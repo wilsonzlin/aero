@@ -68,6 +68,16 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
       - By default, the smoke test **PASS**es even if the captured audio is only silence.
       - Use `--require-non-silence` to fail the capture smoke test if no non-silent buffers are observed.
       - `--test-snd-capture` can also be enabled via env var: `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`.
+    - When a capture smoke test runs, the selftest also runs a **full-duplex** regression check (`virtio-snd-duplex`):
+      - Opens a matching **render** endpoint (48kHz/16-bit/stereo PCM) and a matching **capture** endpoint
+        (48kHz/16-bit/mono PCM) in shared-mode WASAPI.
+      - Starts both streams and runs them concurrently for a short fixed duration while:
+        - continuously submitting a deterministic tone on the render path, and
+        - continuously draining capture buffers and counting frames.
+      - PASS criteria:
+        - all WASAPI calls succeed (Init/Start/GetBuffer/ReleaseBuffer/GetNextPacketSize/GetBuffer/ReleaseBuffer/Stop)
+        - capture returns `frames > 0` (ensures capture does not stall while render is running)
+      - The duplex test records whether any non-silence was observed for diagnostics, but does **not** require non-silence.
   - Use `--disable-snd` to force **SKIP** for both playback and capture.
   - Use `--disable-snd-capture` to force **SKIP** for capture only (while still exercising playback).
 
@@ -89,12 +99,14 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 # Example: virtio-snd not present (or not required) => skip:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 # Example: virtio-snd present => playback + capture markers:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 
@@ -123,6 +135,11 @@ Notes:
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
 - If capture is disabled via `--disable-snd-capture`, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled` (playback behavior unchanged).
+- The duplex marker (`virtio-snd-duplex`) is emitted whenever the virtio-snd section runs:
+  - `SKIP|flag_not_set` unless a capture smoke test is enabled (`--test-snd-capture` or `--require-non-silence`).
+  - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.
+  - `FAIL|reason=...|hr=...` if any WASAPI call fails or capture returns no frames.
+  - `SKIP|endpoint_missing` when the duplex test is enabled but a matching endpoint cannot be found.
 
 ## Building
 
@@ -203,4 +220,5 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
 
 The host harness expects the tool to run automatically and print a final `AERO_VIRTIO_SELFTEST|RESULT|...` line to COM1.
 When the host harness attaches virtio-snd (`-WithVirtioSnd` / `--with-virtio-snd`), it also expects both
-`AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` (not `SKIP`).
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`, `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS`, and
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` (not `SKIP`).

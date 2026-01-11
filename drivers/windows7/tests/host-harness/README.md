@@ -14,6 +14,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
       a capture endpoint is registered
+    - when the guest is provisioned with `--test-snd-capture`, the selftest also runs a full-duplex regression test
+      (`virtio-snd-duplex`) that runs render + capture concurrently
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
     - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present);
       do not use this when running the harness with `-WithVirtioSnd` / `--with-virtio-snd` (capture is required)
@@ -236,6 +238,7 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
 
 ### Why `x-pci-revision=0x01`?
@@ -398,7 +401,8 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
 Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS
 (not SKIP), so do not use `-DisableSndCapture` in that mode.
 
-To run the virtio-snd **capture** smoke test when a capture endpoint exists, provision the scheduled task with
+To run the virtio-snd **capture** smoke test when a capture endpoint exists (and enable the full-duplex regression test),
+provision the scheduled task with
 `--test-snd-capture` (for example via `New-AeroWin7TestImage.ps1 -TestSndCapture`).
 
 - Add `-RequireSndCapture` to fail if no virtio-snd capture endpoint is present.

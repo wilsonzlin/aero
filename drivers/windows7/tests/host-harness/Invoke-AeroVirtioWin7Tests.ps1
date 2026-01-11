@@ -53,9 +53,9 @@ param(
   [string]$HttpPath = "/aero-virtio-selftest",
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
-  # Note: the guest selftest always emits virtio-snd markers (playback + capture), but will report SKIP if the
+  # Note: the guest selftest always emits virtio-snd markers (playback + capture + duplex), but will report SKIP if the
   # virtio-snd PCI device is missing or the test was disabled. When -WithVirtioSnd is enabled, the harness
-  # requires both virtio-snd and virtio-snd-capture to PASS.
+  # requires virtio-snd, virtio-snd-capture, and virtio-snd-duplex to PASS.
   [Parameter(Mandatory = $false)]
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
@@ -236,6 +236,9 @@ function Wait-AeroSelftestResult {
   $sawVirtioSndCapturePass = $false
   $sawVirtioSndCaptureSkip = $false
   $sawVirtioSndCaptureFail = $false
+  $sawVirtioSndDuplexPass = $false
+  $sawVirtioSndDuplexSkip = $false
+  $sawVirtioSndDuplexFail = $false
   $sawVirtioNetPass = $false
   $sawVirtioNetFail = $false
 
@@ -280,6 +283,15 @@ function Wait-AeroSelftestResult {
       }
       if (-not $sawVirtioSndCaptureFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|FAIL") {
         $sawVirtioSndCaptureFail = $true
+      }
+      if (-not $sawVirtioSndDuplexPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|PASS") {
+        $sawVirtioSndDuplexPass = $true
+      }
+      if (-not $sawVirtioSndDuplexSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|SKIP") {
+        $sawVirtioSndDuplexSkip = $true
+      }
+      if (-not $sawVirtioSndDuplexFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|FAIL") {
+        $sawVirtioSndDuplexFail = $true
       }
       if (-not $sawVirtioNetPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net\|PASS") {
         $sawVirtioNetPass = $true
@@ -326,6 +338,16 @@ function Wait-AeroSelftestResult {
             return @{ Result = "VIRTIO_SND_CAPTURE_SKIPPED"; Tail = $tail }
           }
 
+          if ($sawVirtioSndDuplexFail) {
+            return @{ Result = "FAIL"; Tail = $tail }
+          }
+          if (-not ($sawVirtioSndDuplexPass -or $sawVirtioSndDuplexSkip)) {
+            return @{ Result = "MISSING_VIRTIO_SND_DUPLEX"; Tail = $tail }
+          }
+          if ($RequireVirtioSndPass -and (-not $sawVirtioSndDuplexPass)) {
+            return @{ Result = "VIRTIO_SND_DUPLEX_SKIPPED"; Tail = $tail }
+          }
+
           if ($sawVirtioNetFail) {
             return @{ Result = "FAIL"; Tail = $tail }
           }
@@ -341,11 +363,17 @@ function Wait-AeroSelftestResult {
             return @{ Result = "FAIL"; Tail = $tail }
           }
           if ($sawVirtioSndPass) {
-            if ($sawVirtioSndCaptureFail) {
+            if ($sawVirtioSndCaptureFail -or $sawVirtioSndDuplexFail) {
               return @{ Result = "FAIL"; Tail = $tail }
             }
             if ($sawVirtioSndCapturePass) {
-              return @{ Result = "PASS"; Tail = $tail }
+              if ($sawVirtioSndDuplexPass) {
+                return @{ Result = "PASS"; Tail = $tail }
+              }
+              if ($sawVirtioSndDuplexSkip) {
+                return @{ Result = "VIRTIO_SND_DUPLEX_SKIPPED"; Tail = $tail }
+              }
+              return @{ Result = "MISSING_VIRTIO_SND_DUPLEX"; Tail = $tail }
             }
             if ($sawVirtioSndCaptureSkip) {
               return @{ Result = "VIRTIO_SND_CAPTURE_SKIPPED"; Tail = $tail }
@@ -950,6 +978,14 @@ try {
       }
       $scriptExitCode = 1
     }
+    "MISSING_VIRTIO_SND_DUPLEX" {
+      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "MISSING_VIRTIO_NET" {
       Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-net test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -982,6 +1018,19 @@ try {
       }
 
       Write-Host "FAIL: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 1
+    }
+    "VIRTIO_SND_DUPLEX_SKIPPED" {
+      $reason = "unknown"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|SKIP\\|([^\\|\\r\\n]+)") {
+        $reason = $Matches[1]
+      }
+
+      Write-Host "FAIL: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -3695,6 +3695,556 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
   return out;
 }
 
+static TestResult VirtioSndDuplexTest(Logger& log, const std::vector<std::wstring>& match_names, bool allow_transitional) {
+  TestResult out;
+
+  ScopedCoInitialize com(COINIT_MULTITHREADED);
+  if (FAILED(com.hr())) {
+    out.fail_reason = "com_init_failed";
+    out.hr = com.hr();
+    log.Logf("virtio-snd: duplex CoInitializeEx failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+    return out;
+  }
+
+  ComPtr<IMMDeviceEnumerator> enumerator;
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(enumerator.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "create_device_enumerator_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex CoCreateInstance(MMDeviceEnumerator) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  struct SelectedEndpoint {
+    ComPtr<IMMDevice> dev;
+    std::wstring friendly;
+    std::wstring id;
+    std::wstring instance_id;
+    int score = -1;
+  };
+
+  auto select_endpoint = [&](EDataFlow flow, DWORD wait_ms) -> std::optional<SelectedEndpoint> {
+    const char* flow_name = (flow == eRender) ? "render" : (flow == eCapture) ? "capture" : "unknown";
+    const DWORD deadline_ms = GetTickCount() + wait_ms;
+    int attempt = 0;
+
+    for (;;) {
+      attempt++;
+
+      ComPtr<IMMDeviceCollection> collection;
+      const DWORD state_mask =
+          DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_NOTPRESENT | DEVICE_STATE_UNPLUGGED;
+      HRESULT hr_enum = enumerator->EnumAudioEndpoints(flow, state_mask, collection.Put());
+      if (FAILED(hr_enum)) {
+        log.Logf("virtio-snd: duplex EnumAudioEndpoints(%s) failed hr=0x%08lx attempt=%d", flow_name,
+                 static_cast<unsigned long>(hr_enum), attempt);
+        if (wait_ms != 0 && static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+          Sleep(1000);
+          continue;
+        }
+        break;
+      }
+
+      UINT count = 0;
+      hr_enum = collection->GetCount(&count);
+      if (FAILED(hr_enum)) {
+        log.Logf("virtio-snd: duplex IMMDeviceCollection::GetCount(%s) failed hr=0x%08lx", flow_name,
+                 static_cast<unsigned long>(hr_enum));
+        if (wait_ms != 0 && static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+          Sleep(1000);
+          continue;
+        }
+        break;
+      }
+
+      log.Logf("virtio-snd: duplex %s endpoints count=%u attempt=%d", flow_name, count, attempt);
+
+      SelectedEndpoint best{};
+      best.score = -1;
+
+      for (UINT i = 0; i < count; i++) {
+        ComPtr<IMMDevice> dev;
+        HRESULT hr_item = collection->Item(i, dev.Put());
+        if (FAILED(hr_item)) continue;
+
+        DWORD state = 0;
+        hr_item = dev->GetState(&state);
+        if (FAILED(hr_item)) state = 0;
+
+        LPWSTR dev_id_raw = nullptr;
+        std::wstring dev_id;
+        hr_item = dev->GetId(&dev_id_raw);
+        if (SUCCEEDED(hr_item) && dev_id_raw) {
+          dev_id = dev_id_raw;
+          CoTaskMemFree(dev_id_raw);
+        }
+
+        ComPtr<IPropertyStore> props;
+        hr_item = dev->OpenPropertyStore(STGM_READ, props.Put());
+
+        std::wstring friendly;
+        std::wstring instance_id;
+        if (SUCCEEDED(hr_item)) {
+          friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+          if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+          instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
+        }
+
+        const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+        VirtioSndPciIdInfo hwid_info{};
+        const bool hwid_allowed = IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional, &hwid_info);
+        const auto inst_info = GetVirtioSndPciIdInfoFromString(instance_id);
+        const bool inst_allowed = IsAllowedVirtioSndPciId(inst_info, allow_transitional);
+
+        log.Logf("virtio-snd: duplex %s endpoint idx=%u state=%s name=%s id=%s instance_id=%s",
+                 flow_name, static_cast<unsigned>(i), MmDeviceStateToString(state),
+                 WideToUtf8(friendly).c_str(), WideToUtf8(dev_id).c_str(), WideToUtf8(instance_id).c_str());
+        log.Logf(
+            "virtio-snd: duplex %s endpoint idx=%u virtio_snd_match inst(modern=%d rev01=%d transitional=%d "
+            "allowed=%d) hw(modern=%d rev01=%d transitional=%d allowed=%d)",
+            flow_name, static_cast<unsigned>(i), inst_info.modern ? 1 : 0, inst_info.modern_rev01 ? 1 : 0,
+            inst_info.transitional ? 1 : 0, inst_allowed ? 1 : 0, hwid_info.modern ? 1 : 0,
+            hwid_info.modern_rev01 ? 1 : 0, hwid_info.transitional ? 1 : 0, hwid_allowed ? 1 : 0);
+
+        if (state != DEVICE_STATE_ACTIVE) continue;
+
+        int score = 0;
+        if (ContainsInsensitive(friendly, L"virtio")) score += 100;
+        if (ContainsInsensitive(friendly, L"aero")) score += 50;
+        for (const auto& m : match_names) {
+          if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
+        }
+        if (hwid_info.modern) score += 1000;
+        if (hwid_info.modern_rev01) score += 50;
+        if (allow_transitional && hwid_info.transitional) score += 900;
+        if (inst_info.modern) score += 800;
+        if (inst_info.modern_rev01) score += 50;
+        if (allow_transitional && inst_info.transitional) score += 700;
+
+        if (score <= 0) continue;
+        if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names, allow_transitional)) continue;
+
+        if (score > best.score) {
+          best.score = score;
+          best.dev = std::move(dev);
+          best.friendly = friendly;
+          best.id = dev_id;
+          best.instance_id = instance_id;
+        }
+      }
+
+      if (best.dev) return best;
+      if (wait_ms == 0 || static_cast<int32_t>(GetTickCount() - deadline_ms) >= 0) break;
+      Sleep(1000);
+    }
+
+    log.Logf("virtio-snd: duplex no matching ACTIVE %s endpoint found; checking default endpoint", flow_name);
+    SelectedEndpoint def_best{};
+    hr = enumerator->GetDefaultAudioEndpoint(flow, eConsole, def_best.dev.Put());
+    if (FAILED(hr) || !def_best.dev) {
+      log.Logf("virtio-snd: duplex no default %s endpoint available", flow_name);
+      return std::nullopt;
+    }
+
+    ComPtr<IPropertyStore> props;
+    hr = def_best.dev->OpenPropertyStore(STGM_READ, props.Put());
+    std::wstring friendly;
+    std::wstring instance_id;
+    if (SUCCEEDED(hr)) {
+      friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+      if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+      instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
+    }
+    const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+    if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names, allow_transitional)) {
+      log.Logf("virtio-snd: duplex default %s endpoint does not look like virtio-snd (name=%s instance_id=%s)",
+               flow_name, WideToUtf8(friendly).c_str(), WideToUtf8(instance_id).c_str());
+      return std::nullopt;
+    }
+
+    def_best.friendly = friendly;
+    def_best.instance_id = instance_id;
+    def_best.score = 0;
+    LPWSTR dev_id_raw = nullptr;
+    hr = def_best.dev->GetId(&dev_id_raw);
+    if (SUCCEEDED(hr) && dev_id_raw) {
+      def_best.id = dev_id_raw;
+      CoTaskMemFree(dev_id_raw);
+    }
+    return def_best;
+  };
+
+  const DWORD kEndpointWaitMs = 20000;
+
+  auto render_ep = select_endpoint(eRender, kEndpointWaitMs);
+  if (!render_ep.has_value()) {
+    out.fail_reason = "no_matching_endpoint";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    log.LogLine("virtio-snd: duplex missing render endpoint");
+    return out;
+  }
+
+  auto capture_ep = select_endpoint(eCapture, kEndpointWaitMs);
+  if (!capture_ep.has_value()) {
+    out.fail_reason = "no_matching_endpoint";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    log.LogLine("virtio-snd: duplex missing capture endpoint");
+    return out;
+  }
+
+  out.endpoint_found = true;
+  log.Logf("virtio-snd: duplex selected render endpoint name=%s id=%s score=%d",
+           WideToUtf8(render_ep->friendly).c_str(), WideToUtf8(render_ep->id).c_str(), render_ep->score);
+  log.Logf("virtio-snd: duplex selected capture endpoint name=%s id=%s score=%d",
+           WideToUtf8(capture_ep->friendly).c_str(), WideToUtf8(capture_ep->id).c_str(), capture_ep->score);
+
+  ComPtr<IAudioClient> render_client;
+  hr = render_ep->dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                                reinterpret_cast<void**>(render_client.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "activate_render_audio_client_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex render IMMDevice::Activate(IAudioClient) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  ComPtr<IAudioClient> capture_client;
+  hr = capture_ep->dev->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                                 reinterpret_cast<void**>(capture_client.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "activate_capture_audio_client_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex capture IMMDevice::Activate(IAudioClient) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  constexpr REFERENCE_TIME kBufferDuration100ms = 1000000; // 100ms in 100ns units
+
+  // Render: 48kHz / 16-bit / stereo PCM (contract v1).
+  std::vector<BYTE> render_fmt_bytes;
+  render_fmt_bytes.resize(sizeof(WAVEFORMATEX));
+  auto* render_desired = reinterpret_cast<WAVEFORMATEX*>(render_fmt_bytes.data());
+  *render_desired = {};
+  render_desired->wFormatTag = WAVE_FORMAT_PCM;
+  render_desired->nChannels = 2;
+  render_desired->nSamplesPerSec = 48000;
+  render_desired->wBitsPerSample = 16;
+  render_desired->nBlockAlign = static_cast<WORD>((render_desired->nChannels * render_desired->wBitsPerSample) / 8);
+  render_desired->nAvgBytesPerSec = render_desired->nSamplesPerSec * render_desired->nBlockAlign;
+  render_desired->cbSize = 0;
+
+  hr = render_client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, render_desired, nullptr);
+  if (FAILED(hr)) {
+    log.Logf(
+        "virtio-snd: duplex render Initialize(shared desired 48kHz S16 stereo) failed hr=0x%08lx; trying WAVE_FORMAT_EXTENSIBLE",
+        static_cast<unsigned long>(hr));
+
+    render_fmt_bytes.resize(sizeof(WAVEFORMATEXTENSIBLE));
+    auto* ext = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(render_fmt_bytes.data());
+    *ext = {};
+    ext->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    ext->Format.nChannels = 2;
+    ext->Format.nSamplesPerSec = 48000;
+    ext->Format.wBitsPerSample = 16;
+    ext->Format.nBlockAlign = static_cast<WORD>((ext->Format.nChannels * ext->Format.wBitsPerSample) / 8);
+    ext->Format.nAvgBytesPerSec = ext->Format.nSamplesPerSec * ext->Format.nBlockAlign;
+    ext->Format.cbSize = static_cast<WORD>(sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX));
+    ext->Samples.wValidBitsPerSample = 16;
+    ext->dwChannelMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
+    ext->SubFormat = kWaveSubFormatPcm;
+    render_desired = &ext->Format;
+
+    hr = render_client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, render_desired, nullptr);
+    if (FAILED(hr)) {
+      out.fail_reason = "initialize_render_shared_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: duplex render Initialize(shared desired extensible) failed hr=0x%08lx",
+               static_cast<unsigned long>(hr));
+      return out;
+    }
+  }
+
+  // Capture: 48kHz / 16-bit / mono PCM (contract v1).
+  std::vector<BYTE> capture_fmt_bytes;
+  capture_fmt_bytes.resize(sizeof(WAVEFORMATEX));
+  auto* capture_desired = reinterpret_cast<WAVEFORMATEX*>(capture_fmt_bytes.data());
+  *capture_desired = {};
+  capture_desired->wFormatTag = WAVE_FORMAT_PCM;
+  capture_desired->nChannels = 1;
+  capture_desired->nSamplesPerSec = 48000;
+  capture_desired->wBitsPerSample = 16;
+  capture_desired->nBlockAlign =
+      static_cast<WORD>((capture_desired->nChannels * capture_desired->wBitsPerSample) / 8);
+  capture_desired->nAvgBytesPerSec = capture_desired->nSamplesPerSec * capture_desired->nBlockAlign;
+  capture_desired->cbSize = 0;
+
+  hr = capture_client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, capture_desired, nullptr);
+  if (FAILED(hr)) {
+    log.Logf(
+        "virtio-snd: duplex capture Initialize(shared desired 48kHz S16 mono) failed hr=0x%08lx; trying WAVE_FORMAT_EXTENSIBLE",
+        static_cast<unsigned long>(hr));
+
+    capture_fmt_bytes.resize(sizeof(WAVEFORMATEXTENSIBLE));
+    auto* ext = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(capture_fmt_bytes.data());
+    *ext = {};
+    ext->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    ext->Format.nChannels = 1;
+    ext->Format.nSamplesPerSec = 48000;
+    ext->Format.wBitsPerSample = 16;
+    ext->Format.nBlockAlign = static_cast<WORD>((ext->Format.nChannels * ext->Format.wBitsPerSample) / 8);
+    ext->Format.nAvgBytesPerSec = ext->Format.nSamplesPerSec * ext->Format.nBlockAlign;
+    ext->Format.cbSize = static_cast<WORD>(sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX));
+    ext->Samples.wValidBitsPerSample = 16;
+    ext->dwChannelMask = SPEAKER_FRONT_CENTER;
+    ext->SubFormat = kWaveSubFormatPcm;
+    capture_desired = &ext->Format;
+
+    hr = capture_client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, capture_desired, nullptr);
+    if (FAILED(hr)) {
+      out.fail_reason = "initialize_capture_shared_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: duplex capture Initialize(shared desired extensible) failed hr=0x%08lx",
+               static_cast<unsigned long>(hr));
+      return out;
+    }
+  }
+
+  const auto* render_fmt = reinterpret_cast<const WAVEFORMATEX*>(render_fmt_bytes.data());
+  const auto* capture_fmt = reinterpret_cast<const WAVEFORMATEX*>(capture_fmt_bytes.data());
+  log.Logf("virtio-snd: duplex render stream format=%s", WaveFormatToString(render_fmt).c_str());
+  log.Logf("virtio-snd: duplex capture stream format=%s", WaveFormatToString(capture_fmt).c_str());
+
+  UINT32 render_buffer_frames = 0;
+  hr = render_client->GetBufferSize(&render_buffer_frames);
+  if (FAILED(hr) || render_buffer_frames == 0) {
+    out.fail_reason = "get_render_buffer_size_failed";
+    out.hr = FAILED(hr) ? hr : E_FAIL;
+    log.Logf("virtio-snd: duplex render GetBufferSize failed hr=0x%08lx buffer_frames=%u",
+             static_cast<unsigned long>(out.hr), render_buffer_frames);
+    return out;
+  }
+
+  UINT32 capture_buffer_frames = 0;
+  hr = capture_client->GetBufferSize(&capture_buffer_frames);
+  if (FAILED(hr) || capture_buffer_frames == 0) {
+    out.fail_reason = "get_capture_buffer_size_failed";
+    out.hr = FAILED(hr) ? hr : E_FAIL;
+    log.Logf("virtio-snd: duplex capture GetBufferSize failed hr=0x%08lx buffer_frames=%u",
+             static_cast<unsigned long>(out.hr), capture_buffer_frames);
+    return out;
+  }
+
+  ComPtr<IAudioRenderClient> render;
+  hr = render_client->GetService(__uuidof(IAudioRenderClient), reinterpret_cast<void**>(render.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "get_render_client_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex render GetService(IAudioRenderClient) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  ComPtr<IAudioCaptureClient> capture;
+  hr = capture_client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(capture.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "get_capture_client_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex capture GetService(IAudioCaptureClient) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  // Prefill the render buffer with tone so we immediately have audio queued when both streams start.
+  double phase = 0.0;
+  if (render_buffer_frames > 0) {
+    BYTE* data = nullptr;
+    hr = render->GetBuffer(render_buffer_frames, &data);
+    if (FAILED(hr)) {
+      out.fail_reason = "render_get_buffer_prefill_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: duplex render GetBuffer(prefill) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      return out;
+    }
+    if (!FillToneInterleaved(data, render_buffer_frames, render_fmt, 440.0, &phase)) {
+      render->ReleaseBuffer(render_buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT);
+      out.fail_reason = "unsupported_stream_format";
+      out.hr = E_FAIL;
+      log.Logf("virtio-snd: duplex unsupported render stream format for tone generation: %s",
+               WaveFormatToString(render_fmt).c_str());
+      return out;
+    }
+    hr = render->ReleaseBuffer(render_buffer_frames, 0);
+    if (FAILED(hr)) {
+      out.fail_reason = "render_release_buffer_prefill_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: duplex render ReleaseBuffer(prefill) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      return out;
+    }
+  }
+
+  bool render_started = false;
+  bool capture_started = false;
+
+  hr = capture_client->Start();
+  if (FAILED(hr)) {
+    out.fail_reason = "capture_start_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex capture Start failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    return out;
+  }
+  capture_started = true;
+
+  hr = render_client->Start();
+  if (FAILED(hr)) {
+    out.fail_reason = "render_start_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: duplex render Start failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    capture_client->Stop();
+    capture_client->Reset();
+    return out;
+  }
+  render_started = true;
+
+  UINT64 total_capture_frames = 0;
+  bool any_non_silence = false;
+
+  const DWORD run_deadline = GetTickCount() + 3000; // keep short; this runs at every boot in CI images.
+  while (static_cast<int32_t>(GetTickCount() - run_deadline) < 0) {
+    bool did_work = false;
+
+    // Render: keep the buffer fed with tone.
+    UINT32 padding = 0;
+    hr = render_client->GetCurrentPadding(&padding);
+    if (FAILED(hr)) {
+      out.fail_reason = "render_get_current_padding_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: duplex render GetCurrentPadding failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      break;
+    }
+
+    const UINT32 available = (padding < render_buffer_frames) ? (render_buffer_frames - padding) : 0;
+    if (available > 0) {
+      const UINT32 to_write = std::min<UINT32>(available, std::max<UINT32>(1, render_buffer_frames / 4));
+      BYTE* data = nullptr;
+      hr = render->GetBuffer(to_write, &data);
+      if (FAILED(hr)) {
+        out.fail_reason = "render_get_buffer_failed";
+        out.hr = hr;
+        log.Logf("virtio-snd: duplex render GetBuffer failed hr=0x%08lx", static_cast<unsigned long>(hr));
+        break;
+      }
+      if (!FillToneInterleaved(data, to_write, render_fmt, 440.0, &phase)) {
+        render->ReleaseBuffer(to_write, AUDCLNT_BUFFERFLAGS_SILENT);
+        out.fail_reason = "unsupported_stream_format";
+        out.hr = E_FAIL;
+        log.Logf("virtio-snd: duplex unsupported render stream format for tone generation: %s",
+                 WaveFormatToString(render_fmt).c_str());
+        break;
+      }
+      hr = render->ReleaseBuffer(to_write, 0);
+      if (FAILED(hr)) {
+        out.fail_reason = "render_release_buffer_failed";
+        out.hr = hr;
+        log.Logf("virtio-snd: duplex render ReleaseBuffer failed hr=0x%08lx", static_cast<unsigned long>(hr));
+        break;
+      }
+      did_work = true;
+    }
+
+    // Capture: drain all available packets.
+    for (;;) {
+      UINT32 packet_frames = 0;
+      hr = capture->GetNextPacketSize(&packet_frames);
+      if (FAILED(hr)) {
+        out.fail_reason = "capture_get_next_packet_size_failed";
+        out.hr = hr;
+        log.Logf("virtio-snd: duplex capture GetNextPacketSize failed hr=0x%08lx", static_cast<unsigned long>(hr));
+        break;
+      }
+      if (packet_frames == 0) break;
+
+      BYTE* data = nullptr;
+      UINT32 frames = 0;
+      DWORD flags = 0;
+      hr = capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
+      if (FAILED(hr)) {
+        out.fail_reason = "capture_get_buffer_failed";
+        out.hr = hr;
+        log.Logf("virtio-snd: duplex capture GetBuffer failed hr=0x%08lx", static_cast<unsigned long>(hr));
+        break;
+      }
+
+      if (frames > 0) {
+        total_capture_frames += frames;
+        if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && capture_fmt->nBlockAlign != 0) {
+          const size_t bytes = static_cast<size_t>(frames) * capture_fmt->nBlockAlign;
+          if (data && BufferContainsNonSilence(capture_fmt, data, bytes)) any_non_silence = true;
+        }
+      }
+
+      hr = capture->ReleaseBuffer(frames);
+      if (FAILED(hr)) {
+        out.fail_reason = "capture_release_buffer_failed";
+        out.hr = hr;
+        log.Logf("virtio-snd: duplex capture ReleaseBuffer failed hr=0x%08lx", static_cast<unsigned long>(hr));
+        break;
+      }
+
+      did_work = true;
+    }
+
+    if (!out.fail_reason.empty()) break;
+
+    if (!did_work) Sleep(5);
+  }
+
+  if (capture_started) {
+    const HRESULT stop_hr = capture_client->Stop();
+    if (FAILED(stop_hr) && SUCCEEDED(out.hr)) {
+      out.fail_reason = "capture_stop_failed";
+      out.hr = stop_hr;
+      log.Logf("virtio-snd: duplex capture Stop failed hr=0x%08lx", static_cast<unsigned long>(stop_hr));
+    }
+    capture_client->Reset();
+  }
+
+  if (render_started) {
+    const HRESULT stop_hr = render_client->Stop();
+    if (FAILED(stop_hr) && SUCCEEDED(out.hr)) {
+      out.fail_reason = "render_stop_failed";
+      out.hr = stop_hr;
+      log.Logf("virtio-snd: duplex render Stop failed hr=0x%08lx", static_cast<unsigned long>(stop_hr));
+    }
+    render_client->Reset();
+  }
+
+  if (!out.fail_reason.empty()) {
+    if (out.hr == S_OK) out.hr = E_FAIL;
+    return out;
+  }
+
+  if (total_capture_frames == 0) {
+    out.fail_reason = "capture_no_frames";
+    out.hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    log.LogLine("virtio-snd: duplex capture returned 0 frames");
+    return out;
+  }
+
+  out.ok = true;
+  out.hr = S_OK;
+  out.fail_reason.clear();
+  out.captured_frames = total_capture_frames;
+  out.captured_non_silence = any_non_silence;
+  out.captured_silence_only = !any_non_silence;
+  log.Logf("virtio-snd: duplex ok (capture_frames=%llu non_silence=%d)", total_capture_frames,
+           any_non_silence ? 1 : 0);
+  return out;
+}
+
 static void PrintUsage() {
   printf(
       "aero-virtio-selftest.exe [options]\n"
@@ -3878,6 +4428,7 @@ int wmain(int argc, wchar_t** argv) {
       opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
                       : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
+  const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
   const bool want_snd_capture =
       !opt.disable_snd_capture &&
       (opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence || want_snd_playback);
@@ -3886,11 +4437,14 @@ int wmain(int argc, wchar_t** argv) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
   } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture && !opt.require_non_silence) {
     log.LogLine("virtio-snd: skipped (enable with --test-snd)");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled"
                                         : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+    log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled"
+                                        : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
   } else {
     if (!want_snd_playback) {
       log.LogLine("virtio-snd: skipped (enable with --test-snd)");
@@ -3918,6 +4472,9 @@ int wmain(int argc, wchar_t** argv) {
       } else {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
       }
+      log.LogLine(opt.disable_snd_capture   ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled"
+                  : !capture_smoke_test     ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set"
+                                            : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|device_missing");
     } else {
       auto binding = CheckVirtioSndPciBinding(log, snd_pci);
 
@@ -3946,48 +4503,64 @@ int wmain(int argc, wchar_t** argv) {
         }
       }
 
-      if (!binding.ok) {
-        const char* reason = binding.any_wrong_service   ? "wrong_service"
-                            : binding.any_missing_service ? "driver_not_bound"
-                            : binding.any_problem         ? "device_error"
-                                                          : "driver_not_bound";
+       if (!binding.ok) {
+         const char* reason = binding.any_wrong_service   ? "wrong_service"
+                             : binding.any_missing_service ? "driver_not_bound"
+                             : binding.any_problem         ? "device_error"
+                                                           : "driver_not_bound";
 
         if (want_snd_playback) {
           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s", reason);
           all_ok = false;
         }
 
-        if (opt.disable_snd_capture) {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-        } else if (opt.require_snd_capture) {
-          log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
-          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
-          all_ok = false;
-        } else {
-          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
-        }
-      } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
-        log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
+         if (opt.disable_snd_capture) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+         } else if (opt.require_snd_capture) {
+           log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
+           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
+           all_ok = false;
+         } else {
+           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
+         }
 
-        if (want_snd_playback) {
+         if (opt.disable_snd_capture) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+         } else if (!capture_smoke_test) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+         } else {
+           log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|%s", reason);
+         }
+       } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
+         log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
+
+         if (want_snd_playback) {
           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
           all_ok = false;
         }
 
         if (opt.disable_snd_capture) {
           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-        } else if (opt.require_snd_capture) {
-          log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
-          all_ok = false;
-        } else {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
-        }
-      } else {
-        std::vector<std::wstring> match_names;
-        for (const auto& d : snd_pci) {
-          if (!d.description.empty()) match_names.push_back(d.description);
-        }
+         } else if (opt.require_snd_capture) {
+           log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
+           all_ok = false;
+         } else {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
+         }
+
+         if (opt.disable_snd_capture) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+         } else if (!capture_smoke_test) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+         } else {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|topology_interface_missing");
+         }
+       } else {
+         std::vector<std::wstring> match_names;
+         for (const auto& d : snd_pci) {
+           if (!d.description.empty()) match_names.push_back(d.description);
+         }
 
         if (want_snd_playback) {
           bool snd_ok = false;
@@ -4006,15 +4579,14 @@ int wmain(int argc, wchar_t** argv) {
           all_ok = all_ok && snd_ok;
         }
 
-        if (opt.disable_snd_capture) {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-        } else if (want_snd_capture) {
-          const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
-          const DWORD capture_wait_ms =
-              (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
-          bool capture_ok = false;
-          const char* capture_method = "wasapi";
-          bool capture_silence_only = false;
+         if (opt.disable_snd_capture) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+         } else if (want_snd_capture) {
+           const DWORD capture_wait_ms =
+               (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
+           bool capture_ok = false;
+           const char* capture_method = "wasapi";
+           bool capture_silence_only = false;
           bool capture_non_silence = false;
           UINT64 capture_frames = 0;
 
@@ -4075,12 +4647,32 @@ int wmain(int argc, wchar_t** argv) {
               log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
             }
           }
-        } else {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
-        }
-      }
-    }
-  }
+         } else {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+         }
+ 
+         if (opt.disable_snd_capture) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
+         } else if (!(want_snd_playback && capture_smoke_test)) {
+           log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set");
+         } else {
+           const auto duplex = VirtioSndDuplexTest(log, match_names, opt.allow_virtio_snd_transitional);
+           if (duplex.ok) {
+             log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=%llu|non_silence=%d",
+                      duplex.captured_frames, duplex.captured_non_silence ? 1 : 0);
+           } else if (duplex.fail_reason == "no_matching_endpoint") {
+             log.LogLine("virtio-snd: duplex endpoint missing; skipping (use --require-snd-capture to require)");
+             log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|endpoint_missing");
+           } else {
+             log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|reason=%s|hr=0x%08lx",
+                      duplex.fail_reason.empty() ? "unknown" : duplex.fail_reason.c_str(),
+                      static_cast<unsigned long>(duplex.hr));
+             all_ok = false;
+           }
+         }
+       }
+     }
+   }
 
   // Network tests require Winsock initialized for getaddrinfo.
   WSADATA wsa{};
