@@ -136,7 +136,6 @@ struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
   decltype(&D3DKMTQueryAdapterInfo) pfn_query_adapter_info = nullptr;
-  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
 };
 
 static const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
@@ -155,8 +154,6 @@ static const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
     p.pfn_close_adapter = reinterpret_cast<decltype(&D3DKMTCloseAdapter)>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
     p.pfn_query_adapter_info =
         reinterpret_cast<decltype(&D3DKMTQueryAdapterInfo)>(GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo"));
-    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
-        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
     return p;
   }();
   return procs;
@@ -951,125 +948,6 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
     return E_FAIL;
   }
   return S_OK;
-}
-
-template <typename T, typename = void>
-struct has_member_hContext : std::false_type {};
-template <typename T>
-struct has_member_hContext<T, std::void_t<decltype(std::declval<T>().hContext)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_hAdapter : std::false_type {};
-template <typename T>
-struct has_member_hAdapter<T, std::void_t<decltype(std::declval<T>().hAdapter)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_ObjectCount : std::false_type {};
-template <typename T>
-struct has_member_ObjectCount<T, std::void_t<decltype(std::declval<T>().ObjectCount)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_ObjectHandleArray : std::false_type {};
-template <typename T>
-struct has_member_ObjectHandleArray<T, std::void_t<decltype(std::declval<T>().ObjectHandleArray)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_hSyncObjects : std::false_type {};
-template <typename T>
-struct has_member_hSyncObjects<T, std::void_t<decltype(std::declval<T>().hSyncObjects)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_FenceValueArray : std::false_type {};
-template <typename T>
-struct has_member_FenceValueArray<T, std::void_t<decltype(std::declval<T>().FenceValueArray)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_FenceValue : std::false_type {};
-template <typename T>
-struct has_member_FenceValue<T, std::void_t<decltype(std::declval<T>().FenceValue)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_Timeout : std::false_type {};
-template <typename T>
-struct has_member_Timeout<T, std::void_t<decltype(std::declval<T>().Timeout)>> : std::true_type {};
-
-template <typename T>
-static T UintPtrToD3dHandle(std::uintptr_t value) {
-  if constexpr (std::is_pointer_v<T>) {
-    return reinterpret_cast<T>(value);
-  } else {
-    return static_cast<T>(value);
-  }
-}
-
-template <typename WaitArgsT>
-static void FillWaitForSyncObjectArgs(WaitArgsT* args,
-                                      D3DKMT_HANDLE hContext,
-                                      D3DKMT_HANDLE hAdapter,
-                                      const D3DKMT_HANDLE* handles,
-                                      const UINT64* fence_values,
-                                      UINT64 fence_value,
-                                      UINT64 timeout) {
-  if (!args) {
-    return;
-  }
-
-  if constexpr (has_member_hContext<WaitArgsT>::value) {
-    using FieldT = std::remove_reference_t<decltype(args->hContext)>;
-    args->hContext = UintPtrToD3dHandle<FieldT>(static_cast<std::uintptr_t>(hContext));
-  }
-  if constexpr (has_member_hAdapter<WaitArgsT>::value) {
-    using FieldT = std::remove_reference_t<decltype(args->hAdapter)>;
-    args->hAdapter = UintPtrToD3dHandle<FieldT>(static_cast<std::uintptr_t>(hAdapter));
-  }
-  if constexpr (has_member_ObjectCount<WaitArgsT>::value) {
-    args->ObjectCount = 1;
-  }
-
-  auto assign_handles = [&](auto& field) {
-    using FieldT = std::remove_reference_t<decltype(field)>;
-    if constexpr (std::is_pointer_v<FieldT>) {
-      using Pointee = std::remove_pointer_t<FieldT>;
-      using Base = std::remove_const_t<Pointee>;
-      field = reinterpret_cast<FieldT>(const_cast<Base*>(reinterpret_cast<const Base*>(handles)));
-    } else if constexpr (std::is_array_v<FieldT>) {
-      using ElemT = std::remove_reference_t<decltype(field[0])>;
-      field[0] = handles ? UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(handles[0]))
-                         : UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(0));
-    } else {
-      using ElemT = std::remove_reference_t<FieldT>;
-      field = handles ? UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(handles[0])) : UintPtrToD3dHandle<ElemT>(0);
-    }
-  };
-
-  if constexpr (has_member_ObjectHandleArray<WaitArgsT>::value) {
-    assign_handles(args->ObjectHandleArray);
-  } else if constexpr (has_member_hSyncObjects<WaitArgsT>::value) {
-    assign_handles(args->hSyncObjects);
-  }
-
-  auto assign_fence_values = [&](auto& field) {
-    using FieldT = std::remove_reference_t<decltype(field)>;
-    if constexpr (std::is_pointer_v<FieldT>) {
-      using Pointee = std::remove_pointer_t<FieldT>;
-      using Base = std::remove_const_t<Pointee>;
-      field = reinterpret_cast<FieldT>(const_cast<Base*>(reinterpret_cast<const Base*>(fence_values)));
-    } else if constexpr (std::is_array_v<FieldT>) {
-      field[0] = static_cast<std::remove_reference_t<decltype(field[0])>>(fence_value);
-    } else {
-      field = static_cast<FieldT>(fence_value);
-    }
-  };
-
-  if constexpr (has_member_FenceValueArray<WaitArgsT>::value) {
-    assign_fence_values(args->FenceValueArray);
-  } else if constexpr (has_member_FenceValue<WaitArgsT>::value) {
-    assign_fence_values(args->FenceValue);
-  }
-
-  if constexpr (has_member_Timeout<WaitArgsT>::value) {
-    args->Timeout = timeout;
-  }
 }
 
 static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
@@ -7724,14 +7602,6 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
     dev->runtime_callbacks = nullptr;
     dev->~Device();
     return FAILED(wddm_hr) ? wddm_hr : E_FAIL;
-  }
-  if (!GetAeroGpuD3dkmtProcs().pfn_wait_for_syncobj) {
-    DestroyWddmContext(dev);
-    ctx->~AeroGpuDeviceContext();
-    delete callbacks_copy;
-    dev->runtime_callbacks = nullptr;
-    dev->~Device();
-    return E_FAIL;
   }
 
   // Win7 runtimes are known to call a surprisingly large chunk of the D3D11 DDI

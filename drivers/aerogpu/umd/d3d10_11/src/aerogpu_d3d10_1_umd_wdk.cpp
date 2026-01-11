@@ -558,15 +558,6 @@ decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
 }
 
 template <typename T>
-std::uintptr_t D3dHandleToUintPtr(T value) {
-  if constexpr (std::is_pointer_v<T>) {
-    return reinterpret_cast<std::uintptr_t>(value);
-  } else {
-    return static_cast<std::uintptr_t>(value);
-  }
-}
-
-template <typename T>
 T UintPtrToD3dHandle(std::uintptr_t value) {
   if constexpr (std::is_pointer_v<T>) {
     return reinterpret_cast<T>(value);
@@ -575,172 +566,10 @@ T UintPtrToD3dHandle(std::uintptr_t value) {
   }
 }
 
-template <typename T, typename = void>
-struct HasMemberHContext : std::false_type {};
-template <typename T>
-struct HasMemberHContext<T, std::void_t<decltype(std::declval<T>().hContext)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberHAdapter : std::false_type {};
-template <typename T>
-struct HasMemberHAdapter<T, std::void_t<decltype(std::declval<T>().hAdapter)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberObjectCount : std::false_type {};
-template <typename T>
-struct HasMemberObjectCount<T, std::void_t<decltype(std::declval<T>().ObjectCount)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberObjectHandleArray : std::false_type {};
-template <typename T>
-struct HasMemberObjectHandleArray<T, std::void_t<decltype(std::declval<T>().ObjectHandleArray)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberHSyncObjects : std::false_type {};
-template <typename T>
-struct HasMemberHSyncObjects<T, std::void_t<decltype(std::declval<T>().hSyncObjects)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberFenceValueArray : std::false_type {};
-template <typename T>
-struct HasMemberFenceValueArray<T, std::void_t<decltype(std::declval<T>().FenceValueArray)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberFenceValue : std::false_type {};
-template <typename T>
-struct HasMemberFenceValue<T, std::void_t<decltype(std::declval<T>().FenceValue)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberTimeout : std::false_type {};
-template <typename T>
-struct HasMemberTimeout<T, std::void_t<decltype(std::declval<T>().Timeout)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberNewFenceValue : std::false_type {};
-template <typename T>
-struct HasMemberNewFenceValue<T, std::void_t<decltype(std::declval<T>().NewFenceValue)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberSubmissionFenceId : std::false_type {};
-template <typename T>
-struct HasMemberSubmissionFenceId<T, std::void_t<decltype(std::declval<T>().SubmissionFenceId)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberPFenceValue : std::false_type {};
-template <typename T>
-struct HasMemberPFenceValue<T, std::void_t<decltype(std::declval<T>().pFenceValue)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct HasMemberPSubmissionFenceId : std::false_type {};
-template <typename T>
-struct HasMemberPSubmissionFenceId<T, std::void_t<decltype(std::declval<T>().pSubmissionFenceId)>> : std::true_type {};
-
-template <typename WaitArgsT>
-void FillWaitForSyncObjectArgs(WaitArgsT* args,
-                               D3DKMT_HANDLE hContext,
-                               D3DKMT_HANDLE hAdapter,
-                               const D3DKMT_HANDLE* handles,
-                               const UINT64* fence_values,
-                               UINT64 fence_value,
-                               UINT64 timeout) {
-  if (!args) {
-    return;
-  }
-
-  if constexpr (HasMemberHContext<WaitArgsT>::value) {
-    using FieldT = std::remove_reference_t<decltype(args->hContext)>;
-    args->hContext = UintPtrToD3dHandle<FieldT>(static_cast<std::uintptr_t>(hContext));
-  }
-  if constexpr (HasMemberHAdapter<WaitArgsT>::value) {
-    using FieldT = std::remove_reference_t<decltype(args->hAdapter)>;
-    args->hAdapter = UintPtrToD3dHandle<FieldT>(static_cast<std::uintptr_t>(hAdapter));
-  }
-  if constexpr (HasMemberObjectCount<WaitArgsT>::value) {
-    args->ObjectCount = 1;
-  }
-
-  auto assign_handles = [&](auto& field) {
-    using FieldT = std::remove_reference_t<decltype(field)>;
-    if constexpr (std::is_pointer_v<FieldT>) {
-      using Pointee = std::remove_pointer_t<FieldT>;
-      using Base = std::remove_const_t<Pointee>;
-      field = reinterpret_cast<FieldT>(const_cast<Base*>(reinterpret_cast<const Base*>(handles)));
-    } else if constexpr (std::is_array_v<FieldT>) {
-      using ElemT = std::remove_reference_t<decltype(field[0])>;
-      field[0] = handles ? UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(handles[0]))
-                         : UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(0));
-    } else {
-      using ElemT = std::remove_reference_t<FieldT>;
-      field =
-          handles ? UintPtrToD3dHandle<ElemT>(static_cast<std::uintptr_t>(handles[0])) : UintPtrToD3dHandle<ElemT>(0);
-    }
-  };
-
-  if constexpr (HasMemberObjectHandleArray<WaitArgsT>::value) {
-    assign_handles(args->ObjectHandleArray);
-  } else if constexpr (HasMemberHSyncObjects<WaitArgsT>::value) {
-    assign_handles(args->hSyncObjects);
-  }
-
-  auto assign_fence_values = [&](auto& field) {
-    using FieldT = std::remove_reference_t<decltype(field)>;
-    if constexpr (std::is_pointer_v<FieldT>) {
-      using Pointee = std::remove_pointer_t<FieldT>;
-      using Base = std::remove_const_t<Pointee>;
-      field = reinterpret_cast<FieldT>(const_cast<Base*>(reinterpret_cast<const Base*>(fence_values)));
-    } else if constexpr (std::is_array_v<FieldT>) {
-      field[0] = static_cast<std::remove_reference_t<decltype(field[0])>>(fence_value);
-    } else {
-      field = static_cast<FieldT>(fence_value);
-    }
-  };
-
-  if constexpr (HasMemberFenceValueArray<WaitArgsT>::value) {
-    assign_fence_values(args->FenceValueArray);
-  } else if constexpr (HasMemberFenceValue<WaitArgsT>::value) {
-    assign_fence_values(args->FenceValue);
-  }
-
-  if constexpr (HasMemberTimeout<WaitArgsT>::value) {
-    args->Timeout = timeout;
-  }
-}
-
-template <typename SubmitArgsT>
-uint64_t ExtractSubmitFence(const SubmitArgsT& args) {
-  uint64_t fence = 0;
-  if constexpr (HasMemberNewFenceValue<SubmitArgsT>::value) {
-    fence = static_cast<uint64_t>(args.NewFenceValue);
-  }
-  if constexpr (HasMemberFenceValue<SubmitArgsT>::value) {
-    if (fence == 0) {
-      fence = static_cast<uint64_t>(args.FenceValue);
-    }
-  }
-  if constexpr (HasMemberPFenceValue<SubmitArgsT>::value) {
-    if (fence == 0 && args.pFenceValue) {
-      fence = static_cast<uint64_t>(*args.pFenceValue);
-    }
-  }
-  if constexpr (HasMemberSubmissionFenceId<SubmitArgsT>::value) {
-    if (fence == 0) {
-      fence = static_cast<uint64_t>(args.SubmissionFenceId);
-    }
-  }
-  if constexpr (HasMemberPSubmissionFenceId<SubmitArgsT>::value) {
-    if (fence == 0 && args.pSubmissionFenceId) {
-      fence = static_cast<uint64_t>(*args.pSubmissionFenceId);
-    }
-  }
-  return fence;
-}
-
 struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
   decltype(&D3DKMTQueryAdapterInfo) pfn_query_adapter_info = nullptr;
-  decltype(&D3DKMTEscape) pfn_escape = nullptr;
-  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
 };
 
 const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
@@ -760,9 +589,6 @@ const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
         reinterpret_cast<decltype(&D3DKMTCloseAdapter)>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
     p.pfn_query_adapter_info =
         reinterpret_cast<decltype(&D3DKMTQueryAdapterInfo)>(GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo"));
-    p.pfn_escape = reinterpret_cast<decltype(&D3DKMTEscape)>(GetProcAddress(gdi32, "D3DKMTEscape"));
-    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
-        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
     return p;
   }();
   return procs;
