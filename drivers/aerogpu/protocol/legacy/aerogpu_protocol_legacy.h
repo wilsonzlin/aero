@@ -385,7 +385,17 @@ typedef struct aerogpu_submission_desc_header {
 } aerogpu_submission_desc_header;
 
 typedef struct aerogpu_submission_desc_allocation {
-  aerogpu_u64 allocation_handle; /* driver-private token (for debugging) */
+  /*
+   * Driver-private allocation token.
+   *
+   * NOTE: This token is not a stable cross-layer identity key. On Win7/WDDM 1.1
+   * it is typically derived from the KMD's `DXGK_ALLOCATIONLIST::hAllocation`
+   * value (a KMD-private handle/pointer).
+   *
+   * Use `alloc_id` (a stable 32-bit driver-defined ID) for guest↔host backing
+   * allocation lookup. `alloc_id` matches `backing_alloc_id` in `aerogpu_cmd.h`.
+   */
+  aerogpu_u64 allocation_handle;
   aerogpu_u64 gpa;               /* base guest physical address */
   aerogpu_u32 size_bytes;
   aerogpu_u32 alloc_id; /* Stable per-allocation ID (matches backing_alloc_id in aerogpu_cmd.h) */

@@ -1,5 +1,5 @@
 /*
- * AeroGPU WDDM allocation private-driver-data contract (Win7 WDDM 1.1).
+ * AeroGPU WDDM allocation private-driver-data contract (Win7 / WDDM 1.1).
  *
  * This header defines the byte layout stored in WDDM "allocation private driver
  * data" buffers.
@@ -13,14 +13,21 @@
  *   into the buffer during DxgkDdiCreateAllocation expecting the UMD to observe
  *   a writeback; that is not a stable contract for Win7 WDDM 1.1.
  *
+ * IMPORTANT:
+ * - The numeric value of the UMD-visible `hAllocation` handle is not the same
+ *   identity the KMD later sees in DXGK_ALLOCATIONLIST. AeroGPU therefore uses
+ *   a driver-defined 32-bit `alloc_id` (stored in this private-data blob) as
+ *   the stable cross-layer key for a backing allocation.
+ *
  * Requirements:
  * - Must be usable in kernel-mode builds and in user-mode UMD projects.
  * - Fixed-width fields and packed layout.
  * - Versioned so we can extend without breaking older binaries.
  *
- * NOTE: This header intentionally does NOT include `legacy/aerogpu_protocol_legacy.h` (legacy
- * bring-up ABI) because that header defines conflicting global enum constants
- * with the versioned protocol (`aerogpu_cmd.h`). Keep this file self-contained.
+ * NOTE: This header intentionally does NOT include
+ * `legacy/aerogpu_protocol_legacy.h` (legacy bring-up ABI) because that header
+ * defines conflicting global enum constants with the versioned protocol
+ * (`aerogpu_cmd.h`). Keep this file self-contained.
  */
 #ifndef AEROGPU_PROTOCOL_AEROGPU_WDDM_ALLOC_H_
 #define AEROGPU_PROTOCOL_AEROGPU_WDDM_ALLOC_H_
@@ -31,12 +38,6 @@ extern "C" {
 
 #include <stddef.h> /* offsetof */
 
-/*
- * Fixed-width types without depending on C99 stdint in kernel-mode builds.
- *
- * Kernel builds have UINT32/UINT64 via ntdef.h, but do not reliably provide
- * <stdint.h>.
- */
 #if defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_) || defined(_KERNEL_MODE)
 #include <ntdef.h>
 typedef UINT32 aerogpu_wddm_u32;
@@ -47,8 +48,6 @@ typedef uint32_t aerogpu_wddm_u32;
 typedef uint64_t aerogpu_wddm_u64;
 #endif
 
-/* -------------------------- Compile-time utilities ------------------------ */
-
 #define AEROGPU_WDDM_ALLOC_CONCAT2_(a, b) a##b
 #define AEROGPU_WDDM_ALLOC_CONCAT_(a, b) AEROGPU_WDDM_ALLOC_CONCAT2_(a, b)
 #define AEROGPU_WDDM_ALLOC_STATIC_ASSERT(expr) \
@@ -56,6 +55,7 @@ typedef uint64_t aerogpu_wddm_u64;
 
 #define AEROGPU_WDDM_ALLOC_PRIV_MAGIC 0x414C4C4Fu /* 'A''L''L''O' */
 #define AEROGPU_WDDM_ALLOC_PRIV_VERSION 1u
+#define AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 2u
 
 /* Backwards-compat aliases (older code used *_PRIVATE_DATA_* names). */
 #define AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC AEROGPU_WDDM_ALLOC_PRIV_MAGIC
@@ -77,6 +77,8 @@ typedef uint64_t aerogpu_wddm_u64;
 enum aerogpu_wddm_alloc_private_flags {
   AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE = 0,
   AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED = (1u << 0),
+  AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE = (1u << 1),
+  AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING = (1u << 2),
 };
 
 #define AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED
@@ -114,6 +116,12 @@ enum aerogpu_wddm_alloc_private_flags {
 #define AEROGPU_WDDM_ALLOC_PRIV_DESC_FORMAT(desc_u64) ((aerogpu_wddm_u32)((aerogpu_wddm_u64)(desc_u64) & 0xFFFFFFFFull))
 #define AEROGPU_WDDM_ALLOC_PRIV_DESC_WIDTH(desc_u64) ((aerogpu_wddm_u32)(((aerogpu_wddm_u64)(desc_u64) >> 32) & 0xFFFFull))
 #define AEROGPU_WDDM_ALLOC_PRIV_DESC_HEIGHT(desc_u64) ((aerogpu_wddm_u32)(((aerogpu_wddm_u64)(desc_u64) >> 48) & 0x7FFFull))
+
+enum aerogpu_wddm_alloc_kind {
+  AEROGPU_WDDM_ALLOC_KIND_UNKNOWN = 0,
+  AEROGPU_WDDM_ALLOC_KIND_BUFFER = 1,
+  AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D = 2,
+};
 
 #pragma pack(push, 1)
 typedef struct aerogpu_wddm_alloc_priv {
@@ -178,6 +186,39 @@ AEROGPU_WDDM_ALLOC_STATIC_ASSERT(sizeof(aerogpu_wddm_alloc_priv) == 40);
 AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, alloc_id) == 8);
 AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, share_token) == 16);
 AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, reserved0) == 32);
+
+#pragma pack(push, 1)
+typedef struct aerogpu_wddm_alloc_priv_v2 {
+  aerogpu_wddm_u32 magic;   /* AEROGPU_WDDM_ALLOC_PRIV_MAGIC */
+  aerogpu_wddm_u32 version; /* AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 */
+
+  aerogpu_wddm_u32 alloc_id; /* driver-defined; 0 is invalid */
+  aerogpu_wddm_u32 flags;    /* enum aerogpu_wddm_alloc_private_flags */
+
+  aerogpu_wddm_u64 share_token; /* stable cross-process token (shared resources) */
+  aerogpu_wddm_u64 size_bytes;  /* allocation size (bytes) */
+
+  /* See `aerogpu_wddm_alloc_priv.reserved0` (UMD/KMD extension field). */
+  aerogpu_wddm_u64 reserved0;
+
+  aerogpu_wddm_u32 kind; /* enum aerogpu_wddm_alloc_kind */
+
+  /* Texture metadata (0 for buffers). */
+  aerogpu_wddm_u32 width;
+  aerogpu_wddm_u32 height;
+  aerogpu_wddm_u32 format;         /* DXGI_FORMAT numeric value */
+  aerogpu_wddm_u32 row_pitch_bytes; /* linear row pitch; 0 if unknown */
+
+  aerogpu_wddm_u32 reserved1; /* must be zero */
+} aerogpu_wddm_alloc_priv_v2;
+#pragma pack(pop)
+
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(sizeof(aerogpu_wddm_alloc_priv_v2) == 64);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv_v2, alloc_id) == 8);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv_v2, share_token) == 16);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv_v2, reserved0) == 32);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv_v2, kind) == 40);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv_v2, row_pitch_bytes) == 56);
 
 #ifdef __cplusplus
 } /* extern "C" */

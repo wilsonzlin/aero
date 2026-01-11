@@ -2289,7 +2289,7 @@ static NTSTATUS APIENTRY AeroGpuDdiGetStandardAllocationDriverData(_In_ const HA
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
-                                                   _Inout_ DXGKARG_CREATEALLOCATION* pCreate)
+                                                    _Inout_ DXGKARG_CREATEALLOCATION* pCreate)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!adapter || !pCreate || !pCreate->pAllocationInfo) {
@@ -2397,6 +2397,12 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
         ULONG allocId = 0;
         ULONGLONG shareToken = 0;
+        ULONG privFlags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED : 0);
+        ULONG kind = 0;
+        ULONG width = 0;
+        ULONG height = 0;
+        ULONG format = 0;
+        ULONG rowPitchBytes = 0;
         ULONG pitchBytes = 0;
 
         /*
@@ -2412,13 +2418,23 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
                 (const aerogpu_wddm_alloc_private_data*)info->pPrivateDriverData;
 
             if (priv->magic == AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC) {
-                if (priv->version != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION || priv->alloc_id == 0 ||
-                    priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
+                if (priv->version != AEROGPU_WDDM_ALLOC_PRIV_VERSION &&
+                    priv->version != AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
+                }
+                if (priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 &&
+                    info->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_priv_v2)) {
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
+                }
+                if (priv->alloc_id == 0 || priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
                     status = STATUS_INVALID_PARAMETER;
                     goto Rollback;
                 }
 
-                const BOOLEAN privShared = (priv->flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) ? TRUE : FALSE;
+                privFlags = (ULONG)priv->flags;
+                const BOOLEAN privShared = (privFlags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) ? TRUE : FALSE;
                 if (privShared != isShared) {
                     status = STATUS_INVALID_PARAMETER;
                     goto Rollback;
@@ -2458,6 +2474,23 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
                         goto Rollback;
                     }
                 }
+                if (priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+                    const aerogpu_wddm_alloc_priv_v2* priv2 = (const aerogpu_wddm_alloc_priv_v2*)info->pPrivateDriverData;
+                    kind = (ULONG)priv2->kind;
+                    width = (ULONG)priv2->width;
+                    height = (ULONG)priv2->height;
+                    format = (ULONG)priv2->format;
+                    rowPitchBytes = (ULONG)priv2->row_pitch_bytes;
+                }
+
+                /*
+                 * For v2 blobs, also propagate the explicit row pitch to the
+                 * legacy pitch field used by DxgkDdiLock when reserved0 does not
+                 * carry a pitch encoding.
+                 */
+                if (pitchBytes == 0 && rowPitchBytes != 0) {
+                    pitchBytes = rowPitchBytes;
+                }
             }
         }
 
@@ -2485,10 +2518,16 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             goto Rollback;
         }
 
+        RtlZeroMemory(alloc, sizeof(*alloc));
         alloc->AllocationId = allocId;
         alloc->ShareToken = shareToken;
         alloc->SizeBytes = info->Size;
-        alloc->Flags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED : 0);
+        alloc->Flags = privFlags;
+        alloc->Kind = kind;
+        alloc->Width = width;
+        alloc->Height = height;
+        alloc->Format = format;
+        alloc->RowPitchBytes = rowPitchBytes;
         if (info->Flags.Primary) {
             alloc->Flags |= AEROGPU_KMD_ALLOC_FLAG_PRIMARY;
         }
@@ -2629,12 +2668,20 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
 
         const aerogpu_wddm_alloc_private_data* priv = (const aerogpu_wddm_alloc_private_data*)info->pPrivateDriverData;
         if (priv->magic != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC ||
-            priv->version != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION || priv->alloc_id == 0 ||
-            priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
+            (priv->version != AEROGPU_WDDM_ALLOC_PRIV_VERSION && priv->version != AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) ||
+            priv->alloc_id == 0 || priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
             AEROGPU_LOG("OpenAllocation: invalid private data (magic=0x%08lx version=%lu alloc_id=%lu)",
                        (ULONG)priv->magic,
                        (ULONG)priv->version,
                        (ULONG)priv->alloc_id);
+            st = STATUS_INVALID_PARAMETER;
+            goto Cleanup;
+        }
+        if (priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 &&
+            info->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_priv_v2)) {
+            AEROGPU_LOG("OpenAllocation: private data too small for v2 (have=%lu need=%Iu)",
+                        (ULONG)info->PrivateDriverDataSize,
+                        sizeof(aerogpu_wddm_alloc_priv_v2));
             st = STATUS_INVALID_PARAMETER;
             goto Cleanup;
         }
@@ -2681,6 +2728,14 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         alloc->ShareToken = (ULONGLONG)priv->share_token;
         alloc->SizeBytes = (SIZE_T)priv->size_bytes;
         alloc->Flags = ((ULONG)priv->flags) | AEROGPU_KMD_ALLOC_FLAG_OPENED;
+        if (priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2) {
+            const aerogpu_wddm_alloc_priv_v2* priv2 = (const aerogpu_wddm_alloc_priv_v2*)info->pPrivateDriverData;
+            alloc->Kind = (ULONG)priv2->kind;
+            alloc->Width = (ULONG)priv2->width;
+            alloc->Height = (ULONG)priv2->height;
+            alloc->Format = (ULONG)priv2->format;
+            alloc->RowPitchBytes = (ULONG)priv2->row_pitch_bytes;
+        }
         alloc->LastKnownPa.QuadPart = 0;
         alloc->PitchBytes = pitchBytes;
         ExInitializeFastMutex(&alloc->CpuMapMutex);

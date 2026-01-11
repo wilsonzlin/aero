@@ -6020,8 +6020,8 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const AEROGPU_
 }
 
 HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
-                                         const AEROGPU_DDIARG_CREATERESOURCE* pDesc,
-                                         D3D10DDI_HRESOURCE hResource) {
+                                          const AEROGPU_DDIARG_CREATERESOURCE* pDesc,
+                                          D3D10DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CreateResource dim=%u bind=0x%x misc=0x%x byteWidth=%u w=%u h=%u mips=%u array=%u fmt=%u initCount=%u",
                        pDesc ? static_cast<uint32_t>(pDesc->Dimension) : 0,

@@ -96,7 +96,15 @@ typedef struct _AEROGPU_ALLOCATION {
     ULONG AllocationId; /* aerogpu_wddm_alloc_priv.alloc_id */
     ULONGLONG ShareToken; /* protocol share_token (aerogpu_wddm_alloc_priv.share_token; 0 for non-shared allocations) */
     SIZE_T SizeBytes;
-    ULONG Flags;
+    ULONG Flags; /* aerogpu_wddm_alloc_priv.flags + internal KMD flags */
+
+    /* Optional copy of UMD-provided metadata (aerogpu_wddm_alloc_priv_v2). */
+    ULONG Kind; /* enum aerogpu_wddm_alloc_kind */
+    ULONG Width;
+    ULONG Height;
+    ULONG Format;        /* DXGI_FORMAT numeric value */
+    ULONG RowPitchBytes; /* bytes; 0 if unknown */
+
     PHYSICAL_ADDRESS LastKnownPa; /* updated from allocation lists */
     ULONG PitchBytes; /* Optional row pitch (bytes) for linear surface allocations; 0 if not applicable/unknown. */
 
