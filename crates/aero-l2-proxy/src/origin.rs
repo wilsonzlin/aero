@@ -184,6 +184,12 @@ pub fn normalize_origin(input: &str) -> Option<String> {
     if trimmed.contains(',') {
         return None;
     }
+    // Some URL libraries (notably Go's net/url) reject additional host codepoints
+    // that WHATWG URL parsers accept. Reject them here so Origin validation stays
+    // consistent across components.
+    if trimmed.contains('{') || trimmed.contains('}') || trimmed.contains('`') {
+        return None;
+    }
     // Require an explicit scheme://host serialization; `url` will happily
     // normalize `https:example.com` to `https://example.com/`, but browsers won't
     // emit those in Origin headers.

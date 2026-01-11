@@ -31,6 +31,12 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 	if strings.Contains(trimmed, ",") {
 		return "", "", false
 	}
+	// Some URL libraries (notably Go's net/url) reject additional host codepoints
+	// that WHATWG URL parsers accept. Reject them here so Origin validation stays
+	// consistent across components.
+	if strings.ContainsAny(trimmed, "{}`") {
+		return "", "", false
+	}
 	// Reject query and fragment delimiters even when empty. WHATWG URL parsers
 	// normalize `https://example.com?` or `https://example.com#` to the same origin,
 	// but browsers don't emit those in Origin headers.
