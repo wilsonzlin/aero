@@ -111,8 +111,8 @@ type SetupPacket = {
 type UsbHostAction =
   | { kind: "controlIn"; id: number /* u32 */; setup: SetupPacket }
   | { kind: "controlOut"; id: number /* u32 */; setup: SetupPacket; data: Uint8Array }
-  | { kind: "bulkIn"; id: number /* u32 */; endpoint: number; length: number }
-  | { kind: "bulkOut"; id: number /* u32 */; endpoint: number; data: Uint8Array };
+  | { kind: "bulkIn"; id: number /* u32 */; endpoint: number /* endpoint address */; length: number }
+  | { kind: "bulkOut"; id: number /* u32 */; endpoint: number /* endpoint address */; data: Uint8Array };
 
 type UsbHostCompletion =
   | { kind: "controlIn"; id: number /* u32 */; status: "success"; data: Uint8Array }
