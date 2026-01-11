@@ -33,7 +33,6 @@ import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
-import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import {
