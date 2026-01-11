@@ -1,0 +1,4 @@
+# Release packaging outputs (do not commit)
+out/
+*.zip
+

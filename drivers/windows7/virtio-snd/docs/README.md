@@ -2,6 +2,8 @@
 
 This directory contains an initial, clean-room **WDM kernel-mode function driver** for a PCI virtio-snd device.
 
+For packaging/signing/test-install instructions, see `../README.md`.
+
 The driver currently:
 
 - Loads on Windows 7 SP1 (x86/x64)
