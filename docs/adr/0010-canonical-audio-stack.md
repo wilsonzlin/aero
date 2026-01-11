@@ -5,7 +5,7 @@
 The repo accumulated two overlapping audio implementations:
 
 1. **Newer (browser/WASM path)**:
-   - `crates/aero-audio` (HDA device model + PCM helpers)
+   - `crates/aero-audio` (HDA device model: playback + capture; PCM helpers)
    - `crates/aero-virtio` (virtio device models, including virtio-snd)
    - `crates/platform::audio::*` (SharedArrayBuffer ring-buffer layouts used by AudioWorklets)
 
@@ -45,15 +45,15 @@ to keep it available for reference and targeted tests.
    - Prefer `aero-virtio::devices::snd` everywhere new virtio-snd work is done.
 
 3. **Follow-ups**
-   - If additional functionality is needed (capture, multi-stream, format support),
+   - If additional functionality is needed (multi-stream, format support, better resampling/mixing),
      implement it in the canonical crates and delete legacy code once unreferenced.
 
 ## Alternatives considered
 
 1. **Keep the legacy `crates/emulator` stack as canonical**
-   - Pros: already includes AC97, capture, and DSP utilities.
+   - Pros: already includes AC97 and alternate device models / DSP utilities.
    - Cons: not used by the browser/WASM runtime path; would require migrating `aero-wasm`
-     and the web stack, increasing risk and effort.
+      and the web stack, increasing risk and effort.
 
 2. **Keep both stacks active**
    - Pros: preserves optionality.
