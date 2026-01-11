@@ -87,8 +87,8 @@ Because browsers cannot attach arbitrary headers to WebSocket upgrade requests,
 `/udp` supports the same credential delivery patterns as signaling:
 
 1. **Query string** (less preferred; may leak into logs/history):
-   - `AUTH_MODE=api_key` → `?apiKey=...`
-   - `AUTH_MODE=jwt` → `?token=...`
+   - `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
+   - `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
 2. **First WebSocket message** (preferred): a JSON **text** message:
 
 ```json
@@ -297,11 +297,12 @@ When `AUTH_MODE != none`, `GET /webrtc/ice` and **all** signaling endpoints (`PO
 HTTP endpoints accept credentials via:
 
 - `AUTH_MODE=api_key`:
-  - Preferred: `X-API-Key: ...`
-  - Fallback: `?apiKey=...`
+   - Preferred: `X-API-Key: ...`
+   - Alternative: `Authorization: ApiKey ...`
+   - Fallback: `?apiKey=...`
 - `AUTH_MODE=jwt`:
-  - Preferred: `Authorization: Bearer ...`
-  - Fallback: `?token=...`
+   - Preferred: `Authorization: Bearer ...`
+   - Fallback: `?token=...`
 
 For WebSocket authentication, see "WebSocket signaling (trickle ICE)" below.
 
@@ -363,8 +364,8 @@ or:
 
 2. **Fallback (non-browser tooling):** include credentials in the WebSocket URL query string:
 
-- `AUTH_MODE=api_key` → `?apiKey=...`
-- `AUTH_MODE=jwt` → `?token=...`
+- `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
+- `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
 
 The server enforces `SIGNALING_AUTH_TIMEOUT` for unauthenticated sockets and will close the connection if authentication does not complete in time.
 

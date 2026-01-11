@@ -273,11 +273,13 @@ or:
 {"type":"auth","token":"..."}
 ```
 
+Some clients send both `apiKey` and `token` for compatibility. If both are provided, they must match.
+
 2. **Alternative:** include credentials in the WebSocket URL query string:
 
 - `AUTH_MODE=none` → no credentials required
-- `AUTH_MODE=api_key` → `?apiKey=...`
-- `AUTH_MODE=jwt` → `?token=...`
+- `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
+- `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
 
 Tradeoff: query parameters can leak into browser history, reverse-proxy logs, and monitoring.
 Prefer the first-message `{type:"auth"}` flow when possible.
@@ -286,6 +288,7 @@ For HTTP endpoints (`GET /webrtc/ice`, `POST /offer`, `POST /webrtc/offer`, `POS
 
 - `AUTH_MODE=api_key`:
   - Preferred: `X-API-Key: ...`
+  - Alternative: `Authorization: ApiKey ...`
   - Fallback: `?apiKey=...`
 - `AUTH_MODE=jwt`:
   - Preferred: `Authorization: Bearer ...`
