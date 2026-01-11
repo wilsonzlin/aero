@@ -195,6 +195,8 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
         ControlResponse::Ack
     );
 
+    assert_eq!(hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP), UsbInResult::Stall);
+
     let ControlResponse::Data(st) =
         hub.handle_control_request(standard_get_status_endpoint(HUB_INTERRUPT_IN_EP), None)
     else {
@@ -207,6 +209,12 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     assert_eq!(
         hub.handle_control_request(standard_clear_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
         ControlResponse::Ack
+    );
+
+    assert_ne!(
+        hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP),
+        UsbInResult::Stall,
+        "clearing ENDPOINT_HALT should restore interrupt endpoint"
     );
 
     let ControlResponse::Data(st) =
