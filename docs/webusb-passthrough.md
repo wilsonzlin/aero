@@ -208,6 +208,8 @@ requests** that represent high-level device state transitions and routes them th
 dedicated WebUSB APIs instead of emitting a raw `controlTransferOut`:
 
 - `SET_CONFIGURATION` → `USBDevice.selectConfiguration(...)`
+  - Note: WebUSB can reject `selectConfiguration` while interfaces are claimed; the executor
+    releases claimed interfaces first.
 - `SET_INTERFACE` → `USBDevice.selectAlternateInterface(...)` (claiming the interface if needed)
 - `CLEAR_FEATURE(ENDPOINT_HALT)` → `USBDevice.clearHalt(...)`
 
