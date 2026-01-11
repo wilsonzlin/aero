@@ -45,11 +45,13 @@ set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1059"
 rem Aero WDDM GPU stack (AeroGPU).
 rem Must match emulator-presented IDs and the AeroGPU display driver INF.
 rem
-rem AeroGPU may present either of these HWIDs depending on emulator/device model:
+rem AeroGPU should present this HWID:
 rem   - PCI\VEN_A3A0&DEV_0001  (canonical / current)
-rem   - PCI\VEN_1AED&DEV_0001  (legacy)
 rem
-rem The Win7 AeroGPU INFs include both, so Guest Tools should accept either.
+rem The legacy bring-up device model uses `PCI\VEN_1AED&DEV_0001`, but the shipped Win7 AeroGPU
+rem INFs intentionally bind only to `PCI\VEN_A3A0&DEV_0001` (to discourage accidental installs
+rem against the legacy device model). If you are using the legacy device model, install using a
+rem custom INF that matches `PCI\VEN_1AED&DEV_0001`.
 rem Note: the older 1AE0-family vendor ID is stale/deprecated; keep it out of Guest Tools config.
 rem Note: IDs are individually quoted so the value can safely contain `&` characters.
-set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001" "PCI\VEN_1AED&DEV_0001"
+set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001"

@@ -76,16 +76,20 @@ On Windows 7 / WDDM 1.1 the Direct3D runtimes locate the display driver’s user
 
 ## 2) Confirm the PCI Hardware ID(s) (required)
 
-By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the AeroGPU PCI Hardware IDs:
+By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical AeroGPU PCI Hardware ID:
 
 ```
 PCI\VEN_A3A0&DEV_0001  (canonical / current)
-PCI\VEN_1AED&DEV_0001  (legacy)
 ```
 
-These correspond to the new (versioned) and legacy (bring-up) ABIs; see `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD supports both ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
+The Win7 KMD supports a legacy bring-up ABI enumerated as `PCI\VEN_1AED&DEV_0001`, but the shipped
+INFs intentionally do **not** match it (to discourage accidental installs against the legacy device
+model). If you enable the legacy device model for bring-up, install using a custom INF that matches
+`PCI\VEN_1AED&DEV_0001`.
 
-Before installing, confirm your VM's device model reports one of the above Hardware IDs:
+See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models.
+
+Before installing, confirm your VM's device model reports the above Hardware ID:
 
 1. In the Win7 VM: Device Manager → Display adapters (or unknown device) → Properties → Details → *Hardware Ids*
 2. Copy the `PCI\VEN_....&DEV_....` value.

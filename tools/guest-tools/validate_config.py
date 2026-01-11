@@ -406,8 +406,8 @@ def _validate_hwid_contract(
     # least one HWID in devices.cmd.
     #
     # This catches regressions where the packager spec is updated to require
-    # multiple HWID families (e.g. AeroGPU's canonical A3A0 + legacy 1AED), but
-    # devices.cmd only lists one of them.
+    # multiple PCI HWID families (for example: a device temporarily supports both
+    # a new and legacy vendor/device ID), but devices.cmd only lists one of them.
     #
     # We intentionally *do not* require patterns that include SUBSYS/REV/class-code
     # qualifiers to match the `devices.cmd` list, since Guest Tools config usually

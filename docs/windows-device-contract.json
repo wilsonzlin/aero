@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract_name": "aero-windows-pci-device-contract",
-  "contract_version": "1.0.1",
+  "contract_version": "1.0.2",
   "devices": [
     {
       "device": "virtio-blk",
@@ -62,8 +62,7 @@
       "pci_device_id": "0x0001",
       "hardware_id_patterns": [
         "PCI\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
-        "PCI\\VEN_A3A0&DEV_0001",
-        "PCI\\VEN_1AED&DEV_0001"
+        "PCI\\VEN_A3A0&DEV_0001"
       ],
       "driver_service_name": "AeroGPU",
       "inf_name": "aerogpu.inf"
