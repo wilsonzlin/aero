@@ -141,6 +141,7 @@ dependencies = [
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-platform",
+ "aero-snapshot",
  "aero_cpu_core",
  "memory",
 ]

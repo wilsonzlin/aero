@@ -14,3 +14,4 @@ memory = { path = "../memory" }
 [dev-dependencies]
 aero-acpi = { path = "../aero-acpi" }
 aero_cpu_core = { path = "../aero_cpu_core" }
+aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
