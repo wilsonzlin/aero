@@ -5,6 +5,7 @@
 #include <ntddk.h>
 
 #include "virtio_snd_proto.h"
+#include "virtiosnd_dma.h"
 #include "virtiosnd_queue.h"
 
 /*
@@ -21,17 +22,16 @@
 typedef struct _VIRTIOSND_TX_BUFFER {
     LIST_ENTRY Link;
 
-    /* Base of the physically contiguous allocation for this buffer. */
-    PVOID AllocationVa;
-    ULONG AllocationBytes;
+    /* Base of the DMA common buffer allocation for this buffer. */
+    VIRTIOSND_DMA_BUFFER Allocation;
 
     /* OUT: [VIRTIO_SND_TX_HDR][pcm_bytes...] */
     PVOID DataVa;
-    PHYSICAL_ADDRESS DataPa;
+    UINT64 DataDma;
 
     /* IN: VIRTIO_SND_PCM_STATUS */
     VIRTIO_SND_PCM_STATUS* StatusVa;
-    PHYSICAL_ADDRESS StatusPa;
+    UINT64 StatusDma;
 
     ULONG PcmBytes;
 
@@ -48,6 +48,7 @@ typedef struct _VIRTIOSND_TX_ENGINE {
     ULONG InflightCount;
 
     const VIRTIOSND_QUEUE* Queue;
+    PVIRTIOSND_DMA_CONTEXT DmaCtx;
 
     ULONG MaxPeriodBytes;
     ULONG BufferCount;
@@ -70,6 +71,7 @@ ULONG VirtioSndTxFrameSizeBytes(VOID);
 
 _Must_inspect_result_ NTSTATUS VirtioSndTxInit(
     _Out_ VIRTIOSND_TX_ENGINE* Tx,
+    _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
     _In_ const VIRTIOSND_QUEUE* Queue,
     _In_ ULONG MaxPeriodBytes,
     _In_ ULONG BufferCount);

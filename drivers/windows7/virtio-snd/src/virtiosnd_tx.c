@@ -20,10 +20,7 @@ static VOID VirtioSndTxFreeBuffers(_Inout_ VIRTIOSND_TX_ENGINE* Tx)
     }
 
     for (i = 0; i < Tx->BufferCount; ++i) {
-        if (Tx->Buffers[i].AllocationVa != NULL) {
-            MmFreeContiguousMemory(Tx->Buffers[i].AllocationVa);
-            Tx->Buffers[i].AllocationVa = NULL;
-        }
+        VirtIoSndFreeCommonBuffer(Tx->DmaCtx, &Tx->Buffers[i].Allocation);
     }
 
     ExFreePoolWithTag(Tx->Buffers, VIRTIOSND_POOL_TAG);
@@ -33,17 +30,18 @@ static VOID VirtioSndTxFreeBuffers(_Inout_ VIRTIOSND_TX_ENGINE* Tx)
 
 _Use_decl_annotations_
 NTSTATUS
-VirtioSndTxInit(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_QUEUE* Queue, ULONG MaxPeriodBytes, ULONG BufferCount)
+VirtioSndTxInit(
+    VIRTIOSND_TX_ENGINE* Tx,
+    PVIRTIOSND_DMA_CONTEXT DmaCtx,
+    const VIRTIOSND_QUEUE* Queue,
+    ULONG MaxPeriodBytes,
+    ULONG BufferCount)
 {
     NTSTATUS status;
-    PHYSICAL_ADDRESS low;
-    PHYSICAL_ADDRESS high;
-    PHYSICAL_ADDRESS skip;
     ULONG i;
     ULONG outBytes;
     ULONG totalBytes;
     PUCHAR baseVa;
-    PHYSICAL_ADDRESS basePa;
     VIRTIO_SND_TX_HDR* hdr;
 
     NT_ASSERT(Tx != NULL);
@@ -51,6 +49,9 @@ VirtioSndTxInit(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_QUEUE* Queue, ULONG Max
 
     if (Tx == NULL || Queue == NULL || Queue->Ops == NULL || Queue->Ctx == NULL || Queue->Ops->Submit == NULL || Queue->Ops->PopUsed == NULL ||
         Queue->Ops->Kick == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (DmaCtx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
     if (MaxPeriodBytes == 0 || BufferCount == 0) {
@@ -64,6 +65,7 @@ VirtioSndTxInit(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_QUEUE* Queue, ULONG Max
     InitializeListHead(&Tx->InflightList);
 
     Tx->Queue = Queue;
+    Tx->DmaCtx = DmaCtx;
 
     Tx->MaxPeriodBytes = MaxPeriodBytes;
     Tx->NextSequence = 1;
@@ -77,10 +79,6 @@ VirtioSndTxInit(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_QUEUE* Queue, ULONG Max
     RtlZeroMemory(Tx->Buffers, sizeof(VIRTIOSND_TX_BUFFER) * BufferCount);
     Tx->BufferCount = BufferCount;
 
-    low.QuadPart = 0;
-    high.QuadPart = ~0ull;
-    skip.QuadPart = 0;
-
     outBytes = VirtioSndTxHdrBytes() + MaxPeriodBytes;
     if (outBytes < MaxPeriodBytes) {
         VirtioSndTxFreeBuffers(Tx);
@@ -93,23 +91,19 @@ VirtioSndTxInit(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_QUEUE* Queue, ULONG Max
     }
 
     for (i = 0; i < BufferCount; ++i) {
-        baseVa = (PUCHAR)MmAllocateContiguousMemorySpecifyCache(totalBytes, low, high, skip, MmNonCached);
-        if (baseVa == NULL) {
-            status = STATUS_INSUFFICIENT_RESOURCES;
+        status = VirtIoSndAllocCommonBuffer(Tx->DmaCtx, totalBytes, FALSE, &Tx->Buffers[i].Allocation);
+        if (!NT_SUCCESS(status)) {
             goto Fail;
         }
 
+        baseVa = (PUCHAR)Tx->Buffers[i].Allocation.Va;
         RtlZeroMemory(baseVa, totalBytes);
-        basePa = MmGetPhysicalAddress(baseVa);
-
-        Tx->Buffers[i].AllocationVa = baseVa;
-        Tx->Buffers[i].AllocationBytes = totalBytes;
 
         Tx->Buffers[i].DataVa = baseVa;
-        Tx->Buffers[i].DataPa = basePa;
+        Tx->Buffers[i].DataDma = Tx->Buffers[i].Allocation.DmaAddr;
 
         Tx->Buffers[i].StatusVa = (VIRTIO_SND_PCM_STATUS*)(baseVa + outBytes);
-        Tx->Buffers[i].StatusPa.QuadPart = basePa.QuadPart + outBytes;
+        Tx->Buffers[i].StatusDma = Tx->Buffers[i].Allocation.DmaAddr + outBytes;
 
         Tx->Buffers[i].PcmBytes = 0;
         Tx->Buffers[i].Sequence = 0;
@@ -231,11 +225,11 @@ VirtioSndTxSubmitPeriod(
 
     RtlZeroMemory(buf->StatusVa, sizeof(*buf->StatusVa));
 
-    sg[0].addr = (UINT64)buf->DataPa.QuadPart;
+    sg[0].addr = buf->DataDma;
     sg[0].len = (UINT32)(VirtioSndTxHdrBytes() + totalPcmBytes);
     sg[0].write = FALSE;
 
-    sg[1].addr = (UINT64)buf->StatusPa.QuadPart;
+    sg[1].addr = buf->StatusDma;
     sg[1].len = (UINT32)VirtioSndTxStatusBytes();
     sg[1].write = TRUE;
 
