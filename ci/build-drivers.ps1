@@ -731,9 +731,7 @@ if (-not $Drivers -or $Drivers.Count -eq 0) {
     $present[$t.Name.ToLowerInvariant()] = $true
   }
 
-  $legacyToCanonical = @{
-    'win7/virtio-net' = 'windows7/virtio/net'
-  }
+  $legacyToCanonical = @{}
 
   foreach ($legacy in $legacyToCanonical.Keys) {
     $canonical = [string]$legacyToCanonical[$legacy]
