@@ -800,49 +800,6 @@ HRESULT flush_locked(Device* dev) {
   return S_OK;
 }
 
-HRESULT wait_for_fence(Adapter* adapter, uint64_t fence_value) {
-  if (!adapter || fence_value == 0) {
-    return S_OK;
-  }
-
-  // Never wait indefinitely inside a DDI call: readback/copy paths can be hit by
-  // untrusted user-mode callers, and a GPU hang must not wedge the entire
-  // process.
-  const uint64_t deadline = monotonic_ms() + 2000;
-
-  while (monotonic_ms() < deadline) {
-    {
-      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      if (adapter->completed_fence >= fence_value) {
-        return S_OK;
-      }
-    }
-
-    // Refresh from the KMD when available; refresh_fence_snapshot is internally
-    // throttled to avoid expensive escapes in tight polling loops.
-    (void)refresh_fence_snapshot(adapter);
-
-    {
-      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      if (adapter->completed_fence >= fence_value) {
-        return S_OK;
-      }
-    }
-
-    sleep_ms(1);
-  }
-
-  // Final check after the timeout.
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    if (adapter->completed_fence >= fence_value) {
-      return S_OK;
-    }
-  }
-
-  return kD3dErrWasStillDrawing;
-}
-
 bool is_supported_readback_format(uint32_t d3d9_format) {
   // For initial Win7 D3D9Ex bring-up we only require X8R8G8B8 / A8R8G8B8.
   switch (d3d9_format) {
@@ -1838,9 +1795,12 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
     fence = dev->adapter->last_submitted_fence;
   }
-  HRESULT hr = wait_for_fence(dev->adapter, fence);
-  if (hr < 0) {
-    return hr;
+  const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
+  if (wait_res == FenceWaitResult::Failed) {
+    return E_FAIL;
+  }
+  if (wait_res == FenceWaitResult::NotReady) {
+    return kD3dErrWasStillDrawing;
   }
 
   return copy_surface_bytes(src, dst);
@@ -1873,9 +1833,12 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
     std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
     fence = dev->adapter->last_submitted_fence;
   }
-  HRESULT hr = wait_for_fence(dev->adapter, fence);
-  if (hr < 0) {
-    return hr;
+  const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
+  if (wait_res == FenceWaitResult::Failed) {
+    return E_FAIL;
+  }
+  if (wait_res == FenceWaitResult::NotReady) {
+    return kD3dErrWasStillDrawing;
   }
 
   return copy_surface_bytes(src, dst);
