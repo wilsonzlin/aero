@@ -121,6 +121,8 @@ Infrastructure decisions are captured as ADRs in [`docs/adr/`](./docs/adr/):
 - [`docs/adr/0009-rust-toolchain-policy.md`](./docs/adr/0009-rust-toolchain-policy.md)
 - [`docs/adr/0012-cargo-lock-policy.md`](./docs/adr/0012-cargo-lock-policy.md)
 - [`docs/adr/0013-networking-l2-tunnel.md`](./docs/adr/0013-networking-l2-tunnel.md)
+- [`docs/adr/0014-canonical-machine-stack.md`](./docs/adr/0014-canonical-machine-stack.md)
+- [`docs/adr/0015-canonical-usb-stack.md`](./docs/adr/0015-canonical-usb-stack.md)
 
 ## Web (Vite)
 
