@@ -695,6 +695,37 @@ typedef struct _D3DDDIARG_OPENADAPTER2 {
   D3D9DDI_ADAPTERFUNCS* pAdapterFuncs; // out
 } D3DDDIARG_OPENADAPTER2;
 
+// -----------------------------------------------------------------------------
+// Portable ABI sanity checks (anchors)
+// -----------------------------------------------------------------------------
+static_assert(offsetof(D3DDDIARG_OPENADAPTER, pAdapterCallbacks) == 8,
+              "D3DDDIARG_OPENADAPTER ABI mismatch: pAdapterCallbacks offset drift");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER2, pAdapterCallbacks) == 8,
+              "D3DDDIARG_OPENADAPTER2 ABI mismatch: pAdapterCallbacks offset drift");
+#if UINTPTR_MAX == 0xFFFFFFFFu
+static_assert(sizeof(D3DDDIARG_OPENADAPTER) == 24, "D3DDDIARG_OPENADAPTER ABI mismatch: sizeof drift (x86)");
+static_assert(sizeof(D3DDDIARG_OPENADAPTER2) == 24, "D3DDDIARG_OPENADAPTER2 ABI mismatch: sizeof drift (x86)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER, hAdapter) == 16,
+              "D3DDDIARG_OPENADAPTER ABI mismatch: hAdapter offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER, pAdapterFuncs) == 20,
+              "D3DDDIARG_OPENADAPTER ABI mismatch: pAdapterFuncs offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER2, hAdapter) == 16,
+              "D3DDDIARG_OPENADAPTER2 ABI mismatch: hAdapter offset drift (x86)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER2, pAdapterFuncs) == 20,
+              "D3DDDIARG_OPENADAPTER2 ABI mismatch: pAdapterFuncs offset drift (x86)");
+#else
+static_assert(sizeof(D3DDDIARG_OPENADAPTER) == 40, "D3DDDIARG_OPENADAPTER ABI mismatch: sizeof drift (x64)");
+static_assert(sizeof(D3DDDIARG_OPENADAPTER2) == 40, "D3DDDIARG_OPENADAPTER2 ABI mismatch: sizeof drift (x64)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER, hAdapter) == 24,
+              "D3DDDIARG_OPENADAPTER ABI mismatch: hAdapter offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER, pAdapterFuncs) == 32,
+              "D3DDDIARG_OPENADAPTER ABI mismatch: pAdapterFuncs offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER2, hAdapter) == 24,
+              "D3DDDIARG_OPENADAPTER2 ABI mismatch: hAdapter offset drift (x64)");
+static_assert(offsetof(D3DDDIARG_OPENADAPTER2, pAdapterFuncs) == 32,
+              "D3DDDIARG_OPENADAPTER2 ABI mismatch: pAdapterFuncs offset drift (x64)");
+#endif
+
 typedef struct _D3DDDIARG_OPENADAPTERFROMHDC {
   UINT Interface;
   UINT Version;
@@ -747,6 +778,20 @@ typedef struct _D3D9DDI_ADAPTERFUNCS {
   PFND3D9DDI_CREATEDEVICE pfnCreateDevice;
   PFND3D9DDI_QUERYADAPTERINFO pfnQueryAdapterInfo;
 } D3D9DDI_ADAPTERFUNCS;
+
+static_assert(offsetof(D3D9DDI_ADAPTERFUNCS, pfnCloseAdapter) == 0,
+              "D3D9DDI_ADAPTERFUNCS ABI mismatch: pfnCloseAdapter offset drift");
+static_assert(offsetof(D3D9DDI_ADAPTERFUNCS, pfnGetCaps) == sizeof(void*),
+              "D3D9DDI_ADAPTERFUNCS ABI mismatch: pfnGetCaps offset drift");
+static_assert(offsetof(D3D9DDI_ADAPTERFUNCS, pfnCreateDevice) == sizeof(void*) * 2,
+              "D3D9DDI_ADAPTERFUNCS ABI mismatch: pfnCreateDevice offset drift");
+static_assert(offsetof(D3D9DDI_ADAPTERFUNCS, pfnQueryAdapterInfo) == sizeof(void*) * 3,
+              "D3D9DDI_ADAPTERFUNCS ABI mismatch: pfnQueryAdapterInfo offset drift");
+#if UINTPTR_MAX == 0xFFFFFFFFu
+static_assert(sizeof(D3D9DDI_ADAPTERFUNCS) == 16, "D3D9DDI_ADAPTERFUNCS ABI mismatch: sizeof drift (x86)");
+#else
+static_assert(sizeof(D3D9DDI_ADAPTERFUNCS) == 32, "D3D9DDI_ADAPTERFUNCS ABI mismatch: sizeof drift (x64)");
+#endif
 
 // -----------------------------------------------------------------------------
 // Device-level argument structs (subset)
