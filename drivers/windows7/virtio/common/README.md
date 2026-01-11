@@ -176,7 +176,8 @@ must link **exactly one** of them.
 
 - `include/virtio_queue.h` + `src/virtio_queue.c`
   - Windows kernel convenience wrapper around split rings:
-    - allocates physically-contiguous ring memory and maintains a descriptor free list
+    - allocates ring memory as a single physically-contiguous block (for simplicity; modern virtio does not require contiguity)
+      and maintains a descriptor free list
     - programs queues via `VirtioPciSetupQueue` and sets `queue_enable`
     - caches the queue’s notify address and kicks via the modern notify region (`NOTIFY_CFG`)
 
