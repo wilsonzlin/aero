@@ -225,6 +225,36 @@ static void test_contract_v1_parse_fixed_layout_ok(void) {
     expect_u64("contract_v1_parse_fixed_layout_ok.device.addr", caps.device_cfg.addr, bar0_base + 0x3000);
 }
 
+static void test_contract_v1_parse_notify_cap_len_larger_ok(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_cap(cfg, 0x54, 0x70, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_NOTIFY, 0, 0x1000, 0x0100, 24);
+    write_le32(&cfg[0x54 + 16], 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("contract_v1_parse_notify_cap_len_larger_ok.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+    if (res != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    expect_u32("contract_v1_parse_notify_cap_len_larger_ok.notify.cap_len", (uint32_t)caps.notify_cfg.cap_len, 24);
+    expect_u32("contract_v1_parse_notify_cap_len_larger_ok.notify.mult", caps.notify_off_multiplier, 4);
+}
+
 static void test_aero_layout_validation_ok(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -1559,6 +1589,7 @@ static void test_identity_contract_v1_device_not_allowed(void) {
 int main(void) {
     test_valid_all_caps();
     test_contract_v1_parse_fixed_layout_ok();
+    test_contract_v1_parse_notify_cap_len_larger_ok();
     test_aero_layout_validation_ok();
     test_aero_layout_validation_ok_with_larger_lengths();
     test_aero_layout_validation_common_len_too_small();
