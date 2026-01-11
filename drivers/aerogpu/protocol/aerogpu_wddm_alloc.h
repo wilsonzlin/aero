@@ -36,6 +36,13 @@ typedef uint32_t aerogpu_wddm_u32;
 typedef uint64_t aerogpu_wddm_u64;
 #endif
 
+/* -------------------------- Compile-time utilities ------------------------ */
+
+#define AEROGPU_WDDM_ALLOC_CONCAT2_(a, b) a##b
+#define AEROGPU_WDDM_ALLOC_CONCAT_(a, b) AEROGPU_WDDM_ALLOC_CONCAT2_(a, b)
+#define AEROGPU_WDDM_ALLOC_STATIC_ASSERT(expr) \
+  typedef char AEROGPU_WDDM_ALLOC_CONCAT_(aerogpu_wddm_alloc_static_assert_, __LINE__)[(expr) ? 1 : -1]
+
 #define AEROGPU_WDDM_ALLOC_PRIV_MAGIC 0x414C4C4Fu /* 'A''L''L''O' */
 #define AEROGPU_WDDM_ALLOC_PRIV_VERSION 1u
 
@@ -65,6 +72,11 @@ typedef struct aerogpu_wddm_alloc_priv {
   aerogpu_wddm_u64 reserved0;
 } aerogpu_wddm_alloc_priv;
 #pragma pack(pop)
+
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(sizeof(aerogpu_wddm_alloc_priv) == 40);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, alloc_id) == 8);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, share_token) == 16);
+AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, reserved0) == 32);
 
 #ifdef __cplusplus
 } /* extern "C" */
