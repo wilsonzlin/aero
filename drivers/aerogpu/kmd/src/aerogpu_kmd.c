@@ -940,6 +940,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
+    if (adapter->Bar0Length < sizeof(ULONG)) {
+        AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes)", adapter->Bar0Length);
+        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+        adapter->Bar0 = NULL;
+        adapter->Bar0Length = 0;
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
     ULONG abiVersion = 0;
     ULONGLONG features = 0;
@@ -957,6 +965,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     adapter->AbiKind = AEROGPU_ABI_KIND_LEGACY;
     adapter->UsingNewAbi = FALSE;
     if (magic == AEROGPU_MMIO_MAGIC) {
+        if (adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+            AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes) for AGPU ABI", adapter->Bar0Length);
+            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+            adapter->Bar0 = NULL;
+            adapter->Bar0Length = 0;
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         adapter->AbiKind = AEROGPU_ABI_KIND_V1;
         adapter->UsingNewAbi = TRUE;
 
@@ -978,6 +994,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
                     abiVersion,
                     (unsigned long long)features);
     } else {
+        if (adapter->Bar0Length < (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
+            AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes) for legacy ABI", adapter->Bar0Length);
+            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+            adapter->Bar0 = NULL;
+            adapter->Bar0Length = 0;
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
         if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
             AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
