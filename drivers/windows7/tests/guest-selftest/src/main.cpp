@@ -1433,15 +1433,29 @@ static TestVerdict VirtioSndTest(Logger& log, const Options& opt) {
     } else {
       // Fall back to matching by name, which is less strict but works even when devnode query is unsupported.
       chosen_id = FindWaveOutDeviceIdByNameHints(log, hints, &chosen_name, !logged_name_match_devices);
-      if (!logged_name_match_devices && waveOutGetNumDevs() != 0) {
-        logged_name_match_devices = true;
-      }
-
       if (chosen_id.has_value()) {
         verify_mode = DevnodeVerifyMode::kBestEffort;
       } else {
-        chosen_name = L"WAVE_MAPPER";
-        verify_mode = DevnodeVerifyMode::kRequired;
+        const UINT count = waveOutGetNumDevs();
+        if (!logged_name_match_devices && count != 0) {
+          logged_name_match_devices = true;
+        }
+
+        if (count == 1) {
+          // If there is only one waveOut device, opening device 0 is effectively deterministic and
+          // avoids depending on product-name matching.
+          WAVEOUTCAPSW caps{};
+          if (waveOutGetDevCapsW(0, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+            chosen_name = caps.szPname;
+          } else {
+            chosen_name = L"waveOut[0]";
+          }
+          chosen_id = 0;
+          verify_mode = DevnodeVerifyMode::kBestEffort;
+        } else {
+          chosen_name = L"WAVE_MAPPER";
+          verify_mode = DevnodeVerifyMode::kRequired;
+        }
       }
     }
 
