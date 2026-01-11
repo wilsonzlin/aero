@@ -334,11 +334,14 @@ impl DxbcParser {
                     // Shader bytecode
                     shader.instructions = self.parse_shader_bytecode(&mut cursor)?;
                 }
-                CHUNK_ISGN => {
+                // Note: some toolchains emit signature chunk variants with a
+                // trailing `1` (`ISG1`/`OSG1`/`PSG1`). Treat these as equivalent
+                // signature chunks.
+                CHUNK_ISGN | CHUNK_ISG1 => {
                     // Input signature
                     shader.inputs = self.parse_signature(&mut cursor)?;
                 }
-                CHUNK_OSGN => {
+                CHUNK_OSGN | CHUNK_OSG1 => {
                     // Output signature
                     shader.outputs = self.parse_signature(&mut cursor)?;
                 }

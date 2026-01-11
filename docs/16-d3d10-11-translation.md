@@ -239,6 +239,7 @@ Minimum parsing for SM4/5:
 - Extract:
   - shader bytecode chunk (`SHDR` for SM4, `SHEX` for SM5)
   - signatures (`ISGN`, `OSGN`, plus `PSGN` if present)
+    - Some toolchains emit variant IDs with a trailing `1` (`ISG1`/`OSG1`/`PSG1`); treat these as equivalent signature chunks.
   - resource definitions (`RDEF`) for CB sizes and binding slots
 
 ### Instruction decoding model
