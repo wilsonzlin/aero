@@ -25,9 +25,10 @@ Win7/WDDM ABI** described below.
 - `emulator/protocol` — Rust/TypeScript mirror of the C headers (used by tooling/tests).
 
 This is the ABI that the Windows 7 WDDM 1.1 driver stack (KMD + UMD) targets.
-Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`), while
-the Win7 KMD submission transport is still in transition and may use legacy submission paths
-(see `drivers/aerogpu/protocol/README.md` and `drivers/aerogpu/kmd/README.md`).
+Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`). The
+Win7 KMD supports both the versioned and legacy submission transports and auto-detects the
+active ABI via BAR0 MMIO magic (see `drivers/aerogpu/protocol/README.md` and
+`drivers/aerogpu/kmd/README.md`).
 
 ### Legacy bring-up ABI (still present, but not the long-term target)
 
