@@ -26,7 +26,7 @@
 #include "aerogpu_d3d9_blit.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
-#include "aerogpu_wddm_alloc.h"
+#include "aerogpu_alloc.h"
 
 namespace {
 
@@ -965,6 +965,9 @@ bool emit_export_shared_surface_locked(Device* dev, const Resource* res) {
   if (!cmd) {
     return false;
   }
+  logf("aerogpu-d3d9: export shared surface handle=%u share_token=0x%llx\n",
+       static_cast<unsigned>(res->handle),
+       static_cast<unsigned long long>(res->share_token));
   cmd->resource_handle = res->handle;
   cmd->reserved0 = 0;
   cmd->share_token = res->share_token;
@@ -979,6 +982,9 @@ bool emit_import_shared_surface_locked(Device* dev, const Resource* res) {
   if (!cmd) {
     return false;
   }
+  logf("aerogpu-d3d9: import shared surface out_handle=%u share_token=0x%llx\n",
+       static_cast<unsigned>(res->handle),
+       static_cast<unsigned long long>(res->share_token));
   cmd->out_resource_handle = res->handle;
   cmd->reserved0 = 0;
   cmd->share_token = res->share_token;
@@ -1734,6 +1740,9 @@ static void consume_wddm_alloc_priv(Resource* res,
 
   res->backing_alloc_id = priv.alloc_id;
   res->share_token = priv.share_token;
+  if (res->size_bytes == 0 && priv.size_bytes != 0 && priv.size_bytes <= 0xFFFFFFFFull) {
+    res->size_bytes = static_cast<uint32_t>(priv.size_bytes);
+  }
   if (priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) {
     res->is_shared = true;
   }
