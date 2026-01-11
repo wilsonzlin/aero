@@ -31,7 +31,7 @@ def _contract_device(device_name: str):
     contract_path = validate_config.REPO_ROOT / "docs/windows-device-contract.json"
     contract = validate_config.load_windows_device_contract(contract_path)
     try:
-        return contract[device_name]
+        return contract.devices[device_name]
     except KeyError as e:
         raise AssertionError(f"missing {device_name!r} entry in contract: {contract_path}") from e
 
@@ -263,8 +263,8 @@ class ValidateConfigTests(unittest.TestCase):
         # (viostor/netkvm). The validator should support selecting the contract variant.
         virtio_contract_path = validate_config.REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
         virtio_contract = validate_config.load_windows_device_contract(virtio_contract_path)
-        virtio_blk = virtio_contract["virtio-blk"]
-        virtio_net = virtio_contract["virtio-net"]
+        virtio_blk = virtio_contract.devices["virtio-blk"]
+        virtio_net = virtio_contract.devices["virtio-net"]
 
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
             tmp_path = Path(tmp)

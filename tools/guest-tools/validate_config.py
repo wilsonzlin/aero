@@ -61,6 +61,9 @@ MODERN_ONLY_VIRTIO_SPECS = frozenset(
 class DevicesConfig:
     # Uppercased `set` variable name -> raw RHS value (unparsed).
     vars_map: Mapping[str, str]
+    # Optional metadata: when devices.cmd is generated from a Windows device contract JSON,
+    # the generator includes the contract name/version in `rem` header lines.
+    source_contract_name: str | None
     virtio_blk_service: str
     virtio_blk_hwids: Tuple[str, ...]
     virtio_net_hwids: Tuple[str, ...]
@@ -82,6 +85,13 @@ class ContractDevice:
     hardware_id_patterns: Tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class WindowsDeviceContract:
+    contract_name: str
+    contract_version: str
+    devices: Mapping[str, ContractDevice]
+
+
 def _parse_hex_u16(value: object, *, ctx: str) -> int:
     if not isinstance(value, str) or not value.strip():
         raise ValidationError(f"Windows device contract {ctx} must be a non-empty hex string (like 0x1AF4).")
@@ -97,7 +107,7 @@ def _parse_hex_u16(value: object, *, ctx: str) -> int:
     return n
 
 
-def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
+def load_windows_device_contract(path: Path) -> WindowsDeviceContract:
     """
     Load the machine-readable Windows device contract JSON.
 
@@ -113,6 +123,21 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ValidationError(f"Failed to parse Windows device contract JSON: {path}\n{e}") from e
+
+    schema_version = raw.get("schema_version")
+    if schema_version != 1:
+        raise ValidationError(
+            f"Windows device contract {path} has unsupported schema_version {schema_version!r} (expected 1)."
+        )
+
+    contract_name = raw.get("contract_name")
+    contract_version = raw.get("contract_version")
+    if not isinstance(contract_name, str) or not contract_name.strip():
+        raise ValidationError(f"Windows device contract {path} is missing a valid 'contract_name' (expected non-empty string).")
+    if not isinstance(contract_version, str) or not contract_version.strip():
+        raise ValidationError(
+            f"Windows device contract {path} is missing a valid 'contract_version' (expected non-empty string)."
+        )
 
     devices = raw.get("devices")
     if not isinstance(devices, list):
@@ -200,7 +225,11 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
     if not out:
         raise ValidationError(f"Windows device contract {path} contains no devices.")
 
-    return out
+    return WindowsDeviceContract(
+        contract_name=contract_name.strip(),
+        contract_version=contract_version.strip(),
+        devices=out,
+    )
 
 
 def _resolve_path(value: str) -> Path:
@@ -282,11 +311,24 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
 
     raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
     vars_map: Dict[str, str] = {}
+    source_contract_name: str | None = None
     for raw_line in raw:
         line = raw_line.strip()
         if not line:
             continue
         lower = line.lower()
+
+        if lower.startswith("rem"):
+            # Prefer the contract metadata embedded by the generator:
+            #   rem Contract name: ...
+            #   rem Contract version: ...
+            #
+            # This is best-effort and optional (older devices.cmd copies may not include it).
+            m = re.match(r"(?i)^\s*rem\s+contract\s+name:\s*(.+?)\s*$", raw_line)
+            if m:
+                candidate = m.group(1).strip()
+                source_contract_name = candidate if candidate else None
+
         if lower.startswith("rem") or lower.startswith("::") or lower.startswith("@echo"):
             continue
 
@@ -318,6 +360,7 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
 
     return DevicesConfig(
         vars_map=vars_map,
+        source_contract_name=source_contract_name,
         virtio_blk_service=virtio_blk_service,
         virtio_blk_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_BLK_HWIDS", "")),
         virtio_net_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_NET_HWIDS", "")),
@@ -704,23 +747,39 @@ def validate(
     # (do not hand-edit devices.cmd).
     contract_path = windows_device_contract
     contract = load_windows_device_contract(contract_path)
-    virtio_blk_contract = contract.get("virtio-blk")
+    virtio_blk_contract = contract.devices.get("virtio-blk")
     if virtio_blk_contract is None:
         raise ValidationError(f"Windows device contract {contract_path} is missing the required 'virtio-blk' entry.")
     expected_blk_service = virtio_blk_contract.driver_service_name
+    contract_name_hint = ""
+    if (
+        devices.source_contract_name
+        and devices.source_contract_name.strip()
+        and devices.source_contract_name.strip().lower() != contract.contract_name.strip().lower()
+    ):
+        contract_name_hint = (
+            "\n"
+            "\n"
+            "Hint: devices.cmd header indicates it was generated from contract name "
+            f"{devices.source_contract_name!r}, but the selected contract file declares "
+            f"contract_name={contract.contract_name!r}.\n"
+            "If you are validating a virtio-win Guest Tools build, pass:\n"
+            "  --windows-device-contract docs/windows-device-contract-virtio-win.json\n"
+        )
     if devices.virtio_blk_service.strip().lower() != expected_blk_service.strip().lower():
         raise ValidationError(
             "Mismatch: devices.cmd storage service name does not match the Windows device contract.\n"
             "\n"
             f"devices.cmd AERO_VIRTIO_BLK_SERVICE: {devices.virtio_blk_service!r}\n"
-            f"windows-device-contract.json virtio-blk.driver_service_name: {expected_blk_service!r}\n"
+            f"{contract_path} virtio-blk.driver_service_name: {expected_blk_service!r}\n"
             "\n"
             "Remediation:\n"
             f"- Update {contract_path} (virtio-blk.driver_service_name) to match the virtio-blk INF AddService name.\n"
             "- Regenerate guest-tools/config/devices.cmd (it is derived from the contract).\n"
+            f"{contract_name_hint}"
         )
 
-    virtio_net_contract = contract.get("virtio-net")
+    virtio_net_contract = contract.devices.get("virtio-net")
     if virtio_net_contract is None:
         raise ValidationError(f"Windows device contract {contract_path} is missing the required 'virtio-net' entry.")
 
@@ -743,6 +802,7 @@ def validate(
                 "\n"
                 "Remediation:\n"
                 f"- Update {contract_path} ({device_name}.hardware_id_patterns) and regenerate guest-tools/config/devices.cmd.\n"
+                f"{contract_name_hint}"
             )
 
     # Validate boot-critical/early-boot device HWID lists against the contract. The packager specs
@@ -983,18 +1043,33 @@ def main(argv: Sequence[str]) -> int:
     )
     parser.add_argument(
         "--windows-device-contract",
-        default=str(DEFAULT_WINDOWS_DEVICE_CONTRACT_PATH),
-        help="Path to Windows device contract JSON used to validate service names/HWIDs (default: canonical Aero contract).",
+        default=None,
+        help=(
+            "Path to Windows device contract JSON used to validate service names/HWIDs.\n"
+            "Default: auto-detect based on the devices.cmd header when present (falls back to the canonical Aero contract)."
+        ),
     )
     args = parser.parse_args(list(argv))
 
     devices_path = _resolve_path(args.devices_cmd)
     spec_path = _resolve_path(args.spec)
-    contract_path = _resolve_path(args.windows_device_contract)
-
     try:
         devices = load_devices_cmd(devices_path)
         spec_expected = load_packaging_spec(spec_path)
+
+        if args.windows_device_contract:
+            contract_path = _resolve_path(args.windows_device_contract)
+        else:
+            # Default to the canonical Aero contract, but if devices.cmd declares it was
+            # generated from the virtio-win contract variant, use that for validation.
+            contract_path = DEFAULT_WINDOWS_DEVICE_CONTRACT_PATH
+            if (
+                devices.source_contract_name
+                and devices.source_contract_name.strip().lower()
+                == "aero-windows-pci-device-contract-virtio-win"
+            ):
+                contract_path = REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
+
         validate(devices, spec_path, spec_expected, windows_device_contract=contract_path)
     except ValidationError as e:
         print(f"ERROR: {e}", file=sys.stderr)
