@@ -10,7 +10,7 @@
         "items": [
           {
             "usagePage": 9,
-            "usages": [1, 2, 3],
+            "usages": [1, 3],
             "usageMinimum": 1,
             "usageMaximum": 3,
             "reportSize": 1,

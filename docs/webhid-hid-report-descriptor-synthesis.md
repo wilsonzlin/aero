@@ -132,6 +132,13 @@ WebHID surfaces both:
 - `item.isRange` + `item.usageMinimum` / `item.usageMaximum`
 - `item.usages` (a list)
 
+Normalized JSON note:
+
+- In our **normalized** metadata contract (output of `webhid_normalize.ts`), range items are
+  represented compactly: when `item.isRange == true`, `item.usages` is `[usageMinimum, usageMaximum]`
+  (or `[usageMinimum]` when `min == max`).
+- Expanded `usages` lists are not required and are not guaranteed to be preserved for range items.
+
 Synthesis interpretation:
 
 - If `item.isRange == true`, we treat `item.usages` as the set of usages covered by the range.

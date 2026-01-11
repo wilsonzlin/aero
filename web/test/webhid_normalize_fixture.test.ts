@@ -20,7 +20,7 @@ function u32(values: number[]): readonly number[] {
 
 const BUTTONS_ITEM: HidReportItem = {
   usagePage: 9,
-  usages: u32([1, 2, 3]),
+  usages: u32([1, 3]),
   usageMinimum: 1,
   usageMaximum: 3,
   reportSize: 1,
@@ -99,3 +99,52 @@ test("normalizeCollections: WebHID normalized metadata JSON contract", () => {
   assert.deepStrictEqual(normalizeCollections(MOCK_COLLECTIONS), expected);
 });
 
+test("normalizeCollections: expanded usages lists are canonicalized to compact [min, max]", () => {
+  const expandedButtonsItem: HidReportItem = {
+    ...BUTTONS_ITEM,
+    usages: u32([1, 2, 3]),
+  };
+
+  const normalized = normalizeCollections([
+    {
+      ...MOCK_COLLECTIONS[0]!,
+      inputReports: [{ reportId: 0, items: [expandedButtonsItem] }],
+    },
+  ]);
+
+  const item = normalized[0]!.inputReports[0]!.items[0]!;
+  assert.deepStrictEqual(item.usages, [expandedButtonsItem.usageMinimum, expandedButtonsItem.usageMaximum]);
+});
+
+test("normalizeCollections: huge isRange usages lists are normalized to compact [min, max]", () => {
+  // Proxy that reports a huge `.length` but throws if anything tries to iterate/copy it. This
+  // ensures we don't accidentally clone a massive array just to check contiguity.
+  const hugeUsages = new Proxy(
+    { length: 10_000 },
+    {
+      get(target, prop) {
+        if (prop === "length") return target.length;
+        throw new Error(`unexpected access to huge usages list: ${String(prop)}`);
+      },
+    },
+  ) as unknown as readonly number[];
+
+  const hugeRangeItem: HidReportItem = {
+    ...BUTTONS_ITEM,
+    usages: hugeUsages,
+    usageMinimum: 1,
+    usageMaximum: 10_000,
+    reportCount: 10_000,
+  };
+
+  const normalized = normalizeCollections([
+    {
+      ...MOCK_COLLECTIONS[0]!,
+      inputReports: [{ reportId: 0, items: [hugeRangeItem] }],
+    },
+  ]);
+
+  const item = normalized[0]!.inputReports[0]!.items[0]!;
+  assert.deepStrictEqual(item.usages, [hugeRangeItem.usageMinimum, hugeRangeItem.usageMaximum]);
+  assert.ok(item.usages.length <= 2);
+});

@@ -116,12 +116,22 @@ function isContiguousUsageRange(usages: readonly number[]): boolean {
 }
 
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
-  const usages = Array.from(item.usages);
-
-  // WebHID uses `isRange` + expanded `usages` lists. Be robust to malformed input:
-  // if `isRange` is true but the list is not contiguous, downgrade to explicit usages.
+  // WebHID uses `isRange` + expanded `usages` lists. For normalized metadata we emit
+  // compact ranges (`[min, max]`) to keep the JSON contract bounded and deterministic.
+  //
+  // Be robust to malformed input: if `isRange` is true but a *small* `usages` list is
+  // not contiguous, downgrade to explicit usages.
+  //
+  // IMPORTANT: When the list is huge, do not clone/copy it just to check contiguity.
   const isRange =
-    item.isRange && (usages.length > MAX_RANGE_CONTIGUITY_CHECK_LEN || isContiguousUsageRange(usages));
+    item.isRange &&
+    (item.usages.length > MAX_RANGE_CONTIGUITY_CHECK_LEN || isContiguousUsageRange(item.usages));
+
+  const usages = isRange
+    ? item.usageMinimum === item.usageMaximum
+      ? [item.usageMinimum]
+      : [item.usageMinimum, item.usageMaximum]
+    : Array.from(item.usages);
 
   return {
     usagePage: item.usagePage,
