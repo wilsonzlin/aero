@@ -690,7 +690,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
         });
 
         emit_packet(out, OPC_SET_TEXTURE, |out| {
-            push_u32(out, 1); // shader_stage pixel
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
             push_u32(out, 0); // slot
             push_u32(out, DST_TEX_HANDLE);
             push_u32(out, 0); // reserved0
