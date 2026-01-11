@@ -108,6 +108,17 @@ In Aero, this cancellation is triggered by the UHCI control pipe: when a new SET
 the previous control transfer completes, `AttachedUsbDevice` invokes the device model hook
 `UsbDeviceModel::cancel_control_transfer()` (`crates/emulator/src/io/usb/core/mod.rs`).
 
+Idempotency / retry behavior (important):
+
+- A NAKed TD will be retried by the UHCI schedule. This means the device model entrypoints
+  (`handle_control_request`, `handle_in_transfer`, `handle_out_transfer`) can be called multiple
+  times for the same guest-visible transfer.
+- `UsbPassthroughDevice` is written to be **idempotent** under retries:
+  - control requests use an “in-flight” record to avoid emitting duplicate host actions while a
+    completion is pending
+  - non-control endpoints use a per-endpoint in-flight map for the same reason
+  - completions are keyed by `id` and consumed exactly once
+
 Descriptor status (current code):
 
 - `UsbPassthroughDevice` currently returns empty device/config/HID descriptors. Full passthrough
