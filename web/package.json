@@ -27,9 +27,6 @@
     "test:unit:coverage": "vitest run --coverage",
     "wasm:build:dev": "node ./scripts/build_wasm.mjs single dev",
     "wasm:build:release": "npm run wasm:build",
-    "wasm:size": "node ./scripts/wasm-size.mjs"
-  },
-  "devDependencies": {
-    "fake-indexeddb": "^6.0.1"
+  "wasm:size": "node ./scripts/wasm-size.mjs"
   }
 }

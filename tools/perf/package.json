@@ -6,6 +6,6 @@
     "node": ">=20.11.1 <21"
   },
   "dependencies": {
-    "playwright-core": "1.41.2"
+    "playwright-core": "^1.57.0"
   }
 }
