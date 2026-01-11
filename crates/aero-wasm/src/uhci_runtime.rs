@@ -902,7 +902,8 @@ impl UhciRuntime {
                 port,
                 dev: dev.clone(),
             });
-            if let Err(err) = dev.borrow_mut().load_state(buf) {
+            let mut dev_mut = dev.borrow_mut();
+            if let Err(err) = dev_mut.load_state(buf) {
                 self.reset_for_snapshot_restore();
                 return Err(js_error(&format!(
                     "Invalid UHCI runtime snapshot WebUSB device state: {err}"
@@ -911,7 +912,7 @@ impl UhciRuntime {
             // WebUSB host actions are backed by JS Promises and cannot be resumed after a VM
             // snapshot restore. Drop any inflight/queued host bookkeeping so UHCI TD retries
             // re-emit fresh actions.
-            dev.borrow_mut().reset_host_state_for_restore();
+            dev_mut.reset_host_state_for_restore();
         }
 
         // Recreate WebHID devices (using stored static config), then apply their dynamic snapshots.
