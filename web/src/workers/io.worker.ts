@@ -1513,7 +1513,14 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         return;
       }
 
-      usbDemo.run(msg.request, msg.length);
+      try {
+        usbDemo.run(msg.request, msg.length);
+      } catch (err) {
+        ctx.postMessage({
+          type: "usb.demoResult",
+          result: { status: "error", message: `UsbPassthroughDemo failed: ${formatWebUsbGuestError(err)}` },
+        } satisfies UsbPassthroughDemoResultMessage);
+      }
       return;
     }
 
@@ -1542,7 +1549,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           webUsbGuestLastError = null;
         }
       }
-      usbDemo?.onUsbSelected(msg);
+      if (usbDemo) {
+        try {
+          usbDemo.onUsbSelected(msg);
+        } catch (err) {
+          console.warn("[io.worker] UsbPassthroughDemo.onUsbSelected failed", err);
+          if (msg.ok) {
+            ctx.postMessage({
+              type: "usb.demoResult",
+              result: { status: "error", message: `UsbPassthroughDemo failed: ${formatWebUsbGuestError(err)}` },
+            } satisfies UsbPassthroughDemoResultMessage);
+          }
+        }
+      }
       emitWebUsbGuestStatus();
 
       // Dev-only smoke test: once a device is selected on the main thread, request the
