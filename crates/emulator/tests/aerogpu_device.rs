@@ -2493,9 +2493,7 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
     assert_eq!(center & 0x00FF_FFFF, 0x0000_FF00);
 }
 
-fn exec_d3d11_fullscreen_triangle_center_pixel(
-    push_blend_state: impl FnOnce(&mut Vec<u8>),
-) -> u32 {
+fn exec_d3d11_fullscreen_triangle_center_pixel(push_blend_state: impl FnOnce(&mut Vec<u8>)) -> u32 {
     let mut mem = VecMemory::new(0x40_000);
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
 
@@ -2782,7 +2780,7 @@ fn cmd_exec_d3d11_blend_factor_constant_matches_expected() {
         push_u32(stream, cmd::AerogpuBlendFactor::InvBlendFactor as u32);
         push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
         push_u32(stream, 0xF); // write mask + padding
-        // Alpha blend: out_a = src_a
+                               // Alpha blend: out_a = src_a
         push_u32(stream, cmd::AerogpuBlendFactor::One as u32);
         push_u32(stream, cmd::AerogpuBlendFactor::Zero as u32);
         push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
