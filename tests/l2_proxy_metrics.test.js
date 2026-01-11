@@ -59,15 +59,21 @@ test("node l2 proxy exposes /metrics and counts rx frames", async () => {
 
     const deadline = Date.now() + 2_000;
     let rx = null;
+    let sessionsTotal = null;
+    let sessionsActive = null;
     while (Date.now() < deadline) {
       const res = await fetch(`http://127.0.0.1:${port}/metrics`);
       assert.equal(res.status, 200);
       const body = await res.text();
       rx = parseMetric(body, "l2_frames_rx_total");
-      if (rx !== null && rx >= 1) break;
+      sessionsTotal = parseMetric(body, "l2_sessions_total");
+      sessionsActive = parseMetric(body, "l2_sessions_active");
+      if (rx !== null && rx >= 1 && sessionsTotal !== null && sessionsTotal >= 1 && sessionsActive === 0) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.ok(rx !== null && rx >= 1, `expected rx >= 1, got ${rx}`);
+    assert.ok(sessionsTotal !== null && sessionsTotal >= 1, `expected sessions_total >= 1, got ${sessionsTotal}`);
+    assert.equal(sessionsActive, 0, `expected sessions_active == 0, got ${sessionsActive}`);
   } finally {
     await proxy.close();
   }
