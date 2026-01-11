@@ -478,17 +478,24 @@ upstream virtio-win license/notice files (if present) under `licenses/virtio-win
 
 ## Installing on Windows 7
 
-### virtio-blk (storage) during Windows 7 setup (recommended)
+For most users, the recommended installation path is **Aero Guest Tools** (`aero-guest-tools.iso`) and `setup.cmd`
+(`docs/windows7-guest-tools.md`). The steps below are primarily useful for:
+
+- installing storage drivers during **Windows Setup** (“Load driver”), or
+- manual troubleshooting / non-standard packaging flows.
+
+### virtio-blk (storage) during Windows 7 setup (“Load driver”)
 
 If the Windows installer can’t see the disk:
 
 1. Boot the Windows 7 installer ISO.
 2. When you reach “Where do you want to install Windows?”, choose **Load Driver**.
-   - If you have Aero’s packaged driver artifacts, you can also attach the optional FAT driver disk image (`*-fat.vhd`) as a secondary disk and browse `x86\` or `x64\` instead of mounting an ISO. See: [`docs/16-driver-install-media.md`](./16-driver-install-media.md).
-3. Mount the Aero drivers ISO as a second CD-ROM and browse to:
-   - `\win7\x86\viostor\` for Win7 32-bit
-   - `\win7\amd64\viostor\` for Win7 64-bit
-4. Select `viostor.inf`.
+3. Attach one of the following driver media sources:
+   - **CI/release driver bundles** (`win7-drivers`): mount `AeroVirtIO-Win7-<version>.iso` or attach `*-fat.vhd` as a secondary disk (see [`docs/16-driver-install-media.md`](./16-driver-install-media.md) and `INSTALL.txt` at the media root for the exact layout).
+   - **virtio-win-derived drivers ISO** (optional/compatibility): mount `aero-virtio-win7-drivers.iso` built by `drivers/scripts/make-virtio-driver-iso.ps1`.
+4. Select the storage driver INF for your media:
+   - **Aero in-tree virtio-blk**: `aerovblk.inf` (find it under the attached media; the directory names differ between Guest Tools vs driver bundle artifacts).
+   - **virtio-win virtio-blk**: `viostor.inf` (typically under `\win7\amd64\viostor\` or `\win7\x86\viostor\`).
 5. The virtio disk should appear; continue installation.
 
 ### Post-install via Device Manager (net / input / snd)
@@ -498,7 +505,7 @@ If the Windows installer can’t see the disk:
 3. For each unknown device (virtio-net, virtio-input, virtio-snd):
    - Right click → **Update Driver Software…**
    - “Browse my computer for driver software”
-   - Point it at the mounted drivers ISO
+   - Point it at the mounted driver media (Guest Tools ISO/zip, CI driver bundle ISO, or virtio-win-derived drivers ISO)
    - Enable “Include subfolders”
 
 ### Post-install via pnputil
@@ -506,11 +513,17 @@ If the Windows installer can’t see the disk:
 Windows 7 includes `pnputil.exe` (limited compared to newer Windows):
 
 ```bat
-pnputil -i -a D:\win7\x86\viostor\viostor.inf
-pnputil -i -a D:\win7\x86\netkvm\netkvm.inf
+REM Example: virtio-win-derived drivers ISO
+pnputil -i -a D:\win7\amd64\viostor\viostor.inf
+pnputil -i -a D:\win7\amd64\netkvm\netkvm.inf
+
+REM Example: Aero Guest Tools media (in-tree drivers)
+pnputil -i -a X:\drivers\amd64\virtio-blk\aerovblk.inf
+pnputil -i -a X:\drivers\amd64\virtio-net\aerovnet.inf
 ```
 
-Replace `D:` with your mounted drivers ISO drive letter and `x86` with `amd64` as appropriate.
+Replace `D:` / `X:` with your mounted media drive letter and use the correct architecture directory
+(`x86` vs `amd64` / `x64`) for your guest.
 
 If you’re using the FAT driver disk image instead, the layout is typically:
 
