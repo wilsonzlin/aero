@@ -1570,12 +1570,40 @@ mod proptests {
         normalize_reports(&mut collection.output_reports);
         normalize_reports(&mut collection.feature_reports);
 
+        for report in &mut collection.input_reports {
+            for item in &mut report.items {
+                normalize_item(item);
+            }
+        }
+        for report in &mut collection.output_reports {
+            for item in &mut report.items {
+                normalize_item(item);
+            }
+        }
+        for report in &mut collection.feature_reports {
+            for item in &mut report.items {
+                normalize_item(item);
+            }
+        }
+
         for child in &mut collection.children {
             normalize_collection(child);
         }
         collection
             .children
             .sort_by_key(|c| (c.usage_page, c.usage, c.collection_type));
+    }
+
+    fn normalize_item(item: &mut HidReportItem) {
+        if item.is_range && !item.usages.is_empty() {
+            let mut min = item.usages[0];
+            let mut max = item.usages[0];
+            for &u in &item.usages[1..] {
+                min = min.min(u);
+                max = max.max(u);
+            }
+            item.usages = vec![min, max];
+        }
     }
 
     fn normalize_collections(collections: &mut Vec<HidCollectionInfo>) {
@@ -1599,13 +1627,13 @@ mod proptests {
                 .expect("descriptor synthesized by synthesize_report_descriptor must parse");
 
             let mut expected = collections.clone();
-            let mut actual = parsed.clone();
+            let mut actual = parsed.collections.clone();
             normalize_collections(&mut expected);
             normalize_collections(&mut actual);
             prop_assert_eq!(actual, expected);
 
             // Regression safety: synthesizing a parsed descriptor must not panic or error.
-            let _ = synthesize_report_descriptor(&parsed).unwrap();
+            let _ = synthesize_report_descriptor(&parsed.collections).unwrap();
         }
     }
 }

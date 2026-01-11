@@ -861,12 +861,14 @@ fn build_config_descriptor(
 fn report_descriptor_report_lengths(
     report_descriptor_bytes: &[u8],
 ) -> (bool, HashMap<u8, usize>, HashMap<u8, usize>, HashMap<u8, usize>) {
-    let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
+    let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
+        let (report_ids_in_use, input_bits, output_bits, feature_bits) =
+            scan_report_descriptor_bits(report_descriptor_bytes);
         return (
-            report_descriptor_uses_report_ids(report_descriptor_bytes),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
+            report_ids_in_use,
+            bits_to_report_lengths(&input_bits),
+            bits_to_report_lengths(&output_bits),
+            bits_to_report_lengths(&feature_bits),
         );
     };
 
@@ -875,7 +877,7 @@ fn report_descriptor_report_lengths(
     let mut output_bits: HashMap<u8, u64> = HashMap::new();
     let mut feature_bits: HashMap<u8, u64> = HashMap::new();
 
-    for collection in &collections {
+    for collection in &parsed.collections {
         accumulate_report_bits(
             collection,
             &mut report_ids_in_use,
@@ -968,12 +970,50 @@ fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
-fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
+#[derive(Debug, Clone, Copy)]
+struct ScanGlobalState {
+    report_id: u32,
+    report_size: u32,
+    report_count: u32,
+}
+
+impl Default for ScanGlobalState {
+    fn default() -> Self {
+        Self {
+            report_id: 0,
+            report_size: 0,
+            report_count: 0,
+        }
+    }
+}
+
+fn scan_parse_unsigned(data: &[u8]) -> u32 {
+    match data.len() {
+        0 => 0,
+        1 => data[0] as u32,
+        2 => u16::from_le_bytes([data[0], data[1]]) as u32,
+        4 => u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
+        _ => 0,
+    }
+}
+
+fn scan_report_descriptor_bits(
+    report_descriptor: &[u8],
+) -> (bool, HashMap<u8, u64>, HashMap<u8, u64>, HashMap<u8, u64>) {
+    let mut global = ScanGlobalState::default();
+    let mut global_stack: Vec<ScanGlobalState> = Vec::new();
+
+    let mut report_ids_in_use = false;
+    let mut input_bits: HashMap<u8, u64> = HashMap::new();
+    let mut output_bits: HashMap<u8, u64> = HashMap::new();
+    let mut feature_bits: HashMap<u8, u64> = HashMap::new();
+
     let mut i = 0usize;
     while i < report_descriptor.len() {
-        let b = report_descriptor[i];
+        let prefix = report_descriptor[i];
         i += 1;
-        if b == 0xFE {
+
+        if prefix == 0xFE {
             // Long item: bSize, bTag, data...
             if i + 2 > report_descriptor.len() {
                 break;
@@ -984,7 +1024,7 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
             continue;
         }
 
-        let size = match b & 0x03 {
+        let size = match prefix & 0x03 {
             0 => 0usize,
             1 => 1usize,
             2 => 2usize,
@@ -992,26 +1032,59 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
             _ => 0usize,
         };
 
-        // Global item, tag 8 = Report ID.
-        if b & 0xFC == 0x84 {
-            if size == 0 {
-                return true;
-            }
-            if i + size > report_descriptor.len() {
-                break;
-            }
-            let mut value: u32 = 0;
-            for (shift, byte) in report_descriptor[i..i + size].iter().enumerate() {
-                value |= (*byte as u32) << (shift * 8);
-            }
-            if value != 0 {
-                return true;
-            }
+        if i + size > report_descriptor.len() {
+            break;
         }
 
-        i = i.saturating_add(size);
+        let item_type = (prefix >> 2) & 0x03;
+        let tag = (prefix >> 4) & 0x0F;
+
+        let data = &report_descriptor[i..i + size];
+        i += size;
+
+        match (item_type, tag) {
+            // Global items.
+            (1, 7) => global.report_size = scan_parse_unsigned(data),
+            (1, 9) => global.report_count = scan_parse_unsigned(data),
+            (1, 8) => {
+                global.report_id = scan_parse_unsigned(data);
+                if global.report_id != 0 {
+                    report_ids_in_use = true;
+                }
+            }
+            (1, 10) => {
+                // Push
+                if data.is_empty() {
+                    global_stack.push(global);
+                }
+            }
+            (1, 11) => {
+                // Pop
+                if data.is_empty() {
+                    if let Some(prev) = global_stack.pop() {
+                        global = prev;
+                    }
+                }
+            }
+            // Main items: Input / Output / Feature.
+            (0, 8) | (0, 9) | (0, 11) => {
+                let Ok(report_id) = u8::try_from(global.report_id) else {
+                    report_ids_in_use = true;
+                    continue;
+                };
+                let bits = u64::from(global.report_size).saturating_mul(u64::from(global.report_count));
+                match tag {
+                    8 => add_bits(&mut input_bits, report_id, bits),
+                    9 => add_bits(&mut output_bits, report_id, bits),
+                    11 => add_bits(&mut feature_bits, report_id, bits),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
-    false
+
+    (report_ids_in_use, input_bits, output_bits, feature_bits)
 }
 
 #[cfg(test)]
@@ -1049,6 +1122,23 @@ mod tests {
             0x26, 0xff, 0x00, // Logical Maximum (255)
             0x75, 0x08, // Report Size (8)
             0x95, 0x04, // Report Count (4)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
+    fn sample_report_descriptor_with_unsupported_item() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x01, // Report ID (1)
+            0x09, 0x00, // Usage (Undefined)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xff, 0x00, // Logical Maximum (255)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x04, // Report Count (4)
+            0x79, 0x01, // String Index (unsupported by parser)
             0x81, 0x02, // Input (Data,Var,Abs)
             0xc0, // End Collection
         ]
@@ -1171,6 +1261,40 @@ mod tests {
     #[test]
     fn get_report_returns_zero_filled_report_of_descriptor_length() {
         let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".to_string(),
+            "Product".to_string(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Descriptor defines report ID 1 with 4 bytes of payload.
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (1u16 << 8) | 1u16, // Input, report ID 1
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![1, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn get_report_uses_scanner_when_report_descriptor_parser_rejects_descriptor() {
+        let report = sample_report_descriptor_with_unsupported_item();
         let mut dev = UsbHidPassthroughHandle::new(
             0x1234,
             0x5678,
