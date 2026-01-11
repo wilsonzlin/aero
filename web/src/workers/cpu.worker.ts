@@ -139,7 +139,9 @@ class JsWorkletBridge {
     const free = audioFramesFree(read, write, this.capacity_frames);
     const framesToWrite = Math.min(requestedFrames, free);
     const droppedFrames = requestedFrames - framesToWrite;
-    if (droppedFrames > 0) Atomics.add(this.header, AUDIO_OVERRUN_COUNT_INDEX, droppedFrames);
+    if (droppedFrames > 0) {
+      Atomics.add(this.header, AUDIO_OVERRUN_COUNT_INDEX, droppedFrames);
+    }
     if (framesToWrite === 0) return 0;
 
     const writePos = write % this.capacity_frames;
