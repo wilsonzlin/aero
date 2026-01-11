@@ -604,6 +604,47 @@ fn virtio_pci_notify_accepts_32bit_writes() {
 }
 
 #[test]
+fn virtio_pci_undefined_mmio_reads_zero_and_ignores_writes() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Set a known device_status value.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    assert_eq!(
+        bar_read_u8(&mut dev, caps.common + 0x14),
+        VIRTIO_STATUS_ACKNOWLEDGE
+    );
+
+    // Contract v1: reads from undefined MMIO offsets within BAR0 must return all-zeros and writes
+    // must be ignored.
+    let mut buf = [0xaa_u8; 8];
+    dev.bar0_read(0x0100, &mut buf);
+    assert_eq!(buf, [0u8; 8]);
+
+    dev.bar0_read(caps.notify, &mut buf);
+    assert_eq!(buf, [0u8; 8]);
+
+    dev.bar0_read(caps.isr + 1, &mut buf);
+    assert_eq!(buf, [0u8; 8]);
+
+    dev.bar0_read(dev.bar0_size(), &mut buf);
+    assert_eq!(buf, [0u8; 8]);
+
+    dev.bar0_write(0x0100, &[0xff], &mut mem);
+    assert_eq!(
+        bar_read_u8(&mut dev, caps.common + 0x14),
+        VIRTIO_STATUS_ACKNOWLEDGE
+    );
+}
+
+#[test]
 fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
@@ -810,6 +851,148 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
         let state = irq_state.borrow();
         assert_eq!(state.raised, 1);
         assert_eq!(state.lowered, 1);
+        assert!(!state.asserted);
+    }
+    assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
+}
+
+#[test]
+fn virtio_pci_isr_read_acknowledges_and_deasserts_intx() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let (irq, irq_state) = SharedLegacyIrq::new();
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Standard init and feature negotiation.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 0.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Post two event buffers.
+    let event_buf0 = 0x4000;
+    let event_buf1 = 0x4010;
+    mem.write(event_buf0, &[0u8; 8]).unwrap();
+    mem.write(event_buf1, &[0u8; 8]).unwrap();
+    write_desc(&mut mem, desc, 0, event_buf0, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(&mut mem, desc, 1, event_buf1, 8, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 2).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 6, 1).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    // Kicking the queue only makes the buffers available; without events, it must not assert INTx.
+    dev.bar0_write(
+        caps.notify + 0 * u64::from(caps.notify_mult),
+        &0u16.to_le_bytes(),
+        &mut mem,
+    );
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 0);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 0);
+        assert_eq!(state.lowered, 0);
+        assert!(!state.asserted);
+    }
+
+    // Deliver an event; the device must assert INTx and set ISR.QUEUE.
+    dev.device_mut::<VirtioInput>()
+        .unwrap()
+        .push_event(VirtioInputEvent {
+            type_: 1,
+            code: 30,
+            value: 1,
+        });
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    assert_eq!(read_u32_le(&mem, used + 4).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 1);
+        assert_eq!(state.lowered, 0);
+        assert!(state.asserted);
+    }
+
+    // ISR is read-to-ack; it must clear the cause bit and deassert INTx.
+    assert_eq!(bar_read_u8(&mut dev, caps.isr) & 0x01, 0x01);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 1);
+        assert_eq!(state.lowered, 1);
+        assert!(!state.asserted);
+    }
+    assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
+
+    // Second event should reassert INTx (verifies deassert worked).
+    dev.device_mut::<VirtioInput>()
+        .unwrap()
+        .push_event(VirtioInputEvent {
+            type_: 1,
+            code: 31,
+            value: 0,
+        });
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 2);
+    assert_eq!(read_u32_le(&mem, used + 12).unwrap(), 1);
+    assert_eq!(read_u32_le(&mem, used + 16).unwrap(), 8);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 2);
+        assert_eq!(state.lowered, 1);
+        assert!(state.asserted);
+    }
+
+    assert_eq!(bar_read_u8(&mut dev, caps.isr) & 0x01, 0x01);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 2);
+        assert_eq!(state.lowered, 2);
         assert!(!state.asserted);
     }
     assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
