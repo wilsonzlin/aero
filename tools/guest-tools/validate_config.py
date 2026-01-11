@@ -48,6 +48,52 @@ class SpecDriver:
     expected_hardware_ids: Tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ContractDevice:
+    driver_service_name: str
+
+
+def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
+    """
+    Load the machine-readable Windows device contract (docs/windows-device-contract.json).
+
+    We use this as the source of truth for boot-critical service names like virtio-blk:
+    packaging specs intentionally focus on driver folder names + HWID regexes and do not
+    encode Windows service names.
+    """
+
+    if not path.exists():
+        raise ValidationError(f"Windows device contract not found: {path}")
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValidationError(f"Failed to parse Windows device contract JSON: {path}\n{e}") from e
+
+    devices = raw.get("devices")
+    if not isinstance(devices, list):
+        raise ValidationError(f"Windows device contract {path} must contain a list field 'devices'.")
+
+    out: Dict[str, ContractDevice] = {}
+    for entry in devices:
+        if not isinstance(entry, dict):
+            raise ValidationError(f"Windows device contract {path} contains a non-object device entry: {entry!r}")
+        name = entry.get("device")
+        service = entry.get("driver_service_name")
+        if not isinstance(name, str) or not name:
+            raise ValidationError(f"Windows device contract {path} has a device entry missing valid 'device': {entry!r}")
+        if not isinstance(service, str) or not service:
+            raise ValidationError(
+                f"Windows device contract {path} device {name!r} is missing a valid 'driver_service_name': {entry!r}"
+            )
+        out[name] = ContractDevice(driver_service_name=service)
+
+    if not out:
+        raise ValidationError(f"Windows device contract {path} contains no devices.")
+
+    return out
+
+
 def _resolve_path(value: str) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -373,6 +419,31 @@ def _validate_hwid_contract(
 
 
 def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str, SpecDriver]) -> None:
+    # Storage service name: `devices.cmd` must declare the storage driver's INF AddService
+    # name so `guest-tools/setup.cmd` can preseed BOOT_START + CriticalDeviceDatabase keys.
+    #
+    # The in-repo Guest Tools config tracks the Aero device contract
+    # (`docs/windows-device-contract.json`). When packaging Guest Tools from other driver
+    # sets (e.g. virtio-win), wrapper scripts are responsible for patching the staged
+    # `devices.cmd` to match the packaged INF(s).
+    contract_path = REPO_ROOT / "docs/windows-device-contract.json"
+    contract = load_windows_device_contract(contract_path)
+    virtio_blk_contract = contract.get("virtio-blk")
+    if virtio_blk_contract is None:
+        raise ValidationError(f"Windows device contract {contract_path} is missing the required 'virtio-blk' entry.")
+    expected_blk_service = virtio_blk_contract.driver_service_name
+    if devices.virtio_blk_service.strip().lower() != expected_blk_service.strip().lower():
+        raise ValidationError(
+            "Mismatch: devices.cmd storage service name does not match the Windows device contract.\n"
+            "\n"
+            f"devices.cmd AERO_VIRTIO_BLK_SERVICE: {devices.virtio_blk_service!r}\n"
+            f"windows-device-contract.json virtio-blk.driver_service_name: {expected_blk_service!r}\n"
+            "\n"
+            "Remediation:\n"
+            "- Update guest-tools/config/devices.cmd (AERO_VIRTIO_BLK_SERVICE) to match the virtio-blk INF AddService name.\n"
+            "- Update docs/windows-device-contract.json if the contract/service name intentionally changed.\n"
+        )
+
     # Some specs have an expected minimum set of drivers. Enforce that so the
     # validator fails loudly if someone accidentally edits the spec to remove a
     # boot-critical entry.
@@ -389,20 +460,6 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"Spec {spec_path} is missing required driver entries: {', '.join(missing)}\n"
             f"Remediation: update {spec_path} to include them."
         )
-
-    # Storage service name: `devices.cmd` must declare the storage driver's INF AddService
-    # name so `guest-tools/setup.cmd` can preseed BOOT_START + CriticalDeviceDatabase keys.
-    #
-    # Note: we do *not* enforce a specific service name for the virtio-win specs here.
-    # The in-repo Guest Tools config tracks Aero's clean-room storage driver service name
-    # (currently `aerovblk`), while virtio-win uses `viostor`. Packaging wrappers that
-    # build media from a specific driver set are responsible for patching the staged
-    # `devices.cmd` to match the packaged INF(s).
-    # If the spec contains `viostor` but the in-repo Guest Tools config points at a different
-    # storage service (e.g. Aero clean-room `aerovblk`), that's OK: packaging wrappers that
-    # build media from virtio-win are expected to patch the staged `devices.cmd` to match
-    # the packaged INF AddService name.
-
     matches: List[Tuple[str, Tuple[str, str]]] = []
 
     def maybe_validate(
@@ -501,7 +558,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
 
     print("Guest Tools config/spec validation: OK")
     print(f"- spec: {spec_path}")
-    print(f"- virtio-blk service : {devices.virtio_blk_service}")
+    print(f"- virtio-blk service : {devices.virtio_blk_service} (contract: {expected_blk_service})")
     for name, (pattern, hwid) in matches:
         print(f"- {name} HWID match : {pattern!r} matched {hwid!r}")
 

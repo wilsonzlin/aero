@@ -268,8 +268,10 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
 - `cargo test --locked --manifest-path tools/packaging/aero_packager/Cargo.toml`
 - A smoke packaging run that verifies the in-repo `guest-tools/` directory can be packaged (using the
   packager's dummy driver fixtures).
-- A lightweight consistency check that ensures `guest-tools/config/devices.cmd` (service name + HWIDs)
-  stays in sync with the in-repo packaging specs:
+- A lightweight consistency check that ensures `guest-tools/config/devices.cmd` stays consistent with:
+  - the Windows device contract (`docs/windows-device-contract.json`) for the boot-critical virtio-blk
+    storage service name, and
+  - the in-repo packaging specs (HWID regexes):
   - `win7-virtio-win.json`
   - `win7-virtio-full.json`
   - `win7-aero-guest-tools.json`

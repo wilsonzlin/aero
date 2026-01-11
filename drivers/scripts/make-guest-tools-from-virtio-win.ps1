@@ -54,6 +54,11 @@ param(
   [ValidateSet("none", "testsigning", "nointegritychecks")]
   [string]$SigningPolicy = "none",
 
+  # Public certificate to embed under Guest Tools `certs/` when SigningPolicy != none.
+  # For virtio-win this is typically unnecessary (WHQL/production-signed), but it is
+  # required when packaging test-signed/custom-signed driver bundles.
+  [string]$CertPath,
+ 
   # Packaging profile:
   # - full: includes optional virtio audio/input drivers if present (default)
   # - minimal: storage+network only
@@ -150,6 +155,23 @@ Write-Host "  spec    : $resolvedSpecPath"
 Write-Host "  drivers : $($resolvedDrivers -join ', ')"
 
 $guestToolsDir = Join-Path $repoRoot "guest-tools"
+
+$defaultCertPath = Join-Path (Join-Path $guestToolsDir "certs") "AeroTestRoot.cer"
+$resolvedCertPath = if ($PSBoundParameters.ContainsKey("CertPath")) {
+  if (-not $CertPath) {
+    throw "-CertPath must not be empty."
+  }
+  if (-not [System.IO.Path]::IsPathRooted($CertPath)) {
+    Join-Path $repoRoot $CertPath
+  } else {
+    $CertPath
+  }
+} else {
+  $defaultCertPath
+}
+$resolvedCertPath = [System.IO.Path]::GetFullPath($resolvedCertPath)
+$CertPath = $resolvedCertPath
+
 $packScript = Join-Path (Join-Path (Join-Path $repoRoot "drivers") "scripts") "make-driver-pack.ps1"
 $driversOutDir = Join-Path (Join-Path $repoRoot "drivers") "out"
 $driverPackRoot = Join-Path $driversOutDir "aero-win7-driver-pack"
@@ -275,10 +297,13 @@ if ($SigningPolicy -eq "none") {
   }
 }
 
-# 4) Build the actual Guest Tools ISO/zip using the in-repo packager.
-$wrapper = Join-Path (Join-Path $repoRoot "ci") "package-guest-tools.ps1"
-if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
-  throw "Expected Guest Tools packaging wrapper script not found: $wrapper"
+# 4) Build the actual Guest Tools ISO/zip via the standard CI wrapper script.
+# Use the same staging logic as CI packaging so:
+# - the staged Guest Tools config matches the packaged driver INF AddService name (viostor, etc)
+# - outputs are deterministic via SOURCE_DATE_EPOCH / --source-date-epoch (wrapper default)
+$wrapperScript = Join-Path (Join-Path $repoRoot "ci") "package-guest-tools.ps1"
+if (-not (Test-Path -LiteralPath $wrapperScript -PathType Leaf)) {
+  throw "Expected Guest Tools packaging wrapper script not found: $wrapperScript"
 }
 
 Ensure-Directory -Path $OutDir
@@ -287,21 +312,16 @@ Write-Host "Packaging Guest Tools via CI wrapper..."
 Write-Host "  spec : $SpecPath"
 Write-Host "  out  : $OutDir"
 
-# Use the same staging logic as CI packaging so:
-# - the staged Guest Tools config matches the packaged driver INF AddService name (viostor, etc)
-# - outputs are deterministic via SOURCE_DATE_EPOCH / --source-date-epoch (wrapper default)
-$defaultCert = Join-Path (Join-Path $repoRoot "guest-tools") "certs/AeroTestRoot.cer"
-
-& $wrapper `
+& $wrapperScript `
   -InputRoot $packagerDriversRoot `
   -GuestToolsDir $guestToolsStageDir `
   -SigningPolicy $SigningPolicy `
-  -CertPath $defaultCert `
+  -CertPath $CertPath `
   -SpecPath $SpecPath `
   -OutDir $OutDir `
   -Version $Version `
   -BuildId $BuildId
-
+ 
 Write-Host "Done."
 
 if ($CleanStage) {
