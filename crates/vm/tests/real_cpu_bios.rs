@@ -597,6 +597,76 @@ fn aero_cpu_core_int13_ext_read_rejects_invalid_dap_size() {
 }
 
 #[test]
+fn aero_cpu_core_int13_ext_read_rejects_non_hard_disk_drives() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // Minimal 16-byte DAP at 0000:0500.
+    let dap = 0x0500u64;
+    MemoryAccess::write_u8(&mut vm.mem, dap + 0, 0x10);
+    MemoryAccess::write_u8(&mut vm.mem, dap + 1, 0x00);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 2, 1);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 4, 0x1000);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 6, 0x0000);
+    MemoryAccess::write_u64(&mut vm.mem, dap + 8, 0);
+
+    vm.cpu.gpr[gpr::RAX] = 0x4200;
+    vm.cpu.gpr[gpr::RDX] = 0x0000; // DL=0x00 (floppy)
+    vm.cpu.gpr[gpr::RSI] = 0x0500;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0x01);
+}
+
+#[test]
+fn aero_cpu_core_int13_ext_read_reports_out_of_range_lba_errors() {
+    let bios = Bios::new(test_bios_config());
+
+    // Two-sector disk so LBA 5 is out of range.
+    let mut disk_bytes = vec![0u8; 512 * 2];
+    disk_bytes[510] = 0x55;
+    disk_bytes[511] = 0xAA;
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    let dap = 0x0500u64;
+    MemoryAccess::write_u8(&mut vm.mem, dap + 0, 0x10);
+    MemoryAccess::write_u8(&mut vm.mem, dap + 1, 0x00);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 2, 1);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 4, 0x1000);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 6, 0x0000);
+    MemoryAccess::write_u64(&mut vm.mem, dap + 8, 5);
+
+    vm.cpu.gpr[gpr::RAX] = 0x4200;
+    vm.cpu.gpr[gpr::RDX] = 0x0080;
+    vm.cpu.gpr[gpr::RSI] = 0x0500;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0x04);
+}
+
+#[test]
 fn aero_cpu_core_int13_ext_get_drive_params_reports_sector_count() {
     let bios = Bios::new(test_bios_config());
 
@@ -628,6 +698,33 @@ fn aero_cpu_core_int13_ext_get_drive_params_reports_sector_count() {
     assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
     assert_eq!(vm.mem.read_u64(0x0600 + 16), sectors);
     assert_eq!(vm.mem.read_u16(0x0600 + 24), 512);
+}
+
+#[test]
+fn aero_cpu_core_int13_ext_get_drive_params_rejects_small_buffers() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // Drive parameter table at 0000:0600, with an undersized buffer.
+    MemoryAccess::write_u16(&mut vm.mem, 0x0600, 0x19);
+
+    vm.cpu.gpr[gpr::RAX] = 0x4800;
+    vm.cpu.gpr[gpr::RDX] = 0x0080;
+    vm.cpu.gpr[gpr::RSI] = 0x0600;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0x01);
 }
 
 #[test]
