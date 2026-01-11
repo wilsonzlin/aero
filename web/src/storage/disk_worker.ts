@@ -819,7 +819,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             }
             // Count cached bytes stored by RemoteStreamingDisk (OpfsLruChunkCache).
             try {
-              const cacheKey = await stableCacheKey(meta.remote.url);
+              const cacheKey = await stableCacheKey(meta.remote.url, { blockSize: meta.remote.blockSizeBytes });
               const remoteCacheDir = await opfsGetRemoteCacheDir();
               totalBytes += await opfsReadLruChunkCacheBytes(remoteCacheDir, cacheKey);
             } catch {
@@ -1028,7 +1028,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           if (meta.remote) {
             // Best-effort cache cleanup for remote-streaming disks.
             try {
-              const cacheKey = await stableCacheKey(meta.remote.url);
+              const cacheKey = await stableCacheKey(meta.remote.url, { blockSize: meta.remote.blockSizeBytes });
               await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
             } catch {
               // ignore
@@ -1121,14 +1121,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
         // Best-effort cleanup for RemoteRangeDisk / RemoteChunkedDisk cache directories (if used).
         const url = meta.remote.urls.url;
-          if (url) {
-            try {
-              const cacheKey = await stableCacheKey(url);
-              await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
-            } catch {
-              // ignore
-            }
+        if (url) {
+          try {
+            const cacheKey = await stableCacheKey(url, { blockSize: meta.cache.chunkSizeBytes });
+            await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
+          } catch {
+            // ignore
           }
+        }
       }
       await store.deleteDisk(meta.id);
       postOk(requestId, { ok: true });
