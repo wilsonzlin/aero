@@ -171,7 +171,7 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 3. **Accurate capability reporting** to keep DWM and typical D3D9 apps on supported code paths
 
 ### UMD execution model
-
+ 
 - The UMD maintains:
   - A per-device command buffer builder
   - A small state cache (current shaders, render targets, blend state, etc.)
@@ -181,8 +181,26 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
   - 32-bit (Windows 7 x86, and WOW64 on x64)
   - 64-bit (Windows 7 x64)
 
-### Capabilities: what we claim for MVP
+### Device discovery (active ABI + feature bits)
 
+Because AeroGPU currently has both a legacy bring-up ABI (`ARGP`) and a newer versioned ABI (`AGPU`), UMDs should not hardcode assumptions about:
+
+- which BAR0/MMIO ABI they are running against,
+- which optional features are available (vblank timing, fence page, etc.).
+
+Instead, the UMD should call `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` early during adapter open and decode the returned `aerogpu_umd_private_v1` struct from:
+
+- `drivers/aerogpu/protocol/aerogpu_umd_private.h`
+
+The blob provides:
+
+- `device_mmio_magic`: `"ARGP"` (legacy) vs `"AGPU"` (new)
+- `device_abi_version_u32`: legacy MMIO version or new ABI version
+- `device_features`: new ABI feature bitset (0 on legacy)
+- `flags`: convenience bits such as `HAS_VBLANK` and `HAS_FENCE_PAGE`
+
+### Capabilities: what we claim for MVP
+ 
 To get DWM compositing and basic D3D9 apps running, the UMD should expose a conservative, minimal set of caps:
 
 - Shader model: at least `vs_2_0` / `ps_2_0` equivalents (DWM heavily relies on pixel shaders)

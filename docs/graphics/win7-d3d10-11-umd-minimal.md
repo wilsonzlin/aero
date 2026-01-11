@@ -107,6 +107,16 @@ This doc focuses on the *API contract* (D3D10/11 DDI) that the Microsoft runtime
 
 Practical implication for D3D10/11 bring-up: whenever this doc says “flush/submit”, the concrete implementation should enqueue a bounded unit of work to the emulator and ensure the WDDM-visible fence monotonically advances.
 
+### 1.6 AeroGPU device discovery (UMDRIVERPRIVATE)
+
+UMDs must not assume a specific AeroGPU BAR0 ABI is present (legacy `"ARGP"` vs new `"AGPU"`), or that optional features like vblank timing and fence pages exist.
+
+During adapter open, query:
+
+* `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)`
+
+and decode the returned `aerogpu_umd_private_v1` (see `drivers/aerogpu/protocol/aerogpu_umd_private.h`). Use the reported feature bits to gate optional runtime behavior (e.g. vblank-paced present paths).
+ 
 ---
 
 ## 2) Minimum D3D10DDI + D3D11DDI entrypoints (Win7 bring-up set)

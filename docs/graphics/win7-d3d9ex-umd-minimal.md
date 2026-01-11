@@ -121,6 +121,16 @@ Notes:
 * “Close” is typically through adapter function table (e.g. `pfnCloseAdapter`), not an export.
 * Always support **one adapter instance per LUID**; DWM and multiple D3D clients expect consistent identity.
 
+**AeroGPU-specific discovery:** during adapter open, query the KMD for the active AeroGPU device ABI + feature bits via:
+
+* `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)`
+
+Decode the returned `aerogpu_umd_private_v1` from:
+
+* `drivers/aerogpu/protocol/aerogpu_umd_private.h`
+
+This allows the UMD to reliably determine whether it is running against the legacy `"ARGP"` device or the new `"AGPU"` ABI, and to enable optional paths such as vblank-paced presents only when `HAS_VBLANK` / `AEROGPU_FEATURE_VBLANK` is reported.
+
 ### 2.2 Adapter function table: minimum `D3DDDI_ADAPTERFUNCS`
 
 Your `OpenAdapter*` must return an adapter funcs table with (at least) the following implemented:
