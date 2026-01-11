@@ -230,11 +230,12 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
 
     // For HDD images we default to a COW overlay so the imported base image remains unchanged.
     if (mode === "cow" && !readOnly) {
+      let base: AsyncSectorDisk | null = null;
+      let overlay: OpfsAeroSparseDisk | null = null;
       try {
-        const base = await openBase();
+        base = await openBase();
         const overlayName = `${meta.id}.overlay.aerospar`;
 
-        let overlay: OpfsAeroSparseDisk;
         try {
           overlay = await OpfsAeroSparseDisk.open(overlayName);
         } catch {
@@ -263,6 +264,8 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
           },
         };
       } catch (err) {
+        await overlay?.close?.();
+        await base?.close?.();
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
         if (meta.format !== "raw" && meta.format !== "iso" && meta.format !== "unknown") throw err;
@@ -364,16 +367,23 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
       }
 
       if (backend.overlay && !entry.readOnly) {
-        const overlay = await openSparseOrCreate(backend.overlay.fileName, {
-          diskSizeBytes: backend.overlay.diskSizeBytes,
-          blockSizeBytes: backend.overlay.blockSizeBytes,
-        });
-        return {
-          disk: new OpfsCowDisk(base, overlay),
-          readOnly: entry.readOnly,
-          io: emptyIoTelemetry(),
-          backendSnapshot: backend,
-        };
+        let overlay: OpfsAeroSparseDisk | null = null;
+        try {
+          overlay = await openSparseOrCreate(backend.overlay.fileName, {
+            diskSizeBytes: backend.overlay.diskSizeBytes,
+            blockSizeBytes: backend.overlay.blockSizeBytes,
+          });
+          return {
+            disk: new OpfsCowDisk(base, overlay),
+            readOnly: entry.readOnly,
+            io: emptyIoTelemetry(),
+            backendSnapshot: backend,
+          };
+        } catch (err) {
+          await overlay?.close?.();
+          await base.close?.();
+          throw err;
+        }
       }
 
       return { disk: base, readOnly: entry.readOnly, io: emptyIoTelemetry(), backendSnapshot: backend };
@@ -468,26 +478,37 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
   }
 
   if (remoteCacheBackend === "idb") {
-    const disk = await IdbCowDisk.open(base, backend.overlay.fileName, backend.sizeBytes);
+    try {
+      const disk = await IdbCowDisk.open(base, backend.overlay.fileName, backend.sizeBytes);
+      return {
+        disk,
+        readOnly: entry.readOnly,
+        io: emptyIoTelemetry(),
+        backendSnapshot: backend,
+      };
+    } catch (err) {
+      await base.close?.();
+      throw err;
+    }
+  }
+
+  let overlay: OpfsAeroSparseDisk | null = null;
+  try {
+    overlay = await openSparseOrCreate(backend.overlay.fileName, {
+      diskSizeBytes: backend.overlay.diskSizeBytes,
+      blockSizeBytes: backend.overlay.blockSizeBytes,
+    });
     return {
-      disk,
+      disk: new OpfsCowDisk(base, overlay),
       readOnly: entry.readOnly,
       io: emptyIoTelemetry(),
       backendSnapshot: backend,
     };
+  } catch (err) {
+    await overlay?.close?.();
+    await base.close?.();
+    throw err;
   }
-
-  const overlay = await openSparseOrCreate(backend.overlay.fileName, {
-    diskSizeBytes: backend.overlay.diskSizeBytes,
-    blockSizeBytes: backend.overlay.blockSizeBytes,
-  });
-
-  return {
-    disk: new OpfsCowDisk(base, overlay),
-    readOnly: entry.readOnly,
-    io: emptyIoTelemetry(),
-    backendSnapshot: backend,
-  };
 }
 
 // Serialize all worker requests to avoid races between in-flight disk I/O and snapshot/restore.
