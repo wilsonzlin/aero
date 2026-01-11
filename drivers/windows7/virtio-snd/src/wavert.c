@@ -1582,6 +1582,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         while (VirtIoSndWaveRtStateRank(current) < VirtIoSndWaveRtStateRank(State)) {
             if (current == KSSTATE_STOP) {
+                BOOLEAN prepared;
+
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
                 bufferSize = stream->BufferSize;
                 periodBytes = stream->PeriodBytes;
@@ -1604,12 +1606,15 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 VirtIoSndWaveRtWriteClockRegister(stream, 0);
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-                if (bufferSize == 0 || periodBytes == 0 || periodBytes > bufferSize) {
-                    return STATUS_INVALID_DEVICE_STATE;
-                }
+                /*
+                 * PortCls may transition the pin to ACQUIRE before the cyclic buffer
+                 * is allocated. Mirror the modern path: enter ACQUIRE, but only
+                 * consider the stream "prepared" once the buffer is valid.
+                 */
+                prepared = (bufferSize != 0 && periodBytes != 0 && periodBytes <= bufferSize) ? TRUE : FALSE;
 
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
-                stream->HwPrepared = TRUE;
+                stream->HwPrepared = prepared;
                 stream->State = KSSTATE_ACQUIRE;
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
@@ -1635,7 +1640,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     return STATUS_INVALID_DEVICE_STATE;
                 }
                 if (!stream->HwPrepared) {
-                    return STATUS_INVALID_DEVICE_STATE;
+                    KeAcquireSpinLock(&stream->Lock, &oldIrql);
+                    stream->HwPrepared = TRUE;
+                    KeReleaseSpinLock(&stream->Lock, oldIrql);
                 }
 
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
