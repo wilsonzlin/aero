@@ -4528,7 +4528,12 @@ static void resolve_pending_event_queries(Device* dev, uint64_t fence_value) {
     if (!q) {
       continue;
     }
-    q->fence_value.store(fence_value, std::memory_order_release);
+    // Some call sites may pre-populate the fence value (e.g. when Issue(END)
+    // submits work but we intentionally defer making the query "ready" until a
+    // later boundary). Only stamp when still unset.
+    if (q->fence_value.load(std::memory_order_relaxed) == 0) {
+      q->fence_value.store(fence_value, std::memory_order_release);
+    }
     q->submitted.store(true, std::memory_order_release);
   }
   dev->pending_event_queries.clear();
@@ -10678,14 +10683,15 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   // but we defer associating the EVENT query with that fence until a later
   // flush/submission boundary.
   const bool had_pending_cmds = !dev->cmd.empty();
+  uint64_t issue_fence = dev->last_submission_fence;
   if (had_pending_cmds) {
-    (void)submit(dev);
+    issue_fence = submit(dev);
   }
   dev->pending_event_queries.erase(std::remove(dev->pending_event_queries.begin(),
                                                dev->pending_event_queries.end(),
                                                q),
                                    dev->pending_event_queries.end());
-  q->fence_value.store(0, std::memory_order_relaxed);
+  q->fence_value.store(issue_fence, std::memory_order_release);
   q->submitted.store(false, std::memory_order_relaxed);
   q->issued.store(true, std::memory_order_release);
   q->completion_logged.store(false, std::memory_order_relaxed);

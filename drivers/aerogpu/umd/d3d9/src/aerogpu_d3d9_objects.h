@@ -122,13 +122,17 @@ struct VertexDecl {
 struct Query {
   uint32_t type = 0;
   std::atomic<uint64_t> fence_value{0};
-  // True once the query has been associated with a specific submission fence.
+  // True once the query is eligible to observe its `fence_value` via GetData.
   //
   // For D3D9Ex EVENT queries, `Issue(END)` does not necessarily flush commands
   // to the kernel. DWM relies on polling `GetData(DONOTFLUSH)` without forcing
   // a submission; in that state the query must report "not ready" even if the
   // GPU is idle. We therefore keep EVENT queries "unsubmitted" until an
-  // explicit flush/submission boundary stamps them with a fence value.
+  // explicit flush/submission boundary (Flush/Present/etc) marks them ready.
+  //
+  // Note: in some paths we may already know the fence value (because the UMD
+  // submitted work for other reasons), but we still keep the query unsubmitted
+  // so the first DONOTFLUSH poll reports not-ready.
   std::atomic<bool> submitted{false};
   std::atomic<bool> issued{false};
   std::atomic<bool> completion_logged{false};
