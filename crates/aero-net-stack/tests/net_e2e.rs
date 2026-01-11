@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
+    io::Cursor,
     net::{Ipv4Addr, SocketAddr},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
 
 use aero_net_stack::packet::*;
@@ -10,13 +13,13 @@ use aero_net_stack::{
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::{TcpListener, TcpStream, UdpSocket},
     sync::oneshot,
     task::JoinHandle,
     time::{timeout, Duration},
 };
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
 
 /// End-to-end integration test that replaces the legacy `crates/aero-net` `net_e2e`:
 /// - guest DHCP + ARP
@@ -34,6 +37,7 @@ async fn net_e2e() {
     )]))
     .await;
     let tcp_relay = TcpWsRelayServer::spawn().await;
+    let session_cookie = create_gateway_session(tcp_relay.addr).await;
 
     let mut stack = NetworkStack::new(StackConfig::default());
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
@@ -134,7 +138,7 @@ async fn net_e2e() {
 
     let mut tcp_proxy = timeout(
         Duration::from_secs(2),
-        TcpProxyClient::connect(tcp_relay.addr, remote_ip, remote_port),
+        TcpProxyClient::connect(tcp_relay.addr, &session_cookie, remote_ip, remote_port),
     )
     .await
     .expect("tcp relay connect timeout")
@@ -519,11 +523,45 @@ async fn udp_send_recv(dst: SocketAddr, payload: &[u8]) -> std::io::Result<Vec<u
     Ok(buf)
 }
 
+const TEST_AERO_SESSION: &str = "test-session";
+
+async fn create_gateway_session(addr: SocketAddr) -> String {
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .expect("connect tcp relay /session");
+
+    // Mirror the canonical gateway bootstrap: `POST /session` sets `aero_session`.
+    let req = b"POST /session HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    stream
+        .write_all(req)
+        .await
+        .expect("send tcp relay /session request");
+
+    let (_proto, status, headers, _body) = read_http_response(&mut stream)
+        .await
+        .expect("read tcp relay /session response");
+    assert_eq!(status, "201", "expected 201 Created from /session");
+
+    let set_cookie = headers
+        .get("set-cookie")
+        .expect("tcp relay /session missing Set-Cookie");
+    parse_set_cookie_value(set_cookie, "aero_session").expect("parse aero_session cookie")
+}
+
+fn parse_set_cookie_value(set_cookie: &str, cookie_name: &str) -> Option<String> {
+    let first = set_cookie.split(';').next()?.trim();
+    let (name, value) = first.split_once('=')?;
+    (name.trim() == cookie_name).then(|| value.trim().to_string())
+}
+
 /// Minimal TCP relay implementing the `/tcp` WebSocket contract.
 ///
 /// Supports:
 /// - Canonical gateway format: `GET /tcp?v=1&host=<host>&port=<port>`
 /// - Legacy format: `GET /tcp?target=<host>:<port>` (also supports bracketed IPv6)
+///
+/// Also supports a minimal `POST /session` endpoint that issues an `aero_session` cookie, and
+/// requires that cookie on `/tcp` upgrades (mirroring the canonical gateway contract).
 struct TcpWsRelayServer {
     addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -577,18 +615,134 @@ async fn serve_tcp_relay(
     }
 }
 
-async fn handle_tcp_relay_client(stream: TcpStream) -> std::io::Result<()> {
+struct ReplayStream {
+    inner: TcpStream,
+    replay: Cursor<Vec<u8>>,
+}
+
+impl ReplayStream {
+    fn new(inner: TcpStream, replay: Vec<u8>) -> Self {
+        Self {
+            inner,
+            replay: Cursor::new(replay),
+        }
+    }
+}
+
+impl AsyncRead for ReplayStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let me = self.get_mut();
+        let pos = me.replay.position() as usize;
+        let replay_buf = me.replay.get_ref();
+        if pos < replay_buf.len() {
+            let remaining = &replay_buf[pos..];
+            let to_copy = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..to_copy]);
+            me.replay.set_position((pos + to_copy) as u64);
+            return Poll::Ready(Ok(()));
+        }
+
+        Pin::new(&mut me.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for ReplayStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        data: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, data)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
     use tokio_tungstenite::tungstenite::http::Response;
+
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 1024];
+    let header_end;
+    loop {
+        if buf.len() > 64 * 1024 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "http header too large",
+            ));
+        }
+        let n = stream.read(&mut tmp).await?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "eof while reading http header",
+            ));
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            header_end = pos + 4;
+            break;
+        }
+    }
+
+    let header = std::str::from_utf8(&buf[..header_end])
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid http header"))?;
+    let mut lines = header.split("\r\n");
+    let request_line = lines.next().unwrap_or_default();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let path = parts.next().unwrap_or_default();
+
+    if method == "POST" && path == "/session" {
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nSet-Cookie: aero_session={TEST_AERO_SESSION}; Path=/; HttpOnly\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(response.as_bytes()).await?;
+        return Ok(());
+    }
+
+    let replay = ReplayStream::new(stream, buf);
 
     let mut target: Option<(String, u16)> = None;
     let ws_stream = tokio_tungstenite::accept_hdr_async(
-        stream,
+        replay,
         |req: &tokio_tungstenite::tungstenite::http::Request<()>, resp| {
             let uri = req.uri();
             if uri.path() != "/tcp" {
                 return Err(Response::builder()
                     .status(404)
                     .body(Some("invalid path".to_string()))
+                    .expect("build response"));
+            }
+
+            let cookie_ok = req
+                .headers()
+                .get(tokio_tungstenite::tungstenite::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .split(';')
+                .any(|part| {
+                    let part = part.trim();
+                    let Some((k, v)) = part.split_once('=') else {
+                        return false;
+                    };
+                    k.trim() == "aero_session" && v.trim() == TEST_AERO_SESSION
+                });
+
+            if !cookie_ok {
+                return Err(Response::builder()
+                    .status(401)
+                    .body(Some("missing aero_session cookie".to_string()))
                     .expect("build response"));
             }
 
@@ -644,7 +798,7 @@ async fn handle_tcp_relay_client(stream: TcpStream) -> std::io::Result<()> {
         },
     )
     .await
-    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+    .map_err(|err| std::io::Error::other(err.to_string()))?;
 
     let (host, port) = target.expect("validated during handshake");
     let tcp = TcpStream::connect((host.as_str(), port)).await?;
@@ -717,11 +871,18 @@ struct TcpProxyClient {
 impl TcpProxyClient {
     async fn connect(
         proxy_addr: SocketAddr,
+        session_cookie: &str,
         remote_ip: Ipv4Addr,
         remote_port: u16,
     ) -> Result<Self, tokio_tungstenite::tungstenite::Error> {
         let url = format!("ws://{proxy_addr}/tcp?v=1&host={remote_ip}&port={remote_port}");
-        let (ws, _resp) = tokio_tungstenite::connect_async(url).await?;
+        let mut request = url.into_client_request()?;
+        request.headers_mut().insert(
+            tokio_tungstenite::tungstenite::http::header::COOKIE,
+            HeaderValue::from_str(&format!("aero_session={session_cookie}"))
+                .expect("valid Cookie header value"),
+        );
+        let (ws, _resp) = tokio_tungstenite::connect_async(request).await?;
         Ok(Self { ws })
     }
 
