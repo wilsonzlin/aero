@@ -32,7 +32,7 @@ static constexpr uint32_t kVsPassthroughPosColor[] = {
 static constexpr uint32_t kPsPassthroughColor[] = {
     0xFFFF0200u, // ps_2_0
     0x02000001u, // mov (2 operands)
-    0x800F0000u, // oC0.xyzw
+    0x000F0800u, // oC0.xyzw
     0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
 };
