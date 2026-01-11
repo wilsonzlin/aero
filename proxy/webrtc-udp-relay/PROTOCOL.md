@@ -14,6 +14,11 @@ The protocol has two parts:
 
 ## WebRTC DataChannel
 
+The relay supports multiple DataChannels. Each DataChannel message is treated as
+one independent datagram/message (no streaming).
+
+### UDP relay DataChannel
+
 - **Label:** `udp`
 - **Reliability:** best-effort UDP semantics.
   - `ordered = false`
@@ -22,6 +27,34 @@ The protocol has two parts:
 The relay MUST treat each DataChannel message as a single UDP datagram frame (no
 streaming / no message reassembly beyond what SCTP provides for a single
 message).
+
+The binary framing described in this document applies **only** to the `udp`
+DataChannel.
+
+### L2 tunnel DataChannel
+
+- **Label:** `l2`
+- **Recommended client options:**
+  - `ordered = false`
+  - `maxRetransmits = 0`
+
+Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
+it acts as a transport bridge:
+
+```
+browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
+```
+
+- Each binary DataChannel message is forwarded as a single WebSocket **binary**
+  message to the configured backend.
+- Each WebSocket binary message received from the backend is forwarded as a
+  single DataChannel message.
+- The relay negotiates WebSocket subprotocol **`aero-l2-tunnel-v1`**.
+- Message format and semantics are defined by `aero-l2-tunnel-v1` (see
+  `docs/l2-tunnel-protocol.md`).
+- The relay enforces a per-message size limit (`L2_MAX_MESSAGE_BYTES`, default
+  4096 bytes). Messages larger than this limit may cause the relay to tear down
+  the `l2` bridge.
 
 ---
 

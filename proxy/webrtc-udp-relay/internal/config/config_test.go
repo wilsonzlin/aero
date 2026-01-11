@@ -48,6 +48,12 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.PreferV2 {
 		t.Fatalf("PreferV2=true, want false")
 	}
+	if cfg.L2BackendWSURL != "" {
+		t.Fatalf("L2BackendWSURL=%q, want empty", cfg.L2BackendWSURL)
+	}
+	if cfg.L2MaxMessageBytes != DefaultL2MaxMessageBytes {
+		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, DefaultL2MaxMessageBytes)
+	}
 	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	}
@@ -166,6 +172,38 @@ func TestWebRTCUDPListenIP_Invalid(t *testing.T) {
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestL2BackendWSURL_ValidatesSchemeAndHost(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvL2BackendWSURL: "http://example.com/l2",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+
+	_, err = load(lookupMap(map[string]string{
+		EnvL2BackendWSURL: "ws:///l2",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvL2BackendWSURL:    "ws://127.0.0.1:8090/l2",
+		EnvL2MaxMessageBytes: "2048",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.L2BackendWSURL != "ws://127.0.0.1:8090/l2" {
+		t.Fatalf("L2BackendWSURL=%q", cfg.L2BackendWSURL)
+	}
+	if cfg.L2MaxMessageBytes != 2048 {
+		t.Fatalf("L2MaxMessageBytes=%d, want 2048", cfg.L2MaxMessageBytes)
 	}
 }
 

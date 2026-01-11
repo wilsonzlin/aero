@@ -30,6 +30,10 @@ const (
 	EnvDataChannelSendQueueBytes = "DATACHANNEL_SEND_QUEUE_BYTES"
 	EnvPreferV2                  = "PREFER_V2"
 
+	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
+	EnvL2BackendWSURL    = "L2_BACKEND_WS_URL"
+	EnvL2MaxMessageBytes = "L2_MAX_MESSAGE_BYTES"
+
 	// Quota/rate limiting knobs (required by the task).
 	EnvMaxSessions                     = "MAX_SESSIONS"
 	EnvMaxUDPPpsPerSession             = "MAX_UDP_PPS_PER_SESSION"
@@ -65,6 +69,7 @@ const (
 	DefaultUDPReadBufferBytes        = 65535
 	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
 	DefaultMaxUDPBindingsPerSession  = 128
+	DefaultL2MaxMessageBytes         = 4096
 
 	DefaultAuthMode AuthMode = AuthModeAPIKey
 
@@ -173,6 +178,10 @@ type Config struct {
 	UDPReadBufferBytes        int
 	DataChannelSendQueueBytes int
 	PreferV2                  bool
+
+	// L2 tunnel bridging.
+	L2BackendWSURL    string
+	L2MaxMessageBytes int
 
 	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
 	// its defaults (OS ephemeral port selection).
@@ -309,6 +318,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, EnvDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	l2BackendWSURL := envOrDefault(lookup, EnvL2BackendWSURL, "")
+	l2MaxMessageBytes, err := envIntOrDefault(lookup, EnvL2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	if err != nil {
 		return Config{}, err
 	}
@@ -484,6 +498,8 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+EnvUDPBindingIdleTimeout+")")
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
+	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
+	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+EnvL2MaxMessageBytes+")")
 
 	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
 	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+EnvSignalingAuthTimeout+")")
@@ -543,6 +559,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if dataChannelSendQueueBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--datachannel-send-queue-bytes must be > 0", EnvDataChannelSendQueueBytes)
+	}
+	if l2MaxMessageBytes <= 0 {
+		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", EnvL2MaxMessageBytes)
 	}
 	if maxUDPBindingsPerSession <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
@@ -625,6 +644,26 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("%s/%s: %w", EnvAllowedOrigins, "--allowed-origins", err)
 	}
 
+	if strings.TrimSpace(l2BackendWSURL) != "" {
+		u, err := url.Parse(strings.TrimSpace(l2BackendWSURL))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL, err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "ws" && scheme != "wss" {
+			return Config{}, fmt.Errorf("invalid %s/%s %q (expected ws:// or wss://)", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
+		}
+		if u.Host == "" {
+			return Config{}, fmt.Errorf("invalid %s/%s %q (missing host)", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
+		}
+		if u.User != nil {
+			return Config{}, fmt.Errorf("invalid %s/%s %q (must not include credentials)", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
+		}
+		// Preserve the original string (including path/query) but ensure whitespace
+		// isn't part of the configured URL.
+		l2BackendWSURL = strings.TrimSpace(l2BackendWSURL)
+	}
+
 	cfg := Config{
 		ListenAddr:          listenAddr,
 		PublicBaseURL:       publicBaseURL,
@@ -646,6 +685,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		UDPReadBufferBytes:        udpReadBufferBytes,
 		DataChannelSendQueueBytes: dataChannelSendQueueBytes,
 		PreferV2:                  preferV2,
+
+		L2BackendWSURL:    l2BackendWSURL,
+		L2MaxMessageBytes: l2MaxMessageBytes,
 
 		WebRTCUDPPortRange:           webrtcUDPPortRange,
 		WebRTCUDPListenIP:            webrtcUDPListenIP,

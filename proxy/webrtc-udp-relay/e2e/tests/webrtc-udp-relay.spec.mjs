@@ -46,12 +46,12 @@ async function startWebServer() {
   };
 }
 
-async function spawnRelayServer() {
+async function spawnGoReadyServer({ name, pkg, env }) {
   const moduleDir = path.join(__dirname, "..", "..");
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aero-webrtc-udp-relay-e2e-"));
-  const binPath = path.join(tmpDir, "relay-server-go");
+  const binPath = path.join(tmpDir, name);
 
-  const build = spawnSync("go", ["build", "-o", binPath, "./e2e/relay-server-go"], {
+  const build = spawnSync("go", ["build", "-o", binPath, pkg], {
     cwd: moduleDir,
     stdio: "inherit",
   });
@@ -63,9 +63,7 @@ async function spawnRelayServer() {
   const child = spawn(binPath, [], {
     env: {
       ...process.env,
-      AUTH_MODE: "none",
-      BIND_HOST: "127.0.0.1",
-      PORT: "0",
+      ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -110,6 +108,30 @@ async function spawnRelayServer() {
       await fs.rm(tmpDir, { recursive: true, force: true });
     },
   };
+}
+
+async function spawnRelayServer(extraEnv = {}) {
+  return spawnGoReadyServer({
+    name: "relay-server-go",
+    pkg: "./e2e/relay-server-go",
+    env: {
+      AUTH_MODE: "none",
+      BIND_HOST: "127.0.0.1",
+      PORT: "0",
+      ...extraEnv,
+    },
+  });
+}
+
+async function spawnL2BackendServer() {
+  return spawnGoReadyServer({
+    name: "l2-backend-go",
+    pkg: "./e2e/l2-backend-go",
+    env: {
+      BIND_HOST: "127.0.0.1",
+      PORT: "0",
+    },
+  });
 }
 
 test("relays a UDP datagram via a Chromium WebRTC DataChannel", async ({ page }) => {
@@ -484,5 +506,95 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
     expect(echoed).toBe("hello from websocket ipv6");
   } finally {
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
+test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page }) => {
+  const backend = await spawnL2BackendServer();
+  const relay = await spawnRelayServer({
+    L2_BACKEND_WS_URL: `ws://127.0.0.1:${backend.port}/l2`,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const pong = await page.evaluate(
+      async ({ relayPort }) => {
+        const iceServers = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const pc = new RTCPeerConnection({ iceServers });
+        const dc = pc.createDataChannel("l2", { ordered: false, maxRetransmits: 0 });
+        dc.binaryType = "arraybuffer";
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const onState = () => {
+            if (pc.iceGatheringState !== "complete") return;
+            pc.removeEventListener("icegatheringstatechange", onState);
+            resolve();
+          };
+          pc.addEventListener("icegatheringstatechange", onState);
+        });
+
+        ws.send(JSON.stringify({ version: 1, offer: pc.localDescription }));
+
+        const answerMsg = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+          ws.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(JSON.parse(event.data));
+            },
+            { once: true },
+          );
+        });
+
+        if (answerMsg?.version !== 1 || !answerMsg.answer?.sdp) {
+          throw new Error("invalid answer message");
+        }
+
+        await pc.setRemoteDescription(answerMsg.answer);
+
+        await new Promise((resolve, reject) => {
+          dc.addEventListener("open", () => resolve(), { once: true });
+          dc.addEventListener("error", () => reject(new Error("datachannel error")), { once: true });
+        });
+
+        // PING per docs/l2-tunnel-protocol.md: magic (0xA2) + ver (0x03) + type (0x01) + flags (0).
+        dc.send(new Uint8Array([0xa2, 0x03, 0x01, 0x00]));
+
+        const res = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for PONG")), 10_000);
+          dc.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(new Uint8Array(event.data));
+            },
+            { once: true },
+          );
+        });
+
+        ws.close();
+        pc.close();
+        return Array.from(res);
+      },
+      { relayPort: relay.port },
+    );
+
+    expect(pong).toEqual([0xa2, 0x03, 0x02, 0x00]); // PONG
+  } finally {
+    await Promise.all([web.close(), relay.kill(), backend.kill()]);
   }
 });

@@ -83,6 +83,8 @@ func main() {
 		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
 		UDPReadBufferBytes:        cfg.UDPReadBufferBytes,
 		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
+		L2BackendWSURL:            cfg.L2BackendWSURL,
+		L2MaxMessageBytes:         cfg.L2MaxMessageBytes,
 		PreferV2:                  cfg.PreferV2,
 	}
 	sig := signaling.NewServer(signaling.Config{

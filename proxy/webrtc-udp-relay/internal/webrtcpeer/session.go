@@ -9,8 +9,10 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
 
-// Session owns a server-side PeerConnection and (optionally) a SessionRelay bound
-// to the "udp" DataChannel.
+// Session owns a server-side PeerConnection and binds relay adapters to specific
+// DataChannel labels:
+//   - "udp": WebRTC UDP relay
+//   - "l2":  L2 tunnel transport bridge (DataChannel <-> backend WebSocket)
 type Session struct {
 	pc         *webrtc.PeerConnection
 	relayCfg   relay.Config
@@ -20,6 +22,7 @@ type Session struct {
 
 	mu    sync.Mutex
 	r     *relay.SessionRelay
+	l2    *l2Bridge
 	close sync.Once
 }
 
@@ -50,28 +53,55 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 	}
 
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != "udp" {
-			return
-		}
+		switch dc.Label() {
+		case "udp":
+			r := relay.NewSessionRelay(dc, relayCfg, destPolicy, quota)
 
-		r := relay.NewSessionRelay(dc, relayCfg, destPolicy, quota)
+			s.mu.Lock()
+			if s.r != nil {
+				s.r.Close()
+			}
+			s.r = r
+			s.mu.Unlock()
 
-		s.mu.Lock()
-		if s.r != nil {
-			s.r.Close()
-		}
-		s.r = r
-		s.mu.Unlock()
-
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			if msg.IsString {
+			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				if msg.IsString {
+					return
+				}
+				r.HandleDataChannelMessage(msg.Data)
+			})
+			dc.OnClose(func() {
+				r.Close()
+			})
+		case "l2":
+			cfg := relayCfg.WithDefaults()
+			if cfg.L2BackendWSURL == "" {
+				_ = dc.Close()
 				return
 			}
-			r.HandleDataChannelMessage(msg.Data)
-		})
-		dc.OnClose(func() {
-			r.Close()
-		})
+
+			b := newL2Bridge(dc, cfg.L2BackendWSURL, cfg.L2MaxMessageBytes, quota)
+
+			s.mu.Lock()
+			if s.l2 != nil {
+				s.l2.Close()
+			}
+			s.l2 = b
+			s.mu.Unlock()
+
+			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				if msg.IsString {
+					return
+				}
+				data := append([]byte(nil), msg.Data...)
+				b.HandleDataChannelMessage(data)
+			})
+			dc.OnClose(func() {
+				b.Close()
+			})
+		default:
+			return
+		}
 	})
 
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
@@ -94,6 +124,9 @@ func (s *Session) Close() error {
 		s.mu.Lock()
 		if s.r != nil {
 			s.r.Close()
+		}
+		if s.l2 != nil {
+			s.l2.Close()
 		}
 		s.mu.Unlock()
 		if s.onClose != nil {

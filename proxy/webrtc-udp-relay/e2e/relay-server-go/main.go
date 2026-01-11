@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
 
 func main() {
@@ -131,49 +131,24 @@ func serveSignaling(ws *websocket.Conn) {
 	}
 
 	api := webrtc.NewAPI()
+	destPolicy := policy.NewDevDestinationPolicy()
+	relayCfg := relay.Config{
+		PreferV2:                  true,
+		MaxUDPBindingsPerSession:  128,
+		UDPBindingIdleTimeout:     time.Minute,
+		UDPReadBufferBytes:        65535,
+		DataChannelSendQueueBytes: 1 << 20,
+		L2BackendWSURL:            os.Getenv("L2_BACKEND_WS_URL"),
+		L2MaxMessageBytes:         envIntOrDefault("L2_MAX_MESSAGE_BYTES", 4096),
+	}
 
-	pc, err := api.NewPeerConnection(webrtc.Configuration{
-		ICEServers: nil,
-	})
+	sess, err := webrtcpeer.NewSession(api, nil, relayCfg, destPolicy, nil, nil)
 	if err != nil {
 		return
 	}
-	defer pc.Close()
+	defer sess.Close()
 
-	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != "udp" {
-			return
-		}
-
-		destPolicy := policy.NewDevDestinationPolicy()
-		var sendMu sync.Mutex
-		engine := relay.NewEngine(relay.EngineConfig{
-			PreferV2: true,
-			Policy:   destPolicy,
-		}, func(pkt []byte) error {
-			// Pion's DataChannel is safe for concurrent Send calls, but we keep
-			// sends serialized anyway to reduce the chance of surprising races in
-			// the E2E harness.
-			sendMu.Lock()
-			defer sendMu.Unlock()
-			return dc.Send(pkt)
-		})
-
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			if msg.IsString {
-				return
-			}
-			// Handle each frame in its own goroutine so we don't block pion internals.
-			data := append([]byte(nil), msg.Data...)
-			go func() {
-				_ = engine.HandleClientFrame(data)
-			}()
-		})
-
-		dc.OnClose(func() {
-			_ = engine.Close()
-		})
-	})
+	pc := sess.PeerConnection()
 
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{
 		Type: webrtc.SDPTypeOffer,
