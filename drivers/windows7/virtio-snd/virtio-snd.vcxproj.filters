@@ -28,9 +28,6 @@
     <ClCompile Include="src\topology.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\virtio\common\src\virtio_pci_modern_wdm.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\virtio_snd_proto.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -50,6 +47,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\virtiosnd_queue_split.c">
@@ -76,16 +76,7 @@
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c">
