@@ -1387,6 +1387,17 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllo
         if (aerogpuCurrentRenderTarget === handle) aerogpuCurrentRenderTarget = null;
         const buf: AeroGpuCpuBuffer = { sizeBytes, data: new Uint8Array(sizeBytes) };
         if (backingAllocId !== 0) {
+          const table = requireAllocTable(allocTable);
+          const alloc = table.get(backingAllocId);
+          if (!alloc) {
+            throw new Error(`aerogpu: CREATE_BUFFER unknown alloc_id ${backingAllocId} for buffer ${handle}`);
+          }
+          const endBytes = BigInt(backingOffsetBytes) + BigInt(sizeBytes);
+          if (endBytes > BigInt(alloc.sizeBytes)) {
+            throw new Error(
+              `aerogpu: CREATE_BUFFER backing out of bounds (alloc_id=${backingAllocId}, offset=${backingOffsetBytes}, size=${sizeBytes}, allocBytes=${alloc.sizeBytes})`,
+            );
+          }
           buf.backing = { allocId: backingAllocId, offsetBytes: backingOffsetBytes };
         }
         aerogpuBuffers.set(handle, buf);
@@ -1414,6 +1425,9 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllo
         if (mipLevels !== 1 || arrayLayers !== 1) {
           throw new Error("aerogpu: CREATE_TEXTURE2D only supports mip_levels=1 and array_layers=1 in the browser executor");
         }
+        if (backingAllocId !== 0 && rowPitchBytesRaw === 0) {
+          throw new Error("aerogpu: CREATE_TEXTURE2D backing_alloc_id requires non-zero row_pitch_bytes");
+        }
         if (
           format !== AEROGPU_FORMAT_R8G8B8A8_UNORM &&
           format !== AEROGPU_FORMAT_R8G8B8X8_UNORM &&
@@ -1432,6 +1446,20 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllo
         }
         if (rowPitchBytes % 4 !== 0) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D row_pitch_bytes must be a multiple of 4 (got ${rowPitchBytes})`);
+        }
+        if (backingAllocId !== 0) {
+          const table = requireAllocTable(allocTable);
+          const alloc = table.get(backingAllocId);
+          if (!alloc) {
+            throw new Error(`aerogpu: CREATE_TEXTURE2D unknown alloc_id ${backingAllocId} for texture ${handle}`);
+          }
+          const backingBytes = BigInt(rowPitchBytes) * BigInt(height);
+          const endBytes = BigInt(backingOffsetBytes) + backingBytes;
+          if (endBytes > BigInt(alloc.sizeBytes)) {
+            throw new Error(
+              `aerogpu: CREATE_TEXTURE2D backing out of bounds (alloc_id=${backingAllocId}, offset=${backingOffsetBytes}, size=${backingBytes}, allocBytes=${alloc.sizeBytes})`,
+            );
+          }
         }
 
         const byteLenBig = BigInt(width) * BigInt(height) * 4n;
