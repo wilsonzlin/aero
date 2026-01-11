@@ -539,7 +539,7 @@ runs don't overwrite each other.
 In CI we run a shorter benchmark configuration to keep PR runtime low:
 
 ```bash
-AERO_BENCH_PROFILE=ci cargo bench --locked -p aero-cpu-core --bench emulator_critical -- --noplot
+AERO_BENCH_PROFILE=ci cargo bench --locked -p aero-cpu-core --bench emulator_critical --features legacy-interp -- --noplot
 ```
 
 ## Benchmark regression CI
