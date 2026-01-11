@@ -368,6 +368,8 @@ impl AerogpuResourceManager {
     /// Map an ILAY input layout + currently-bound vertex buffer strides into WebGPU vertex layouts.
     ///
     /// The mapping is cached per input layout, keyed by `(vertex_shader_dxbc_hash, slot_strides)`.
+    /// The returned [`MappedInputLayout`] includes both the WebGPU vertex buffer layouts and the
+    /// D3D slot → WebGPU slot mapping that must be applied when binding vertex buffers.
     ///
     /// If the vertex shader's `ISGN` signature is unavailable, this falls back to mapping ILAY
     /// semantics in declaration order to shader locations `0..N` (sufficient for bring-up shaders).
