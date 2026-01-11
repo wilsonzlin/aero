@@ -311,7 +311,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
     const out: L2TunnelClientOptions = { ...(opts.tunnelOptions ?? {}) };
     if (out.maxFrameSize === undefined) {
       const maxFramePayloadBytes = session?.limits?.l2?.maxFramePayloadBytes;
-      if (Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0) {
+      if (typeof maxFramePayloadBytes === "number" && Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0) {
         out.maxFrameSize = maxFramePayloadBytes;
       }
     }
