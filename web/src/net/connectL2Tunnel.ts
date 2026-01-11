@@ -273,6 +273,15 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       // Ignore late events from superseded tunnels.
       if (gen !== generation) return;
 
+      if (ev.type === "error") {
+        // `WebSocketL2TunnelClient` also throttles error events internally, but
+        // `connectL2Tunnel` can emit its own errors (disconnects, reconnect
+        // attempts, `sendFrame()` while disconnected). Run everything through the
+        // same throttler so callers see at most one error per interval overall.
+        emitErrorThrottled(ev.error);
+        return;
+      }
+
       if (ev.type === "open") {
         reconnectAttempts = 0;
       } else if (ev.type === "close") {
