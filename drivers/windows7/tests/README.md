@@ -35,6 +35,7 @@ drivers/windows7/tests/
   - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059`).
     - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID `DEV_1018`,
       which is intentionally **not** supported by the Aero INF/contract v1 (and the test will fail to find the device).
+- Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`
@@ -49,16 +50,21 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
 # or:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
-The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test
-markers (virtio-input + virtio-snd) were emitted so older selftest binaries can’t accidentally pass.
+The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
+(virtio-input + virtio-snd) were emitted so older selftest binaries can’t accidentally pass.
 
-Note: The virtio-snd test emits `SKIP` by default unless enabled via `--test-snd` / `--require-snd`.
-When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL. Use `--disable-snd`
-to force `SKIP` even if `--test-snd` is set.
+Note:
+- The virtio-snd test emits `SKIP` by default unless enabled via `--test-snd` / `--require-snd`. When enabled, missing
+  virtio-snd or playback failure causes the overall selftest to FAIL. Use `--disable-snd` to force `SKIP` even if
+  `--test-snd` is set.
+- Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
+  `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
+  detection is performed).
 
 ### Building (Windows)
 

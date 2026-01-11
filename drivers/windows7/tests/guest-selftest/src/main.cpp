@@ -52,6 +52,10 @@ struct Options {
   bool disable_snd = false;
   // Enable the virtio-snd test. Missing device or playback failure causes overall FAIL.
   bool require_snd = false;
+  // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
+  bool require_snd_capture = false;
+  // If set, run a capture smoke test when a virtio-snd capture endpoint is present.
+  bool test_snd_capture = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -2241,6 +2245,505 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
   return true;
 }
 
+static std::wstring WinmmInErrorToWide(MMRESULT rc) {
+  wchar_t buf[256]{};
+  if (waveInGetErrorTextW(rc, buf, static_cast<UINT>(sizeof(buf) / sizeof(buf[0]))) == MMSYSERR_NOERROR) {
+    return std::wstring(buf);
+  }
+  return L"";
+}
+
+static std::optional<std::wstring> WaveInDeviceInstanceId(UINT device_id) {
+  wchar_t buf[512]{};
+  const MMRESULT rc = waveInMessage(reinterpret_cast<HWAVEIN>(static_cast<UINT_PTR>(device_id)),
+                                    DRV_QUERYDEVICEINSTANCEID, reinterpret_cast<DWORD_PTR>(buf), sizeof(buf));
+  if (rc != MMSYSERR_NOERROR) return std::nullopt;
+  buf[(sizeof(buf) / sizeof(buf[0])) - 1] = L'\0';
+  if (buf[0] == L'\0') return std::nullopt;
+  return std::wstring(buf);
+}
+
+static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& match_names) {
+  const UINT num = waveInGetNumDevs();
+  log.Logf("virtio-snd: waveIn capture devices=%u", num);
+  if (num == 0) return false;
+
+  auto name_matches = [&](const std::wstring& n) -> bool {
+    if (ContainsInsensitive(n, L"virtio") || ContainsInsensitive(n, L"aero")) return true;
+    for (const auto& m : match_names) {
+      if (!m.empty() && ContainsInsensitive(n, m)) return true;
+    }
+    return false;
+  };
+
+  UINT device_id = UINT_MAX;
+  int best_score = 0;
+  for (UINT i = 0; i < num; i++) {
+    WAVEINCAPSW caps{};
+    const MMRESULT rc = waveInGetDevCapsW(i, &caps, sizeof(caps));
+    if (rc != MMSYSERR_NOERROR) continue;
+
+    int score = 0;
+    if (name_matches(caps.szPname)) score += 100;
+
+    const auto inst_id = WaveInDeviceInstanceId(i);
+    if (inst_id.has_value()) {
+      log.Logf("virtio-snd: waveIn[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
+               WideToUtf8(*inst_id).c_str());
+      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
+        score += 500;
+      }
+      const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
+      if (IsVirtioSndPciHardwareId(hwids)) score += 1000;
+      if (IsVirtioHardwareId(hwids)) score += 200;
+    } else {
+      log.Logf("virtio-snd: waveIn[%u]=%s instance_id=<unavailable>", i, WideToUtf8(caps.szPname).c_str());
+    }
+
+    if (score > best_score) {
+      best_score = score;
+      device_id = i;
+    }
+  }
+
+  if (device_id == UINT_MAX || best_score <= 0) {
+    log.LogLine("virtio-snd: waveIn no matching device found");
+    return false;
+  } else {
+    log.Logf("virtio-snd: waveIn using device_id=%u score=%d", device_id, best_score);
+  }
+
+  HANDLE done_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!done_event) {
+    log.Logf("virtio-snd: waveIn CreateEvent failed err=%lu", GetLastError());
+    return false;
+  }
+
+  auto try_open = [&](WORD channels, HWAVEIN* out_hwi, WAVEFORMATEX* out_fmt) -> MMRESULT {
+    if (!out_hwi || !out_fmt) return MMSYSERR_INVALPARAM;
+    *out_hwi = nullptr;
+    *out_fmt = {};
+    out_fmt->wFormatTag = WAVE_FORMAT_PCM;
+    out_fmt->nChannels = channels;
+    out_fmt->nSamplesPerSec = 48000;
+    out_fmt->wBitsPerSample = 16;
+    out_fmt->nBlockAlign = static_cast<WORD>((out_fmt->nChannels * out_fmt->wBitsPerSample) / 8);
+    out_fmt->nAvgBytesPerSec = out_fmt->nSamplesPerSec * out_fmt->nBlockAlign;
+
+    return waveInOpen(out_hwi, device_id, out_fmt, reinterpret_cast<DWORD_PTR>(done_event), 0, CALLBACK_EVENT);
+  };
+
+  HWAVEIN hwi = nullptr;
+  WAVEFORMATEX fmt{};
+  MMRESULT rc = try_open(1, &hwi, &fmt);
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveInOpen mono failed rc=%u text=%s; trying stereo", rc,
+             WideToUtf8(WinmmInErrorToWide(rc)).c_str());
+    rc = try_open(2, &hwi, &fmt);
+  }
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveInOpen failed rc=%u text=%s", rc, WideToUtf8(WinmmInErrorToWide(rc)).c_str());
+    CloseHandle(done_event);
+    return false;
+  }
+
+  ResetEvent(done_event);
+
+  const UINT32 frames = fmt.nSamplesPerSec / 4; // 250ms
+  std::vector<BYTE> data(static_cast<size_t>(frames) * fmt.nBlockAlign);
+
+  WAVEHDR hdr{};
+  hdr.lpData = reinterpret_cast<LPSTR>(data.data());
+  hdr.dwBufferLength = static_cast<DWORD>(data.size());
+
+  rc = waveInPrepareHeader(hwi, &hdr, sizeof(hdr));
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveInPrepareHeader failed rc=%u text=%s", rc,
+             WideToUtf8(WinmmInErrorToWide(rc)).c_str());
+    waveInClose(hwi);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  rc = waveInAddBuffer(hwi, &hdr, sizeof(hdr));
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveInAddBuffer failed rc=%u text=%s", rc, WideToUtf8(WinmmInErrorToWide(rc)).c_str());
+    waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
+    waveInClose(hwi);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  rc = waveInStart(hwi);
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveInStart failed rc=%u text=%s", rc, WideToUtf8(WinmmInErrorToWide(rc)).c_str());
+    waveInReset(hwi);
+    waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
+    waveInClose(hwi);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  const DWORD wait_rc = WaitForSingleObject(done_event, 5000);
+  if (wait_rc != WAIT_OBJECT_0) {
+    log.Logf("virtio-snd: waveIn timed out wait_rc=%lu", wait_rc);
+    waveInStop(hwi);
+    waveInReset(hwi);
+    waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
+    waveInClose(hwi);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  waveInStop(hwi);
+  waveInReset(hwi);
+
+  const bool got_bytes = hdr.dwBytesRecorded > 0;
+  log.Logf("virtio-snd: waveIn captured bytes=%lu flags=0x%08lx", static_cast<unsigned long>(hdr.dwBytesRecorded),
+           static_cast<unsigned long>(hdr.dwFlags));
+
+  waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
+  waveInClose(hwi);
+  CloseHandle(done_event);
+
+  if (!got_bytes) {
+    log.LogLine("virtio-snd: waveIn capture did not return any bytes");
+    return false;
+  }
+
+  log.LogLine("virtio-snd: waveIn capture ok");
+  return true;
+}
+
+static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstring>& match_names, bool smoke_test,
+                                       DWORD endpoint_wait_ms) {
+  TestResult out;
+
+  ScopedCoInitialize com(COINIT_MULTITHREADED);
+  if (FAILED(com.hr())) {
+    out.fail_reason = "com_init_failed";
+    out.hr = com.hr();
+    log.Logf("virtio-snd: CoInitializeEx failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+    return out;
+  }
+
+  ComPtr<IMMDeviceEnumerator> enumerator;
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(enumerator.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "create_device_enumerator_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: CoCreateInstance(MMDeviceEnumerator) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  ComPtr<IMMDevice> chosen;
+  std::wstring chosen_friendly;
+  std::wstring chosen_id;
+  int best_score = -1;
+
+  const DWORD deadline_ms = GetTickCount() + endpoint_wait_ms;
+  int attempt = 0;
+
+  for (;;) {
+    attempt++;
+
+    ComPtr<IMMDeviceCollection> collection;
+    const DWORD state_mask =
+        DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_NOTPRESENT | DEVICE_STATE_UNPLUGGED;
+    hr = enumerator->EnumAudioEndpoints(eCapture, state_mask, collection.Put());
+    if (FAILED(hr)) {
+      log.Logf("virtio-snd: EnumAudioEndpoints(eCapture) failed hr=0x%08lx attempt=%d",
+               static_cast<unsigned long>(hr), attempt);
+      if (endpoint_wait_ms != 0 && static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+        Sleep(1000);
+        continue;
+      }
+      break;
+    }
+
+    UINT count = 0;
+    hr = collection->GetCount(&count);
+    if (FAILED(hr)) {
+      log.Logf("virtio-snd: IMMDeviceCollection::GetCount failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      if (endpoint_wait_ms != 0 && static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+        Sleep(1000);
+        continue;
+      }
+      break;
+    }
+
+    log.Logf("virtio-snd: capture endpoints count=%u attempt=%d", count, attempt);
+
+    best_score = -1;
+    chosen.Reset();
+    chosen_friendly.clear();
+    chosen_id.clear();
+
+    for (UINT i = 0; i < count; i++) {
+      ComPtr<IMMDevice> dev;
+      hr = collection->Item(i, dev.Put());
+      if (FAILED(hr)) continue;
+
+      DWORD state = 0;
+      hr = dev->GetState(&state);
+      if (FAILED(hr)) state = 0;
+
+      LPWSTR dev_id_raw = nullptr;
+      std::wstring dev_id;
+      hr = dev->GetId(&dev_id_raw);
+      if (SUCCEEDED(hr) && dev_id_raw) {
+        dev_id = dev_id_raw;
+        CoTaskMemFree(dev_id_raw);
+      }
+
+      ComPtr<IPropertyStore> props;
+      hr = dev->OpenPropertyStore(STGM_READ, props.Put());
+
+      std::wstring friendly;
+      std::wstring instance_id;
+      if (SUCCEEDED(hr)) {
+        friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+        if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+        instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
+      }
+
+      const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+      const bool hwid_virtio_snd = IsVirtioSndPciHardwareId(hwids);
+      const bool hwid_virtio = IsVirtioHardwareId(hwids);
+
+      log.Logf("virtio-snd: capture endpoint idx=%u state=%s name=%s id=%s instance_id=%s", static_cast<unsigned>(i),
+               MmDeviceStateToString(state), WideToUtf8(friendly).c_str(), WideToUtf8(dev_id).c_str(),
+               WideToUtf8(instance_id).c_str());
+      if (!hwids.empty()) {
+        log.Logf("virtio-snd: capture endpoint idx=%u hwid0=%s", static_cast<unsigned>(i),
+                 WideToUtf8(hwids[0]).c_str());
+      }
+
+      if (state != DEVICE_STATE_ACTIVE) continue;
+
+      int score = 0;
+      if (ContainsInsensitive(friendly, L"virtio")) score += 100;
+      if (ContainsInsensitive(friendly, L"aero")) score += 50;
+      if (ContainsInsensitive(friendly, L"snd")) score += 20;
+      for (const auto& m : match_names) {
+        if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
+      }
+      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+        score += 150;
+      }
+      if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
+        score += 80;
+      }
+      if (hwid_virtio_snd) score += 200;
+      if (hwid_virtio) score += 90;
+
+      if (score <= 0) continue;
+
+      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
+        best_score = score;
+        chosen = std::move(dev);
+        chosen_friendly = friendly;
+        chosen_id = dev_id;
+      }
+    }
+
+    if (chosen) break;
+    if (endpoint_wait_ms == 0 || static_cast<int32_t>(GetTickCount() - deadline_ms) >= 0) break;
+    Sleep(1000);
+  }
+
+  if (!chosen) {
+    log.LogLine("virtio-snd: no matching ACTIVE capture endpoint found; checking default endpoint");
+    hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, chosen.Put());
+    if (FAILED(hr) || !chosen) {
+      out.fail_reason = "no_matching_endpoint";
+      out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+      log.LogLine("virtio-snd: no default capture endpoint available");
+      return out;
+    }
+
+    ComPtr<IPropertyStore> props;
+    hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
+    std::wstring friendly;
+    std::wstring instance_id;
+    if (SUCCEEDED(hr)) {
+      friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+      if (friendly.empty()) friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+      instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
+    }
+    const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+    if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
+      out.fail_reason = "no_matching_endpoint";
+      out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+      log.Logf("virtio-snd: default capture endpoint does not look like virtio-snd (name=%s instance_id=%s)",
+               WideToUtf8(friendly).c_str(), WideToUtf8(instance_id).c_str());
+      return out;
+    }
+
+    best_score = 0;
+    chosen_friendly.clear();
+    chosen_id.clear();
+
+    LPWSTR dev_id_raw = nullptr;
+    hr = chosen->GetId(&dev_id_raw);
+    if (SUCCEEDED(hr) && dev_id_raw) {
+      chosen_id = dev_id_raw;
+      CoTaskMemFree(dev_id_raw);
+    }
+
+    props.Reset();
+    hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
+    if (SUCCEEDED(hr)) {
+      chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+      if (chosen_friendly.empty()) chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+    }
+  }
+
+  log.Logf("virtio-snd: selected capture endpoint name=%s id=%s score=%d", WideToUtf8(chosen_friendly).c_str(),
+           WideToUtf8(chosen_id).c_str(), best_score);
+
+  if (!smoke_test) {
+    out.ok = true;
+    out.hr = S_OK;
+    out.fail_reason.clear();
+    return out;
+  }
+
+  ComPtr<IAudioClient> client;
+  hr = chosen->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                        reinterpret_cast<void**>(client.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "activate_audio_client_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: capture IMMDevice::Activate(IAudioClient) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  WAVEFORMATEX* mix = nullptr;
+  hr = client->GetMixFormat(&mix);
+  if (FAILED(hr) || !mix) {
+    out.fail_reason = "get_mix_format_failed";
+    out.hr = FAILED(hr) ? hr : E_FAIL;
+    log.Logf("virtio-snd: capture GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+    return out;
+  }
+  log.Logf("virtio-snd: capture mix format=%s", WaveFormatToString(mix).c_str());
+  const DWORD sample_rate_hz = mix->nSamplesPerSec;
+
+  constexpr REFERENCE_TIME kBufferDuration100ms = 1000000; // 100ms in 100ns units
+  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, mix, nullptr);
+  CoTaskMemFree(mix);
+  if (FAILED(hr)) {
+    out.fail_reason = "initialize_shared_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: capture Initialize(shared) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  UINT32 buffer_frames = 0;
+  hr = client->GetBufferSize(&buffer_frames);
+  if (FAILED(hr) || buffer_frames == 0) {
+    out.fail_reason = "get_buffer_size_failed";
+    out.hr = FAILED(hr) ? hr : E_FAIL;
+    log.Logf("virtio-snd: capture GetBufferSize failed hr=0x%08lx buffer_frames=%u",
+             static_cast<unsigned long>(out.hr), buffer_frames);
+    return out;
+  }
+
+  ComPtr<IAudioCaptureClient> capture;
+  hr = client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(capture.Put()));
+  if (FAILED(hr)) {
+    out.fail_reason = "get_capture_client_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: capture GetService(IAudioCaptureClient) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  hr = client->Start();
+  if (FAILED(hr)) {
+    out.fail_reason = "start_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: capture IAudioClient::Start failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    return out;
+  }
+
+  const UINT64 min_frames =
+      (sample_rate_hz != 0) ? std::max<UINT64>(1, static_cast<UINT64>(sample_rate_hz) / 10) : 1;
+  UINT64 total_frames = 0;
+  DWORD captured_flags = 0;
+  const DWORD capture_deadline = GetTickCount() + 2500;
+  while (static_cast<int32_t>(GetTickCount() - capture_deadline) < 0) {
+    UINT32 packet_frames = 0;
+    hr = capture->GetNextPacketSize(&packet_frames);
+    if (FAILED(hr)) {
+      out.fail_reason = "get_next_packet_size_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: capture GetNextPacketSize failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      client->Stop();
+      return out;
+    }
+    if (packet_frames == 0) {
+      Sleep(5);
+      continue;
+    }
+
+    BYTE* data = nullptr;
+    UINT32 frames = 0;
+    DWORD flags = 0;
+    hr = capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
+    if (FAILED(hr)) {
+      out.fail_reason = "get_buffer_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: capture GetBuffer failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      client->Stop();
+      return out;
+    }
+
+    if (frames > 0) {
+      total_frames += frames;
+      captured_flags = flags;
+    }
+
+    hr = capture->ReleaseBuffer(frames);
+    if (FAILED(hr)) {
+      out.fail_reason = "release_buffer_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: capture ReleaseBuffer failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      client->Stop();
+      return out;
+    }
+
+    if (total_frames >= min_frames) break;
+  }
+
+  hr = client->Stop();
+  if (FAILED(hr)) {
+    out.fail_reason = "stop_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: capture IAudioClient::Stop failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    return out;
+  }
+  client->Reset();
+
+  if (total_frames == 0) {
+    out.fail_reason = "capture_timeout";
+    out.hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    log.LogLine("virtio-snd: capture timed out waiting for frames");
+    return out;
+  }
+
+  out.ok = true;
+  out.hr = S_OK;
+  out.fail_reason.clear();
+  log.Logf("virtio-snd: capture smoke ok (frames=%llu min_frames=%llu flags=0x%08lx)", total_frames, min_frames,
+           static_cast<unsigned long>(captured_flags));
+  return out;
+}
+
 static void PrintUsage() {
   printf(
       "aero-virtio-selftest.exe [options]\n"
@@ -2253,6 +2756,8 @@ static void PrintUsage() {
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
       "  --test-snd                Run virtio-snd test (FAIL if missing/playback fails)\n"
       "  --require-snd             Alias for --test-snd\n"
+      "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
+      "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: no)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -2317,6 +2822,10 @@ int wmain(int argc, wchar_t** argv) {
       opt.disable_snd = true;
     } else if (arg == L"--test-snd" || arg == L"--require-snd") {
       opt.require_snd = true;
+    } else if (arg == L"--require-snd-capture") {
+      opt.require_snd_capture = true;
+    } else if (arg == L"--test-snd-capture") {
+      opt.test_snd_capture = true;
     } else if (arg == L"--net-timeout-sec") {
       const wchar_t* v = next();
       const auto parsed = ParseU32(v);
@@ -2348,8 +2857,10 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
-  if (opt.disable_snd && opt.require_snd) {
-    printf("--disable-snd and --test-snd/--require-snd cannot both be set\n");
+  if (opt.disable_snd && (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture)) {
+    printf(
+        "--disable-snd cannot be combined with --require-snd/--test-snd, --require-snd-capture, or "
+        "--test-snd-capture\n");
     PrintUsage();
     return 2;
   }
@@ -2376,38 +2887,101 @@ int wmain(int argc, wchar_t** argv) {
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
 
+  const bool want_snd_playback = opt.require_snd;
+  const bool want_snd_capture = opt.require_snd_capture || opt.test_snd_capture || want_snd_playback;
+
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled");
-  } else if (!opt.require_snd) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+  } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture) {
     log.LogLine("virtio-snd: skipped (enable with --test-snd)");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
   } else {
+    if (!want_snd_playback) {
+      log.LogLine("virtio-snd: skipped (enable with --test-snd)");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
+    }
+
     const auto snd_pci = DetectVirtioSndPciDevices(log);
     if (snd_pci.empty()) {
       log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
-      all_ok = false;
+      if (want_snd_playback) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
+        all_ok = false;
+      }
+
+      if (opt.require_snd_capture) {
+        log.LogLine("virtio-snd: --require-snd-capture set; failing (device missing)");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|device_missing");
+        all_ok = false;
+      } else {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
+      }
     } else {
       std::vector<std::wstring> match_names;
       for (const auto& d : snd_pci) {
         if (!d.description.empty()) match_names.push_back(d.description);
       }
 
-      bool snd_ok = false;
-      const auto snd = VirtioSndTest(log, match_names);
-      if (snd.ok) {
-        snd_ok = true;
-      } else {
-        log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
-                 snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-                 static_cast<unsigned long>(snd.hr));
-        log.LogLine("virtio-snd: trying waveOut fallback");
-        snd_ok = WaveOutToneTest(log, match_names);
+      if (want_snd_playback) {
+        bool snd_ok = false;
+        const auto snd = VirtioSndTest(log, match_names);
+        if (snd.ok) {
+          snd_ok = true;
+        } else {
+          log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
+                   snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                   static_cast<unsigned long>(snd.hr));
+          log.LogLine("virtio-snd: trying waveOut fallback");
+          snd_ok = WaveOutToneTest(log, match_names);
+        }
+
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+        all_ok = all_ok && snd_ok;
       }
 
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
-      all_ok = all_ok && snd_ok;
+      if (want_snd_capture) {
+        const DWORD capture_wait_ms = (opt.require_snd_capture || opt.test_snd_capture) ? 20000 : 0;
+        bool capture_ok = false;
+
+        auto capture = VirtioSndCaptureTest(log, match_names, opt.test_snd_capture, capture_wait_ms);
+        if (capture.ok) {
+          capture_ok = true;
+        } else if (opt.test_snd_capture) {
+          log.Logf("virtio-snd: capture WASAPI failed reason=%s hr=0x%08lx",
+                   capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
+                   static_cast<unsigned long>(capture.hr));
+          log.LogLine("virtio-snd: trying waveIn fallback");
+          capture_ok = WaveInCaptureTest(log, match_names);
+        }
+
+        if (capture_ok) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS");
+        } else if (capture.fail_reason == "no_matching_endpoint") {
+          if (opt.require_snd_capture) {
+            log.LogLine("virtio-snd: --require-snd-capture set; failing");
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing");
+            all_ok = false;
+          } else {
+            log.LogLine("virtio-snd: no capture endpoint; skipping (use --require-snd-capture to require)");
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing");
+          }
+        } else {
+          log.Logf("virtio-snd: capture failed reason=%s hr=0x%08lx",
+                   capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
+                   static_cast<unsigned long>(capture.hr));
+          if (opt.require_snd_capture || opt.test_snd_capture) {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
+            all_ok = false;
+          } else {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
+          }
+        }
+      } else {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+      }
     }
   }
 
