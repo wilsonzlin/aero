@@ -166,3 +166,31 @@ test("ACMD SET_CONSTANT_BUFFERS rejects truncated binding payloads", () => {
     /SET_CONSTANT_BUFFERS/,
   );
 });
+
+test("ACMD FLUSH is accepted by the browser executor", () => {
+  const w = new AerogpuCmdWriter();
+  w.flush();
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+
+  assert.equal(state.presentCount, 0n);
+  assert.equal(state.textures.size, 0);
+  assert.equal(state.buffers.size, 0);
+});
+
+test("ACMD FLUSH rejects undersized packets", () => {
+  const w = new AerogpuCmdWriter();
+  w.flush();
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer);
+  // Truncate the stream to a header-only flush packet by shrinking both:
+  // - cmd_stream_header.size_bytes
+  // - cmd_hdr.size_bytes
+  // This preserves iterator validity while simulating a guest bug.
+  view.setUint32(8, 24 + 8, true);
+  view.setUint32(24 + 4, 8, true);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(() => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }), /FLUSH/);
+});

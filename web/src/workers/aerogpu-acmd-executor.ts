@@ -11,6 +11,7 @@ import {
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
   AEROGPU_CMD_DESTROY_SAMPLER_SIZE,
+  AEROGPU_CMD_FLUSH_SIZE,
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
@@ -213,6 +214,7 @@ const AEROGPU_CMD_COPY_TEXTURE2D = AerogpuCmdOpcode.CopyTexture2d;
 const AEROGPU_CMD_SET_RENDER_TARGETS = AerogpuCmdOpcode.SetRenderTargets;
 const AEROGPU_CMD_PRESENT = AerogpuCmdOpcode.Present;
 const AEROGPU_CMD_PRESENT_EX = AerogpuCmdOpcode.PresentEx;
+const AEROGPU_CMD_FLUSH = AerogpuCmdOpcode.Flush;
 const AEROGPU_CMD_CREATE_SAMPLER = AerogpuCmdOpcode.CreateSampler;
 const AEROGPU_CMD_DESTROY_SAMPLER = AerogpuCmdOpcode.DestroySampler;
 const AEROGPU_CMD_SET_SAMPLERS = AerogpuCmdOpcode.SetSamplers;
@@ -924,6 +926,15 @@ export const executeAerogpuCmdStream = (
           state.lastPresentedFrame = { width: tex.width, height: tex.height, rgba8: tex.data.slice().buffer };
           opts.presentTexture?.(tex);
         }
+        break;
+      }
+
+      case AEROGPU_CMD_FLUSH: {
+        if (cmdSizeBytes < AEROGPU_CMD_FLUSH_SIZE) {
+          throw new Error(`aerogpu: FLUSH packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        // `FLUSH` exists mainly to model D3D9Ex semantics. For the lightweight browser CPU
+        // executor (used for protocol tests + simple copy/present flows) it is a no-op.
         break;
       }
 
