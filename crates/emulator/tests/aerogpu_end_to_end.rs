@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
     AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -129,7 +129,7 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     let stream = build_stream(
         |out| {
             // CREATE_TEXTURE2D (56 bytes)
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 1); // texture_handle
                 push_u32(out, 0); // usage_flags
                 push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
@@ -144,7 +144,7 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
             });
 
             // SET_RENDER_TARGETS (48 bytes)
-            emit_packet(out, 0x400, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
                 push_u32(out, 1); // color_count
                 push_u32(out, 0); // depth_stencil
                 push_u32(out, 1); // colors[0]
@@ -154,7 +154,7 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
             });
 
             // CLEAR (36 bytes)
-            emit_packet(out, 0x600, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, AEROGPU_CLEAR_COLOR);
                 push_u32(out, 0.0f32.to_bits()); // r
                 push_u32(out, 1.0f32.to_bits()); // g
@@ -165,7 +165,7 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
             });
 
             // PRESENT (16 bytes)
-            emit_packet(out, 0x700, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Present as u32, |out| {
                 push_u32(out, 0); // scanout_id
                 push_u32(out, 0); // flags
             });
