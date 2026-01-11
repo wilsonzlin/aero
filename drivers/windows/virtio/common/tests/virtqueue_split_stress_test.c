@@ -397,7 +397,8 @@ static void ScenarioOutOfOrderCompletion(BOOLEAN event_idx, BOOLEAN indirect)
 	void *comp_cookie[64];
 	UINT32 comp_len[64];
 
-	PRNG rng = {.state = 0x123456789ULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1)};
+	PRNG rng;
+	rng.state = 0x123456789ULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1);
 
 	CtxInit(&ctx, qsz, event_idx, indirect);
 
@@ -461,7 +462,8 @@ static void ScenarioRingFullBackpressure(BOOLEAN event_idx, BOOLEAN indirect)
 	UINT16 count = 0;
 	UINT16 i;
 
-	PRNG rng = {.state = 0xBADC0DEULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1)};
+	PRNG rng;
+	rng.state = 0xBADC0DEULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1);
 
 	CtxInit(&ctx, qsz, event_idx, indirect);
 
@@ -589,7 +591,8 @@ static void ScenarioIndirectPoolExhaustionFallback(BOOLEAN event_idx)
 	UINT16 heads[4];
 	UINT16 i;
 
-	PRNG rng = {.state = 0x51515555ULL ^ (UINT64)(event_idx ? 1 : 0)};
+	PRNG rng;
+	rng.state = 0x51515555ULL ^ (UINT64)(event_idx ? 1 : 0);
 
 	CtxInitEx(&ctx, qsz, event_idx, TRUE, pool_tables);
 	ASSERT_TRUE(ctx.vq->indirect_pool_va != NULL);
@@ -696,7 +699,8 @@ static void ScenarioWraparoundTorture(BOOLEAN event_idx, BOOLEAN indirect)
 	UINT32 cookie_counter = 1;
 	UINT32 step;
 
-	PRNG rng = {.state = 0xDEADBEEFULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1)};
+	PRNG rng;
+	rng.state = 0xDEADBEEFULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1);
 
 	CtxInit(&ctx, qsz, event_idx, indirect);
 
@@ -816,7 +820,8 @@ static void ScenarioNotifyDecisionSanity(BOOLEAN event_idx, BOOLEAN indirect)
 
 	VQ_CTX ctx;
 	VIRTQ_SG sg[1];
-	PRNG rng = {.state = 0xC0FFEEULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1)};
+	PRNG rng;
+	rng.state = 0xC0FFEEULL ^ (UINT64)(event_idx ? 1 : 0) ^ ((UINT64)(indirect ? 1 : 0) << 1);
 
 	CtxInit(&ctx, qsz, event_idx, indirect);
 

@@ -57,8 +57,7 @@ jobs:
             exit 0
           fi
 
-          # Release build keeps the stress test comfortably within CI budgets.
-          cmake -S . -B build-virtio-host-tests-linux -DAERO_VIRTIO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build-virtio-host-tests-linux -DAERO_VIRTIO_BUILD_TESTS=ON
           cmake --build build-virtio-host-tests-linux
           ctest --test-dir build-virtio-host-tests-linux --output-on-failure
 
