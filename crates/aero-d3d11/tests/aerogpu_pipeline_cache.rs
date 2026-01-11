@@ -203,6 +203,45 @@ fn build_input_layout_blob() -> Vec<u8> {
     out
 }
 
+fn build_input_layout_blob_sparse_slots() -> Vec<u8> {
+    // Like `build_input_layout_blob`, but places POSITION in slot 0 and COLOR in slot 15.
+    //
+    // This exercises the runtime's compact slot mapping (D3D11 supports up to 32 IA slots, while
+    // WebGPU only supports 8 vertex buffers with dense indices).
+    const MAGIC: u32 = 0x5941_4C49; // "ILAY"
+    const VERSION: u32 = 1;
+    const ELEMENT_COUNT: u32 = 2;
+
+    // DXGI_FORMAT_R32G32B32A32_FLOAT
+    const DXGI_FORMAT_R32G32B32A32_FLOAT: u32 = 2;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&MAGIC.to_le_bytes());
+    out.extend_from_slice(&VERSION.to_le_bytes());
+    out.extend_from_slice(&ELEMENT_COUNT.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+
+    // Element 0: v0 POSITION @ slot 0, offset 0.
+    out.extend_from_slice(&fnv1a_32(b"POSITION").to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    out.extend_from_slice(&DXGI_FORMAT_R32G32B32A32_FLOAT.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // input_slot
+    out.extend_from_slice(&0u32.to_le_bytes()); // aligned_byte_offset
+    out.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
+    out.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
+
+    // Element 1: v1 COLOR @ slot 15, offset 0.
+    out.extend_from_slice(&fnv1a_32(b"COLOR").to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    out.extend_from_slice(&DXGI_FORMAT_R32G32B32A32_FLOAT.to_le_bytes());
+    out.extend_from_slice(&15u32.to_le_bytes()); // input_slot
+    out.extend_from_slice(&0u32.to_le_bytes()); // aligned_byte_offset
+    out.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
+    out.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
+
+    out
+}
+
 #[test]
 fn aerogpu_render_pipeline_is_cached_across_draws() {
     pollster::block_on(async {
@@ -285,6 +324,101 @@ fn aerogpu_render_pipeline_is_cached_across_draws() {
         assert_eq!(stats.render_pipeline_misses, 1);
         assert_eq!(stats.render_pipeline_hits, 1);
         assert_eq!(stats.render_pipelines, 1);
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_compacts_sparse_vertex_slots() {
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping sparse-slot test");
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const ILAY: u32 = 3;
+        const VB_POS: u32 = 4;
+        const VB_COLOR: u32 = 5;
+        const RTEX: u32 = 6;
+
+        rt.create_shader_dxbc(VS, &build_test_vs_dxbc()).unwrap();
+        rt.create_shader_dxbc(PS, &build_test_ps_dxbc()).unwrap();
+        rt.create_input_layout(ILAY, &build_input_layout_blob_sparse_slots())
+            .unwrap();
+
+        let positions: [[f32; 4]; 3] = [
+            [-1.0, -1.0, 0.0, 1.0],
+            [3.0, -1.0, 0.0, 1.0],
+            [-1.0, 3.0, 0.0, 1.0],
+        ];
+        let colors: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.0]; 3];
+
+        rt.create_buffer(
+            VB_POS,
+            std::mem::size_of_val(&positions) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB_POS, 0, bytemuck::cast_slice(&positions))
+            .unwrap();
+
+        rt.create_buffer(
+            VB_COLOR,
+            std::mem::size_of_val(&colors) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB_COLOR, 0, bytemuck::cast_slice(&colors))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            4,
+            4,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+
+        let mut colors_rt = [None; 8];
+        colors_rt[0] = Some(RTEX);
+        rt.set_render_targets(&colors_rt, None);
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(ILAY));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB_POS,
+                stride: 16,
+                offset: 0,
+            }],
+        );
+        rt.set_vertex_buffers(
+            15,
+            &[VertexBufferBinding {
+                buffer: VB_COLOR,
+                stride: 16,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let stats = rt.pipeline_cache_stats();
+        assert_eq!(stats.render_pipeline_misses, 1);
+        assert_eq!(stats.render_pipeline_hits, 1);
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
