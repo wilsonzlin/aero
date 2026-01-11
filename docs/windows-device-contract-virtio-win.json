@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract_name": "aero-windows-pci-device-contract-virtio-win",
-  "contract_version": "1.0.3",
+  "contract_version": "1.0.4",
   "devices": [
     {
       "device": "virtio-blk",
