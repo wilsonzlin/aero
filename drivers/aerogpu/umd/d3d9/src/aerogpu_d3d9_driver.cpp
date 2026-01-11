@@ -3281,6 +3281,55 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
     }
   }
 
+  auto is_backbuffer = [sc](const Resource* res) -> bool {
+    if (!sc || !res) {
+      return false;
+    }
+    return std::find(sc->backbuffers.begin(), sc->backbuffers.end(), res) != sc->backbuffers.end();
+  };
+
+  // Reset recreates swapchain backbuffer handles. If any of the backbuffers are
+  // currently bound via other state (textures / IA bindings), re-emit the bind
+  // commands so the host uses the updated handles.
+  for (uint32_t stage = 0; stage < 16; ++stage) {
+    if (!is_backbuffer(dev->textures[stage])) {
+      continue;
+    }
+    if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE)) {
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+      cmd->slot = stage;
+      cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
+      cmd->reserved0 = 0;
+    }
+  }
+
+  for (uint32_t stream = 0; stream < 16; ++stream) {
+    if (!is_backbuffer(dev->streams[stream].vb)) {
+      continue;
+    }
+
+    aerogpu_vertex_buffer_binding binding{};
+    binding.buffer = dev->streams[stream].vb ? dev->streams[stream].vb->handle : 0;
+    binding.stride_bytes = dev->streams[stream].stride_bytes;
+    binding.offset_bytes = dev->streams[stream].offset_bytes;
+    binding.reserved0 = 0;
+
+    if (auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+            dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding))) {
+      cmd->start_slot = stream;
+      cmd->buffer_count = 1;
+    }
+  }
+
+  if (is_backbuffer(dev->index_buffer)) {
+    if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER)) {
+      cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
+      cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
+      cmd->offset_bytes = dev->index_offset_bytes;
+      cmd->reserved0 = 0;
+    }
+  }
+
   if (!dev->render_targets[0] && !sc->backbuffers.empty()) {
     dev->render_targets[0] = sc->backbuffers[0];
   }

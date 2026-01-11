@@ -1518,6 +1518,118 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   return Check(res0->handle == h1 && res1->handle == h0, "rotate identities swaps handles on success");
 }
 
+bool TestResetRebindsBackbufferTexture() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+
+    ~Cleanup() {
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = 64;
+  create_sc.present_params.backbuffer_height = 64;
+  create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
+  create_sc.present_params.backbuffer_count = 1;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 1;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* sc = reinterpret_cast<SwapChain*>(create_sc.hSwapChain.pDrvPrivate);
+  auto* bb = reinterpret_cast<Resource*>(create_sc.hBackBuffer.pDrvPrivate);
+  if (!Check(dev && sc && bb, "swapchain/device pointers")) {
+    return false;
+  }
+  if (!Check(!sc->backbuffers.empty() && sc->backbuffers[0] == bb, "backbuffer[0]")) {
+    return false;
+  }
+
+  const aerogpu_handle_t old_handle = bb->handle;
+
+  AEROGPU_D3D9DDI_HRESOURCE hTex{};
+  hTex.pDrvPrivate = bb;
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(backbuffer)")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDIARG_RESET reset{};
+  reset.present_params = create_sc.present_params;
+  hr = cleanup.device_funcs.pfnReset(create_dev.hDevice, &reset);
+  if (!Check(hr == S_OK, "Reset")) {
+    return false;
+  }
+
+  const aerogpu_handle_t new_handle = bb->handle;
+  if (!Check(new_handle != old_handle, "Reset recreates backbuffer handle")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const CmdLoc loc = FindLastOpcode(dev->cmd.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_TEXTURE);
+  if (!Check(loc.hdr != nullptr, "SET_TEXTURE emitted after reset")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_texture*>(loc.hdr);
+  if (!Check(cmd->slot == 0, "SET_TEXTURE slot 0")) {
+    return false;
+  }
+  return Check(cmd->texture == new_handle, "SET_TEXTURE uses recreated backbuffer handle");
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -1539,5 +1651,6 @@ int main() {
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesUndoOnSmallCmdBuffer();
+  failures += !aerogpu::TestResetRebindsBackbufferTexture();
   return failures ? 1 : 0;
 }
