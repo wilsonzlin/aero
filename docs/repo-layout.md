@@ -63,6 +63,16 @@ Most maintained backend work lives under:
 - `proxy/` (networking relays used in production deployments, e.g. `proxy/webrtc-udp-relay`)
 - `net-proxy/` (local-dev WebSocket TCP/UDP relay; run alongside `vite dev`)
 
+### Protocol golden vectors (canonical): `protocol-vectors/`
+
+Bytes-on-the-wire protocols that have multiple independent implementations (Go,
+TypeScript, JavaScript) use **shared canonical golden vectors** under:
+
+- `protocol-vectors/`
+
+These vectors are consumed by conformance tests across implementations to
+prevent protocol drift.
+
 ## Non-canonical / quarantined paths
 
 ### Repo-root Vite app: *dev/test harness* (not production)
