@@ -109,10 +109,15 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
   __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
     init_ptr = pDesc->pInitialDataUP;
   }
+  __if_not_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+    __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialData) {
+      init_ptr = pDesc->pInitialData;
+    }
+  }
 
   AEROGPU_D3D10_11_LOG(
       "trace_resources: D3D10 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
-      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u initUP=%p",
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u init=%p",
       static_cast<unsigned>(pDesc->ResourceDimension),
       static_cast<unsigned>(pDesc->BindFlags),
       static_cast<unsigned>(usage),
@@ -1253,26 +1258,39 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return hr;
     }
 
-    if (pDesc->pInitialDataUP) {
-      const auto& init = pDesc->pInitialDataUP[0];
+    auto copy_initial_data = [&](auto init_data) -> HRESULT {
+      if (!init_data) {
+        return S_OK;
+      }
+      const auto& init = init_data[0];
       if (!init.pSysMem) {
-        deallocate_if_needed();
-        res->~AeroGpuResource();
         return E_INVALIDARG;
       }
       if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-        deallocate_if_needed();
-        res->~AeroGpuResource();
         return E_OUTOFMEMORY;
       }
       try {
         res->storage.resize(static_cast<size_t>(res->size_bytes));
       } catch (...) {
-        deallocate_if_needed();
-        res->~AeroGpuResource();
         return E_OUTOFMEMORY;
       }
       std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
+      return S_OK;
+    };
+
+    HRESULT init_hr = S_OK;
+    __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      init_hr = copy_initial_data(pDesc->pInitialDataUP);
+    }
+    __if_not_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialData) {
+        init_hr = copy_initial_data(pDesc->pInitialData);
+      }
+    }
+    if (FAILED(init_hr)) {
+      deallocate_if_needed();
+      res->~AeroGpuResource();
+      return init_hr;
     }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
@@ -1350,24 +1368,21 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return hr;
     }
 
-    if (pDesc->pInitialDataUP) {
-      const auto& init = pDesc->pInitialDataUP[0];
+    auto copy_initial_data = [&](auto init_data) -> HRESULT {
+      if (!init_data) {
+        return S_OK;
+      }
+      const auto& init = init_data[0];
       if (!init.pSysMem) {
-        deallocate_if_needed();
-        res->~AeroGpuResource();
         return E_INVALIDARG;
       }
 
       if (total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-        deallocate_if_needed();
-        res->~AeroGpuResource();
         return E_OUTOFMEMORY;
       }
       try {
         res->storage.resize(static_cast<size_t>(total_bytes));
       } catch (...) {
-        deallocate_if_needed();
-        res->~AeroGpuResource();
         return E_OUTOFMEMORY;
       }
 
@@ -1384,6 +1399,22 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                       res->row_pitch_bytes - row_bytes);
         }
       }
+      return S_OK;
+    };
+
+    HRESULT init_hr = S_OK;
+    __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      init_hr = copy_initial_data(pDesc->pInitialDataUP);
+    }
+    __if_not_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialData) {
+        init_hr = copy_initial_data(pDesc->pInitialData);
+      }
+    }
+    if (FAILED(init_hr)) {
+      deallocate_if_needed();
+      res->~AeroGpuResource();
+      return init_hr;
     }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
@@ -1803,10 +1834,24 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                         D3D10DDI_HRENDERTARGETVIEW hView,
                                         D3D10DDI_HRTRENDERTARGETVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
+
+  D3D10DDI_HRESOURCE hRes{};
+  __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::hDrvResource) {
+    hRes = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::hDrvResource) {
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::hResource) {
+      hRes = pDesc->hResource;
+    }
+  }
+  if (!hRes.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hRes);
   auto* rtv = new (hView.pDrvPrivate) AeroGpuRenderTargetView();
   rtv->texture = res ? res->handle : 0;
   rtv->resource = res;
@@ -1829,10 +1874,24 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATEDEPTHSTENCILVIEW* pDesc,
                                         D3D10DDI_HDEPTHSTENCILVIEW hView,
                                         D3D10DDI_HRTDEPTHSTENCILVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
+
+  D3D10DDI_HRESOURCE hRes{};
+  __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
+    hRes = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::hResource) {
+      hRes = pDesc->hResource;
+    }
+  }
+  if (!hRes.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hRes);
   auto* dsv = new (hView.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->texture = res ? res->handle : 0;
   return S_OK;
@@ -1854,10 +1913,24 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
                                           const D3D10DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
                                           D3D10DDI_HSHADERRESOURCEVIEW hView,
                                           D3D10DDI_HRTSHADERRESOURCEVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
+
+  D3D10DDI_HRESOURCE hRes{};
+  __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
+    hRes = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::hResource) {
+      hRes = pDesc->hResource;
+    }
+  }
+  if (!hRes.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hRes);
   auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
   srv->texture = res ? res->handle : 0;
   return S_OK;
