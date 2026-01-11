@@ -64,7 +64,7 @@ These are declared in the WDK headers (`d3d10umddi.h`, `d3d11umddi.h`) and recei
 
 * pointers to the runtime **callback tables** (`D3D10DDI_ADAPTERCALLBACKS` / `D3D11DDI_ADAPTERCALLBACKS`)
 * a place for you to return the **adapter function table** (`D3D10DDI_ADAPTERFUNCS` / `D3D11DDI_ADAPTERFUNCS`)
-* interface version negotiation (e.g. `D3D10DDI_INTERFACE_VERSION`, `D3D11DDI_INTERFACE_VERSION`)
+* interface version negotiation (e.g. `D3D10DDI_INTERFACE_VERSION`, `D3D11DDI_INTERFACE_VERSION` / `D3D11DDI_SUPPORTED`)
 
 From there, the runtime calls your adapter funcs’ `pfnCreateDevice(...)`, and device creation returns a `D3D10DDI_DEVICEFUNCS` / `D3D11DDI_DEVICEFUNCS` table plus your private `D3D*DDI_HDEVICE`.
 
