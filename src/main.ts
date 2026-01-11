@@ -220,8 +220,7 @@ function parseUsbId(text: string): number | null {
 }
 
 function summarizeUsbDevice(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  device: any,
+  device: unknown,
 ): Record<string, unknown> | null {
   if (!device || typeof device !== 'object') return null;
 
@@ -345,8 +344,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   }) as HTMLInputElement;
   const interfaceSelect = el('select') as HTMLSelectElement;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let selectedDevice: any | null = null;
+  let selectedDevice: USBDevice | null = null;
   let selectedSummary: Record<string, unknown> | null = null;
   let workerProbe: Record<string, unknown> | null = null;
   let workerProbeError: { name: string; message: string } | null = null;
@@ -542,8 +540,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         return;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+      const usb = (navigator as unknown as { usb?: USB }).usb;
       if (!usb || typeof usb.requestDevice !== 'function') {
         output.textContent = 'navigator.usb.requestDevice is unavailable in this context.';
         return;
@@ -551,26 +548,24 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
       try {
         // Must be called directly from the user gesture handler (transient user activation).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const options: any = {};
-        if (acceptAllDevicesInput.checked) {
-          options.filters = [];
-          options.acceptAllDevices = true;
-        } else {
+        type UsbRequestDeviceOptions = USBDeviceRequestOptions & { acceptAllDevices?: boolean };
+        const options: UsbRequestDeviceOptions = (() => {
+          if (acceptAllDevicesInput.checked) {
+            return { filters: [], acceptAllDevices: true };
+          }
+
           // Note: some Chromium versions require at least one filter; `{}` is a best-effort "match all"
           // filter for probing. If this fails, specify vendorId/productId explicitly.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const filters: any[] = [];
+          const filters: USBDeviceFilter[] = [];
           if (vendorId !== null) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const filter: any = { vendorId };
+            const filter: USBDeviceFilter = { vendorId };
             if (productId !== null) filter.productId = productId;
             filters.push(filter);
           } else {
             filters.push({});
           }
-          options.filters = filters;
-        }
+          return { filters };
+        })();
 
         // Snapshot the worker's pre-grant getDevices() view (do not await; preserve user gesture).
         runWorkerGetDevicesSnapshot(workerGetDevicesBefore, 'before_requestDevice');
@@ -655,8 +650,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         output.textContent = 'WebUSB is unavailable (navigator.usb is undefined).';
         return;
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+      const usb = (navigator as unknown as { usb?: USB }).usb;
       if (!usb || typeof usb.getDevices !== 'function') {
         output.textContent = 'navigator.usb.getDevices is unavailable in this context.';
         return;

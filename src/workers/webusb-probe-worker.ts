@@ -9,8 +9,7 @@ type ProbeRequest =
       type: 'match_and_open';
       criteria: { vendorId: number; productId: number; serialNumber?: string };
     }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | { id: number; type: 'device'; device: any };
+  | { id: number; type: 'device'; device: unknown };
 
 type ProbeResponse =
   | { id: number; type: 'probe-result'; report: unknown }
@@ -40,8 +39,7 @@ type RequestDeviceProbeResult = {
 let requestDeviceProbe: Promise<RequestDeviceProbeResult> | null = null;
 
 function summarizeUsbDevice(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  device: any,
+  device: unknown,
 ): Record<string, unknown> | null {
   if (!device || typeof device !== 'object') return null;
 
@@ -71,8 +69,7 @@ function summarizeUsbDevice(
 }
 
 async function runRequestDeviceProbe(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  usb: any,
+  usb: Pick<USB, 'requestDevice'>,
   timeoutMs = 500,
 ): Promise<RequestDeviceProbeResult> {
   if (requestDeviceProbe) return await requestDeviceProbe;
@@ -115,8 +112,8 @@ async function runRequestDeviceProbe(
 }
 
 async function probe(): Promise<unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+  type UsbMaybe = { getDevices?: unknown; requestDevice?: unknown };
+  const usb = (navigator as unknown as { usb?: UsbMaybe }).usb;
   const hasUsb = typeof usb !== 'undefined';
 
   const report: Record<string, unknown> = {
@@ -128,7 +125,7 @@ async function probe(): Promise<unknown> {
 
   if (typeof usb?.getDevices === 'function') {
     try {
-      const devices = await usb.getDevices();
+      const devices = await (usb.getDevices as () => Promise<unknown>)();
       report.getDevices = {
         ok: true,
         count: Array.isArray(devices) ? devices.length : null,
@@ -145,7 +142,7 @@ async function probe(): Promise<unknown> {
   if (typeof usb?.requestDevice === 'function') {
     // In specs/Chromium, this is expected to reject in workers due to missing transient user activation.
     // Use a short timeout so the probe doesn't hang if a chooser prompt appears.
-    report.requestDevice = await runRequestDeviceProbe(usb);
+    report.requestDevice = await runRequestDeviceProbe(usb as unknown as Pick<USB, 'requestDevice'>);
   }
 
   return report;
@@ -156,8 +153,8 @@ async function matchAndOpen(criteria: {
   productId: number;
   serialNumber?: string;
 }): Promise<unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+  type UsbMaybe = { getDevices?: unknown };
+  const usb = (navigator as unknown as { usb?: UsbMaybe }).usb;
   const hasUsb = typeof usb !== 'undefined';
 
   const report: Record<string, unknown> = {
@@ -177,7 +174,7 @@ async function matchAndOpen(criteria: {
 
   let devices: unknown[];
   try {
-    const res = await usb.getDevices();
+    const res = await (usb.getDevices as () => Promise<unknown>)();
     if (!Array.isArray(res)) {
       report.getDevices = {
         ok: false,
@@ -279,38 +276,38 @@ async function matchAndOpen(criteria: {
 }
 
 async function probeDevice(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  device: any,
+  device: unknown,
 ): Promise<unknown> {
+  const dev = device as { open?: unknown; close?: unknown; opened?: unknown };
   const report: Record<string, unknown> = {
     received: summarizeUsbDevice(device),
-    hasOpen: typeof device?.open === 'function',
-    hasClose: typeof device?.close === 'function',
+    hasOpen: typeof dev?.open === 'function',
+    hasClose: typeof dev?.close === 'function',
   };
 
-  const openedBefore = typeof device?.opened === 'boolean' ? device.opened : null;
+  const openedBefore = typeof dev?.opened === 'boolean' ? (dev.opened as boolean) : null;
   let openOk = false;
   let closeOk = false;
   let openError: unknown = null;
   let closeError: unknown = null;
 
   try {
-    if (typeof device?.open !== 'function') throw new TypeError('device.open is not a function');
-    await device.open();
+    if (typeof dev?.open !== 'function') throw new TypeError('device.open is not a function');
+    await (dev.open as () => Promise<void>)();
     openOk = true;
   } catch (err) {
     openError = serializeError(err);
   }
 
   try {
-    if (typeof device?.close !== 'function') throw new TypeError('device.close is not a function');
-    await device.close();
+    if (typeof dev?.close !== 'function') throw new TypeError('device.close is not a function');
+    await (dev.close as () => Promise<void>)();
     closeOk = true;
   } catch (err) {
     closeError = serializeError(err);
   }
 
-  const openedAfter = typeof device?.opened === 'boolean' ? device.opened : null;
+  const openedAfter = typeof dev?.opened === 'boolean' ? (dev.opened as boolean) : null;
   report.openClose = {
     openedBefore,
     openedAfter,
