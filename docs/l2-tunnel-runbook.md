@@ -100,7 +100,8 @@ const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", sink, {
   token: "sekrit",
   // Default is "query" (adds ?token=...); "subprotocol" uses an additional
   // Sec-WebSocket-Protocol entry `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`.
-  // Prefer query-string delivery for JWTs.
+  // Prefer "subprotocol" when possible to avoid putting secrets in URLs/logs; use "query" when
+  // the credential isn't a valid HTTP token (RFC 7230 `tchar`) or the client cannot set subprotocols.
   tokenTransport: "subprotocol",
 });
 ```
@@ -259,7 +260,9 @@ Single-origin flow:
 - Optional mixed mode:
   - `AERO_L2_AUTH_MODE=cookie_or_jwt` accepts either a cookie session or a JWT (useful when mixing same-origin browser clients with WebRTC relay L2 bridging).
 
-Credentials offered via `Sec-WebSocket-Protocol` must be valid WebSocket subprotocol tokens; prefer query-string delivery for JWTs.
+Credentials offered via `Sec-WebSocket-Protocol` must be valid WebSocket subprotocol tokens (HTTP token / RFC 7230 `tchar`).
+Prefer subprotocol delivery when possible to avoid putting secrets in URLs/logs; use query-string delivery when the credential
+cannot be expressed as a subprotocol token.
 
 Missing/incorrect credentials reject the upgrade with **HTTP 401** (no WebSocket).
 

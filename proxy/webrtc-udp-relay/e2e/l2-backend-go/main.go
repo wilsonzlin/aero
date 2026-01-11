@@ -77,8 +77,8 @@ func main() {
 		protocols := splitHeaderTokens(r.Header.Values("Sec-WebSocket-Protocol"))
 		pToken := tokenFromSubprotocols(protocols)
 
-		// Match `crates/aero-l2-proxy` precedence: prefer query-string credentials
-		// (apiKey/token) over `aero-l2-token.*` subprotocol tokens.
+		// Match `crates/aero-l2-proxy` precedence: check query-string credentials
+		// (apiKey/token) before `aero-l2-token.*` subprotocol tokens.
 		token := qAPIKey
 		tokenSource := ""
 		if token != "" {
