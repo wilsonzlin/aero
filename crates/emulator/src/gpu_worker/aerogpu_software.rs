@@ -123,6 +123,11 @@ struct BlendState {
     src_factor: u32,
     dst_factor: u32,
     blend_op: u32,
+    src_factor_alpha: u32,
+    dst_factor_alpha: u32,
+    blend_op_alpha: u32,
+    blend_constant: [f32; 4],
+    sample_mask: u32,
     write_mask: u8,
 }
 
@@ -134,6 +139,11 @@ impl Default for BlendState {
             src_factor: cmd::AerogpuBlendFactor::One as u32,
             dst_factor: cmd::AerogpuBlendFactor::Zero as u32,
             blend_op: cmd::AerogpuBlendOp::Add as u32,
+            src_factor_alpha: cmd::AerogpuBlendFactor::One as u32,
+            dst_factor_alpha: cmd::AerogpuBlendFactor::Zero as u32,
+            blend_op_alpha: cmd::AerogpuBlendOp::Add as u32,
+            blend_constant: [0.0; 4],
+            sample_mask: 0xFFFF_FFFF,
             write_mask: 0xF,
         }
     }
@@ -592,7 +602,7 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
-    fn blend_factor(factor: u32, src_a: f32, dst_a: f32) -> f32 {
+    fn blend_factor(factor: u32, src_a: f32, dst_a: f32, constant: f32) -> f32 {
         match factor {
             x if x == cmd::AerogpuBlendFactor::Zero as u32 => 0.0,
             x if x == cmd::AerogpuBlendFactor::One as u32 => 1.0,
@@ -600,6 +610,8 @@ impl AeroGpuSoftwareExecutor {
             x if x == cmd::AerogpuBlendFactor::InvSrcAlpha as u32 => 1.0 - src_a,
             x if x == cmd::AerogpuBlendFactor::DestAlpha as u32 => dst_a,
             x if x == cmd::AerogpuBlendFactor::InvDestAlpha as u32 => 1.0 - dst_a,
+            x if x == cmd::AerogpuBlendFactor::BlendFactor as u32 => constant,
+            x if x == cmd::AerogpuBlendFactor::InvBlendFactor as u32 => 1.0 - constant,
             _ => 1.0,
         }
     }
@@ -622,6 +634,9 @@ impl AeroGpuSoftwareExecutor {
         rgba: [f32; 4],
         blend: BlendState,
     ) {
+        if (blend.sample_mask & 1) == 0 {
+            return;
+        }
         if x < 0 || y < 0 {
             return;
         }
@@ -656,13 +671,20 @@ impl AeroGpuSoftwareExecutor {
         if blend.enable {
             let src_a = rgba[3].clamp(0.0, 1.0);
             let dst_a = dst[3].clamp(0.0, 1.0);
-            let sf = Self::blend_factor(blend.src_factor, src_a, dst_a);
-            let df = Self::blend_factor(blend.dst_factor, src_a, dst_a);
 
             for i in 0..4 {
+                let (src_factor, dst_factor, op) = if i == 3 {
+                    (blend.src_factor_alpha, blend.dst_factor_alpha, blend.blend_op_alpha)
+                } else {
+                    (blend.src_factor, blend.dst_factor, blend.blend_op)
+                };
+                let constant = blend.blend_constant[i].clamp(0.0, 1.0);
+                let sf = Self::blend_factor(src_factor, src_a, dst_a, constant);
+                let df = Self::blend_factor(dst_factor, src_a, dst_a, constant);
+
                 let s = rgba[i].clamp(0.0, 1.0) * sf;
                 let d = dst[i].clamp(0.0, 1.0) * df;
-                out[i] = Self::blend_op(blend.blend_op, s, d).clamp(0.0, 1.0);
+                out[i] = Self::blend_op(op, s, d).clamp(0.0, 1.0);
             }
         }
 
@@ -857,6 +879,9 @@ impl AeroGpuSoftwareExecutor {
         c2: [f32; 4],
         blend: BlendState,
     ) {
+        if (blend.sample_mask & 1) == 0 {
+            return;
+        }
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
@@ -921,6 +946,9 @@ impl AeroGpuSoftwareExecutor {
         c2: [f32; 4],
         blend: BlendState,
     ) {
+        if (blend.sample_mask & 1) == 0 {
+            return;
+        }
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
@@ -1006,6 +1034,9 @@ impl AeroGpuSoftwareExecutor {
         uv2: (f32, f32),
         blend: BlendState,
     ) {
+        if (blend.sample_mask & 1) == 0 {
+            return;
+        }
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
@@ -1073,6 +1104,9 @@ impl AeroGpuSoftwareExecutor {
         uv2: (f32, f32),
         blend: BlendState,
     ) {
+        if (blend.sample_mask & 1) == 0 {
+            return;
+        }
         fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
@@ -2553,22 +2587,69 @@ impl AeroGpuSoftwareExecutor {
                 self.state.input_layout = u32::from_le(packet_cmd.input_layout_handle);
             }
             cmd::AerogpuCmdOpcode::SetBlendState => {
-                let packet_cmd =
-                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetBlendState>(packet) {
-                        Some(v) => v,
-                        None => {
-                            Self::record_error(regs);
-                            return false;
-                        }
-                    };
+                // `SET_BLEND_STATE` was extended over time; accept older 28-byte packets and
+                // default missing fields (alpha=params, constant=0, sample_mask=0xFFFFFFFF).
+                if packet.len() < 28 {
+                    Self::record_error(regs);
+                    return false;
+                }
 
-                let state = packet_cmd.state;
+                let enable = u32::from_le_bytes(packet[8..12].try_into().unwrap()) != 0;
+                let src_factor = u32::from_le_bytes(packet[12..16].try_into().unwrap());
+                let dst_factor = u32::from_le_bytes(packet[16..20].try_into().unwrap());
+                let blend_op = u32::from_le_bytes(packet[20..24].try_into().unwrap());
+                let write_mask = packet[24];
+
+                let src_factor_alpha = if packet.len() >= 32 {
+                    u32::from_le_bytes(packet[28..32].try_into().unwrap())
+                } else {
+                    src_factor
+                };
+                let dst_factor_alpha = if packet.len() >= 36 {
+                    u32::from_le_bytes(packet[32..36].try_into().unwrap())
+                } else {
+                    dst_factor
+                };
+                let blend_op_alpha = if packet.len() >= 40 {
+                    u32::from_le_bytes(packet[36..40].try_into().unwrap())
+                } else {
+                    blend_op
+                };
+
+                let mut blend_constant = [0.0f32; 4];
+                if packet.len() >= 44 {
+                    blend_constant[0] =
+                        f32::from_bits(u32::from_le_bytes(packet[40..44].try_into().unwrap()));
+                }
+                if packet.len() >= 48 {
+                    blend_constant[1] =
+                        f32::from_bits(u32::from_le_bytes(packet[44..48].try_into().unwrap()));
+                }
+                if packet.len() >= 52 {
+                    blend_constant[2] =
+                        f32::from_bits(u32::from_le_bytes(packet[48..52].try_into().unwrap()));
+                }
+                if packet.len() >= 56 {
+                    blend_constant[3] =
+                        f32::from_bits(u32::from_le_bytes(packet[52..56].try_into().unwrap()));
+                }
+                let sample_mask = if packet.len() >= 60 {
+                    u32::from_le_bytes(packet[56..60].try_into().unwrap())
+                } else {
+                    0xFFFF_FFFF
+                };
+
                 self.state.blend = BlendState {
-                    enable: u32::from_le(state.enable) != 0,
-                    src_factor: u32::from_le(state.src_factor),
-                    dst_factor: u32::from_le(state.dst_factor),
-                    blend_op: u32::from_le(state.blend_op),
-                    write_mask: state.color_write_mask,
+                    enable,
+                    src_factor,
+                    dst_factor,
+                    blend_op,
+                    src_factor_alpha,
+                    dst_factor_alpha,
+                    blend_op_alpha,
+                    blend_constant,
+                    sample_mask,
+                    write_mask,
                 };
             }
             cmd::AerogpuCmdOpcode::SetRasterizerState => {
@@ -2631,12 +2712,7 @@ impl AeroGpuSoftwareExecutor {
                     _ => {}
                 }
             }
-            cmd::AerogpuCmdOpcode::SetSamplerState
-            | cmd::AerogpuCmdOpcode::SetRenderState
-            | cmd::AerogpuCmdOpcode::CreateSampler
-            | cmd::AerogpuCmdOpcode::DestroySampler
-            | cmd::AerogpuCmdOpcode::SetSamplers
-            | cmd::AerogpuCmdOpcode::SetConstantBuffers => {
+            cmd::AerogpuCmdOpcode::SetSamplerState | cmd::AerogpuCmdOpcode::SetRenderState => {
                 // Parsed but currently ignored by the software backend.
             }
             cmd::AerogpuCmdOpcode::SetRenderTargets => {
