@@ -227,12 +227,6 @@ impl<'a> DxbcFile<'a> {
     /// Signature chunks include `ISGN`, `OSGN`, and `PSGN` (and may also appear
     /// as `ISG1`, `OSG1`, `PSG1` depending on the compiler/toolchain).
     pub fn get_signature(&self, kind: FourCC) -> Option<Result<SignatureChunk, DxbcError>> {
-        if let Some(chunk) = self.get_chunk(kind) {
-            return Some(parse_signature_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
-                DxbcError::invalid_chunk(format!("{kind} signature chunk: {}", e.context()))
-            }));
-        }
-
         // Some toolchains emit signature chunk variant IDs with a trailing `1`
         // (e.g. `ISG1` instead of `ISGN`). Accept either spelling.
         let fallback_kind = match kind.0 {
@@ -243,12 +237,33 @@ impl<'a> DxbcFile<'a> {
             [b'O', b'S', b'G', b'1'] => Some(FourCC(*b"OSGN")),
             [b'P', b'S', b'G', b'1'] => Some(FourCC(*b"PSGN")),
             _ => None,
-        }?;
+        };
 
-        let chunk = self.get_chunk(fallback_kind)?;
-        Some(parse_signature_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
-            DxbcError::invalid_chunk(format!("{fallback_kind} signature chunk: {}", e.context()))
-        }))
+        let mut first_err = None;
+        for chunk in self.chunks() {
+            if chunk.fourcc != kind && Some(chunk.fourcc) != fallback_kind {
+                continue;
+            }
+
+            let parsed = parse_signature_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
+                DxbcError::invalid_chunk(format!(
+                    "{} signature chunk: {}",
+                    chunk.fourcc,
+                    e.context()
+                ))
+            });
+
+            match parsed {
+                Ok(sig) => return Some(Ok(sig)),
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+            }
+        }
+
+        first_err.map(Err)
     }
 
     /// Returns the first shader bytecode chunk (`SHEX` or `SHDR`) in file order.

@@ -281,6 +281,31 @@ fn dxbc_get_signature_parses_v1_layout_single_entry_stream_is_preserved() {
 }
 
 #[test]
+fn dxbc_get_signature_uses_fallback_variant_if_primary_is_malformed() {
+    let mut bad_bytes = Vec::new();
+    bad_bytes.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bad_bytes.extend_from_slice(&4u32.to_le_bytes()); // param_offset into header (invalid)
+
+    let good_bytes = build_signature_chunk();
+
+    let dxbc_bytes = build_dxbc(&[
+        (FourCC(*b"ISGN"), &bad_bytes),
+        (FourCC(*b"ISG1"), &good_bytes),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Even though ISGN exists, it is malformed. Accept the `ISG1` variant if it
+    // parses successfully.
+    let sig = dxbc
+        .get_signature(FourCC(*b"ISGN"))
+        .expect("expected a signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
 fn dxbc_get_signature_falls_back_from_v1_to_base_chunk_id() {
     let sig_bytes = build_signature_chunk();
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);
