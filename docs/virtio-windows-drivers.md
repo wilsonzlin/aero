@@ -291,7 +291,9 @@ Notes:
 
 ### Build `aero-guest-tools.iso` from a virtio-win ISO (recommended for end users)
 
-This produces a Guest Tools ISO that includes virtio drivers plus install scripts/certs.
+This produces a Guest Tools ISO that includes virtio drivers plus install scripts.
+
+By default, the wrapper builds media with `signing_policy=none` (for WHQL/production-signed virtio-win drivers), so it does **not** require or inject any custom certificate files and `setup.cmd` will not prompt to enable Test Mode by default.
 
 On a machine with Rust (`cargo`) installed:
 
@@ -301,6 +303,17 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
+```
+
+If you are packaging **test-signed/custom-signed** drivers (not typical for virtio-win), you can override:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local `
+  -SigningPolicy testsigning
 ```
 
 On Linux/macOS, extract first and pass `-VirtioWinRoot`:
