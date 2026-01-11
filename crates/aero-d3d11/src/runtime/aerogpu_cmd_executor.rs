@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 use std::ops::Range;
+use std::sync::Arc;
 
+use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
 use aero_gpu::guest_memory::{GuestMemory, GuestMemoryError};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
@@ -22,7 +25,10 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
-use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, Sm4Program};
+use crate::{
+    parse_signatures, translate_sm4_module_to_wgsl, Binding, BindingKind, DxbcFile,
+    ShaderReflection, ShaderTranslation, Sm4Program,
+};
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 
@@ -57,6 +63,9 @@ const OPCODE_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
 const OPCODE_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
 const OPCODE_SET_INDEX_BUFFER: u32 = AerogpuCmdOpcode::SetIndexBuffer as u32;
 const OPCODE_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+
+const OPCODE_SET_TEXTURE: u32 = AerogpuCmdOpcode::SetTexture as u32;
+const OPCODE_SET_SAMPLER_STATE: u32 = AerogpuCmdOpcode::SetSamplerState as u32;
 
 const OPCODE_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
 const OPCODE_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
@@ -180,6 +189,7 @@ struct ShaderResource {
     dxbc_hash_fnv1a64: u64,
     entry_point: &'static str,
     vs_input_signature: Vec<VsInputSignatureElement>,
+    reflection: ShaderReflection,
     #[cfg(debug_assertions)]
     #[allow(dead_code)]
     wgsl_source: String,
@@ -240,6 +250,10 @@ struct AerogpuD3d11State {
     cs: Option<u32>,
     input_layout: Option<u32>,
 
+    textures_vs: Vec<Option<u32>>,
+    textures_ps: Vec<Option<u32>>,
+    textures_cs: Vec<Option<u32>>,
+
     // A small subset of pipeline state. Unsupported values are tolerated and
     // mapped onto sensible defaults.
     blend: Option<wgpu::BlendState>,
@@ -263,6 +277,9 @@ impl Default for AerogpuD3d11State {
             ps: None,
             cs: None,
             input_layout: None,
+            textures_vs: Vec::new(),
+            textures_ps: Vec::new(),
+            textures_cs: Vec::new(),
             blend: None,
             color_write_mask: wgpu::ColorWrites::ALL,
             cull_mode: None,
@@ -279,7 +296,11 @@ pub struct AerogpuD3d11Executor {
     resources: AerogpuD3d11Resources,
     state: AerogpuD3d11State,
 
-    pipeline_layout_empty: wgpu::PipelineLayout,
+    bind_group_layout_cache: BindGroupLayoutCache,
+    pipeline_layout_cache: HashMap<PipelineLayoutKey, Arc<wgpu::PipelineLayout>>,
+    fallback_texture_view: wgpu::TextureView,
+    fallback_sampler: wgpu::Sampler,
+    fallback_uniform_buffer: wgpu::Buffer,
     pipeline_cache: PipelineCache,
 }
 
@@ -338,12 +359,64 @@ impl AerogpuD3d11Executor {
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
-        let pipeline_layout_empty =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aerogpu empty pipeline layout"),
-                bind_group_layouts: &[],
-                push_constant_ranges: &[],
-            });
+        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu_cmd fallback texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let fallback_texture_view =
+            fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &fallback_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0u8; 4],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let fallback_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("aerogpu_cmd fallback sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let fallback_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd fallback uniform buffer"),
+            size: 65536,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut mapped = fallback_uniform_buffer.slice(..).get_mapped_range_mut();
+            mapped.fill(0);
+        }
+        fallback_uniform_buffer.unmap();
 
         let caps = GpuCapabilities::from_device(&device);
         let pipeline_cache = PipelineCache::new(PipelineCacheConfig::default(), caps);
@@ -353,7 +426,11 @@ impl AerogpuD3d11Executor {
             queue,
             resources: AerogpuD3d11Resources::default(),
             state: AerogpuD3d11State::default(),
-            pipeline_layout_empty,
+            bind_group_layout_cache: BindGroupLayoutCache::new(),
+            pipeline_layout_cache: HashMap::new(),
+            fallback_texture_view,
+            fallback_sampler,
+            fallback_uniform_buffer,
             pipeline_cache,
         })
     }
@@ -587,6 +664,8 @@ impl AerogpuD3d11Executor {
             OPCODE_SET_VERTEX_BUFFERS => self.exec_set_vertex_buffers(cmd_bytes),
             OPCODE_SET_INDEX_BUFFER => self.exec_set_index_buffer(cmd_bytes),
             OPCODE_SET_PRIMITIVE_TOPOLOGY => self.exec_set_primitive_topology(cmd_bytes),
+            OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes),
+            OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes),
             OPCODE_CLEAR => self.exec_clear(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_PRESENT => self.exec_present(encoder, cmd_bytes, report),
             OPCODE_PRESENT_EX => self.exec_present_ex(encoder, cmd_bytes, report),
@@ -661,14 +740,68 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        let (vs_reflection, ps_reflection) = {
+            let vs_handle = self
+                .state
+                .vs
+                .ok_or_else(|| anyhow!("render draw without bound VS"))?;
+            let ps_handle = self
+                .state
+                .ps
+                .ok_or_else(|| anyhow!("render draw without bound PS"))?;
+
+            let vs = self
+                .resources
+                .shaders
+                .get(&vs_handle)
+                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
+            let ps = self
+                .resources
+                .shaders
+                .get(&ps_handle)
+                .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+
+            if vs.stage != ShaderStage::Vertex {
+                bail!("shader {vs_handle} is not a vertex shader");
+            }
+            if ps.stage != ShaderStage::Pixel {
+                bail!("shader {ps_handle} is not a pixel shader");
+            }
+
+            (vs.reflection.clone(), ps.reflection.clone())
+        };
+
+        let prepared_bindings = self.prepare_pipeline_bindings(&vs_reflection, &ps_reflection)?;
+
+        // Upload any dirty textures referenced by shader-resource bindings (SRVs).
+        for binding in &prepared_bindings.bindings {
+            if matches!(binding.kind, BindingKind::Texture2D { .. }) {
+                if let Some(handle) = resolve_texture_binding(&self.state, binding) {
+                    self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
+                }
+            }
+        }
+
         let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
             get_or_create_render_pipeline_for_state(
                 &self.device,
                 &mut self.pipeline_cache,
-                &self.pipeline_layout_empty,
+                prepared_bindings.pipeline_layout.as_ref(),
                 &mut self.resources,
                 &self.state,
+                prepared_bindings.layout_key.clone(),
             )?;
+
+        let bind_groups = build_bind_groups(
+            &self.device,
+            &prepared_bindings.bindings,
+            &prepared_bindings.group_layouts,
+            &self.state,
+            &self.resources,
+            &self.fallback_texture_view,
+            &self.fallback_sampler,
+            &self.fallback_uniform_buffer,
+        )?;
 
         let state = &self.state;
         let resources = &self.resources;
@@ -728,6 +861,9 @@ impl AerogpuD3d11Executor {
         }
 
         pass.set_pipeline(pipeline);
+        for (group, bind_group) in bind_groups.iter().enumerate() {
+            pass.set_bind_group(group as u32, bind_group, &[]);
+        }
 
         for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
             let slot = d3d_slot as usize;
@@ -1392,7 +1528,9 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
 
-        let wgsl = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
+        let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
+        let wgsl = translated.wgsl;
+        let reflection = translated.reflection;
 
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
@@ -1420,6 +1558,7 @@ impl AerogpuD3d11Executor {
             dxbc_hash_fnv1a64,
             entry_point,
             vs_input_signature,
+            reflection,
             wgsl_source: wgsl,
         };
         #[cfg(not(debug_assertions))]
@@ -1429,6 +1568,7 @@ impl AerogpuD3d11Executor {
             dxbc_hash_fnv1a64,
             entry_point,
             vs_input_signature,
+            reflection,
         };
 
         self.resources.shaders.insert(shader_handle, shader);
@@ -1660,6 +1800,52 @@ impl AerogpuD3d11Executor {
             6 => wgpu::PrimitiveTopology::TriangleList,
             other => bail!("SET_PRIMITIVE_TOPOLOGY: unknown topology {other}"),
         };
+        Ok(())
+    }
+
+    fn exec_set_texture(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        // struct aerogpu_cmd_set_texture (24 bytes)
+        if cmd_bytes.len() != 24 {
+            bail!("SET_TEXTURE: expected 24 bytes, got {}", cmd_bytes.len());
+        }
+        let stage_u32 = read_u32_le(cmd_bytes, 8)?;
+        let slot_u32 = read_u32_le(cmd_bytes, 12)?;
+        let texture = read_u32_le(cmd_bytes, 16)?;
+
+        let slot: usize = slot_u32
+            .try_into()
+            .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
+        let texture = if texture == 0 { None } else { Some(texture) };
+
+        let slots = match stage_u32 {
+            0 => &mut self.state.textures_vs,
+            1 => &mut self.state.textures_ps,
+            2 => &mut self.state.textures_cs,
+            _ => bail!("SET_TEXTURE: unknown shader stage {stage_u32}"),
+        };
+
+        if slots.len() <= slot {
+            slots.resize(slot + 1, None);
+        }
+        slots[slot] = texture;
+        Ok(())
+    }
+
+    fn exec_set_sampler_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        // struct aerogpu_cmd_set_sampler_state (24 bytes)
+        if cmd_bytes.len() != 24 {
+            bail!(
+                "SET_SAMPLER_STATE: expected 24 bytes, got {}",
+                cmd_bytes.len()
+            );
+        }
+
+        // For now we ignore the D3D9 sampler-state details; the executor binds a
+        // default sampler for all referenced slots.
+        let _stage_u32 = read_u32_le(cmd_bytes, 8)?;
+        let _slot_u32 = read_u32_le(cmd_bytes, 12)?;
+        let _state = read_u32_le(cmd_bytes, 16)?;
+        let _value = read_u32_le(cmd_bytes, 20)?;
         Ok(())
     }
 
@@ -1971,6 +2157,71 @@ impl AerogpuD3d11Executor {
         tex.dirty = false;
         Ok(())
     }
+
+    fn prepare_pipeline_bindings(
+        &mut self,
+        vs: &ShaderReflection,
+        ps: &ShaderReflection,
+    ) -> Result<PreparedPipelineBindings> {
+        let bindings = merge_shader_bindings([&vs.bindings, &ps.bindings])?;
+
+        let max_group = bindings.iter().map(|b| b.group).max();
+        let mut group_entries: Vec<Vec<wgpu::BindGroupLayoutEntry>> = match max_group {
+            Some(max) => vec![Vec::new(); (max + 1) as usize],
+            None => Vec::new(),
+        };
+
+        for b in &bindings {
+            let entry = bind_group_layout_entry_for_binding(b)?;
+            let group: usize = b
+                .group
+                .try_into()
+                .map_err(|_| anyhow!("binding group out of range"))?;
+            group_entries[group].push(entry);
+        }
+
+        let group_layouts: Vec<CachedBindGroupLayout> = group_entries
+            .iter()
+            .map(|entries| self.bind_group_layout_cache.get_or_create(&self.device, entries))
+            .collect();
+
+        let layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: group_layouts.iter().map(|l| l.hash).collect(),
+        };
+
+        let pipeline_layout = if let Some(existing) = self.pipeline_layout_cache.get(&layout_key) {
+            existing.clone()
+        } else {
+            let bgl_refs: Vec<&wgpu::BindGroupLayout> =
+                group_layouts.iter().map(|l| l.layout.as_ref()).collect();
+            let pipeline_layout = Arc::new(
+                self.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aerogpu_cmd pipeline layout"),
+                        bind_group_layouts: &bgl_refs,
+                        push_constant_ranges: &[],
+                    }),
+            );
+            self.pipeline_layout_cache
+                .insert(layout_key.clone(), pipeline_layout.clone());
+            pipeline_layout
+        };
+
+        Ok(PreparedPipelineBindings {
+            bindings,
+            group_layouts,
+            layout_key,
+            pipeline_layout,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedPipelineBindings {
+    bindings: Vec<Binding>,
+    group_layouts: Vec<CachedBindGroupLayout>,
+    layout_key: PipelineLayoutKey,
+    pipeline_layout: Arc<wgpu::PipelineLayout>,
 }
 
 #[derive(Debug, Clone)]
@@ -2015,12 +2266,138 @@ fn exec_draw_indexed<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> R
     Ok(())
 }
 
+fn merge_shader_bindings(all: [&[Binding]; 2]) -> Result<Vec<Binding>> {
+    use std::collections::hash_map::Entry;
+
+    let mut merged: HashMap<(u32, u32), Binding> = HashMap::new();
+    for list in all {
+        for b in list {
+            let key = (b.group, b.binding);
+            match merged.entry(key) {
+                Entry::Vacant(v) => {
+                    v.insert(b.clone());
+                }
+                Entry::Occupied(mut o) => {
+                    let existing = o.get_mut();
+                    if existing.kind != b.kind {
+                        bail!(
+                            "binding kind mismatch for @group({}) @binding({}): existing={:?} new={:?}",
+                            b.group,
+                            b.binding,
+                            existing.kind,
+                            b.kind
+                        );
+                    }
+                    existing.visibility |= b.visibility;
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<Binding> = merged.into_values().collect();
+    out.sort_by_key(|b| (b.group, b.binding));
+    Ok(out)
+}
+
+fn bind_group_layout_entry_for_binding(binding: &Binding) -> Result<wgpu::BindGroupLayoutEntry> {
+    let ty = match &binding.kind {
+        BindingKind::ConstantBuffer { reg_count, .. } => {
+            let min_size = (*reg_count as u64).saturating_mul(16);
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: NonZeroU64::new(min_size),
+            }
+        }
+        BindingKind::Texture2D { .. } => wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        BindingKind::Sampler { .. } => {
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+        }
+    };
+
+    Ok(wgpu::BindGroupLayoutEntry {
+        binding: binding.binding,
+        visibility: binding.visibility,
+        ty,
+        count: None,
+    })
+}
+
+fn resolve_texture_binding(state: &AerogpuD3d11State, binding: &Binding) -> Option<u32> {
+    let slot: usize = binding.binding.try_into().ok()?;
+    let vs = state.textures_vs.get(slot).and_then(|v| *v);
+    let ps = state.textures_ps.get(slot).and_then(|v| *v);
+    let cs = state.textures_cs.get(slot).and_then(|v| *v);
+
+    if binding.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+        if ps.is_some() {
+            return ps;
+        }
+        if binding.visibility.contains(wgpu::ShaderStages::VERTEX) && vs.is_some() {
+            return vs;
+        }
+    }
+    if binding.visibility.contains(wgpu::ShaderStages::VERTEX) && vs.is_some() {
+        return vs;
+    }
+    if binding.visibility.contains(wgpu::ShaderStages::COMPUTE) && cs.is_some() {
+        return cs;
+    }
+    None
+}
+
+fn build_bind_groups(
+    device: &wgpu::Device,
+    bindings: &[Binding],
+    group_layouts: &[CachedBindGroupLayout],
+    state: &AerogpuD3d11State,
+    resources: &AerogpuD3d11Resources,
+    fallback_texture_view: &wgpu::TextureView,
+    fallback_sampler: &wgpu::Sampler,
+    fallback_uniform_buffer: &wgpu::Buffer,
+) -> Result<Vec<wgpu::BindGroup>> {
+    let mut out = Vec::with_capacity(group_layouts.len());
+    for (group, cached_layout) in group_layouts.iter().enumerate() {
+        let group_u32 = group as u32;
+        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
+        for b in bindings.iter().filter(|b| b.group == group_u32) {
+            let resource = match &b.kind {
+                BindingKind::ConstantBuffer { .. } => fallback_uniform_buffer.as_entire_binding(),
+                BindingKind::Texture2D { .. } => {
+                    let handle = resolve_texture_binding(state, b);
+                    let view = handle
+                        .and_then(|h| resources.textures.get(&h).map(|t| &t.view))
+                        .unwrap_or(fallback_texture_view);
+                    wgpu::BindingResource::TextureView(view)
+                }
+                BindingKind::Sampler { .. } => wgpu::BindingResource::Sampler(fallback_sampler),
+            };
+            entries.push(wgpu::BindGroupEntry {
+                binding: b.binding,
+                resource,
+            });
+        }
+        entries.sort_by_key(|e| e.binding);
+        out.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd bind group"),
+            layout: cached_layout.layout.as_ref(),
+            entries: &entries,
+        }));
+    }
+    Ok(out)
+}
+
 fn get_or_create_render_pipeline_for_state<'a>(
     device: &wgpu::Device,
     pipeline_cache: &'a mut PipelineCache,
-    pipeline_layout_empty: &wgpu::PipelineLayout,
+    pipeline_layout: &wgpu::PipelineLayout,
     resources: &mut AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
+    layout_key: PipelineLayoutKey,
 ) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline, Vec<u32>)> {
     let vs_handle = state
         .vs
@@ -2096,7 +2473,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
         scissor_enabled: state.scissor_enable,
         vertex_buffers: vertex_buffer_keys,
         sample_count: 1,
-        layout: PipelineLayoutKey::empty(),
+        layout: layout_key,
     };
 
     let topology = state.primitive_topology;
@@ -2112,7 +2489,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
 
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("aerogpu_cmd render pipeline"),
-                layout: Some(pipeline_layout_empty),
+                layout: Some(pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: vs,
                     entry_point: vs_entry_point,
@@ -2468,18 +2845,10 @@ fn try_translate_sm4_signature_driven(
     dxbc: &DxbcFile<'_>,
     program: &Sm4Program,
     signatures: &crate::ShaderSignatures,
-) -> Result<String> {
+) -> Result<ShaderTranslation> {
     let module = program.decode().context("decode SM4/5 token stream")?;
-    let translated = translate_sm4_module_to_wgsl(dxbc, &module, signatures)
-        .context("signature-driven SM4/5 translation")?;
-
-    // NOTE: `AerogpuD3d11Executor` does not yet build bind groups for translated resources. Only
-    // accept the signature-driven path when the shader has no declared bindings.
-    if !translated.reflection.bindings.is_empty() {
-        bail!("shader requires resource bindings (not supported yet)");
-    }
-
-    Ok(translated.wgsl)
+    translate_sm4_module_to_wgsl(dxbc, &module, signatures)
+        .context("signature-driven SM4/5 translation")
 }
 
 fn read_u32_le(buf: &[u8], offset: usize) -> Result<u32> {

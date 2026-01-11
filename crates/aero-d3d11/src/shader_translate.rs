@@ -207,10 +207,17 @@ fn translate_ps(
     let mut w = WgslWriter::new();
 
     resources.emit_decls(&mut w)?;
-    io.emit_ps_structs(&mut w)?;
+    let ps_has_inputs = !io.inputs.is_empty() || io.ps_position_register.is_some();
+    if ps_has_inputs {
+        io.emit_ps_structs(&mut w)?;
+    }
 
     w.line("@fragment");
-    w.line("fn fs_main(input: PsIn) -> @location(0) vec4<f32> {");
+    if ps_has_inputs {
+        w.line("fn fs_main(input: PsIn) -> @location(0) vec4<f32> {");
+    } else {
+        w.line("fn fs_main() -> @location(0) vec4<f32> {");
+    }
     w.indent();
     w.line("");
     emit_temp_and_output_decls(&mut w, module, &io)?;

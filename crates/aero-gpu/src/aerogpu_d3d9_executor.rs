@@ -1246,8 +1246,8 @@ impl AerogpuD3d9Executor {
                     }
 
                     // Flush any pending CPU writes before GPU reads/writes this buffer.
-                    self.flush_buffer_if_dirty(Some(&mut encoder), src_buffer, ctx.guest_memory)?;
-                    self.flush_buffer_if_dirty(Some(&mut encoder), dst_buffer, ctx.guest_memory)?;
+                    self.flush_buffer_if_dirty(encoder_opt.as_mut(), src_buffer, ctx.guest_memory)?;
+                    self.flush_buffer_if_dirty(encoder_opt.as_mut(), dst_buffer, ctx.guest_memory)?;
 
                     let src_buf = match self
                         .resources
@@ -1517,12 +1517,12 @@ impl AerogpuD3d9Executor {
 
                     // Flush any pending CPU writes before GPU reads/writes these subresources.
                     self.flush_texture_if_dirty_strict(
-                        Some(&mut encoder),
+                        encoder_opt.as_mut(),
                         src_texture,
                         ctx.guest_memory,
                     )?;
                     self.flush_texture_if_dirty_strict(
-                        Some(&mut encoder),
+                        encoder_opt.as_mut(),
                         dst_texture,
                         ctx.guest_memory,
                     )?;
