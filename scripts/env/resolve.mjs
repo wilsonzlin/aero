@@ -7,9 +7,10 @@
  * - node: `const cfg = JSON.parse(execFileSync('node', ['scripts/env/resolve.mjs']))`
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -133,6 +134,31 @@ function resolveDirFromEnv({ canonical, aliases }) {
 }
 
 function autoDetectNodeDir() {
+  const detectScript = path.resolve(repoRoot, "scripts/ci/detect-node-dir.mjs");
+  if (fileExists(detectScript)) {
+    const tmpOut = path.join(os.tmpdir(), `aero-detect-node-dir-${process.pid}-${Date.now()}.txt`);
+    const result = spawnSync(process.execPath, [detectScript, "--allow-missing", "--github-output", tmpOut], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    if ((result.status ?? 1) !== 0) {
+      const details = (result.stderr || result.stdout || "").trim();
+      die(`detect-node-dir failed.\n\n${details}`);
+    }
+
+    for (const line of (result.stdout || "").split(/\r?\n/u)) {
+      const idx = line.indexOf("=");
+      if (idx === -1) continue;
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (key === "dir" && value) {
+        return resolvePathMaybeAbs(value);
+      }
+    }
+    return null;
+  }
+
   const candidates = [".", "frontend", "web"];
   for (const rel of candidates) {
     const abs = path.resolve(repoRoot, rel);
@@ -171,6 +197,31 @@ function resolveNodeDir({ override }) {
 }
 
 function autoDetectWasmCrateDir() {
+  const detectScript = path.resolve(repoRoot, "scripts/ci/detect-wasm-crate.mjs");
+  if (fileExists(detectScript)) {
+    const tmpOut = path.join(os.tmpdir(), `aero-detect-wasm-crate-${process.pid}-${Date.now()}.txt`);
+    const result = spawnSync(process.execPath, [detectScript, "--allow-missing", "--github-output", tmpOut], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    if ((result.status ?? 1) !== 0) {
+      const details = (result.stderr || result.stdout || "").trim();
+      die(`detect-wasm-crate failed.\n\n${details}`);
+    }
+
+    for (const line of (result.stdout || "").split(/\r?\n/u)) {
+      const idx = line.indexOf("=");
+      if (idx === -1) continue;
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (key === "dir" && value) {
+        return resolvePathMaybeAbs(value);
+      }
+    }
+    return null;
+  }
+
   const candidates = ["crates/aero-wasm", "crates/wasm", "crates/aero-ipc", "wasm", "rust/wasm"];
   for (const rel of candidates) {
     const abs = path.resolve(repoRoot, rel);
@@ -403,4 +454,3 @@ for (const [k, v] of Object.entries(resolved)) {
   // eslint-disable-next-line no-console
   console.log(`export ${k}=${bashQuote(v)}`);
 }
-
