@@ -12,6 +12,8 @@ SMOKE_WASM_DIR="$(dirname "$SMOKE_WASM_PATH")"
 
 compose() {
   AERO_DOMAIN=localhost \
+    AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
+    AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_HSTS_MAX_AGE=0 \
     AERO_CSP_CONNECT_SRC_EXTRA= \
     AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
