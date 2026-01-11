@@ -91,6 +91,15 @@ class WddmSubmit {
 
   volatile uint64_t* monitored_fence_value_ = nullptr;
 
+  // Runtime-provided per-DMA-buffer private data for the current command buffer.
+  //
+  // The Win7 AeroGPU KMD requires this blob to be non-null on every Render/Present
+  // submission. Header/interface revisions vary on where the pointer is exposed
+  // (CreateContext vs Allocate/GetCommandBuffer vs in/out submit structs), so we
+  // stash the latest observed value here as a fallback.
+  void* dma_private_data_ = nullptr;
+  UINT dma_private_data_bytes_ = 0;
+
   uint64_t last_submitted_fence_ = 0;
   uint64_t last_completed_fence_ = 0;
 };

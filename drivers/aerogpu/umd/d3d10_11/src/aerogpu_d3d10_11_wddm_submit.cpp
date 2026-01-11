@@ -13,6 +13,9 @@
 
 #include "../../../protocol/aerogpu_cmd.h"
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
+#include "../../../protocol/aerogpu_win7_abi.h"
+
+#include "aerogpu_d3d10_11_log.h"
 
 #ifndef FAILED
   #define FAILED(hr) (((HRESULT)(hr)) < 0)
@@ -29,6 +32,10 @@ constexpr bool NtSuccess(NTSTATUS st) {
 
 #ifndef STATUS_TIMEOUT
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
+#endif
+
+#ifndef STATUS_INVALID_PARAMETER
+  #define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
 #endif
 
 template <typename Fn>
@@ -273,13 +280,27 @@ struct has_member_pFenceValue : std::false_type {};
 template <typename T>
 struct has_member_pFenceValue<T, std::void_t<decltype(std::declval<T>().pFenceValue)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pDmaBufferPrivateData : std::false_type {};
+
+template <typename T>
+struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DmaBufferPrivateDataSize : std::false_type {};
+
+template <typename T>
+struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<T>().DmaBufferPrivateDataSize)>> : std::true_type {};
+
 template <typename CallbacksT, typename FnT>
 HRESULT create_context_common(const CallbacksT* callbacks,
-                             FnT fn,
-                             D3DKMT_HANDLE hDevice,
-                             D3DKMT_HANDLE* hContextOut,
-                             D3DKMT_HANDLE* hSyncObjectOut,
-                             volatile uint64_t** monitored_fence_value_out) {
+                              FnT fn,
+                              D3DKMT_HANDLE hDevice,
+                              D3DKMT_HANDLE* hContextOut,
+                              D3DKMT_HANDLE* hSyncObjectOut,
+                              volatile uint64_t** monitored_fence_value_out,
+                              void** dma_private_data_out,
+                              UINT* dma_private_data_size_out) {
   if (!callbacks || !fn || !hDevice || !hContextOut || !hSyncObjectOut) {
     return E_INVALIDARG;
   }
@@ -302,6 +323,19 @@ HRESULT create_context_common(const CallbacksT* callbacks,
   *hContextOut = data.hContext;
   *hSyncObjectOut = data.hSyncObject;
 
+  if (dma_private_data_out) {
+    *dma_private_data_out = nullptr;
+    if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+      *dma_private_data_out = data.pDmaBufferPrivateData;
+    }
+  }
+  if (dma_private_data_size_out) {
+    *dma_private_data_size_out = 0;
+    if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+      *dma_private_data_size_out = data.DmaBufferPrivateDataSize;
+    }
+  }
+
   if (monitored_fence_value_out) {
     *monitored_fence_value_out = nullptr;
     if constexpr (has_member_pMonitoredFenceValue<Arg>::value) {
@@ -316,10 +350,12 @@ HRESULT create_context_common(const CallbacksT* callbacks,
 
 template <typename CallbacksT>
 HRESULT create_context_from_callbacks(const CallbacksT* callbacks,
-                                      D3DKMT_HANDLE hDevice,
-                                      D3DKMT_HANDLE* hContextOut,
-                                      D3DKMT_HANDLE* hSyncObjectOut,
-                                      volatile uint64_t** monitored_fence_value_out) {
+                                       D3DKMT_HANDLE hDevice,
+                                       D3DKMT_HANDLE* hContextOut,
+                                       D3DKMT_HANDLE* hSyncObjectOut,
+                                       volatile uint64_t** monitored_fence_value_out,
+                                       void** dma_private_data_out,
+                                       UINT* dma_private_data_size_out) {
   if (!callbacks || !hDevice) {
     return E_INVALIDARG;
   }
@@ -328,7 +364,14 @@ HRESULT create_context_from_callbacks(const CallbacksT* callbacks,
   // entrypoint for other interface versions.
   if constexpr (has_pfnCreateContextCb2<CallbacksT>::value) {
     if (callbacks->pfnCreateContextCb2) {
-      return create_context_common(callbacks, callbacks->pfnCreateContextCb2, hDevice, hContextOut, hSyncObjectOut, monitored_fence_value_out);
+      return create_context_common(callbacks,
+                                   callbacks->pfnCreateContextCb2,
+                                   hDevice,
+                                   hContextOut,
+                                   hSyncObjectOut,
+                                   monitored_fence_value_out,
+                                   dma_private_data_out,
+                                   dma_private_data_size_out);
     }
   }
 
@@ -336,7 +379,14 @@ HRESULT create_context_from_callbacks(const CallbacksT* callbacks,
     if (!callbacks->pfnCreateContextCb) {
       return E_FAIL;
     }
-    return create_context_common(callbacks, callbacks->pfnCreateContextCb, hDevice, hContextOut, hSyncObjectOut, monitored_fence_value_out);
+    return create_context_common(callbacks,
+                                 callbacks->pfnCreateContextCb,
+                                 hDevice,
+                                 hContextOut,
+                                 hSyncObjectOut,
+                                 monitored_fence_value_out,
+                                 dma_private_data_out,
+                                 dma_private_data_size_out);
   }
 
   return E_NOTIMPL;
@@ -517,6 +567,153 @@ struct SubmissionBuffers {
   D3DDDICB_ALLOCATE alloc = {};
 };
 
+template <typename T, typename = void>
+struct has_member_pNewCommandBuffer : std::false_type {};
+template <typename T>
+struct has_member_pNewCommandBuffer<T, std::void_t<decltype(std::declval<T>().pNewCommandBuffer)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewCommandBufferSize : std::false_type {};
+template <typename T>
+struct has_member_NewCommandBufferSize<T, std::void_t<decltype(std::declval<T>().NewCommandBufferSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pNewAllocationList : std::false_type {};
+template <typename T>
+struct has_member_pNewAllocationList<T, std::void_t<decltype(std::declval<T>().pNewAllocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewAllocationListSize : std::false_type {};
+template <typename T>
+struct has_member_NewAllocationListSize<T, std::void_t<decltype(std::declval<T>().NewAllocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pNewPatchLocationList : std::false_type {};
+template <typename T>
+struct has_member_pNewPatchLocationList<T, std::void_t<decltype(std::declval<T>().pNewPatchLocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewPatchLocationListSize : std::false_type {};
+template <typename T>
+struct has_member_NewPatchLocationListSize<T, std::void_t<decltype(std::declval<T>().NewPatchLocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_CommandBufferSize : std::false_type {};
+template <typename T>
+struct has_member_CommandBufferSize<T, std::void_t<decltype(std::declval<T>().CommandBufferSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pCommandBuffer : std::false_type {};
+template <typename T>
+struct has_member_pCommandBuffer<T, std::void_t<decltype(std::declval<T>().pCommandBuffer)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pAllocationList : std::false_type {};
+template <typename T>
+struct has_member_pAllocationList<T, std::void_t<decltype(std::declval<T>().pAllocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AllocationListSize : std::false_type {};
+template <typename T>
+struct has_member_AllocationListSize<T, std::void_t<decltype(std::declval<T>().AllocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pPatchLocationList : std::false_type {};
+template <typename T>
+struct has_member_pPatchLocationList<T, std::void_t<decltype(std::declval<T>().pPatchLocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_PatchLocationListSize : std::false_type {};
+template <typename T>
+struct has_member_PatchLocationListSize<T, std::void_t<decltype(std::declval<T>().PatchLocationListSize)>> : std::true_type {};
+
+template <typename SubmitArgsT>
+void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& args) {
+  if (!buf) {
+    return;
+  }
+
+  bool updated_cmd_buffer = false;
+  if constexpr (has_member_pNewCommandBuffer<SubmitArgsT>::value && has_member_NewCommandBufferSize<SubmitArgsT>::value) {
+    if (args.pNewCommandBuffer && args.NewCommandBufferSize) {
+      buf->command_buffer = args.pNewCommandBuffer;
+      buf->command_buffer_bytes = args.NewCommandBufferSize;
+      if (!buf->dma_buffer) {
+        buf->dma_buffer = buf->command_buffer;
+      }
+      updated_cmd_buffer = true;
+    }
+  }
+  if (!updated_cmd_buffer) {
+    if constexpr (has_member_pCommandBuffer<SubmitArgsT>::value) {
+      if (args.pCommandBuffer) {
+        buf->command_buffer = args.pCommandBuffer;
+      }
+    }
+    if constexpr (has_member_CommandBufferSize<SubmitArgsT>::value) {
+      if (args.CommandBufferSize) {
+        buf->command_buffer_bytes = args.CommandBufferSize;
+      }
+    }
+  }
+
+  bool updated_allocation_list = false;
+  if constexpr (has_member_pNewAllocationList<SubmitArgsT>::value && has_member_NewAllocationListSize<SubmitArgsT>::value) {
+    if (args.pNewAllocationList && args.NewAllocationListSize) {
+      buf->allocation_list = args.pNewAllocationList;
+      buf->allocation_list_entries = args.NewAllocationListSize;
+      updated_allocation_list = true;
+    }
+  }
+  if (!updated_allocation_list) {
+    if constexpr (has_member_pAllocationList<SubmitArgsT>::value) {
+      if (args.pAllocationList) {
+        buf->allocation_list = args.pAllocationList;
+      }
+    }
+    if constexpr (has_member_AllocationListSize<SubmitArgsT>::value) {
+      if (args.AllocationListSize) {
+        buf->allocation_list_entries = args.AllocationListSize;
+      }
+    }
+  }
+
+  bool updated_patch_list = false;
+  if constexpr (has_member_pNewPatchLocationList<SubmitArgsT>::value && has_member_NewPatchLocationListSize<SubmitArgsT>::value) {
+    if (args.pNewPatchLocationList && args.NewPatchLocationListSize) {
+      buf->patch_location_list = args.pNewPatchLocationList;
+      buf->patch_location_list_entries = args.NewPatchLocationListSize;
+      updated_patch_list = true;
+    }
+  }
+  if (!updated_patch_list) {
+    if constexpr (has_member_pPatchLocationList<SubmitArgsT>::value) {
+      if (args.pPatchLocationList) {
+        buf->patch_location_list = args.pPatchLocationList;
+      }
+    }
+    if constexpr (has_member_PatchLocationListSize<SubmitArgsT>::value) {
+      if (args.PatchLocationListSize) {
+        buf->patch_location_list_entries = args.PatchLocationListSize;
+      }
+    }
+  }
+
+  // pDmaBufferPrivateData is required by the AeroGPU Win7 KMD (DxgkDdiRender /
+  // DxgkDdiPresent validate it). The runtime may rotate it alongside the command
+  // buffer, so treat it as an in/out field.
+  if constexpr (has_member_pDmaBufferPrivateData<SubmitArgsT>::value) {
+    if (args.pDmaBufferPrivateData) {
+      buf->dma_private_data = args.pDmaBufferPrivateData;
+    }
+  }
+  if constexpr (has_member_DmaBufferPrivateDataSize<SubmitArgsT>::value) {
+    if (args.DmaBufferPrivateDataSize) {
+      buf->dma_private_data_bytes = args.DmaBufferPrivateDataSize;
+    }
+  }
+}
+
 } // namespace
 
 WddmSubmit::~WddmSubmit() {
@@ -545,10 +742,28 @@ HRESULT WddmSubmit::Init(const D3DDDI_DEVICECALLBACKS* callbacks,
     return hr;
   }
 
-  hr = create_context_from_callbacks(callbacks_, hDevice_, &hContext_, &hSyncObject_, &monitored_fence_value_);
+  hr = create_context_from_callbacks(callbacks_,
+                                     hDevice_,
+                                     &hContext_,
+                                     &hSyncObject_,
+                                     &monitored_fence_value_,
+                                     &dma_private_data_,
+                                     &dma_private_data_bytes_);
   if (FAILED(hr)) {
     Shutdown();
     return hr;
+  }
+
+  const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+  if (dma_private_data_bytes_ != 0 && !dma_private_data_) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: CreateContext returned DmaBufferPrivateDataSize=%u but pDmaBufferPrivateData=NULL",
+                         static_cast<unsigned>(dma_private_data_bytes_));
+  } else if (!dma_private_data_ || dma_private_data_bytes_ < expected_dma_priv_bytes) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: CreateContext did not provide usable dma private data ptr=%p bytes=%u (need >=%u); "
+                         "will rely on Allocate/GetCommandBuffer",
+                         dma_private_data_,
+                         static_cast<unsigned>(dma_private_data_bytes_),
+                         static_cast<unsigned>(expected_dma_priv_bytes));
   }
 
   return S_OK;
@@ -570,6 +785,8 @@ void WddmSubmit::Shutdown() {
   hContext_ = 0;
   hSyncObject_ = 0;
   monitored_fence_value_ = nullptr;
+  dma_private_data_ = nullptr;
+  dma_private_data_bytes_ = 0;
   last_submitted_fence_ = 0;
   last_completed_fence_ = 0;
 }
@@ -807,19 +1024,20 @@ HRESULT acquire_submit_buffers_get_command_buffer(const D3DDDI_DEVICECALLBACKS* 
 HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
                      void* runtime_device_private,
                      D3DKMT_HANDLE hContext,
-                     const SubmissionBuffers& buf,
+                     SubmissionBuffers* buf,
                      UINT chunk_size,
                      bool do_present,
                      uint64_t* out_fence) {
   if (out_fence) {
     *out_fence = 0;
   }
-  if (!callbacks || !runtime_device_private || !buf.command_buffer || chunk_size == 0) {
+  if (!callbacks || !runtime_device_private || !buf || !buf->command_buffer || chunk_size == 0) {
     return E_INVALIDARG;
   }
 
   HRESULT submit_hr = E_NOTIMPL;
   uint64_t fence = 0;
+  const HRESULT status_invalid_parameter = static_cast<HRESULT>(STATUS_INVALID_PARAMETER);
 
   if (do_present) {
     if constexpr (!has_pfnPresentCb<D3DDDI_DEVICECALLBACKS>::value) {
@@ -835,10 +1053,10 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
         present.hContext = hContext;
       }
       __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
-        present.pDmaBuffer = buf.dma_buffer;
+        present.pDmaBuffer = buf->dma_buffer;
       }
       __if_exists(D3DDDICB_PRESENT::pCommandBuffer) {
-        present.pCommandBuffer = buf.command_buffer;
+        present.pCommandBuffer = buf->command_buffer;
       }
       __if_exists(D3DDDICB_PRESENT::DmaBufferSize) {
         present.DmaBufferSize = chunk_size;
@@ -847,25 +1065,25 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
         present.CommandLength = chunk_size;
       }
       __if_exists(D3DDDICB_PRESENT::CommandBufferSize) {
-        present.CommandBufferSize = buf.command_buffer_bytes;
+        present.CommandBufferSize = buf->command_buffer_bytes;
       }
       __if_exists(D3DDDICB_PRESENT::pAllocationList) {
-        present.pAllocationList = buf.allocation_list;
+        present.pAllocationList = buf->allocation_list;
       }
       __if_exists(D3DDDICB_PRESENT::AllocationListSize) {
         present.AllocationListSize = 0;
       }
       __if_exists(D3DDDICB_PRESENT::pPatchLocationList) {
-        present.pPatchLocationList = buf.patch_location_list;
+        present.pPatchLocationList = buf->patch_location_list;
       }
       __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
         present.PatchLocationListSize = 0;
       }
       __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
-        present.pDmaBufferPrivateData = buf.dma_private_data;
+        present.pDmaBufferPrivateData = buf->dma_private_data;
       }
       __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
-        present.DmaBufferPrivateDataSize = buf.dma_private_data_bytes;
+        present.DmaBufferPrivateDataSize = buf->dma_private_data_bytes;
       }
       __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) {
         present.pSubmissionFenceId = reinterpret_cast<decltype(present.pSubmissionFenceId)>(&fence_id_tmp);
@@ -880,6 +1098,12 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
                                     &present);
       if (SUCCEEDED(submit_hr)) {
         fence = extract_submit_fence(present);
+        update_buffers_from_submit_args(buf, present);
+      } else if (submit_hr == E_INVALIDARG || submit_hr == status_invalid_parameter) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: PresentCb invalid parameter hr=0x%08x dma_priv=%p bytes=%u",
+                             static_cast<unsigned>(submit_hr),
+                             buf->dma_private_data,
+                             static_cast<unsigned>(buf->dma_private_data_bytes));
       }
     }
   } else {
@@ -896,10 +1120,10 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
         render.hContext = hContext;
       }
       __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
-        render.pDmaBuffer = buf.dma_buffer;
+        render.pDmaBuffer = buf->dma_buffer;
       }
       __if_exists(D3DDDICB_RENDER::pCommandBuffer) {
-        render.pCommandBuffer = buf.command_buffer;
+        render.pCommandBuffer = buf->command_buffer;
       }
       __if_exists(D3DDDICB_RENDER::DmaBufferSize) {
         render.DmaBufferSize = chunk_size;
@@ -908,25 +1132,25 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
         render.CommandLength = chunk_size;
       }
       __if_exists(D3DDDICB_RENDER::CommandBufferSize) {
-        render.CommandBufferSize = buf.command_buffer_bytes;
+        render.CommandBufferSize = buf->command_buffer_bytes;
       }
       __if_exists(D3DDDICB_RENDER::pAllocationList) {
-        render.pAllocationList = buf.allocation_list;
+        render.pAllocationList = buf->allocation_list;
       }
       __if_exists(D3DDDICB_RENDER::AllocationListSize) {
         render.AllocationListSize = 0;
       }
       __if_exists(D3DDDICB_RENDER::pPatchLocationList) {
-        render.pPatchLocationList = buf.patch_location_list;
+        render.pPatchLocationList = buf->patch_location_list;
       }
       __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
         render.PatchLocationListSize = 0;
       }
       __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
-        render.pDmaBufferPrivateData = buf.dma_private_data;
+        render.pDmaBufferPrivateData = buf->dma_private_data;
       }
       __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
-        render.DmaBufferPrivateDataSize = buf.dma_private_data_bytes;
+        render.DmaBufferPrivateDataSize = buf->dma_private_data_bytes;
       }
       __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) {
         render.pSubmissionFenceId = reinterpret_cast<decltype(render.pSubmissionFenceId)>(&fence_id_tmp);
@@ -939,6 +1163,12 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
           CallCbMaybeHandle(callbacks->pfnRenderCb, MakeRtDevice11(runtime_device_private), MakeRtDevice10(runtime_device_private), &render);
       if (SUCCEEDED(submit_hr)) {
         fence = extract_submit_fence(render);
+        update_buffers_from_submit_args(buf, render);
+      } else if (submit_hr == E_INVALIDARG || submit_hr == status_invalid_parameter) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: RenderCb invalid parameter hr=0x%08x dma_priv=%p bytes=%u",
+                             static_cast<unsigned>(submit_hr),
+                             buf->dma_private_data,
+                             static_cast<unsigned>(buf->dma_private_data_bytes));
       }
     }
   }
@@ -1012,6 +1242,62 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
       }
     };
 
+    // DMA buffer private data is a required UMD→KMD ABI for AeroGPU on Win7. The
+    // KMD validates that `pDmaBufferPrivateData != NULL`, and dxgkrnl only forwards
+    // the pointer when `DmaBufferPrivateDataSize` is non-zero.
+    bool used_ctx_dma_priv_ptr_fallback = false;
+    bool used_ctx_dma_priv_size_fallback = false;
+    if (!buf.dma_private_data && dma_private_data_) {
+      buf.dma_private_data = dma_private_data_;
+      used_ctx_dma_priv_ptr_fallback = true;
+    }
+    if (buf.dma_private_data_bytes == 0 && dma_private_data_bytes_ != 0) {
+      buf.dma_private_data_bytes = dma_private_data_bytes_;
+      used_ctx_dma_priv_size_fallback = true;
+    }
+    const bool used_ctx_dma_priv_fallback = used_ctx_dma_priv_ptr_fallback || used_ctx_dma_priv_size_fallback;
+    if (used_ctx_dma_priv_fallback) {
+      static bool logged_fallback = false;
+      if (!logged_fallback) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: filling missing dma private data ptr/size from CreateContext (ptr=%p bytes=%u)",
+                             buf.dma_private_data,
+                             static_cast<unsigned>(buf.dma_private_data_bytes));
+        logged_fallback = true;
+      }
+    }
+    const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+    if (buf.dma_private_data_bytes != 0 && !buf.dma_private_data) {
+      AEROGPU_D3D10_11_LOG("wddm_submit: %s provided dma private data size=%u but ptr=NULL",
+                           buf.needs_deallocate ? "AllocateCb" : "GetCommandBufferCb",
+                           static_cast<unsigned>(buf.dma_private_data_bytes));
+      release();
+      return E_FAIL;
+    }
+    if (!buf.dma_private_data || buf.dma_private_data_bytes < expected_dma_priv_bytes) {
+      AEROGPU_D3D10_11_LOG("wddm_submit: %s missing dma private data ptr=%p size=%u (need >=%u)",
+                           buf.needs_deallocate ? "AllocateCb" : "GetCommandBufferCb",
+                           buf.dma_private_data,
+                           static_cast<unsigned>(buf.dma_private_data_bytes),
+                           static_cast<unsigned>(expected_dma_priv_bytes));
+      release();
+      return E_FAIL;
+    }
+    if (buf.dma_private_data_bytes != expected_dma_priv_bytes) {
+      static bool logged_size_mismatch = false;
+      if (!logged_size_mismatch) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: dma private data size mismatch bytes=%u expected=%u",
+                             static_cast<unsigned>(buf.dma_private_data_bytes),
+                             static_cast<unsigned>(expected_dma_priv_bytes));
+        logged_size_mismatch = true;
+      }
+    }
+    // Safety: if the runtime reports a larger private-data size than the KMD/UMD
+    // contract, clamp to the expected size so dxgkrnl does not copy extra bytes
+    // of user-mode memory into kernel-mode buffers.
+    if (buf.dma_private_data_bytes > expected_dma_priv_bytes) {
+      buf.dma_private_data_bytes = expected_dma_priv_bytes;
+    }
+
     const UINT dma_cap = buf.command_buffer_bytes;
     if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
       release();
@@ -1051,6 +1337,15 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
     hdr->size_bytes = static_cast<uint32_t>(chunk_size);
 
+    // Security: avoid leaking uninitialized user-mode bytes into the kernel-mode
+    // copy of the per-DMA-buffer private data. The AeroGPU KMD will overwrite
+    // AEROGPU_DMA_PRIV anyway.
+    const size_t zero_bytes =
+        std::min<size_t>(static_cast<size_t>(buf.dma_private_data_bytes), static_cast<size_t>(expected_dma_priv_bytes));
+    if (zero_bytes) {
+      std::memset(buf.dma_private_data, 0, zero_bytes);
+    }
+
     const bool is_last_chunk = (chunk_end == src_size);
     bool do_present = false;
     if (want_present && is_last_chunk) {
@@ -1061,7 +1356,17 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
 
     uint64_t fence = 0;
     const HRESULT submit_hr =
-        submit_chunk(callbacks_, runtime_device_private_, hContext_, buf, static_cast<UINT>(chunk_size), do_present, &fence);
+        submit_chunk(callbacks_, runtime_device_private_, hContext_, &buf, static_cast<UINT>(chunk_size), do_present, &fence);
+    if (SUCCEEDED(submit_hr) && buf.dma_private_data && buf.dma_private_data_bytes) {
+      // Only persist the updated pointer/size when the runtime owns this memory:
+      // - GetCommandBuffer path (no Deallocate call), or
+      // - CreateContext supplied the pointer (so it is not tied to an AllocateCb
+      //   buffer lifetime).
+      if (!buf.needs_deallocate || used_ctx_dma_priv_ptr_fallback) {
+        dma_private_data_ = buf.dma_private_data;
+        dma_private_data_bytes_ = buf.dma_private_data_bytes;
+      }
+    }
     release();
     if (FAILED(submit_hr)) {
       return submit_hr;
