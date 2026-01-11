@@ -27,6 +27,12 @@ use super::aerogpu_cmd::{
 };
 use super::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
+/// WebGPU requires buffer copy offsets and sizes be 4-byte aligned.
+///
+/// This matches `wgpu::COPY_BUFFER_ALIGNMENT` but we avoid depending on `wgpu` in the
+/// protocol crate.
+const COPY_BUFFER_ALIGNMENT: u64 = 4;
+
 fn align_up(v: usize, a: usize) -> usize {
     debug_assert!(a.is_power_of_two());
     let mask = a - 1;
@@ -127,6 +133,10 @@ impl AerogpuCmdWriter {
         backing_alloc_id: u32,
         backing_offset_bytes: u32,
     ) {
+        assert!(
+            size_bytes % COPY_BUFFER_ALIGNMENT == 0,
+            "CREATE_BUFFER size_bytes must be {COPY_BUFFER_ALIGNMENT}-byte aligned (got {size_bytes})",
+        );
         let base = self.append_raw(
             AerogpuCmdOpcode::CreateBuffer,
             size_of::<AerogpuCmdCreateBuffer>(),
@@ -275,6 +285,12 @@ impl AerogpuCmdWriter {
         size_bytes: u64,
         flags: u32,
     ) {
+        assert!(
+            dst_offset_bytes % COPY_BUFFER_ALIGNMENT == 0
+                && src_offset_bytes % COPY_BUFFER_ALIGNMENT == 0
+                && size_bytes % COPY_BUFFER_ALIGNMENT == 0,
+            "COPY_BUFFER offsets and size must be {COPY_BUFFER_ALIGNMENT}-byte aligned (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})",
+        );
         let base = self.append_raw(
             AerogpuCmdOpcode::CopyBuffer,
             size_of::<AerogpuCmdCopyBuffer>(),

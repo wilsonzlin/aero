@@ -355,7 +355,7 @@ fn cmd_writer_emits_copy_packets() {
     };
 
     let mut w = AerogpuCmdWriter::new();
-    w.copy_buffer_writeback_dst(1, 2, 3, 4, 5);
+    w.copy_buffer_writeback_dst(1, 2, 4, 8, 12);
     w.copy_texture2d_writeback_dst(10, 11, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8);
     w.flush();
 
@@ -384,7 +384,7 @@ fn cmd_writer_emits_copy_packets() {
                 .try_into()
                 .unwrap()
         ),
-        5
+        12
     );
     assert_eq!(
         u32::from_le_bytes(

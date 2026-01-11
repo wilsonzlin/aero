@@ -670,6 +670,8 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
 
 #[test]
 fn d3d9_create_buffer_rejects_unaligned_size() {
+    use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdCreateBuffer, AerogpuCmdStreamHeader};
+
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
@@ -683,12 +685,16 @@ fn d3d9_create_buffer_rejects_unaligned_size() {
     writer.create_buffer(
         1, // buffer_handle
         0, // usage_flags
-        3, // size_bytes (not 4-byte aligned)
+        4, // size_bytes (writer requires aligned; patch to invalid below)
         0, // backing_alloc_id
         0, // backing_offset_bytes
     );
 
-    let stream = writer.finish();
+    let mut stream = writer.finish();
+    // Patch CREATE_BUFFER.size_bytes to be unaligned without panicking the safe writer.
+    let size_offset = AerogpuCmdStreamHeader::SIZE_BYTES
+        + core::mem::offset_of!(AerogpuCmdCreateBuffer, size_bytes);
+    stream[size_offset..size_offset + 8].copy_from_slice(&3u64.to_le_bytes());
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected CREATE_BUFFER with unaligned size_bytes to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("CREATE_BUFFER")),
@@ -727,6 +733,10 @@ fn d3d9_upload_resource_rejects_unaligned_buffer_range() {
 
 #[test]
 fn d3d9_copy_buffer_rejects_unaligned_range() {
+    use aero_protocol::aerogpu::aerogpu_cmd::{
+        AerogpuCmdCopyBuffer, AerogpuCmdCreateBuffer, AerogpuCmdStreamHeader,
+    };
+
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
@@ -744,11 +754,16 @@ fn d3d9_copy_buffer_rejects_unaligned_range() {
         1, // src_buffer
         0, // dst_offset_bytes
         0, // src_offset_bytes
-        2, // size_bytes (not aligned)
+        4, // size_bytes (writer requires aligned; patch to invalid below)
         0, // flags
     );
 
-    let stream = writer.finish();
+    let mut stream = writer.finish();
+    // Patch COPY_BUFFER.size_bytes to be unaligned without panicking the safe writer.
+    let copy_base =
+        AerogpuCmdStreamHeader::SIZE_BYTES + 2 * core::mem::size_of::<AerogpuCmdCreateBuffer>();
+    let size_offset = copy_base + core::mem::offset_of!(AerogpuCmdCopyBuffer, size_bytes);
+    stream[size_offset..size_offset + 8].copy_from_slice(&2u64.to_le_bytes());
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected COPY_BUFFER with unaligned size_bytes to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("COPY_BUFFER")),
