@@ -30,12 +30,13 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_map_dynamic_buffer_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
         "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
@@ -241,6 +242,31 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   if (!map.pData) {
     context->Unmap(staging_buf.get(), 0);
     return aerogpu_test::Fail(kTestName, "Map(staging, READ) returned NULL pData");
+  }
+
+  if (dump) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring path = aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity.bin");
+    HANDLE h = CreateFileW(
+        path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+      aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW failed: %s",
+                                 kTestName,
+                                 aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    } else {
+      DWORD written = 0;
+      if (!WriteFile(h, map.pData, kByteWidth, &written, NULL) || written != kByteWidth) {
+        aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile failed: %s",
+                                   kTestName,
+                                   aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                                   kTestName,
+                                   (unsigned)kByteWidth,
+                                   path.c_str());
+      }
+      CloseHandle(h);
+    }
   }
 
   const uint8_t* got = (const uint8_t*)map.pData;
