@@ -20,6 +20,9 @@
 
 use std::collections::HashMap;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::storage::state::{NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState};
 use memory::MemoryBus;
 
 const PAGE_SIZE: usize = 4096;
@@ -780,6 +783,145 @@ impl NvmeController {
     }
 }
 
+impl IoSnapshot for NvmeController {
+    const DEVICE_ID: [u8; 4] = <NvmeControllerState as IoSnapshot>::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = <NvmeControllerState as IoSnapshot>::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        let mut state = NvmeControllerState::default();
+        state.cap = self.cap;
+        state.vs = self.vs;
+        state.intms = self.intms;
+        // INTMC is write-only in this device model; we store 0 for compatibility with the shared
+        // snapshot state struct.
+        state.intmc = 0;
+        state.cc = self.cc;
+        state.csts = self.csts;
+        state.aqa = self.aqa;
+        state.asq = self.asq;
+        state.acq = self.acq;
+        state.intx_level = self.intx_level;
+
+        state.admin_sq = self.admin_sq.as_ref().map(|sq| NvmeSubmissionQueueState {
+            qid: sq.id,
+            base: sq.base,
+            size: sq.size,
+            head: sq.head,
+            tail: sq.tail,
+            cqid: sq.cqid,
+        });
+
+        state.admin_cq = self.admin_cq.as_ref().map(|cq| NvmeCompletionQueueState {
+            qid: cq.id,
+            base: cq.base,
+            size: cq.size,
+            head: cq.head,
+            tail: cq.tail,
+            phase: cq.phase,
+            irq_enabled: cq.irq_enabled,
+        });
+
+        state.io_sqs = self
+            .io_sqs
+            .values()
+            .map(|sq| NvmeSubmissionQueueState {
+                qid: sq.id,
+                base: sq.base,
+                size: sq.size,
+                head: sq.head,
+                tail: sq.tail,
+                cqid: sq.cqid,
+            })
+            .collect();
+        state.io_cqs = self
+            .io_cqs
+            .values()
+            .map(|cq| NvmeCompletionQueueState {
+                qid: cq.id,
+                base: cq.base,
+                size: cq.size,
+                head: cq.head,
+                tail: cq.tail,
+                phase: cq.phase,
+                irq_enabled: cq.irq_enabled,
+            })
+            .collect();
+
+        // This controller processes commands synchronously, so there is no meaningful in-flight state.
+        state.in_flight.clear();
+
+        state.save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        let mut state = NvmeControllerState::default();
+        state.load_state(bytes)?;
+
+        self.cap = state.cap;
+        self.vs = state.vs;
+        self.intms = state.intms;
+        self.cc = state.cc;
+        self.csts = state.csts;
+        self.aqa = state.aqa;
+        self.asq = state.asq;
+        self.acq = state.acq;
+
+        self.admin_sq = state.admin_sq.map(|sq| SubmissionQueue {
+            id: sq.qid,
+            size: sq.size,
+            base: sq.base,
+            head: sq.head,
+            tail: sq.tail,
+            cqid: sq.cqid,
+        });
+
+        self.admin_cq = state.admin_cq.map(|cq| CompletionQueue {
+            id: cq.qid,
+            size: cq.size,
+            base: cq.base,
+            head: cq.head,
+            tail: cq.tail,
+            phase: cq.phase,
+            irq_enabled: cq.irq_enabled,
+        });
+
+        self.io_sqs.clear();
+        for sq in state.io_sqs {
+            self.io_sqs.insert(
+                sq.qid,
+                SubmissionQueue {
+                    id: sq.qid,
+                    size: sq.size,
+                    base: sq.base,
+                    head: sq.head,
+                    tail: sq.tail,
+                    cqid: sq.cqid,
+                },
+            );
+        }
+
+        self.io_cqs.clear();
+        for cq in state.io_cqs {
+            self.io_cqs.insert(
+                cq.qid,
+                CompletionQueue {
+                    id: cq.qid,
+                    size: cq.size,
+                    base: cq.base,
+                    head: cq.head,
+                    tail: cq.tail,
+                    phase: cq.phase,
+                    irq_enabled: cq.irq_enabled,
+                },
+            );
+        }
+
+        // Recompute derived INTx level so it stays coherent with restored masks + queue state.
+        self.refresh_intx_level();
+        Ok(())
+    }
+}
+
 fn read_command(
     sq_base: u64,
     head: u16,
@@ -1034,6 +1176,58 @@ impl NvmePciDevice {
 
     pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64, mem: &mut dyn MemoryBus) {
         self.controller.mmio_write(offset, size, value, mem);
+    }
+}
+
+impl IoSnapshot for NvmePciDevice {
+    const DEVICE_ID: [u8; 4] = *b"NVMP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_PCI: u16 = 1;
+        const TAG_CONTROLLER: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let pci = Encoder::new()
+            .u64(self.pci.bar0)
+            .bool(self.pci.bar0_probe)
+            .u16(self.pci.command)
+            .u16(self.pci.status)
+            .u8(self.pci.interrupt_line)
+            .finish();
+        w.field_bytes(TAG_PCI, pci);
+        w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_PCI: u16 = 1;
+        const TAG_CONTROLLER: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_PCI) {
+            let mut d = Decoder::new(buf);
+            self.pci.bar0 = d.u64()?;
+            self.pci.bar0_probe = d.bool()?;
+            self.pci.command = d.u16()?;
+            self.pci.status = d.u16()?;
+            self.pci.interrupt_line = d.u8()?;
+            d.finish()?;
+        } else {
+            self.pci = PciConfig::default();
+        }
+
+        if let Some(buf) = r.bytes(TAG_CONTROLLER) {
+            self.controller.load_state(buf)?;
+        } else {
+            return Err(SnapshotError::InvalidFieldEncoding("missing nvme controller state"));
+        }
+
+        Ok(())
     }
 }
 

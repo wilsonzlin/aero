@@ -170,6 +170,7 @@ dependencies = [
 name = "aero-devices-nvme"
 version = "0.1.0"
 dependencies = [
+ "aero-io-snapshot",
  "criterion",
  "emulator",
  "memory",

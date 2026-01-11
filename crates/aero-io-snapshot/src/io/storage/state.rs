@@ -340,11 +340,24 @@ impl IoSnapshot for IdeControllerState {
 // ----------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NvmeQueueState {
+pub struct NvmeSubmissionQueueState {
+    pub qid: u16,
     pub base: u64,
     pub size: u16,
     pub head: u16,
     pub tail: u16,
+    pub cqid: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NvmeCompletionQueueState {
+    pub qid: u16,
+    pub base: u64,
+    pub size: u16,
+    pub head: u16,
+    pub tail: u16,
+    pub phase: bool,
+    pub irq_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,9 +379,11 @@ pub struct NvmeControllerState {
     pub aqa: u32,
     pub asq: u64,
     pub acq: u64,
-    pub admin_sq: NvmeQueueState,
-    pub admin_cq: NvmeQueueState,
-    pub io_queues: Vec<(NvmeQueueState, NvmeQueueState)>,
+    pub admin_sq: Option<NvmeSubmissionQueueState>,
+    pub admin_cq: Option<NvmeCompletionQueueState>,
+    pub io_sqs: Vec<NvmeSubmissionQueueState>,
+    pub io_cqs: Vec<NvmeCompletionQueueState>,
+    pub intx_level: bool,
     pub in_flight: Vec<NvmeInFlightCommandState>,
 }
 
@@ -384,19 +399,11 @@ impl Default for NvmeControllerState {
             aqa: 0,
             asq: 0,
             acq: 0,
-            admin_sq: NvmeQueueState {
-                base: 0,
-                size: 0,
-                head: 0,
-                tail: 0,
-            },
-            admin_cq: NvmeQueueState {
-                base: 0,
-                size: 0,
-                head: 0,
-                tail: 0,
-            },
-            io_queues: Vec::new(),
+            admin_sq: None,
+            admin_cq: None,
+            io_sqs: Vec::new(),
+            io_cqs: Vec::new(),
+            intx_level: false,
             in_flight: Vec::new(),
         }
     }
@@ -404,13 +411,20 @@ impl Default for NvmeControllerState {
 
 impl IoSnapshot for NvmeControllerState {
     const DEVICE_ID: [u8; 4] = *b"NVME";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
+        // Legacy queue tags kept for forward compatibility (NVME 1.0).
         const TAG_ADMIN_QUEUES: u16 = 2;
         const TAG_IO_QUEUES: u16 = 3;
         const TAG_IN_FLIGHT: u16 = 4;
+        // Extended queue state for deterministic resume (NVME 1.1+).
+        const TAG_ADMIN_SQ: u16 = 5;
+        const TAG_ADMIN_CQ: u16 = 6;
+        const TAG_IO_SQS: u16 = 7;
+        const TAG_IO_CQS: u16 = 8;
+        const TAG_INTX_LEVEL: u16 = 9;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         let regs = Encoder::new()
@@ -426,21 +440,9 @@ impl IoSnapshot for NvmeControllerState {
             .finish();
         w.field_bytes(TAG_REGS, regs);
 
-        let admin = Encoder::new()
-            .u64(self.admin_sq.base)
-            .u16(self.admin_sq.size)
-            .u16(self.admin_sq.head)
-            .u16(self.admin_sq.tail)
-            .u64(self.admin_cq.base)
-            .u16(self.admin_cq.size)
-            .u16(self.admin_cq.head)
-            .u16(self.admin_cq.tail)
-            .finish();
-        w.field_bytes(TAG_ADMIN_QUEUES, admin);
-
-        let mut ioqs = Encoder::new().u32(self.io_queues.len() as u32);
-        for (sq, cq) in &self.io_queues {
-            ioqs = ioqs
+        // Old admin queue encoding: base/size/head/tail for SQ and CQ.
+        if let (Some(sq), Some(cq)) = (self.admin_sq.as_ref(), self.admin_cq.as_ref()) {
+            let admin = Encoder::new()
                 .u64(sq.base)
                 .u16(sq.size)
                 .u16(sq.head)
@@ -448,9 +450,91 @@ impl IoSnapshot for NvmeControllerState {
                 .u64(cq.base)
                 .u16(cq.size)
                 .u16(cq.head)
-                .u16(cq.tail);
+                .u16(cq.tail)
+                .finish();
+            w.field_bytes(TAG_ADMIN_QUEUES, admin);
+        }
+
+        if let Some(sq) = self.admin_sq.as_ref() {
+            let admin_sq = Encoder::new()
+                .u16(sq.qid)
+                .u64(sq.base)
+                .u16(sq.size)
+                .u16(sq.head)
+                .u16(sq.tail)
+                .u16(sq.cqid)
+                .finish();
+            w.field_bytes(TAG_ADMIN_SQ, admin_sq);
+        }
+
+        if let Some(cq) = self.admin_cq.as_ref() {
+            let admin_cq = Encoder::new()
+                .u16(cq.qid)
+                .u64(cq.base)
+                .u16(cq.size)
+                .u16(cq.head)
+                .u16(cq.tail)
+                .bool(cq.phase)
+                .bool(cq.irq_enabled)
+                .finish();
+            w.field_bytes(TAG_ADMIN_CQ, admin_cq);
+        }
+
+        // Old IO queue encoding: ordered list of SQ/CQ pairs without explicit qids.
+        // We preserve it by encoding SQs in ascending qid order and pairing each SQ
+        // with its mapped CQ (cqid), if present.
+        let mut sqs_sorted = self.io_sqs.clone();
+        sqs_sorted.sort_by_key(|sq| sq.qid);
+        let mut cq_by_qid: BTreeMap<u16, NvmeCompletionQueueState> = BTreeMap::new();
+        for cq in &self.io_cqs {
+            cq_by_qid.insert(cq.qid, cq.clone());
+        }
+        let mut ioqs = Encoder::new().u32(sqs_sorted.len() as u32);
+        for sq in &sqs_sorted {
+            let cq = cq_by_qid.get(&sq.cqid);
+            ioqs = ioqs
+                .u64(sq.base)
+                .u16(sq.size)
+                .u16(sq.head)
+                .u16(sq.tail)
+                .u64(cq.map_or(0, |cq| cq.base))
+                .u16(cq.map_or(0, |cq| cq.size))
+                .u16(cq.map_or(0, |cq| cq.head))
+                .u16(cq.map_or(0, |cq| cq.tail));
         }
         w.field_bytes(TAG_IO_QUEUES, ioqs.finish());
+
+        // Deterministic extended queue state (qid-sorted).
+        let mut io_sqs = self.io_sqs.clone();
+        io_sqs.sort_by_key(|sq| sq.qid);
+        let mut io_sqs_enc = Encoder::new().u32(io_sqs.len() as u32);
+        for sq in &io_sqs {
+            io_sqs_enc = io_sqs_enc
+                .u16(sq.qid)
+                .u64(sq.base)
+                .u16(sq.size)
+                .u16(sq.head)
+                .u16(sq.tail)
+                .u16(sq.cqid);
+        }
+        w.field_bytes(TAG_IO_SQS, io_sqs_enc.finish());
+
+        let mut io_cqs = self.io_cqs.clone();
+        io_cqs.sort_by_key(|cq| cq.qid);
+        let mut io_cqs_enc = Encoder::new().u32(io_cqs.len() as u32);
+        for cq in &io_cqs {
+            io_cqs_enc = io_cqs_enc
+                .u16(cq.qid)
+                .u64(cq.base)
+                .u16(cq.size)
+                .u16(cq.head)
+                .u16(cq.tail)
+                .bool(cq.phase)
+                .bool(cq.irq_enabled);
+        }
+        w.field_bytes(TAG_IO_CQS, io_cqs_enc.finish());
+
+        w.field_bool(TAG_INTX_LEVEL, self.intx_level);
 
         let mut inflight = Encoder::new().u32(self.in_flight.len() as u32);
         for cmd in &self.in_flight {
@@ -470,6 +554,11 @@ impl IoSnapshot for NvmeControllerState {
         const TAG_ADMIN_QUEUES: u16 = 2;
         const TAG_IO_QUEUES: u16 = 3;
         const TAG_IN_FLIGHT: u16 = 4;
+        const TAG_ADMIN_SQ: u16 = 5;
+        const TAG_ADMIN_CQ: u16 = 6;
+        const TAG_IO_SQS: u16 = 7;
+        const TAG_IO_CQS: u16 = 8;
+        const TAG_INTX_LEVEL: u16 = 9;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -488,41 +577,156 @@ impl IoSnapshot for NvmeControllerState {
             d.finish()?;
         }
 
+        // Reset queue state to a deterministic baseline before applying snapshot fields.
+        self.admin_sq = None;
+        self.admin_cq = None;
+        self.io_sqs.clear();
+        self.io_cqs.clear();
+
+        // Legacy admin queue state (no cqid/phase/irq).
         if let Some(buf) = r.bytes(TAG_ADMIN_QUEUES) {
             let mut d = Decoder::new(buf);
-            self.admin_sq.base = d.u64()?;
-            self.admin_sq.size = d.u16()?;
-            self.admin_sq.head = d.u16()?;
-            self.admin_sq.tail = d.u16()?;
-            self.admin_cq.base = d.u64()?;
-            self.admin_cq.size = d.u16()?;
-            self.admin_cq.head = d.u16()?;
-            self.admin_cq.tail = d.u16()?;
+            let sq_base = d.u64()?;
+            let sq_size = d.u16()?;
+            let sq_head = d.u16()?;
+            let sq_tail = d.u16()?;
+            let cq_base = d.u64()?;
+            let cq_size = d.u16()?;
+            let cq_head = d.u16()?;
+            let cq_tail = d.u16()?;
             d.finish()?;
+
+            self.admin_sq = Some(NvmeSubmissionQueueState {
+                qid: 0,
+                base: sq_base,
+                size: sq_size,
+                head: sq_head,
+                tail: sq_tail,
+                cqid: 0,
+            });
+            self.admin_cq = Some(NvmeCompletionQueueState {
+                qid: 0,
+                base: cq_base,
+                size: cq_size,
+                head: cq_head,
+                tail: cq_tail,
+                phase: true,
+                irq_enabled: true,
+            });
         }
 
-        self.io_queues.clear();
+        // Extended admin queue state.
+        if let Some(buf) = r.bytes(TAG_ADMIN_SQ) {
+            let mut d = Decoder::new(buf);
+            let qid = d.u16()?;
+            let base = d.u64()?;
+            let size = d.u16()?;
+            let head = d.u16()?;
+            let tail = d.u16()?;
+            let cqid = d.u16()?;
+            d.finish()?;
+            self.admin_sq = Some(NvmeSubmissionQueueState {
+                qid,
+                base,
+                size,
+                head,
+                tail,
+                cqid,
+            });
+        }
+
+        if let Some(buf) = r.bytes(TAG_ADMIN_CQ) {
+            let mut d = Decoder::new(buf);
+            let qid = d.u16()?;
+            let base = d.u64()?;
+            let size = d.u16()?;
+            let head = d.u16()?;
+            let tail = d.u16()?;
+            let phase = d.bool()?;
+            let irq_enabled = d.bool()?;
+            d.finish()?;
+            self.admin_cq = Some(NvmeCompletionQueueState {
+                qid,
+                base,
+                size,
+                head,
+                tail,
+                phase,
+                irq_enabled,
+            });
+        }
+
+        // Legacy IO queues (no qid/cqid/phase/irq). We map them to qid=1..N.
         if let Some(buf) = r.bytes(TAG_IO_QUEUES) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
-            self.io_queues.reserve(count);
-            for _ in 0..count {
-                let sq = NvmeQueueState {
+            self.io_sqs.reserve(count);
+            self.io_cqs.reserve(count);
+            for idx in 0..count {
+                let qid = idx as u16 + 1;
+                let sq = NvmeSubmissionQueueState {
+                    qid,
                     base: d.u64()?,
                     size: d.u16()?,
                     head: d.u16()?,
                     tail: d.u16()?,
+                    cqid: qid,
                 };
-                let cq = NvmeQueueState {
+                let cq = NvmeCompletionQueueState {
+                    qid,
                     base: d.u64()?,
                     size: d.u16()?,
                     head: d.u16()?,
                     tail: d.u16()?,
+                    phase: true,
+                    irq_enabled: true,
                 };
-                self.io_queues.push((sq, cq));
+                self.io_sqs.push(sq);
+                self.io_cqs.push(cq);
             }
             d.finish()?;
         }
+
+        if let Some(buf) = r.bytes(TAG_IO_SQS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            self.io_sqs.clear();
+            self.io_sqs.reserve(count);
+            for _ in 0..count {
+                self.io_sqs.push(NvmeSubmissionQueueState {
+                    qid: d.u16()?,
+                    base: d.u64()?,
+                    size: d.u16()?,
+                    head: d.u16()?,
+                    tail: d.u16()?,
+                    cqid: d.u16()?,
+                });
+            }
+            d.finish()?;
+            self.io_sqs.sort_by_key(|sq| sq.qid);
+        }
+
+        if let Some(buf) = r.bytes(TAG_IO_CQS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            self.io_cqs.clear();
+            self.io_cqs.reserve(count);
+            for _ in 0..count {
+                self.io_cqs.push(NvmeCompletionQueueState {
+                    qid: d.u16()?,
+                    base: d.u64()?,
+                    size: d.u16()?,
+                    head: d.u16()?,
+                    tail: d.u16()?,
+                    phase: d.bool()?,
+                    irq_enabled: d.bool()?,
+                });
+            }
+            d.finish()?;
+            self.io_cqs.sort_by_key(|cq| cq.qid);
+        }
+
+        self.intx_level = r.bool(TAG_INTX_LEVEL)?.unwrap_or(false);
 
         self.in_flight.clear();
         if let Some(buf) = r.bytes(TAG_IN_FLIGHT) {
@@ -543,4 +747,3 @@ impl IoSnapshot for NvmeControllerState {
         Ok(())
     }
 }
-

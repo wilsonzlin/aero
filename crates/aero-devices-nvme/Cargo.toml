@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
 
 [dev-dependencies]

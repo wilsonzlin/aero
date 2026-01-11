@@ -4,8 +4,8 @@ use aero_io_snapshot::io::network::state::{
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::{
-    DiskLayerState, IdeControllerState, IdeInFlightCommandState, NvmeControllerState, NvmeInFlightCommandState,
-    NvmeQueueState,
+    DiskLayerState, IdeControllerState, IdeInFlightCommandState, NvmeCompletionQueueState, NvmeControllerState,
+    NvmeInFlightCommandState, NvmeSubmissionQueueState,
 };
 
 #[test]
@@ -55,32 +55,41 @@ fn nvme_state_roundtrip() {
         aqa: 0x77,
         asq: 0x8888,
         acq: 0x9999,
-        admin_sq: NvmeQueueState {
+        admin_sq: Some(NvmeSubmissionQueueState {
+            qid: 0,
             base: 0x1000,
             size: 16,
             head: 3,
             tail: 8,
-        },
-        admin_cq: NvmeQueueState {
+            cqid: 0,
+        }),
+        admin_cq: Some(NvmeCompletionQueueState {
+            qid: 0,
             base: 0x2000,
             size: 16,
             head: 1,
             tail: 2,
-        },
-        io_queues: vec![(
-            NvmeQueueState {
-                base: 0x3000,
-                size: 64,
-                head: 10,
-                tail: 11,
-            },
-            NvmeQueueState {
-                base: 0x4000,
-                size: 64,
-                head: 12,
-                tail: 13,
-            },
-        )],
+            phase: true,
+            irq_enabled: true,
+        }),
+        io_sqs: vec![NvmeSubmissionQueueState {
+            qid: 1,
+            base: 0x3000,
+            size: 64,
+            head: 10,
+            tail: 11,
+            cqid: 1,
+        }],
+        io_cqs: vec![NvmeCompletionQueueState {
+            qid: 1,
+            base: 0x4000,
+            size: 64,
+            head: 12,
+            tail: 13,
+            phase: false,
+            irq_enabled: false,
+        }],
+        intx_level: true,
         in_flight: vec![NvmeInFlightCommandState {
             cid: 7,
             opcode: 2,
@@ -166,4 +175,3 @@ fn hda_state_roundtrip() {
     restored.load_state(&snap).unwrap();
     assert_eq!(hda, restored);
 }
-
