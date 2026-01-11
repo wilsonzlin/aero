@@ -157,6 +157,38 @@ fn build_signature_chunk_v0_one_entry(stream: u8) -> Vec<u8> {
     bytes
 }
 
+fn build_signature_chunk_v0_one_entry_padded(stream: u8) -> Vec<u8> {
+    // A v0 (24-byte) entry layout with extra padding between the entry table
+    // and string table. This exercises that `DxbcFile::get_signature` prefers
+    // the v0 layout for `*SGN` chunk IDs even if the v1 heuristic could match.
+    let mut bytes = Vec::new();
+
+    let param_count = 1u32;
+    let param_offset = 8u32;
+
+    bytes.extend_from_slice(&param_count.to_le_bytes());
+    bytes.extend_from_slice(&param_offset.to_le_bytes());
+
+    let table_start = bytes.len();
+    assert_eq!(table_start, 8);
+
+    let entry_size = 24usize;
+    let padding_len = 8usize;
+    let string_table_offset = (table_start + entry_size + padding_len) as u32;
+
+    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
+    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
+    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, stream, 0]).to_le_bytes()); // mask/rw/stream/min_prec
+
+    bytes.resize(bytes.len() + padding_len, 0);
+    bytes.extend_from_slice(b"POSITION\0");
+
+    bytes
+}
+
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
     let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
@@ -264,6 +296,22 @@ fn dxbc_get_signature_parses_chunk() {
 
     assert_eq!(sig.entries.len(), 2);
     assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
+fn dxbc_get_signature_prefers_v0_layout_for_sgn_chunk_ids() {
+    let sig_bytes = build_signature_chunk_v0_one_entry_padded(2);
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sig = dxbc
+        .get_signature(FourCC(*b"ISGN"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 1);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].stream, Some(2));
 }
 
 #[test]

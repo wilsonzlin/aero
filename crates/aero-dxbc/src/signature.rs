@@ -104,10 +104,14 @@ fn parse_signature_chunk_impl(
         )));
     }
 
-    let mut prefer_v1 = matches!(fourcc, Some(f) if f.0[3] == b'1');
-    if !prefer_v1 {
-        prefer_v1 = detect_v1_layout(bytes, param_offset_usize);
-    }
+    // Prefer the encoding indicated by the FourCC when available (`*SGN` vs
+    // `*SG1`). Only fall back to a heuristic when the FourCC isn't provided (or
+    // doesn't match either known suffix).
+    let prefer_v1 = match fourcc {
+        Some(f) if f.0[3] == b'1' => true,
+        Some(f) if f.0[3] == b'N' => false,
+        _ => detect_v1_layout(bytes, param_offset_usize),
+    };
 
     let (first_size, second_size, first_name, second_name) = if prefer_v1 {
         (
