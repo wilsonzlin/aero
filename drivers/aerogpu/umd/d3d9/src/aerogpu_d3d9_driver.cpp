@@ -1281,6 +1281,35 @@ Adapter* acquire_adapter(const LUID& luid,
   adapter->umd_version = umd_version;
   adapter->adapter_callbacks = callbacks;
   adapter->adapter_callbacks2 = callbacks2;
+
+#if defined(_WIN32)
+  // Initialize a best-effort primary display mode so GetDisplayModeEx returns a
+  // stable value even when the runtime opens the adapter via the LUID path (as
+  // DWM commonly does).
+  const int w = GetSystemMetrics(SM_CXSCREEN);
+  const int h = GetSystemMetrics(SM_CYSCREEN);
+  if (w > 0) {
+    adapter->primary_width = static_cast<uint32_t>(w);
+  }
+  if (h > 0) {
+    adapter->primary_height = static_cast<uint32_t>(h);
+  }
+
+  DEVMODEA dm{};
+  dm.dmSize = sizeof(dm);
+  if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &dm)) {
+    if (dm.dmPelsWidth > 0) {
+      adapter->primary_width = static_cast<uint32_t>(dm.dmPelsWidth);
+    }
+    if (dm.dmPelsHeight > 0) {
+      adapter->primary_height = static_cast<uint32_t>(dm.dmPelsHeight);
+    }
+    if (dm.dmDisplayFrequency > 0) {
+      adapter->primary_refresh_hz = static_cast<uint32_t>(dm.dmDisplayFrequency);
+    }
+  }
+#endif
+
   g_adapter_cache.emplace(key, adapter);
   return adapter;
 }
