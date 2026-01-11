@@ -1162,7 +1162,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   // For bring-up we only accept buffers and 2D textures.
   if (pDesc->ResourceDimension == D3D10DDIRESOURCE_BUFFER) {
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = dev->adapter->next_handle.fetch_add(1);
+    res->handle = AllocateGlobalHandle(dev->adapter);
     res->kind = ResourceKind::Buffer;
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
@@ -1208,7 +1208,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = dev->adapter->next_handle.fetch_add(1);
+    res->handle = AllocateGlobalHandle(dev->adapter);
     res->kind = ResourceKind::Texture2D;
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
@@ -1713,7 +1713,7 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = AllocateGlobalHandle(dev->adapter);
   sh->stage = stage;
   sh->dxbc.resize(code_size);
   std::memcpy(sh->dxbc.data(), pCode, code_size);
@@ -1805,7 +1805,7 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
-  layout->handle = dev->adapter->next_handle.fetch_add(1);
+  layout->handle = AllocateGlobalHandle(dev->adapter);
 
   const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
                            static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);

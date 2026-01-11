@@ -20,6 +20,10 @@
 #include "aerogpu_cmd_writer.h"
 #include "../../../protocol/aerogpu_umd_private.h"
 
+#if defined(_WIN32)
+  #include <windows.h>
+#endif
+
 namespace aerogpu::d3d10_11 {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
@@ -163,6 +167,48 @@ struct Adapter {
   uint64_t next_fence = 1;
   uint64_t completed_fence = 0;
 };
+
+inline aerogpu_handle_t AllocateGlobalHandle(Adapter* adapter) {
+#if defined(_WIN32)
+  static std::mutex g_mutex;
+  static HANDLE g_mapping = nullptr;
+  static void* g_view = nullptr;
+
+  std::lock_guard<std::mutex> lock(g_mutex);
+
+  if (!g_view) {
+    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    if (mapping) {
+      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
+      if (view) {
+        g_mapping = mapping;
+        g_view = view;
+      } else {
+        CloseHandle(mapping);
+      }
+    }
+  }
+
+  if (g_view) {
+    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
+    LONG64 token = InterlockedIncrement64(counter);
+    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
+      token = InterlockedIncrement64(counter);
+    }
+    return static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
+  }
+#endif
+
+  if (!adapter) {
+    return kInvalidHandle;
+  }
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == kInvalidHandle) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
+}
 
 struct Resource {
   aerogpu_handle_t handle = 0;

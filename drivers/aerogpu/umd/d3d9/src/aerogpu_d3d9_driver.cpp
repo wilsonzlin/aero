@@ -1481,12 +1481,9 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
     if (!adapter->share_token_view) {
       wchar_t name[128];
       // Keep the object name stable across processes within a session.
-      // Multiple adapters can disambiguate via LUID when available.
       swprintf(name,
                sizeof(name) / sizeof(name[0]),
-               L"Local\\AeroGPU.D3D9.ShareToken.%08X%08X",
-               static_cast<unsigned>(adapter->luid.HighPart),
-               static_cast<unsigned>(adapter->luid.LowPart));
+               L"Local\\AeroGPU.GlobalHandleCounter");
 
       HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
       if (mapping) {
@@ -1538,6 +1535,28 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   (void)adapter;
   static std::atomic<uint64_t> next_token{1};
   return next_token.fetch_add(1);
+#endif
+}
+
+aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
+  if (!adapter) {
+    return 0;
+  }
+
+#if defined(_WIN32)
+  for (;;) {
+    const uint64_t token = allocate_share_token(adapter);
+    const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
+    if (handle != 0) {
+      return handle;
+    }
+  }
+#else
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == 0) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
 #endif
 }
 
@@ -2346,7 +2365,7 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
   width = std::max(1u, width);
   height = std::max(1u, height);
 
-  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->handle = allocate_global_handle(dev->adapter);
   res->kind = ResourceKind::Surface;
   res->type = 0;
   res->format = format;
@@ -2417,7 +2436,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   }
 
   auto res = std::make_unique<Resource>();
-  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->handle = allocate_global_handle(dev->adapter);
   res->type = pCreateResource->type;
   res->format = pCreateResource->format;
   res->width = pCreateResource->width;
@@ -2607,7 +2626,7 @@ static HRESULT device_open_resource_impl(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto res = std::make_unique<Resource>();
-  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->handle = allocate_global_handle(dev->adapter);
 
   res->is_shared = true;
   res->is_shared_alias = true;
@@ -2847,7 +2866,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto sc = std::make_unique<SwapChain>();
-  sc->handle = dev->adapter->next_handle.fetch_add(1);
+  sc->handle = allocate_global_handle(dev->adapter);
   sc->hwnd = pp.hDeviceWindow;
   sc->width = width;
   sc->height = height;
@@ -3875,7 +3894,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto decl = std::make_unique<VertexDecl>();
-  decl->handle = dev->adapter->next_handle.fetch_add(1);
+  decl->handle = allocate_global_handle(dev->adapter);
   decl->blob.resize(decl_size);
   std::memcpy(decl->blob.data(), pDecl, decl_size);
 
@@ -4028,7 +4047,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_shader(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto sh = std::make_unique<Shader>();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
   sh->bytecode.resize(bytecode_size);
   std::memcpy(sh->bytecode.data(), pBytecode, bytecode_size);

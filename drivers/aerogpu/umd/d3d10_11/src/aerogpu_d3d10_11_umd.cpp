@@ -268,6 +268,48 @@ struct AeroGpuAdapter {
 #endif
 };
 
+static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
+#if defined(_WIN32)
+  static std::mutex g_mutex;
+  static HANDLE g_mapping = nullptr;
+  static void* g_view = nullptr;
+
+  std::lock_guard<std::mutex> lock(g_mutex);
+
+  if (!g_view) {
+    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    if (mapping) {
+      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
+      if (view) {
+        g_mapping = mapping;
+        g_view = view;
+      } else {
+        CloseHandle(mapping);
+      }
+    }
+  }
+
+  if (g_view) {
+    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
+    LONG64 token = InterlockedIncrement64(counter);
+    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
+      token = InterlockedIncrement64(counter);
+    }
+    return static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
+  }
+#endif
+
+  if (!adapter) {
+    return kInvalidHandle;
+  }
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == kInvalidHandle) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
+}
+
 struct AeroGpuResource {
   aerogpu_handle_t handle = 0;
   ResourceKind kind = ResourceKind::Unknown;
@@ -1217,7 +1259,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->handle = allocate_global_handle(dev->adapter);
   res->kind = ResourceKind::Unknown;
 
   // The Win7 WDK DDI contains rich resource descriptors; the bring-up skeleton
@@ -1340,7 +1382,7 @@ HRESULT AEROGPU_APIENTRY CreateVertexShader11(D3D11DDI_HDEVICE hDevice,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = AEROGPU_SHADER_STAGE_VERTEX;
   return S_OK;
 }
@@ -1370,7 +1412,7 @@ HRESULT AEROGPU_APIENTRY CreatePixelShader11(D3D11DDI_HDEVICE hDevice,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = AEROGPU_SHADER_STAGE_PIXEL;
   return S_OK;
 }
@@ -1400,7 +1442,7 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   // Geometry stage isn't represented in the current command stream; keep as vertex-stage for hashing/ID purposes.
   sh->stage = AEROGPU_SHADER_STAGE_VERTEX;
   return S_OK;
@@ -1431,7 +1473,7 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
-  layout->handle = dev->adapter->next_handle.fetch_add(1);
+  layout->handle = allocate_global_handle(dev->adapter);
   return S_OK;
 }
 
@@ -3690,7 +3732,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
   if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER) {
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = dev->adapter->next_handle.fetch_add(1);
+    res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Buffer;
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
@@ -3764,7 +3806,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = dev->adapter->next_handle.fetch_add(1);
+    res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Texture2D;
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
@@ -4551,7 +4593,7 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
   sh->dxbc.resize(pDesc->CodeSize);
   std::memcpy(sh->dxbc.data(), pDesc->pCode, pDesc->CodeSize);
@@ -4629,7 +4671,7 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
-  layout->handle = dev->adapter->next_handle.fetch_add(1);
+  layout->handle = allocate_global_handle(dev->adapter);
 
   const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
                            static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);

@@ -582,7 +582,7 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
 
   if (!dev->builtin_copy_vs) {
     auto* sh = new Shader();
-    sh->handle = dev->adapter->next_handle.fetch_add(1);
+    sh->handle = allocate_global_handle(dev->adapter);
     sh->stage = AEROGPU_D3D9DDI_SHADER_STAGE_VS;
     sh->bytecode.assign(builtin_d3d9_shaders::kCopyVsDxbc,
                         builtin_d3d9_shaders::kCopyVsDxbc + builtin_d3d9_shaders::kCopyVsDxbcSize);
@@ -603,7 +603,7 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
 
   if (!dev->builtin_copy_ps) {
     auto* sh = new Shader();
-    sh->handle = dev->adapter->next_handle.fetch_add(1);
+    sh->handle = allocate_global_handle(dev->adapter);
     sh->stage = AEROGPU_D3D9DDI_SHADER_STAGE_PS;
     sh->bytecode.assign(builtin_d3d9_shaders::kCopyPsDxbc,
                         builtin_d3d9_shaders::kCopyPsDxbc + builtin_d3d9_shaders::kCopyPsDxbcSize);
@@ -624,7 +624,7 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
 
   if (!dev->builtin_copy_decl) {
     auto* decl = new VertexDecl();
-    decl->handle = dev->adapter->next_handle.fetch_add(1);
+    decl->handle = allocate_global_handle(dev->adapter);
 
     const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) + 2 * sizeof(aerogpu_input_layout_element_dxgi);
     decl->blob.resize(blob_size);
@@ -667,7 +667,7 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
 
   if (!dev->builtin_copy_vb) {
     auto* vb = new Resource();
-    vb->handle = dev->adapter->next_handle.fetch_add(1);
+    vb->handle = allocate_global_handle(dev->adapter);
     vb->kind = ResourceKind::Buffer;
     vb->size_bytes = sizeof(BlitVertex) * 4;
     vb->storage.resize(vb->size_bytes);

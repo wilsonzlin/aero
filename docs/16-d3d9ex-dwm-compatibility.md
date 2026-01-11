@@ -248,6 +248,7 @@ Recommended approach:
 
 - Treat the device as “always operational” unless the host explicitly signals fatal device removal.
 - Keep a resource table keyed by protocol `resource_handle` (or equivalent internal ID); `ResetEx` updates presentation parameters but does not invalidate existing resources unless format/size constraints require it.
+- Ensure protocol handles (`resource_handle`, `shader_handle`, `input_layout_handle`, etc) are **globally unique across guest processes**. The MVP ring ABI currently sets `aerogpu_submit_desc.context_id = 0`, so the host interprets handles in a single global namespace.
 
 ---
 

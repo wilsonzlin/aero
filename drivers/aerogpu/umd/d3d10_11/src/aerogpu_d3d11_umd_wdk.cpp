@@ -921,7 +921,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* res = new (hResource.pDrvPrivate) Resource();
-  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->handle = AllocateGlobalHandle(dev->adapter);
   res->bind_flags = static_cast<uint32_t>(pDesc->BindFlags);
   res->misc_flags = static_cast<uint32_t>(pDesc->MiscFlags);
   res->usage = static_cast<uint32_t>(pDesc->Usage);
@@ -1203,7 +1203,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
     return E_FAIL;
   }
 
-  out->handle = dev->adapter->next_handle.fetch_add(1);
+  out->handle = AllocateGlobalHandle(dev->adapter);
   out->stage = stage;
   try {
     out->dxbc.resize(static_cast<size_t>(code_size));
@@ -1369,7 +1369,7 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* layout = new (hLayout.pDrvPrivate) InputLayout();
-  layout->handle = dev->adapter->next_handle.fetch_add(1);
+  layout->handle = AllocateGlobalHandle(dev->adapter);
 
   const UINT elem_count = pDesc->NumElements;
   if (!pDesc->pVertexElements || elem_count == 0) {

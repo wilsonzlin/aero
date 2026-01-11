@@ -342,4 +342,6 @@ struct Device {
   Resource* builtin_copy_vb = nullptr;
 };
 
+aerogpu_handle_t allocate_global_handle(Adapter* adapter);
+
 } // namespace aerogpu
