@@ -109,6 +109,7 @@ jobs:
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-win.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-win.log
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-full.log
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-aero-guest-tools.log
+          python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-virtio.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-aero-virtio.log
 
       - name: Python unit tests (tools/guest-tools)
         shell: bash

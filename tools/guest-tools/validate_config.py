@@ -515,6 +515,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     # boot-critical entry.
     if spec_path.name in ("win7-virtio-win.json", "win7-virtio-full.json"):
         required_groups = (("viostor",), ("netkvm",))
+    elif spec_path.name == "win7-aero-virtio.json":
+        required_groups = (("aerovblk",), ("aerovnet",))
     elif spec_path.name == "win7-aero-guest-tools.json":
         # The in-repo driver folder name for AeroGPU is `aerogpu`, but keep
         # backwards-compatible aliases to avoid renames breaking CI history.
@@ -553,7 +555,19 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         driver_kind="virtio-blk",
     )
     maybe_validate(
+        "aerovblk",
+        devices_var="AERO_VIRTIO_BLK_HWIDS",
+        hwids=devices.virtio_blk_hwids,
+        driver_kind="virtio-blk",
+    )
+    maybe_validate(
         "netkvm",
+        devices_var="AERO_VIRTIO_NET_HWIDS",
+        hwids=devices.virtio_net_hwids,
+        driver_kind="virtio-net",
+    )
+    maybe_validate(
+        "aerovnet",
         devices_var="AERO_VIRTIO_NET_HWIDS",
         hwids=devices.virtio_net_hwids,
         driver_kind="virtio-net",
@@ -613,6 +627,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         supported = [
             "viostor",
             "netkvm",
+            "aerovblk",
+            "aerovnet",
             "vioinput",
             "viosnd",
             "virtio-blk",

@@ -297,6 +297,7 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
   - `win7-virtio-win.json`
   - `win7-virtio-full.json`
   - `win7-aero-guest-tools.json`
+  - `win7-aero-virtio.json`
 
 You can run the same check locally:
 
@@ -304,4 +305,5 @@ You can run the same check locally:
 python tools/guest-tools/validate_config.py
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json
+python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-virtio.json
 ```
