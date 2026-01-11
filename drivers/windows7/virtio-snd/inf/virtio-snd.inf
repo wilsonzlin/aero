@@ -1,3 +1,5 @@
+; SPDX-License-Identifier: MIT OR Apache-2.0
+
 ; virtio-snd (Windows 7) - clean-room PortCls/WaveRT render-only driver INF.
 
 ; NOTE: `aero-virtio-snd.inf` is the canonical INF used by Aero Guest Tools.

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #pragma once
 
 // PortCls interfaces can be consumed from C by defining CINTERFACE/COBJMACROS
@@ -8,4 +10,3 @@
 #include <portcls.h>
 #include <ks.h>
 #include <ksmedia.h>
-
