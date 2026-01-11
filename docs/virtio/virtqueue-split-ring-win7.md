@@ -693,6 +693,89 @@ They:
 They do **not** implement descriptor allocation/free, cookies, or notification logic; those algorithms are still
 defined by this document (§4–§7).
 
+### 9.5 Windows 7 WDM (no WDF) notes
+
+This document is written primarily in KMDF terms (for example, it references `WdfCommonBufferCreate` in §2.3 and
+uses `WdfSpinLockAcquire` in pseudocode), but Aero also ships drivers that are **pure WDM** (no WDF), e.g.
+`drivers/windows7/virtio-snd/`.
+
+The split-ring algorithms in §4–§8 are the same in WDM; the main differences are **how you allocate DMA memory**
+and **which locking primitives you use at DISPATCH_LEVEL**.
+
+#### 9.5.1 Ring + indirect table allocation in WDM (recommended)
+
+For WDM, a straightforward strategy is to allocate a single page-aligned, physically contiguous region for:
+
+* the queue ring (`desc` + `avail` + `used`), and
+* an optional pool of indirect descriptor tables (if you don’t allocate them separately).
+
+Recommended APIs:
+
+* `MmAllocateContiguousMemorySpecifyCache(..., MmNonCached)` for the allocation
+* `MmGetPhysicalAddress()` to obtain the guest-physical/DMA address to program into `queue_desc/queue_avail/queue_used`
+
+Notes:
+
+* **IRQL**: allocate/free at `PASSIVE_LEVEL` (e.g. during `IRP_MN_START_DEVICE`), not from the DPC/ISR path.
+* **Cache type**:
+  * Prefer `MmNonCached` for ring + indirect tables.
+  * If `MmNonCached` fails (fragmentation / limited noncached resources), a pragmatic fallback is to retry with
+    `MmCached` and continue to rely on the same `KeMemoryBarrier()` ordering points described in this guide.
+* **Alignment**:
+  * `MmAllocateContiguousMemorySpecifyCache` returns **remapped, page-aligned** virtual memory.
+  * Page alignment trivially satisfies the virtqueue minimum alignments (16-byte for `desc`, 4-byte for `used`,
+    2-byte for `avail`). You still must align the **used ring offset** appropriately (§2.2) if you are targeting
+    legacy `QueueAlign` rules.
+
+Minimal sketch:
+
+```c
+PHYSICAL_ADDRESS low = {0};
+PHYSICAL_ADDRESS high; high.QuadPart = ~0ull;
+PHYSICAL_ADDRESS boundary = {0};
+
+PVOID ring_va = MmAllocateContiguousMemorySpecifyCache(total_bytes, low, high, boundary, MmNonCached);
+if (!ring_va) {
+    /* Optional fallback */
+    ring_va = MmAllocateContiguousMemorySpecifyCache(total_bytes, low, high, boundary, MmCached);
+}
+if (!ring_va) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+}
+
+PHYSICAL_ADDRESS ring_pa = MmGetPhysicalAddress(ring_va);
+/* Program queue_desc/queue_avail/queue_used using ring_pa + computed offsets (§2.2). */
+```
+
+#### 9.5.2 Per-queue locking in WDM
+
+In a WDM driver, protect each virtqueue’s shared + private state with its own `KSPIN_LOCK`:
+
+* Must be safe at **DISPATCH_LEVEL** (queue operations typically run in a DPC).
+* Avoid taking the queue lock in the ISR at DIRQL; do minimal ISR work and drain/post in the DPC instead.
+
+#### 9.5.3 Aero contract v1: no EVENT_IDX fields + always-notify
+
+When implementing virtqueues for **Aero contract v1**, note that `VIRTIO_F_RING_EVENT_IDX` is **not negotiated**.
+That has two important implications:
+
+* **The EVENT_IDX fields are absent**: there is no `avail->used_event` and no `used->avail_event`.
+  * Do **not** size the ring as if those fields exist.
+  * Do **not** compute pointers to them (e.g. `&avail->ring[qsz]` / `&used->ring[qsz]`) and do **not** read/write
+    them; doing so will access unrelated memory (often the next structure) and will corrupt the ring.
+* **Always-notify semantics**: after publishing new entries (`avail->idx`), the driver **must always notify** the
+  device (Aero contract v1). Don’t implement a “maybe kick?” path based on EVENT_IDX or `VRING_USED_F_NO_NOTIFY`.
+
+#### 9.5.4 WDM reference code in this repo
+
+For a reusable, transport-agnostic split-ring engine that does not depend on WDF, see:
+
+* `drivers/windows/virtio/common/`
+
+For a concrete WDM consumer of that engine, see:
+
+* `drivers/windows7/virtio-snd/`
+
 ## 10) End-to-end pseudocode example (virtio-input style RX queue)
 
 This example shows a typical “device writes events into driver-provided buffers” virtqueue. It includes:
