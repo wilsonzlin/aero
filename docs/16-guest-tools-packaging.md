@@ -330,12 +330,12 @@ the generated `config/devices.cmd` matches upstream virtio-win driver service na
 
 Profiles (defaults):
 
-- `minimal` (default):
-  - `-Drivers @('viostor','netkvm')`
-  - `-SpecPath tools/packaging/specs/win7-virtio-win.json`
-- `full`:
+- `full` (default):
   - `-Drivers @('viostor','netkvm','viosnd','vioinput')`
   - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `minimal`:
+  - `-Drivers @('viostor','netkvm')`
+  - `-SpecPath tools/packaging/specs/win7-virtio-win.json`
 
 To build storage+network-only Guest Tools media (no optional audio/input drivers), use `-Profile minimal`:
 
