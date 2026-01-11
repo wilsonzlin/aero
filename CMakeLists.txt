@@ -37,4 +37,5 @@ endif ()
 
 if (AERO_AEROGPU_BUILD_TESTS)
     add_subdirectory(drivers/aerogpu/umd/d3d9/tests)
+    add_subdirectory(drivers/aerogpu/umd/d3d10_11/tests)
 endif ()
