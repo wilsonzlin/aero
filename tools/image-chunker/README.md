@@ -38,6 +38,7 @@ These defaults match [`docs/18-chunked-disk-image-format.md`](../../docs/18-chun
 
 - `--cache-control-chunks <value>`
 - `--cache-control-manifest <value>`
+- `--cache-control-latest <value>` (only used with `--publish-latest`)
 
 ### Example
 
@@ -55,14 +56,31 @@ Example:
   --concurrency 8
 ```
 
-`--image-id` can be omitted if `--prefix` already ends with `/<imageId>/<version>/`.
+`--image-id` can be omitted if `--prefix` already includes `<imageId>` (either as
+`images/<imageId>/` or `images/<imageId>/<version>/`).
 
 `--image-version` can be omitted in two cases:
 
 - When `--compute-version none` (default) and `--prefix` already ends with `/<imageId>/<version>/` (the version is inferred from the prefix).
-- When `--compute-version sha256` is enabled (the manifest `version` is computed as `sha256-<digest>` while streaming the input image).
+- When `--compute-version sha256` is enabled (the version is computed as `sha256-<digest>` over the entire disk image content).
 
-If you enable `--compute-version sha256` and also provide `--image-version`, the provided version is used and the computed hash is printed for reference.
+If you enable `--compute-version sha256` and also provide `--image-version`, the tool validates they match.
+
+### Example: compute a content-addressed version automatically
+
+This computes `sha256-<digest>` from the input image, uploads under `images/<imageId>/<sha256-...>/`,
+and optionally updates `images/<imageId>/latest.json`:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker publish \
+  --file ./disk.img \
+  --bucket my-bucket \
+  --prefix images/<imageId>/ \
+  --compute-version sha256 \
+  --publish-latest \
+  --chunk-size 4194304 \
+  --region us-east-1
+```
 
 Artifacts uploaded under the given prefix:
 
@@ -82,7 +100,7 @@ For public/demo images, you can publish a short-lived pointer file:
 
 This uploads `images/<imageId>/latest.json` with:
 
-- `Cache-Control: public, max-age=60`
+- `Cache-Control: public, max-age=60` (default; configurable via `--cache-control-latest`)
 - `Content-Type: application/json`
 
 The JSON contains the version and the object key of the versioned `manifest.json`.
