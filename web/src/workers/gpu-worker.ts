@@ -1297,7 +1297,6 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
 
 const handleTick = async () => {
   syncPerfFrame();
-  flushAerogpuSubmitCompleteOnTick();
   const perfEnabled = !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
   refreshFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
@@ -1780,6 +1779,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
     case "tick": {
       void (msg as { frameTimeMs?: unknown }).frameTimeMs;
+      flushAerogpuSubmitCompleteOnTick();
       void handleTick();
       break;
     }
