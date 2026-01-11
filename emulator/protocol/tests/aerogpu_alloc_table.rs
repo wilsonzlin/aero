@@ -39,7 +39,7 @@ fn decode_alloc_table_valid() {
 
     // Entry 0.
     let e0 = AerogpuAllocTableHeader::SIZE_BYTES;
-    write_u32_le(buf, e0 + 0, 10);
+    write_u32_le(buf, e0, 10);
     write_u32_le(buf, e0 + 4, AEROGPU_ALLOC_FLAG_READONLY);
     write_u64_le(buf, e0 + 8, 0x1122_3344_5566_7788);
     write_u64_le(buf, e0 + 16, 0x1000);
@@ -47,7 +47,7 @@ fn decode_alloc_table_valid() {
 
     // Entry 1.
     let e1 = AerogpuAllocTableHeader::SIZE_BYTES + AerogpuAllocEntry::SIZE_BYTES;
-    write_u32_le(buf, e1 + 0, 20);
+    write_u32_le(buf, e1, 20);
     write_u32_le(buf, e1 + 4, 0);
     write_u64_le(buf, e1 + 8, 0x8877_6655_4433_2211);
     write_u64_le(buf, e1 + 16, 0x2000);

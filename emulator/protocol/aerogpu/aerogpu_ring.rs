@@ -202,7 +202,7 @@ pub fn decode_alloc_table_le(buf: &[u8]) -> Result<AerogpuAllocTableView<'_>, Ae
     let entries_buf = &buf[header_size_bytes..header_size_bytes + entries_size_bytes];
 
     let align = core::mem::align_of::<AerogpuAllocEntry>();
-    if (entries_buf.as_ptr() as usize) % align != 0 {
+    if !(entries_buf.as_ptr() as usize).is_multiple_of(align) {
         return Err(AerogpuAllocTableDecodeError::Misaligned);
     }
 

@@ -73,7 +73,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     assert_eq!(vendor_id, AEROGPU_PCI_VENDOR_ID);
     assert_eq!(device_id, AEROGPU_PCI_DEVICE_ID);
 
-    assert_eq!(require_json_str(aerogpu, "driver_service_name"), "AeroGPU");
+    assert_eq!(require_json_str(aerogpu, "driver_service_name"), "aerogpu");
     assert_eq!(require_json_str(aerogpu, "inf_name"), "aerogpu.inf");
 
     let expected_hwid_with_subsys = format!(
@@ -155,7 +155,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         "Aero GPU class code must contain `03/00/00` (got: {:?})",
         aerogpu_cells[3]
     );
-    assert_eq!(aerogpu_cells[4], "`AeroGPU`");
+    assert_eq!(aerogpu_cells[4], "`aerogpu`");
     assert_eq!(aerogpu_cells[5], "`aerogpu.inf`");
 
     // Make sure we don't keep stale contract text around under a different name.
