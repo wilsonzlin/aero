@@ -186,7 +186,7 @@ name = "aero-emulator"
 version = "0.1.0"
 
 [[package]]
-name = "aero-gateway"
+name = "aero-gateway-rs"
 version = "0.1.0"
 dependencies = [
  "axum",

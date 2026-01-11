@@ -59,12 +59,12 @@ members = [
     "crates/aero-devices-nvme",
     "crates/aero-devices-storage",
     "crates/nt-packetlib",
-    # `server/` is a Node/JS service (no Cargo.toml); keep it out of the Rust workspace.
+    # `server/` and `backend/aero-gateway/` are Node/JS services (no Cargo.toml); keep them out of the Rust workspace.
     "tools/bcd_patch",
     "tools/qemu_diff",
     "crates/virtio-gpu-proto",
     "crates/vm",
-    "backend/aero-gateway",
+    "tools/aero-gateway-rs",
     "crates/aero-jit-proto",
     "crates/aero-usb",
     "crates/st-idb",

@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::SystemTime};
 
-use aero_gateway::{
+use aero_gateway_rs::{
     build_app,
     capture::{CaptureConfig, CaptureManager, ConnectionMeta, Direction},
     GatewayConfig,

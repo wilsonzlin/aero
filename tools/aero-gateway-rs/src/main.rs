@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, str::FromStr};
 
-use aero_gateway::{build_app, GatewayConfig};
+use aero_gateway_rs::{build_app, GatewayConfig};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -17,6 +17,6 @@ async fn main() -> std::io::Result<()> {
     let app = build_app(config).await?;
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!("aero-gateway listening on http://{bind_addr}");
+    tracing::info!("aero-gateway-rs listening on http://{bind_addr}");
     axum::serve(listener, app).await
 }
