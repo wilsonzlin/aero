@@ -4,11 +4,14 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
+import { encodeCommand } from "../ipc/protocol";
+import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeL2Message, encodeL2Frame, L2_TUNNEL_TYPE_FRAME } from "../shared/l2TunnelProtocol";
 import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
   allocateSharedMemorySegments,
+  ringRegionsForWorker,
   type SharedMemorySegments,
 } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
@@ -95,6 +98,7 @@ describe("workers/net.worker (worker_threads)", () => {
 
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+    const commandRing = new RingBuffer(segments.control, ringRegionsForWorker("net").command.byteOffset);
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -215,6 +219,88 @@ describe("workers/net.worker (worker_threads)", () => {
       const decoded2 = decodeL2Message(wsSent2.data!);
       expect(decoded2.type).toBe(L2_TUNNEL_TYPE_FRAME);
       expect(Array.from(decoded2.payload)).toEqual(Array.from(frame2));
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+
+  it("wakes promptly on shutdown commands even while pending RX frames are buffered", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+
+    const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+    const commandRing = new RingBuffer(segments.control, ringRegionsForWorker("net").command.byteOffset);
+
+    // Ensure the worker takes the `Atomics.waitAsync` scheduling path (otherwise it
+    // already polls in short slices and this test is less meaningful).
+    expect(typeof (Atomics as any).waitAsync).toBe("function");
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const wsCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000);
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "net",
+        10000,
+      );
+
+      worker.postMessage({ kind: "config.update", version: 1, config: makeConfig("https://gateway.example.com") });
+      worker.postMessage(makeInit(segments));
+
+      await wsCreated;
+      await workerReady;
+
+      // Fill NET_RX to force inbound frames into the forwarder's pending queue.
+      const fillerLen = 64 * 1024;
+      const filler = new Uint8Array(fillerLen);
+      filler.fill(0xaa);
+      let fillerCount = 0;
+      while (netRxRing.tryPush(filler)) fillerCount += 1;
+      expect(fillerCount).toBeGreaterThan(0);
+
+      // Inject a frame that cannot be delivered immediately due to NET_RX being full.
+      worker.postMessage({ type: "ws.inject", data: encodeL2Frame(Uint8Array.of(1, 2, 3, 4)) });
+
+      // Allow the worker to observe pendingRx>0 and park in the 1s pending-RX wait.
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+      const shutdownStart = Date.now();
+      expect(commandRing.tryPush(encodeCommand({ kind: "shutdown" }))).toBe(true);
+
+      // With the command ring included in the Promise.race, the worker should wake
+      // quickly (without waiting for the 1s pending-RX timeout).
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("timed out waiting for net worker to exit after shutdown command"));
+        }, 800);
+
+        const onExit = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = (err: unknown) => {
+          cleanup();
+          reject(err instanceof Error ? err : new Error(String(err)));
+        };
+
+        function cleanup(): void {
+          clearTimeout(timer);
+          worker.off("exit", onExit);
+          worker.off("error", onError);
+        }
+
+        worker.on("exit", onExit);
+        worker.on("error", onError);
+      });
+
+      expect(Date.now() - shutdownStart).toBeLessThan(500);
     } finally {
       await worker.terminate();
     }
