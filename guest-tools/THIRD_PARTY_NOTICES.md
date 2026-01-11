@@ -16,6 +16,8 @@ process will also attempt to copy upstream virtio-win license/notice files (if
 present) into the packaged media under:
 
 - `licenses/virtio-win/`
+  - `driver-pack-manifest.json` is included alongside these files to preserve
+    the virtio-win ISO provenance used to build the packaged drivers.
 
 See also:
 
