@@ -422,3 +422,12 @@ guest-tools\drivers\<arch>\virtio-snd\
    - `aero-virtio-snd.cat` (signed)
    - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed)
 2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
+2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
+
+For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
+
+- `../tests/offline-install/README.md`
+
+For a repeatable end-to-end validation flow under QEMU (device enumeration → driver binding → endpoint presence → playback), see:
+
+- `../tests/qemu/README.md`

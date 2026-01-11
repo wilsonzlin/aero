@@ -178,7 +178,8 @@ If you want virtio-snd to bind automatically on first boot (for example when bui
 
 ## Manual QEMU test plan
 
-For a repeatable manual bring-up/validation plan under QEMU (including required `disable-legacy=on` and `x-pci-revision=0x01` settings for the Aero contract v1 HWID), see:
+For a repeatable manual bring-up/validation plan under QEMU (including required `disable-legacy=on` and
+`REV_01`/`x-pci-*` identification guidance for the Aero contract v1 HWID), see:
 
 - `tests/qemu/README.md`
 
