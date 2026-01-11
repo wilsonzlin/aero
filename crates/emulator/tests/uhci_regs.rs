@@ -515,6 +515,47 @@ fn uhci_fgr_latches_resume_detect_and_can_irq() {
 }
 
 #[test]
+fn uhci_port_resume_detect_latches_resume_sts_and_can_irq() {
+    #[derive(Clone)]
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mut mem = Bus::new(0x1000);
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
+
+    // Enable resume interrupts.
+    uhci.port_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+    assert!(!uhci.irq_level());
+
+    // A port-level resume-detect event should latch the global USBSTS bit and assert IRQ.
+    uhci.controller.hub_mut().force_resume_detect_for_tests(0);
+    uhci.tick_1ms(&mut mem);
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(uhci.irq_level());
+
+    // W1C clears the latched status.
+    uhci.port_write(REG_USBSTS, 2, USBSTS_RESUMEDETECT as u32);
+    assert_eq!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(!uhci.irq_level());
+}
+
+#[test]
 fn uhci_greset_resets_attached_devices() {
     #[derive(Clone)]
     struct ResetCountingDevice {

@@ -26,6 +26,7 @@ pub struct UhciController {
     regs: UhciRegs,
     hub: RootHub,
     irq_level: bool,
+    prev_port_resume_detect: bool,
 }
 
 impl UhciController {
@@ -34,6 +35,7 @@ impl UhciController {
             regs: UhciRegs::new(),
             hub: RootHub::new(),
             irq_level: false,
+            prev_port_resume_detect: false,
         }
     }
 
@@ -65,6 +67,7 @@ impl UhciController {
     fn reset(&mut self) {
         self.regs = UhciRegs::new();
         self.irq_level = false;
+        self.prev_port_resume_detect = false;
     }
 
     fn update_irq(&mut self) {
@@ -283,6 +286,16 @@ impl UhciController {
 
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
         self.hub.tick_1ms();
+        // Latch global resume-detect status if a port asserts its Resume Detect (RD) bit.
+        //
+        // This provides a realistic interrupt path for remote-wake style flows where software
+        // enables USBINTR.RESUME and expects USBSTS.RESUMEDETECT to latch from port events.
+        const PORTSC_RD: u16 = 1 << 6;
+        let rd = (self.hub.read_portsc(0) | self.hub.read_portsc(1)) & PORTSC_RD != 0;
+        if rd && !self.prev_port_resume_detect {
+            self.regs.usbsts |= USBSTS_RESUMEDETECT;
+        }
+        self.prev_port_resume_detect = rd;
 
         if self.regs.usbcmd & (USBCMD_RS | USBCMD_EGSM) != USBCMD_RS {
             self.regs.update_halted();
