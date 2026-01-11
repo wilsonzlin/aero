@@ -55,6 +55,105 @@ static void probe_interrupt_type_enums() {
   printf("DXGK_INTERRUPT_TYPE_DMA_COMPLETED = %u\n", (unsigned)DXGK_INTERRUPT_TYPE_DMA_COMPLETED);
 }
 
+static void probe_allocation_flag_masks() {
+  print_header("DXGK_ALLOCATIONINFO::Flags masks");
+
+  typedef decltype(((DXGK_ALLOCATIONINFO*)0)->Flags) FlagsT;
+
+  print_sizeof("DXGK_ALLOCATIONINFO", sizeof(DXGK_ALLOCATIONINFO));
+  print_offsetof("DXGK_ALLOCATIONINFO", "Size", offsetof(DXGK_ALLOCATIONINFO, Size));
+  print_offsetof("DXGK_ALLOCATIONINFO", "Flags", offsetof(DXGK_ALLOCATIONINFO, Flags));
+  print_offsetof("DXGK_ALLOCATIONINFO", "SegmentId", offsetof(DXGK_ALLOCATIONINFO, SegmentId));
+  print_offsetof("DXGK_ALLOCATIONINFO", "pPrivateDriverData", offsetof(DXGK_ALLOCATIONINFO, pPrivateDriverData));
+  print_offsetof("DXGK_ALLOCATIONINFO", "PrivateDriverDataSize", offsetof(DXGK_ALLOCATIONINFO, PrivateDriverDataSize));
+
+  print_sizeof("DXGK_ALLOCATIONINFO::Flags", sizeof(FlagsT));
+
+#if defined(_MSC_VER)
+  // Print the bitmask value for each named flag as exposed by this header set.
+  // This is useful for decoding the `flags_in`/`flags_out` values dumped by
+  // `aerogpu_dbgctl --dump-createalloc` without having to rely on guesswork.
+  //
+  // NOTE: Some flags may be multi-bit fields; for those, assigning 1 prints the
+  // lowest bit in the field.
+  printf("  DXGK_ALLOCATIONINFOFLAGS masks (field -> Flags.Value):\n");
+
+  #define PRINT_MASK(FieldName)                                                      \
+    __if_exists(FlagsT::FieldName) {                                                \
+      FlagsT f = {};                                                                \
+      f.Value = 0;                                                                  \
+      f.FieldName = 1;                                                              \
+      printf("    %-28s 0x%08X\n", #FieldName, (unsigned)f.Value);                  \
+    }                                                                               \
+    __if_not_exists(FlagsT::FieldName) {                                            \
+      printf("    %-28s <n/a>\n", #FieldName);                                      \
+    }
+
+  // Common Win7-era bits we care about (Present/backbuffer stability).
+  PRINT_MASK(Primary);
+  PRINT_MASK(CpuVisible);
+  PRINT_MASK(Aperture);
+
+  // Additional flags that may show up in traces (header-dependent).
+  PRINT_MASK(NonLocalOnly);
+  PRINT_MASK(Swizzled);
+  PRINT_MASK(ExistingSysMem);
+  PRINT_MASK(Protected);
+  PRINT_MASK(Cached);
+  PRINT_MASK(WriteCombined);
+  PRINT_MASK(Overlay);
+  PRINT_MASK(Capture);
+  PRINT_MASK(RenderTarget);
+  PRINT_MASK(FlipChain);
+  PRINT_MASK(FrontBuffer);
+  PRINT_MASK(BackBuffer);
+  PRINT_MASK(HistoryBuffer);
+  PRINT_MASK(IndicationOnly);
+  PRINT_MASK(Immutable);
+  PRINT_MASK(Invisible);
+  PRINT_MASK(Tiled);
+
+  #undef PRINT_MASK
+#endif
+}
+
+static void probe_createallocation_flag_masks() {
+  print_header("DXGKARG_CREATEALLOCATION::Flags masks");
+
+  typedef decltype(((DXGKARG_CREATEALLOCATION*)0)->Flags) FlagsT;
+  print_sizeof("DXGKARG_CREATEALLOCATION", sizeof(DXGKARG_CREATEALLOCATION));
+  print_offsetof("DXGKARG_CREATEALLOCATION", "Flags", offsetof(DXGKARG_CREATEALLOCATION, Flags));
+  print_offsetof("DXGKARG_CREATEALLOCATION", "NumAllocations", offsetof(DXGKARG_CREATEALLOCATION, NumAllocations));
+  print_offsetof("DXGKARG_CREATEALLOCATION", "pAllocationInfo", offsetof(DXGKARG_CREATEALLOCATION, pAllocationInfo));
+  print_sizeof("DXGKARG_CREATEALLOCATION::Flags", sizeof(FlagsT));
+
+#if defined(_MSC_VER)
+  printf("  DXGK_CREATEALLOCATIONFLAGS masks (field -> Flags.Value):\n");
+
+  #define PRINT_MASK(FieldName)                                                      \
+    __if_exists(FlagsT::FieldName) {                                                \
+      FlagsT f = {};                                                                \
+      f.Value = 0;                                                                  \
+      f.FieldName = 1;                                                              \
+      printf("    %-28s 0x%08X\n", #FieldName, (unsigned)f.Value);                  \
+    }                                                                               \
+    __if_not_exists(FlagsT::FieldName) {                                            \
+      printf("    %-28s <n/a>\n", #FieldName);                                      \
+    }
+
+  // Common fields referenced by bring-up debugging.
+  PRINT_MASK(CreateResource);
+  PRINT_MASK(CreateShared);
+
+  // Other known fields (header-dependent).
+  PRINT_MASK(NonSystem);
+  PRINT_MASK(Resize);
+  PRINT_MASK(OpenSharedResource);
+
+  #undef PRINT_MASK
+#endif
+}
+
 int main() {
   printf("AeroGPU KMD WDK ABI probe\n");
 
@@ -78,6 +177,8 @@ int main() {
 
   probe_interrupt_type_enums();
   probe_notify_interrupt();
+  probe_allocation_flag_masks();
+  probe_createallocation_flag_masks();
 
   return 0;
 }

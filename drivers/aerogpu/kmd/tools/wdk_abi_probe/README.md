@@ -3,11 +3,14 @@
 This directory contains a **standalone console program** intended to be built
 against the **real Win7-era** display miniport headers (`d3dkmddi.h`).
 
-It prints ABI-critical details for Win7 WDDM 1.1 vblank interrupt delivery:
+It prints ABI-critical details for Win7 WDDM 1.1 display miniport bring-up, including:
 
 - `sizeof(...)` / `offsetof(...)` for `DXGKARGCB_NOTIFY_INTERRUPT` and its vblank
   union payload (`CrtcVsync.VidPnSourceId`).
 - Enum values for vblank-related `DXGK_INTERRUPT_TYPE_*` constants.
+- The bitmask values for key flag bitfields:
+  - `DXGK_ALLOCATIONINFO::Flags.Value` (decoded by setting individual bitfields)
+  - `DXGKARG_CREATEALLOCATION::Flags.Value`
 
 This makes header/version drift obvious before debugging a Win7 VM.
 
