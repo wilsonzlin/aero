@@ -128,6 +128,23 @@ test("explainWebUsbError: includes secure-context hint when isSecureContext is f
   }
 });
 
+test("explainWebUsbError: SecurityError omits secure-context hint when isSecureContext is true", () => {
+  const prev = (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext;
+  (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
+
+  try {
+    const res = explainWebUsbError({ name: "SecurityError", message: "Access denied. Protected interface class." });
+    assert.ok(!res.hints.some((hint) => hint.includes("https://") || hint.includes("localhost")));
+    assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("protected")));
+  } finally {
+    if (prev === undefined) {
+      delete (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext;
+    } else {
+      (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext = prev;
+    }
+  }
+});
+
 test("explainWebUsbError: AbortError indicates cancellation / retry requestDevice()", () => {
   const res = explainWebUsbError({
     name: "AbortError",

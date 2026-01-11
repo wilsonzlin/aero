@@ -148,9 +148,11 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     hints.push(hint);
   };
 
-  const insecureContext =
-    typeof (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext === "boolean" &&
-    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === false;
+  const secureContextValue =
+    typeof (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext === "boolean"
+      ? (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext
+      : null;
+  const insecureContext = secureContextValue === false;
   const mentionsSecureContext = includesAny(msgLower, ["secure context", "secure origin", "only secure"]);
 
   const mentionsUserGesture = includesAny(msgLower, ["user gesture", "user activation"]);
@@ -257,7 +259,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   }
 
   // --- Hints ---
-  if (insecureContext || mentionsSecureContext || name === "SecurityError") {
+  if (insecureContext || mentionsSecureContext || (name === "SecurityError" && secureContextValue !== true)) {
     addHint("WebUSB requires a secure context: use https:// or http://localhost (check `isSecureContext`).");
   }
 
