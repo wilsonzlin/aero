@@ -408,6 +408,7 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
   - the Windows device contract (`docs/windows-device-contract.json`) for the boot-critical virtio-blk
     storage service name and the exact virtio-blk/virtio-net PCI hardware IDs that Guest Tools seeds, and
   - the in-repo packaging specs (HWID regexes):
+  - `win7-signed.json`
   - `win7-virtio-win.json`
   - `win7-virtio-full.json`
   - `win7-aero-guest-tools.json`
@@ -416,6 +417,7 @@ packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
 You can run the same check locally:
 
 ```bash
+python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-signed.json
 python tools/guest-tools/validate_config.py
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json
 python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-aero-guest-tools.json
