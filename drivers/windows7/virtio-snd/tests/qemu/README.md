@@ -123,7 +123,7 @@ If you cannot use the `wav` backend, replace `-audiodev wav,...` with a backend 
 - Contract major version: `REV_01` (encoded in PCI Revision ID)
 - Transport: PCI vendor-specific capabilities + BAR0 MMIO (virtio-pci modern)
  
-Some QEMU builds enumerate virtio-snd as a transitional device by default (`DEV_1018`, typically `REV_00`);
+Some QEMU builds enumerate virtio-snd as a transitional device by default (often with `REV_00`);
 use the opt-in legacy package in that case.
 
 ### Expected HWIDs (quick reference)
@@ -131,7 +131,7 @@ use the opt-in legacy package in that case.
 | Mode | Expected HWID | INF | SYS |
 |---|---|---|---|
 | Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero-virtio-snd.inf` | `virtiosnd.sys` |
-| QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
+| QEMU transitional (optional) | transitional virtio-snd PCI HWID (see Device Manager) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
 
 The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
 
@@ -222,15 +222,15 @@ Use either Device Manager or PnPUtil.
     - Repo layout: `drivers/windows7/virtio-snd/inf/`
     - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
    - When prompted, pick the INF that matches your QEMU device configuration:
-     - `aero-virtio-snd.inf` (recommended; modern `DEV_1059&REV_01`)
-     - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional `DEV_1018`)
+      - `aero-virtio-snd.inf` (recommended; modern `DEV_1059&REV_01`)
+      - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional virtio-snd PCI ID)
 
 **PnPUtil (scriptable, elevated CMD):**
 
 ```bat
 pnputil -i -a X:\path\to\aero-virtio-snd.inf
 
-REM Stock QEMU (transitional DEV_1018):
+REM Stock QEMU (transitional virtio-snd device):
 pnputil -i -a X:\path\to\aero-virtio-snd-legacy.inf
 ```
 
