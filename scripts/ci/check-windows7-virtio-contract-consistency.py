@@ -57,6 +57,15 @@ AERO_VIRTIO_DEVICE_SOURCES: Mapping[str, Path] = {
     "virtio-snd": REPO_ROOT / "crates/aero-virtio/src/devices/snd.rs",
 }
 
+# Canonical in-tree Windows driver INFs for the Aero Win7 virtio contract.
+# Keeping these in sync prevents "driver installs but doesn't bind" regressions.
+AERO_VIRTIO_INF_SOURCES: Mapping[str, Path] = {
+    "virtio-blk": REPO_ROOT / "drivers/windows7/virtio/blk/aerovblk.inf",
+    "virtio-net": REPO_ROOT / "drivers/windows7/virtio/net/aerovnet.inf",
+    "virtio-snd": REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf",
+    "virtio-input": REPO_ROOT / "drivers/windows/virtio-input/virtio-input.inf",
+}
+
 
 def fail(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
@@ -73,6 +82,12 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         fail(f"missing required file: {path.as_posix()}")
+
+
+def strip_inf_comment_lines(text: str) -> str:
+    """Remove full-line INF comments (`; ...`) from `text`."""
+
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";"))
 
 
 def parse_hex(value: str) -> int:
@@ -1136,6 +1151,69 @@ def main() -> None:
                     ],
                 )
             )
+
+        # -----------------------------------------------------------------
+        # 2.1) Canonical driver INF must bind to the same VEN/DEV and service.
+        # -----------------------------------------------------------------
+        inf_path = AERO_VIRTIO_INF_SOURCES.get(device_name)
+        if inf_path is None:
+            errors.append(
+                format_error(
+                    f"{device_name}: missing INF path mapping in {Path(__file__).as_posix()}:",
+                    [
+                        f"expected an entry in AERO_VIRTIO_INF_SOURCES for {device_name!r}",
+                    ],
+                )
+            )
+        else:
+            inf_text = strip_inf_comment_lines(read_text(inf_path))
+            inf_upper = inf_text.upper()
+
+            if base_hwid_upper not in inf_upper:
+                errors.append(
+                    format_error(
+                        f"{device_name}: driver INF does not contain the expected canonical VEN/DEV hardware ID:",
+                        [
+                            f"expected to find: {base_hwid}",
+                            f"file: {inf_path.as_posix()}",
+                        ],
+                    )
+                )
+
+            # If the INF revision-qualifies the HWID, ensure it matches the contract major.
+            for line in inf_text.splitlines():
+                if base_hwid_upper not in line.upper():
+                    continue
+                m = re.search(r"&REV_(?P<rev>[0-9A-Fa-f]{2})", line)
+                if not m:
+                    continue
+                rev = int(m.group("rev"), 16)
+                if rev != contract_rev:
+                    errors.append(
+                        format_error(
+                            f"{device_name}: driver INF REV_ qualifier mismatch:",
+                            [
+                                f"expected: REV_{contract_rev:02X}",
+                                f"got: {line.strip()}",
+                                f"file: {inf_path.as_posix()}",
+                            ],
+                        )
+                    )
+
+            if not re.search(
+                rf"^\s*AddService\s*=\s*{re.escape(expected_service)}\b",
+                inf_text,
+                flags=re.I | re.M,
+            ):
+                errors.append(
+                    format_error(
+                        f"{device_name}: driver INF does not install the expected Windows service name:",
+                        [
+                            f"expected AddService = {expected_service}",
+                            f"file: {inf_path.as_posix()}",
+                        ],
+                    )
+                )
 
     # ---------------------------------------------------------------------
     # 3) Feature bit guardrails: docs must agree on Win7 contract v1 ring features.
