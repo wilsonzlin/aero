@@ -180,15 +180,21 @@ HID short items support payload sizes of `{ 0, 1, 2, 4 }` bytes.
 For numeric values we emit, we choose the minimal payload size among `{ 1, 2, 4 }` bytes that can represent the value:
 
 - Unsigned fields (e.g. `Usage Page`, `Usage`, `Report Size`, `Report Count`, `Report ID`) use the smallest unsigned width.
-- Signed fields (`Logical Min/Max`, `Physical Min/Max`, `Unit Exponent`) use the smallest *signed* width that can represent the value.
+- Signed fields (`Logical Min/Max`, `Physical Min/Max`) use the smallest *signed* width that can represent the value.
+- **Unit Exponent** (`0x55`) is **special** in HID 1.11: it is a **4-bit signed value** (`-8..=7`) stored in the **low nibble** of a **single byte** (high nibble reserved and emitted as `0`).
 
 All payloads are encoded **little-endian**.
 
 ### Signed encoding
 
-Signed values are encoded in two’s complement.
+Signed values are encoded in two’s complement **except Unit Exponent**.
 
 Example: `Logical Minimum (-1)` uses a 1-byte payload: `0xFF`.
+
+Unit Exponent encoding (HID 1.11):
+
+- `Unit Exponent (-1)` → `0x55 0x0F` (not `0x55 0xFF`)
+- `Unit Exponent (-2)` → `0x55 0x0E`
 
 ---
 
@@ -208,6 +214,10 @@ When using `Usage Minimum` / `Usage Maximum`:
 
 - `usageMax` MUST be `>= usageMin`.
 - The range length (`usageMax - usageMin + 1`) SHOULD be consistent with `reportCount` when used for variable fields (common case: `reportCount == rangeLen`).
+
+### Unit Exponent range
+
+- `unitExponent` MUST be in the inclusive range `-8..=7` (HID 1.11 4-bit signed field).
 
 ### Mixed reportId 0/non-zero policy
 
