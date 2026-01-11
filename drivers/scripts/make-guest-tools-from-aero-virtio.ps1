@@ -130,16 +130,23 @@ if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
   throw "Expected packager manifest not found: $packagerManifest"
 }
 
+$deviceContractPath = Join-Path $repoRoot "docs\windows-device-contract.json"
+if (-not (Test-Path -LiteralPath $deviceContractPath -PathType Leaf)) {
+  throw "Expected Windows device contract not found: $deviceContractPath"
+}
+
 Ensure-Directory -Path $OutDir
 
 Write-Host "Packaging Guest Tools..."
 Write-Host "  spec : $specPath"
 Write-Host "  out  : $OutDir"
+Write-Host "  contract : $deviceContractPath"
 
 & cargo run --manifest-path $packagerManifest --release --locked -- `
   --drivers-dir $driversRoot `
   --guest-tools-dir $GuestToolsDir `
   --spec $specPath `
+  --windows-device-contract $deviceContractPath `
   --out-dir $OutDir `
   --version $Version `
   --build-id $BuildId

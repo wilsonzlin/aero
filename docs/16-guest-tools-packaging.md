@@ -149,6 +149,33 @@ When building Guest Tools from an upstream `virtio-win.iso` via
 populate `licenses/virtio-win/` with upstream license/notice files (when present) and
 include `driver-pack-manifest.json` for virtio-win ISO provenance.
 
+## Packaging in-tree aero virtio drivers (aerovblk + aerovnet)
+
+If you built Aero's in-tree Windows 7 virtio drivers (`drivers/windows7/virtio/{blk,net}`) and
+have a packager-style driver directory:
+
+```
+<DriverOutDir>/
+  x86/aerovblk/*.{inf,sys,cat}
+  x86/aerovnet/*.{inf,sys,cat}
+  amd64/aerovblk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
+  amd64/aerovnet/*.{inf,sys,cat}
+```
+
+You can build Guest Tools media directly using:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-aero-virtio.ps1 `
+  -DriverOutDir C:\path\to\driver-out `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local
+```
+
+This uses the modern-only validation spec:
+
+- `tools/packaging/specs/win7-aero-virtio.json`
+
 ## Running locally
 
 ### CI-style flow (signed drivers → Guest Tools ISO/zip)
