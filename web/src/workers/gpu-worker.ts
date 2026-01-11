@@ -86,17 +86,14 @@ import {
   AEROGPU_CMD_CREATE_BUFFER_SIZE,
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
-  AEROGPU_CMD_HDR_SIZE as AEROGPU_CMD_HDR_BYTES,
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
   AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
-  AEROGPU_CMD_STREAM_HEADER_SIZE as AEROGPU_STREAM_HEADER_BYTES,
   AEROGPU_CMD_UPLOAD_RESOURCE_SIZE,
   AEROGPU_COPY_FLAG_WRITEBACK_DST,
   AerogpuCmdOpcode,
-  decodeCmdHdr,
-  decodeCmdStreamHeader,
+  AerogpuCmdStreamIter,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
 import { AerogpuFormat, parseAndValidateAbiVersionU32 } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import {
@@ -1365,35 +1362,15 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
 };
 
 const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllocTable | null): bigint => {
-  const dv = new DataView(cmdStream);
-  const bufLen = dv.byteLength;
-
-  if (bufLen < AEROGPU_STREAM_HEADER_BYTES) {
-    throw new Error(`aerogpu: cmd stream too small (${bufLen} bytes)`);
-  }
-
-  const streamHdr = decodeCmdStreamHeader(dv, 0);
-  const sizeBytes = streamHdr.sizeBytes;
-  if (sizeBytes > bufLen) {
-    throw new Error(`aerogpu: invalid cmd stream size_bytes=${sizeBytes} (buffer_len=${bufLen})`);
-  }
-
-  let offset = AEROGPU_STREAM_HEADER_BYTES;
+  const iter = new AerogpuCmdStreamIter(cmdStream);
+  const dv = iter.view;
   let presentDelta = 0n;
 
-  while (offset < sizeBytes) {
-    if (offset + AEROGPU_CMD_HDR_BYTES > sizeBytes) {
-      throw new Error(`aerogpu: truncated command header at offset ${offset}`);
-    }
-
-    const cmdHdr = decodeCmdHdr(dv, offset);
-    const opcode = cmdHdr.opcode;
-    const cmdSizeBytes = cmdHdr.sizeBytes;
-
-    const end = offset + cmdSizeBytes;
-    if (end > sizeBytes) {
-      throw new Error(`aerogpu: command at offset ${offset} overruns stream (end=${end}, size=${sizeBytes})`);
-    }
+  for (const packet of iter) {
+    const offset = packet.offsetBytes;
+    const end = packet.endBytes;
+    const opcode = packet.hdr.opcode;
+    const cmdSizeBytes = packet.hdr.sizeBytes;
 
     switch (opcode) {
       case AEROGPU_CMD_CREATE_BUFFER: {
@@ -1922,8 +1899,6 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllo
         // Unknown opcodes are skipped (forward-compat).
         break;
     }
-
-    offset = end;
   }
 
   return presentDelta;

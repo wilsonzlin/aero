@@ -94,6 +94,7 @@
 
   let decodeCmdStreamHeader = null;
   let decodeCmdHdr = null;
+  let AerogpuCmdStreamIter = null;
 
   let aerogpuProtocolInit = null;
   async function maybeInitAerogpuProtocol() {
@@ -106,6 +107,7 @@
 
         if (typeof cmd.decodeCmdStreamHeader === "function") decodeCmdStreamHeader = cmd.decodeCmdStreamHeader;
         if (typeof cmd.decodeCmdHdr === "function") decodeCmdHdr = cmd.decodeCmdHdr;
+        if (typeof cmd.AerogpuCmdStreamIter === "function") AerogpuCmdStreamIter = cmd.AerogpuCmdStreamIter;
 
         if (typeof cmd.AEROGPU_CMD_STREAM_MAGIC === "number") {
           AEROGPU_CMD_STREAM_MAGIC_U32 = cmd.AEROGPU_CMD_STREAM_MAGIC >>> 0;
@@ -1533,31 +1535,64 @@ void main() {
         fail("invalid cmd stream size_bytes=" + sizeBytes);
       }
 
-      let off = AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES;
-      while (off < sizeBytes) {
-        if (off + AEROGPU_CMD_HDR_SIZE_BYTES > sizeBytes) fail("truncated cmd header at offset " + off);
+      let off = 0;
+      let opcode = 0;
+      let cmdSizeBytes = 0;
+      let end = 0;
 
-        let opcode = 0;
-        let cmdSizeBytes = 0;
-        if (decodeCmdHdr) {
-          const hdr = decodeCmdHdr(dv, off);
-          opcode = hdr.opcode >>> 0;
-          cmdSizeBytes = hdr.sizeBytes >>> 0;
-        } else {
-          opcode = dv.getUint32(off + 0, true);
-          cmdSizeBytes = dv.getUint32(off + 4, true);
-          if (cmdSizeBytes < AEROGPU_CMD_HDR_SIZE_BYTES) {
-            fail("invalid cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
-          }
-          if (cmdSizeBytes % 4 !== 0) {
-            fail("misaligned cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
-          }
-        }
-        const end = off + cmdSizeBytes;
-        if (end > sizeBytes) {
-          fail("cmd overruns stream (end=" + end + ", size=" + sizeBytes + ")");
+      let nextPacket;
+      if (AerogpuCmdStreamIter) {
+        let iter;
+        try {
+          iter = new AerogpuCmdStreamIter(cmdStreamBytes);
+        } catch (err) {
+          fail(err && err.message ? err.message : String(err));
         }
 
+        nextPacket = () => {
+          let res;
+          try {
+            res = iter.next();
+          } catch (err) {
+            fail(err && err.message ? err.message : String(err));
+          }
+          if (res.done) return false;
+          off = res.value.offsetBytes >>> 0;
+          end = res.value.endBytes >>> 0;
+          opcode = res.value.hdr.opcode >>> 0;
+          cmdSizeBytes = res.value.hdr.sizeBytes >>> 0;
+          return true;
+        };
+      } else {
+        off = AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES;
+        nextPacket = () => {
+          if (off >= sizeBytes) return false;
+          if (off + AEROGPU_CMD_HDR_SIZE_BYTES > sizeBytes) fail("truncated cmd header at offset " + off);
+
+          if (decodeCmdHdr) {
+            const hdr = decodeCmdHdr(dv, off);
+            opcode = hdr.opcode >>> 0;
+            cmdSizeBytes = hdr.sizeBytes >>> 0;
+          } else {
+            opcode = dv.getUint32(off + 0, true);
+            cmdSizeBytes = dv.getUint32(off + 4, true);
+            if (cmdSizeBytes < AEROGPU_CMD_HDR_SIZE_BYTES) {
+              fail("invalid cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+            }
+            if (cmdSizeBytes % 4 !== 0) {
+              fail("misaligned cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+            }
+          }
+
+          end = off + cmdSizeBytes;
+          if (end > sizeBytes) {
+            fail("cmd overruns stream (end=" + end + ", size=" + sizeBytes + ")");
+          }
+          return true;
+        };
+      }
+
+      while (nextPacket()) {
         switch (opcode) {
           case AEROGPU_CMD_CREATE_BUFFER: {
             if (cmdSizeBytes < AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES) fail("CREATE_BUFFER packet too small");

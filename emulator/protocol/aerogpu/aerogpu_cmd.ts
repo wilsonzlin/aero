@@ -82,6 +82,78 @@ export function decodeCmdHdr(view: DataView, byteOffset = 0): AerogpuCmdHdr {
   return { opcode, sizeBytes };
 }
 
+export interface AerogpuCmdPacket {
+  offsetBytes: number;
+  endBytes: number;
+  hdr: AerogpuCmdHdr;
+  payload: Uint8Array;
+}
+
+export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacket> {
+  readonly bytes: Uint8Array;
+  readonly view: DataView;
+  readonly header: AerogpuCmdStreamHeader;
+
+  private cursor: number;
+  private end: number;
+
+  constructor(bytes: ArrayBuffer | Uint8Array) {
+    this.bytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    this.view = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength);
+
+    this.header = decodeCmdStreamHeader(this.view, 0);
+    this.end = this.header.sizeBytes >>> 0;
+
+    if (this.end > this.view.byteLength) {
+      throw new Error(
+        `Buffer too small for aerogpu_cmd_stream: need ${this.end} bytes, have ${this.view.byteLength}`,
+      );
+    }
+
+    this.cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  }
+
+  [Symbol.iterator](): IterableIterator<AerogpuCmdPacket> {
+    return this;
+  }
+
+  next(): IteratorResult<AerogpuCmdPacket> {
+    if (this.cursor >= this.end) {
+      return { done: true, value: undefined as unknown as AerogpuCmdPacket };
+    }
+
+    if (this.end - this.cursor < AEROGPU_CMD_HDR_SIZE) {
+      throw new Error(`truncated aerogpu_cmd_hdr at offset ${this.cursor}`);
+    }
+
+    let hdr: AerogpuCmdHdr;
+    try {
+      hdr = decodeCmdHdr(this.view, this.cursor);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`invalid aerogpu_cmd_hdr at offset ${this.cursor}: ${msg}`);
+    }
+
+    const end = this.cursor + hdr.sizeBytes;
+    if (end > this.end) {
+      throw new Error(
+        `aerogpu cmd packet at offset ${this.cursor} overruns stream (end=${end}, stream_size=${this.end})`,
+      );
+    }
+
+    const payload = this.bytes.subarray(this.cursor + AEROGPU_CMD_HDR_SIZE, end);
+    const packet: AerogpuCmdPacket = {
+      offsetBytes: this.cursor,
+      endBytes: end,
+      hdr,
+      payload,
+    };
+
+    this.cursor = end;
+    return { done: false, value: packet };
+  }
+}
+
 export const AerogpuCmdOpcode = {
   Nop: 0,
   // Packet payload is UTF-8 bytes (no NUL terminator); padded to 4-byte alignment.
