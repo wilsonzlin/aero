@@ -1,0 +1,35 @@
+name: Net proxy CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - net-proxy/**
+      - .github/workflows/net-proxy.yml
+  pull_request:
+    paths:
+      - net-proxy/**
+      - .github/workflows/net-proxy.yml
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: net-proxy/package-lock.json
+
+      - name: Install dependencies
+        working-directory: net-proxy
+        run: npm ci
+
+      - name: Run tests
+        working-directory: net-proxy
+        run: npm test
