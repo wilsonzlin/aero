@@ -15,6 +15,20 @@ const CloseFlags = {
   RST: 0x02,
 };
 
+function decodeErrorPayload(payload) {
+  if (payload.length < 4) return { code: 0, message: "ERROR payload too short" };
+  const code = payload.readUInt16BE(0);
+  const messageLen = payload.readUInt16BE(2);
+  if (payload.length !== 4 + messageLen) return { code, message: "ERROR payload length mismatch" };
+  const message = payload.subarray(4).toString("utf8");
+  return { code, message };
+}
+
+function decodeClosePayload(payload) {
+  if (payload.length !== 1) return { flags: 0 };
+  return { flags: payload.readUInt8(0) };
+}
+
 function encodeFrame(msgType, streamId, payload) {
   const payloadBuf = payload ?? Buffer.alloc(0);
   const buf = Buffer.allocUnsafe(HEADER_BYTES + payloadBuf.length);
@@ -61,26 +75,44 @@ ws.addEventListener("open", () => {
   }, 250);
 });
 
+let pending = Buffer.alloc(0);
+
 ws.addEventListener("message", (event) => {
   if (!(event.data instanceof ArrayBuffer)) return;
-  const buf = Buffer.from(event.data);
+  const chunk = Buffer.from(event.data);
+  pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
 
-  // Minimal parsing: assumes one protocol frame per WebSocket message.
-  if (buf.length < HEADER_BYTES) {
-    console.error("short frame");
-    return;
-  }
-  const msgType = buf.readUInt8(0);
-  const streamId = buf.readUInt32BE(1);
-  const length = buf.readUInt32BE(5);
-  const payload = buf.subarray(HEADER_BYTES, HEADER_BYTES + length);
+  // Frames are carried in a byte stream: multiple frames may be concatenated in
+  // a WebSocket message, or split across messages.
+  while (pending.length >= HEADER_BYTES) {
+    const msgType = pending.readUInt8(0);
+    const streamId = pending.readUInt32BE(1);
+    const length = pending.readUInt32BE(5);
+    const total = HEADER_BYTES + length;
+    if (pending.length < total) break;
 
-  if (msgType === MsgType.DATA) {
-    process.stdout.write(`[stream ${streamId}] ${payload.toString("utf8")}`);
-  } else if (msgType === MsgType.ERROR) {
-    console.error(`[stream ${streamId}] ERROR`, payload);
-  } else {
-    console.log(`[stream ${streamId}] msg_type=${msgType} len=${length}`);
+    const payload = pending.subarray(HEADER_BYTES, total);
+    pending = pending.subarray(total);
+
+    if (msgType === MsgType.DATA) {
+      process.stdout.write(`[stream ${streamId}] ${payload.toString("utf8")}`);
+    } else if (msgType === MsgType.ERROR) {
+      const { code, message } = decodeErrorPayload(payload);
+      console.error(`[stream ${streamId}] ERROR code=${code} message=${message}`);
+    } else if (msgType === MsgType.CLOSE) {
+      const { flags } = decodeClosePayload(payload);
+      const parts = [];
+      if (flags & CloseFlags.FIN) parts.push("FIN");
+      if (flags & CloseFlags.RST) parts.push("RST");
+      console.log(`[stream ${streamId}] CLOSE ${parts.length ? parts.join("|") : `flags=0x${flags.toString(16)}`}`);
+    } else if (msgType === MsgType.PING) {
+      // Reply with PONG (same payload) per protocol.
+      ws.send(encodeFrame(MsgType.PONG, streamId, payload));
+    } else if (msgType === MsgType.PONG) {
+      console.log(`[stream ${streamId}] PONG len=${length}`);
+    } else {
+      console.log(`[stream ${streamId}] msg_type=${msgType} len=${length}`);
+    }
   }
 });
 
