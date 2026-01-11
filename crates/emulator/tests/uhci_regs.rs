@@ -623,7 +623,9 @@ fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
     let mut mem = Bus::new(0x1000);
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(keyboard.clone()));
     uhci.controller.hub_mut().force_enable_for_tests(0);
 
     // Configure the device and enable remote wakeup.

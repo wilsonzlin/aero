@@ -370,7 +370,8 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         };
-        let Some(entries_bytes) = entry_count.checked_mul(ring::AerogpuAllocEntry::SIZE_BYTES) else {
+        let Some(entries_bytes) = entry_count.checked_mul(ring::AerogpuAllocEntry::SIZE_BYTES)
+        else {
             Self::record_error(regs);
             return None;
         };
@@ -1454,19 +1455,21 @@ impl AeroGpuSoftwareExecutor {
                             None => continue,
                         };
                     let color = match layout.color {
-                        Some(col_el) => match self.read_vertex_elem_f32x4(
-                            regs, mem, allocs, col_el, idx_u32,
-                        ) {
-                            Some(v) => v,
-                            None => continue,
-                        },
+                        Some(col_el) => {
+                            match self.read_vertex_elem_f32x4(regs, mem, allocs, col_el, idx_u32) {
+                                Some(v) => v,
+                                None => continue,
+                            }
+                        }
                         None => [1.0, 1.0, 1.0, 1.0],
                     };
                     let uv = match layout.texcoord0 {
-                        Some(uv_el) => match self.read_vertex_elem_f32x2(regs, mem, allocs, uv_el, idx_u32) {
-                            Some(v) => v,
-                            None => continue,
-                        },
+                        Some(uv_el) => {
+                            match self.read_vertex_elem_f32x2(regs, mem, allocs, uv_el, idx_u32) {
+                                Some(v) => v,
+                                None => continue,
+                            }
+                        }
                         None => (0.0, 0.0),
                     };
 

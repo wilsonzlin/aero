@@ -188,7 +188,10 @@ fn write_alloc_table_entries(
         mem.write_u32(entry_base + ALLOC_ENTRY_ALLOC_ID_OFFSET, *alloc_id);
         mem.write_u32(entry_base + ALLOC_ENTRY_FLAGS_OFFSET, *flags);
         mem.write_u64(entry_base + ALLOC_ENTRY_GPA_OFFSET, *entry_gpa);
-        mem.write_u64(entry_base + ALLOC_ENTRY_SIZE_BYTES_OFFSET, *entry_size_bytes);
+        mem.write_u64(
+            entry_base + ALLOC_ENTRY_SIZE_BYTES_OFFSET,
+            *entry_size_bytes,
+        );
         mem.write_u64(entry_base + ALLOC_ENTRY_RESERVED0_OFFSET, 0);
     }
 

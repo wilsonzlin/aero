@@ -1808,7 +1808,9 @@ impl AerogpuD3d9Executor {
                             .alloc_offset_bytes
                             .checked_add(dst_offset_bytes)
                             .ok_or_else(|| {
-                                AerogpuD3d9Error::Validation("COPY_BUFFER: dst backing overflow".into())
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_BUFFER: dst backing overflow".into(),
+                                )
                             })?;
                         let alloc_end = alloc_offset.checked_add(size_bytes).ok_or_else(|| {
                             AerogpuD3d9Error::Validation("COPY_BUFFER: dst backing overflow".into())
@@ -2285,12 +2287,16 @@ impl AerogpuD3d9Executor {
                         .checked_add(row_off)
                         .and_then(|v| v.checked_add(dst_x_bytes))
                         .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst backing overflow".into())
+                            AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: dst backing overflow".into(),
+                            )
                         })?;
                     let alloc_end = alloc_offset
                         .checked_add(row_bytes.len() as u64)
                         .ok_or_else(|| {
-                            AerogpuD3d9Error::Validation("COPY_TEXTURE2D: dst backing overflow".into())
+                            AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: dst backing overflow".into(),
+                            )
                         })?;
                     if alloc_end > alloc.size_bytes {
                         return Err(AerogpuD3d9Error::Validation(format!(
@@ -2982,7 +2988,9 @@ impl AerogpuD3d9Executor {
                 .checked_add(alloc_offset)
                 .ok_or_else(|| AerogpuD3d9Error::Validation("buffer backing overflow".into()))?;
             if src_gpa.checked_add(len_u64).is_none() {
-                return Err(AerogpuD3d9Error::Validation("buffer backing overflow".into()));
+                return Err(AerogpuD3d9Error::Validation(
+                    "buffer backing overflow".into(),
+                ));
             }
             guest_memory.read(src_gpa, &mut data)?;
             if let Some(encoder) = encoder.as_deref_mut() {
@@ -3135,19 +3143,20 @@ impl AerogpuD3d9Executor {
                 let row_off = (row as u64).checked_mul(row_pitch).ok_or_else(|| {
                     AerogpuD3d9Error::Validation("texture backing overflow".into())
                 })?;
-                let alloc_offset = backing
-                    .alloc_offset_bytes
-                    .checked_add(row_off)
-                    .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
-                let src_gpa = alloc_entry
-                    .gpa
-                    .checked_add(alloc_offset)
-                    .ok_or_else(|| AerogpuD3d9Error::Validation("texture backing overflow".into()))?;
-                if src_gpa
-                    .checked_add(unpadded_bpr as u64)
-                    .is_none()
-                {
-                    return Err(AerogpuD3d9Error::Validation("texture backing overflow".into()));
+                let alloc_offset =
+                    backing
+                        .alloc_offset_bytes
+                        .checked_add(row_off)
+                        .ok_or_else(|| {
+                            AerogpuD3d9Error::Validation("texture backing overflow".into())
+                        })?;
+                let src_gpa = alloc_entry.gpa.checked_add(alloc_offset).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation("texture backing overflow".into())
+                })?;
+                if src_gpa.checked_add(unpadded_bpr as u64).is_none() {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "texture backing overflow".into(),
+                    ));
                 }
                 let dst_off = i as usize * upload_bpr_usize;
                 guest_memory.read(

@@ -116,7 +116,9 @@ pub struct AllocTable {
 }
 
 impl AllocTable {
-    pub fn new(entries: impl IntoIterator<Item = (u32, AllocEntry)>) -> Result<Self, ExecutorError> {
+    pub fn new(
+        entries: impl IntoIterator<Item = (u32, AllocEntry)>,
+    ) -> Result<Self, ExecutorError> {
         let mut map = HashMap::<u32, AllocEntry>::new();
         for (alloc_id, entry) in entries {
             if alloc_id == 0 {
@@ -162,11 +164,14 @@ impl AllocTable {
             )));
         }
 
-        let gpa = entry.gpa.checked_add(offset).ok_or_else(|| {
-            ExecutorError::Validation("alloc table gpa+offset overflow".into())
-        })?;
+        let gpa = entry
+            .gpa
+            .checked_add(offset)
+            .ok_or_else(|| ExecutorError::Validation("alloc table gpa+offset overflow".into()))?;
         if gpa.checked_add(size).is_none() {
-            return Err(ExecutorError::Validation("alloc table gpa+size overflow".into()));
+            return Err(ExecutorError::Validation(
+                "alloc table gpa+size overflow".into(),
+            ));
         }
 
         Ok(gpa)
@@ -182,10 +187,7 @@ impl AllocTable {
                 "alloc table gpa/size must be non-zero".into(),
             ));
         }
-        if table_gpa
-            .checked_add(u64::from(table_size_bytes))
-            .is_none()
-        {
+        if table_gpa.checked_add(u64::from(table_size_bytes)).is_none() {
             return Err(ExecutorError::Validation(
                 "alloc table gpa+size overflow".into(),
             ));
@@ -231,17 +233,24 @@ impl AllocTable {
         for i in 0..entry_count {
             let entry_offset = (i as u64)
                 .checked_mul(entry_stride_bytes as u64)
-                .ok_or_else(|| ExecutorError::Validation("alloc table entry offset overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("alloc table entry offset overflow".into())
+                })?;
             let entry_gpa = table_gpa
                 .checked_add(ring::AerogpuAllocTableHeader::SIZE_BYTES as u64)
                 .and_then(|gpa| gpa.checked_add(entry_offset))
-                .ok_or_else(|| ExecutorError::Validation("alloc table entry gpa overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("alloc table entry gpa overflow".into())
+                })?;
             let mut entry_bytes = [0u8; ring::AerogpuAllocEntry::SIZE_BYTES];
             guest_memory.read(entry_gpa, &mut entry_bytes)?;
 
-            let entry = ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes).map_err(|err| {
-                ExecutorError::Validation(format!("failed to decode alloc table entry {i}: {err:?}"))
-            })?;
+            let entry =
+                ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes).map_err(|err| {
+                    ExecutorError::Validation(format!(
+                        "failed to decode alloc table entry {i}: {err:?}"
+                    ))
+                })?;
             entries.push((
                 entry.alloc_id,
                 AllocEntry {
@@ -2190,9 +2199,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .map_err(|_| ExecutorError::Validation("buffer dirty range too large".into()))?;
             let mut data = vec![0u8; len_usize];
 
-            let alloc_offset = backing.alloc_offset_bytes.checked_add(aligned_start).ok_or_else(|| {
-                ExecutorError::Validation("buffer alloc offset overflow".into())
-            })?;
+            let alloc_offset = backing
+                .alloc_offset_bytes
+                .checked_add(aligned_start)
+                .ok_or_else(|| ExecutorError::Validation("buffer alloc offset overflow".into()))?;
             let src_gpa = table.resolve_gpa(backing.alloc_id, alloc_offset, len)?;
             guest_memory.read(src_gpa, &mut data)?;
             self.queue
@@ -2264,18 +2274,18 @@ fn fs_main() -> @location(0) vec4<f32> {
             let mut staging = vec![0u8; upload_bpr as usize * height as usize];
             for i in 0..height {
                 let row = rows.start + i;
-                let row_off = (row as u64)
-                    .checked_mul(row_pitch)
-                    .ok_or_else(|| ExecutorError::Validation("texture row offset overflow".into()))?;
-                let alloc_offset = backing
-                    .alloc_offset_bytes
-                    .checked_add(row_off)
-                    .ok_or_else(|| ExecutorError::Validation("texture alloc offset overflow".into()))?;
-                let src_gpa = table.resolve_gpa(
-                    backing.alloc_id,
-                    alloc_offset,
-                    unpadded_bpr as u64,
-                )?;
+                let row_off = (row as u64).checked_mul(row_pitch).ok_or_else(|| {
+                    ExecutorError::Validation("texture row offset overflow".into())
+                })?;
+                let alloc_offset =
+                    backing
+                        .alloc_offset_bytes
+                        .checked_add(row_off)
+                        .ok_or_else(|| {
+                            ExecutorError::Validation("texture alloc offset overflow".into())
+                        })?;
+                let src_gpa =
+                    table.resolve_gpa(backing.alloc_id, alloc_offset, unpadded_bpr as u64)?;
                 let dst_off = i as usize * upload_bpr as usize;
                 guest_memory.read(
                     src_gpa,

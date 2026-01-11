@@ -512,7 +512,9 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
         });
 
         let cmd_a_gpa = 0x9000u64;
-        guest.write(cmd_a_gpa, &stream_a).expect("write cmd stream A");
+        guest
+            .write(cmd_a_gpa, &stream_a)
+            .expect("write cmd stream A");
         let report_a = exec.process_submission_from_guest_memory(
             &guest,
             cmd_a_gpa,
@@ -520,7 +522,11 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
             alloc_table_gpa,
             alloc_table_a.len() as u32,
         );
-        assert!(report_a.is_ok(), "submission A errors: {:#?}", report_a.events);
+        assert!(
+            report_a.is_ok(),
+            "submission A errors: {:#?}",
+            report_a.events
+        );
 
         // Verify the first draw sampled red from tex_gpa_a.
         let rt_tex = exec.texture(3).expect("render target texture");
@@ -606,7 +612,9 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
         });
 
         let cmd_b_gpa = 0xA000u64;
-        guest.write(cmd_b_gpa, &stream_b).expect("write cmd stream B");
+        guest
+            .write(cmd_b_gpa, &stream_b)
+            .expect("write cmd stream B");
         let report_b = exec.process_submission_from_guest_memory(
             &guest,
             cmd_b_gpa,
@@ -614,7 +622,11 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
             alloc_table_gpa,
             alloc_table_b.len() as u32,
         );
-        assert!(report_b.is_ok(), "submission B errors: {:#?}", report_b.events);
+        assert!(
+            report_b.is_ok(),
+            "submission B errors: {:#?}",
+            report_b.events
+        );
 
         let rgba = {
             let rt_tex = exec.texture(3).expect("render target texture");
