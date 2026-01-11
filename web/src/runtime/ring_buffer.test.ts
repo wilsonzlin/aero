@@ -151,12 +151,12 @@ describe("RingBuffer", () => {
       const ring = new RingBuffer(sab, 0, sab.byteLength);
       ring.reset();
 
-    const count = 100;
-    // Worker threads do not support Node ESM loaders, and Node 20 does not have a
-    // built-in TypeScript runtime. Keep the cross-thread test coverage by running
-    // a small JS-only consumer worker (no TS imports).
-    const worker = new Worker(
-      `
+      const count = 100;
+      // Worker threads do not support Node ESM loaders, and Node 20 does not have a
+      // built-in TypeScript runtime. Keep the cross-thread test coverage by running
+      // a small JS-only consumer worker (no TS imports).
+      const worker = new Worker(
+        `
 const { parentPort, workerData } = require("node:worker_threads");
 
 const META_BYTES = 8;
@@ -248,37 +248,37 @@ async function run() {
 run().catch((err) => {
   parentPort?.postMessage({ error: String(err) });
 });
-      `,
-      {
-        eval: true,
-        workerData: { sab, byteOffset: 0, byteLength: sab.byteLength, count },
-      }
-    );
+        `,
+        {
+          eval: true,
+          workerData: { sab, byteOffset: 0, byteLength: sab.byteLength, count },
+        },
+      );
 
-    try {
-      for (let i = 0; i < count; i++) {
-        const payload = new Uint8Array(4);
-        new DataView(payload.buffer).setUint32(0, i, true);
-        while (!ring.push(payload)) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-      }
-
-      const received = await new Promise<number[]>((resolve, reject) => {
-        worker.once("message", (msg) => {
-          if (!Array.isArray(msg) && msg && typeof msg === "object" && "error" in msg) {
-            reject(new Error(String((msg as { error: unknown }).error)));
-            return;
+      try {
+        for (let i = 0; i < count; i++) {
+          const payload = new Uint8Array(4);
+          new DataView(payload.buffer).setUint32(0, i, true);
+          while (!ring.push(payload)) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
           }
-          resolve(msg as number[]);
-        });
-        worker.once("error", reject);
-        worker.once("exit", (code) => {
-          if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));
-        });
-      });
+        }
 
-      expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
+        const received = await new Promise<number[]>((resolve, reject) => {
+          worker.once("message", (msg) => {
+            if (!Array.isArray(msg) && msg && typeof msg === "object" && "error" in msg) {
+              reject(new Error(String((msg as { error: unknown }).error)));
+              return;
+            }
+            resolve(msg as number[]);
+          });
+          worker.once("error", reject);
+          worker.once("exit", (code) => {
+            if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));
+          });
+        });
+
+        expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
       } finally {
         await worker.terminate();
       }

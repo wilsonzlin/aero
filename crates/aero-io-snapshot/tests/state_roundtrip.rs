@@ -4,20 +4,75 @@ use aero_io_snapshot::io::network::state::{
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::storage::state::{
-    DiskLayerState, IdeControllerState, IdeInFlightCommandState, NvmeCompletionQueueState, NvmeControllerState,
-    NvmeInFlightCommandState, NvmeSubmissionQueueState,
+    DiskBackendState, DiskCacheState, DiskLayerState, DiskOverlayState, IdeControllerState, IdeInFlightCommandState,
+    LocalDiskBackendKind, LocalDiskBackendState, NvmeCompletionQueueState, NvmeControllerState, NvmeInFlightCommandState,
+    NvmeSubmissionQueueState, RemoteDiskBackendState, RemoteDiskBaseState, RemoteDiskValidator,
 };
 
 #[test]
 fn disk_layer_state_roundtrip() {
-    let mut disk = DiskLayerState::new("disk0", 4096, 512);
-    disk.read_cache.insert(1, vec![1u8; 512]);
-    disk.write_cache.insert(2, vec![2u8; 512]);
-    disk.dirty_sectors.insert(2);
-    disk.flush_in_progress = false;
+    let disk = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Opfs,
+            key: "disk0.aerospar".to_string(),
+            overlay: Some(DiskOverlayState {
+                file_name: "disk0.overlay.aerospar".to_string(),
+                disk_size_bytes: 4096,
+                block_size_bytes: 1024 * 1024,
+            }),
+        }),
+        4096,
+        512,
+    );
 
     let snap = disk.save_state();
-    let mut restored = DiskLayerState::new("ignored", 0, 1);
+    let mut restored = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Other,
+            key: "ignored".to_string(),
+            overlay: None,
+        }),
+        0,
+        1,
+    );
+    restored.load_state(&snap).unwrap();
+    assert_eq!(disk, restored);
+}
+
+#[test]
+fn disk_layer_state_roundtrip_remote() {
+    let disk = DiskLayerState::new(
+        DiskBackendState::Remote(RemoteDiskBackendState {
+            base: RemoteDiskBaseState {
+                image_id: "win7-sp1-x64".to_string(),
+                version: "sha256-deadbeef".to_string(),
+                delivery_type: "range".to_string(),
+                expected_validator: Some(RemoteDiskValidator::Etag("\"abc\"".to_string())),
+                chunk_size: 1024 * 1024,
+            },
+            overlay: DiskOverlayState {
+                file_name: "remote.overlay.aerospar".to_string(),
+                disk_size_bytes: 4096,
+                block_size_bytes: 1024 * 1024,
+            },
+            cache: DiskCacheState {
+                file_name: "remote.cache.aerospar".to_string(),
+            },
+        }),
+        4096,
+        512,
+    );
+
+    let snap = disk.save_state();
+    let mut restored = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Other,
+            key: "ignored".to_string(),
+            overlay: None,
+        }),
+        0,
+        1,
+    );
     restored.load_state(&snap).unwrap();
     assert_eq!(disk, restored);
 }

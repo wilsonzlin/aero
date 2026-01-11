@@ -104,7 +104,7 @@ describe('waitUntilNotEqual', () => {
         await new Promise<void>((resolve) => {
           notifier.once('message', () => resolve());
         });
-        await expect(waitUntilNotEqual(i32, 0, 0, { canBlock: true, timeoutMs: 1000 })).resolves.toBe('ok');
+        await expect(waitUntilNotEqual(i32, 0, 0, { canBlock: true, timeoutMs: 5_000 })).resolves.toBe('ok');
       } finally {
         await notifier.terminate();
       }

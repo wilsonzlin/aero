@@ -31,6 +31,8 @@ type RequestMessage =
   | { type: "request"; requestId: number; op: "read"; payload: { handle: number; lba: number; byteLength: number } }
   | { type: "request"; requestId: number; op: "write"; payload: { handle: number; lba: number; data: Uint8Array } }
   | { type: "request"; requestId: number; op: "stats"; payload: { handle: number } }
+  | { type: "request"; requestId: number; op: "prepareSnapshot"; payload: Record<string, never> }
+  | { type: "request"; requestId: number; op: "restoreFromSnapshot"; payload: { state: Uint8Array } }
   | {
       type: "request";
       requestId: number;
@@ -150,6 +152,15 @@ export class RuntimeDiskClient {
 
   stats(handle: number): Promise<DiskStats> {
     return this.request("stats", { handle });
+  }
+
+  prepareSnapshot(): Promise<Uint8Array> {
+    return this.request<{ state: Uint8Array }>("prepareSnapshot", {}).then((r) => r.state);
+  }
+
+  restoreFromSnapshot(state: Uint8Array): Promise<void> {
+    const buf = state.slice();
+    return this.request("restoreFromSnapshot", { state: buf }, [buf.buffer]).then(() => undefined);
   }
 
   bench(

@@ -1,6 +1,13 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { opfsGetDisksDir } from "./metadata";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
+import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
+
+export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
+  // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
+  // by the environment (same-origin session cookies, signed cookies, etc).
+  return `/images/${encodeURIComponent(base.imageId)}/${encodeURIComponent(base.version)}/disk.img`;
+}
 
 export type RemoteRangeDiskTelemetry = {
   bytesDownloaded: number;

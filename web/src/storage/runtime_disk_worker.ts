@@ -8,6 +8,17 @@ import { benchSequentialRead, benchSequentialWrite } from "./bench";
 import type { DiskImageMetadata } from "./metadata";
 import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
+import { opfsDeleteDisk, opfsGetDiskFileHandle } from "./import_export";
+import { RemoteRangeDisk, defaultRemoteRangeUrl } from "./remote_range_disk";
+import {
+  deserializeRuntimeDiskSnapshot,
+  serializeRuntimeDiskSnapshot,
+  shouldInvalidateRemoteCache,
+  type DiskBackendSnapshot,
+  type RemoteCacheBinding,
+  type RuntimeDiskSnapshot,
+  type RuntimeDiskSnapshotEntry,
+} from "./runtime_disk_snapshot";
 
 type OpenMode = "direct" | "cow";
 
@@ -29,6 +40,7 @@ type DiskEntry = {
   disk: AsyncSectorDisk;
   readOnly: boolean;
   io: DiskIoTelemetry;
+  backendSnapshot: DiskBackendSnapshot | null;
 };
 
 type RequestMessage =
@@ -56,6 +68,8 @@ type RequestMessage =
   | { type: "request"; requestId: number; op: "read"; payload: { handle: number; lba: number; byteLength: number } }
   | { type: "request"; requestId: number; op: "write"; payload: { handle: number; lba: number; data: Uint8Array } }
   | { type: "request"; requestId: number; op: "stats"; payload: { handle: number } }
+  | { type: "request"; requestId: number; op: "prepareSnapshot"; payload: Record<string, never> }
+  | { type: "request"; requestId: number; op: "restoreFromSnapshot"; payload: { state: Uint8Array } }
   | {
       type: "request";
       requestId: number;
@@ -74,6 +88,40 @@ type ResponseMessage =
 
 const disks = new Map<number, DiskEntry>();
 let nextHandle = 1;
+
+function cacheBindingFileName(cacheFileName: string): string {
+  return `${cacheFileName}.binding.json`;
+}
+
+async function readCacheBinding(fileName: string): Promise<RemoteCacheBinding | null> {
+  try {
+    const handle = await opfsGetDiskFileHandle(fileName, { create: false });
+    const file = await handle.getFile();
+    const text = await file.text();
+    if (!text.trim()) return null;
+    return JSON.parse(text) as RemoteCacheBinding;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "NotFoundError") return null;
+    return null;
+  }
+}
+
+async function writeCacheBinding(fileName: string, binding: RemoteCacheBinding): Promise<void> {
+  const handle = await opfsGetDiskFileHandle(fileName, { create: true });
+  const writable = await handle.createWritable({ keepExistingData: false });
+  await writable.write(JSON.stringify(binding, null, 2));
+  await writable.close();
+}
+
+async function ensureRemoteCacheBinding(expected: RemoteCacheBinding["base"], cacheFileName: string): Promise<void> {
+  const bindingName = cacheBindingFileName(cacheFileName);
+  const existing = await readCacheBinding(bindingName);
+  if (shouldInvalidateRemoteCache(expected, existing)) {
+    await opfsDeleteDisk(cacheFileName);
+    await opfsDeleteDisk(bindingName);
+  }
+  await writeCacheBinding(bindingName, { version: 1, base: expected });
+}
 
 function serializeError(err: unknown): { message: string; name?: string; stack?: string } {
   if (err instanceof Error) return { message: err.message, name: err.name, stack: err.stack };
@@ -149,7 +197,24 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
           });
         }
 
-        return { disk: new OpfsCowDisk(base, overlay), readOnly: false, io: emptyIoTelemetry() };
+        return {
+          disk: new OpfsCowDisk(base, overlay),
+          readOnly: false,
+          io: emptyIoTelemetry(),
+          backendSnapshot: {
+            kind: "local",
+            backend: "opfs",
+            key: meta.fileName,
+            format: meta.format,
+            diskKind: meta.kind,
+            sizeBytes: meta.sizeBytes,
+            overlay: {
+              fileName: overlayName,
+              diskSizeBytes: meta.sizeBytes,
+              blockSizeBytes: overlay.blockSizeBytes,
+            },
+          },
+        };
       } catch (err) {
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
@@ -158,28 +223,153 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     }
 
     const disk = await openBase();
-    return { disk, readOnly, io: emptyIoTelemetry() };
+    return {
+      disk,
+      readOnly,
+      io: emptyIoTelemetry(),
+      backendSnapshot: {
+        kind: "local",
+        backend: "opfs",
+        key: meta.fileName,
+        format: meta.format,
+        diskKind: meta.kind,
+        sizeBytes: meta.sizeBytes,
+      },
+    };
   }
 
   // IndexedDB backend: disk data is stored in the `chunks` store (sparse).
   const disk = await IdbChunkDisk.open(meta.id, meta.sizeBytes);
-  return { disk, readOnly, io: emptyIoTelemetry() };
+  return {
+    disk,
+    readOnly,
+    io: emptyIoTelemetry(),
+    backendSnapshot: {
+      kind: "local",
+      backend: "idb",
+      key: meta.id,
+      format: meta.format,
+      diskKind: meta.kind,
+      sizeBytes: meta.sizeBytes,
+    },
+  };
 }
 
 async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise<DiskEntry> {
   const disk = await RemoteStreamingDisk.open(url, options);
-  return { disk, readOnly: true, io: emptyIoTelemetry() };
+  return { disk, readOnly: true, io: emptyIoTelemetry(), backendSnapshot: null };
 }
 
 async function openChunkedDisk(manifestUrl: string, options?: RemoteChunkedDiskOpenOptions): Promise<DiskEntry> {
   const disk = await RemoteChunkedDisk.open(manifestUrl, options);
-  return { disk, readOnly: true, io: emptyIoTelemetry() };
+  return { disk, readOnly: true, io: emptyIoTelemetry(), backendSnapshot: null };
 }
 
 async function requireDisk(handle: number): Promise<DiskEntry> {
   const entry = disks.get(handle);
   if (!entry) throw new Error(`unknown disk handle ${handle}`);
   return entry;
+}
+
+async function openSparseOrCreate(
+  fileName: string,
+  opts: { diskSizeBytes: number; blockSizeBytes: number },
+): Promise<OpfsAeroSparseDisk> {
+  try {
+    const disk = await OpfsAeroSparseDisk.open(fileName);
+    if (disk.capacityBytes !== opts.diskSizeBytes) {
+      await disk.close?.();
+      throw new Error(`disk size mismatch: expected=${opts.diskSizeBytes} actual=${disk.capacityBytes}`);
+    }
+    if (disk.blockSizeBytes !== opts.blockSizeBytes) {
+      await disk.close?.();
+      throw new Error(`block size mismatch: expected=${opts.blockSizeBytes} actual=${disk.blockSizeBytes}`);
+    }
+    return disk;
+  } catch {
+    return await OpfsAeroSparseDisk.create(fileName, opts);
+  }
+}
+
+async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<DiskEntry> {
+  const backend = entry.backend;
+  if (backend.kind === "local") {
+    if (backend.backend === "opfs") {
+      let base: AsyncSectorDisk;
+      switch (backend.format) {
+        case "aerospar": {
+          const disk = await OpfsAeroSparseDisk.open(backend.key);
+          if (disk.capacityBytes !== backend.sizeBytes) {
+            await disk.close?.();
+            throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${disk.capacityBytes}`);
+          }
+          base = disk;
+          break;
+        }
+        case "raw":
+        case "iso":
+        case "unknown":
+          base = await OpfsRawDisk.open(backend.key, { create: false, sizeBytes: backend.sizeBytes });
+          break;
+        case "qcow2":
+        case "vhd":
+          throw new Error(`unsupported OPFS disk format ${backend.format} (convert to aerospar first)`);
+      }
+
+      if (backend.overlay && !entry.readOnly) {
+        const overlay = await openSparseOrCreate(backend.overlay.fileName, {
+          diskSizeBytes: backend.overlay.diskSizeBytes,
+          blockSizeBytes: backend.overlay.blockSizeBytes,
+        });
+        return {
+          disk: new OpfsCowDisk(base, overlay),
+          readOnly: entry.readOnly,
+          io: emptyIoTelemetry(),
+          backendSnapshot: backend,
+        };
+      }
+
+      return { disk: base, readOnly: entry.readOnly, io: emptyIoTelemetry(), backendSnapshot: backend };
+    }
+
+    const disk = await IdbChunkDisk.open(backend.key, backend.sizeBytes);
+    return { disk, readOnly: entry.readOnly, io: emptyIoTelemetry(), backendSnapshot: backend };
+  }
+
+  // Remote base image with OPFS cache + overlay.
+  await ensureRemoteCacheBinding(backend.base, backend.cache.fileName);
+
+  if (backend.base.deliveryType !== "range") {
+    throw new Error(`unsupported remote deliveryType=${backend.base.deliveryType}`);
+  }
+
+  const url = defaultRemoteRangeUrl(backend.base);
+  const imageKey = `${backend.base.imageId}:${backend.base.version}:${backend.base.deliveryType}`;
+  const sparseCacheFactory = {
+    open: async (_cacheId: string) => await OpfsAeroSparseDisk.open(backend.cache.fileName),
+    create: async (_cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }) =>
+      await OpfsAeroSparseDisk.create(backend.cache.fileName, opts),
+    delete: async (_cacheId: string) => {
+      await opfsDeleteDisk(backend.cache.fileName);
+    },
+  };
+  const base = await RemoteRangeDisk.open(url, { imageKey, chunkSize: backend.base.chunkSize, sparseCacheFactory });
+  if (base.capacityBytes !== backend.sizeBytes) {
+    await base.close?.();
+    throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${base.capacityBytes}`);
+  }
+
+  const overlay = await openSparseOrCreate(backend.overlay.fileName, {
+    diskSizeBytes: backend.overlay.diskSizeBytes,
+    blockSizeBytes: backend.overlay.blockSizeBytes,
+  });
+
+  return {
+    disk: new OpfsCowDisk(base, overlay),
+    readOnly: entry.readOnly,
+    io: emptyIoTelemetry(),
+    backendSnapshot: backend,
+  };
 }
 
 globalThis.onmessage = (ev: MessageEvent<RequestMessage>) => {
@@ -320,6 +510,60 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
         io: entry.io,
         remote,
       });
+      return;
+    }
+
+    case "prepareSnapshot": {
+      for (const entry of disks.values()) {
+        await entry.disk.flush();
+        const backend = entry.backendSnapshot;
+        if (!backend) {
+          throw new Error("disk backend does not support snapshotting (missing backend descriptor)");
+        }
+        if (backend.kind === "remote") {
+          await writeCacheBinding(cacheBindingFileName(backend.cache.fileName), { version: 1, base: backend.base });
+        }
+      }
+
+      const ordered = Array.from(disks.entries()).sort(([a], [b]) => a - b);
+      const disksSnapshot = ordered.map(([handle, entry]) => {
+        const backend = entry.backendSnapshot;
+        if (!backend) {
+          throw new Error("disk backend does not support snapshotting (missing backend descriptor)");
+        }
+        return {
+          handle,
+          readOnly: entry.readOnly,
+          sectorSize: entry.disk.sectorSize,
+          capacityBytes: entry.disk.capacityBytes,
+          backend,
+        };
+      });
+      const snapshot: RuntimeDiskSnapshot = {
+        version: 1,
+        nextHandle,
+        disks: disksSnapshot,
+      };
+      const state = serializeRuntimeDiskSnapshot(snapshot);
+      postOk(msg.requestId, { state }, [state.buffer]);
+      return;
+    }
+
+    case "restoreFromSnapshot": {
+      const snapshot = deserializeRuntimeDiskSnapshot(msg.payload.state);
+
+      for (const entry of disks.values()) {
+        await entry.disk.close?.();
+      }
+      disks.clear();
+
+      const maxHandle = snapshot.disks.reduce((max, d) => Math.max(max, d.handle), 0);
+      nextHandle = Math.max(snapshot.nextHandle, maxHandle + 1);
+      for (const diskEntry of snapshot.disks) {
+        const opened = await openDiskFromSnapshot(diskEntry);
+        disks.set(diskEntry.handle, opened);
+      }
+      postOk(msg.requestId, { ok: true });
       return;
     }
 

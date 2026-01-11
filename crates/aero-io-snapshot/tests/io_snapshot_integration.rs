@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use aero_devices_input::I8042Controller;
 use aero_io_snapshot::io::network::state::{Ipv4Addr, NetworkStackState, TcpRestorePolicy};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
-use aero_io_snapshot::io::storage::state::{DiskBackend, DiskLayerState};
+use aero_io_snapshot::io::storage::state::{
+    DiskBackend, DiskBackendState, DiskLayerState, LocalDiskBackendKind, LocalDiskBackendState,
+};
 
 struct InMemoryDiskBackend {
     key: String,
@@ -45,8 +47,20 @@ fn scripted_io_snapshot_restore() {
     // Script: disk write + keyboard + "network connect".
     let store: Arc<Mutex<BTreeMap<String, Vec<u8>>>> = Arc::new(Mutex::new(BTreeMap::new()));
 
-    let mut disk = DiskLayerState::new("disk0", 4096, 512);
-    disk.attach_backend(open_disk_backend(&store, &disk.backend_key, disk.size_bytes));
+    let mut disk = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Other,
+            key: "disk0".to_string(),
+            overlay: None,
+        }),
+        4096,
+        512,
+    );
+    let key = match &disk.backend {
+        DiskBackendState::Local(local) => local.key.clone(),
+        DiskBackendState::Remote(_) => unreachable!("test uses local backend"),
+    };
+    disk.attach_backend(open_disk_backend(&store, &key, disk.size_bytes));
 
     let mut i8042 = I8042Controller::new();
     i8042.inject_browser_key("KeyA", true);
@@ -72,9 +86,21 @@ fn scripted_io_snapshot_restore() {
     // Reset and restore.
     let r = SnapshotReader::parse(&bundle, *b"IOCO").unwrap();
 
-    let mut disk2 = DiskLayerState::new("ignored", 0, 1);
+    let mut disk2 = DiskLayerState::new(
+        DiskBackendState::Local(LocalDiskBackendState {
+            kind: LocalDiskBackendKind::Other,
+            key: "ignored".to_string(),
+            overlay: None,
+        }),
+        0,
+        1,
+    );
     disk2.load_state(r.bytes(1).unwrap()).unwrap();
-    disk2.attach_backend(open_disk_backend(&store, &disk2.backend_key, disk2.size_bytes));
+    let key2 = match &disk2.backend {
+        DiskBackendState::Local(local) => local.key.clone(),
+        DiskBackendState::Remote(_) => unreachable!("test uses local backend"),
+    };
+    disk2.attach_backend(open_disk_backend(&store, &key2, disk2.size_bytes));
 
     let mut i8042_2 = I8042Controller::new();
     i8042_2.load_state(r.bytes(2).unwrap()).unwrap();
@@ -95,4 +121,3 @@ fn scripted_io_snapshot_restore() {
     assert!(net2.tcp_proxy_conns.contains_key(&conn_id));
     assert_eq!(net2.tcp_proxy_conns[&conn_id].status as u8, 3);
 }
-

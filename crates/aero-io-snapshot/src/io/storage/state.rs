@@ -1,7 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::io::state::codec::{Decoder, Encoder};
 use crate::io::state::{IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use std::collections::BTreeMap;
 
 // ----------------------------------------
 // Disk layer state (host-side)
@@ -13,152 +12,323 @@ pub trait DiskBackend {
     fn flush(&mut self);
 }
 
+/// Local disk backend identity (browser-backed disks).
+///
+/// Snapshot state MUST remain stable across page reloads and must never include
+/// signed URLs, auth tokens, or other secrets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalDiskBackendKind {
+    /// OPFS-backed disk file (key is a stable OPFS path / filename).
+    Opfs,
+    /// IndexedDB-backed disk (key is a stable disk id / primary key).
+    Idb,
+    /// Unknown/other backend. Only used for forward/backward-compat decoding.
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskOverlayState {
+    /// OPFS filename for the overlay image (e.g. `<diskId>.overlay.aerospar`).
+    pub file_name: String,
+    /// Virtual disk size for the overlay (bytes).
+    pub disk_size_bytes: u64,
+    /// Overlay block size (bytes). Must be a multiple of 512.
+    pub block_size_bytes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskCacheState {
+    /// OPFS filename for the cache image. Cached bytes are stored in OPFS and
+    /// must not be inlined in the snapshot.
+    pub file_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalDiskBackendState {
+    pub kind: LocalDiskBackendKind,
+    /// Stable backend key/path.
+    pub key: String,
+    /// Optional local overlay (COW).
+    pub overlay: Option<DiskOverlayState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteDiskValidator {
+    Etag(String),
+    LastModified(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteDiskBaseState {
+    /// Stable image identifier (e.g. `win7-sp1-x64` or a UUID for private images).
+    pub image_id: String,
+    /// Stable image version identifier (e.g. `sha256-...`).
+    pub version: String,
+    /// Delivery scheme (`range`, `chunked`, ...).
+    pub delivery_type: String,
+    /// Expected validator for the remote base (etag/last-modified). Used to bind
+    /// OPFS cache files to a specific immutable base.
+    pub expected_validator: Option<RemoteDiskValidator>,
+    /// Chunk size (bytes) used for aligned remote reads and local caching.
+    pub chunk_size: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteDiskBackendState {
+    pub base: RemoteDiskBaseState,
+    /// Local write overlay (OPFS).
+    pub overlay: DiskOverlayState,
+    /// Local read cache binding (OPFS).
+    pub cache: DiskCacheState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiskBackendState {
+    Local(LocalDiskBackendState),
+    Remote(RemoteDiskBackendState),
+}
+
+impl DiskBackendState {
+    fn encode_string(mut e: Encoder, s: &str) -> Encoder {
+        e = e.u32(s.len() as u32);
+        e.bytes(s.as_bytes())
+    }
+
+    fn decode_string(d: &mut Decoder<'_>) -> SnapshotResult<String> {
+        let len = d.u32()? as usize;
+        let bytes = d.bytes(len)?;
+        String::from_utf8(bytes.to_vec()).map_err(|_| SnapshotError::InvalidFieldEncoding("string utf8"))
+    }
+
+    fn encode_overlay(mut e: Encoder, overlay: &DiskOverlayState) -> Encoder {
+        e = Self::encode_string(e, &overlay.file_name);
+        e = e.u64(overlay.disk_size_bytes);
+        e.u32(overlay.block_size_bytes)
+    }
+
+    fn decode_overlay(d: &mut Decoder<'_>) -> SnapshotResult<DiskOverlayState> {
+        let file_name = Self::decode_string(d)?;
+        let disk_size_bytes = d.u64()?;
+        let block_size_bytes = d.u32()?;
+        Ok(DiskOverlayState {
+            file_name,
+            disk_size_bytes,
+            block_size_bytes,
+        })
+    }
+
+    fn encode_cache(e: Encoder, cache: &DiskCacheState) -> Encoder {
+        Self::encode_string(e, &cache.file_name)
+    }
+
+    fn decode_cache(d: &mut Decoder<'_>) -> SnapshotResult<DiskCacheState> {
+        let file_name = Self::decode_string(d)?;
+        Ok(DiskCacheState { file_name })
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        // v1 backend descriptor payload:
+        // u8 kind (0=local, 1=remote)
+        //
+        // local:
+        //  u8 backend_kind (0=opfs, 1=idb, 2=other)
+        //  string key
+        //  u8 overlay_present
+        //   [overlay]
+        //
+        // remote:
+        //  string image_id
+        //  string version
+        //  string delivery_type
+        //  u8 validator_kind (0=none, 1=etag, 2=last_modified)
+        //   [string validator_value]
+        //  u32 chunk_size
+        //  overlay
+        //  cache
+        let mut e = Encoder::new();
+        match self {
+            DiskBackendState::Local(local) => {
+                e = e.u8(0);
+                let kind = match local.kind {
+                    LocalDiskBackendKind::Opfs => 0,
+                    LocalDiskBackendKind::Idb => 1,
+                    LocalDiskBackendKind::Other => 2,
+                };
+                e = e.u8(kind);
+                e = Self::encode_string(e, &local.key);
+                match &local.overlay {
+                    Some(overlay) => {
+                        e = e.u8(1);
+                        e = Self::encode_overlay(e, overlay);
+                    }
+                    None => {
+                        e = e.u8(0);
+                    }
+                }
+                e.finish()
+            }
+            DiskBackendState::Remote(remote) => {
+                e = e.u8(1);
+                e = Self::encode_string(e, &remote.base.image_id);
+                e = Self::encode_string(e, &remote.base.version);
+                e = Self::encode_string(e, &remote.base.delivery_type);
+                match &remote.base.expected_validator {
+                    None => {
+                        e = e.u8(0);
+                    }
+                    Some(RemoteDiskValidator::Etag(v)) => {
+                        e = e.u8(1);
+                        e = Self::encode_string(e, v);
+                    }
+                    Some(RemoteDiskValidator::LastModified(v)) => {
+                        e = e.u8(2);
+                        e = Self::encode_string(e, v);
+                    }
+                }
+                e = e.u32(remote.base.chunk_size);
+                e = Self::encode_overlay(e, &remote.overlay);
+                e = Self::encode_cache(e, &remote.cache);
+                e.finish()
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> SnapshotResult<Self> {
+        let mut d = Decoder::new(bytes);
+        let kind = d.u8()?;
+        let out = match kind {
+            0 => {
+                let backend_kind = d.u8()?;
+                let kind = match backend_kind {
+                    0 => LocalDiskBackendKind::Opfs,
+                    1 => LocalDiskBackendKind::Idb,
+                    _ => LocalDiskBackendKind::Other,
+                };
+                let key = Self::decode_string(&mut d)?;
+                let overlay = match d.u8()? {
+                    0 => None,
+                    1 => Some(Self::decode_overlay(&mut d)?),
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("overlay_present")),
+                };
+                DiskBackendState::Local(LocalDiskBackendState { kind, key, overlay })
+            }
+            1 => {
+                let image_id = Self::decode_string(&mut d)?;
+                let version = Self::decode_string(&mut d)?;
+                let delivery_type = Self::decode_string(&mut d)?;
+                let expected_validator = match d.u8()? {
+                    0 => None,
+                    1 => Some(RemoteDiskValidator::Etag(Self::decode_string(&mut d)?)),
+                    2 => Some(RemoteDiskValidator::LastModified(Self::decode_string(&mut d)?)),
+                    _ => return Err(SnapshotError::InvalidFieldEncoding("validator_kind")),
+                };
+                let chunk_size = d.u32()?;
+                let overlay = Self::decode_overlay(&mut d)?;
+                let cache = Self::decode_cache(&mut d)?;
+                DiskBackendState::Remote(RemoteDiskBackendState {
+                    base: RemoteDiskBaseState {
+                        image_id,
+                        version,
+                        delivery_type,
+                        expected_validator,
+                        chunk_size,
+                    },
+                    overlay,
+                    cache,
+                })
+            }
+            _ => return Err(SnapshotError::InvalidFieldEncoding("backend kind")),
+        };
+        d.finish()?;
+        Ok(out)
+    }
+}
+
 /// Host-side disk state that can be snapshotted independently of the underlying backing store.
 ///
 /// The actual disk contents are assumed to live in an external backend (OPFS/IndexedDB/etc).
 /// Dirty write-back state is flushed before snapshot at the coordinator layer.
 pub struct DiskLayerState {
-    pub backend_key: String,
+    pub backend: DiskBackendState,
     pub sector_size: usize,
     pub size_bytes: u64,
-
-    // Optional read cache (hot sectors).
-    pub read_cache: BTreeMap<u64, Vec<u8>>,
-
-    // Buffered writes (dirty sectors).
-    pub write_cache: BTreeMap<u64, Vec<u8>>,
-    pub dirty_sectors: BTreeSet<u64>,
-    pub flush_in_progress: bool,
-
-    backend: Option<Box<dyn DiskBackend>>,
+    attached_backend: Option<Box<dyn DiskBackend>>,
 }
 
 impl std::fmt::Debug for DiskLayerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DiskLayerState")
-            .field("backend_key", &self.backend_key)
+            .field("backend", &self.backend)
             .field("sector_size", &self.sector_size)
             .field("size_bytes", &self.size_bytes)
-            .field("read_cache", &self.read_cache)
-            .field("write_cache", &self.write_cache)
-            .field("dirty_sectors", &self.dirty_sectors)
-            .field("flush_in_progress", &self.flush_in_progress)
-            .field("backend_attached", &self.backend.is_some())
+            .field("backend_attached", &self.attached_backend.is_some())
             .finish()
     }
 }
 
 impl PartialEq for DiskLayerState {
     fn eq(&self, other: &Self) -> bool {
-        self.backend_key == other.backend_key
+        self.backend == other.backend
             && self.sector_size == other.sector_size
             && self.size_bytes == other.size_bytes
-            && self.read_cache == other.read_cache
-            && self.write_cache == other.write_cache
-            && self.dirty_sectors == other.dirty_sectors
-            && self.flush_in_progress == other.flush_in_progress
     }
 }
 
 impl Eq for DiskLayerState {}
 
 impl DiskLayerState {
-    pub fn new(backend_key: impl Into<String>, size_bytes: u64, sector_size: usize) -> Self {
+    pub fn new(backend: DiskBackendState, size_bytes: u64, sector_size: usize) -> Self {
         Self {
-            backend_key: backend_key.into(),
+            backend,
             sector_size,
             size_bytes,
-            read_cache: BTreeMap::new(),
-            write_cache: BTreeMap::new(),
-            dirty_sectors: BTreeSet::new(),
-            flush_in_progress: false,
-            backend: None,
+            attached_backend: None,
         }
     }
 
     pub fn attach_backend(&mut self, backend: Box<dyn DiskBackend>) {
-        self.backend = Some(backend);
+        self.attached_backend = Some(backend);
     }
 
     pub fn read_sector(&mut self, lba: u64) -> Vec<u8> {
-        if let Some(data) = self.write_cache.get(&lba) {
-            return data.clone();
-        }
-        if let Some(data) = self.read_cache.get(&lba) {
-            return data.clone();
-        }
-
         let mut out = vec![0u8; self.sector_size];
-        if let Some(backend) = &self.backend {
+        if let Some(backend) = &self.attached_backend {
             backend.read_at(lba * self.sector_size as u64, &mut out);
         }
-        self.read_cache.insert(lba, out.clone());
         out
     }
 
     pub fn write_sector(&mut self, lba: u64, data: &[u8]) {
         assert_eq!(data.len(), self.sector_size);
-        self.write_cache.insert(lba, data.to_vec());
-        self.dirty_sectors.insert(lba);
+        if let Some(backend) = self.attached_backend.as_mut() {
+            backend.write_at(lba * self.sector_size as u64, data);
+        }
     }
 
     pub fn flush(&mut self) {
-        let Some(backend) = self.backend.as_mut() else {
-            self.write_cache.clear();
-            self.dirty_sectors.clear();
-            return;
-        };
-
-        self.flush_in_progress = true;
-        for lba in self.dirty_sectors.iter().copied().collect::<Vec<_>>() {
-            if let Some(data) = self.write_cache.get(&lba) {
-                backend.write_at(lba * self.sector_size as u64, data);
-            }
+        if let Some(backend) = self.attached_backend.as_mut() {
+            backend.flush();
         }
-        backend.flush();
-
-        self.write_cache.clear();
-        self.dirty_sectors.clear();
-        self.flush_in_progress = false;
     }
 }
 
 impl IoSnapshot for DiskLayerState {
     const DEVICE_ID: [u8; 4] = *b"DSK0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_BACKEND_KEY: u16 = 1;
         const TAG_SECTOR_SIZE: u16 = 2;
         const TAG_SIZE_BYTES: u16 = 3;
-        const TAG_READ_CACHE: u16 = 4;
-        const TAG_WRITE_CACHE: u16 = 5;
-        const TAG_DIRTY_SECTORS: u16 = 6;
-        const TAG_FLUSH_IN_PROGRESS: u16 = 7;
+        const TAG_BACKEND_STATE: u16 = 8;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-        w.field_bytes(TAG_BACKEND_KEY, self.backend_key.as_bytes().to_vec());
+        if let DiskBackendState::Local(local) = &self.backend {
+            w.field_bytes(TAG_BACKEND_KEY, local.key.as_bytes().to_vec());
+        }
+        w.field_bytes(TAG_BACKEND_STATE, self.backend.encode());
         w.field_u32(TAG_SECTOR_SIZE, self.sector_size as u32);
         w.field_u64(TAG_SIZE_BYTES, self.size_bytes);
-        w.field_bool(TAG_FLUSH_IN_PROGRESS, self.flush_in_progress);
-
-        let mut read_entries = Encoder::new().u32(self.read_cache.len() as u32);
-        for (lba, data) in &self.read_cache {
-            read_entries = read_entries.u64(*lba).u32(data.len() as u32).bytes(data);
-        }
-        w.field_bytes(TAG_READ_CACHE, read_entries.finish());
-
-        let mut write_entries = Encoder::new().u32(self.write_cache.len() as u32);
-        for (lba, data) in &self.write_cache {
-            write_entries = write_entries.u64(*lba).u32(data.len() as u32).bytes(data);
-        }
-        w.field_bytes(TAG_WRITE_CACHE, write_entries.finish());
-
-        let mut dirty = Encoder::new().u32(self.dirty_sectors.len() as u32);
-        for lba in &self.dirty_sectors {
-            dirty = dirty.u64(*lba);
-        }
-        w.field_bytes(TAG_DIRTY_SECTORS, dirty.finish());
 
         w.finish()
     }
@@ -167,17 +337,22 @@ impl IoSnapshot for DiskLayerState {
         const TAG_BACKEND_KEY: u16 = 1;
         const TAG_SECTOR_SIZE: u16 = 2;
         const TAG_SIZE_BYTES: u16 = 3;
-        const TAG_READ_CACHE: u16 = 4;
-        const TAG_WRITE_CACHE: u16 = 5;
-        const TAG_DIRTY_SECTORS: u16 = 6;
-        const TAG_FLUSH_IN_PROGRESS: u16 = 7;
+        const TAG_BACKEND_STATE: u16 = 8;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        if let Some(key) = r.bytes(TAG_BACKEND_KEY) {
-            self.backend_key = String::from_utf8(key.to_vec())
+        if let Some(buf) = r.bytes(TAG_BACKEND_STATE) {
+            self.backend = DiskBackendState::decode(buf)?;
+        } else if let Some(key) = r.bytes(TAG_BACKEND_KEY) {
+            // Backward-compat: legacy snapshots only stored a backend key string.
+            let key = String::from_utf8(key.to_vec())
                 .map_err(|_| SnapshotError::InvalidFieldEncoding("backend_key utf8"))?;
+            self.backend = DiskBackendState::Local(LocalDiskBackendState {
+                kind: LocalDiskBackendKind::Other,
+                key,
+                overlay: None,
+            });
         }
         if let Some(sector) = r.u32(TAG_SECTOR_SIZE)? {
             self.sector_size = sector as usize;
@@ -185,47 +360,8 @@ impl IoSnapshot for DiskLayerState {
         if let Some(size) = r.u64(TAG_SIZE_BYTES)? {
             self.size_bytes = size;
         }
-        if let Some(v) = r.bool(TAG_FLUSH_IN_PROGRESS)? {
-            self.flush_in_progress = v;
-        }
 
-        self.read_cache.clear();
-        if let Some(buf) = r.bytes(TAG_READ_CACHE) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            for _ in 0..count {
-                let lba = d.u64()?;
-                let len = d.u32()? as usize;
-                let data = d.bytes(len)?.to_vec();
-                self.read_cache.insert(lba, data);
-            }
-            d.finish()?;
-        }
-
-        self.write_cache.clear();
-        if let Some(buf) = r.bytes(TAG_WRITE_CACHE) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            for _ in 0..count {
-                let lba = d.u64()?;
-                let len = d.u32()? as usize;
-                let data = d.bytes(len)?.to_vec();
-                self.write_cache.insert(lba, data);
-            }
-            d.finish()?;
-        }
-
-        self.dirty_sectors.clear();
-        if let Some(buf) = r.bytes(TAG_DIRTY_SECTORS) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            for _ in 0..count {
-                self.dirty_sectors.insert(d.u64()?);
-            }
-            d.finish()?;
-        }
-
-        self.backend = None;
+        self.attached_backend = None;
         Ok(())
     }
 }

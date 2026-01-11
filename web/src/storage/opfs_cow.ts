@@ -98,6 +98,7 @@ export class OpfsCowDisk implements AsyncSectorDisk {
 
   async flush(): Promise<void> {
     await this.overlay.flush();
+    await this.base.flush();
   }
 
   async close(): Promise<void> {
