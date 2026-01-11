@@ -118,6 +118,7 @@ function getAudioContextCtor(): typeof AudioContext | undefined {
 export function detectPlatformFeatures(): PlatformFeatureReport {
   const crossOriginIsolated = (globalThis as typeof globalThis & { crossOriginIsolated?: boolean })
     .crossOriginIsolated === true;
+  const isSecureContext = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
   const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
   const wasmSimd = detectWasmSimd();
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
@@ -126,7 +127,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
   const webusb =
     typeof navigator !== 'undefined' &&
-    globalThis.isSecureContext === true &&
+    isSecureContext &&
     'usb' in navigator &&
     !!(navigator as Navigator & { usb?: unknown }).usb;
   const opfs =

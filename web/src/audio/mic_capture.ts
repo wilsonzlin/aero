@@ -70,7 +70,7 @@ export class MicCapture extends EventTarget {
       sampleRate: opts.sampleRate ?? 48000,
       bufferMs: opts.bufferMs ?? 100,
       preferWorklet: opts.preferWorklet ?? true,
-      deviceId: opts.deviceId,
+      deviceId: opts.deviceId ?? "",
       echoCancellation: opts.echoCancellation ?? true,
       noiseSuppression: opts.noiseSuppression ?? true,
       autoGainControl: opts.autoGainControl ?? true,
