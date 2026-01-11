@@ -223,11 +223,12 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   ULONG I;
   NDIS_STATUS Status;
   NTSTATUS NtStatus;
-  UINT32 Bar0Low;
-  UINT32 Bar0High;
   UINT64 Bar0Base;
   UCHAR PciCfg[256];
   ULONG BytesRead;
+  UINT32 Bar0Low;
+  UINT32 Bar0High;
+  UCHAR InterruptPin;
 
   Adapter->Bar0Va = NULL;
   Adapter->Bar0Length = 0;
@@ -238,28 +239,39 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
     return NDIS_STATUS_RESOURCES;
   }
 
-  // Prefer matching the assigned CmResourceTypeMemory range against BAR0 from
-  // PCI config space (BAR0 is required by the AERO-W7-VIRTIO contract).
+  RtlZeroMemory(PciCfg, sizeof(PciCfg));
+  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0, PciCfg, sizeof(PciCfg));
+  if (BytesRead != sizeof(PciCfg)) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  // Enforce contract v1 identity (VEN/DEV/REV) using the PCI config snapshot.
+  if (AerovNetReadLe16FromPciCfg(PciCfg, 0x00) != AEROVNET_VENDOR_ID ||
+      AerovNetReadLe16FromPciCfg(PciCfg, 0x02) != (USHORT)AEROVNET_PCI_DEVICE_ID || PciCfg[0x08] != AEROVNET_PCI_REVISION_ID) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  // Contract v1: INTx on INTA#.
+  InterruptPin = PciCfg[0x3D];
+  if (InterruptPin != 0x01u) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  // Contract v1: BAR0 is MMIO and 64-bit.
   Bar0Low = 0;
   Bar0High = 0;
-  Bar0Base = 0;
-  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x10, &Bar0Low, sizeof(Bar0Low));
-  if (BytesRead == sizeof(Bar0Low) && (Bar0Low & 0x1u) == 0) {
-    Bar0Base = (UINT64)(Bar0Low & ~0xFu);
-
-    // 64-bit memory BAR uses BAR0/BAR1.
-    if (((Bar0Low >> 1) & 0x3u) == 0x2u) {
-      BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x14, &Bar0High, sizeof(Bar0High));
-      if (BytesRead == sizeof(Bar0High)) {
-        Bar0Base |= ((UINT64)Bar0High << 32);
-      }
-    }
+  RtlCopyMemory(&Bar0Low, PciCfg + 0x10, sizeof(Bar0Low));
+  RtlCopyMemory(&Bar0High, PciCfg + 0x14, sizeof(Bar0High));
+  if ((Bar0Low & 0x1u) != 0 || (Bar0Low & 0x6u) != 0x4u) {
+    return NDIS_STATUS_NOT_SUPPORTED;
   }
+
+  Bar0Base = (UINT64)(Bar0Low & ~0xFu) | ((UINT64)Bar0High << 32);
 
   for (I = 0; I < Resources->Count; I++) {
     PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &Resources->PartialDescriptors[I];
     if (Desc->Type == CmResourceTypeMemory && Desc->u.Memory.Length >= AEROVNET_BAR0_MIN_LEN) {
-      if (Bar0Base != 0 && Desc->u.Memory.Start.QuadPart != Bar0Base) {
+      if (Desc->u.Memory.Start.QuadPart != Bar0Base) {
         continue;
       }
       Adapter->Bar0Pa = Desc->u.Memory.Start;
@@ -283,74 +295,6 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
     Adapter->Bar0Length = 0;
     Adapter->Bar0Pa.QuadPart = 0;
     return Status;
-  }
-
-  RtlZeroMemory(PciCfg, sizeof(PciCfg));
-  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0, PciCfg, sizeof(PciCfg));
-  if (BytesRead != sizeof(PciCfg)) {
-    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-    Adapter->Bar0Va = NULL;
-    Adapter->Bar0Length = 0;
-    Adapter->Bar0Pa.QuadPart = 0;
-    return NDIS_STATUS_FAILURE;
-  }
-
-  // Enforce contract v1 identity (VEN/DEV/REV) using the PCI config snapshot.
-  if (AerovNetReadLe16FromPciCfg(PciCfg, 0x00) != AEROVNET_VENDOR_ID ||
-      AerovNetReadLe16FromPciCfg(PciCfg, 0x02) != (USHORT)AEROVNET_PCI_DEVICE_ID || PciCfg[0x08] != AEROVNET_PCI_REVISION_ID) {
-    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-    Adapter->Bar0Va = NULL;
-    Adapter->Bar0Length = 0;
-    Adapter->Bar0Pa.QuadPart = 0;
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-
-  // Contract v1: INTA# is required.
-  if (PciCfg[0x3D] != 0x01u) {
-    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-    Adapter->Bar0Va = NULL;
-    Adapter->Bar0Length = 0;
-    Adapter->Bar0Pa.QuadPart = 0;
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
-
-  // Contract v1: BAR0 must be a 64-bit MMIO BAR and must match the mapped resource.
-  {
-    UINT32 Bar0LowCfg;
-    UINT32 Bar0HighCfg;
-    UINT64 Bar0CfgBase;
-
-    Bar0LowCfg = 0;
-    Bar0HighCfg = 0;
-    RtlCopyMemory(&Bar0LowCfg, PciCfg + 0x10, sizeof(Bar0LowCfg));
-    RtlCopyMemory(&Bar0HighCfg, PciCfg + 0x14, sizeof(Bar0HighCfg));
-
-    // Bit0=1 => I/O BAR (not permitted by contract v1).
-    if ((Bar0LowCfg & 0x1u) != 0) {
-      NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-      Adapter->Bar0Va = NULL;
-      Adapter->Bar0Length = 0;
-      Adapter->Bar0Pa.QuadPart = 0;
-      return NDIS_STATUS_NOT_SUPPORTED;
-    }
-
-    // Bits[2:1]=0b10 => 64-bit BAR (required by contract v1).
-    if ((Bar0LowCfg & 0x6u) != 0x4u) {
-      NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-      Adapter->Bar0Va = NULL;
-      Adapter->Bar0Length = 0;
-      Adapter->Bar0Pa.QuadPart = 0;
-      return NDIS_STATUS_NOT_SUPPORTED;
-    }
-
-    Bar0CfgBase = ((UINT64)Bar0HighCfg << 32) | (UINT64)(Bar0LowCfg & ~0xFu);
-    if (Bar0CfgBase != (UINT64)Adapter->Bar0Pa.QuadPart) {
-      NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
-      Adapter->Bar0Va = NULL;
-      Adapter->Bar0Length = 0;
-      Adapter->Bar0Pa.QuadPart = 0;
-      return NDIS_STATUS_NOT_SUPPORTED;
-    }
   }
 
   NtStatus = VirtioPciModernMiniportInit(&Adapter->Vdev, Adapter->Bar0Va, Adapter->Bar0Length, PciCfg, sizeof(PciCfg));
