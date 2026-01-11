@@ -33,6 +33,8 @@ use crate::{
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 const DEFAULT_MAX_TEXTURE_SLOTS: usize = 16;
+const DEFAULT_MAX_SAMPLER_SLOTS: usize = 16;
+const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 16;
 
 // Opcode constants from `aerogpu_cmd.h` (via the canonical `aero-protocol` enum).
 const OPCODE_NOP: u32 = AerogpuCmdOpcode::Nop as u32;
@@ -330,12 +332,12 @@ impl Default for AerogpuD3d11State {
             textures_vs: vec![None; DEFAULT_MAX_TEXTURE_SLOTS],
             textures_ps: vec![None; DEFAULT_MAX_TEXTURE_SLOTS],
             textures_cs: vec![None; DEFAULT_MAX_TEXTURE_SLOTS],
-            samplers_vs: Vec::new(),
-            samplers_ps: Vec::new(),
-            samplers_cs: Vec::new(),
-            constant_buffers_vs: Vec::new(),
-            constant_buffers_ps: Vec::new(),
-            constant_buffers_cs: Vec::new(),
+            samplers_vs: vec![None; DEFAULT_MAX_SAMPLER_SLOTS],
+            samplers_ps: vec![None; DEFAULT_MAX_SAMPLER_SLOTS],
+            samplers_cs: vec![None; DEFAULT_MAX_SAMPLER_SLOTS],
+            constant_buffers_vs: vec![None; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS],
+            constant_buffers_ps: vec![None; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS],
+            constant_buffers_cs: vec![None; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS],
             blend: None,
             color_write_mask: wgpu::ColorWrites::ALL,
             blend_constant: [0.0; 4],
@@ -2422,8 +2424,10 @@ impl AerogpuD3d11Executor {
         let end_slot = start_slot
             .checked_add(sampler_count)
             .ok_or_else(|| anyhow!("SET_SAMPLERS: slot range overflow"))?;
-        if slots.len() < end_slot {
-            slots.resize(end_slot, None);
+        if end_slot > DEFAULT_MAX_SAMPLER_SLOTS {
+            bail!(
+                "SET_SAMPLERS: slot range out of supported range: start_slot={start_slot} sampler_count={sampler_count}"
+            );
         }
 
         for i in 0..sampler_count {
@@ -2474,8 +2478,10 @@ impl AerogpuD3d11Executor {
         let end_slot = start_slot
             .checked_add(buffer_count)
             .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: slot range overflow"))?;
-        if slots.len() < end_slot {
-            slots.resize(end_slot, None);
+        if end_slot > DEFAULT_MAX_CONSTANT_BUFFER_SLOTS {
+            bail!(
+                "SET_CONSTANT_BUFFERS: slot range out of supported range: start_slot={start_slot} buffer_count={buffer_count}"
+            );
         }
 
         for i in 0..buffer_count {
