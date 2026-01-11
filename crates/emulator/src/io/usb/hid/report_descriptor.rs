@@ -363,11 +363,16 @@ fn validate_report_list(
 
             if kind != HidReportKind::Feature {
                 let data_bytes = total_bits.checked_add(7).ok_or_else(|| {
-                    HidDescriptorError::at(&item_path, "report bit length too large to round to bytes")
+                    HidDescriptorError::at(
+                        &item_path,
+                        "report bit length too large to round to bytes",
+                    )
                 })? / 8;
                 let report_bytes = data_bytes
                     .checked_add(if report.report_id != 0 { 1 } else { 0 })
-                    .ok_or_else(|| HidDescriptorError::at(&item_path, "report byte length overflows u32"))?;
+                    .ok_or_else(|| {
+                        HidDescriptorError::at(&item_path, "report byte length overflows u32")
+                    })?;
                 if report_bytes > MAX_USB_FULL_SPEED_INTERRUPT_PACKET_BYTES {
                     let kind_str = match kind {
                         HidReportKind::Input => "input",
@@ -2112,7 +2117,10 @@ mod tests {
             collection_type: 0,
             input_reports: vec![],
             output_reports: vec![],
-            feature_reports: vec![HidReportInfo { report_id: 0, items }],
+            feature_reports: vec![HidReportInfo {
+                report_id: 0,
+                items,
+            }],
             children: vec![],
         }];
 
