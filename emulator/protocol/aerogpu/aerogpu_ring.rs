@@ -106,7 +106,7 @@ impl AerogpuSubmitDesc {
     }
 
     pub fn validate_prefix(&self) -> Result<(), AerogpuRingDecodeError> {
-        if self.desc_size_bytes != Self::SIZE_BYTES as u32 {
+        if self.desc_size_bytes < Self::SIZE_BYTES as u32 {
             return Err(AerogpuRingDecodeError::BadSizeField {
                 found: self.desc_size_bytes,
             });
@@ -226,4 +226,3 @@ pub fn write_fence_page_completed_fence_le(buf: &mut [u8], fence_value: u64) -> 
     buf[8..16].copy_from_slice(&fence_value.to_le_bytes());
     Ok(())
 }
-

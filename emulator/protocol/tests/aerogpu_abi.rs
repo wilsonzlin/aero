@@ -19,8 +19,8 @@ use aero_protocol::aerogpu::aerogpu_pci::{
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_VENDOR_ID, AEROGPU_RING_CONTROL_ENABLE,
 };
 use aero_protocol::aerogpu::aerogpu_ring::{
-    write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader, AerogpuFencePage, AerogpuRingHeader,
-    AerogpuSubmitDesc, AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
+    write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader, AerogpuFencePage, AerogpuRingDecodeError,
+    AerogpuRingHeader, AerogpuSubmitDesc, AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
     AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 
@@ -301,6 +301,25 @@ fn abi_version_accepts_unknown_minor() {
     let parsed = parse_and_validate_abi_version_u32(version_u32).expect("minor versions are backwards compatible");
     assert_eq!(parsed.major, AEROGPU_ABI_MAJOR as u16);
     assert_eq!(parsed.minor, 999);
+}
+
+#[test]
+fn submit_desc_size_accepts_extensions() {
+    let mut buf = vec![0u8; 128];
+    buf[0..4].copy_from_slice(&(128u32).to_le_bytes());
+
+    let desc = AerogpuSubmitDesc::decode_from_le_bytes(&buf).unwrap();
+    desc.validate_prefix().unwrap();
+}
+
+#[test]
+fn submit_desc_size_rejects_too_small() {
+    let mut buf = vec![0u8; AerogpuSubmitDesc::SIZE_BYTES];
+    buf[0..4].copy_from_slice(&(32u32).to_le_bytes());
+
+    let desc = AerogpuSubmitDesc::decode_from_le_bytes(&buf).unwrap();
+    let err = desc.validate_prefix().unwrap_err();
+    assert!(matches!(err, AerogpuRingDecodeError::BadSizeField { found: 32 }));
 }
 
 #[test]
