@@ -1,4 +1,5 @@
 use aero_cpu_core::interp::tier0::exec::{step as tier0_step, StepExit};
+use aero_cpu_core::interrupts::{self, PendingEventState};
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{
     mask_bits, CpuMode, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_SF, FLAG_ZF, RFLAGS_IF,
@@ -74,6 +75,7 @@ enum StepOutcome {
 
 struct Machine {
     cpu: CpuState,
+    pending: PendingEventState,
     mem: TestMem,
     ports: TestPorts,
     msr: HashMap<u32, u64>,
@@ -83,6 +85,7 @@ impl Machine {
     fn new(cpu: CpuState, mem: TestMem, ports: TestPorts) -> Self {
         Self {
             cpu,
+            pending: PendingEventState::default(),
             mem,
             ports,
             msr: HashMap::new(),
@@ -109,15 +112,18 @@ impl Machine {
         };
         match tier0_step(&mut self.cpu, &mut bus)? {
             StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => {
+                self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
             StepExit::Halted => Ok(StepOutcome::Halted),
             StepExit::BiosInterrupt(vector) => {
                 self.handle_bios_interrupt(vector)?;
+                self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
             StepExit::Assist(reason) => {
                 self.handle_assist(reason)?;
+                self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
         }
@@ -143,17 +149,17 @@ impl Machine {
             _ => return Err(Exception::Unimplemented("BIOS interrupt vector")),
         }
 
-        // Return to the interrupted context (IRET).
+        // Return to the interrupted context (IRET). The Tier-0 BIOS hypercall mechanism
+        // surfaces the interrupt vector, but the original interrupt frame remains on the
+        // guest stack. Use the canonical IRET implementation so the pending-frame
+        // bookkeeping stays consistent with INT delivery.
         let mut bus = Bus {
             mem: &mut self.mem,
             ports: &mut self.ports,
         };
-        let ip = pop(&mut self.cpu, &mut bus, 2)? & 0xFFFF;
-        let cs = pop(&mut self.cpu, &mut bus, 2)? as u16;
-        let flags = pop(&mut self.cpu, &mut bus, 2)? as u16;
-        self.cpu.write_reg(Register::CS, cs as u64);
-        self.cpu.set_rip(ip);
-        self.cpu.set_rflags(flags as u64);
+        interrupts::iret(&mut self.cpu, &mut bus, &mut self.pending)
+            .unwrap_or_else(|exit| panic!("BIOS hypercall IRET failed: {exit:?}"));
+        self.cpu.clear_pending_bios_int();
 
         Ok(())
     }
@@ -208,6 +214,7 @@ impl Machine {
             }
             Mnemonic::Sti => {
                 self.cpu.set_flag(RFLAGS_IF, true);
+                self.pending.inhibit_interrupts_for_one_instruction();
                 self.cpu.set_rip(next_ip);
                 Ok(())
             }
@@ -351,32 +358,21 @@ impl Machine {
                 if self.cpu.bitness() != 16 {
                     return Err(Exception::Unimplemented("INT outside real mode"));
                 }
-                // Mirror Tier-0's BIOS hypercall bookkeeping: record the real-mode interrupt
-                // vector so a subsequent ROM-stub `HLT` can be surfaced as
-                // `StepExit::BiosInterrupt(n)` (see `CpuState::pending_bios_int`).
+                // Mirror the Tier-0 BIOS hypercall convention: record the vector so an HLT at
+                // the target stub can be surfaced as `StepExit::BiosInterrupt`.
                 self.cpu.set_pending_bios_int(vector);
-                let flags = self.cpu.rflags() & 0xFFFF;
-                push(&mut self.cpu, &mut bus, flags, 2)?;
-                let cs = self.cpu.read_reg(Register::CS);
-                push(&mut self.cpu, &mut bus, cs, 2)?;
-                push(&mut self.cpu, &mut bus, next_ip & 0xFFFF, 2)?;
-                let vec_addr = (vector as u64) * 4;
-                let off = bus.read_u16(vec_addr)? as u64;
-                let seg = bus.read_u16(vec_addr + 2)? as u64;
-                self.cpu.write_reg(Register::CS, seg);
-                self.cpu.set_rip(off);
+
+                self.pending.raise_software_interrupt(vector, next_ip);
+                interrupts::deliver_pending_event(&mut self.cpu, &mut bus, &mut self.pending)
+                    .unwrap_or_else(|exit| panic!("interrupt delivery failed: {exit:?}"));
                 Ok(())
             }
             Mnemonic::Iret => {
                 if self.cpu.bitness() != 16 {
                     return Err(Exception::Unimplemented("IRET outside real mode"));
                 }
-                let ip = pop(&mut self.cpu, &mut bus, 2)? & 0xFFFF;
-                let cs = pop(&mut self.cpu, &mut bus, 2)? as u16;
-                let flags = pop(&mut self.cpu, &mut bus, 2)? as u16;
-                self.cpu.write_reg(Register::CS, cs as u64);
-                self.cpu.set_rip(ip);
-                self.cpu.set_rflags(flags as u64);
+                interrupts::iret(&mut self.cpu, &mut bus, &mut self.pending)
+                    .unwrap_or_else(|exit| panic!("IRET failed: {exit:?}"));
                 // Any real-mode IRET cancels the pending BIOS interrupt marker (the hypercall
                 // path consumes the marker when the ROM stub executes `HLT`).
                 self.cpu.clear_pending_bios_int();
