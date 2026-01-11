@@ -131,6 +131,30 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
   }
 
   // ---------------------------------------------------------------------------
+  // Case 0: non-shared texture with multiple mip levels (Levels>1).
+  //
+  // This is a useful baseline even if the driver chooses to reject shared mip
+  // chains: if the KMD logs show NumAllocations>1 here, shared mips are very
+  // likely multi-allocation as well.
+  // ---------------------------------------------------------------------------
+  ComPtr<IDirect3DTexture9> non_shared_mip_tex;
+  hr = dev->CreateTexture(128,
+                          128,
+                          4,
+                          0,
+                          D3DFMT_A8R8G8B8,
+                          D3DPOOL_DEFAULT,
+                          non_shared_mip_tex.put(),
+                          NULL);
+  if (SUCCEEDED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: non-shared mip texture created (Levels=4)", kTestName);
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: CreateTexture(non-shared mips) failed with %s",
+                               kTestName,
+                               aerogpu_test::HresultToString(hr).c_str());
+  }
+
+  // ---------------------------------------------------------------------------
   // Case A: shared render-target surface.
   // ---------------------------------------------------------------------------
   HANDLE shared_rt_surface_handle = NULL;
