@@ -180,13 +180,19 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
         "[--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
+    aerogpu_test::PrintfStdout("Default: window is hidden (pass --show to display it).");
     return 0;
   }
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
-  bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  // Hide the window by default since this is a synchronization microtest. Use --show/--show-window
+  // when debugging interactively.
+  bool hidden = true;
+  if (aerogpu_test::HasArg(argc, argv, "--hidden")) {
+    hidden = true;
+  }
   const bool show_window =
       aerogpu_test::HasArg(argc, argv, "--show-window") || aerogpu_test::HasArg(argc, argv, "--show");
   if (show_window) {
