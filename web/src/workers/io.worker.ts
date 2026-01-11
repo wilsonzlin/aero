@@ -1581,7 +1581,6 @@ function startIoIpcServer(): void {
       flushPendingIoEvents();
       drainRuntimeCommands();
       drainHidInputRing();
-      mgr.tick(nowMs);
       const hidRing = hidInRing;
       if (hidRing) {
         const res = drainIoHidInputRing(hidRing, (msg) => hidGuest.inputReport(msg));
@@ -1609,6 +1608,7 @@ function startIoIpcServer(): void {
           );
         }
       }
+      mgr.tick(nowMs);
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();
