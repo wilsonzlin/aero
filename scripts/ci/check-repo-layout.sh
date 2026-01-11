@@ -44,8 +44,19 @@ if grep -q "$retired_gpu_device_dir" Cargo.toml; then
   die "Cargo workspace must not include the retired $retired_gpu_device_dir member"
 fi
 
-# AeroGPU KMD → UMD ShareToken payload header (canonical protocol ABI).
-need_file "drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
+# AeroGPU shared-surface contract: `share_token` is persisted via WDDM allocation
+# private driver data (dxgkrnl preserves the blob across OpenResource).
+need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
+
+# Guardrail: prevent regressions back to the deleted `aerogpu_alloc_privdata.h`
+# ("KMD→UMD ShareToken") model.
+deprecated_alloc_privdata_header="drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
+if [[ -f "$deprecated_alloc_privdata_header" ]]; then
+  die "$deprecated_alloc_privdata_header is deprecated; use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead"
+fi
+if git grep -n "aerogpu_alloc_privdata.h" -- docs drivers >/dev/null; then
+  die "stale references to aerogpu_alloc_privdata.h found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
+fi
 
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
 # (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)

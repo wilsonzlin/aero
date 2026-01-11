@@ -3,9 +3,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
-use aero_protocol::aerogpu::aerogpu_alloc_privdata::{
-    AerogpuAllocPrivdata, AEROGPU_ALLOC_PRIVDATA_MAGIC, AEROGPU_ALLOC_PRIVDATA_VERSION,
-};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
     AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
@@ -57,6 +54,11 @@ use aero_protocol::aerogpu::aerogpu_umd_private::{
     AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI,
     AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO, AEROGPU_UMDPRIV_MMIO_REG_MAGIC,
     AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
+};
+use aero_protocol::aerogpu::aerogpu_wddm_alloc::{
+    AerogpuWddmAllocPriv, AEROGPU_WDDM_ALLOC_ID_KMD_MIN, AEROGPU_WDDM_ALLOC_ID_UMD_MAX,
+    AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED, AEROGPU_WDDM_ALLOC_PRIV_MAGIC,
+    AEROGPU_WDDM_ALLOC_PRIV_VERSION,
 };
 use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 
@@ -2054,39 +2056,47 @@ fn rust_layout_matches_c_headers() {
     );
 
     // WDDM allocation private-data contract (stable across x86/x64).
-    assert_eq!(abi.size("aerogpu_wddm_alloc_priv"), 40);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "magic"), 0);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "version"), 4);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "alloc_id"), 8);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "flags"), 12);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "share_token"), 16);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "size_bytes"), 24);
-    assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "reserved0"), 32);
-
-    // Allocation private data returned by the KMD for shareable allocations (stable across x86/x64).
-    assert_size!(AerogpuAllocPrivdata, "aerogpu_alloc_privdata");
+    assert_size!(AerogpuWddmAllocPriv, "aerogpu_wddm_alloc_priv");
     assert_off!(
-        AerogpuAllocPrivdata,
+        AerogpuWddmAllocPriv,
         magic,
-        "aerogpu_alloc_privdata",
+        "aerogpu_wddm_alloc_priv",
         "magic"
     );
     assert_off!(
-        AerogpuAllocPrivdata,
+        AerogpuWddmAllocPriv,
         version,
-        "aerogpu_alloc_privdata",
+        "aerogpu_wddm_alloc_priv",
         "version"
     );
     assert_off!(
-        AerogpuAllocPrivdata,
+        AerogpuWddmAllocPriv,
+        alloc_id,
+        "aerogpu_wddm_alloc_priv",
+        "alloc_id"
+    );
+    assert_off!(
+        AerogpuWddmAllocPriv,
+        flags,
+        "aerogpu_wddm_alloc_priv",
+        "flags"
+    );
+    assert_off!(
+        AerogpuWddmAllocPriv,
         share_token,
-        "aerogpu_alloc_privdata",
+        "aerogpu_wddm_alloc_priv",
         "share_token"
     );
     assert_off!(
-        AerogpuAllocPrivdata,
+        AerogpuWddmAllocPriv,
+        size_bytes,
+        "aerogpu_wddm_alloc_priv",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuWddmAllocPriv,
         reserved0,
-        "aerogpu_alloc_privdata",
+        "aerogpu_wddm_alloc_priv",
         "reserved0"
     );
 
@@ -3168,19 +3178,25 @@ fn rust_layout_matches_c_headers() {
     );
 
     assert_eq!(
-        abi.konst("AEROGPU_ALLOC_PRIVDATA_MAGIC"),
-        AEROGPU_ALLOC_PRIVDATA_MAGIC as u64
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"),
+        AEROGPU_WDDM_ALLOC_PRIV_MAGIC as u64
     );
     assert_eq!(
-        abi.konst("AEROGPU_ALLOC_PRIVDATA_VERSION"),
-        AEROGPU_ALLOC_PRIVDATA_VERSION as u64
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION"),
+        AEROGPU_WDDM_ALLOC_PRIV_VERSION as u64
     );
-
-    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"), 0x414c_4c4f);
-    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION"), 1);
-    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_ID_UMD_MAX"), 0x7fff_ffff);
-    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_ID_KMD_MIN"), 0x8000_0000);
-    assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED"), 1);
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_ID_UMD_MAX"),
+        AEROGPU_WDDM_ALLOC_ID_UMD_MAX as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_ID_KMD_MIN"),
+        AEROGPU_WDDM_ALLOC_ID_KMD_MIN as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED"),
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED as u64
+    );
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_VERSION"), 1);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1);
