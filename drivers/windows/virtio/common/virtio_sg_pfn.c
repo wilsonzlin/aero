@@ -292,16 +292,6 @@ NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BO
 		return STATUS_SUCCESS;
 	}
 
-	/*
-	 * KeFlushIoBuffers is safe at DISPATCH_LEVEL. On coherent x86/x64 it is
-	 * typically a no-op, but it is required for non-coherent platforms.
-	 */
-	if (out_cap != 0) {
-		for (cur = Mdl; cur != NULL; cur = cur->Next) {
-			KeFlushIoBuffers(cur, /*ReadOperation*/ device_write, /*DmaOperation*/ TRUE);
-		}
-	}
-
 	b.out = out;
 	b.out_cap = (UINT32)out_cap;
 	b.count = 0;
@@ -370,7 +360,23 @@ NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BO
 	}
 
 	*out_count = (UINT16)b.count;
-	return (b.count > b.out_cap) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+	if (b.count > b.out_cap) {
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	/*
+	 * KeFlushIoBuffers is safe at DISPATCH_LEVEL. On coherent x86/x64 it is
+	 * typically a no-op, but it is required for non-coherent platforms.
+	 *
+	 * Only flush on success (i.e. when the caller provided enough SG space to
+	 * actually submit the buffer to the device). Callers can issue a sizing call
+	 * first by passing out_cap==0.
+	 */
+	for (cur = Mdl; cur != NULL; cur = cur->Next) {
+		KeFlushIoBuffers(cur, /*ReadOperation*/ device_write, /*DmaOperation*/ TRUE);
+	}
+
+	return STATUS_SUCCESS;
 }
 
 #endif /* VIRTIO_OSDEP_KERNEL_MODE */
