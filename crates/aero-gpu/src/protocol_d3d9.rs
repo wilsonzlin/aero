@@ -58,8 +58,10 @@ pub enum Opcode {
     FenceDestroy = 0x0063,
 
     // D3D9Ex shared surface interop (mirrors aerogpu_cmd.h values).
-    ExportSharedSurface = 0x0710,
-    ImportSharedSurface = 0x0711,
+    ExportSharedSurface =
+        aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode::ExportSharedSurface as u16,
+    ImportSharedSurface =
+        aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode::ImportSharedSurface as u16,
 }
 
 impl Opcode {

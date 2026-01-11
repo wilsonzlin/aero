@@ -1,9 +1,13 @@
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
-use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AEROGPU_CMD_STREAM_MAGIC,
+use aero_protocol::aerogpu::{
+    aerogpu_cmd::{
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR,
+        AEROGPU_CMD_STREAM_MAGIC,
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    },
+    aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_MAJOR},
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_MAJOR;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -57,19 +61,16 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
         .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
-// Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-const OPC_CREATE_TEXTURE2D: u32 = 0x101;
-const OPC_DESTROY_RESOURCE: u32 = 0x102;
-const OPC_SET_RENDER_TARGETS: u32 = 0x400;
-const OPC_CLEAR: u32 = 0x600;
-const OPC_PRESENT: u32 = 0x700;
-const OPC_EXPORT_SHARED_SURFACE: u32 = 0x710;
-const OPC_IMPORT_SHARED_SURFACE: u32 = 0x711;
+// Protocol constants are sourced from `aero-protocol` to avoid drift.
+const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+const OPC_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
+const OPC_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
+const OPC_EXPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ExportSharedSurface as u32;
+const OPC_IMPORT_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ImportSharedSurface as u32;
 
-const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
-const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
-const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
+const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 
 fn emit_create_texture2d_rgba8(out: &mut Vec<u8>, handle: u32, width: u32, height: u32) {
     emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
