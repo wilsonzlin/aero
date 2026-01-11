@@ -1,9 +1,17 @@
 import { PERF_RECORD_SIZE_BYTES, WorkerKind } from "./record.js";
 import { createSpscRingBufferSharedArrayBuffer } from "./ring_buffer.js";
 
+// Shared perf frame header (Int32Array over SharedArrayBuffer) used to coordinate
+// per-frame samples across the main thread + workers.
+//
+// Layout (all values are u32 stored in Int32Array slots):
+// - FRAME_ID: monotonically increasing frame counter written by PerfSession (0 while inactive)
+// - T_US: `performance.now()` timestamp in microseconds since run start
+// - ENABLED: 0/1 gate set by PerfSession so workers can skip perf writes when HUD/capture is inactive
 export const PERF_FRAME_HEADER_FRAME_ID_INDEX = 0;
 export const PERF_FRAME_HEADER_T_US_INDEX = 1;
-export const PERF_FRAME_HEADER_I32_LEN = 2;
+export const PERF_FRAME_HEADER_ENABLED_INDEX = 2;
+export const PERF_FRAME_HEADER_I32_LEN = 3;
 
 export function nowEpochMs() {
   // `performance.timeOrigin + performance.now()` is available in both Window and Worker

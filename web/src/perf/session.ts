@@ -7,7 +7,12 @@ import type { PerfBufferStats, PerfCaptureRecord, PerfExport } from "./export";
 import { JIT_DISABLED_SNAPSHOT } from "./export";
 import { encodeFrameSampleRecord, msToUsU32, PERF_RECORD_SIZE_BYTES, WorkerKind, workerKindToString } from "./record.js";
 import { SpscRingBuffer } from "./ring_buffer.js";
-import { createPerfChannel, PERF_FRAME_HEADER_FRAME_ID_INDEX, PERF_FRAME_HEADER_T_US_INDEX } from "./shared.js";
+import {
+  createPerfChannel,
+  PERF_FRAME_HEADER_ENABLED_INDEX,
+  PERF_FRAME_HEADER_FRAME_ID_INDEX,
+  PERF_FRAME_HEADER_T_US_INDEX,
+} from "./shared.js";
 import type { ByteSizedCacheTracker, GpuAllocationTracker } from "./memory";
 import { MemoryTelemetry } from "./memory";
 import type { PerfApi, PerfHudSnapshot, PerfTimeBreakdownMs } from "./types";
@@ -278,6 +283,7 @@ export class PerfSession implements PerfApi {
     out.frameTimeAvgMs = stats.avgFrameMs > 0 ? stats.avgFrameMs : undefined;
     out.frameTimeP95Ms = stats.p95FrameMs > 0 ? stats.p95FrameMs : undefined;
     out.mipsAvg = stats.avgMips > 0 ? stats.avgMips : undefined;
+    out.mipsP95 = stats.p95Mips > 0 ? stats.p95Mips : undefined;
 
     const windowAgg = this.computeWindowAggregates();
     out.lastFrameTimeMs = windowAgg.lastFrameTimeMs;
@@ -333,6 +339,7 @@ export class PerfSession implements PerfApi {
   private syncLoops(): void {
     const shouldRun = this.shouldRun();
 
+    Atomics.store(this.frameHeader, PERF_FRAME_HEADER_ENABLED_INDEX, shouldRun ? 1 : 0);
     this.responsiveness.setActive(shouldRun);
     if (shouldRun) {
       this.memoryTelemetry.start();

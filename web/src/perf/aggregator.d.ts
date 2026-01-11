@@ -44,6 +44,7 @@ export type PerfStats = {
   stdevFrameMs: number;
   covFrameTime: number;
   avgMips: number;
+  p95Mips: number;
 
   drawCallsPerFrame: number;
   renderPassesPerFrame: number;

@@ -4,7 +4,7 @@ import type { AeroConfig } from "../config/aero_config";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
-import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
+import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
@@ -131,6 +131,8 @@ let perfFrameHeader: Int32Array | null = null;
 
 function maybeWritePerfSample(jitMs: number): void {
   if (!perfWriter || !perfFrameHeader) return;
+  const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+  if (!enabled) return;
   const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
   if (frameId === 0) return;
   perfWriter.frameSample(frameId, { durations: { jit_ms: jitMs } });

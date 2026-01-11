@@ -14,6 +14,14 @@ function bigintDivToNumberScaled(numerator, denominator, scale) {
   return Number(scaled) / scale;
 }
 
+function percentileNearestRank(sortedValues, p) {
+  if (!sortedValues.length) return 0;
+  if (!(p >= 0 && p <= 1)) return 0;
+  const target = Math.ceil(sortedValues.length * p);
+  const idx = Math.min(sortedValues.length - 1, Math.max(0, target - 1));
+  return sortedValues[idx];
+}
+
 export class PerfAggregator {
   constructor(channel, { windowSize = 120, captureSize = 2000, maxDrainPerBuffer = 5000 } = {}) {
     if (!channel?.buffers) {
@@ -187,6 +195,7 @@ export class PerfAggregator {
         stdevFrameMs: 0,
         covFrameTime: 0,
         avgMips: 0,
+        p95Mips: 0,
         drawCallsPerFrame: 0,
         renderPassesPerFrame: 0,
         pipelineSwitchesPerFrame: 0,
@@ -214,6 +223,13 @@ export class PerfAggregator {
     const totalInstructions = frames.reduce((acc, f) => acc + f.instructions, 0n);
 
     const avgMips = bigintDivToNumberScaled(totalInstructions, totalTimeUs, 1000);
+    const mipsPerFrame = [];
+    for (const f of frames) {
+      if (!f || f.frameUs <= 0 || f.instructions <= 0n) continue;
+      mipsPerFrame.push(bigintDivToNumberScaled(f.instructions, BigInt(f.frameUs >>> 0), 1000));
+    }
+    mipsPerFrame.sort((a, b) => a - b);
+    const p95Mips = percentileNearestRank(mipsPerFrame, 0.95);
 
     const drawCallsSum = frames.reduce((acc, f) => acc + (f.drawCalls >>> 0), 0);
     const renderPassesSum = frames.reduce((acc, f) => acc + (f.renderPasses >>> 0), 0);
@@ -265,6 +281,7 @@ export class PerfAggregator {
       stdevFrameMs: ft.stdevFrameTimeMs,
       covFrameTime: ft.covFrameTime,
       avgMips,
+      p95Mips,
       drawCallsPerFrame,
       renderPassesPerFrame,
       pipelineSwitchesPerFrame,

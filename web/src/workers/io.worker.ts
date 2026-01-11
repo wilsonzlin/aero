@@ -8,7 +8,7 @@ import { InputEventType } from "../input/event_queue";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
-import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
+import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
@@ -155,7 +155,15 @@ let perfIoWriteBytes = 0;
 
 function maybeEmitPerfSample(): void {
   if (!perfWriter || !perfFrameHeader) return;
+  const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
   const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+  if (!enabled) {
+    perfLastFrameId = frameId;
+    perfIoMs = 0;
+    perfIoReadBytes = 0;
+    perfIoWriteBytes = 0;
+    return;
+  }
   if (frameId === 0 || frameId === perfLastFrameId) return;
   perfLastFrameId = frameId;
 

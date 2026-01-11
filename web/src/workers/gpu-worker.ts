@@ -11,9 +11,9 @@
 // (`kind: "init"`, READY/ERROR messages) so it can be managed like other runtime workers.
 
 import { perf } from '../perf/perf';
+import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from '../perf/shared.js';
 import { installWorkerPerfHandlers } from '../perf/worker';
 import { PerfWriter } from '../perf/writer.js';
-import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from '../perf/shared.js';
 
 import {
   FRAME_DIRTY,
@@ -338,6 +338,13 @@ const flushPerfFrameSample = () => {
 
 const syncPerfFrame = () => {
   if (!perfWriter || !perfFrameHeader) return;
+  const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+  if (!enabled) {
+    perfCurrentFrameId = 0;
+    perfGpuMs = 0;
+    perfUploadBytes = 0;
+    return;
+  }
   const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
   if (frameId === 0) return;
 

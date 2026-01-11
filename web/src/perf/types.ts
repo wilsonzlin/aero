@@ -1,4 +1,5 @@
 import type { ResponsivenessHudSnapshot } from './responsiveness';
+import type { PerfChannel } from './shared.js';
 
 export type PerfTimeBreakdownMs = {
   cpu?: number;
@@ -112,6 +113,15 @@ export type PerfHudSnapshot = {
 export interface PerfApi {
   getHudSnapshot(out: PerfHudSnapshot): PerfHudSnapshot;
   setHudActive(active: boolean): void;
+
+  /**
+   * Returns the installed SharedArrayBuffer perf channel config.
+   *
+   * This is used by the runtime coordinator to plumb per-worker ring buffers to
+   * Web Workers. Environments without SharedArrayBuffer support should return
+   * null.
+   */
+  getChannel(): PerfChannel | null;
 
   noteInputCaptured?(id: number, tCaptureMs?: number): void;
   noteInputInjected?(id: number, tInjectedMs?: number, queueDepth?: number, queueOldestCaptureMs?: number | null): void;

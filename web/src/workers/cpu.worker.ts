@@ -5,9 +5,9 @@ import { openRingByKind } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { perf } from "../perf/perf";
+import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
-import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
 import {
   layoutFromHeader,
@@ -839,7 +839,14 @@ async function runLoopInner(): Promise<void> {
 
   const maybeEmitPerfSample = () => {
     if (!perfWriter || !perfFrameHeader) return;
+    const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
     const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+    if (!enabled) {
+      perfLastFrameId = frameId;
+      perfCpuMs = 0;
+      perfInstructions = 0n;
+      return;
+    }
     if (frameId === 0 || frameId === perfLastFrameId) return;
     perfLastFrameId = frameId;
 

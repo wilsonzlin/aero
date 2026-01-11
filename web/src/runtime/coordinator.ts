@@ -114,7 +114,7 @@ function nowMs(): number {
 
 function maybeGetHudPerfChannel(): PerfChannel | null {
   const aero = (globalThis as unknown as { aero?: unknown }).aero as { perf?: unknown } | undefined;
-  const perfApi = aero?.perf as { getChannel?: () => PerfChannel } | undefined;
+  const perfApi = aero?.perf as { getChannel?: () => PerfChannel | null } | undefined;
   if (perfApi && typeof perfApi.getChannel === "function") {
     return perfApi.getChannel();
   }

@@ -16,8 +16,10 @@ export type InstallPerfHudOptions = {
 
 const isPerfApi = (value: unknown): value is PerfApi => {
   if (!value || typeof value !== "object") return false;
-  const maybe = value as { getHudSnapshot?: unknown; export?: unknown };
-  return typeof maybe.getHudSnapshot === "function" && typeof maybe.export === "function";
+  const maybe = value as { getHudSnapshot?: unknown; export?: unknown; getChannel?: unknown };
+  return (
+    typeof maybe.getHudSnapshot === "function" && typeof maybe.export === "function" && typeof maybe.getChannel === "function"
+  );
 };
 
 export const installPerfHud = (options: InstallPerfHudOptions = {}) => {

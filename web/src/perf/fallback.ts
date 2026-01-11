@@ -147,6 +147,10 @@ export class FallbackPerf implements PerfApi {
     this.captureIoBytes.fill(Number.NaN);
   }
 
+  getChannel(): null {
+    return null;
+  }
+
   recordFrame(
     frameTimeMs: number,
     instructions?: number,

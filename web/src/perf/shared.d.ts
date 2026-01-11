@@ -9,6 +9,7 @@ export type PerfChannel = {
 
 export const PERF_FRAME_HEADER_FRAME_ID_INDEX: number;
 export const PERF_FRAME_HEADER_T_US_INDEX: number;
+export const PERF_FRAME_HEADER_ENABLED_INDEX: number;
 export const PERF_FRAME_HEADER_I32_LEN: number;
 
 export function nowEpochMs(): number;
