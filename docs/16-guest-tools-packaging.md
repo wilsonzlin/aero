@@ -6,6 +6,34 @@ The packaging tool lives under:
 
 - `tools/packaging/aero_packager/`
 
+## CI packaging (from `out/packages` + `out/certs`)
+
+Windows-driver CI produces:
+
+- `out/packages/**` (staged + signed driver packages)
+- `out/certs/aero-test.cer` (the *actual* signing certificate used for the driver catalogs)
+
+To convert those CI outputs into the packager input layout and build the distributable Guest Tools media, use:
+
+```powershell
+pwsh -File ci/package-guest-tools.ps1
+```
+
+By default this will:
+
+- stage drivers into the layout expected by `aero_packager`:
+  - `drivers/x86/<driver>/...`
+  - `drivers/amd64/<driver>/...`
+- stage `guest-tools/` and replace `guest-tools/certs/*` with `out/certs/aero-test.cer` (keeping `certs/README.md` if present)
+- produce:
+  - `out/artifacts/guest-tools/aero-guest-tools.iso`
+  - `out/artifacts/guest-tools/aero-guest-tools.zip`
+  - `out/artifacts/guest-tools/manifest.json`
+
+The default packaging spec is:
+
+- `tools/packaging/specs/win7-aero-guest-tools.json`
+
 ## Inputs
 
 ### Driver artifacts
@@ -69,7 +97,7 @@ The tool produces the following in the output directory:
 
 - `aero-guest-tools.iso`
 - `aero-guest-tools.zip`
-- `manifest.json` (renamed to `aero-guest-tools.manifest.json` by CI wrapper scripts)
+- `manifest.json`
 
 The packaged media also includes `THIRD_PARTY_NOTICES.md` at the ISO/zip root.
 
@@ -101,7 +129,7 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
 ### CI-style flow (signed drivers → Guest Tools ISO/zip)
 
 The repository ships a CI-friendly wrapper script that consumes the signed driver packages
-produced by the Win7 driver pipeline and emits Guest Tools media into `out/artifacts/`:
+produced by the Win7 driver pipeline and emits Guest Tools media into `out/artifacts/guest-tools/`:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
@@ -131,9 +159,9 @@ Notes:
 
 Outputs:
 
-- `out/artifacts/aero-guest-tools.iso`
-- `out/artifacts/aero-guest-tools.zip`
-- `out/artifacts/aero-guest-tools.manifest.json`
+- `out/artifacts/guest-tools/aero-guest-tools.iso`
+- `out/artifacts/guest-tools/aero-guest-tools.zip`
+- `out/artifacts/guest-tools/manifest.json`
 
 ### Direct packager invocation (advanced)
 

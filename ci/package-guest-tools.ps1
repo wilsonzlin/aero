@@ -1,23 +1,20 @@
 #Requires -Version 5.1
 #
-# CI-friendly wrapper around the deterministic Rust Guest Tools packager.
-# Produces:
-#   - out/artifacts/aero-guest-tools.iso
-#   - out/artifacts/aero-guest-tools.zip
-#   - out/artifacts/aero-guest-tools.manifest.json
+# CI wrapper around the deterministic Rust Guest Tools packager.
 #
-# Inputs are signed driver packages produced by the existing Win7 driver pipeline
-# (typically `out/packages/`) OR an extracted `*-bundle.zip` produced by
-# `ci/package-drivers.ps1`.
+# Inputs:
+#   - Signed driver packages (typically `out/packages/**/<arch>/...`)
+#   - The signing certificate used for the driver catalogs (typically `out/certs/aero-test.cer`)
+#   - Guest Tools scripts/config (`guest-tools/`)
+#
+# Outputs (in -OutDir):
+#   - aero-guest-tools.iso
+#   - aero-guest-tools.zip
+#   - manifest.json
 
 [CmdletBinding()]
 param(
-  # Root containing signed driver packages. Common inputs:
-  #   - out/packages/                         (CI staging output)
-  #   - <extracted AeroVirtIO-Win7-*-bundle>/ (output of ci/package-drivers.ps1)
   [string] $InputRoot = "out/packages",
-
-  # Source Guest Tools directory (scripts/config/certs).
   [string] $GuestToolsDir = "guest-tools",
 
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
@@ -31,18 +28,10 @@ param(
   # Public certificate used to sign the driver catalogs (required unless SigningPolicy=none).
   [string] $CertPath = "out/certs/aero-test.cer",
 
-  # Output directory for final artifacts.
-  [string] $OutDir = "out/artifacts",
-
-  # Version string embedded in manifest.json (defaults to the same derived format as ci/package-drivers.ps1).
+  [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
+  [string] $OutDir = "out/artifacts/guest-tools",
   [string] $Version,
-
-  # Build identifier embedded in manifest.json (defaults to the git short SHA).
   [string] $BuildId,
-
-  # Optional override for SOURCE_DATE_EPOCH. If not provided:
-  #   - uses $env:SOURCE_DATE_EPOCH when set
-  #   - otherwise uses the HEAD commit timestamp (git) for determinism
   [Nullable[long]] $SourceDateEpoch
 )
 
@@ -56,16 +45,42 @@ function Resolve-RepoPath {
     return [System.IO.Path]::GetFullPath($Path)
   }
 
-  $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+  $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
   return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
 }
 
 function Ensure-EmptyDirectory {
   param([Parameter(Mandatory = $true)][string] $Path)
+
   if (Test-Path -LiteralPath $Path) {
     Remove-Item -LiteralPath $Path -Recurse -Force
   }
   New-Item -ItemType Directory -Force -Path $Path | Out-Null
+}
+
+function Require-Command {
+  param([Parameter(Mandatory = $true)][string] $Name)
+
+  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+  if (-not $cmd) {
+    throw "Required tool not found on PATH: $Name"
+  }
+  return $cmd.Source
+}
+
+function Try-GetGitValue {
+  param([Parameter(Mandatory = $true)][string[]] $Args)
+
+  try {
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    $out = (& git -C $repoRoot @Args 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+      return $null
+    }
+    return ([string]($out | Out-String)).Trim()
+  } catch {
+    return $null
+  }
 }
 
 function Get-VersionString {
@@ -153,30 +168,32 @@ function Get-VersionString {
   return "$date-$semver"
 }
 
-function Try-GetGitValue {
-  param([Parameter(Mandatory = $true)][string[]] $Args)
-  try {
-    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-    $out = (& git -C $repoRoot @Args 2>$null)
-    if ($LASTEXITCODE -ne 0) {
-      return $null
+function Get-BuildIdString {
+  $candidates = @(
+    $env:GITHUB_RUN_ID,
+    $env:GITHUB_RUN_NUMBER,
+    $env:BUILD_BUILDID,
+    $env:CI_PIPELINE_ID
+  )
+  foreach ($c in $candidates) {
+    if (-not [string]::IsNullOrWhiteSpace($c)) {
+      return ([string]$c).Trim()
     }
-    return ([string]($out | Out-String)).Trim()
-  } catch {
-    return $null
   }
-}
 
-function Get-DefaultBuildId {
   $sha = Try-GetGitValue -Args @("rev-parse", "--short=12", "HEAD")
   if (-not [string]::IsNullOrWhiteSpace($sha)) {
     return $sha
   }
+
   return "local"
 }
 
 function Get-DefaultSourceDateEpoch {
-  # Honor explicit env var first.
+  if ($PSBoundParameters.ContainsKey("SourceDateEpoch") -and $null -ne $SourceDateEpoch) {
+    return [long] $SourceDateEpoch
+  }
+
   if (-not [string]::IsNullOrWhiteSpace($env:SOURCE_DATE_EPOCH)) {
     try {
       return [long] $env:SOURCE_DATE_EPOCH
@@ -185,7 +202,6 @@ function Get-DefaultSourceDateEpoch {
     }
   }
 
-  # Deterministic per commit.
   $ct = Try-GetGitValue -Args @("show", "-s", "--format=%ct", "HEAD")
   if (-not [string]::IsNullOrWhiteSpace($ct)) {
     try {
@@ -198,17 +214,73 @@ function Get-DefaultSourceDateEpoch {
   return 0
 }
 
-function Assert-ContainsFileExtension {
+function Get-PackagerArchFromPath {
+  param([Parameter(Mandatory = $true)][string] $Path)
+
+  $p = $Path.ToLowerInvariant()
+
+  if ($p -match '(^|[\\/])(amd64|x64|x86_64)([\\/]|$)') {
+    return "amd64"
+  }
+
+  if ($p -match '(^|[\\/])(x86|i386|win32)([\\/]|$)') {
+    return "x86"
+  }
+
+  return $null
+}
+
+function Get-DriverNameFromRelativeSegments {
   param(
-    [Parameter(Mandatory = $true)][string] $Root,
-    [Parameter(Mandatory = $true)][string] $Extension
+    [Parameter(Mandatory = $true)][string[]] $Segments,
+    [Parameter(Mandatory = $true)][string] $Fallback
   )
 
-  $pattern = "*.$Extension"
-  $found = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $found) {
-    throw "Expected at least one '$pattern' file under '$Root'."
+  $skip = @(
+    "drivers",
+    "driver",
+    "packages",
+    "package",
+    "signed",
+    "release",
+    "debug",
+    "build",
+    "bin",
+    "dist",
+    "windows",
+    "wdk",
+    "win7",
+    "w7",
+    "windows7",
+    "win7sp1",
+    "sp1",
+    "packaging"
+  )
+
+  for ($i = $Segments.Count - 1; $i -ge 0; $i--) {
+    $segment = $Segments[$i]
+    $s = $segment.ToLowerInvariant()
+    if ($s -in @("x86", "i386", "win32", "x64", "amd64", "x86_64")) {
+      continue
+    }
+    if ($s -in $skip) {
+      continue
+    }
+
+    return $segment
   }
+
+  return $Fallback
+}
+
+function Normalize-PathComponent {
+  param([Parameter(Mandatory = $true)][string] $Value)
+
+  $invalid = [System.IO.Path]::GetInvalidFileNameChars()
+  foreach ($c in $invalid) {
+    $Value = $Value.Replace($c, "_")
+  }
+  return $Value
 }
 
 function Get-DevicesCmdVariable {
@@ -438,42 +510,59 @@ function Update-DevicesCmdStorageServiceFromDrivers {
   [System.IO.File]::WriteAllLines($DevicesCmdPath, $updated, $utf8NoBom)
 }
 
-function Copy-GuestToolsWithCert {
+function Copy-DriversToPackagerLayout {
   param(
-    [Parameter(Mandatory = $true)][string] $SourceDir,
-    [Parameter(Mandatory = $true)][string] $DestDir,
-    [Parameter(Mandatory = $true)][string] $CertSourcePath
+    [Parameter(Mandatory = $true)][string] $InputRoot,
+    [Parameter(Mandatory = $true)][string] $StageDriversRoot
   )
 
-  Copy-Item -LiteralPath $SourceDir -Destination $DestDir -Recurse -Force
+  $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
 
-  $certsDir = Join-Path $DestDir "certs"
-  if (-not (Test-Path -LiteralPath $certsDir -PathType Container)) {
-    New-Item -ItemType Directory -Force -Path $certsDir | Out-Null
+  $infFiles = Get-ChildItem -Path $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue | Sort-Object -Property FullName
+  if (-not $infFiles) {
+    throw "No '.inf' files found under '$InputRoot'."
   }
 
-  # Replace any placeholder certs in the staged Guest Tools tree so the output ISO
-  # matches the signing certificate used for the packaged driver catalogs.
-  Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in @(".cer", ".crt", ".p7b") } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
+  $seen = New-Object "System.Collections.Generic.HashSet[string]"
+  $copied = 0
 
-  Copy-Item -LiteralPath $CertSourcePath -Destination (Join-Path $certsDir "aero-test.cer") -Force
-}
+  foreach ($inf in $infFiles) {
+    $arch = Get-PackagerArchFromPath -Path $inf.FullName
+    if (-not $arch) {
+      continue
+    }
 
-function Copy-GuestToolsWithoutCert {
-  param(
-    [Parameter(Mandatory = $true)][string] $SourceDir,
-    [Parameter(Mandatory = $true)][string] $DestDir
-  )
+    $srcDir = Split-Path -Parent $inf.FullName
+    $relative = ""
+    if ($srcDir.Length -ge $inputRootTrimmed.Length -and $srcDir.StartsWith($inputRootTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $relative = $srcDir.Substring($inputRootTrimmed.Length).TrimStart("\", "/")
+    }
+    $segments = @()
+    if (-not [string]::IsNullOrWhiteSpace($relative)) {
+      $segments = $relative -split "[\\/]+"
+    }
 
-  Copy-Item -LiteralPath $SourceDir -Destination $DestDir -Recurse -Force
+    $driverName = Get-DriverNameFromRelativeSegments -Segments $segments -Fallback $inf.BaseName
+    $driverName = $driverName.Trim()
+    if ([string]::IsNullOrWhiteSpace($driverName)) {
+      $driverName = $inf.BaseName
+    }
+    $driverName = (Normalize-PathComponent -Value $driverName).ToLowerInvariant()
 
-  $certsDir = Join-Path $DestDir "certs"
-  if (Test-Path -LiteralPath $certsDir -PathType Container) {
-    Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
-      Where-Object { $_.Extension -in @(".cer", ".crt", ".p7b") } |
-      Remove-Item -Force -ErrorAction SilentlyContinue
+    $key = "$arch|$driverName|$srcDir"
+    if ($seen.Contains($key)) {
+      continue
+    }
+    $null = $seen.Add($key)
+
+    $destDir = Join-Path $StageDriversRoot (Join-Path $arch $driverName)
+    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+    Copy-Item -Path (Join-Path $srcDir "*") -Destination $destDir -Recurse -Force
+    $copied++
+  }
+
+  if ($copied -eq 0) {
+    throw "No driver packages found under '$InputRoot' for known architectures (x86/amd64)."
   }
 }
 
@@ -519,7 +608,7 @@ function Stage-DriversFromPackagerLayout {
 
     $driverDirs = Get-ChildItem -LiteralPath $arch.Src -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
     foreach ($d in $driverDirs) {
-      $dst = Join-Path $destArchDir $d.Name
+      $dst = Join-Path $destArchDir $d.Name.ToLowerInvariant()
       Copy-Item -LiteralPath $d.FullName -Destination $dst -Recurse -Force
     }
   }
@@ -543,9 +632,11 @@ function Stage-DriversFromBundleLayout {
 
   $driverDirs = Get-ChildItem -LiteralPath $driversRoot -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
   foreach ($d in $driverDirs) {
+    $driverName = $d.Name.ToLowerInvariant()
+
     $srcX86 = Join-Path $d.FullName "x86"
     if (Test-Path -LiteralPath $srcX86 -PathType Container) {
-      $dst = Join-Path $destX86 $d.Name
+      $dst = Join-Path $destX86 $driverName
       New-Item -ItemType Directory -Force -Path $dst | Out-Null
       Copy-Item -Path (Join-Path $srcX86 "*") -Destination $dst -Recurse -Force
     }
@@ -559,210 +650,78 @@ function Stage-DriversFromBundleLayout {
       }
     }
     if ($srcX64) {
-      $dst = Join-Path $destAmd64 $d.Name
+      $dst = Join-Path $destAmd64 $driverName
       New-Item -ItemType Directory -Force -Path $dst | Out-Null
       Copy-Item -Path (Join-Path $srcX64 "*") -Destination $dst -Recurse -Force
     }
   }
 }
 
-function Stage-DriversFromPackagesLayout {
+function Stage-GuestTools {
   param(
-    [Parameter(Mandatory = $true)][string] $PackagesRoot,
-    [Parameter(Mandatory = $true)][string] $StageDriversRoot
+    [Parameter(Mandatory = $true)][string] $SourceDir,
+    [Parameter(Mandatory = $true)][string] $DestDir,
+    [Parameter(Mandatory = $true)][string] $CertSourcePath,
+    [Parameter(Mandatory = $true)][bool] $IncludeCerts
   )
 
-  $archDirs = Get-ChildItem -LiteralPath $PackagesRoot -Recurse -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -in @("x86", "x64", "amd64", "win32", "i386") }
+  Ensure-EmptyDirectory -Path $DestDir
+  Copy-Item -Path (Join-Path $SourceDir "*") -Destination $DestDir -Recurse -Force
 
-  if (-not $archDirs) {
-    throw "No architecture directories (x86/x64/amd64) found under '$PackagesRoot'."
+  $certsDir = Join-Path $DestDir "certs"
+  if (-not (Test-Path -LiteralPath $certsDir -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $certsDir | Out-Null
   }
 
-  $records = New-Object System.Collections.Generic.List[object]
-  foreach ($archDir in $archDirs) {
-    $inf = Get-ChildItem -LiteralPath $archDir.FullName -File -Filter "*.inf" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $inf) {
+  $existing = @(Get-ChildItem -LiteralPath $certsDir -Recurse -File -ErrorAction SilentlyContinue)
+  foreach ($file in $existing) {
+    if ($file.Name -ieq "README.md") {
       continue
     }
-
-    $archOut = $null
-    switch ($archDir.Name.ToLowerInvariant()) {
-      "x86" { $archOut = "x86" }
-      "win32" { $archOut = "x86" }
-      "i386" { $archOut = "x86" }
-      "x64" { $archOut = "amd64" }
-      "amd64" { $archOut = "amd64" }
-      default { $archOut = $null }
+    if ($file.Extension.ToLowerInvariant() -in @(".cer", ".crt", ".p7b")) {
+      Remove-Item -LiteralPath $file.FullName -Force
     }
-    if (-not $archOut) { continue }
-
-    $driverRoot = Split-Path -Parent $archDir.FullName
-    $driverNameCandidate = Split-Path -Leaf $driverRoot
-
-    $rel = $driverRoot
-    $inputTrimmed = $PackagesRoot.TrimEnd("\", "/")
-    if ($driverRoot.Length -ge $inputTrimmed.Length -and $driverRoot.StartsWith($inputTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
-      $rel = $driverRoot.Substring($inputTrimmed.Length).TrimStart("\", "/")
-    }
-
-    [void]$records.Add([pscustomobject]@{
-      ArchOut = $archOut
-      SrcDir = $archDir.FullName
-      DriverNameCandidate = $driverNameCandidate
-      DriverRootRel = $rel
-    })
   }
 
-  if ($records.Count -eq 0) {
-    throw "No driver package directories containing .inf files were found under '$PackagesRoot'."
-  }
-
-  # Avoid collisions when multiple driver roots share the same leaf directory name.
-  $byCandidate = @{}
-  foreach ($r in $records) {
-    $key = $r.DriverNameCandidate.ToLowerInvariant()
-    if (-not $byCandidate.ContainsKey($key)) {
-      $byCandidate[$key] = New-Object System.Collections.Generic.List[object]
-    }
-    [void]$byCandidate[$key].Add($r)
-  }
-
-  foreach ($r in $records) {
-    $candidateKey = $r.DriverNameCandidate.ToLowerInvariant()
-    $list = $byCandidate[$candidateKey]
-    $finalName = $r.DriverNameCandidate
-    if ($list.Count -gt 1) {
-      $finalName = $r.DriverRootRel.Replace("\", "-").Replace("/", "-")
-    }
-    $r | Add-Member -NotePropertyName DriverName -NotePropertyValue $finalName -Force
-  }
-
-  $destX86 = Join-Path $StageDriversRoot "x86"
-  $destAmd64 = Join-Path $StageDriversRoot "amd64"
-  New-Item -ItemType Directory -Force -Path $destX86 | Out-Null
-  New-Item -ItemType Directory -Force -Path $destAmd64 | Out-Null
-
-  # Group sources by the destination key to avoid merging unrelated directories.
-  $byDest = @{}
-  foreach ($r in $records) {
-    $key = "{0}|{1}" -f $r.ArchOut, $r.DriverName.ToLowerInvariant()
-    if (-not $byDest.ContainsKey($key)) {
-      $byDest[$key] = New-Object System.Collections.Generic.List[object]
-    }
-    [void]$byDest[$key].Add($r)
-  }
-
-  foreach ($key in ($byDest.Keys | Sort-Object)) {
-    $items = $byDest[$key]
-    if ($items.Count -gt 1) {
-      $paths = ($items | Select-Object -ExpandProperty SrcDir | Sort-Object -Unique) -join ", "
-      throw "Multiple source directories map to the same staged driver directory ($key): $paths"
-    }
-
-    $r = $items[0]
-    $destArchDir = if ($r.ArchOut -eq "x86") { $destX86 } else { $destAmd64 }
-    $destDir = Join-Path $destArchDir $r.DriverName
-    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-    Copy-Item -Path (Join-Path $r.SrcDir "*") -Destination $destDir -Recurse -Force
+  if ($IncludeCerts) {
+    $certDest = Join-Path $certsDir (Split-Path -Leaf $CertSourcePath)
+    Copy-Item -LiteralPath $CertSourcePath -Destination $certDest -Force
   }
 }
 
-function New-PackagerSpecFromStagedDrivers {
+function Assert-FileExistsNonEmpty {
+  param([Parameter(Mandatory = $true)][string] $Path)
+
+  $file = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+  if (-not $file -or $file.Length -le 0) {
+    throw "Expected output file to exist and be non-empty: '$Path'."
+  }
+}
+
+function Assert-ZipContainsFile {
   param(
-    [Parameter(Mandatory = $true)][string] $StageDriversRoot,
-    [Parameter(Mandatory = $true)][string] $SpecOutPath
+    [Parameter(Mandatory = $true)][string] $ZipPath,
+    [Parameter(Mandatory = $true)][string] $EntryPath
   )
 
-  $x86Dir = Join-Path $StageDriversRoot "x86"
-  $amd64Dir = Join-Path $StageDriversRoot "amd64"
-  if (-not (Test-Path -LiteralPath $x86Dir -PathType Container)) {
-    throw "Missing staged drivers directory: $x86Dir"
-  }
-  if (-not (Test-Path -LiteralPath $amd64Dir -PathType Container)) {
-    throw "Missing staged drivers directory: $amd64Dir"
-  }
-
-  $x86Drivers = @(Get-ChildItem -LiteralPath $x86Dir -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
-  $amd64Drivers = @(Get-ChildItem -LiteralPath $amd64Dir -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
-
-  if (-not $x86Drivers -or $x86Drivers.Count -eq 0) {
-    throw "No staged x86 driver directories found under: $x86Dir"
-  }
-  if (-not $amd64Drivers -or $amd64Drivers.Count -eq 0) {
-    throw "No staged amd64 driver directories found under: $amd64Dir"
-  }
-
-  # Basic sanity: ensure each staged driver directory contains the expected file types.
-  foreach ($d in $x86Drivers) {
-    Assert-ContainsFileExtension -Root $d.FullName -Extension "inf"
-    Assert-ContainsFileExtension -Root $d.FullName -Extension "sys"
-    Assert-ContainsFileExtension -Root $d.FullName -Extension "cat"
-  }
-  foreach ($d in $amd64Drivers) {
-    Assert-ContainsFileExtension -Root $d.FullName -Extension "inf"
-    Assert-ContainsFileExtension -Root $d.FullName -Extension "sys"
-    Assert-ContainsFileExtension -Root $d.FullName -Extension "cat"
-  }
-
-  $setX86 = @{}
-  foreach ($d in $x86Drivers) { $setX86[$d.Name.ToLowerInvariant()] = $d.Name }
-  $setAmd64 = @{}
-  foreach ($d in $amd64Drivers) { $setAmd64[$d.Name.ToLowerInvariant()] = $d.Name }
-
-  $common = New-Object System.Collections.Generic.List[string]
-  foreach ($k in $setX86.Keys) {
-    if ($setAmd64.ContainsKey($k)) {
-      [void]$common.Add($setX86[$k])
+  Add-Type -AssemblyName System.IO.Compression
+  $fs = [System.IO.File]::OpenRead($ZipPath)
+  $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+  try {
+    $match = $zip.Entries | Where-Object { $_.FullName -eq $EntryPath } | Select-Object -First 1
+    if (-not $match) {
+      throw "Expected ZIP '$ZipPath' to contain entry '$EntryPath'."
     }
+  } finally {
+    $zip.Dispose()
+    $fs.Dispose()
   }
-
-  if ($common.Count -eq 0) {
-    $x86Names = ($x86Drivers | Select-Object -ExpandProperty Name | Sort-Object) -join ", "
-    $amd64Names = ($amd64Drivers | Select-Object -ExpandProperty Name | Sort-Object) -join ", "
-    throw "No driver directories were staged for BOTH x86 and amd64; refusing to package Guest Tools. x86=[$x86Names] amd64=[$amd64Names]"
-  }
-
-  # Emit a packager spec that lists:
-  # - drivers present for both x86+amd64 as required=true
-  # - drivers present for only one architecture as required=false (best-effort; packager will warn + skip missing arch)
-  $allKeys = @{}
-  foreach ($k in $setX86.Keys) { $allKeys[$k] = $true }
-  foreach ($k in $setAmd64.Keys) { $allKeys[$k] = $true }
-
-  $drivers = @()
-  foreach ($k in ($allKeys.Keys | Sort-Object)) {
-    $name = $null
-    if ($setX86.ContainsKey($k)) {
-      $name = $setX86[$k]
-    } else {
-      $name = $setAmd64[$k]
-    }
-    $isRequired = $setX86.ContainsKey($k) -and $setAmd64.ContainsKey($k)
-
-    $drivers += @{
-      name = $name
-      required = $isRequired
-      expected_hardware_ids = @()
-    }
-  }
-
-  $spec = @{
-    drivers = $drivers
-  }
-
-  $json = $spec | ConvertTo-Json -Depth 10
-  # serde_json does NOT accept UTF-8 BOM, and Windows PowerShell 5.1 writes BOM by
-  # default for `-Encoding UTF8`. Always write UTF-8 without BOM so the Rust packager
-  # can parse the generated spec reliably on all hosts.
-  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllText($SpecOutPath, $json, $utf8NoBom)
 }
 
-$repoRootResolved = Resolve-RepoPath -Path "."
 $inputRootResolved = Resolve-RepoPath -Path $InputRoot
 $guestToolsResolved = Resolve-RepoPath -Path $GuestToolsDir
 $certPathResolved = Resolve-RepoPath -Path $CertPath
+$specPathResolved = Resolve-RepoPath -Path $SpecPath
 $outDirResolved = Resolve-RepoPath -Path $OutDir
 
 if (-not (Test-Path -LiteralPath $inputRootResolved)) {
@@ -776,59 +735,59 @@ if ($SigningPolicy -ine "none") {
     throw "CertPath does not exist: '$certPathResolved'."
   }
 }
+if (-not (Test-Path -LiteralPath $specPathResolved -PathType Leaf)) {
+  throw "SpecPath does not exist: '$specPathResolved'."
+}
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $Version = Get-VersionString
 }
 if ([string]::IsNullOrWhiteSpace($BuildId)) {
-  $BuildId = Get-DefaultBuildId
+  $BuildId = Get-BuildIdString
 }
 
-$epoch = $null
-if ($PSBoundParameters.ContainsKey("SourceDateEpoch") -and $null -ne $SourceDateEpoch) {
-  $epoch = [long] $SourceDateEpoch
-} else {
-  $epoch = Get-DefaultSourceDateEpoch
-}
-$env:SOURCE_DATE_EPOCH = [string]$epoch
+$epoch = Get-DefaultSourceDateEpoch
 
-New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
+Require-Command -Name "cargo" | Out-Null
+
+$packagerManifest = Resolve-RepoPath -Path "tools/packaging/aero_packager/Cargo.toml"
+if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
+  throw "Missing packager Cargo.toml: '$packagerManifest'."
+}
 
 $stageRoot = Resolve-RepoPath -Path "out/_staging_guest_tools"
 $stageDriversRoot = Join-Path $stageRoot "drivers"
 $stageGuestTools = Join-Path $stageRoot "guest-tools"
 $stageInputExtract = Join-Path $stageRoot "input"
-$stageSpec = Join-Path $stageRoot "spec.json"
-$stagePackagerOut = Join-Path $stageRoot "packager_out"
 
 $success = $false
 try {
   Ensure-EmptyDirectory -Path $stageRoot
   Ensure-EmptyDirectory -Path $stageDriversRoot
   Ensure-EmptyDirectory -Path $stageInputExtract
-  Ensure-EmptyDirectory -Path $stagePackagerOut
 
   Write-Host "Staging Guest Tools..."
-  if ($SigningPolicy -ine "none") {
-    Copy-GuestToolsWithCert -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved
-  } else {
-    Copy-GuestToolsWithoutCert -SourceDir $guestToolsResolved -DestDir $stageGuestTools
-  }
+  $includeCerts = $SigningPolicy -ine "none"
+  Stage-GuestTools -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
 
   Write-Host "Staging signed drivers..."
 
   $inputRootForStaging = $inputRootResolved
-  $inputExt = [System.IO.Path]::GetExtension($inputRootResolved).ToLowerInvariant()
-  if ((Test-Path -LiteralPath $inputRootResolved -PathType Leaf) -and ($inputExt -eq ".zip")) {
-    Write-Host "  Extracting driver bundle ZIP: $inputRootResolved"
-    Expand-Archive -LiteralPath $inputRootResolved -DestinationPath $stageInputExtract -Force
+  if (Test-Path -LiteralPath $inputRootResolved -PathType Leaf) {
+    $inputExt = [System.IO.Path]::GetExtension($inputRootResolved).ToLowerInvariant()
+    if ($inputExt -eq ".zip") {
+      Write-Host "  Extracting driver bundle ZIP: $inputRootResolved"
+      Expand-Archive -LiteralPath $inputRootResolved -DestinationPath $stageInputExtract -Force
 
-    $topDirs = @(Get-ChildItem -LiteralPath $stageInputExtract -Directory -ErrorAction SilentlyContinue)
-    $topFiles = @(Get-ChildItem -LiteralPath $stageInputExtract -File -ErrorAction SilentlyContinue)
-    if ($topDirs.Count -eq 1 -and $topFiles.Count -eq 0) {
-      $inputRootForStaging = $topDirs[0].FullName
+      $topDirs = @(Get-ChildItem -LiteralPath $stageInputExtract -Directory -ErrorAction SilentlyContinue)
+      $topFiles = @(Get-ChildItem -LiteralPath $stageInputExtract -File -ErrorAction SilentlyContinue)
+      if ($topDirs.Count -eq 1 -and $topFiles.Count -eq 0) {
+        $inputRootForStaging = $topDirs[0].FullName
+      } else {
+        $inputRootForStaging = $stageInputExtract
+      }
     } else {
-      $inputRootForStaging = $stageInputExtract
+      throw "InputRoot is a file with unsupported extension '$inputExt'. Expected a directory, or a .zip."
     }
   }
 
@@ -853,7 +812,7 @@ try {
     Stage-DriversFromBundleLayout -BundleRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   } else {
     Write-Host "  Detected input layout: CI packages (out/packages/<driver>/<arch>/...)"
-    Stage-DriversFromPackagesLayout -PackagesRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
+    Copy-DriversToPackagerLayout -InputRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   }
 
   # Ensure the staged Guest Tools config matches the staged storage driver packages.
@@ -863,64 +822,41 @@ try {
     Update-DevicesCmdStorageServiceFromDrivers -StageDriversRoot $stageDriversRoot -DevicesCmdPath $devicesCmdStage
   }
 
-  Write-Host "Generating packager spec..."
-  New-PackagerSpecFromStagedDrivers -StageDriversRoot $stageDriversRoot -SpecOutPath $stageSpec
-
-  $packagerManifest = Resolve-RepoPath -Path "tools/packaging/aero_packager/Cargo.toml"
-  if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
-    throw "Missing packager Cargo.toml: '$packagerManifest'."
-  }
-
-  $volumeId = ("AERO_GUEST_TOOLS_" + $Version).ToUpperInvariant() -replace "[^A-Z0-9_]", "_"
-  if ($volumeId.Length -gt 32) {
-    $volumeId = $volumeId.Substring(0, 32)
-  }
+  New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
 
   Write-Host "Packaging via aero_packager..."
-  Write-Host "  version: $Version"
-  Write-Host "  build  : $BuildId"
-  Write-Host "  epoch  : $epoch"
-  Write-Host "  policy : $SigningPolicy"
-  Write-Host "  out    : $outDirResolved"
+  Write-Host "  version : $Version"
+  Write-Host "  build-id: $BuildId"
+  Write-Host "  epoch   : $epoch"
+  Write-Host "  policy  : $SigningPolicy"
+  Write-Host "  spec    : $specPathResolved"
+  Write-Host "  out     : $outDirResolved"
 
-  & cargo run --manifest-path $packagerManifest --release --locked -- `
+  & cargo run --manifest-path $packagerManifest --release -- `
     --drivers-dir $stageDriversRoot `
     --guest-tools-dir $stageGuestTools `
-    --spec $stageSpec `
-    --out-dir $stagePackagerOut `
+    --spec $specPathResolved `
+    --out-dir $outDirResolved `
     --version $Version `
     --build-id $BuildId `
-    --volume-id $volumeId `
     --signing-policy $SigningPolicy `
     --source-date-epoch $epoch
   if ($LASTEXITCODE -ne 0) {
     throw "aero_packager failed (exit code $LASTEXITCODE)."
   }
 
-  $isoSrc = Join-Path $stagePackagerOut "aero-guest-tools.iso"
-  $zipSrc = Join-Path $stagePackagerOut "aero-guest-tools.zip"
-  $manifestSrc = Join-Path $stagePackagerOut "manifest.json"
+  $isoPath = Join-Path $outDirResolved "aero-guest-tools.iso"
+  $zipPath = Join-Path $outDirResolved "aero-guest-tools.zip"
+  $manifestPath = Join-Path $outDirResolved "manifest.json"
 
-  foreach ($p in @($isoSrc, $zipSrc, $manifestSrc)) {
-    $item = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
-    if (-not $item -or $item.Length -le 0) {
-      throw "Expected packager output file missing or empty: $p"
-    }
+  Assert-FileExistsNonEmpty -Path $isoPath
+  Assert-FileExistsNonEmpty -Path $zipPath
+  Assert-FileExistsNonEmpty -Path $manifestPath
+
+  if ($includeCerts) {
+    $certLeaf = Split-Path -Leaf $certPathResolved
+    Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
   }
-
-  $isoDest = Join-Path $outDirResolved "aero-guest-tools.iso"
-  $zipDest = Join-Path $outDirResolved "aero-guest-tools.zip"
-  $manifestDest = Join-Path $outDirResolved "aero-guest-tools.manifest.json"
-
-  foreach ($p in @($isoDest, $zipDest, $manifestDest)) {
-    if (Test-Path -LiteralPath $p) {
-      Remove-Item -LiteralPath $p -Force
-    }
-  }
-
-  Move-Item -LiteralPath $isoSrc -Destination $isoDest -Force
-  Move-Item -LiteralPath $zipSrc -Destination $zipDest -Force
-  Move-Item -LiteralPath $manifestSrc -Destination $manifestDest -Force
 
   $success = $true
 } finally {
@@ -932,5 +868,4 @@ try {
 Write-Host "Guest Tools artifacts created in '$outDirResolved':"
 Write-Host "  aero-guest-tools.iso"
 Write-Host "  aero-guest-tools.zip"
-Write-Host "  aero-guest-tools.manifest.json"
-
+Write-Host "  manifest.json"
