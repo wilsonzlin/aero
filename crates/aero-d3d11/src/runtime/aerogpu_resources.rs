@@ -1,16 +1,19 @@
 use std::collections::HashMap;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
-    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuHandle, AerogpuInputLayoutBlobHeader as ProtoInputLayoutBlobHeader,
+    AerogpuInputLayoutElementDxgi as ProtoInputLayoutElementDxgi,
+    AerogpuShaderStage, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::{translate_sm4_to_wgsl, ShaderStage, Sm4Program};
+use crate::input_layout::InputLayoutElementDxgi;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackingInfo {
@@ -55,25 +58,6 @@ pub struct ShaderResource {
     pub wgsl: String,
     pub module: wgpu::ShaderModule,
     pub reflection: ShaderReflection,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InputLayoutBlobHeader {
-    pub magic: u32,
-    pub version: u32,
-    pub element_count: u32,
-    pub reserved0: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InputLayoutElementDxgi {
-    pub semantic_name_hash: u32,
-    pub semantic_index: u32,
-    pub dxgi_format: u32,
-    pub input_slot: u32,
-    pub aligned_byte_offset: u32,
-    pub input_slot_class: u32,
-    pub instance_data_step_rate: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -196,8 +180,24 @@ impl AerogpuResourceManager {
         if array_layers == 0 {
             bail!("CreateTexture2d: array_layers must be >= 1");
         }
+        if backing_alloc_id != 0 && row_pitch_bytes == 0 {
+            bail!("CreateTexture2d: row_pitch_bytes is required for allocation-backed textures");
+        }
 
         let wgpu_format = map_aerogpu_format(format)?;
+        if row_pitch_bytes != 0 {
+            let bpp = bytes_per_texel(wgpu_format)?;
+            let min_row_pitch = width
+                .checked_mul(bpp)
+                .ok_or_else(|| anyhow!("CreateTexture2d: row_pitch overflow"))?;
+            if row_pitch_bytes < min_row_pitch {
+                bail!(
+                    "CreateTexture2d: row_pitch_bytes {} is smaller than required {}",
+                    row_pitch_bytes,
+                    min_row_pitch
+                );
+            }
+        }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu texture2d"),
             size: wgpu::Extent3d {
@@ -755,9 +755,6 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-const INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" little-endian
-const INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
-
 fn parse_u32_le(buf: &[u8], offset: usize) -> Result<u32> {
     let b = buf
         .get(offset..offset + 4)
@@ -766,33 +763,25 @@ fn parse_u32_le(buf: &[u8], offset: usize) -> Result<u32> {
 }
 
 fn parse_input_layout_blob(blob: &[u8]) -> Result<Vec<InputLayoutElementDxgi>> {
-    if blob.len() < 16 {
+    const HEADER_SIZE: usize = ProtoInputLayoutBlobHeader::SIZE_BYTES;
+    const ELEM_SIZE: usize = ProtoInputLayoutElementDxgi::SIZE_BYTES;
+
+    if blob.len() < HEADER_SIZE {
         return Ok(Vec::new());
     }
 
-    let hdr = InputLayoutBlobHeader {
-        magic: parse_u32_le(blob, 0)?,
-        version: parse_u32_le(blob, 4)?,
-        element_count: parse_u32_le(blob, 8)?,
-        reserved0: parse_u32_le(blob, 12)?,
-    };
-
-    if hdr.magic != INPUT_LAYOUT_BLOB_MAGIC {
+    let magic = parse_u32_le(blob, 0)?;
+    if magic != AEROGPU_INPUT_LAYOUT_BLOB_MAGIC {
         return Ok(Vec::new());
     }
-    if hdr.version != INPUT_LAYOUT_BLOB_VERSION {
-        bail!("unsupported input layout blob version {}", hdr.version);
+    let version = parse_u32_le(blob, 4)?;
+    if version != AEROGPU_INPUT_LAYOUT_BLOB_VERSION {
+        bail!("unsupported input layout blob version {version}");
     }
 
-    let count = hdr.element_count as usize;
-    let elems_start = 16usize;
-    let elem_size = 28usize;
-    let bytes_needed = elems_start
-        .checked_add(
-            count
-                .checked_mul(elem_size)
-                .ok_or_else(|| anyhow!("element_count overflow"))?,
-        )
+    let count = parse_u32_le(blob, 8)? as usize;
+    let bytes_needed = HEADER_SIZE
+        .checked_add(count.checked_mul(ELEM_SIZE).ok_or_else(|| anyhow!("element_count overflow"))?)
         .ok_or_else(|| anyhow!("input layout blob size overflow"))?;
     if blob.len() < bytes_needed {
         bail!(
@@ -805,7 +794,7 @@ fn parse_input_layout_blob(blob: &[u8]) -> Result<Vec<InputLayoutElementDxgi>> {
 
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        let base = elems_start + i * elem_size;
+        let base = HEADER_SIZE + i * ELEM_SIZE;
         out.push(InputLayoutElementDxgi {
             semantic_name_hash: parse_u32_le(blob, base + 0)?,
             semantic_index: parse_u32_le(blob, base + 4)?,
@@ -887,8 +876,8 @@ mod tests {
     #[test]
     fn parses_input_layout_blob_v1() {
         let mut blob = Vec::new();
-        blob.extend_from_slice(&INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
-        blob.extend_from_slice(&INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
+        blob.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
+        blob.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
         blob.extend_from_slice(&1u32.to_le_bytes()); // element_count
         blob.extend_from_slice(&0u32.to_le_bytes()); // reserved0
                                                      // element

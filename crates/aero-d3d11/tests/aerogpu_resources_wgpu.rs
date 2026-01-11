@@ -230,3 +230,28 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
         Ok(())
     })
 }
+#[test]
+fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue) = create_device_queue().await?;
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        let res = resources.create_texture2d(
+            42,
+            AEROGPU_RESOURCE_USAGE_TEXTURE,
+            AerogpuFormat::R8G8B8A8Unorm as u32,
+            4,
+            4,
+            1,
+            1,
+            0, // row_pitch_bytes
+            1, // backing_alloc_id
+            0,
+        );
+        let err = res.expect_err("expected create_texture2d to reject missing row_pitch_bytes");
+        assert!(err
+            .to_string()
+            .contains("row_pitch_bytes is required for allocation-backed textures"));
+        Ok(())
+    })
+}
