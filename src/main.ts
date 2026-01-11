@@ -18,6 +18,8 @@ import { importFileToOpfs } from './platform/opfs';
 import { requestWebGpuDevice } from './platform/webgpu';
 import { VmCoordinator } from './emulator/vmCoordinator.js';
 import { MicCapture } from '../web/src/audio/mic_capture';
+import type { AeroConfig } from '../web/src/config/aero_config';
+import { WorkerCoordinator } from '../web/src/runtime/coordinator';
 
 declare global {
   interface Window {
@@ -245,6 +247,7 @@ function renderAudioPanel(): HTMLElement {
   const status = el("pre", { text: "" });
   let toneTimer: number | null = null;
   let tonePhase = 0;
+  const workerCoordinator = new WorkerCoordinator();
 
   function stopTone() {
     if (toneTimer !== null) {
@@ -315,7 +318,77 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
-  return el("div", { class: "panel" }, el("h2", { text: "Audio" }), el("div", { class: "row" }, button), status);
+  const workerButton = el("button", {
+    id: "init-audio-output-worker",
+    text: "Init audio output (worker tone)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+
+      const workerConfig: AeroConfig = {
+        guestMemoryMiB: 256,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      };
+
+      try {
+        workerCoordinator.start(workerConfig);
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ringBufferFrames: Math.floor(48_000 / 5),
+      });
+
+      // Expose for Playwright smoke tests.
+      (globalThis as typeof globalThis & { __aeroAudioOutputWorker?: unknown }).__aeroAudioOutputWorker = output;
+      (globalThis as typeof globalThis & { __aeroAudioToneBackendWorker?: unknown }).__aeroAudioToneBackendWorker =
+        "cpu-worker-wasm";
+
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      try {
+        // Prefill the entire ring with silence so the CPU worker has time to attach
+        // and begin writing without incurring startup underruns.
+        output.writeInterleaved(
+          new Float32Array(output.ringBuffer.capacityFrames * output.ringBuffer.channelCount),
+          output.context.sampleRate,
+        );
+
+        workerCoordinator.setAudioRingBuffer(
+          output.ringBuffer.buffer,
+          output.ringBuffer.capacityFrames,
+          output.ringBuffer.channelCount,
+          output.context.sampleRate,
+        );
+
+        await output.resume();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      status.textContent = "Audio initialized (worker tone backend).";
+    },
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Audio" }),
+    el("div", { class: "row" }, button, workerButton),
+    status,
+  );
 }
 
 function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {

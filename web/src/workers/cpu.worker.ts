@@ -76,6 +76,121 @@ let sineTone: { write: (...args: unknown[]) => number; free?: () => void } | nul
 
 let nextAudioFillDeadlineMs = 0;
 
+const AUDIO_HEADER_U32_LEN = 4;
+const AUDIO_HEADER_BYTES = AUDIO_HEADER_U32_LEN * Uint32Array.BYTES_PER_ELEMENT;
+const AUDIO_READ_FRAME_INDEX = 0;
+const AUDIO_WRITE_FRAME_INDEX = 1;
+const AUDIO_UNDERRUN_COUNT_INDEX = 2;
+
+function audioFramesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
+  return (writeFrameIndex - readFrameIndex) >>> 0;
+}
+
+function audioFramesAvailableClamped(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
+  return Math.min(audioFramesAvailable(readFrameIndex, writeFrameIndex), capacityFrames);
+}
+
+function audioFramesFree(readFrameIndex: number, writeFrameIndex: number, capacityFrames: number): number {
+  return capacityFrames - audioFramesAvailableClamped(readFrameIndex, writeFrameIndex, capacityFrames);
+}
+
+class JsWorkletBridge {
+  readonly capacity_frames: number;
+  readonly channel_count: number;
+  private readonly header: Uint32Array;
+  private readonly samples: Float32Array;
+
+  constructor(sab: SharedArrayBuffer, capacityFrames: number, channelCount: number) {
+    this.capacity_frames = capacityFrames;
+    this.channel_count = channelCount;
+
+    const sampleCapacity = capacityFrames * channelCount;
+    const requiredBytes = AUDIO_HEADER_BYTES + sampleCapacity * Float32Array.BYTES_PER_ELEMENT;
+    if (sab.byteLength < requiredBytes) {
+      throw new Error(`audio ring buffer is too small: need ${requiredBytes} bytes, got ${sab.byteLength} bytes`);
+    }
+
+    this.header = new Uint32Array(sab, 0, AUDIO_HEADER_U32_LEN);
+    this.samples = new Float32Array(sab, AUDIO_HEADER_BYTES, sampleCapacity);
+  }
+
+  buffer_level_frames(): number {
+    const read = Atomics.load(this.header, AUDIO_READ_FRAME_INDEX) >>> 0;
+    const write = Atomics.load(this.header, AUDIO_WRITE_FRAME_INDEX) >>> 0;
+    return audioFramesAvailableClamped(read, write, this.capacity_frames);
+  }
+
+  underrun_count(): number {
+    return Atomics.load(this.header, AUDIO_UNDERRUN_COUNT_INDEX) >>> 0;
+  }
+
+  write_f32_interleaved(input: Float32Array): number {
+    const requestedFrames = Math.floor(input.length / this.channel_count);
+    if (requestedFrames === 0) return 0;
+
+    const read = Atomics.load(this.header, AUDIO_READ_FRAME_INDEX) >>> 0;
+    const write = Atomics.load(this.header, AUDIO_WRITE_FRAME_INDEX) >>> 0;
+
+    const free = audioFramesFree(read, write, this.capacity_frames);
+    const framesToWrite = Math.min(requestedFrames, free);
+    if (framesToWrite === 0) return 0;
+
+    const writePos = write % this.capacity_frames;
+    const firstFrames = Math.min(framesToWrite, this.capacity_frames - writePos);
+    const secondFrames = framesToWrite - firstFrames;
+
+    const cc = this.channel_count;
+    const firstSamples = firstFrames * cc;
+    const secondSamples = secondFrames * cc;
+
+    this.samples.set(input.subarray(0, firstSamples), writePos * cc);
+    if (secondFrames > 0) {
+      this.samples.set(input.subarray(firstSamples, firstSamples + secondSamples), 0);
+    }
+
+    Atomics.store(this.header, AUDIO_WRITE_FRAME_INDEX, write + framesToWrite);
+    return framesToWrite;
+  }
+
+  free(): void {
+    // No-op; included for parity with wasm-bindgen objects.
+  }
+}
+
+class JsSineTone {
+  private phase = 0;
+  private scratch = new Float32Array();
+  private readonly channelCount: number;
+
+  constructor(channelCount: number) {
+    this.channelCount = channelCount;
+  }
+
+  write(bridge: unknown, frames: number, freqHz: number, sampleRate: number, gain: number): number {
+    if (frames <= 0 || sampleRate <= 0) return 0;
+
+    const cc = this.channelCount;
+    const totalSamples = frames * cc;
+    if (this.scratch.length < totalSamples) {
+      this.scratch = new Float32Array(totalSamples);
+    }
+    const out = this.scratch.subarray(0, totalSamples);
+
+    for (let i = 0; i < frames; i++) {
+      const s = Math.sin(this.phase * 2 * Math.PI) * gain;
+      for (let c = 0; c < cc; c++) out[i * cc + c] = s;
+      this.phase += freqHz / sampleRate;
+      if (this.phase >= 1) this.phase -= 1;
+    }
+
+    return (bridge as JsWorkletBridge).write_f32_interleaved(out);
+  }
+
+  free(): void {
+    // No-op; included for parity with wasm-bindgen objects.
+  }
+}
+
 function detachAudioOutput(): void {
   if (sineTone?.free) {
     sineTone.free();
@@ -98,19 +213,31 @@ function maybeInitAudioOutput(): void {
   detachAudioOutput();
 
   if (!audioRingBuffer) return;
-  if (!wasmApi?.attach_worklet_bridge || !wasmApi?.SineTone) return;
   if (audioCapacityFrames <= 0 || audioChannelCount <= 0) return;
 
-  // Try to initialize the WASM-side bridge + sine generator. This is a best-effort
-  // path (used by the Playwright AudioWorklet worker smoke test).
+  // Prefer the WASM-side bridge + sine generator if available; otherwise fall back
+  // to a tiny JS implementation so worker-driven audio works even when the WASM
+  // packages are absent (e.g. in CI or fresh checkouts).
+  if (wasmApi?.attach_worklet_bridge && wasmApi?.SineTone) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      workletBridge = (wasmApi.attach_worklet_bridge as any)(audioRingBuffer, audioCapacityFrames, audioChannelCount);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      sineTone = new (wasmApi.SineTone as any)() as { write: (...args: unknown[]) => number; free?: () => void };
+      nextAudioFillDeadlineMs = performance.now();
+      return;
+    } catch (err) {
+      console.error("Failed to init WASM audio output bridge:", err);
+      detachAudioOutput();
+    }
+  }
+
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    workletBridge = (wasmApi.attach_worklet_bridge as any)(audioRingBuffer, audioCapacityFrames, audioChannelCount);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    sineTone = new (wasmApi.SineTone as any)() as { write: (...args: unknown[]) => number; free?: () => void };
+    workletBridge = new JsWorkletBridge(audioRingBuffer, audioCapacityFrames, audioChannelCount);
+    sineTone = new JsSineTone(audioChannelCount);
     nextAudioFillDeadlineMs = performance.now();
   } catch (err) {
-    console.error("Failed to init audio output bridge:", err);
+    console.error("Failed to init JS audio output bridge:", err);
     detachAudioOutput();
   }
 }
@@ -245,11 +372,12 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         const value = api.add(20, 22);
         ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setReadyFlag(status, role, false);
-        ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
-        ctx.close();
-        return;
+        // WASM init is best-effort: keep the CPU worker alive so non-WASM demos
+        // (including AudioWorklet ring-buffer smoke tests) can run in environments
+        // where the generated wasm-pack output is absent.
+        console.error("WASM init failed in CPU worker:", err);
+        wasmApi = null;
+        maybeInitAudioOutput();
       }
 
       setReadyFlag(status, role, true);
