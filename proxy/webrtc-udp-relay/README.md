@@ -211,22 +211,23 @@ Configuration env vars (server → server dialing):
 - `L2_BACKEND_FORWARD_ORIGIN` (default: `true` when `L2_BACKEND_WS_URL` is set):
   forward a normalized/derived Origin from the client signaling request to the
   backend WebSocket upgrade request.
-- `L2_BACKEND_ORIGIN_OVERRIDE` (optional): If set, use this Origin value for all
-  backend dials instead of forwarding the client origin. (Alias that overrides
-  `L2_BACKEND_WS_ORIGIN`.)
-- `L2_BACKEND_ORIGIN` (optional): Alias for `L2_BACKEND_ORIGIN_OVERRIDE`.
-- `L2_BACKEND_WS_ORIGIN` (optional): If set, send `Origin: <value>` when dialing
-  the backend WebSocket.
+- `L2_BACKEND_ORIGIN` (optional): Override Origin sent to the backend WebSocket.
+  This value must be allowed by the backend (e.g. `AERO_L2_ALLOWED_ORIGINS` for
+  `crates/aero-l2-proxy`).
+  - Alias: `L2_BACKEND_ORIGIN_OVERRIDE` (overrides `L2_BACKEND_WS_ORIGIN`).
+- `L2_BACKEND_WS_ORIGIN` (optional): Static Origin header value to send when
+  dialing the backend WebSocket (overridden by `L2_BACKEND_ORIGIN` /
+  `L2_BACKEND_ORIGIN_OVERRIDE`).
 - `L2_BACKEND_AUTH_FORWARD_MODE` (default `query`): `none|query|subprotocol` —
   how to forward the relay credential (JWT/API key) to the backend:
   - `query`: append `token=<credential>` and `apiKey=<credential>`
   - `subprotocol`: offer `aero-l2-token.<credential>` (credential must be valid
     for `Sec-WebSocket-Protocol`, i.e. an HTTP token / RFC 7230 `tchar`)
   - `none`: do not forward credentials
-- `L2_BACKEND_WS_TOKEN` (optional): If set, send an additional offered WebSocket
+- `L2_BACKEND_TOKEN` (optional): If set, offer an additional WebSocket
   subprotocol `aero-l2-token.<token>` when dialing the backend (alongside
   `aero-l2-tunnel-v1`).
-- `L2_BACKEND_TOKEN` (optional): Alias for `L2_BACKEND_WS_TOKEN`.
+  - Alias: `L2_BACKEND_WS_TOKEN`.
 - `L2_MAX_MESSAGE_BYTES` (default `4096`): Per-message size limit enforced on the
   DataChannel and backend WebSocket.
 
@@ -237,6 +238,61 @@ outbound connection to the backend. Browser signaling auth is configured via
 Security note: If you need to pass a token that cannot be represented as a WebSocket
 subprotocol token, you can embed `?token=...` in `L2_BACKEND_WS_URL` instead. This is
 less preferred because query strings are more likely to leak into logs/metrics.
+
+### Example: bridge to `crates/aero-l2-proxy` (Docker / Kubernetes)
+
+When the L2 backend is `crates/aero-l2-proxy`, the relay's backend WebSocket dial
+must satisfy the proxy's Origin allowlist and auth policy:
+
+- **Origin allowlist:** the backend requires `Origin` (unless `AERO_L2_OPEN=1`) and
+  checks it against `AERO_L2_ALLOWED_ORIGINS`.
+  - By default the relay forwards the client signaling Origin (`L2_BACKEND_FORWARD_ORIGIN=1`).
+  - Use `L2_BACKEND_ORIGIN` to pin a specific Origin value (must be in the backend allowlist).
+- **Auth:** cookie auth (`AERO_L2_AUTH_MODE=cookie`) does not work for relay bridging (the relay
+  cannot forward browser cookies). Use `AERO_L2_AUTH_MODE=api_key`, `jwt`, or `cookie_or_jwt`.
+
+#### Docker / docker-compose
+
+Use the backend service name inside the docker network:
+
+```bash
+# L2 proxy (backend).
+export AERO_L2_ALLOWED_ORIGINS=https://aero.example.com
+export AERO_L2_AUTH_MODE=api_key
+export AERO_L2_API_KEY='REPLACE_WITH_SECRET'
+
+# WebRTC relay (bridge).
+export L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
+export L2_BACKEND_ORIGIN=https://aero.example.com
+export L2_BACKEND_TOKEN='REPLACE_WITH_SECRET'
+
+# IMPORTANT: If you set L2_BACKEND_TOKEN and also run the relay with AUTH_MODE enabled,
+# disable credential forwarding so the backend doesn't see a conflicting ?token=/?apiKey=.
+export L2_BACKEND_AUTH_FORWARD_MODE=none
+```
+
+The relay sends the token using the WebSocket subprotocol mechanism:
+
+`Sec-WebSocket-Protocol: aero-l2-tunnel-v1, aero-l2-token.<token>`
+
+#### Kubernetes
+
+Use the L2 proxy Service DNS name in `L2_BACKEND_WS_URL`, for example:
+
+```yaml
+env:
+  - name: L2_BACKEND_WS_URL
+    value: ws://aero-l2-proxy.aero.svc.cluster.local:8090/l2
+  - name: L2_BACKEND_ORIGIN
+    value: https://aero.example.com
+  - name: L2_BACKEND_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: aero-l2-bridge
+        key: token
+  - name: L2_BACKEND_AUTH_FORWARD_MODE
+    value: none
+```
 
 ## Implemented
 

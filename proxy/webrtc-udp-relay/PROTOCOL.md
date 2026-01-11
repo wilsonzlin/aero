@@ -78,17 +78,36 @@ options), and are never sent by the browser.
 
 - `L2_BACKEND_WS_URL` (optional): Backend WebSocket URL (must be `ws://` or
   `wss://`). When unset/empty, `l2` DataChannels are rejected.
-- `L2_BACKEND_FORWARD_ORIGIN` (optional, default: true when `L2_BACKEND_WS_URL` is
-  set): When enabled, the relay forwards a normalized `Origin` value from the
+
+Backend `Origin` handling (relevant for `crates/aero-l2-proxy` Origin allowlists):
+
+- `L2_BACKEND_FORWARD_ORIGIN` (optional, default: `true` when `L2_BACKEND_WS_URL`
+  is set): When enabled, the relay forwards a normalized `Origin` value from the
   client signaling request to the backend WebSocket upgrade request.
   - If the client request has no `Origin` header, the relay derives an origin
     from the request host and scheme (e.g. `https://example.com`).
-- `L2_BACKEND_ORIGIN_OVERRIDE` (optional): If set, use this value for the backend
-  `Origin` header instead of forwarding the client origin. (Alias that overrides
-  `L2_BACKEND_WS_ORIGIN`.)
-- `L2_BACKEND_ORIGIN` (optional): Alias for `L2_BACKEND_ORIGIN_OVERRIDE`.
-- `L2_BACKEND_WS_ORIGIN` (optional): If set, the relay includes
-  `Origin: <value>` on the backend WebSocket upgrade request.
+- `L2_BACKEND_ORIGIN` (optional): Override the backend `Origin` header value.
+  This is the recommended knob when the backend enforces an Origin allowlist and
+  you want a fixed `Origin` regardless of the client signaling request.
+  - The value MUST be an allowed origin on the backend (e.g. included in
+    `AERO_L2_ALLOWED_ORIGINS` for `crates/aero-l2-proxy`).
+  - Alias: `L2_BACKEND_ORIGIN_OVERRIDE`.
+  - `L2_BACKEND_WS_ORIGIN` is a legacy knob that sets the backend Origin header
+    unless overridden by `L2_BACKEND_ORIGIN`/`L2_BACKEND_ORIGIN_OVERRIDE`.
+
+Backend token authentication (relevant for `crates/aero-l2-proxy`
+`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt`):
+
+- `L2_BACKEND_TOKEN` (optional): If set, the relay offers an additional WebSocket
+  subprotocol `aero-l2-token.<token>` alongside the required `aero-l2-tunnel-v1`
+  subprotocol.
+  - This is delivered as:
+    `Sec-WebSocket-Protocol: aero-l2-tunnel-v1, aero-l2-token.<token>`
+  - The negotiated subprotocol is still required to be `aero-l2-tunnel-v1`.
+  - Alias: `L2_BACKEND_WS_TOKEN`.
+
+Credential forwarding (optional):
+
 - `L2_BACKEND_AUTH_FORWARD_MODE` (optional, default: `query`):
   `none|query|subprotocol`.
   - `query`: append `token=<credential>` and `apiKey=<credential>` query
@@ -103,11 +122,12 @@ options), and are never sent by the browser.
   - The forwarded `<credential>` is the same JWT/API key that authenticated the
     relay's signaling endpoints (`AUTH_MODE`). When `AUTH_MODE=none`, no
     credential is forwarded.
-- `L2_BACKEND_WS_TOKEN` (optional): If set, the relay offers an additional
-  WebSocket subprotocol `aero-l2-token.<token>` alongside the required
-  `aero-l2-tunnel-v1` subprotocol. The negotiated subprotocol is still required
-  to be `aero-l2-tunnel-v1`.
-- `L2_BACKEND_TOKEN` (optional): Alias for `L2_BACKEND_WS_TOKEN`.
+
+Important interoperability note (for `crates/aero-l2-proxy`): query-string
+credentials are checked before `aero-l2-token.*` subprotocol tokens. If you want
+the backend to use `L2_BACKEND_TOKEN`, set `L2_BACKEND_AUTH_FORWARD_MODE=none`
+(or `subprotocol`) to avoid sending `?token=`/`?apiKey=` from the client
+credential.
 
 Security note: If your backend only supports query-string tokens (or your token
 cannot be represented as a WebSocket subprotocol token), you can instead embed
