@@ -1625,7 +1625,8 @@ impl AerogpuD3d11Executor {
             }
 
             if opcode == OPCODE_SET_VERTEX_BUFFERS {
-                let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes) else {
+                let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
+                else {
                     break;
                 };
                 let start_slot = cmd.start_slot as usize;
@@ -1954,15 +1955,16 @@ impl AerogpuD3d11Executor {
                         };
                         if vb.stride_bytes != u32::from_le(bindings[slot - start_slot].stride_bytes)
                         {
-                            bail!("SET_VERTEX_BUFFERS: stride update requires restarting render pass");
+                            bail!(
+                                "SET_VERTEX_BUFFERS: stride update requires restarting render pass"
+                            );
                         }
 
                         let (buf_ptr, buf_size): (*const wgpu::Buffer, u64) = {
-                            let buf = self
-                                .resources
-                                .buffers
-                                .get(&vb.buffer)
-                                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+                            let buf =
+                                self.resources.buffers.get(&vb.buffer).ok_or_else(|| {
+                                    anyhow!("unknown vertex buffer {}", vb.buffer)
+                                })?;
                             (&buf.buffer as *const wgpu::Buffer, buf.size)
                         };
                         if vb.offset_bytes > buf_size {
