@@ -1736,6 +1736,18 @@ async fn max_connections_enforced() {
         .expect_err("expected max-connections enforcement");
     assert_http_status(err, StatusCode::TOO_MANY_REQUESTS);
 
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let rejected = parse_metric(&body, "l2_upgrade_reject_max_connections_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected max-connections reject counter >= 1, got {rejected}"
+    );
+
     let _ = ws1.send(Message::Close(None)).await;
 
     // Wait for the server-side session to observe the close and release the permit.
@@ -1794,6 +1806,32 @@ async fn max_connections_per_session_enforced() {
         .await
         .expect_err("expected per-session tunnel limit enforcement");
     assert_http_status(err, StatusCode::TOO_MANY_REQUESTS);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let rejected = parse_metric(
+        &body,
+        "l2_upgrade_reject_max_connections_per_session_total",
+    )
+    .unwrap();
+    assert!(
+        rejected >= 1,
+        "expected per-session reject counter >= 1, got {rejected}"
+    );
+    let rejected = parse_metric(&body, "l2_upgrade_reject_max_tunnels_per_session_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected legacy per-session reject counter >= 1, got {rejected}"
+    );
+    let denied = parse_metric(&body, "l2_session_connection_denied_total").unwrap();
+    assert!(
+        denied >= 1,
+        "expected session connection denied counter >= 1, got {denied}"
+    );
 
     let _ = ws1.send(Message::Close(None)).await;
 
