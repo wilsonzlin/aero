@@ -51,6 +51,8 @@ pub enum AerogpuCmdOpcode {
     DestroyResource = 0x102,
     ResourceDirtyRange = 0x103,
     UploadResource = 0x104,
+    CopyBuffer = 0x105,
+    CopyTexture2d = 0x106,
 
     CreateShaderDxbc = 0x200,
     DestroyShader = 0x201,
@@ -98,6 +100,8 @@ impl AerogpuCmdOpcode {
             0x102 => Some(Self::DestroyResource),
             0x103 => Some(Self::ResourceDirtyRange),
             0x104 => Some(Self::UploadResource),
+            0x105 => Some(Self::CopyBuffer),
+            0x106 => Some(Self::CopyTexture2d),
             0x200 => Some(Self::CreateShaderDxbc),
             0x201 => Some(Self::DestroyShader),
             0x202 => Some(Self::BindShaders),
