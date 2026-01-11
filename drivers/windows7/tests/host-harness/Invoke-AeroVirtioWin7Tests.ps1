@@ -230,6 +230,9 @@ function Wait-AeroSelftestResult {
   $sawVirtioSndPass = $false
   $sawVirtioSndSkip = $false
   $sawVirtioSndFail = $false
+  $sawVirtioSndCapturePass = $false
+  $sawVirtioSndCaptureSkip = $false
+  $sawVirtioSndCaptureFail = $false
   $sawVirtioNetPass = $false
   $sawVirtioNetFail = $false
 
@@ -266,6 +269,15 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioSndFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|FAIL") {
         $sawVirtioSndFail = $true
       }
+      if (-not $sawVirtioSndCapturePass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|PASS") {
+        $sawVirtioSndCapturePass = $true
+      }
+      if (-not $sawVirtioSndCaptureSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|SKIP") {
+        $sawVirtioSndCaptureSkip = $true
+      }
+      if (-not $sawVirtioSndCaptureFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|FAIL") {
+        $sawVirtioSndCaptureFail = $true
+      }
       if (-not $sawVirtioNetPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net\|PASS") {
         $sawVirtioNetPass = $true
       }
@@ -301,6 +313,16 @@ function Wait-AeroSelftestResult {
             return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
           }
 
+          if ($sawVirtioSndCaptureFail) {
+            return @{ Result = "FAIL"; Tail = $tail }
+          }
+          if (-not ($sawVirtioSndCapturePass -or $sawVirtioSndCaptureSkip)) {
+            return @{ Result = "MISSING_VIRTIO_SND_CAPTURE"; Tail = $tail }
+          }
+          if ($RequireVirtioSndPass -and (-not $sawVirtioSndCapturePass)) {
+            return @{ Result = "VIRTIO_SND_CAPTURE_SKIPPED"; Tail = $tail }
+          }
+
           if ($sawVirtioNetFail) {
             return @{ Result = "FAIL"; Tail = $tail }
           }
@@ -316,7 +338,16 @@ function Wait-AeroSelftestResult {
             return @{ Result = "FAIL"; Tail = $tail }
           }
           if ($sawVirtioSndPass) {
-            return @{ Result = "PASS"; Tail = $tail }
+            if ($sawVirtioSndCaptureFail) {
+              return @{ Result = "FAIL"; Tail = $tail }
+            }
+            if ($sawVirtioSndCapturePass) {
+              return @{ Result = "PASS"; Tail = $tail }
+            }
+            if ($sawVirtioSndCaptureSkip) {
+              return @{ Result = "VIRTIO_SND_CAPTURE_SKIPPED"; Tail = $tail }
+            }
+            return @{ Result = "MISSING_VIRTIO_SND_CAPTURE"; Tail = $tail }
           }
           if ($sawVirtioSndSkip) {
             return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
@@ -908,6 +939,14 @@ try {
       }
       $scriptExitCode = 1
     }
+    "MISSING_VIRTIO_SND_CAPTURE" {
+      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-snd-capture test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "MISSING_VIRTIO_NET" {
       Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-net test marker"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -927,6 +966,25 @@ try {
       }
 
       Write-Host "FAIL: virtio-snd test was skipped ($reason) but -WithVirtioSnd was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 1
+    }
+    "VIRTIO_SND_CAPTURE_SKIPPED" {
+      $reason = "unknown"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|endpoint_missing") {
+        $reason = "endpoint_missing"
+      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|flag_not_set") {
+        $reason = "flag_not_set"
+      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|disabled") {
+        $reason = "disabled"
+      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|device_missing") {
+        $reason = "device_missing"
+      }
+
+      Write-Host "FAIL: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

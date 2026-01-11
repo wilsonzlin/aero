@@ -160,6 +160,23 @@ def _virtio_snd_skip_failure_message(tail: bytes) -> str:
     return "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
 
 
+def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
+    # The capture marker is separate from the playback marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS/FAIL/SKIP|...
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing" in tail:
+        return "FAIL: virtio-snd capture endpoint missing but --with-virtio-snd was enabled"
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set" in tail:
+        return (
+            "FAIL: virtio-snd capture test was skipped (flag_not_set) but --with-virtio-snd was enabled "
+            "(ensure the guest is configured with --test-snd/--require-snd or capture flags)"
+        )
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled" in tail:
+        return "FAIL: virtio-snd capture test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing" in tail:
+        return "FAIL: virtio-snd capture test was skipped (device missing) but --with-virtio-snd was enabled"
+    return "FAIL: virtio-snd capture test was skipped but --with-virtio-snd was enabled"
+
+
 def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     try:
         proc = subprocess.run(
@@ -576,6 +593,9 @@ def main() -> int:
             saw_virtio_snd_pass = False
             saw_virtio_snd_skip = False
             saw_virtio_snd_fail = False
+            saw_virtio_snd_capture_pass = False
+            saw_virtio_snd_capture_skip = False
+            saw_virtio_snd_capture_fail = False
             saw_virtio_net_pass = False
             saw_virtio_net_fail = False
             require_per_test_markers = not args.virtio_transitional
@@ -606,6 +626,21 @@ def main() -> int:
                         saw_virtio_snd_skip = True
                     if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
                         saw_virtio_snd_fail = True
+                    if (
+                        not saw_virtio_snd_capture_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS" in tail
+                    ):
+                        saw_virtio_snd_capture_pass = True
+                    if (
+                        not saw_virtio_snd_capture_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP" in tail
+                    ):
+                        saw_virtio_snd_capture_skip = True
+                    if (
+                        not saw_virtio_snd_capture_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL" in tail
+                    ):
+                        saw_virtio_snd_capture_fail = True
                     if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
                         saw_virtio_net_pass = True
                     if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
@@ -667,6 +702,22 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                                if saw_virtio_snd_capture_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_snd_capture_pass:
+                                    msg = "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                    if saw_virtio_snd_capture_skip:
+                                        msg = _virtio_snd_capture_skip_failure_message(tail)
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             else:
                                 # Even when virtio-snd isn't attached, require the marker so older selftest binaries
                                 # (that predate virtio-snd testing) cannot accidentally pass.
@@ -714,6 +765,22 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            if saw_virtio_snd_capture_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_snd_capture_pass:
+                                msg = "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                if saw_virtio_snd_capture_skip:
+                                    msg = _virtio_snd_capture_skip_failure_message(tail)
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -742,6 +809,21 @@ def main() -> int:
                             saw_virtio_snd_skip = True
                         if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
                             saw_virtio_snd_fail = True
+                        if (
+                            not saw_virtio_snd_capture_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS" in tail
+                        ):
+                            saw_virtio_snd_capture_pass = True
+                        if (
+                            not saw_virtio_snd_capture_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP" in tail
+                        ):
+                            saw_virtio_snd_capture_skip = True
+                        if (
+                            not saw_virtio_snd_capture_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL" in tail
+                        ):
+                            saw_virtio_snd_capture_fail = True
                         if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
                             saw_virtio_net_pass = True
                         if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
@@ -798,6 +880,24 @@ def main() -> int:
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
+                                    if saw_virtio_snd_capture_fail:
+                                        print(
+                                            "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+                                    if not saw_virtio_snd_capture_pass:
+                                        msg = (
+                                            "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                        )
+                                        if saw_virtio_snd_capture_skip:
+                                            msg = _virtio_snd_capture_skip_failure_message(tail)
+                                        print(msg, file=sys.stderr)
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                                 else:
                                     if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                                         print(
@@ -837,6 +937,22 @@ def main() -> int:
                                     msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
                                         msg = _virtio_snd_skip_failure_message(tail)
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if saw_virtio_snd_capture_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_snd_capture_pass:
+                                    msg = "FAIL: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                    if saw_virtio_snd_capture_skip:
+                                        msg = _virtio_snd_capture_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
