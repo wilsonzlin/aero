@@ -62,6 +62,61 @@ test("AudioOutput exposes getOverrunCount() reading ring buffer header[3]", asyn
   }
 });
 
+test("createAudioOutput() does not emit unhandledRejection when AudioContext.resume rejects", async () => {
+  const originalAudioContext = (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
+  const originalAudioWorkletNode = (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode;
+
+  class FakeAudioContext {
+    readonly sampleRate: number;
+    state: AudioContextState = "suspended";
+    readonly destination = {};
+
+    constructor(options?: { sampleRate?: number }) {
+      this.sampleRate = options?.sampleRate ?? 48_000;
+    }
+
+    resume(): Promise<void> {
+      return Promise.reject(new Error("resume blocked"));
+    }
+
+    async close(): Promise<void> {
+      this.state = "closed";
+    }
+  }
+
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+
+  try {
+    (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = FakeAudioContext;
+
+    process.on("unhandledRejection", onUnhandled);
+
+    const output = await createAudioOutput({ sampleRate: 48_000 });
+    assert.equal(output.enabled, false);
+
+    // Let promise rejection bookkeeping settle (if any).
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(unhandled.length, 0);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+
+    if (originalAudioContext === undefined) {
+      delete (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
+    } else {
+      (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = originalAudioContext;
+    }
+
+    if (originalAudioWorkletNode === undefined) {
+      delete (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode;
+    } else {
+      (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode = originalAudioWorkletNode;
+    }
+  }
+});
+
 test("writeRingBufferInterleaved() increments overrunCount when frames are dropped", () => {
   const capacityFrames = 4;
   const channelCount = 1;

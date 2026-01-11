@@ -506,7 +506,6 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       sampleRate: actualSampleRate,
     });
   }
-
   if (!context.audioWorklet || typeof context.audioWorklet.addModule !== "function") {
     await context.close();
     return createDisabledAudioOutput({

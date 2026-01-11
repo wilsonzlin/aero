@@ -1001,6 +1001,7 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoWorker.terminate();
     hdaDemoWorker = null;
     hdaDemoStats = null;
+    (globalThis as typeof globalThis & { __aeroAudioHdaDemoStats?: unknown }).__aeroAudioHdaDemoStats = undefined;
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;

@@ -2088,6 +2088,8 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoWorker.terminate();
     hdaDemoWorker = null;
     hdaDemoStats = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroAudioHdaDemoStats = undefined;
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;
