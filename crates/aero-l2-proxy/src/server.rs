@@ -1254,7 +1254,7 @@ fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
 
 fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let mut parts = value.trim().split_whitespace();
+    let mut parts = value.split_whitespace();
     let scheme = parts.next()?;
     if !scheme.eq_ignore_ascii_case("bearer") {
         return None;

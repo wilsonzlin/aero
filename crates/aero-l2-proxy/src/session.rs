@@ -265,7 +265,7 @@ pub(crate) async fn run_session(
 ) -> anyhow::Result<()> {
     let span = tracing::info_span!("l2_session", tunnel_id, session_id = tracing::field::Empty);
     if let Some(session_id) = session_id.as_deref() {
-        span.record("session_id", &tracing::field::display(session_id));
+        span.record("session_id", tracing::field::display(session_id));
     }
 
     run_session_inner(socket, state, tunnel_id)

@@ -943,6 +943,93 @@ async fn cookie_or_jwt_accepts_either_credential() {
 }
 
 #[tokio::test]
+async fn cookie_or_api_key_accepts_either_credential() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie_or_api_key");
+    let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "sekrit");
+    let _api_key = EnvVarGuard::set("AERO_L2_API_KEY", "apisecrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // Missing both credentials should be rejected.
+    let req = base_ws_request(addr);
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected cookie_or_api_key auth to reject missing credentials");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(60);
+
+    // Cookie credential works.
+    let token = mint_session_token("sekrit", "sid", exp);
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // API key credential works.
+    let ws_url = format!("ws://{addr}/l2?apiKey=apisecrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Invalid cookie but valid API key should still succeed.
+    let bad_cookie = tamper_session_token(&mint_session_token("sekrit", "sid", exp));
+    let ws_url = format!("ws://{addr}/l2?apiKey=apisecrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={bad_cookie}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Invalid api key is rejected (even if a cookie is present but invalid).
+    let ws_url = format!("ws://{addr}/l2?apiKey=wrong");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={bad_cookie}")).unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected invalid api key to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn host_allowlist_rejects_mismatch() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
