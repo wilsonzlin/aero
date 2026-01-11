@@ -37,6 +37,9 @@
     <ClCompile Include="src\virtiosnd_control.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\virtiosnd_control_proto.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\virtiosnd_dma.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -123,6 +126,9 @@
     <ClInclude Include="include\virtiosnd_control.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\virtiosnd_control_proto.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\virtiosnd_dma.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -133,6 +139,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\virtiosnd_queue_split.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\virtiosnd_rx.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\virtiosnd_sg.h">
