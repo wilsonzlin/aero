@@ -1,4 +1,4 @@
-import { openFileHandle, removeOpfsEntry } from "../platform/opfs";
+import { openFileHandle, removeOpfsEntry } from "../platform/opfs.ts";
 import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";

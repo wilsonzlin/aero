@@ -14,7 +14,7 @@ import {
 } from "./audio/mic_ring.js";
 import { startSyntheticMic } from "./audio/synthetic_mic";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
-import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
+import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs.ts";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./platform/webhid_passthrough";
 import { initAeroStatusApi } from "./api/status";

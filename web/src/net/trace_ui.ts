@@ -1,4 +1,4 @@
-import { openFileHandle } from "../platform/opfs";
+import { openFileHandle } from "../platform/opfs.ts";
 
 export interface NetTraceBackend {
   isEnabled(): boolean;

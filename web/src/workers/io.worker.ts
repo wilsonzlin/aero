@@ -29,7 +29,7 @@ import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
-import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
+import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs.ts";
 import { RemoteStreamingDisk, type RemoteDiskCacheStatus } from "../platform/remote_disk";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
