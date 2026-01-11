@@ -97,20 +97,26 @@ PortCls miniports:
 - Physically bridges them via `PcRegisterPhysicalConnection`.
 - Exposes a single **render** endpoint (fixed format):
   - 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
-- Uses a QPC-based playback clock (`KeQueryPerformanceCounter`) for position reporting (virtqueue completions are not a reliable clock in Aero).
 - Uses a periodic timer/DPC “software DMA” model that:
-  - advances play position
-  - signals the WaveRT notification event each period
   - submits one period of PCM to a backend callback
+  - advances play position + signals the WaveRT notification event only when the backend accepts the period (backpressure-aware)
 
 * `src/adapter.c` — PortCls adapter driver (`PcInitializeAdapterDriver` / `PcAddAdapterDevice`)
 * `src/topology.c` — minimal topology miniport (speaker jack + channel config properties)
 * `src/wavert.c` — WaveRT miniport + stream (periodic timer/DPC advances the ring position and pushes PCM)
 
-Virtio backend (AERO-W7-VIRTIO v1 modern transport):
+Backend layer (WaveRT ↔ virtio-snd):
+
+- The WaveRT miniport uses the backend interface in `include/backend.h`.
+- Default backend: `src/backend_virtio.c` (submits one period of PCM to `txq` each tick).
+- Fallback backend: `src/backend_null.c` (silent; used for debugging and when virtio bring-up fails).
+- To force the Null backend even when virtio is available, set `ForceNullBackend` (`REG_DWORD`) = `1` under the device's **Device Parameters** key.
+
+Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 
 * `include/backend.h` — WaveRT “backend” interface used by `wavert.c`
 * `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
+* `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
 * Shared virtio-pci modern transport:
   - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`

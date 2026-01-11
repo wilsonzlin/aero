@@ -27,14 +27,14 @@ VOID
 VirtIoSndAdapterContext_Initialize(VOID);
 
 _Must_inspect_result_ NTSTATUS
-VirtIoSndAdapterContext_Register(_In_ PUNKNOWN UnknownAdapter, _In_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+VirtIoSndAdapterContext_Register(_In_ PUNKNOWN UnknownAdapter, _In_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ BOOLEAN ForceNullBackend);
 
 VOID
 VirtIoSndAdapterContext_Unregister(_In_ PUNKNOWN UnknownAdapter);
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 _Ret_maybenull_ PVIRTIOSND_DEVICE_EXTENSION
-VirtIoSndAdapterContext_Lookup(_In_opt_ PUNKNOWN UnknownAdapter);
+VirtIoSndAdapterContext_Lookup(_In_opt_ PUNKNOWN UnknownAdapter, _Out_opt_ BOOLEAN* ForceNullBackendOut);
 
 /*
  * Best-effort teardown hook for device stop/remove paths where a PortCls callback

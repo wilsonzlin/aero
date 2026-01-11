@@ -70,6 +70,40 @@ static VOID VirtIoSndSafeRelease(_In_opt_ PUNKNOWN Unknown)
     }
 }
 
+static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
+{
+    HANDLE key;
+    UNICODE_STRING valueName;
+    UCHAR buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    PKEY_VALUE_PARTIAL_INFORMATION info;
+    ULONG resultLen;
+    BOOLEAN forceNullBackend;
+
+    forceNullBackend = FALSE;
+    key = NULL;
+
+    if (DeviceObject == NULL) {
+        return FALSE;
+    }
+
+    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &key)) || key == NULL) {
+        return FALSE;
+    }
+
+    RtlInitUnicodeString(&valueName, L"ForceNullBackend");
+    info = (PKEY_VALUE_PARTIAL_INFORMATION)buf;
+    RtlZeroMemory(buf, sizeof(buf));
+    resultLen = 0;
+
+    if (NT_SUCCESS(ZwQueryValueKey(key, &valueName, KeyValuePartialInformation, info, sizeof(buf), &resultLen)) &&
+        info->Type == REG_DWORD && info->DataLength >= sizeof(ULONG)) {
+        forceNullBackend = (*(UNALIGNED const ULONG*)info->Data) ? TRUE : FALSE;
+    }
+
+    ZwClose(key);
+    return forceNullBackend;
+}
+
 static NTSTATUS
 VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
@@ -297,7 +331,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     }
     hwStarted = TRUE;
 
-    status = VirtIoSndAdapterContext_Register(unknownAdapter, dx);
+    status = VirtIoSndAdapterContext_Register(unknownAdapter, dx, VirtIoSndReadForceNullBackend(DeviceObject));
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("VirtIoSndAdapterContext_Register failed: 0x%08X\n", (UINT)status);
         goto Exit;
@@ -316,7 +350,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         goto Exit;
     }
 
-    status = IUnknown_QueryInterface(unknownTopoPort, &IID_IPortTopology, (PVOID *)&portTopology);
+    status = IUnknown_QueryInterface(unknownTopoPort, &IID_IPortTopology, (PVOID*)&portTopology);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("QueryInterface(IPortTopology) failed: 0x%08X\n", (UINT)status);
         goto Exit;
@@ -347,7 +381,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         goto Exit;
     }
 
-    status = IUnknown_QueryInterface(unknownWavePort, &IID_IPortWaveRT, (PVOID *)&portWaveRt);
+    status = IUnknown_QueryInterface(unknownWavePort, &IID_IPortWaveRT, (PVOID*)&portWaveRt);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("QueryInterface(IPortWaveRT) failed: 0x%08X\n", (UINT)status);
         goto Exit;

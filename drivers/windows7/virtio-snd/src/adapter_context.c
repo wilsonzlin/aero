@@ -10,6 +10,7 @@ typedef struct _VIRTIOSND_ADAPTER_CONTEXT_ENTRY {
     LIST_ENTRY ListEntry;
     PUNKNOWN UnknownAdapter;
     PVIRTIOSND_DEVICE_EXTENSION Dx;
+    BOOLEAN ForceNullBackend;
 } VIRTIOSND_ADAPTER_CONTEXT_ENTRY, *PVIRTIOSND_ADAPTER_CONTEXT_ENTRY;
 
 static LIST_ENTRY g_VirtIoSndAdapterContextList = {&g_VirtIoSndAdapterContextList, &g_VirtIoSndAdapterContextList};
@@ -46,7 +47,8 @@ VirtIoSndAdapterContext_Initialize(VOID)
 }
 
 _Use_decl_annotations_
-NTSTATUS VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTENSION Dx)
+NTSTATUS
+VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTENSION Dx, BOOLEAN ForceNullBackend)
 {
     NTSTATUS status;
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY newEntry;
@@ -66,6 +68,7 @@ NTSTATUS VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DE
         existing = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
         if (existing != NULL) {
             existing->Dx = Dx;
+            existing->ForceNullBackend = ForceNullBackend;
             KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
             return STATUS_SUCCESS;
         }
@@ -80,6 +83,7 @@ NTSTATUS VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DE
     RtlZeroMemory(newEntry, sizeof(*newEntry));
     newEntry->UnknownAdapter = UnknownAdapter;
     newEntry->Dx = Dx;
+    newEntry->ForceNullBackend = ForceNullBackend;
 
     /*
      * Hold a reference so the mapping can survive after VirtIoSndStartDevice drops
@@ -94,6 +98,7 @@ NTSTATUS VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DE
         existing = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
         if (existing != NULL) {
             existing->Dx = Dx;
+            existing->ForceNullBackend = ForceNullBackend;
             status = STATUS_SUCCESS;
         } else {
             InsertTailList(&g_VirtIoSndAdapterContextList, &newEntry->ListEntry);
@@ -112,7 +117,8 @@ NTSTATUS VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DE
 }
 
 _Use_decl_annotations_
-VOID VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
+VOID
+VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
 {
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY entry;
     KIRQL oldIrql;
@@ -140,10 +146,15 @@ VOID VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
 }
 
 _Use_decl_annotations_
-PVIRTIOSND_DEVICE_EXTENSION VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapter)
+PVIRTIOSND_DEVICE_EXTENSION
+VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapter, BOOLEAN* ForceNullBackendOut)
 {
     PVIRTIOSND_DEVICE_EXTENSION dx;
     KIRQL oldIrql;
+
+    if (ForceNullBackendOut != NULL) {
+        *ForceNullBackendOut = FALSE;
+    }
 
     if (UnknownAdapter == NULL) {
         return NULL;
@@ -158,6 +169,9 @@ PVIRTIOSND_DEVICE_EXTENSION VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapt
         entry = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
         if (entry != NULL) {
             dx = entry->Dx;
+            if (ForceNullBackendOut != NULL) {
+                *ForceNullBackendOut = entry->ForceNullBackend;
+            }
         }
     }
     KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
@@ -166,7 +180,8 @@ PVIRTIOSND_DEVICE_EXTENSION VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapt
 }
 
 _Use_decl_annotations_
-VOID VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkRemoved)
+VOID
+VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkRemoved)
 {
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY entry;
     KIRQL oldIrql;

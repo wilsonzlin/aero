@@ -270,20 +270,13 @@ VirtIoSndBackendVirtio_WritePeriod(
         return STATUS_DEVICE_HARDWARE_ERROR;
     }
 
-    status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, TRUE);
-    if (status == STATUS_INSUFFICIENT_RESOURCES) {
+    status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, FALSE);
+    if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
         (VOID)VirtIoSndHwDrainTxCompletions(dx);
         if (dx->Tx.FatalError) {
             return STATUS_DEVICE_HARDWARE_ERROR;
         }
-        status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, TRUE);
-        if (status == STATUS_INSUFFICIENT_RESOURCES) {
-            /*
-             * No buffers available right now. Treat as a dropped period so the WaveRT engine
-             * can keep moving; the host side is expected to output silence on underrun.
-             */
-            return STATUS_SUCCESS;
-        }
+        status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, FALSE);
     }
 
     (VOID)VirtIoSndHwDrainTxCompletions(dx);
@@ -326,6 +319,13 @@ VirtIoSndBackendVirtio_Create(PVIRTIOSND_DEVICE_EXTENSION Dx, PVIRTIOSND_BACKEND
         return STATUS_INVALID_PARAMETER;
     }
     *OutBackend = NULL;
+
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     backend = (PVIRTIOSND_BACKEND_VIRTIO)ExAllocatePoolWithTag(NonPagedPool, sizeof(*backend), VIRTIOSND_POOL_TAG);
     if (backend == NULL) {
