@@ -133,15 +133,25 @@ int virtqueue_split_alloc_ring(const virtio_os_ops_t *os,
 void virtqueue_split_free_ring(const virtio_os_ops_t *os, void *os_ctx, virtio_dma_buffer_t *ring);
 
 int virtqueue_split_init(virtqueue_split_t *vq,
-                         const virtio_os_ops_t *os,
-                         void *os_ctx,
-                         uint16_t queue_index,
-                         uint16_t queue_size,
-                         uint32_t queue_align,
-                         const virtio_dma_buffer_t *ring_dma,
-                         virtio_bool_t event_idx,
-                         virtio_bool_t indirect_desc,
-                         uint16_t indirect_max_desc);
+                          const virtio_os_ops_t *os,
+                          void *os_ctx,
+                          uint16_t queue_index,
+                          uint16_t queue_size,
+                          uint32_t queue_align,
+                          const virtio_dma_buffer_t *ring_dma,
+                          virtio_bool_t event_idx,
+                          virtio_bool_t indirect_desc,
+                          uint16_t indirect_max_desc);
+
+/*
+ * Reset a virtqueue back to its initial empty state while retaining all
+ * allocations performed by virtqueue_split_init() (cookie array + optional
+ * indirect tables).
+ *
+ * This is intended for device reset / stop-start paths where queue memory is
+ * preserved but the device will no longer touch it (after device_status=0).
+ */
+void virtqueue_split_reset(virtqueue_split_t *vq);
 
 void virtqueue_split_destroy(virtqueue_split_t *vq);
 

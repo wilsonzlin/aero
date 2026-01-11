@@ -157,51 +157,11 @@ static VOID AerovblkAbortOutstandingRequestsLocked(_Inout_ PAEROVBLK_DEVICE_EXTE
 }
 
 static VOID AerovblkResetVirtqueueLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
-  virtqueue_split_t* vq;
-  size_t ringBytes;
-  uint16_t i;
-  size_t cookieBytes;
-
   if (devExt == NULL) {
     return;
   }
 
-  vq = &devExt->Vq;
-  if (vq->queue_size == 0 || devExt->RingDma.vaddr == NULL) {
-    return;
-  }
-
-  ringBytes = virtqueue_split_ring_size(vq->queue_size, vq->queue_align, VIRTIO_FALSE);
-  if (ringBytes != 0 && devExt->RingDma.size >= ringBytes) {
-    RtlZeroMemory(devExt->RingDma.vaddr, ringBytes);
-  }
-
-  vq->avail_idx = 0;
-  vq->last_used_idx = 0;
-  vq->last_kick_avail = 0;
-  vq->free_head = 0;
-  vq->num_free = vq->queue_size;
-
-  if (vq->desc != NULL) {
-    for (i = 0; i < vq->queue_size; ++i) {
-      vq->desc[i].next = (uint16_t)(i + 1u);
-    }
-    vq->desc[vq->queue_size - 1u].next = 0xFFFFu;
-  }
-
-  if (vq->avail != NULL) {
-    vq->avail->idx = 0;
-    vq->avail->flags = 0;
-  }
-  if (vq->used != NULL) {
-    vq->used->idx = 0;
-    vq->used->flags = 0;
-  }
-
-  if (vq->cookies != NULL) {
-    cookieBytes = sizeof(void*) * (size_t)vq->queue_size;
-    RtlZeroMemory(vq->cookies, cookieBytes);
-  }
+  virtqueue_split_reset(&devExt->Vq);
 }
 
 static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {

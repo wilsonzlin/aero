@@ -176,10 +176,10 @@ static void virtqueue_split_free_chain(virtqueue_split_t *vq, uint16_t head)
 }
 
 int virtqueue_split_init(virtqueue_split_t *vq,
-                         const virtio_os_ops_t *os,
-                         void *os_ctx,
-                         uint16_t queue_index,
-                         uint16_t queue_size,
+                          const virtio_os_ops_t *os,
+                          void *os_ctx,
+                          uint16_t queue_index,
+                          uint16_t queue_size,
                          uint32_t queue_align,
                          const virtio_dma_buffer_t *ring_dma,
                          virtio_bool_t event_idx,
@@ -284,6 +284,65 @@ int virtqueue_split_init(virtqueue_split_t *vq,
     }
 
     return VIRTIO_OK;
+}
+
+void virtqueue_split_reset(virtqueue_split_t *vq)
+{
+    uint16_t i;
+    size_t ring_required;
+
+    if (vq == NULL || vq->queue_size == 0 || vq->queue_align == 0) {
+        return;
+    }
+    if (vq->ring_dma.vaddr == NULL || vq->desc == NULL || vq->avail == NULL || vq->used == NULL) {
+        return;
+    }
+
+    ring_required = virtqueue_split_ring_size(vq->queue_size, vq->queue_align, vq->event_idx);
+    if (ring_required != 0) {
+        virtio_memset(vq->ring_dma.vaddr, 0, ring_required);
+    } else {
+        /* Defensive: fall back to clearing only the state we touch below. */
+        for (i = 0; i < vq->queue_size; i++) {
+            virtio_memset(&vq->desc[i], 0, sizeof(vq->desc[i]));
+        }
+    }
+
+    /* Driver-side indices. */
+    vq->avail_idx = 0;
+    vq->last_used_idx = 0;
+    vq->last_kick_avail = 0;
+
+    /* Rebuild descriptor free list and clear cookies. */
+    vq->free_head = 0;
+    vq->num_free = vq->queue_size;
+
+    for (i = 0; i < vq->queue_size; i++) {
+        vq->desc[i].next = (uint16_t)(i + 1u);
+        if (vq->cookies != NULL) {
+            vq->cookies[i] = NULL;
+        }
+    }
+    vq->desc[vq->queue_size - 1u].next = 0xffffu;
+
+    /* Device-visible ring indices/flags. */
+    vq->avail->flags = 0;
+    vq->avail->idx = 0;
+    vq->used->flags = 0;
+    vq->used->idx = 0;
+
+    if (vq->event_idx != VIRTIO_FALSE) {
+        if (vq->used_event != NULL) {
+            *vq->used_event = 0;
+        }
+        /*
+         * avail_event is device-written, but clearing it is harmless and keeps
+         * reset deterministic for unit tests.
+         */
+        if (vq->avail_event != NULL) {
+            *vq->avail_event = 0;
+        }
+    }
 }
 
 void virtqueue_split_destroy(virtqueue_split_t *vq)
