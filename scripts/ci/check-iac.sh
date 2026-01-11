@@ -24,6 +24,13 @@ K8S_VERSION="${K8S_VERSION:-1.28.0}"
 CHART="${CHART:-deploy/k8s/chart/aero-gateway}"
 CRD_SCHEMA_LOCATION="${CRD_SCHEMA_LOCATION:-https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json}"
 
+export TF_IN_AUTOMATION="${TF_IN_AUTOMATION:-1}"
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cache}"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+KUBECONFORM_CACHE_DIR="${KUBECONFORM_CACHE_DIR:-$HOME/.cache/kubeconform}"
+mkdir -p "$KUBECONFORM_CACHE_DIR"
+
 echo "==> Deploy manifest hygiene (labels + docker compose config)"
 # Run in "CI mode" so the script enforces docker compose availability.
 CI=true node scripts/ci/check-deploy-manifests.mjs
@@ -79,6 +86,7 @@ for values in "${values_files[@]}"; do
   helm template aero-gateway "$CHART" -n aero --kube-version "$K8S_VERSION" -f "$CHART/$values" >"$out"
 
   kubeconform \
+    -cache "$KUBECONFORM_CACHE_DIR" \
     -strict \
     -schema-location default \
     -schema-location "$CRD_SCHEMA_LOCATION" \
@@ -117,7 +125,7 @@ NODE
 done
 
 echo "==> kubeconform (raw manifests)"
-kubeconform -strict -schema-location default -schema-location "$CRD_SCHEMA_LOCATION" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
-kubeconform -strict -schema-location default -schema-location "$CRD_SCHEMA_LOCATION" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
+kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "$CRD_SCHEMA_LOCATION" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
+kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "$CRD_SCHEMA_LOCATION" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
 
 echo "All IaC checks passed."
