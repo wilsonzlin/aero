@@ -128,6 +128,12 @@ describe("usb/usb_proxy_protocol", () => {
     if (actionMsg.action.kind !== "bulkOut") throw new Error("unreachable");
     expect(getTransferablesForUsbActionMessage(actionMsg)).toEqual([actionMsg.action.data.buffer]);
 
+    // Do not transfer subviews: detaching would detach unrelated bytes from the sender.
+    const big = new Uint8Array(16);
+    const sub = new Uint8Array(big.buffer, 4, 4);
+    const subMsg: UsbActionMessage = { type: "usb.action", action: { kind: "bulkOut", id: 99, endpoint: 1, data: sub } };
+    expect(getTransferablesForUsbActionMessage(subMsg)).toBeUndefined();
+
     const completionMsg: UsbCompletionMessage = {
       type: "usb.completion",
       completion: { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(9) },

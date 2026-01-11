@@ -16,8 +16,11 @@ export type UsbProxyMessage = UsbActionMessage | UsbCompletionMessage | UsbSelec
 
 function transferablesForBytes(bytes: Uint8Array): Transferable[] | undefined {
   // Only `ArrayBuffer` instances are transferable. `SharedArrayBuffer` can be structured-cloned but not transferred.
-  if (bytes.buffer instanceof ArrayBuffer) return [bytes.buffer];
-  return undefined;
+  if (!(bytes.buffer instanceof ArrayBuffer)) return undefined;
+  // Only transfer when the view covers the full buffer so we don't accidentally detach
+  // unrelated data from the sender.
+  if (bytes.byteOffset !== 0 || bytes.byteLength !== bytes.buffer.byteLength) return undefined;
+  return [bytes.buffer];
 }
 
 export function getTransferablesForUsbActionMessage(msg: UsbActionMessage): Transferable[] | undefined {

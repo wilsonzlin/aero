@@ -62,23 +62,25 @@ function normalizeU32(value: unknown): number | null {
   return asNum;
 }
 
-function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array {
+function ensureTransferableBytes(bytes: Uint8Array): Uint8Array {
   // `postMessage(..., transfer)` only supports `ArrayBuffer`, not `SharedArrayBuffer`.
-  // Copy here so USB payloads can be transferred between the worker and main thread.
-  if (bytes.buffer instanceof ArrayBuffer) return bytes;
+  // Also, transferring detaches the *entire* underlying buffer, so ensure the
+  // view covers the full buffer before we opt into transferables.
+  const buf = bytes.buffer;
+  const canTransfer =
+    buf instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === buf.byteLength;
+  if (canTransfer) return bytes;
+
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
   return out;
 }
 
 function normalizeBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) return ensureArrayBufferBacked(value);
+  if (value instanceof Uint8Array) return ensureTransferableBytes(value);
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
-    const src = new Uint8Array(value);
-    const out = new Uint8Array(src.byteLength);
-    out.set(src);
-    return out;
+    return ensureTransferableBytes(new Uint8Array(value));
   }
   if (Array.isArray(value)) {
     if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
