@@ -476,6 +476,15 @@ foreach ($driverBuildDir in $driverBuildDirs) {
   $manifestPath = Join-Path -Path $driverSourceDir -ChildPath 'ci-package.json'
   if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     Write-Host "  -> Skipping: missing ci-package.json (treating as dev/test driver; not CI-packaged)."
+    # Avoid accidentally shipping stale packages from prior runs if a previously-packaged
+    # driver is no longer opted into CI packaging.
+    if (-not [string]::IsNullOrWhiteSpace($driverRel)) {
+      $stalePackageRoot = Resolve-ChildPathUnderRoot -Root $outputRootAbs -ChildPath $driverRel
+      if (Test-Path -LiteralPath $stalePackageRoot -PathType Container) {
+        Write-Host "     Removing stale package output: $stalePackageRoot"
+        Remove-Item -LiteralPath $stalePackageRoot -Recurse -Force -ErrorAction Stop
+      }
+    }
     $skippedMissingManifestCount++
     continue
   }
