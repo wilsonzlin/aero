@@ -1,3 +1,5 @@
+#include "aerogpu_ring.h"
+
 #include "aerogpu_kmd.h"
 #include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_umd_private.h"
@@ -132,6 +134,148 @@ static ULONG AeroGpuLegacyScanoutFormatToNew(_In_ ULONG LegacyFormat)
     }
 }
 
+static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta)
+{
+    if (!Meta) {
+        return;
+    }
+
+    AeroGpuFreeContiguous(Meta->AllocTableVa);
+    ExFreePoolWithTag(Meta, AEROGPU_POOL_TAG);
+}
+
+static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
+                                      _In_ UINT Count,
+                                      _Outptr_result_bytebuffer_(*OutSizeBytes) PVOID* OutVa,
+                                      _Out_ PHYSICAL_ADDRESS* OutPa,
+                                      _Out_ UINT* OutSizeBytes)
+{
+    if (!OutVa || !OutPa || !OutSizeBytes) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    *OutVa = NULL;
+    OutPa->QuadPart = 0;
+    *OutSizeBytes = 0;
+
+    struct aerogpu_alloc_entry* tmpEntries = NULL;
+    uint32_t* seen = NULL;
+    UINT entryCount = 0;
+
+    if (Count && List) {
+        const SIZE_T tmpBytes = (SIZE_T)Count * sizeof(*tmpEntries);
+        tmpEntries = (struct aerogpu_alloc_entry*)ExAllocatePoolWithTag(NonPagedPool, tmpBytes, AEROGPU_POOL_TAG);
+        if (!tmpEntries) {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        RtlZeroMemory(tmpEntries, tmpBytes);
+
+        UINT cap = 16;
+        const uint64_t target = (uint64_t)Count * 2ull;
+        while ((uint64_t)cap < target && cap < (1u << 30)) {
+            cap <<= 1;
+        }
+
+        const SIZE_T seenBytes = (SIZE_T)cap * sizeof(*seen);
+        seen = (uint32_t*)ExAllocatePoolWithTag(NonPagedPool, seenBytes, AEROGPU_POOL_TAG);
+        if (!seen) {
+            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        RtlZeroMemory(seen, seenBytes);
+
+        const UINT mask = cap - 1;
+
+        for (UINT i = 0; i < Count; ++i) {
+            AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
+            if (!alloc) {
+                AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has null hAllocation", i);
+                continue;
+            }
+
+            alloc->LastKnownPa.QuadPart = List[i].PhysicalAddress.QuadPart;
+
+            const uint32_t allocId = (uint32_t)alloc->AllocationId;
+            if (allocId == 0) {
+                AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has alloc_id=0", i);
+                continue;
+            }
+
+            UINT slot = (allocId * 2654435761u) & mask;
+            for (;;) {
+                const uint32_t existing = seen[slot];
+                if (existing == 0) {
+                    seen[slot] = allocId;
+
+                    tmpEntries[entryCount].alloc_id = allocId;
+                    tmpEntries[entryCount].flags = 0;
+                    tmpEntries[entryCount].gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
+                    tmpEntries[entryCount].size_bytes = (uint64_t)alloc->SizeBytes;
+                    tmpEntries[entryCount].reserved0 = 0;
+
+                    entryCount += 1;
+                    break;
+                }
+
+                if (existing == allocId) {
+                    /* Duplicate alloc_id; keep the first GPA observed. */
+                    break;
+                }
+
+                slot = (slot + 1) & mask;
+            }
+        }
+    }
+
+    const SIZE_T sizeBytes = sizeof(struct aerogpu_alloc_table_header) + ((SIZE_T)entryCount * sizeof(struct aerogpu_alloc_entry));
+    if (sizeBytes > UINT32_MAX) {
+        if (seen) {
+            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+        }
+        if (tmpEntries) {
+            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+        }
+        return STATUS_INTEGER_OVERFLOW;
+    }
+
+    PHYSICAL_ADDRESS pa;
+    PVOID va = AeroGpuAllocContiguous(sizeBytes, &pa);
+    if (!va) {
+        if (seen) {
+            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+        }
+        if (tmpEntries) {
+            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+        }
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    struct aerogpu_alloc_table_header* hdr = (struct aerogpu_alloc_table_header*)va;
+    hdr->magic = AEROGPU_ALLOC_TABLE_MAGIC;
+    hdr->abi_version = AEROGPU_ABI_VERSION_U32;
+    hdr->size_bytes = (uint32_t)sizeBytes;
+    hdr->entry_count = (uint32_t)entryCount;
+    hdr->entry_stride_bytes = (uint32_t)sizeof(struct aerogpu_alloc_entry);
+    hdr->reserved0 = 0;
+
+    if (entryCount) {
+        struct aerogpu_alloc_entry* outEntries = (struct aerogpu_alloc_entry*)(hdr + 1);
+        RtlCopyMemory(outEntries, tmpEntries, (SIZE_T)entryCount * sizeof(*outEntries));
+    }
+
+    if (seen) {
+        ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+    }
+    if (tmpEntries) {
+        ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+    }
+
+    *OutVa = va;
+    *OutPa = pa;
+    *OutSizeBytes = (UINT)sizeBytes;
+    return STATUS_SUCCESS;
+}
+
 static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICAL_ADDRESS FbPa)
 {
     const ULONG enable = Adapter->SourceVisible ? 1u : 0u;
@@ -239,11 +383,9 @@ static VOID AeroGpuFreeAllPendingSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 
         KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
 
+        AeroGpuFreeContiguous(sub->AllocTableVa);
         AeroGpuFreeContiguous(sub->DmaCopyVa);
         AeroGpuFreeContiguous(sub->DescVa);
-        if (sub->Meta) {
-            ExFreePoolWithTag(sub->Meta, AEROGPU_POOL_TAG);
-        }
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
 
         KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
@@ -273,11 +415,9 @@ static VOID AeroGpuRetireSubmissionsUpToFence(_Inout_ AEROGPU_ADAPTER* Adapter, 
             break;
         }
 
+        AeroGpuFreeContiguous(sub->AllocTableVa);
         AeroGpuFreeContiguous(sub->DmaCopyVa);
         AeroGpuFreeContiguous(sub->DescVa);
-        if (sub->Meta) {
-            ExFreePoolWithTag(sub->Meta, AEROGPU_POOL_TAG);
-        }
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
 }
@@ -1170,36 +1310,23 @@ static NTSTATUS APIENTRY AeroGpuDdiDestroyContext(_In_ const HANDLE hContext)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ ULONG Type,
-                                                  _In_ UINT AllocationCount,
+static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
                                                   _In_reads_opt_(AllocationCount) const DXGK_ALLOCATIONLIST* AllocationList,
                                                   _Out_ AEROGPU_SUBMISSION_META** MetaOut)
 {
     *MetaOut = NULL;
 
-    SIZE_T metaSize = FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations) +
-                      ((SIZE_T)AllocationCount * sizeof(aerogpu_submission_desc_allocation));
-
-    AEROGPU_SUBMISSION_META* meta =
-        (AEROGPU_SUBMISSION_META*)ExAllocatePoolWithTag(NonPagedPool, metaSize, AEROGPU_POOL_TAG);
+    AEROGPU_SUBMISSION_META* meta = (AEROGPU_SUBMISSION_META*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*meta), AEROGPU_POOL_TAG);
     if (!meta) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    RtlZeroMemory(meta, metaSize);
+    RtlZeroMemory(meta, sizeof(*meta));
 
-    meta->Type = Type;
-    meta->AllocationCount = AllocationCount;
-
-    for (UINT i = 0; i < AllocationCount; ++i) {
-        AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)AllocationList[i].hAllocation;
-        meta->Allocations[i].allocation_handle = (aerogpu_u64)(ULONG_PTR)AllocationList[i].hAllocation;
-        meta->Allocations[i].gpa = (aerogpu_u64)AllocationList[i].PhysicalAddress.QuadPart;
-        meta->Allocations[i].size_bytes = (aerogpu_u32)(alloc ? alloc->SizeBytes : 0);
-        meta->Allocations[i].reserved0 = 0;
-
-        if (alloc) {
-            alloc->LastKnownPa.QuadPart = AllocationList[i].PhysicalAddress.QuadPart;
-        }
+    NTSTATUS st =
+        AeroGpuBuildAllocTable(AllocationList, AllocationCount, &meta->AllocTableVa, &meta->AllocTablePa, &meta->AllocTableSizeBytes);
+    if (!NT_SUCCESS(st)) {
+        ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
+        return st;
     }
 
     *MetaOut = meta;
@@ -1219,8 +1346,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
     priv->Meta = NULL;
 
     if (pRender->AllocationListSize && pRender->pAllocationList) {
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(AEROGPU_SUBMIT_RENDER,
-                                               pRender->AllocationListSize,
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(pRender->AllocationListSize,
                                                pRender->pAllocationList,
                                                &priv->Meta);
         if (!NT_SUCCESS(st)) {
@@ -1244,8 +1370,7 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
     priv->Meta = NULL;
 
     if (pPresent->AllocationListSize && pPresent->pAllocationList) {
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(AEROGPU_SUBMIT_PRESENT,
-                                               pPresent->AllocationListSize,
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(pPresent->AllocationListSize,
                                                pPresent->pAllocationList,
                                                &priv->Meta);
         if (!NT_SUCCESS(st)) {
@@ -1286,61 +1411,70 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     ULONG type = AEROGPU_SUBMIT_PAGING;
     AEROGPU_SUBMISSION_META* meta = NULL;
     if (pSubmitCommand->pDmaBufferPrivateData) {
-        const AEROGPU_DMA_PRIV* priv = (const AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
+        AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
         type = priv->Type;
         meta = priv->Meta;
+        priv->Meta = NULL;
     }
 
     PHYSICAL_ADDRESS dmaPa;
     PVOID dmaVa = AeroGpuAllocContiguous(pSubmitCommand->DmaBufferSize, &dmaPa);
     if (!dmaVa) {
-        if (meta) {
-            ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
-        }
+        AeroGpuFreeSubmissionMeta(meta);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlCopyMemory(dmaVa, pSubmitCommand->pDmaBuffer, pSubmitCommand->DmaBufferSize);
 
-    const ULONG allocCount = meta ? meta->AllocationCount : 0;
-    SIZE_T descSize = sizeof(aerogpu_submission_desc_header) + (SIZE_T)allocCount * sizeof(aerogpu_submission_desc_allocation);
-
     PHYSICAL_ADDRESS descPa;
-    aerogpu_submission_desc_header* desc = (aerogpu_submission_desc_header*)AeroGpuAllocContiguous(descSize, &descPa);
+    const SIZE_T descSize = sizeof(struct aerogpu_submit_desc);
+    struct aerogpu_submit_desc* desc = (struct aerogpu_submit_desc*)AeroGpuAllocContiguous(descSize, &descPa);
     if (!desc) {
         AeroGpuFreeContiguous(dmaVa);
-        if (meta) {
-            ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
-        }
+        AeroGpuFreeSubmissionMeta(meta);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    desc->version = AEROGPU_SUBMISSION_DESC_VERSION;
-    desc->type = type;
-    desc->fence = fence;
-    desc->reserved0 = 0;
-    desc->dma_buffer_gpa = (aerogpu_u64)dmaPa.QuadPart;
-    desc->dma_buffer_size = pSubmitCommand->DmaBufferSize;
-    desc->allocation_count = allocCount;
-
-    if (allocCount && meta) {
-        aerogpu_submission_desc_allocation* out = (aerogpu_submission_desc_allocation*)(desc + 1);
-        RtlCopyMemory(out, meta->Allocations, (SIZE_T)allocCount * sizeof(*out));
+    PVOID allocTableVa = NULL;
+    PHYSICAL_ADDRESS allocTablePa;
+    UINT allocTableSizeBytes = 0;
+    allocTablePa.QuadPart = 0;
+    if (meta) {
+        allocTableVa = meta->AllocTableVa;
+        allocTablePa = meta->AllocTablePa;
+        allocTableSizeBytes = meta->AllocTableSizeBytes;
     }
+
+    desc->desc_size_bytes = (uint32_t)sizeof(*desc);
+    desc->flags = (type == AEROGPU_SUBMIT_PRESENT) ? AEROGPU_SUBMIT_FLAG_PRESENT : 0;
+    desc->context_id = 0;
+    desc->engine_id = AEROGPU_ENGINE_0;
+    desc->cmd_gpa = (uint64_t)dmaPa.QuadPart;
+    desc->cmd_size_bytes = (uint32_t)pSubmitCommand->DmaBufferSize;
+    desc->cmd_reserved0 = 0;
+    desc->alloc_table_gpa = allocTableSizeBytes ? (uint64_t)allocTablePa.QuadPart : 0;
+    desc->alloc_table_size_bytes = (uint32_t)allocTableSizeBytes;
+    desc->alloc_table_reserved0 = 0;
+    desc->signal_fence = (uint64_t)fence;
+    desc->reserved0 = 0;
 
     NTSTATUS ringSt = AeroGpuRingPushSubmit(adapter, fence, (ULONG)descSize, descPa);
     if (!NT_SUCCESS(ringSt)) {
         AeroGpuFreeContiguous(desc);
         AeroGpuFreeContiguous(dmaVa);
-        if (meta) {
-            ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
-        }
+        AeroGpuFreeSubmissionMeta(meta);
         return ringSt;
     }
 
     AEROGPU_SUBMISSION* sub =
         (AEROGPU_SUBMISSION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*sub), AEROGPU_POOL_TAG);
     if (!sub) {
-        /* Submission already sent; keep resources around until reset/stop. */
+        /*
+         * Submission already sent; keep resources around until reset/stop to
+         * avoid use-after-free if the device consumes them later.
+         */
+        if (meta) {
+            ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
+        }
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlZeroMemory(sub, sizeof(*sub));
@@ -1351,7 +1485,13 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     sub->DescVa = desc;
     sub->DescSize = descSize;
     sub->DescPa = descPa;
-    sub->Meta = meta;
+    sub->AllocTableVa = allocTableVa;
+    sub->AllocTablePa = allocTablePa;
+    sub->AllocTableSizeBytes = allocTableSizeBytes;
+
+    if (meta) {
+        ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
+    }
 
     KIRQL oldIrql;
     KeAcquireSpinLock(&adapter->PendingLock, &oldIrql);
@@ -1642,21 +1782,25 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         RtlCopyMemory((PUCHAR)dmaVa + sizeof(cmdHdr), &cmdPayload, sizeof(cmdPayload));
 
         PHYSICAL_ADDRESS descPa;
-        aerogpu_submission_desc_header* desc =
-            (aerogpu_submission_desc_header*)AeroGpuAllocContiguous(sizeof(*desc), &descPa);
+        struct aerogpu_submit_desc* desc = (struct aerogpu_submit_desc*)AeroGpuAllocContiguous(sizeof(*desc), &descPa);
         if (!desc) {
             AeroGpuFreeContiguous(dmaVa);
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
             return STATUS_SUCCESS;
         }
 
-        desc->version = AEROGPU_SUBMISSION_DESC_VERSION;
-        desc->type = AEROGPU_SUBMIT_RENDER;
-        desc->fence = fenceNoop;
+        desc->desc_size_bytes = (uint32_t)sizeof(*desc);
+        desc->flags = 0;
+        desc->context_id = 0;
+        desc->engine_id = AEROGPU_ENGINE_0;
+        desc->cmd_gpa = (uint64_t)dmaPa.QuadPart;
+        desc->cmd_size_bytes = (uint32_t)dmaSize;
+        desc->cmd_reserved0 = 0;
+        desc->alloc_table_gpa = 0;
+        desc->alloc_table_size_bytes = 0;
+        desc->alloc_table_reserved0 = 0;
+        desc->signal_fence = (uint64_t)fenceNoop;
         desc->reserved0 = 0;
-        desc->dma_buffer_gpa = (aerogpu_u64)dmaPa.QuadPart;
-        desc->dma_buffer_size = dmaSize;
-        desc->allocation_count = 0;
 
         /* Push directly to the ring under RingLock for determinism. */
         ULONG headBefore = 0;

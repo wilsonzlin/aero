@@ -48,9 +48,9 @@ typedef struct _AEROGPU_SUBMISSION_LOG {
 } AEROGPU_SUBMISSION_LOG;
 
 typedef struct _AEROGPU_SUBMISSION_META {
-    ULONG Type;
-    ULONG AllocationCount;
-    aerogpu_submission_desc_allocation Allocations[1]; /* variable length */
+    PVOID AllocTableVa;
+    PHYSICAL_ADDRESS AllocTablePa;
+    UINT AllocTableSizeBytes;
 } AEROGPU_SUBMISSION_META;
 
 typedef struct _AEROGPU_SUBMISSION {
@@ -65,7 +65,9 @@ typedef struct _AEROGPU_SUBMISSION {
     SIZE_T DescSize;
     PHYSICAL_ADDRESS DescPa;
 
-    AEROGPU_SUBMISSION_META* Meta;
+    PVOID AllocTableVa;
+    PHYSICAL_ADDRESS AllocTablePa;
+    UINT AllocTableSizeBytes;
 } AEROGPU_SUBMISSION;
 
 typedef struct _AEROGPU_ALLOCATION {

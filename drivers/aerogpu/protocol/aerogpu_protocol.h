@@ -249,15 +249,21 @@ typedef struct AEROGPU_CMD_SIGNAL_FENCE_PAYLOAD {
  * The actual VEN/DEV values are part of the virtual machine's PCI device model.
  * If your device model uses different IDs, update the INF accordingly.
  */
+#ifndef AEROGPU_PCI_VENDOR_ID
 #define AEROGPU_PCI_VENDOR_ID 0x1AED
+#endif
+#ifndef AEROGPU_PCI_DEVICE_ID
 #define AEROGPU_PCI_DEVICE_ID 0x0001
+#endif
 
 /*
  * MMIO register space (BAR0) layout.
  *
  * All registers are little-endian.
  */
+#ifndef AEROGPU_MMIO_MAGIC
 #define AEROGPU_MMIO_MAGIC 0x41524750u /* 'A''R''G''P' */
+#endif
 #define AEROGPU_MMIO_VERSION 0x00010000u
 
 enum aerogpu_mmio_reg {
