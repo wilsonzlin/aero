@@ -1154,7 +1154,11 @@ function publishSharedFramebufferFrame(): void {
 
   const base = 0xff00ff00; // RGBA green in little-endian u32
   const tileColor = sharedTileToggle ? 0xff0000ff /* RGBA red */ : base;
-  sharedTileToggle = !sharedTileToggle;
+  // Advance the toggle once per full double-buffer cycle. If we flip the color every
+  // frame while also flipping which buffer is active, each slot ends up with a
+  // stable color (slot0 always red, slot1 always green). That makes smoke tests
+  // flaky if the presenter consistently drops one parity of frames.
+  if (back === 0) sharedTileToggle = !sharedTileToggle;
 
   const backSlotSeq = Atomics.load(
     sharedHeader,
