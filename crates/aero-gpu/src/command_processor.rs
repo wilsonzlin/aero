@@ -133,6 +133,7 @@ pub enum CommandProcessorError {
     CreateRebindMismatch {
         resource_handle: u32,
     },
+    InvalidCreateBuffer,
     InvalidCreateTexture2d,
 }
 
@@ -204,6 +205,9 @@ impl std::fmt::Display for CommandProcessorError {
                 f,
                 "CREATE_* for existing handle 0x{resource_handle:08X} has mismatched immutable properties; destroy and recreate the handle"
             ),
+            CommandProcessorError::InvalidCreateBuffer => {
+                write!(f, "invalid CREATE_BUFFER parameters")
+            }
             CommandProcessorError::InvalidCreateTexture2d => {
                 write!(f, "invalid CREATE_TEXTURE2D parameters")
             }
@@ -283,7 +287,11 @@ impl AeroGpuCommandProcessor {
         if handle == 0 {
             return Err(CommandProcessorError::InvalidResourceHandle(handle));
         }
-        if self.shared_surface_handles.contains_key(&handle) {
+        if let Some(existing_underlying) = self.shared_surface_handles.get(&handle).copied() {
+            // A handle that is already bound as an alias must not be reused as a new texture handle.
+            if existing_underlying != handle {
+                return Err(CommandProcessorError::SharedSurfaceHandleInUse(handle));
+            }
             return Ok(());
         }
         // Handle reuse would corrupt the aliasing tables because this processor uses protocol
@@ -419,6 +427,9 @@ impl AeroGpuCommandProcessor {
                     if buffer_handle == 0 {
                         return Err(CommandProcessorError::InvalidResourceHandle(buffer_handle));
                     }
+                    if size_bytes == 0 || size_bytes % 4 != 0 {
+                        return Err(CommandProcessorError::InvalidCreateBuffer);
+                    }
                     let desc = ResourceDesc::Buffer {
                         usage_flags,
                         size_bytes,
@@ -464,7 +475,12 @@ impl AeroGpuCommandProcessor {
                     backing_alloc_id,
                     backing_offset_bytes,
                 } => {
-                    self.register_shared_surface(texture_handle)?;
+                    if texture_handle == 0 {
+                        return Err(CommandProcessorError::InvalidResourceHandle(texture_handle));
+                    }
+                    if width == 0 || height == 0 || mip_levels == 0 || array_layers == 0 {
+                        return Err(CommandProcessorError::InvalidCreateTexture2d);
+                    }
 
                     if backing_alloc_id != 0 && row_pitch_bytes == 0 {
                         return Err(CommandProcessorError::InvalidCreateTexture2d);
@@ -480,6 +496,14 @@ impl AeroGpuCommandProcessor {
                         row_pitch_bytes,
                     };
 
+                    if let Some(existing) = self.resources.get(&texture_handle) {
+                        if existing.desc != desc {
+                            return Err(CommandProcessorError::CreateRebindMismatch {
+                                resource_handle: texture_handle,
+                            });
+                        }
+                    }
+
                     let resource_size_bytes = desc.size_bytes()?;
                     if backing_alloc_id != 0 {
                         let alloc = Self::lookup_allocation(allocations, backing_alloc_id)?;
@@ -487,13 +511,10 @@ impl AeroGpuCommandProcessor {
                         Self::validate_range_in_allocation(alloc, offset, resource_size_bytes)?;
                     }
 
+                    self.register_shared_surface(texture_handle)?;
+
                     match self.resources.get_mut(&texture_handle) {
                         Some(existing) => {
-                            if existing.desc != desc {
-                                return Err(CommandProcessorError::CreateRebindMismatch {
-                                    resource_handle: texture_handle,
-                                });
-                            }
                             existing.backing_alloc_id = backing_alloc_id;
                             existing.backing_offset_bytes = backing_offset_bytes;
                         }

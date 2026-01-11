@@ -138,3 +138,115 @@ fn command_processor_rejects_reusing_handle_with_different_texture_desc() {
         }
     ));
 }
+
+#[test]
+fn command_processor_rejects_invalid_create_buffer_alignment() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, 0x10); // buffer_handle
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 3); // size_bytes (not COPY_BUFFER_ALIGNMENT aligned)
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    let err = proc.process_submission(&stream, 0).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidCreateBuffer));
+}
+
+#[test]
+fn command_processor_does_not_register_shared_surface_on_failed_create_texture2d() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let create_stream = build_stream(|out| {
+        // Guest-backed texture with row_pitch_bytes=0 is invalid; the processor should reject the
+        // command without registering the handle in the shared-surface tables.
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 0x10); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format (opaque numeric)
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes (invalid when guest-backed)
+            push_u32(out, 1); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    let err = proc.process_submission(&create_stream, 0).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidCreateTexture2d));
+
+    let export_stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+    });
+
+    let err = proc.process_submission(&export_stream, 0).unwrap_err();
+    assert!(matches!(
+        err,
+        CommandProcessorError::UnknownSharedSurfaceHandle(0x10)
+    ));
+}
+
+#[test]
+fn command_processor_rejects_creating_texture_under_shared_surface_alias_handle() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let stream = build_stream(|out| {
+        // Create + export + import shared surface.
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 0x10); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+        emit_packet(out, AeroGpuOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+
+        // Attempt to create a new texture using the alias handle.
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 0x20); // texture_handle (alias)
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    let err = proc.process_submission(&stream, 0).unwrap_err();
+    assert!(matches!(
+        err,
+        CommandProcessorError::SharedSurfaceHandleInUse(0x20)
+    ));
+}
