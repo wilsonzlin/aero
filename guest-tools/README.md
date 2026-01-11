@@ -138,7 +138,7 @@ Optional flags:
 - `uninstall.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 
-If the current Guest Tools media `manifest.json` has `signing_policy=none`, `uninstall.cmd` also defaults to **not** prompting about Test Signing / `nointegritychecks` changes.
+`uninstall.cmd` only prompts about Test Signing / `nointegritychecks` if `setup.cmd` previously enabled them (marker files under `C:\AeroGuestTools\`). For `signing_policy=none` media, these markers are not created by default.
 
 Output:
 

@@ -214,7 +214,6 @@ exit /b 0
 
 :maybe_disable_testsigning
 rem Only prompt if we previously enabled it.
-if /i "%SIGNING_POLICY%"=="none" exit /b 0
 if not exist "%STATE_TESTSIGN%" exit /b 0
 
 if "%ARG_FORCE%"=="1" (
@@ -240,7 +239,6 @@ exit /b 0
 
 :maybe_disable_nointegritychecks
 rem Only prompt if we previously enabled it.
-if /i "%SIGNING_POLICY%"=="none" exit /b 0
 if not exist "%STATE_NOINTEGRITY%" exit /b 0
 
 if "%ARG_FORCE%"=="1" (
