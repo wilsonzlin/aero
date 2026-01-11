@@ -9,7 +9,7 @@ export default defineConfig({
     // nested Worker scheduling / Atomics wakeups, causing flakes/timeouts.
     // Run tests in forked processes for deterministic cross-thread behavior.
     pool: "forks",
-    include: ["web/tests/**/*.test.ts", "web/src/**/*.test.ts"],
+    include: ["web/tests/**/*.test.ts", "web/src/**/*.test.ts", "web/test/**/*.vitest.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
