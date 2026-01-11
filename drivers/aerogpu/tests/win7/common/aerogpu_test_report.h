@@ -356,6 +356,21 @@ class TestReporter {
       } else {
         json_path_ = Utf8ToWideFallbackAcp(std::string(json_value));
       }
+
+      // Best-effort: truncate the report file up-front so if the process crashes before
+      // emitting a report, automation won't accidentally consume a stale JSON from a prior run.
+      //
+      // We intentionally don't treat failure here as fatal: reporting must not affect test outcome.
+      HANDLE h = CreateFileW(json_path_.c_str(),
+                             GENERIC_WRITE,
+                             0,
+                             NULL,
+                             CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL,
+                             NULL);
+      if (h != INVALID_HANDLE_VALUE) {
+        CloseHandle(h);
+      }
     }
   }
 
