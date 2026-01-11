@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1-bookworm AS builder
+ARG RUST_VERSION=1.92.0
+FROM rust:${RUST_VERSION}-bookworm AS builder
 
 WORKDIR /workspace
 
