@@ -115,6 +115,9 @@ And verifies:
 
 Packages signed driver staging folders from `out/packages/` into release artifacts under `out/artifacts/`.
 
+This step refuses to package any driver that is not explicitly opted into CI packaging via
+`drivers/<driver>/ci-package.json` (defense-in-depth against stale/stray packages under `out/packages/`).
+
 Artifacts (typical):
 
 - `AeroVirtIO-Win7-<version>-x86.zip`

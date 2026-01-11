@@ -24,6 +24,87 @@ function Resolve-RepoPath {
     return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
 }
 
+function Assert-CiPackagedDriversOnly {
+    param(
+        [Parameter(Mandatory = $true)][string] $InputRoot,
+        [Parameter(Mandatory = $true)][string] $RepoRoot
+    )
+
+    $driversRoot = Join-Path $RepoRoot "drivers"
+    if (-not (Test-Path -LiteralPath $driversRoot -PathType Container)) {
+        return
+    }
+
+    # Only enforce this gate for the CI packaging layout (out/packages/<driverRel>/<arch>/...).
+    # This prevents accidentally shipping stray/stale driver packages that were not explicitly
+    # opted into CI packaging via drivers/<driverRel>/ci-package.json.
+    $infFiles = @(Get-ChildItem -LiteralPath $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue)
+    if (-not $infFiles -or $infFiles.Count -eq 0) {
+        return
+    }
+
+    $inputTrimmed = $InputRoot.TrimEnd("\", "/")
+    $archNames = @("x86", "i386", "win32", "x64", "amd64", "x86_64", "x86-64")
+
+    $seen = @{}
+    $missing = New-Object System.Collections.Generic.List[object]
+
+    foreach ($inf in $infFiles) {
+        $srcDir = Split-Path -Parent $inf.FullName
+        $relative = ""
+        if ($srcDir.Length -ge $inputTrimmed.Length -and $srcDir.StartsWith($inputTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $relative = $srcDir.Substring($inputTrimmed.Length).TrimStart("\", "/")
+        }
+        if ([string]::IsNullOrWhiteSpace($relative)) {
+            continue
+        }
+
+        $segments = $relative -split "[\\/]+"
+        if (-not $segments -or $segments.Count -eq 0) {
+            continue
+        }
+
+        $archIndex = -1
+        for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+            $s = $segments[$i].ToLowerInvariant()
+            if ($archNames -contains $s) {
+                $archIndex = $i
+                break
+            }
+        }
+
+        # If there is no arch directory segment, this INF isn't in the CI packages layout.
+        if ($archIndex -le 0) {
+            continue
+        }
+
+        $driverRel = ($segments[0..($archIndex - 1)] -join "\")
+        if ([string]::IsNullOrWhiteSpace($driverRel)) {
+            continue
+        }
+
+        $key = $driverRel.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) {
+            continue
+        }
+        $seen[$key] = $true
+
+        $manifestPath = Join-Path (Join-Path $driversRoot $driverRel) "ci-package.json"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            [void]$missing.Add([pscustomobject]@{
+                Driver = $driverRel.Replace("\", "/")
+                ExampleInf = $inf.FullName
+                Manifest = $manifestPath
+            })
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        $list = ($missing | Sort-Object -Property Driver | ForEach-Object { "- $($_.Driver) (e.g. $($_.ExampleInf))" }) -join "`r`n"
+        throw "Refusing to package driver(s) missing drivers/<driver>/ci-package.json.`r`n`r`n$list"
+    }
+}
+
 function Get-VersionString {
     function Parse-SemverTag {
         param([Parameter(Mandatory = $true)][string] $Tag)
@@ -432,6 +513,7 @@ function New-IsoFromFolder {
 $inputRootResolved = Resolve-RepoPath -Path $InputRoot
 $certPathResolved = Resolve-RepoPath -Path $CertPath
 $outDirResolved = Resolve-RepoPath -Path $OutDir
+$repoRootResolved = Resolve-RepoPath -Path "."
 
 if (-not (Test-Path $inputRootResolved)) {
     throw "InputRoot does not exist: '$inputRootResolved'."
@@ -439,6 +521,8 @@ if (-not (Test-Path $inputRootResolved)) {
 if (-not (Test-Path $certPathResolved)) {
     throw "CertPath does not exist: '$certPathResolved'."
 }
+
+Assert-CiPackagedDriversOnly -InputRoot $inputRootResolved -RepoRoot $repoRootResolved
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Get-VersionString
