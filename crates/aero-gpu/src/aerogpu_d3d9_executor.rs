@@ -426,9 +426,10 @@ struct RasterizerState {
 impl Default for RasterizerState {
     fn default() -> Self {
         Self {
-            // Disable culling by default so callers that don't explicitly configure cull state
-            // don't depend on a particular winding convention.
-            cull_mode: cmd::AerogpuCullMode::None as u32,
+            // D3D9 defaults to `D3DCULL_CCW` with `FRONTCOUNTERCLOCKWISE = FALSE`, meaning
+            // clockwise triangles are front faces and counter-clockwise triangles are culled
+            // (back-face culling).
+            cull_mode: cmd::AerogpuCullMode::Back as u32,
             front_ccw: false,
             scissor_enable: false,
             depth_bias: 0,
