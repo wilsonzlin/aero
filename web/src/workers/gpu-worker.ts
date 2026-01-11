@@ -1036,6 +1036,13 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
   if (isDeviceLost) return;
   if (!runtimeInit) return;
 
+  // The wgpu WebGL2 presenter calls into aero-gpu-wasm and may clear the wasm D3D9 executor state
+  // via `destroy_gpu()`. On device loss we conservatively invalidate our D3D9 tracking so the
+  // next submission can re-initialize as needed.
+  aerogpuWasmD3d9Backend = null;
+  aerogpuWasmD3d9InternalCanvas = null;
+  aerogpuWasmD3d9InitBackend = null;
+
   isDeviceLost = true;
   runtimeReadySent = false;
   stopTelemetryPolling();
@@ -1649,6 +1656,11 @@ async function tryInitBackend(
     case "webgl2_wgpu": {
       const mod = await import("../gpu/wgpu-webgl2-presenter");
       const p = new mod.WgpuWebGl2Presenter();
+      // `WgpuWebGl2Presenter.init()` calls `aero-gpu-wasm.destroy_gpu()` to reset its own state.
+      // That also clears the wasm D3D9 executor state.
+      aerogpuWasmD3d9Backend = null;
+      aerogpuWasmD3d9InternalCanvas = null;
+      aerogpuWasmD3d9InitBackend = null;
       await p.init(canvas, width, height, dpr, opts);
       return p;
     }
@@ -1665,11 +1677,20 @@ async function tryInitBackend(
 }
 
 async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, height: number): Promise<void> {
+  const prevPresenterBackend = presenter?.backend ?? null;
   presenter?.destroy?.();
   presenter = null;
   presenterFallback = undefined;
   presenterErrorGeneration += 1;
   const generation = presenterErrorGeneration;
+
+  if (prevPresenterBackend === "webgl2_wgpu") {
+    // `WgpuWebGl2Presenter.destroy()` calls `aero-gpu-wasm.destroy_gpu()`, which clears both the
+    // legacy presenter state and the D3D9 executor state.
+    aerogpuWasmD3d9Backend = null;
+    aerogpuWasmD3d9InternalCanvas = null;
+    aerogpuWasmD3d9InitBackend = null;
+  }
 
   const dpr = outputDpr || 1;
 
