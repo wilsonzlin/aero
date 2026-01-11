@@ -142,10 +142,11 @@ function workerRoleToPerfWorkerKind(role: WorkerRole): number {
     case "jit":
       return WorkerKind.JIT;
     case "net":
-      // Perf HUD uses per-worker-kind SPSC ring buffers. Until we have a dedicated
-      // NET buffer, return an unused kind so the net worker simply doesn't get a
-      // perf channel attached (avoids sharing IO/JIT buffers across producers).
-      return 5;
+      // Perf HUD uses per-worker-kind SPSC ring buffers. We expose a dedicated
+      // WorkerKind for net, but the default PerfSession currently doesn't
+      // allocate a NET buffer, so net workers won't receive a perf channel
+      // attachment unless explicitly enabled in the perf layer.
+      return WorkerKind.NET;
     default: {
       const neverRole: never = role;
       throw new Error(`Unknown worker role: ${String(neverRole)}`);

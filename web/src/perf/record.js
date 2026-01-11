@@ -11,6 +11,7 @@ export const WorkerKind = Object.freeze({
   GPU: 2,
   IO: 3,
   JIT: 4,
+  NET: 5,
 });
 
 export function workerKindToString(kind) {
@@ -25,6 +26,8 @@ export function workerKindToString(kind) {
       return "io";
     case WorkerKind.JIT:
       return "jit";
+    case WorkerKind.NET:
+      return "net";
     default:
       return `worker(${kind})`;
   }

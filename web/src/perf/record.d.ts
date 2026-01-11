@@ -11,6 +11,7 @@ export const WorkerKind: Readonly<{
   GPU: 2;
   IO: 3;
   JIT: 4;
+  NET: 5;
 }>;
 
 export function workerKindToString(kind: number): string;
