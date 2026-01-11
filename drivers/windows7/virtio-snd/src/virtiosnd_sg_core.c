@@ -92,6 +92,7 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
         uint32_t page_off;
         uint32_t bytes_in_page;
         uint32_t chunk;
+        uint64_t pfn;
         uint64_t paddr;
         virtio_sg_entry_t *prev;
 
@@ -104,13 +105,23 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
         bytes_in_page = VIRTIOSND_SG_PAGE_SIZE - page_off;
         chunk = remaining < bytes_in_page ? remaining : bytes_in_page;
 
-        paddr = ((uint64_t)pfn_array[page_index] << VIRTIOSND_SG_PAGE_SHIFT) + (uint64_t)page_off;
+        pfn = (uint64_t)pfn_array[page_index];
+        if (pfn > (UINT64_MAX >> VIRTIOSND_SG_PAGE_SHIFT)) {
+            return VIRTIO_ERR_INVAL;
+        }
+        paddr = (pfn << VIRTIOSND_SG_PAGE_SHIFT) + (uint64_t)page_off;
 
         /* Coalesce adjacent physical ranges. */
         if (*inout_count != 0) {
             prev = &out[(uint16_t)(*inout_count - 1u)];
-            if (prev->device_writes == VIRTIO_FALSE && (prev->addr + (uint64_t)prev->len) == paddr) {
-                prev->len += chunk;
+            if (prev->device_writes == VIRTIO_FALSE && prev->addr <= (UINT64_MAX - (uint64_t)prev->len) &&
+                (prev->addr + (uint64_t)prev->len) == paddr) {
+                uint64_t merged_len;
+                merged_len = (uint64_t)prev->len + (uint64_t)chunk;
+                if (merged_len > UINT32_MAX) {
+                    return VIRTIO_ERR_INVAL;
+                }
+                prev->len = (uint32_t)merged_len;
             } else {
                 if (*inout_count >= max_elems) {
                     return VIRTIO_ERR_NOSPC;
@@ -257,4 +268,3 @@ int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
     *out_count = count;
     return VIRTIO_OK;
 }
-
