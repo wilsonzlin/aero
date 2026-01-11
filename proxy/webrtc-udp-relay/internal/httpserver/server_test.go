@@ -165,6 +165,43 @@ func TestICEEndpointSchema(t *testing.T) {
 	}
 }
 
+func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
+		ICEServers:      nil,
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	resp, err := http.Get(baseURL + "/webrtc/ice")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	v, ok := payload["iceServers"]
+	if !ok {
+		t.Fatalf("missing iceServers field: %#v", payload)
+	}
+	if _, ok := v.([]any); !ok {
+		t.Fatalf("iceServers=%T, want []", v)
+	}
+}
+
 func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",

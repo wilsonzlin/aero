@@ -8,7 +8,9 @@ import (
 
 func withTURNRESTCredentials(servers []webrtc.ICEServer, username, credential string) []webrtc.ICEServer {
 	if len(servers) == 0 {
-		return nil
+		// Preserve empty (non-nil) slices so JSON responses consistently encode as
+		// `[]` rather than `null`.
+		return servers
 	}
 	out := make([]webrtc.ICEServer, len(servers))
 	for i, server := range servers {

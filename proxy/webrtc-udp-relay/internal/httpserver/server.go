@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/webrtc/v4"
+
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
@@ -153,6 +155,9 @@ func (s *Server) registerRoutes() {
 			return
 		}
 		iceServers := s.cfg.ICEServers
+		if iceServers == nil {
+			iceServers = []webrtc.ICEServer{}
+		}
 		if s.cfg.TURNREST.Enabled() {
 			gen, err := turnrest.NewGenerator(turnrest.GeneratorConfig{
 				SharedSecret:    s.cfg.TURNREST.SharedSecret,
