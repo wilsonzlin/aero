@@ -99,7 +99,7 @@ Because Aero prefers worker-side I/O, there are two viable integration patterns:
 - **B) Main thread proxies all WebUSB I/O (fallback):**
   - If worker access is unavailable, or the `USBDevice` handle cannot be moved/shared, keep all WebUSB calls on the main thread and proxy operations over Aero’s existing main↔worker IPC.
 
-> `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime (see the [WebUSB probe panel](../src/main.ts) in the repo-root dev harness).
+> `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime via the production WebUSB smoke-test panel (`web/src/usb/webusb_panel.ts`) or the dedicated diagnostics page (`/webusb_diagnostics.html`). The repo-root dev harness also has a WebUSB probe panel (`src/main.ts`).
 
 See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
 

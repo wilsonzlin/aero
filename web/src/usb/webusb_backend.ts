@@ -125,6 +125,16 @@ export function dataViewToUint8Array(view: DataView): Uint8Array {
   return out;
 }
 
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array {
+  // TypeScript's `BufferSource` type excludes `SharedArrayBuffer` in some lib.dom
+  // versions, even though Chromium accepts it for WebUSB calls. Keep the backend
+  // strict-friendly by copying when the buffer is shared.
+  if (bytes.buffer instanceof ArrayBuffer) return bytes;
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
+
 function setupPacketToWebUsbParameters(setup: SetupPacket): USBControlTransferParameters {
   const parsed = parseBmRequestType(setup.bmRequestType);
   return {
@@ -250,7 +260,7 @@ export class WebUsbBackend {
           }
 
           const params = setupPacketToWebUsbParameters(action.setup);
-          const result = await this.device.controlTransferOut(params, action.data);
+          const result = await this.device.controlTransferOut(params, ensureArrayBufferBacked(action.data));
           if (result.status === "ok") {
             return { kind: "controlOut", id: action.id, status: "success", bytesWritten: result.bytesWritten };
           }
@@ -283,7 +293,7 @@ export class WebUsbBackend {
         }
         case "bulkOut": {
           const ep = endpointAddressToEndpointNumber(action.endpoint);
-          const result = await this.device.transferOut(ep, action.data);
+          const result = await this.device.transferOut(ep, ensureArrayBufferBacked(action.data));
           if (result.status === "ok") {
             return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: result.bytesWritten };
           }

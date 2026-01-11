@@ -25,7 +25,7 @@ declare global {
   }
 
   interface USBInTransferResult {
-    data?: DataView | null;
+    data: DataView | null;
     status: USBTransferStatus;
   }
 
@@ -46,7 +46,7 @@ declare global {
     readonly interfaceClass: number;
     readonly interfaceSubclass: number;
     readonly interfaceProtocol: number;
-    readonly endpoints?: USBEndpoint[];
+    readonly endpoints: USBEndpoint[];
   }
 
   interface USBDeviceFilter {
@@ -65,9 +65,9 @@ declare global {
 
   interface USBInterface {
     readonly interfaceNumber: number;
-    readonly claimed?: boolean;
-    readonly alternates?: USBAlternateInterface[];
-    readonly alternate?: USBAlternateInterface;
+    readonly claimed: boolean;
+    readonly alternates: USBAlternateInterface[];
+    readonly alternate: USBAlternateInterface;
   }
 
   interface USBConfiguration {
