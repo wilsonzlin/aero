@@ -48,6 +48,10 @@ fn pc_platform_routes_hda_mmio_through_bar0() {
     pc.memory.write_u32(bar0_base + 0x08, 1);
     let gctl = pc.memory.read_u32(bar0_base + 0x08);
     assert_ne!(gctl & 1, 0);
+
+    // PhysicalMemoryBus issues MMIO reads in chunks up to 8 bytes; ensure the HDA MMIO mapping
+    // handles 64-bit reads by splitting into supported access sizes.
+    assert_eq!(pc.memory.read_u64(bar0_base + 0x08), 0x0001_0000_0000_0001);
 }
 
 #[test]
