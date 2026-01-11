@@ -68,31 +68,7 @@ jobs:
         id: node-dir
         run: |
           set -euo pipefail
-
-          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
-            dir="$AERO_NODE_DIR"
-          elif [[ -f package.json ]]; then
-            dir="."
-          elif [[ -f frontend/package.json ]]; then
-            dir="frontend"
-          elif [[ -f web/package.json ]]; then
-            dir="web"
-          else
-            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
-            exit 1
-          fi
-
-          lockfile="$dir/package-lock.json"
-          if [[ "$dir" == "." ]]; then
-            lockfile="package-lock.json"
-          fi
-          if [[ ! -f "$lockfile" ]]; then
-            echo "package-lock.json not found at '$lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
-            exit 1
-          fi
-
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          node scripts/ci/detect-node-dir.mjs --require-lockfile --github-output "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4

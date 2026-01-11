@@ -46,32 +46,32 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
-            dir="$AERO_NODE_DIR"
-          elif [[ -f head/package.json ]]; then
-            dir="."
-          elif [[ -f head/frontend/package.json ]]; then
-            dir="frontend"
-          elif [[ -f head/web/package.json ]]; then
-            dir="web"
-          else
-            echo "package.json not found in candidate checkout. Set AERO_NODE_DIR to the directory containing package.json." >&2
+          detected="$(node head/scripts/ci/detect-node-dir.mjs --require-lockfile --github-output /dev/null)"
+          dir=""
+          lockfile=""
+          while IFS="=" read -r key value; do
+            case "$key" in
+              dir)
+                dir="$value"
+                ;;
+              lockfile)
+                lockfile="$value"
+                ;;
+            esac
+          done <<<"$detected"
+
+          if [[ -z "$dir" || -z "$lockfile" ]]; then
+            echo "detect-node-dir did not return expected outputs" >&2
+            echo "$detected" >&2
             exit 1
           fi
 
-          lockfile="$dir/package-lock.json"
           if [[ "$dir" == "." ]]; then
-            lockfile="package-lock.json"
             full_dir="head"
           else
             full_dir="head/$dir"
           fi
           full_lockfile="head/$lockfile"
-
-          if [[ ! -f "$full_lockfile" ]]; then
-            echo "package-lock.json not found at '$full_lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
-            exit 1
-          fi
 
           echo "dir=$full_dir" >> "$GITHUB_OUTPUT"
           echo "lockfile=$full_lockfile" >> "$GITHUB_OUTPUT"
@@ -81,32 +81,32 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
-            dir="$AERO_NODE_DIR"
-          elif [[ -f base/package.json ]]; then
-            dir="."
-          elif [[ -f base/frontend/package.json ]]; then
-            dir="frontend"
-          elif [[ -f base/web/package.json ]]; then
-            dir="web"
-          else
-            echo "package.json not found in baseline checkout. Set AERO_NODE_DIR to the directory containing package.json." >&2
+          detected="$(node base/scripts/ci/detect-node-dir.mjs --require-lockfile --github-output /dev/null)"
+          dir=""
+          lockfile=""
+          while IFS="=" read -r key value; do
+            case "$key" in
+              dir)
+                dir="$value"
+                ;;
+              lockfile)
+                lockfile="$value"
+                ;;
+            esac
+          done <<<"$detected"
+
+          if [[ -z "$dir" || -z "$lockfile" ]]; then
+            echo "detect-node-dir did not return expected outputs" >&2
+            echo "$detected" >&2
             exit 1
           fi
 
-          lockfile="$dir/package-lock.json"
           if [[ "$dir" == "." ]]; then
-            lockfile="package-lock.json"
             full_dir="base"
           else
             full_dir="base/$dir"
           fi
           full_lockfile="base/$lockfile"
-
-          if [[ ! -f "$full_lockfile" ]]; then
-            echo "package-lock.json not found at '$full_lockfile'. This workflow expects npm; ensure a lockfile exists." >&2
-            exit 1
-          fi
 
           echo "dir=$full_dir" >> "$GITHUB_OUTPUT"
           echo "lockfile=$full_lockfile" >> "$GITHUB_OUTPUT"

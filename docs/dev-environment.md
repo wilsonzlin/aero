@@ -35,14 +35,14 @@ From the repo root **inside the container**:
 
 ```bash
 just setup
-./scripts/test-all.sh --skip-e2e
+cargo xtask test-all --skip-e2e
 ```
 
-By default, `./scripts/test-all.sh` uses the **repo root** Node workspace (`package.json` in the root) which matches CI.
+By default, `cargo xtask test-all` uses the **repo root** Node workspace (`package.json` in the root) which matches CI.
 If you want to run tests against a different Node workspace (e.g. `web/`), override it:
 
 ```bash
-AERO_NODE_DIR=web ./scripts/test-all.sh --skip-e2e
+AERO_NODE_DIR=web cargo xtask test-all --skip-e2e
 ```
 
 ### Running Playwright E2E tests (optional)
@@ -58,9 +58,9 @@ npx playwright install chromium
 Then run:
 
 ```bash
-./scripts/test-all.sh
+cargo xtask test-all
 ```
 
 ## Option B: Nix (optional)
 
-This repo currently does not ship a Nix flake. If you’d like to contribute one, it should provide a `devShell` with the same toolchain as the dev container and document the equivalent validation steps (`just setup` + `./scripts/test-all.sh --skip-e2e`).
+This repo currently does not ship a Nix flake. If you’d like to contribute one, it should provide a `devShell` with the same toolchain as the dev container and document the equivalent validation steps (`just setup` + `cargo xtask test-all --skip-e2e`).

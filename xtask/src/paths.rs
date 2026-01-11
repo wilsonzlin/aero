@@ -14,6 +14,59 @@ pub fn repo_root() -> Result<PathBuf> {
 }
 
 pub fn resolve_node_dir(repo_root: &Path, cli_override: Option<&str>) -> Result<PathBuf> {
+    // Prefer sharing detection logic with other tooling/CI by using the Node-based resolver when
+    // available.
+    let detect_script = repo_root.join("scripts/ci/detect-node-dir.mjs");
+    if detect_script.is_file() {
+        let mut cmd = Command::new("node");
+        cmd.current_dir(repo_root).arg(&detect_script);
+        if let Some(dir) = cli_override {
+            cmd.args(["--node-dir", dir]);
+        }
+
+        let output = cmd.output().map_err(|err| match err.kind() {
+            io::ErrorKind::NotFound => {
+                XtaskError::Message("missing required command: node".to_string())
+            }
+            _ => XtaskError::Message(format!("failed to run detect-node-dir script: {err}")),
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(XtaskError::Message(format!(
+                "detect-node-dir failed (exit code {:?}): {stderr}",
+                output.status.code()
+            )));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut dir: Option<&str> = None;
+        for line in stdout.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key.trim() == "dir" {
+                dir = Some(value.trim());
+                break;
+            }
+        }
+
+        let Some(dir) = dir.filter(|v| !v.is_empty()) else {
+            return Err(XtaskError::Message(
+                "detect-node-dir did not return a workspace directory".to_string(),
+            ));
+        };
+
+        let resolved = normalize_dir(repo_root, dir);
+        if resolved.join("package.json").is_file() {
+            return Ok(resolved);
+        }
+
+        return Err(XtaskError::Message(format!(
+            "detected node dir does not contain package.json: {resolved:?}"
+        )));
+    }
+
     if let Some(dir) = cli_override {
         return normalize_and_validate_node_dir(repo_root, dir);
     }

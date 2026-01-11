@@ -424,31 +424,7 @@ jobs:
         id: node-dir
         run: |
           set -euo pipefail
-
-          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
-            dir="$AERO_NODE_DIR"
-          elif [[ -f package.json ]]; then
-            dir="."
-          elif [[ -f frontend/package.json ]]; then
-            dir="frontend"
-          elif [[ -f web/package.json ]]; then
-            dir="web"
-          else
-            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
-            exit 1
-          fi
-
-          lockfile=""
-          if [[ "$dir" == "." ]]; then
-            if [[ -f package-lock.json ]]; then
-              lockfile="package-lock.json"
-            fi
-          elif [[ -f "$dir/package-lock.json" ]]; then
-            lockfile="$dir/package-lock.json"
-          fi
-
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          node scripts/ci/detect-node-dir.mjs --github-output "$GITHUB_OUTPUT"
 
       - name: Setup Node
         if: steps.node-dir.outputs.lockfile == ''
@@ -568,46 +544,7 @@ jobs:
         id: node-dir
         shell: pwsh
         run: |
-          $dir = $env:AERO_NODE_DIR
-
-          if ([string]::IsNullOrWhiteSpace($dir)) {
-            if (Test-Path "package.json") {
-              $dir = "."
-            } elseif (Test-Path "frontend/package.json") {
-              $dir = "frontend"
-            } elseif (Test-Path "web/package.json") {
-              $dir = "web"
-            } else {
-              Write-Error "package.json not found. Set AERO_NODE_DIR to the directory containing package.json."
-              exit 1
-            }
-          }
-
-          # Normalise to forward slashes so downstream tools/actions behave the
-          # same across OSes (esp. cache-dependency-path on Windows).
-          $dir = $dir.Trim() -replace '\\', '/'
-          if ($dir -ne "." -and $dir -ne "/" -and $dir -notmatch '^[A-Za-z]:/$') {
-            $dir = $dir.TrimEnd('/')
-          }
-
-          # Cache/dependency install strategy:
-          # - If a lockfile exists, use `npm ci` and enable npm caching.
-          # - If there is no lockfile (e.g. new package / local experimentation),
-          #   fall back to `npm install` (without npm caching).
-          $lockfile = ""
-          if ($dir -eq ".") {
-            if (Test-Path -LiteralPath "package-lock.json") {
-              $lockfile = "package-lock.json"
-            }
-          } else {
-            $candidate = "$dir/package-lock.json"
-            if (Test-Path -LiteralPath $candidate) {
-              $lockfile = $candidate
-            }
-          }
-
-          "dir=$dir" >> $env:GITHUB_OUTPUT
-          "lockfile=$lockfile" >> $env:GITHUB_OUTPUT
+          node scripts/ci/detect-node-dir.mjs --github-output $env:GITHUB_OUTPUT
 
       - name: Setup Node
         if: steps.node-dir.outputs.lockfile == ''
@@ -678,31 +615,7 @@ jobs:
         id: node-dir
         run: |
           set -euo pipefail
-
-          if [[ -n "${AERO_NODE_DIR:-}" ]]; then
-            dir="$AERO_NODE_DIR"
-          elif [[ -f package.json ]]; then
-            dir="."
-          elif [[ -f frontend/package.json ]]; then
-            dir="frontend"
-          elif [[ -f web/package.json ]]; then
-            dir="web"
-          else
-            echo "package.json not found. Set AERO_NODE_DIR to the directory containing package.json." >&2
-            exit 1
-          fi
-
-          lockfile=""
-          if [[ "$dir" == "." ]]; then
-            if [[ -f package-lock.json ]]; then
-              lockfile="package-lock.json"
-            fi
-          elif [[ -f "$dir/package-lock.json" ]]; then
-            lockfile="$dir/package-lock.json"
-          fi
-
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          node scripts/ci/detect-node-dir.mjs --github-output "$GITHUB_OUTPUT"
 
       - name: Setup Node
         if: steps.node-dir.outputs.lockfile == ''
