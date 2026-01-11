@@ -2872,6 +2872,18 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
 
+            /*
+             * Clear any pending vblank status before enabling delivery.
+             *
+             * Some device models may latch the vblank status bit even while the
+             * IRQ is masked; without this defensive ACK, a later enable could
+             * trigger an immediate "stale" interrupt and break
+             * D3DKMTWaitForVerticalBlankEvent pacing.
+             */
+            if (EnableInterrupt) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            }
+
             ULONG enable = 0;
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
                 enable = adapter->IrqEnableMask;
