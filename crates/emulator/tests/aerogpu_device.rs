@@ -2493,8 +2493,9 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
     assert_eq!(center & 0x00FF_FFFF, 0x0000_FF00);
 }
 
-#[test]
-fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
+fn exec_d3d11_fullscreen_triangle_center_pixel(
+    push_blend_state: impl FnOnce(&mut Vec<u8>),
+) -> u32 {
     let mut mem = VecMemory::new(0x40_000);
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
 
@@ -2667,31 +2668,8 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
     push_u32(&mut stream, 4);
     push_u32(&mut stream, 0);
 
-    // SET_BLEND_STATE: standard src_alpha/inv_src_alpha.
-    //
-    // The protocol's blend state carries a full D3D11-style payload (separate alpha factors,
-    // blend constant, sample mask). For this test we only care about RGB blending; keep the
-    // remaining fields at sensible defaults.
-    push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
-    push_u32(&mut stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
-    // BlendState { enable, src_factor, dst_factor, blend_op, ... }
-    push_u32(&mut stream, 1); // enable
-    push_u32(&mut stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
-    push_u32(&mut stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
-    push_u32(&mut stream, cmd::AerogpuBlendOp::Add as u32);
-    // color_write_mask (u8) + reserved0[3]
-    push_u32(&mut stream, 0xF);
-    // Alpha blend factors/op (unused by the software executor; keep consistent).
-    push_u32(&mut stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
-    push_u32(&mut stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
-    push_u32(&mut stream, cmd::AerogpuBlendOp::Add as u32);
-    // blend_constant_rgba_f32
-    push_f32(&mut stream, 0.0);
-    push_f32(&mut stream, 0.0);
-    push_f32(&mut stream, 0.0);
-    push_f32(&mut stream, 0.0);
-    // sample_mask
-    push_u32(&mut stream, u32::MAX);
+    // SET_BLEND_STATE.
+    push_blend_state(&mut stream);
 
     // CLEAR red.
     push_u32(&mut stream, cmd::AerogpuCmdOpcode::Clear as u32);
@@ -2747,13 +2725,127 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
 
     assert_eq!(dev.regs.completed_fence, 1);
 
-    let center = read_pixel_bgra(
+    read_pixel_bgra(
         &mut mem,
         rt_alloc_gpa,
         rt_pitch,
         rt_width / 2,
         rt_height / 2,
-    );
+    )
+}
+
+#[test]
+fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
+    let center = exec_d3d11_fullscreen_triangle_center_pixel(|stream| {
+        // Standard src_alpha/inv_src_alpha.
+        //
+        // The protocol's blend state carries a full D3D11-style payload (separate alpha factors,
+        // blend constant, sample mask). For this test we only care about RGB blending; keep the
+        // remaining fields at sensible defaults.
+        push_u32(stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
+        push_u32(stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
+        // BlendState { enable, src_factor, dst_factor, blend_op, ... }
+        push_u32(stream, 1); // enable
+        push_u32(stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        // color_write_mask (u8) + reserved0[3]
+        push_u32(stream, 0xF);
+        // Alpha blend factors/op.
+        push_u32(stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        // blend_constant_rgba_f32
+        push_f32(stream, 0.0);
+        push_f32(stream, 0.0);
+        push_f32(stream, 0.0);
+        push_f32(stream, 0.0);
+        // sample_mask
+        push_u32(stream, u32::MAX);
+    });
+    let b = (center & 0xFF) as u8;
+    let g = ((center >> 8) & 0xFF) as u8;
+    let r = ((center >> 16) & 0xFF) as u8;
+
+    assert_eq!(b, 0);
+    assert!((r as i32 - 0x80).abs() <= 2);
+    assert!((g as i32 - 0x80).abs() <= 2);
+}
+
+#[test]
+fn cmd_exec_d3d11_blend_factor_constant_matches_expected() {
+    let center = exec_d3d11_fullscreen_triangle_center_pixel(|stream| {
+        push_u32(stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
+        push_u32(stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
+        push_u32(stream, 1); // enable
+        push_u32(stream, cmd::AerogpuBlendFactor::BlendFactor as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvBlendFactor as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        push_u32(stream, 0xF); // write mask + padding
+        // Alpha blend: out_a = src_a
+        push_u32(stream, cmd::AerogpuBlendFactor::One as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::Zero as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        for _ in 0..4 {
+            push_f32(stream, 0.25);
+        }
+        push_u32(stream, u32::MAX);
+    });
+
+    let b = (center & 0xFF) as i32;
+    let g = ((center >> 8) & 0xFF) as i32;
+    let r = ((center >> 16) & 0xFF) as i32;
+    let a = ((center >> 24) & 0xFF) as i32;
+
+    assert!((r - 0xBF).abs() <= 2, "r={r}");
+    assert!((g - 0x40).abs() <= 2, "g={g}");
+    assert!(b.abs() <= 2, "b={b}");
+    assert!((a - 0x80).abs() <= 2, "a={a}");
+}
+
+#[test]
+fn cmd_exec_d3d11_sample_mask_discards_draw() {
+    let center = exec_d3d11_fullscreen_triangle_center_pixel(|stream| {
+        push_u32(stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
+        push_u32(stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
+        push_u32(stream, 1); // enable
+        push_u32(stream, cmd::AerogpuBlendFactor::BlendFactor as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvBlendFactor as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        push_u32(stream, 0xF);
+        push_u32(stream, cmd::AerogpuBlendFactor::One as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::Zero as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        for _ in 0..4 {
+            push_f32(stream, 0.25);
+        }
+        // sample_mask bit 0 is cleared => draw is discarded for sample_count=1.
+        push_u32(stream, 0);
+    });
+
+    let b = (center & 0xFF) as u8;
+    let g = ((center >> 8) & 0xFF) as u8;
+    let r = ((center >> 16) & 0xFF) as u8;
+    let a = ((center >> 24) & 0xFF) as u8;
+
+    assert_eq!(b, 0);
+    assert_eq!(g, 0);
+    assert_eq!(r, 0xFF);
+    assert_eq!(a, 0xFF);
+}
+
+#[test]
+fn cmd_exec_d3d11_legacy_blend_state_packet_still_works() {
+    let center = exec_d3d11_fullscreen_triangle_center_pixel(|stream| {
+        // Legacy packet size (28 bytes): opcode+size+5 u32s.
+        push_u32(stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
+        push_u32(stream, 28);
+        push_u32(stream, 1); // enable
+        push_u32(stream, cmd::AerogpuBlendFactor::SrcAlpha as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvSrcAlpha as u32);
+        push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
+        push_u32(stream, 0xF); // write mask + padding
+    });
     let b = (center & 0xFF) as u8;
     let g = ((center >> 8) & 0xFF) as u8;
     let r = ((center >> 16) & 0xFF) as u8;
