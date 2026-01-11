@@ -27,6 +27,7 @@ The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:
     `include/aerogpu_legacy_abi.h`
   * PCI IDs: `VID=0x1AED`, `DID=0x0001`
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
+  * This ABI is retained for compatibility during migration and is expected to be removed once Task 530 completes.
 
 The Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned `PCI\\VEN_A3A0&DEV_0001` device by default.
 The legacy `PCI\\VEN_1AED&DEV_0001` path is retained for bring-up/compatibility and requires a custom INF plus enabling the emulator legacy device model (`emulator` feature `aerogpu-legacy`).
@@ -196,7 +197,7 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`)
   - returns the detected device ABI (`detected_mmio_magic`), ABI version, and (for versioned devices) feature bits
-  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response
+  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response (legacy bring-up ABI; see `drivers/aerogpu/protocol/aerogpu_protocol.h`)
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 
