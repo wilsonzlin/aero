@@ -93,7 +93,7 @@ Audio: PCI device 1af4:1059
 ## Contract v1 summary (virtio-snd behavior)
 
 - The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and `REV_...`). The Aero
-  contract-v1 INF is strict and requires `DEV_1059&REV_01`.
+  contract-v1 INF is strict and requires `PCI\VEN_1AF4&DEV_1059&REV_01`.
 - Transport: virtio-pci modern-only (vendor-specific caps + BAR0 MMIO)
 - Required features: `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only
 - Queues: control/event/rx=64, tx=256

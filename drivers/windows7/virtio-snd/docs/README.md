@@ -85,7 +85,7 @@ The current shipped PortCls miniports expose **stream 0 only** as a Windows rend
 
 ### QEMU support (manual testing)
 
-Because the INF requires `DEV_1059&REV_01`, stock QEMU defaults often will **not** bind without additional configuration.
+Because the INF requires `PCI\VEN_1AF4&DEV_1059&REV_01`, stock QEMU defaults often will **not** bind without additional configuration.
 
 To test the strict Aero contract v1 identity under QEMU (only if your QEMU build exposes these properties):
 
@@ -624,7 +624,7 @@ Note: the default Guest Tools tree does not include the QEMU compatibility varia
 
 INF selection note:
 
-- `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `DEV_1059&REV_01` and installs service `aeroviosnd`).
+- `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `PCI\VEN_1AF4&DEV_1059&REV_01` and installs service `aeroviosnd`).
 - `aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI ID with no revision gate and installs service `aeroviosnd_legacy`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
   It installs the same driver/service as `aero-virtio-snd.inf` and matches the same Aero contract v1 HWIDs,
