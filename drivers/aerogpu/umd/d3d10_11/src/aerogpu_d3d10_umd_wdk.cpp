@@ -1742,11 +1742,27 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
 
+    bool want_host_owned = false;
+    if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
+      const uint32_t usage = static_cast<uint32_t>(pDesc->Usage);
+    #ifdef D3D10_USAGE_DYNAMIC
+      want_host_owned = (usage == static_cast<uint32_t>(D3D10_USAGE_DYNAMIC));
+    #else
+      want_host_owned = (usage == 2u);
+    #endif
+    }
+    want_host_owned = want_host_owned && !is_shared;
+
     HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
       res->~AeroGpuResource();
       return hr;
+    }
+
+    if (want_host_owned) {
+      res->backing_alloc_id = 0;
+      res->backing_offset_bytes = 0;
     }
 
     auto copy_initial_data = [&](auto init_data) -> HRESULT {
@@ -1850,11 +1866,27 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
 #endif
+
+    bool want_host_owned = false;
+    if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
+      const uint32_t usage = static_cast<uint32_t>(pDesc->Usage);
+    #ifdef D3D10_USAGE_DYNAMIC
+      want_host_owned = (usage == static_cast<uint32_t>(D3D10_USAGE_DYNAMIC));
+    #else
+      want_host_owned = (usage == 2u);
+    #endif
+    }
+    want_host_owned = want_host_owned && !is_shared;
     HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
       res->~AeroGpuResource();
       return hr;
+    }
+
+    if (want_host_owned) {
+      res->backing_alloc_id = 0;
+      res->backing_offset_bytes = 0;
     }
 
     auto copy_initial_data = [&](auto init_data) -> HRESULT {

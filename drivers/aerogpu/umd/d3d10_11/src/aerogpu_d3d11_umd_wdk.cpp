@@ -2738,6 +2738,11 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return E_OUTOFMEMORY;
     }
 
+    if (res->usage == kD3D11UsageDynamic && !is_shared) {
+      res->backing_alloc_id = 0;
+      res->backing_offset_bytes = 0;
+    }
+
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
     AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u size=%llu",
                          static_cast<unsigned>(res->handle),
@@ -2815,6 +2820,11 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       deallocate_if_needed();
       res->~Resource();
       return E_OUTOFMEMORY;
+    }
+
+    if (res->usage == kD3D11UsageDynamic && !is_shared) {
+      res->backing_alloc_id = 0;
+      res->backing_offset_bytes = 0;
     }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
