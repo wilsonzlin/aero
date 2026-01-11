@@ -43,16 +43,22 @@ uint64_t ReadMonitoredFenceValue(volatile uint64_t* ptr) {
   }
 #if defined(_M_IX86)
   // 32-bit UMDs can observe torn 64-bit reads if the monitored fence value is
-  // updated concurrently. Use an interlocked compare-exchange as an atomic read.
+  // updated concurrently. Avoid that by reading the high 32 bits twice around a
+  // low 32-bit read and retrying if the high part changes.
   //
-  // Important: some stacks may map the fence page as read-only. Use a sentinel
-  // comparand value that should never occur in practice (all bits set) so the
-  // compare-exchange doesn't attempt to write.
-  if ((reinterpret_cast<std::uintptr_t>(ptr) & 7u) == 0) {
-    constexpr LONG64 kSentinelNeverMatches = static_cast<LONG64>(-1);
-    return static_cast<uint64_t>(InterlockedCompareExchange64(reinterpret_cast<volatile LONG64*>(ptr),
-                                                              kSentinelNeverMatches,
-                                                              kSentinelNeverMatches));
+  // This avoids interlocked primitives that might attempt to write to the fence
+  // page (some stacks map it read-only).
+  const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
+  if ((addr & 3u) == 0) {
+    volatile uint32_t* p32 = reinterpret_cast<volatile uint32_t*>(ptr);
+    for (;;) {
+      const uint32_t hi1 = p32[1];
+      const uint32_t lo = p32[0];
+      const uint32_t hi2 = p32[1];
+      if (hi1 == hi2) {
+        return (static_cast<uint64_t>(hi2) << 32) | static_cast<uint64_t>(lo);
+      }
+    }
   }
 #endif
   return static_cast<uint64_t>(*ptr);
