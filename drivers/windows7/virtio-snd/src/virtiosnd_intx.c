@@ -6,6 +6,10 @@
 #include "virtiosnd.h"
 #include "virtiosnd_intx.h"
 
+#ifndef CM_RESOURCE_INTERRUPT_MESSAGE
+#define CM_RESOURCE_INTERRUPT_MESSAGE 0x0004
+#endif
+
 static __forceinline BOOLEAN VirtIoSndIntxStopping(_In_ const PVIRTIOSND_DEVICE_EXTENSION Dx) {
     return (Dx->Stopping != 0) ? TRUE : FALSE;
 }
@@ -64,6 +68,7 @@ VOID VirtIoSndIntxInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx) {
 _Use_decl_annotations_
 NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOURCE_LIST TranslatedResources) {
     ULONG listIndex;
+    BOOLEAN sawMessageInterrupt;
 
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -79,6 +84,8 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
         return STATUS_RESOURCE_TYPE_NOT_FOUND;
     }
 
+    sawMessageInterrupt = FALSE;
+
     for (listIndex = 0; listIndex < TranslatedResources->Count; ++listIndex) {
         PCM_FULL_RESOURCE_DESCRIPTOR full = &TranslatedResources->List[listIndex];
         PCM_PARTIAL_RESOURCE_DESCRIPTOR desc = full->PartialResourceList.PartialDescriptors;
@@ -92,6 +99,7 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
 
             // Contract v1 requires line-based INTx; ignore message-signaled interrupts.
             if ((desc[i].Flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
+                sawMessageInterrupt = TRUE;
                 continue;
             }
 
@@ -99,7 +107,7 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
             Dx->InterruptIrql = (KIRQL)desc[i].u.Interrupt.Level;
             Dx->InterruptAffinity = desc[i].u.Interrupt.Affinity;
             Dx->InterruptMode = ((desc[i].Flags & CM_RESOURCE_INTERRUPT_LATCHED) != 0) ? Latched : LevelSensitive;
-            Dx->InterruptShareVector = (desc[i].ShareDisposition == CmResourceShareDispositionShared) ? TRUE : FALSE;
+            Dx->InterruptShareVector = (desc[i].ShareDisposition == CmResourceShareShared) ? TRUE : FALSE;
 
             VIRTIOSND_TRACE(
                 "INTx resource: vector=%lu level=%lu affinity=%I64x mode=%s share=%u\n",
@@ -113,7 +121,7 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
         }
     }
 
-    return STATUS_RESOURCE_TYPE_NOT_FOUND;
+    return sawMessageInterrupt ? STATUS_NOT_SUPPORTED : STATUS_RESOURCE_TYPE_NOT_FOUND;
 }
 
 _Use_decl_annotations_
