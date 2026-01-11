@@ -185,6 +185,13 @@ pub fn run_batch_with_assists<B: CpuBus>(
                     exit: BatchExit::Halted,
                 };
             }
+            Ok(StepExit::BiosInterrupt(vector)) => {
+                executed += 1;
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::BiosInterrupt(vector),
+                };
+            }
             Ok(StepExit::Assist(r)) => {
                 // Preserve the "basic block" behavior of `run_batch` by returning
                 // `Branch` when the assist instruction changes RIP.
