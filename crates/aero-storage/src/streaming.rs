@@ -1109,7 +1109,7 @@ impl StreamingDisk {
                     let actual = extract_validator(resp.headers());
                     if actual
                         .as_deref()
-                        .is_some_and(|etag| etag != expected.as_str())
+                        .is_some_and(|actual| !validators_match(expected, actual))
                     {
                         return Err(StreamingDiskError::ValidatorMismatch {
                             expected: Some(expected.clone()),
@@ -1124,6 +1124,20 @@ impl StreamingDisk {
             return Err(StreamingDiskError::HttpStatus {
                 status: resp.status().as_u16(),
             });
+        }
+
+        // Servers that don't implement `If-Range` may still return `206` after the representation
+        // has changed. When the response includes a validator (ETag / Last-Modified), detect
+        // mismatches to avoid mixing bytes from different versions under one cache identity.
+        if let Some(expected) = &self.inner.validator {
+            if let Some(actual) = extract_validator(resp.headers()) {
+                if !validators_match(expected, &actual) {
+                    return Err(StreamingDiskError::ValidatorMismatch {
+                        expected: Some(expected.clone()),
+                        actual: Some(actual),
+                    });
+                }
+            }
         }
 
         if let Some(encoding) = resp
@@ -1290,6 +1304,21 @@ fn extract_validator(headers: &HeaderMap) -> Option<String> {
                 .and_then(|v| v.to_str().ok())
                 .map(|v| v.to_string())
         })
+}
+
+fn validators_match(expected: &str, actual: &str) -> bool {
+    let expected = expected.trim();
+    let actual = actual.trim();
+
+    let expected_weak = expected
+        .strip_prefix("W/")
+        .or_else(|| expected.strip_prefix("w/"));
+    let actual_weak = actual.strip_prefix("W/").or_else(|| actual.strip_prefix("w/"));
+
+    match (expected_weak, actual_weak) {
+        (Some(expected), Some(actual)) => expected == actual,
+        _ => expected == actual,
+    }
 }
 
 fn cache_backend_looks_populated(

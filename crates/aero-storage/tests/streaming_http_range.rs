@@ -1035,3 +1035,43 @@ async fn weak_etag_does_not_break_range_fetches() {
 
     let _ = shutdown.send(());
 }
+
+#[tokio::test]
+async fn weak_etag_change_is_detected_even_without_if_range() {
+    // When the validator is a weak ETag, `StreamingDisk` omits `If-Range` to avoid servers
+    // treating it as a mismatch per RFC 9110. We still want to detect when the server starts
+    // serving a different version of the representation, so we compare the validator on `206`
+    // responses when present.
+    let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        r#"W/"etag-v1""#,
+        false,
+        None,
+        false,
+        true,
+        false,
+        None,
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    disk.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..16]);
+
+    // Simulate the remote changing while the disk is open.
+    *state.etag.lock().unwrap() = r#"W/"etag-v2""#.to_string();
+
+    let err = disk.read_at(1024, &mut buf).await.err().unwrap();
+    assert!(matches!(err, StreamingDiskError::ValidatorMismatch { .. }));
+
+    let _ = shutdown.send(());
+}
