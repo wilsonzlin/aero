@@ -27,7 +27,7 @@ def check_wrapper_defaults() -> list[str]:
         return errors
 
     ps1_text = ps1_path.read_text(encoding="utf-8")
-    m = re.search(r'\[string\]\$Profile\s*=\s*"([^"]+)"', ps1_text)
+    m = re.search(r"\[string\]\$Profile\s*=\s*['\"]([^'\"]+)['\"]", ps1_text)
     if not m:
         errors.append(f"Could not find default Profile parameter in {ps1_path}")
     else:
@@ -38,7 +38,7 @@ def check_wrapper_defaults() -> list[str]:
             )
 
     sh_text = sh_path.read_text(encoding="utf-8")
-    m = re.search(r'(?m)^\s*profile="([^"]+)"\s*$', sh_text)
+    m = re.search(r"(?m)^\s*profile=['\"]([^'\"]+)['\"]\s*$", sh_text)
     if not m:
         errors.append(f"Could not find default profile=... assignment in {sh_path}")
     else:
@@ -75,7 +75,9 @@ def check_docs() -> list[str]:
         ),
         (
             "claims by-default uses -Profile minimal",
-            re.compile(r"(?i)\bBy default\b[^\n]{0,200}`?-Profile\s+minimal`?"),
+            # Allow line-wrapping but avoid crossing sentence boundaries (so we don't flag
+            # "By default ... -Profile full. ... use -Profile minimal").
+            re.compile(r"(?i)\bBy default\b[^.]{0,200}`?-Profile\s+minimal`?"),
         ),
         (
             "claims `--profile minimal` is default",
@@ -87,7 +89,7 @@ def check_docs() -> list[str]:
         ),
         (
             "claims by-default uses --profile minimal",
-            re.compile(r"(?i)\bBy default\b[^\n]{0,200}`?--profile\s+minimal`?"),
+            re.compile(r"(?i)\bBy default\b[^.]{0,200}`?--profile\s+minimal`?"),
         ),
     ]
 
@@ -98,10 +100,16 @@ def check_docs() -> list[str]:
 
     for path in doc_paths:
         text = path.read_text(encoding="utf-8")
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            for label, pat in patterns:
-                if pat.search(line):
-                    errors.append(f"{path}:{lineno}: {label}: {line.strip()}")
+        lines = text.splitlines()
+        for label, pat in patterns:
+            for m in pat.finditer(text):
+                lineno = text.count("\n", 0, m.start()) + 1
+                # Show a compact excerpt since matches may span multiple lines.
+                excerpt = re.sub(r"\s+", " ", m.group(0)).strip()
+                # If the excerpt is very long, also include the line containing the match start for context.
+                if len(excerpt) > 200 and 1 <= lineno <= len(lines):
+                    excerpt = f"{excerpt[:200]}… (line: {lines[lineno - 1].strip()})"
+                errors.append(f"{path}:{lineno}: {label}: {excerpt}")
 
     return errors
 
@@ -121,4 +129,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
