@@ -376,6 +376,7 @@ version = "0.1.0"
 name = "aero-platform"
 version = "0.1.0"
 dependencies = [
+ "aero-acpi",
  "aero-devices",
  "js-sys",
  "wasm-bindgen",
