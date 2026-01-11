@@ -16,6 +16,7 @@
 d3d9ex_dwm_probe
 d3d9ex_event_query
 vblank_wait_sanity
+vblank_wait
 wait_vblank_pacing
 vblank_wait_pacing
 get_scanline_sanity

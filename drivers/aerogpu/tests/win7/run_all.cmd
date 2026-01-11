@@ -105,16 +105,17 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--samples=N] [--iterations=N] [--wait-timeout-ms=N] [--timeout-ms=NNNN] [--no-timeout] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--samples=N] [--iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--no-timeout] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   Rendering tests validate that the expected AeroGPU UMD DLL is loaded unless --allow-microsoft/--allow-non-aerogpu is set; use --require-umd to force the UMD check.
-echo   --samples affects pacing/sampling tests ^(dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing^).
+echo   --samples affects pacing/sampling tests ^(dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing^).
 echo   --iterations affects d3d9ex_event_query: number of query submissions to run.
 echo   --wait-timeout-ms affects wait_vblank_pacing and vblank_wait_sanity: per-wait timeout for D3DKMTWaitForVerticalBlankEvent.
-echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, dwm_flush_pacing, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing.
+echo   --display affects vblank_wait ^(defaults to primary display: \\.\DISPLAY1^).
+echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing.
 echo   --show affects d3d9ex_event_query, d3d9ex_shared_surface, and d3d9ex_shared_surface_ipc: show their windows (overrides --hidden).
 echo   d3d9ex_shared_surface validates cross-process pixel sharing by default; use --no-validate-sharing to skip readback validation ^(--dump always validates^).
 echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
