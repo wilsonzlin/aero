@@ -609,8 +609,19 @@ VirtIoSndWaveRtDpcRoutine(
                                                      (USHORT)RTL_NUMBER_OF(sg),
                                                      &sgCount);
             if (!NT_SUCCESS(status)) {
-                InterlockedExchange(&stream->RxInFlight, 0);
-                KeSetEvent(&stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
+                /*
+                 * Keep capture progressing with deterministic silence. If we fail
+                 * to build the SG list (e.g. because the MDL region would exceed
+                 * the indirect descriptor limit), treat it like an IO_ERR period
+                 * so user-mode capture clients don't stall.
+                 */
+                VirtIoSndWaveRtRxCompletion(stream,
+                                            status,
+                                            VIRTIO_SND_S_IO_ERR,
+                                            0,
+                                            0,
+                                            (UINT32)sizeof(VIRTIO_SND_PCM_STATUS),
+                                            NULL);
                 goto Exit;
             }
 
@@ -621,8 +632,17 @@ VirtIoSndWaveRtDpcRoutine(
 
             status = VirtIoSndHwSubmitRxSg(dx, segs, sgCount, stream);
             if (!NT_SUCCESS(status)) {
-                InterlockedExchange(&stream->RxInFlight, 0);
-                KeSetEvent(&stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
+                /*
+                 * If the RX submission fails, keep the capture pin's timeline
+                 * moving forward by completing the period as silence.
+                 */
+                VirtIoSndWaveRtRxCompletion(stream,
+                                            status,
+                                            VIRTIO_SND_S_IO_ERR,
+                                            0,
+                                            0,
+                                            (UINT32)sizeof(VIRTIO_SND_PCM_STATUS),
+                                            NULL);
                 goto Exit;
             }
         }
