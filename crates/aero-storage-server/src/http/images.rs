@@ -149,9 +149,9 @@ async fn serve_image(
     let len = meta.size;
     let cache_control = data_cache_control_value(&state, &req_headers);
 
-    // Conditional requests: only required for HEAD, but safe for GET too (when present).
-    if !want_body && cache::is_not_modified(&req_headers, meta.etag.as_deref(), meta.last_modified)
-    {
+    // Conditional requests: if the client has a matching validator, we can return `304` and
+    // avoid streaming bytes (RFC 9110).
+    if cache::is_not_modified(&req_headers, meta.etag.as_deref(), meta.last_modified) {
         return not_modified_response(&state, &meta, cache_control);
     }
 
