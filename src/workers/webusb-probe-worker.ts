@@ -83,8 +83,9 @@ async function runRequestDeviceProbe(
       .then((device: unknown) => ({ ok: true, device: summarizeUsbDevice(device) } as RequestDeviceProbeResult))
       .catch((err: unknown) => ({ ok: false, error: serializeError(err) } as RequestDeviceProbeResult));
 
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<RequestDeviceProbeResult>((resolve) => {
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
         resolve({
           ok: false,
           timeoutMs,
@@ -99,6 +100,9 @@ async function runRequestDeviceProbe(
     });
 
     const result = await Promise.race([settle, timeout]);
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
     // If we timed out, don't cache the result so the user can retry after
     // dismissing any chooser UI that might have appeared.
     if (result.timeoutMs !== undefined) {
