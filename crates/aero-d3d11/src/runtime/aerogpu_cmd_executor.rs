@@ -2617,7 +2617,10 @@ impl AerogpuD3d11Executor {
         // Forward-compat: allow this packet to grow by appending new fields after the existing
         // payload.
         if cmd_bytes.len() < 24 {
-            bail!("SET_TEXTURE: expected at least 24 bytes, got {}", cmd_bytes.len());
+            bail!(
+                "SET_TEXTURE: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let stage_raw = read_u32_le(cmd_bytes, 8)?;
         let slot = read_u32_le(cmd_bytes, 12)?;

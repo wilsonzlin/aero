@@ -385,7 +385,7 @@ fn aerogpu_cmd_set_constant_buffers_accepts_trailing_bytes() {
             stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
             stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
             stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-            // bindings[0]
+                                                           // bindings[0]
             stream.extend_from_slice(&0u32.to_le_bytes()); // buffer = unbound
             stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
             stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
