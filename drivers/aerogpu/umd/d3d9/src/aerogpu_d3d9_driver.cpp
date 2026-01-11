@@ -28,6 +28,44 @@
 #include "aerogpu_log.h"
 #include "aerogpu_wddm_alloc.h"
 
+namespace {
+
+template <typename T, typename = void>
+struct has_interface_version_member : std::false_type {};
+
+template <typename T>
+struct has_interface_version_member<T, std::void_t<decltype(std::declval<T>().InterfaceVersion)>> : std::true_type {};
+
+template <typename T>
+UINT get_interface_version(const T* open) {
+  if (!open) {
+    return 0;
+  }
+  if constexpr (has_interface_version_member<T>::value) {
+    return open->InterfaceVersion;
+  }
+  return open->Interface;
+}
+
+template <typename T, typename = void>
+struct has_adapter_callbacks2_member : std::false_type {};
+
+template <typename T>
+struct has_adapter_callbacks2_member<T, std::void_t<decltype(std::declval<T>().pAdapterCallbacks2)>> : std::true_type {};
+
+template <typename T>
+D3DDDI_ADAPTERCALLBACKS2* get_adapter_callbacks2(T* open) {
+  if (!open) {
+    return nullptr;
+  }
+  if constexpr (has_adapter_callbacks2_member<T>::value) {
+    return open->pAdapterCallbacks2;
+  }
+  return nullptr;
+}
+
+} // namespace
+
 namespace aerogpu {
 namespace {
 
@@ -3696,6 +3734,20 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
     return E_INVALIDARG;
   }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  // The D3D runtime passes a D3D_UMD_INTERFACE_VERSION in the OpenAdapter args.
+  // Be defensive: if the runtime asks for a newer interface than the headers we
+  // are compiled against, fail cleanly rather than returning a vtable that does
+  // not match what the runtime expects.
+  if (interface_version > D3D_UMD_INTERFACE_VERSION) {
+    aerogpu::logf("aerogpu-d3d9: %s unsupported interface_version=%u (compiled=%u)\n",
+                  entrypoint,
+                  static_cast<unsigned>(interface_version),
+                  static_cast<unsigned>(D3D_UMD_INTERFACE_VERSION));
+    return E_INVALIDARG;
+  }
+#endif
+
   Adapter* adapter = acquire_adapter(luid, interface_version, umd_version, callbacks, callbacks2);
   if (!adapter) {
     return E_OUTOFMEMORY;
@@ -3738,10 +3790,10 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
   }
 
   return aerogpu::OpenAdapterCommon("OpenAdapter",
-                                    pOpenAdapter->Interface,
+                                    get_interface_version(pOpenAdapter),
                                     pOpenAdapter->Version,
                                     pOpenAdapter->pAdapterCallbacks,
-                                    nullptr,
+                                    get_adapter_callbacks2(pOpenAdapter),
                                     luid,
                                     &pOpenAdapter->hAdapter,
                                     adapter_funcs);
@@ -3760,10 +3812,10 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
   }
 
   return aerogpu::OpenAdapterCommon("OpenAdapter2",
-                                    pOpenAdapter->Interface,
+                                    get_interface_version(pOpenAdapter),
                                     pOpenAdapter->Version,
                                     pOpenAdapter->pAdapterCallbacks,
-                                    nullptr,
+                                    get_adapter_callbacks2(pOpenAdapter),
                                     luid,
                                     &pOpenAdapter->hAdapter,
                                     adapter_funcs);
@@ -3793,10 +3845,10 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
   }
 
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromHdc",
-                                                pOpenAdapter->Interface,
+                                                get_interface_version(pOpenAdapter),
                                                 pOpenAdapter->Version,
                                                 pOpenAdapter->pAdapterCallbacks,
-                                                nullptr,
+                                                get_adapter_callbacks2(pOpenAdapter),
                                                 luid,
                                                 &pOpenAdapter->hAdapter,
                                                 adapter_funcs);
@@ -3870,10 +3922,10 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
   }
 
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromLuid",
-                                                pOpenAdapter->Interface,
+                                                get_interface_version(pOpenAdapter),
                                                 pOpenAdapter->Version,
                                                 pOpenAdapter->pAdapterCallbacks,
-                                                nullptr,
+                                                get_adapter_callbacks2(pOpenAdapter),
                                                 luid,
                                                 &pOpenAdapter->hAdapter,
                                                 adapter_funcs);
