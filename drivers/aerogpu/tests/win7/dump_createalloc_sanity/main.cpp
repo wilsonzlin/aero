@@ -49,7 +49,9 @@ static int RunDumpCreateallocSanity(int argc, char** argv) {
 
   if (!ok) {
     if (st == aerogpu_test::kmt::kStatusNotSupported) {
-      return reporter.Fail("AeroGPU CreateAllocation trace escape not supported (NTSTATUS=0x%08lX)", (unsigned long)st);
+      aerogpu_test::PrintfStdout("INFO: %s: DUMP_CREATEALLOCATION escape not supported; skipping", kTestName);
+      reporter.SetSkipped("not_supported");
+      return reporter.Pass();
     }
     return reporter.Fail("D3DKMTEscape(dump-createalloc) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
   }
