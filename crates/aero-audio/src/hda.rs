@@ -1541,9 +1541,19 @@ impl HdaController {
 
         let entries = self.corb_entries();
         let corb_base = self.corb_base();
+        let mask = self.corb_ptr_mask();
 
-        while self.corbrp != self.corbwp {
-            self.corbrp = (self.corbrp + 1) % entries;
+        // Keep pointers in range even if the guest (or snapshot restore) provides out-of-range
+        // values for the currently-selected CORB size. Without this, the `while corbrp != corbwp`
+        // loop below can spin forever (e.g. entries=2, corbwp=3).
+        self.corbwp &= mask;
+        self.corbrp &= mask;
+
+        // Defensive bound: we should never process more entries than the ring can hold.
+        let mut processed = 0u16;
+        while self.corbrp != self.corbwp && processed < entries {
+            processed += 1;
+            self.corbrp = (self.corbrp + 1) & mask;
             let addr = corb_base + self.corbrp as u64 * 4;
             let cmd = mem.read_u32(addr);
 
@@ -1956,6 +1966,9 @@ impl HdaController {
         self.corbctl = state.corbctl;
         self.corbsts = state.corbsts;
         self.corbsize = state.corbsize;
+        let corb_mask = self.corb_ptr_mask();
+        self.corbwp &= corb_mask;
+        self.corbrp &= corb_mask;
 
         self.rirblbase = state.rirblbase;
         self.rirbubase = state.rirbubase;
@@ -1964,6 +1977,7 @@ impl HdaController {
         self.rirbctl = state.rirbctl;
         self.rirbsts = state.rirbsts;
         self.rirbsize = state.rirbsize;
+        self.rirbwp &= self.rirb_ptr_mask();
 
         for (sd, s) in self.streams.iter_mut().zip(&state.streams) {
             sd.ctl = s.ctl;
