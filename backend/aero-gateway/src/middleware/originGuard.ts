@@ -45,6 +45,7 @@ export async function originGuard(
     if (requestHeaders) {
       reply.header('access-control-allow-headers', Array.isArray(requestHeaders) ? requestHeaders.join(',') : requestHeaders);
     }
+    reply.header('access-control-allow-credentials', 'true');
     reply.header('access-control-max-age', '600');
     reply.code(204).send();
     return;

@@ -118,6 +118,14 @@ test('HTTPS server starts and serves /healthz', async (t) => {
     DNS_ALLOW_PRIVATE_PTR: false,
     DNS_QPS_PER_IP: 0,
     DNS_BURST_PER_IP: 0,
+
+    UDP_RELAY_BASE_URL: '',
+    UDP_RELAY_AUTH_MODE: 'none',
+    UDP_RELAY_API_KEY: '',
+    UDP_RELAY_JWT_SECRET: '',
+    UDP_RELAY_TOKEN_TTL_SECONDS: 300,
+    UDP_RELAY_AUDIENCE: '',
+    UDP_RELAY_ISSUER: '',
   });
 
   await app.listen({ host: '127.0.0.1', port: 0 });

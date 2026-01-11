@@ -23,6 +23,9 @@ test('loadConfig applies defaults and derives ALLOWED_ORIGINS from PUBLIC_BASE_U
   assert.deepEqual(config.TCP_BLOCKED_CLIENT_IPS, []);
   assert.equal(config.TCP_MUX_MAX_STREAMS, 1024);
   assert.equal(config.TCP_PROXY_MAX_CONNECTIONS, 64);
+  assert.equal(config.UDP_RELAY_BASE_URL, '');
+  assert.equal(config.UDP_RELAY_AUTH_MODE, 'none');
+  assert.equal(config.UDP_RELAY_TOKEN_TTL_SECONDS, 300);
 });
 
 test('loadConfig validates port range', () => {
@@ -68,4 +71,36 @@ test('loadConfig validates TCP_ALLOWED_PORTS range', () => {
 test('loadConfig parses TCP_ALLOW_PRIVATE_IPS', () => {
   const config = loadConfig({ TCP_ALLOW_PRIVATE_IPS: '1' });
   assert.equal(config.TCP_ALLOW_PRIVATE_IPS, true);
+});
+
+test('loadConfig: UDP relay api_key auth requires UDP_RELAY_API_KEY when configured', () => {
+  assert.throws(
+    () => loadConfig({ UDP_RELAY_BASE_URL: 'https://relay.example.com', UDP_RELAY_AUTH_MODE: 'api_key' }),
+    /UDP_RELAY_API_KEY is required/i,
+  );
+  const config = loadConfig({
+    UDP_RELAY_BASE_URL: 'https://relay.example.com',
+    UDP_RELAY_AUTH_MODE: 'api_key',
+    UDP_RELAY_API_KEY: 'dev-key',
+  });
+  assert.equal(config.UDP_RELAY_AUTH_MODE, 'api_key');
+  assert.equal(config.UDP_RELAY_API_KEY, 'dev-key');
+});
+
+test('loadConfig: UDP relay jwt auth requires UDP_RELAY_JWT_SECRET when configured', () => {
+  assert.throws(
+    () => loadConfig({ UDP_RELAY_BASE_URL: 'https://relay.example.com', UDP_RELAY_AUTH_MODE: 'jwt' }),
+    /UDP_RELAY_JWT_SECRET is required/i,
+  );
+  const config = loadConfig({
+    UDP_RELAY_BASE_URL: 'https://relay.example.com',
+    UDP_RELAY_AUTH_MODE: 'jwt',
+    UDP_RELAY_JWT_SECRET: 'secret',
+  });
+  assert.equal(config.UDP_RELAY_AUTH_MODE, 'jwt');
+  assert.equal(config.UDP_RELAY_JWT_SECRET, 'secret');
+});
+
+test('loadConfig: UDP relay base URL is validated when set', () => {
+  assert.throws(() => loadConfig({ UDP_RELAY_BASE_URL: 'not-a-url' }), /Invalid UDP_RELAY_BASE_URL/i);
 });

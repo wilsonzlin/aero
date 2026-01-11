@@ -621,6 +621,29 @@ Running a UDP relay makes your server a **network egress point**. If it is reach
 The WebRTC UDP relay DataChannel framing and signaling schema are specified in
 [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
 
+### Browser integration: gateway-minted relay credentials
+
+The browser should **not** embed long-lived relay secrets. Instead, it obtains a short-lived relay token from the Aero Gateway:
+
+1. Call `POST /session` on the gateway with `credentials: "include"`.
+2. Read the optional `udpRelay` field from the JSON response (only present when `UDP_RELAY_BASE_URL` is configured).
+3. Use `udpRelay.baseUrl` + `udpRelay.endpoints.*` to build relay URLs.
+
+Endpoint meanings:
+
+- `webrtcSignal`: WebSocket signaling (trickle ICE): `wss://…/webrtc/signal`
+- `webrtcOffer`: HTTP signaling fallback (non-trickle ICE): `https://…/webrtc/offer`
+- `webrtcIce`: HTTP ICE server discovery: `https://…/webrtc/ice`
+- `udp`: WebSocket UDP fallback (non-WebRTC): `wss://…/udp`
+
+When `udpRelay.authMode` is:
+
+- `none`: connect directly.
+- `api_key`: append `?apiKey=<token>` to relay URLs (dev-only mode).
+- `jwt`: append `?token=<token>` to relay URLs (production mode).
+
+Some deployments additionally expose `POST /udp-relay/token` on the gateway to refresh the short-lived relay token without re-running the full session bootstrap.
+
 ```rust
 pub struct UdpProxy {
     peer_connection: RtcPeerConnection,

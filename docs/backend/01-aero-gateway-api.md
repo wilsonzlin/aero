@@ -83,6 +83,44 @@ Create or refresh a session. The gateway responds with a `Set-Cookie` header.
     - `Path=/`
 - Body: JSON with session metadata and limits (see `docs/backend/openapi.yaml`).
 
+#### Optional: UDP relay configuration (`udpRelay`)
+
+If the gateway is configured with a UDP relay base URL (`UDP_RELAY_BASE_URL`), the session response includes an additional top-level field:
+
+```json
+{
+  "udpRelay": {
+    "baseUrl": "https://relay.example.com",
+    "authMode": "none | api_key | jwt",
+    "endpoints": {
+      "webrtcSignal": "/webrtc/signal",
+      "webrtcOffer": "/webrtc/offer",
+      "webrtcIce": "/webrtc/ice",
+      "udp": "/udp"
+    },
+    "token": "…",
+    "expiresAt": "2026-01-10T00:05:00Z"
+  }
+}
+```
+
+Token rules:
+
+- `authMode=none`: `token` and `expiresAt` are omitted.
+- `authMode=api_key`: `token` is the configured API key (intended for local/dev only).
+- `authMode=jwt`: `token` is a short-lived JWT minted by the gateway.
+  - Claims include `iat`, `exp`, and a stable session identifier (`sid`) derived from `aero_session`.
+  - Gateways may additionally bind the token to the browser origin (`origin` claim) to reduce replay.
+
+Clients must treat `udpRelay.token` as a secret and must not log it.
+
+#### Optional: refresh relay token (`POST /udp-relay/token`)
+
+Some gateway deployments expose `POST /udp-relay/token`, which returns a fresh short-lived relay credential without requiring a full session bootstrap.
+
+- Requires the `aero_session` cookie.
+- Requires a valid `Origin` header (and is subject to per-session rate limits).
+
 ### Browser usage pattern
 
 Call `/session` once during app startup **before** opening any TCP WebSockets or sending DoH requests:

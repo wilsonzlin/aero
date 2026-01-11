@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import { z } from 'zod';
 
 const logLevels = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
+const udpRelayAuthModes = ['none', 'api_key', 'jwt'] as const;
 
 export type LogLevel = (typeof logLevels)[number];
+export type UdpRelayAuthMode = (typeof udpRelayAuthModes)[number];
 
 export type Config = Readonly<{
   HOST: string;
@@ -57,6 +59,15 @@ export type Config = Readonly<{
 
   DNS_QPS_PER_IP: number;
   DNS_BURST_PER_IP: number;
+
+  // Optional UDP relay (WebRTC + WebSocket UDP fallback) integration.
+  UDP_RELAY_BASE_URL: string;
+  UDP_RELAY_AUTH_MODE: UdpRelayAuthMode;
+  UDP_RELAY_API_KEY: string;
+  UDP_RELAY_JWT_SECRET: string;
+  UDP_RELAY_TOKEN_TTL_SECONDS: number;
+  UDP_RELAY_AUDIENCE: string;
+  UDP_RELAY_ISSUER: string;
 }>;
 
 type Env = Record<string, string | undefined>;
@@ -152,6 +163,14 @@ const envSchema = z.object({
 
   DNS_QPS_PER_IP: z.coerce.number().min(0).default(10),
   DNS_BURST_PER_IP: z.coerce.number().min(0).default(20),
+
+  UDP_RELAY_BASE_URL: z.string().optional().default(''),
+  UDP_RELAY_AUTH_MODE: z.enum(udpRelayAuthModes).optional().default('none'),
+  UDP_RELAY_API_KEY: z.string().optional().default(''),
+  UDP_RELAY_JWT_SECRET: z.string().optional().default(''),
+  UDP_RELAY_TOKEN_TTL_SECONDS: z.coerce.number().int().min(1).default(300),
+  UDP_RELAY_AUDIENCE: z.string().optional().default(''),
+  UDP_RELAY_ISSUER: z.string().optional().default(''),
 });
 
 export function loadConfig(env: Env = process.env): Config {
@@ -201,6 +220,39 @@ export function loadConfig(env: Env = process.env): Config {
   const allowedOriginsWithDefault =
     allowedOrigins.length > 0 ? allowedOrigins : [normalizeOrigin(publicBaseUrlParsed.origin)];
 
+  const udpRelayBaseUrlRaw = raw.UDP_RELAY_BASE_URL.trim();
+  let udpRelayBaseUrl = '';
+  if (udpRelayBaseUrlRaw.length > 0) {
+    let udpRelayParsed: URL;
+    try {
+      udpRelayParsed = new URL(udpRelayBaseUrlRaw);
+    } catch {
+      throw new Error(`Invalid UDP_RELAY_BASE_URL "${udpRelayBaseUrlRaw}". Expected a URL like "https://relay.example.com".`);
+    }
+
+    if (!['http:', 'https:', 'ws:', 'wss:'].includes(udpRelayParsed.protocol)) {
+      throw new Error(
+        `Invalid UDP_RELAY_BASE_URL "${udpRelayBaseUrlRaw}". Expected http(s):// or ws(s)://, got "${udpRelayParsed.protocol}".`,
+      );
+    }
+
+    udpRelayBaseUrl = udpRelayParsed.toString().replace(/\/$/, '');
+  }
+
+  const udpRelayApiKey = raw.UDP_RELAY_API_KEY.trim();
+  const udpRelayJwtSecret = raw.UDP_RELAY_JWT_SECRET.trim();
+  const udpRelayAudience = raw.UDP_RELAY_AUDIENCE.trim();
+  const udpRelayIssuer = raw.UDP_RELAY_ISSUER.trim();
+
+  if (udpRelayBaseUrl) {
+    if (raw.UDP_RELAY_AUTH_MODE === 'api_key' && !udpRelayApiKey) {
+      throw new Error('UDP_RELAY_API_KEY is required when UDP_RELAY_AUTH_MODE=api_key');
+    }
+    if (raw.UDP_RELAY_AUTH_MODE === 'jwt' && !udpRelayJwtSecret) {
+      throw new Error('UDP_RELAY_JWT_SECRET is required when UDP_RELAY_AUTH_MODE=jwt');
+    }
+  }
+
   return {
     HOST: raw.HOST,
     PORT: raw.PORT,
@@ -249,5 +301,13 @@ export function loadConfig(env: Env = process.env): Config {
 
     DNS_QPS_PER_IP: raw.DNS_QPS_PER_IP,
     DNS_BURST_PER_IP: raw.DNS_BURST_PER_IP,
+
+    UDP_RELAY_BASE_URL: udpRelayBaseUrl,
+    UDP_RELAY_AUTH_MODE: raw.UDP_RELAY_AUTH_MODE,
+    UDP_RELAY_API_KEY: udpRelayApiKey,
+    UDP_RELAY_JWT_SECRET: udpRelayJwtSecret,
+    UDP_RELAY_TOKEN_TTL_SECONDS: raw.UDP_RELAY_TOKEN_TTL_SECONDS,
+    UDP_RELAY_AUDIENCE: udpRelayAudience,
+    UDP_RELAY_ISSUER: udpRelayIssuer,
   };
 }

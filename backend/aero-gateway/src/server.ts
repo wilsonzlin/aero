@@ -7,6 +7,7 @@ import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Config } from './config.js';
 import { appendSetCookieHeader, isRequestSecure, serializeCookie } from './cookies.js';
+import { TokenBucketRateLimiter } from './dns/rateLimit.js';
 import { SESSION_COOKIE_NAME, SessionConnectionTracker, createSessionManager } from './session.js';
 import { setupCrossOriginIsolation } from './middleware/crossOriginIsolation.js';
 import { originGuard } from './middleware/originGuard.js';
@@ -17,6 +18,7 @@ import { setupMetrics } from './metrics.js';
 import { setupDohRoutes } from './routes/doh.js';
 import { handleTcpMuxUpgrade } from './routes/tcpMux.js';
 import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
+import { buildUdpRelaySessionInfo, mintUdpRelayToken } from './udpRelay.js';
 import { getVersionInfo } from './version.js';
 
 type ServerBundle = {
@@ -106,6 +108,7 @@ export function buildServer(config: Config): ServerBundle {
 
   const sessions = createSessionManager(config, app.log);
   const sessionConnections = new SessionConnectionTracker(config.TCP_PROXY_MAX_CONNECTIONS);
+  const udpRelayTokenRateLimiter = new TokenBucketRateLimiter(1, 5);
 
   setupRequestIdHeader(app);
   setupSecurityHeaders(app);
@@ -133,6 +136,7 @@ export function buildServer(config: Config): ServerBundle {
       return reply.code(400).send({ error: 'bad_request', message: 'Request body must be a JSON object' });
     }
 
+    const nowMs = Date.now();
     const existing = sessions.verifySessionCookie(request.headers.cookie);
     const { token, session } = sessions.issueSession(existing);
 
@@ -156,7 +160,7 @@ export function buildServer(config: Config): ServerBundle {
 
     reply.header('cache-control', 'no-store');
     reply.code(201);
-    return {
+    const response: Record<string, unknown> = {
       session: { expiresAt: new Date(session.expiresAtMs).toISOString() },
       endpoints: { tcp: '/tcp', dnsQuery: '/dns-query' },
       limits: {
@@ -169,6 +173,42 @@ export function buildServer(config: Config): ServerBundle {
         dns: { maxQueryBytes: config.DNS_MAX_QUERY_BYTES },
       },
     };
+
+    const originHeader = request.headers.origin;
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    const udpRelay = buildUdpRelaySessionInfo(config, { sessionId: session.id, origin, nowMs });
+    if (udpRelay) response.udpRelay = udpRelay;
+
+    return response;
+  });
+
+  app.post('/udp-relay/token', async (request, reply) => {
+    if (!config.UDP_RELAY_BASE_URL) {
+      return reply.code(404).send({ error: 'not_found', message: 'UDP relay not configured' });
+    }
+
+    const originHeader = request.headers.origin;
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    if (!origin) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Origin header required' });
+    }
+
+    const session = sessions.verifySessionCookie(request.headers.cookie);
+    if (!session) {
+      return reply.code(401).send({ error: 'unauthorized', message: 'Missing or expired session' });
+    }
+
+    if (!udpRelayTokenRateLimiter.allow(session.id)) {
+      return reply.code(429).send({ error: 'too_many_requests', message: 'Rate limit exceeded' });
+    }
+
+    const tokenInfo = mintUdpRelayToken(config, { sessionId: session.id, origin });
+    if (!tokenInfo) {
+      return reply.code(404).send({ error: 'not_found', message: 'UDP relay not configured' });
+    }
+
+    reply.header('cache-control', 'no-store');
+    return tokenInfo;
   });
 
   // Helper endpoint to validate Secure cookie behaviour in local dev (TLS vs proxy TLS termination).

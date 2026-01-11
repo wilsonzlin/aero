@@ -19,6 +19,8 @@ servers:
 tags:
   - name: session
     description: Session bootstrap and cookies
+  - name: udpRelay
+    description: UDP relay token minting (WebRTC UDP proxy)
   - name: dns
     description: DNS-over-HTTPS (RFC 8484)
 paths:
@@ -63,6 +65,16 @@ paths:
                     endpoints:
                       tcp: /tcp
                       dnsQuery: /dns-query
+                    udpRelay:
+                      baseUrl: https://relay.example.com
+                      authMode: jwt
+                      endpoints:
+                        webrtcSignal: /webrtc/signal
+                        webrtcOffer: /webrtc/offer
+                        udp: /udp
+                        webrtcIce: /webrtc/ice
+                      token: '<jwt>'
+                      expiresAt: '2026-01-10T00:05:00Z'
                     limits:
                       tcp:
                         maxConnections: 64
@@ -72,6 +84,34 @@ paths:
                       dns:
                         maxQueryBytes: 4096
         '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /udp-relay/token:
+    post:
+      tags: [udpRelay]
+      summary: Mint a fresh UDP relay token for the current session
+      description: |
+        Returns a short-lived credential for the configured UDP relay, bound
+        to the caller's `aero_session` cookie.
+
+        This endpoint is optional and only available when the gateway is
+        configured with `UDP_RELAY_BASE_URL`.
+      security:
+        - aeroSession: []
+      responses:
+        '200':
+          description: Token minted (or authMode=none).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UdpRelayTokenResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        '429':
           $ref: '#/components/responses/ErrorResponse'
 
   /dns-query:
@@ -204,6 +244,11 @@ components:
               type: string
               description: Path for DNS-over-HTTPS.
               example: /dns-query
+        udpRelay:
+          $ref: '#/components/schemas/UdpRelayInfo'
+          description: |
+            Optional UDP relay configuration. Present when the gateway is
+            configured with `UDP_RELAY_BASE_URL`.
         limits:
           type: object
           additionalProperties: false
@@ -245,6 +290,69 @@ components:
                   type: integer
                   minimum: 1
                   description: Maximum accepted DNS query message size in bytes.
+
+    UdpRelayEndpoints:
+      type: object
+      additionalProperties: false
+      required: [webrtcSignal, webrtcOffer, udp, webrtcIce]
+      properties:
+        webrtcSignal:
+          type: string
+          description: Path for WebRTC signaling over WebSocket (trickle ICE).
+          example: /webrtc/signal
+        webrtcOffer:
+          type: string
+          description: Path for HTTP offer/answer signaling (non-trickle ICE fallback).
+          example: /webrtc/offer
+        udp:
+          type: string
+          description: Path for WebSocket UDP fallback (non-WebRTC).
+          example: /udp
+        webrtcIce:
+          type: string
+          description: Path for ICE server discovery.
+          example: /webrtc/ice
+
+    UdpRelayInfo:
+      type: object
+      additionalProperties: false
+      required: [baseUrl, authMode, endpoints]
+      properties:
+        baseUrl:
+          type: string
+          description: Base URL for the UDP relay service.
+          example: https://relay.example.com
+        authMode:
+          type: string
+          enum: [none, api_key, jwt]
+          description: |
+            Authentication mode for the UDP relay.
+
+            `token` and `expiresAt` are omitted when `authMode=none`.
+        endpoints:
+          $ref: '#/components/schemas/UdpRelayEndpoints'
+        token:
+          type: string
+          description: |
+            Short-lived relay credential (api key or JWT), depending on auth mode.
+        expiresAt:
+          type: string
+          format: date-time
+          description: UTC expiration timestamp for `token`.
+
+    UdpRelayTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [authMode]
+      properties:
+        authMode:
+          type: string
+          enum: [none, api_key, jwt]
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
 
     ErrorResponse:
       type: object

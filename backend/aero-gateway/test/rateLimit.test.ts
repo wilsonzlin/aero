@@ -40,6 +40,14 @@ const baseConfig = {
   DNS_ALLOW_PRIVATE_PTR: false,
   DNS_QPS_PER_IP: 0,
   DNS_BURST_PER_IP: 0,
+
+  UDP_RELAY_BASE_URL: '',
+  UDP_RELAY_AUTH_MODE: 'none' as const,
+  UDP_RELAY_API_KEY: '',
+  UDP_RELAY_JWT_SECRET: '',
+  UDP_RELAY_TOKEN_TTL_SECONDS: 300,
+  UDP_RELAY_AUDIENCE: '',
+  UDP_RELAY_ISSUER: '',
 };
 
 test('rate limiter rejects when the per-minute budget is exceeded', async () => {

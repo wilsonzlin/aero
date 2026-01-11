@@ -53,6 +53,14 @@ const baseConfig = {
   DNS_ALLOW_PRIVATE_PTR: true,
   DNS_QPS_PER_IP: 1000,
   DNS_BURST_PER_IP: 1000,
+
+  UDP_RELAY_BASE_URL: '',
+  UDP_RELAY_AUTH_MODE: 'none' as const,
+  UDP_RELAY_API_KEY: '',
+  UDP_RELAY_JWT_SECRET: '',
+  UDP_RELAY_TOKEN_TTL_SECONDS: 300,
+  UDP_RELAY_AUDIENCE: '',
+  UDP_RELAY_ISSUER: '',
 };
 
 async function listen(app: import('fastify').FastifyInstance): Promise<number> {
