@@ -20,6 +20,8 @@ import {
   WebSocketTcpMuxProxyClient,
 } from "../../../web/src/net/tcpMuxProxy.js";
 
+import { WebSocketTcpProxyMuxClient, type TcpProxyEvent } from "../../../web/src/net/tcpProxy.js";
+
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
   const out = new Uint8Array(total);
@@ -184,6 +186,65 @@ describe("tcp-mux browser client integration", () => {
 
     await withTimeout(tcpEnd, 2_000, "expected TCP FIN to reach echo server");
     await withTimeout(closed, 2_000, "expected onClose after FIN exchange");
+
+    try {
+      await client.shutdown();
+    } finally {
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
+  it("bridges /tcp-mux streams into TcpProxyEventSink (WebSocketTcpProxyMuxClient)", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowedTargetHosts: ["8.8.8.8"],
+        allowedTargetPorts: [echoPort],
+        maxStreams: 16,
+        createConnection: (() =>
+          net.createConnection({
+            host: "127.0.0.1",
+            port: echoPort,
+            allowHalfOpen: true,
+          })) as typeof net.createConnection,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const events: TcpProxyEvent[] = [];
+    let connectedResolve: (() => void) | null = null;
+    let closedResolve: (() => void) | null = null;
+    let dataResolve: (() => void) | null = null;
+    const streamId = 1;
+
+    const connected = new Promise<void>((resolve) => (connectedResolve = resolve));
+    const closed = new Promise<void>((resolve) => (closedResolve = resolve));
+    const gotHello = new Promise<void>((resolve) => (dataResolve = resolve));
+
+    const client = new WebSocketTcpProxyMuxClient(`http://127.0.0.1:${proxyPort}`, (evt) => {
+      events.push(evt);
+      if (evt.connectionId !== streamId) return;
+      if (evt.type === "connected") connectedResolve?.();
+      if (evt.type === "closed") closedResolve?.();
+      if (evt.type === "data" && new TextDecoder().decode(evt.data).includes("hello")) dataResolve?.();
+    });
+
+    client.connect(streamId, "8.8.8.8", echoPort);
+    client.send(streamId, new TextEncoder().encode("hello"));
+
+    await withTimeout(connected, 2_000, "expected connected event");
+    await withTimeout(gotHello, 2_000, "expected DATA event");
+
+    client.close(streamId);
+    await withTimeout(closed, 2_000, "expected closed event after FIN exchange");
+
+    assert.ok(events.some((e) => e.type === "connected" && e.connectionId === streamId));
+    assert.ok(events.some((e) => e.type === "data" && e.connectionId === streamId));
+    assert.ok(events.some((e) => e.type === "closed" && e.connectionId === streamId));
 
     try {
       await client.shutdown();

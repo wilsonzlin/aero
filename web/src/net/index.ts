@@ -1,4 +1,4 @@
-export { WebSocketTcpProxyClient } from "./tcpProxy";
+export { WebSocketTcpProxyClient, WebSocketTcpProxyMuxClient } from "./tcpProxy";
 export { WebSocketTcpMuxProxyClient } from "./tcpMuxProxy";
 export { resolveAOverDoh, resolveAOverDohJson } from "./doh";
 export { WebRtcUdpProxyClient, WebSocketUdpProxyClient } from "./udpProxy";
