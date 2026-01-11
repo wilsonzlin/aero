@@ -372,6 +372,13 @@ pub struct AerogpuD3d11Executor {
     fallback_sampler: wgpu::Sampler,
     fallback_uniform_buffer: wgpu::Buffer,
     pipeline_cache: PipelineCache,
+
+    /// Tracks whether the in-flight command encoder has recorded any GPU work.
+    ///
+    /// This is used to avoid submitting empty command buffers when we need to
+    /// flush the encoder to preserve ordering relative to `queue.write_*`
+    /// uploads.
+    encoder_has_commands: bool,
 }
 
 impl AerogpuD3d11Executor {
@@ -502,6 +509,7 @@ impl AerogpuD3d11Executor {
             fallback_sampler,
             fallback_uniform_buffer,
             pipeline_cache,
+            encoder_has_commands: false,
         })
     }
 
@@ -625,6 +633,7 @@ impl AerogpuD3d11Executor {
         allocs: Option<&[AerogpuAllocEntry]>,
         guest_mem: &dyn aero_gpu::GuestMemory,
     ) -> Result<ExecuteReport> {
+        self.encoder_has_commands = false;
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
         let stream_size = iter.header().size_bytes as usize;
@@ -698,7 +707,28 @@ impl AerogpuD3d11Executor {
         }
 
         self.queue.submit([encoder.finish()]);
+        self.encoder_has_commands = false;
         Ok(report)
+    }
+
+    fn submit_encoder(&mut self, encoder: &mut wgpu::CommandEncoder, label: &'static str) {
+        let new_encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        let finished = std::mem::replace(encoder, new_encoder).finish();
+        self.queue.submit([finished]);
+        self.encoder_has_commands = false;
+    }
+
+    fn submit_encoder_if_has_commands(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        label: &'static str,
+    ) {
+        if !self.encoder_has_commands {
+            return;
+        }
+        self.submit_encoder(encoder, label);
     }
 
     fn exec_non_draw_command(
@@ -717,7 +747,7 @@ impl AerogpuD3d11Executor {
             OPCODE_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, allocs),
             OPCODE_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes),
             OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes),
-            OPCODE_UPLOAD_RESOURCE => self.exec_upload_resource(cmd_bytes),
+            OPCODE_UPLOAD_RESOURCE => self.exec_upload_resource(encoder, cmd_bytes),
             OPCODE_COPY_BUFFER => self.exec_copy_buffer(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_COPY_TEXTURE2D => {
                 self.exec_copy_texture2d(encoder, cmd_bytes, allocs, guest_mem)
@@ -779,10 +809,10 @@ impl AerogpuD3d11Executor {
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
         for &handle in &render_targets {
-            self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
+            self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
-            self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
+            self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
 
         // Upload any dirty resources used by the current input assembler bindings.
@@ -797,7 +827,7 @@ impl AerogpuD3d11Executor {
             ia_buffers.push(ib.buffer);
         }
         for handle in ia_buffers {
-            self.ensure_buffer_uploaded(handle, allocs, guest_mem)?;
+            self.ensure_buffer_uploaded(encoder, handle, allocs, guest_mem)?;
         }
 
         // The upcoming render pass will write to bound targets. Invalidate any CPU shadow copies so
@@ -852,12 +882,12 @@ impl AerogpuD3d11Executor {
             match binding.kind {
                 BindingKind::Texture2D { .. } => {
                     if let Some(handle) = resolve_texture_binding(&self.state, binding) {
-                        self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
+                        self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
                     }
                 }
                 BindingKind::ConstantBuffer { .. } => {
                     if let Some(cb) = resolve_constant_buffer_binding(&self.state, binding) {
-                        self.ensure_buffer_uploaded(cb.buffer, allocs, guest_mem)?;
+                        self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
                     }
                 }
                 BindingKind::Sampler { .. } => {}
@@ -885,6 +915,8 @@ impl AerogpuD3d11Executor {
             &self.fallback_sampler,
             &self.fallback_uniform_buffer,
         )?;
+
+        self.encoder_has_commands = true;
 
         let state = &self.state;
         let resources = &self.resources;
@@ -1291,27 +1323,39 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
-    fn exec_upload_resource(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+    fn exec_upload_resource(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        cmd_bytes: &[u8],
+    ) -> Result<()> {
         let (cmd, data) = decode_cmd_upload_resource_payload_le(cmd_bytes)
             .map_err(|e| anyhow!("UPLOAD_RESOURCE: invalid payload: {e:?}"))?;
         let handle = cmd.resource_handle;
         let offset = cmd.offset_bytes;
         let size = cmd.size_bytes;
 
-        if let Some(buf) = self.resources.buffers.get(&handle) {
+        if let Some((buffer_size, buffer_gpu_size)) = self
+            .resources
+            .buffers
+            .get(&handle)
+            .map(|buf| (buf.size, buf.gpu_size))
+        {
             let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
             if offset % alignment != 0 {
-                bail!("UPLOAD_RESOURCE: buffer offset {offset} does not respect COPY_BUFFER_ALIGNMENT");
+                bail!(
+                    "UPLOAD_RESOURCE: buffer offset {offset} does not respect COPY_BUFFER_ALIGNMENT"
+                );
             }
-            if offset.saturating_add(size) > buf.size {
+            if offset.saturating_add(size) > buffer_size {
                 bail!("UPLOAD_RESOURCE: buffer upload out of bounds");
             }
 
             // `wgpu::Queue::write_buffer` requires the write size be a multiple of
             // `COPY_BUFFER_ALIGNMENT` (4). The AeroGPU command stream is byte-granular (e.g. index
             // buffers can be 3x u16 = 6 bytes), so we pad writes that reach the end of the buffer.
-            if size % alignment != 0 {
-                if offset.saturating_add(size) != buf.size {
+            let mut padded_tmp = Vec::new();
+            let write_data: &[u8] = if size % alignment != 0 {
+                if offset.saturating_add(size) != buffer_size {
                     bail!(
                         "UPLOAD_RESOURCE: unaligned buffer upload is only supported when writing to the end of the buffer"
                     );
@@ -1320,19 +1364,33 @@ impl AerogpuD3d11Executor {
                     .try_into()
                     .map_err(|_| anyhow!("UPLOAD_RESOURCE: size_bytes out of range"))?;
                 let padded = align4(size_usize);
-                let mut tmp = vec![0u8; padded];
-                tmp[..size_usize].copy_from_slice(data);
+                padded_tmp.resize(padded, 0);
+                padded_tmp[..size_usize].copy_from_slice(data);
 
                 let end = offset
                     .checked_add(padded as u64)
                     .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: upload range overflows u64"))?;
-                if end > buf.gpu_size {
+                if end > buffer_gpu_size {
                     bail!("UPLOAD_RESOURCE: padded upload overruns wgpu buffer allocation");
                 }
 
-                self.queue.write_buffer(&buf.buffer, offset, &tmp);
+                &padded_tmp
             } else {
-                self.queue.write_buffer(&buf.buffer, offset, data);
+                data
+            };
+
+            // Preserve command stream ordering relative to any previously encoded GPU work.
+            self.submit_encoder_if_has_commands(
+                encoder,
+                "aerogpu_cmd encoder after UPLOAD_RESOURCE",
+            );
+            {
+                let buf = self
+                    .resources
+                    .buffers
+                    .get(&handle)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown buffer {handle}"))?;
+                self.queue.write_buffer(&buf.buffer, offset, write_data);
             }
             if let Some(buf_mut) = self.resources.buffers.get_mut(&handle) {
                 // Uploaded data is now current on the GPU; clear dirty ranges.
@@ -1347,20 +1405,28 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
-        if let Some(tex) = self.resources.textures.get_mut(&handle) {
+        let Some((desc, row_pitch_bytes, shadow_len)) = self
+            .resources
+            .textures
+            .get(&handle)
+            .map(|tex| (tex.desc, tex.row_pitch_bytes, tex.host_shadow.as_ref().map(|v| v.len())))
+        else {
+            return Ok(());
+        };
+
+        {
             // Texture uploads are expressed as a linear byte range into mip0/layer0.
             //
             // WebGPU uploads are 2D; for partial updates we patch into a CPU shadow buffer and then
             // re-upload the full texture.
-            let bytes_per_row = if tex.row_pitch_bytes != 0 {
-                tex.row_pitch_bytes
+            let bytes_per_row = if row_pitch_bytes != 0 {
+                row_pitch_bytes
             } else {
-                tex.desc
-                    .width
-                    .checked_mul(bytes_per_texel(tex.desc.format)?)
+                desc.width
+                    .checked_mul(bytes_per_texel(desc.format)?)
                     .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: bytes_per_row overflow"))?
             };
-            let expected = (bytes_per_row as u64).saturating_mul(tex.desc.height as u64);
+            let expected = (bytes_per_row as u64).saturating_mul(desc.height as u64);
 
             let end = offset
                 .checked_add(size)
@@ -1380,12 +1446,38 @@ impl AerogpuD3d11Executor {
                 .map_err(|_| anyhow!("UPLOAD_RESOURCE: end out of range"))?;
 
             if offset == 0 && size == expected {
+                self.submit_encoder_if_has_commands(
+                    encoder,
+                    "aerogpu_cmd encoder after UPLOAD_RESOURCE",
+                );
+                let tex = self
+                    .resources
+                    .textures
+                    .get_mut(&handle)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
                 write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, data)?;
                 tex.host_shadow = Some(data.to_vec());
                 tex.dirty = false;
                 return Ok(());
             }
 
+            let shadow_len = shadow_len.ok_or_else(|| {
+                anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
+            })?;
+            if shadow_len != expected_usize {
+                bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
+            }
+
+            self.submit_encoder_if_has_commands(
+                encoder,
+                "aerogpu_cmd encoder after UPLOAD_RESOURCE",
+            );
+
+            let tex = self
+                .resources
+                .textures
+                .get_mut(&handle)
+                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: unknown texture {handle}"))?;
             let shadow = tex.host_shadow.as_mut().ok_or_else(|| {
                 anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
             })?;
@@ -1396,10 +1488,8 @@ impl AerogpuD3d11Executor {
 
             write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, shadow)?;
             tex.dirty = false;
-            return Ok(());
+            Ok(())
         }
-
-        Ok(())
     }
 
     fn exec_copy_buffer(
@@ -1446,7 +1536,7 @@ impl AerogpuD3d11Executor {
             .ok_or_else(|| anyhow!("COPY_BUFFER: dst range overflows u64"))?;
 
         // Ensure the source buffer reflects any CPU writes from guest memory before copying.
-        self.ensure_buffer_uploaded(src_buffer, allocs, guest_mem)?;
+        self.ensure_buffer_uploaded(encoder, src_buffer, allocs, guest_mem)?;
 
         let dst_backing = if writeback {
             let dst = self
@@ -1482,7 +1572,7 @@ impl AerogpuD3d11Executor {
             }
         };
         if needs_dst_upload {
-            self.ensure_buffer_uploaded(dst_buffer, allocs, guest_mem)?;
+            self.ensure_buffer_uploaded(encoder, dst_buffer, allocs, guest_mem)?;
         }
 
         let mut staging: Option<wgpu::Buffer> = None;
@@ -1567,6 +1657,8 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        self.encoder_has_commands = true;
+
         if writeback {
             #[cfg(target_arch = "wasm32")]
             {
@@ -1586,13 +1678,7 @@ impl AerogpuD3d11Executor {
                 let dst_gpa =
                     allocs.validate_write_range(dst_backing.alloc_id, dst_offset, size_bytes)?;
 
-                let new_encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("aerogpu_cmd encoder after COPY_BUFFER writeback"),
-                        });
-                let finished = std::mem::replace(encoder, new_encoder).finish();
-                self.queue.submit([finished]);
+                self.submit_encoder(encoder, "aerogpu_cmd encoder after COPY_BUFFER writeback");
 
                 let slice = staging.slice(..);
                 let state = std::sync::Arc::new((
@@ -1683,7 +1769,7 @@ impl AerogpuD3d11Executor {
         }
 
         // Ensure the source texture reflects any CPU writes from guest memory before copying.
-        self.ensure_texture_uploaded(src_texture, allocs, guest_mem)?;
+        self.ensure_texture_uploaded(encoder, src_texture, allocs, guest_mem)?;
 
         // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle,
         // upload it now so the untouched pixels remain correct.
@@ -1705,7 +1791,7 @@ impl AerogpuD3d11Executor {
             }
         };
         if needs_dst_upload {
-            self.ensure_texture_uploaded(dst_texture, allocs, guest_mem)?;
+            self.ensure_texture_uploaded(encoder, dst_texture, allocs, guest_mem)?;
         }
 
         let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
@@ -1878,6 +1964,7 @@ impl AerogpuD3d11Executor {
                 staging = Some((staging_buf, padded_bpr, unpadded_bpr, height));
             }
         }
+        self.encoder_has_commands = true;
 
         if writeback {
             #[cfg(target_arch = "wasm32")]
@@ -1946,13 +2033,10 @@ impl AerogpuD3d11Executor {
                     validate_size,
                 )?;
 
-                let new_encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("aerogpu_cmd encoder after COPY_TEXTURE2D writeback"),
-                        });
-                let finished = std::mem::replace(encoder, new_encoder).finish();
-                self.queue.submit([finished]);
+                self.submit_encoder(
+                    encoder,
+                    "aerogpu_cmd encoder after COPY_TEXTURE2D writeback",
+                );
 
                 let slice = staging.slice(..);
                 let state = std::sync::Arc::new((
@@ -2765,10 +2849,10 @@ impl AerogpuD3d11Executor {
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
         for &handle in &render_targets {
-            self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
+            self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
-            self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
+            self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
 
         let flags = read_u32_le(cmd_bytes, 8)?;
@@ -2797,6 +2881,7 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        self.encoder_has_commands = true;
         let (mut color_attachments, mut depth_stencil_attachment) =
             build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
 
@@ -2858,13 +2943,7 @@ impl AerogpuD3d11Executor {
             d3d9_present_flags: None,
             presented_render_target,
         });
-        let new_encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("aerogpu_cmd encoder after present"),
-            });
-        let finished = std::mem::replace(encoder, new_encoder).finish();
-        self.queue.submit([finished]);
+        self.submit_encoder(encoder, "aerogpu_cmd encoder after present");
         Ok(())
     }
 
@@ -2891,44 +2970,46 @@ impl AerogpuD3d11Executor {
             d3d9_present_flags: Some(d3d9_present_flags),
             presented_render_target,
         });
-        let new_encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("aerogpu_cmd encoder after present_ex"),
-            });
-        let finished = std::mem::replace(encoder, new_encoder).finish();
-        self.queue.submit([finished]);
+        self.submit_encoder(encoder, "aerogpu_cmd encoder after present_ex");
         Ok(())
     }
 
     fn exec_flush(&mut self, encoder: &mut wgpu::CommandEncoder) -> Result<()> {
-        let new_encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("aerogpu_cmd encoder after flush"),
-            });
-        let finished = std::mem::replace(encoder, new_encoder).finish();
-        self.queue.submit([finished]);
+        self.submit_encoder(encoder, "aerogpu_cmd encoder after flush");
         Ok(())
     }
 
     fn ensure_buffer_uploaded(
         &mut self,
+        encoder: &mut wgpu::CommandEncoder,
         buffer_handle: u32,
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
     ) -> Result<()> {
-        let Some(buf) = self.resources.buffers.get_mut(&buffer_handle) else {
-            return Ok(());
-        };
-        let Some(dirty) = buf.dirty.take() else {
-            return Ok(());
-        };
-        let Some(backing) = buf.backing else {
-            return Ok(());
+        let (dirty, backing, buffer_size, buffer_gpu_size) = {
+            let Some(buf) = self.resources.buffers.get_mut(&buffer_handle) else {
+                return Ok(());
+            };
+            let Some(dirty) = buf.dirty.take() else {
+                return Ok(());
+            };
+            let Some(backing) = buf.backing else {
+                return Ok(());
+            };
+            (dirty, backing, buf.size, buf.gpu_size)
         };
 
         let dirty_len = dirty.end.saturating_sub(dirty.start);
+        if dirty_len == 0 {
+            return Ok(());
+        }
+        if dirty.start % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+            bail!(
+                "buffer {buffer_handle} dirty range start {} does not respect COPY_BUFFER_ALIGNMENT",
+                dirty.start
+            );
+        }
+
         allocs.validate_range(
             backing.alloc_id,
             backing.offset_bytes + dirty.start,
@@ -2936,14 +3017,18 @@ impl AerogpuD3d11Executor {
         )?;
         let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + dirty.start;
 
+        // Preserve command stream ordering relative to any previously encoded GPU work.
+        self.submit_encoder_if_has_commands(
+            encoder,
+            "aerogpu_cmd encoder after implicit buffer upload",
+        );
+
+        let Some(buf) = self.resources.buffers.get(&buffer_handle) else {
+            return Ok(());
+        };
+
         // Upload in chunks to avoid allocating massive temporary buffers for big resources.
         const CHUNK: usize = 64 * 1024;
-        if dirty.start % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
-            bail!(
-                "buffer {buffer_handle} dirty range start {} does not respect COPY_BUFFER_ALIGNMENT",
-                dirty.start
-            );
-        }
         let mut offset = dirty.start;
         while offset < dirty.end {
             let remaining = (dirty.end - offset) as usize;
@@ -2954,7 +3039,7 @@ impl AerogpuD3d11Executor {
                 .map_err(|e| anyhow_guest_mem(e))?;
 
             let write_len = if n % (wgpu::COPY_BUFFER_ALIGNMENT as usize) != 0 {
-                if offset + n as u64 != dirty.end || dirty.end != buf.size {
+                if offset + n as u64 != dirty.end || dirty.end != buffer_size {
                     bail!("buffer {buffer_handle} upload is not COPY_BUFFER_ALIGNMENT-aligned");
                 }
                 let padded = align4(n);
@@ -2967,7 +3052,7 @@ impl AerogpuD3d11Executor {
             let end = offset
                 .checked_add(write_len as u64)
                 .ok_or_else(|| anyhow!("buffer upload range overflows u64"))?;
-            if end > buf.gpu_size {
+            if end > buffer_gpu_size {
                 bail!("buffer upload overruns wgpu buffer allocation");
             }
 
@@ -2981,35 +3066,45 @@ impl AerogpuD3d11Executor {
 
     fn ensure_texture_uploaded(
         &mut self,
+        encoder: &mut wgpu::CommandEncoder,
         texture_handle: u32,
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
     ) -> Result<()> {
-        let Some(tex) = self.resources.textures.get_mut(&texture_handle) else {
-            return Ok(());
-        };
-        if !tex.dirty {
-            return Ok(());
-        }
-
-        let Some(backing) = tex.backing else {
-            tex.dirty = false;
-            return Ok(());
+        let (desc, row_pitch_bytes, backing) = match self.resources.textures.get(&texture_handle) {
+            Some(tex) if tex.dirty => (tex.desc, tex.row_pitch_bytes, tex.backing),
+            _ => return Ok(()),
         };
 
-        let bytes_per_row = if tex.row_pitch_bytes != 0 {
-            tex.row_pitch_bytes
+        let Some(backing) = backing else {
+            if let Some(tex) = self.resources.textures.get_mut(&texture_handle) {
+                tex.dirty = false;
+            }
+            return Ok(());
+        };
+
+        let bytes_per_row = if row_pitch_bytes != 0 {
+            row_pitch_bytes
         } else {
-            tex.desc
-                .width
-                .checked_mul(bytes_per_texel(tex.desc.format)?)
+            desc.width
+                .checked_mul(bytes_per_texel(desc.format)?)
                 .ok_or_else(|| anyhow!("texture upload bytes_per_row overflow"))?
         };
         let total_size = (bytes_per_row as u64)
-            .checked_mul(tex.desc.height as u64)
+            .checked_mul(desc.height as u64)
             .ok_or_else(|| anyhow!("texture upload size overflow"))?;
         allocs.validate_range(backing.alloc_id, backing.offset_bytes, total_size)?;
         let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes;
+
+        // Preserve command stream ordering relative to any previously encoded GPU work.
+        self.submit_encoder_if_has_commands(
+            encoder,
+            "aerogpu_cmd encoder after implicit texture upload",
+        );
+
+        let Some(tex) = self.resources.textures.get_mut(&texture_handle) else {
+            return Ok(());
+        };
 
         // Avoid allocating `bytes_per_row * height` (and potentially a second repack buffer) for
         // large textures. We upload in row chunks, repacking only when required by WebGPU's
