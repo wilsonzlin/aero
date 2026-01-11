@@ -115,7 +115,27 @@ try {
     wsEl.textContent = "skipped (no session)";
     wsEl.className = "bad";
   } else {
-    const ws = new WebSocket(wsUrl.toString(), "aero-l2-tunnel-v1");
+    const pageParams = new URLSearchParams(location.search);
+    const l2Token = pageParams.get("l2Token");
+    const l2TokenTransportRaw = pageParams.get("l2TokenTransport");
+    const l2TokenTransport = l2TokenTransportRaw === "subprotocol" || l2TokenTransportRaw === "both" ? l2TokenTransportRaw : "query";
+
+    // Optional: allow the smoke test page to validate token-authenticated `/l2`
+    // deployments by visiting e.g.:
+    //   https://localhost/?l2Token=sekrit&l2TokenTransport=subprotocol
+    //
+    // If not set, the default (cookie-only) compose stack still succeeds.
+    let protocols = "aero-l2-tunnel-v1";
+    if (l2Token) {
+      if (l2TokenTransport === "query" || l2TokenTransport === "both") {
+        wsUrl.searchParams.set("token", l2Token);
+      }
+      if (l2TokenTransport === "subprotocol" || l2TokenTransport === "both") {
+        protocols = ["aero-l2-tunnel-v1", `aero-l2-token.${l2Token}`];
+      }
+    }
+
+    const ws = new WebSocket(wsUrl.toString(), protocols);
     const timeout = setTimeout(() => {
       wsEl.textContent = "timeout";
       wsEl.className = "bad";
