@@ -129,6 +129,10 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
   options.
 - The WebUSB wire contract has a single owner and a cross-language fixture, reducing accidental
   drift.
+- `crates/aero-usb` device models can participate in VM snapshot/restore via the repo-standard
+  `aero-io-snapshot` TLV encoding (`aero_io_snapshot::io::state::IoSnapshot`). This keeps device
+  state deterministic and versioned; higher-level VM snapshot wiring stores the resulting TLV blob in
+  the `DEVICES` section (see `docs/16-snapshots.md`).
 
 ### Migration plan (incremental; includes deletion targets)
 

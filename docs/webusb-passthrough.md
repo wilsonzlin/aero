@@ -167,6 +167,20 @@ Cancellation behavior:
 - `UsbPassthroughDevice::reset()` clears queued actions/completions and cancels all in-flight
   requests.
 
+### Snapshot/restore (save-state)
+
+`crates/aero-usb` device models support deterministic snapshot/restore using the repo-standard
+`aero-io-snapshot` TLV encoding (`aero_io_snapshot::io::state::IoSnapshot`).
+
+For WebUSB passthrough specifically:
+
+- `UsbPassthroughDevice` snapshots only its monotonic action id counter (`next_id`) and **drops all**
+  queued/in-flight host I/O on restore. This prevents replaying side effects after restore; the guest
+  will naturally retry transfers, emitting fresh `UsbHostAction`s.
+- `UsbWebUsbPassthroughDevice` snapshots guest-visible USB state (address + control pipe stage) so a
+  restore taken mid-control-transfer does not deadlock the guest. Any host-side work is still dropped
+  as above, so the restored control pipe will NAK and re-emit an action as needed.
+
 Idempotency / retry behavior (important):
 
 - A NAKed TD will be retried by the UHCI schedule. This means the device model entrypoints
