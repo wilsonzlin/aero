@@ -183,6 +183,9 @@ components:
 
     ChunkedStream:
       type: object
+      description: |
+        Chunked disk image delivery using plain GET requests (no HTTP Range). Clients fetch `manifestUrl` once,
+        then fetch chunk objects by resolving `chunks/<index>.bin` relative to `manifestUrl`.
       properties:
         delivery:
           type: string

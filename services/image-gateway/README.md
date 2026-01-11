@@ -259,6 +259,14 @@ If CloudFront is configured, these endpoints redirect to CloudFront (stable URLs
   }
 }
 ```
+
+Notes:
+
+- In `CLOUDFRONT_AUTH_MODE=cookie`, `manifestUrl` points directly at the CloudFront URL for `manifest.json`.
+- In `CLOUDFRONT_AUTH_MODE=url`, `manifestUrl` points at the gateway endpoint (`/v1/images/:id/chunked/manifest`) so that
+  chunk URLs resolved relative to the manifest (e.g. `new URL("chunks/00000000.bin", manifestUrl)`) also hit the gateway,
+  which then redirects each request to a per-object signed CloudFront URL. This avoids needing query-string auth to propagate
+  through relative URL resolution.
 - disable compression / transformations (no `Content-Encoding` other than `identity`)
 - include the streaming-safe headers described in `docs/16-disk-image-streaming-auth.md`:
   - `Cache-Control: no-transform`
