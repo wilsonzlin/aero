@@ -516,7 +516,9 @@ impl UsbHubDevice {
                     _ => None,
                 }
             }
-            (0x80, USB_REQUEST_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, USB_REQUEST_GET_CONFIGURATION) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
+            }
             (0x81, USB_REQUEST_GET_INTERFACE) => {
                 (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
             }

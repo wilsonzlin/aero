@@ -754,6 +754,22 @@ fn invalid_get_configuration_nonzero_wvalue_stalls_passthrough() {
 }
 
 #[test]
+fn invalid_get_configuration_nonzero_wvalue_stalls_hub() {
+    let mut dev = UsbHubDevice::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x80, // IN | Standard | Device
+        request: 0x08,      // GET_CONFIGURATION
+        value: 1,           // invalid (must be 0)
+        index: 0,
+        length: 1,
+    });
+
+    let mut buf = [0u8; 1];
+    assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+}
+
+#[test]
 fn invalid_get_status_nonzero_wvalue_stalls_passthrough() {
     let mut dev = UsbHidPassthrough::default();
 
