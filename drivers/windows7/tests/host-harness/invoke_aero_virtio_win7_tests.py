@@ -39,10 +39,12 @@ from __future__ import annotations
 
 import argparse
 import http.server
+import json
 import math
 import warnings
 import os
 import shlex
+import socket
 import socketserver
 import subprocess
 import struct
@@ -143,6 +145,50 @@ def _stop_process(proc: subprocess.Popen[bytes]) -> None:
             proc.kill()
         except Exception:
             pass
+
+
+def _qmp_read_json(sock: socket.socket, *, timeout_seconds: float = 2.0) -> dict[str, object]:
+    sock.settimeout(timeout_seconds)
+    buf = b""
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise RuntimeError("EOF while waiting for QMP JSON message")
+        buf += chunk
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                return json.loads(line.decode("utf-8", errors="replace"))
+            except json.JSONDecodeError:
+                # QMP is line-delimited JSON; if we got partial/garbled data keep reading.
+                continue
+
+
+def _try_qmp_quit(qmp_socket: Path) -> bool:
+    """
+    Attempt to shut QEMU down gracefully via QMP.
+
+    This is primarily to ensure side-effectful devices (notably the `wav` audiodev backend)
+    flush/finalize their output files before the host harness verifies them.
+    """
+    if not qmp_socket.exists():
+        return False
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.connect(str(qmp_socket))
+            # Greeting.
+            _qmp_read_json(s)
+            s.sendall(b'{"execute":"qmp_capabilities"}\n')
+            # Capabilities ack (ignore contents).
+            _qmp_read_json(s)
+            s.sendall(b'{"execute":"quit"}\n')
+            return True
+    except Exception:
+        return False
 
 
 def _qemu_quote_keyval_value(value: str) -> str:
@@ -471,6 +517,17 @@ def main() -> int:
     except FileNotFoundError:
         pass
 
+    # QMP socket used to request a graceful shutdown (so the wav audiodev can flush/finalize).
+    # We use a UNIX domain socket, so only enable this on non-Windows hosts.
+    use_qmp = os.name != "nt"
+    qmp_socket: Optional[Path] = None
+    if use_qmp:
+        qmp_socket = serial_log.with_name(serial_log.stem + ".qmp.sock")
+        try:
+            qmp_socket.unlink()
+        except FileNotFoundError:
+            pass
+
     http_log_path: Optional[Path] = None
     if args.http_log:
         try:
@@ -563,6 +620,10 @@ def main() -> int:
                 "-display",
                 "none",
                 "-no-reboot",
+            ]
+            if use_qmp and qmp_socket is not None:
+                qemu_args += ["-qmp", f"unix:{qmp_socket},server,nowait"]
+            qemu_args += [
                 "-chardev",
                 serial_chardev,
                 "-serial",
@@ -630,6 +691,10 @@ def main() -> int:
                 "-display",
                 "none",
                 "-no-reboot",
+            ]
+            if use_qmp and qmp_socket is not None:
+                qemu_args += ["-qmp", f"unix:{qmp_socket},server,nowait"]
+            qemu_args += [
                 "-chardev",
                 serial_chardev,
                 "-serial",
@@ -1228,12 +1293,28 @@ def main() -> int:
                 _print_tail(serial_log)
                 result_code = 2
         finally:
-            _stop_process(proc)
+            # Prefer a graceful QMP shutdown so that the wav audiodev backend can finalize its header.
+            if proc.poll() is None:
+                if use_qmp and qmp_socket is not None and _try_qmp_quit(qmp_socket):
+                    try:
+                        proc.wait(timeout=10)
+                    except Exception:
+                        _stop_process(proc)
+                else:
+                    _stop_process(proc)
             httpd.shutdown()
             try:
                 stderr_f.close()
             except Exception:
                 pass
+            if use_qmp and qmp_socket is not None:
+                try:
+                    qmp_socket.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    # Best-effort cleanup.
+                    pass
 
         if args.virtio_snd_verify_wav:
             if wav_path is None:
