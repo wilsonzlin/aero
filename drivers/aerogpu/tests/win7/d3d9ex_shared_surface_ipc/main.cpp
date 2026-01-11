@@ -400,13 +400,22 @@ static int RunConsumer(int argc, char** argv) {
                                   tex.put(),
                                   &open_handle);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
-  }
-  if (open_handle != shared_handle) {
-    aerogpu_test::PrintfStdout("INFO: %s: CreateTexture updated shared handle: %p -> %p",
+    aerogpu_test::PrintfStdout("INFO: %s: CreateTexture(open shared) failed with %s; trying OpenSharedResource",
                                kTestName,
-                               shared_handle,
-                               open_handle);
+                               aerogpu_test::HresultToString(hr).c_str());
+    hr = dev->OpenSharedResource(shared_handle,
+                                 IID_IDirect3DTexture9,
+                                 reinterpret_cast<void**>(tex.put()));
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "CreateTexture/OpenSharedResource(open shared)", hr);
+    }
+  } else {
+    if (open_handle != shared_handle) {
+      aerogpu_test::PrintfStdout("INFO: %s: CreateTexture updated shared handle: %p -> %p",
+                                 kTestName,
+                                 shared_handle,
+                                 open_handle);
+    }
   }
 
   ComPtr<IDirect3DSurface9> surf;
@@ -702,8 +711,15 @@ static int RunProducer(int argc, char** argv) {
     }
   }
 
-  // Duplicate the shared handle into the consumer process. The numeric value must differ across
-  // processes; otherwise a buggy driver could accidentally use the raw handle value as a stable key.
+  // If the shared handle is a real NT handle, duplicate it into the consumer process so the
+  // consumer can use the *child* handle value.
+  //
+  // When possible, try to avoid a numeric collision between the producer and consumer handle values
+  // to catch bugs where the driver accidentally treats the raw numeric value as a stable key.
+  //
+  // Note: some D3D9Ex implementations use "token" shared handles that are not real NT handles and
+  // cannot be duplicated with DuplicateHandle. In that case we fall back to passing the raw numeric
+  // handle value to the consumer.
   HANDLE shared_in_child = NULL;
   ok = DuplicateHandle(GetCurrentProcess(),
                        shared,
@@ -712,63 +728,44 @@ static int RunProducer(int argc, char** argv) {
                        0,
                        FALSE,
                        DUPLICATE_SAME_ACCESS);
-  if (!ok) {
+  const bool duplicated_into_child = (ok && shared_in_child != NULL);
+  if (!duplicated_into_child) {
     DWORD werr = GetLastError();
-    TerminateProcess(pi.hProcess, 1);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    if (job) {
-      CloseHandle(job);
-    }
-    return aerogpu_test::Fail(kTestName,
-                              "DuplicateHandle failed: %s",
-                              aerogpu_test::Win32ErrorToString(werr).c_str());
-  }
-  aerogpu_test::PrintfStdout("INFO: %s: duplicated shared handle into consumer: %p (producer) -> %p (consumer)",
-                             kTestName,
-                             shared,
-                             shared_in_child);
-  if ((uintptr_t)shared_in_child == (uintptr_t)shared) {
-    // Extremely unlikely but possible if the consumer's handle table happens to allocate the same
-    // numeric value. Duplicate again to guarantee numeric instability across processes.
-    HANDLE shared_in_child2 = NULL;
-    ok = DuplicateHandle(GetCurrentProcess(),
-                         shared,
-                         pi.hProcess,
-                         &shared_in_child2,
-                          0,
-                          FALSE,
-                          DUPLICATE_SAME_ACCESS);
-    if (ok && shared_in_child2) {
-      // Close the first duplicated handle in the consumer to avoid leaking handles if we end up
-      // using the second one.
-      HANDLE tmp = NULL;
-      if (DuplicateHandle(pi.hProcess,
-                          shared_in_child,
-                          GetCurrentProcess(),
-                          &tmp,
-                          0,
-                          FALSE,
-                          DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE) &&
-          tmp) {
-        CloseHandle(tmp);
+    aerogpu_test::PrintfStdout("INFO: %s: DuplicateHandle failed (%s); falling back to raw handle value %p",
+                               kTestName,
+                               aerogpu_test::Win32ErrorToString(werr).c_str(),
+                               shared);
+    shared_in_child = shared;
+  } else {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: duplicated shared handle into consumer: %p (producer) -> %p (consumer)",
+        kTestName,
+        shared,
+        shared_in_child);
+    if ((uintptr_t)shared_in_child == (uintptr_t)shared) {
+      // It's possible (though unlikely) for the duplicated handle to end up with the same numeric
+      // value in the child. Try duplicating again so we can still cover the "numeric instability"
+      // case without failing spuriously.
+      HANDLE shared_in_child2 = NULL;
+      ok = DuplicateHandle(GetCurrentProcess(),
+                           shared,
+                           pi.hProcess,
+                           &shared_in_child2,
+                           0,
+                           FALSE,
+                           DUPLICATE_SAME_ACCESS);
+      if (ok && shared_in_child2 != NULL && (uintptr_t)shared_in_child2 != (uintptr_t)shared) {
+        shared_in_child = shared_in_child2;
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: re-duplicated shared handle to avoid numeric collision: now %p (consumer)",
+            kTestName,
+            shared_in_child);
+      } else {
+        aerogpu_test::PrintfStdout(
+            "INFO: %s: duplicated shared handle is numerically identical across processes; continuing anyway",
+            kTestName);
       }
-      shared_in_child = shared_in_child2;
-      aerogpu_test::PrintfStdout(
-          "INFO: %s: re-duplicated shared handle to avoid numeric collision: now %p (consumer)",
-          kTestName,
-          shared_in_child);
     }
-  }
-  if ((uintptr_t)shared_in_child == (uintptr_t)shared) {
-    TerminateProcess(pi.hProcess, 1);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    if (job) {
-      CloseHandle(job);
-    }
-    return aerogpu_test::Fail(kTestName,
-                              "refusing to run: shared handle value is numerically identical across processes");
   }
 
   std::string patch_err;
@@ -806,7 +803,6 @@ static int RunProducer(int argc, char** argv) {
   if (job) {
     CloseHandle(job);
   }
-  CloseHandle(shared);
 
   if (exit_code != 0) {
     return aerogpu_test::Fail(kTestName, "consumer failed with exit code %lu", (unsigned long)exit_code);

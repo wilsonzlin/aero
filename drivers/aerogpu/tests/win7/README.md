@@ -188,7 +188,8 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
-* `d3d9ex_shared_surface_ipc` creates a shared D3D9Ex render-target texture in one process, duplicates the shared handle into a second process (asserting the numeric handle value differs), and validates the consumer can read back the producer’s clear color
+* `d3d9ex_shared_surface_ipc` creates a shared D3D9Ex render-target texture in one process, opens it in a second process, and validates the consumer can read back the producer’s clear color.
+  * If the shared handle is a real NT handle, the producer duplicates it into the consumer; otherwise it falls back to passing the raw handle value (token-style shared handles).
 * `d3d9ex_shared_allocations` exercises allocation behavior for shared resources:
   * creates a non-shared mip chain texture (Levels=4) as a baseline for `NumAllocations` logging
   * creates a shared render-target surface and attempts shared textures that would imply multiple mips (Levels=4 and Levels=0/full chain), which may be rejected by the MVP single-allocation policy
