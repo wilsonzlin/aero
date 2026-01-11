@@ -33,6 +33,12 @@ export type PlatformFeatureReport = {
    * callers can surface a clear reason when it is unavailable.
    */
   webusb: boolean;
+  /**
+   * Whether WebHID is exposed (`navigator.hid`) in this context.
+   *
+   * Like WebUSB, WebHID is only available in secure contexts (HTTPS / localhost).
+   */
+  webhid: boolean;
   /** Whether WebGL2 is available (via `getContext("webgl2")`). */
   webgl2: boolean;
   /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
@@ -154,6 +160,11 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true &&
     "usb" in navigator &&
     !!(navigator as Navigator & { usb?: unknown }).usb;
+  const webhid =
+    typeof navigator !== "undefined" &&
+    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true &&
+    "hid" in navigator &&
+    !!(navigator as Navigator & { hid?: unknown }).hid;
   const webgl2 = detectWebGl2();
   const opfs =
     typeof navigator !== "undefined" &&
@@ -180,6 +191,7 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     jit_dynamic_wasm,
     webgpu,
     webusb,
+    webhid,
     webgl2,
     opfs,
     opfsSyncAccessHandle,

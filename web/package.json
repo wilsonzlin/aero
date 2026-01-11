@@ -20,7 +20,6 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve": "vite preview",
-    "pretypecheck": "npm run check:node && npm run build:wasm:microbench",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:unit": "vitest run",

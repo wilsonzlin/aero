@@ -18,6 +18,11 @@ export type WebHidBrokerState = {
 
 export type WebHidBrokerListener = (state: WebHidBrokerState) => void;
 
+export type WebHidLastInputReportInfo = {
+  tsMs: number;
+  byteLength: number;
+};
+
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
   const stack = [...collections];
   while (stack.length) {
@@ -52,8 +57,11 @@ export class WebHidBroker {
 
   readonly #attachedToWorker = new Set<number>();
   readonly #inputReportListeners = new Map<number, (event: HIDInputReportEvent) => void>();
+  readonly #lastInputReportInfo = new Map<number, WebHidLastInputReportInfo>();
 
   readonly #listeners = new Set<WebHidBrokerListener>();
+
+  #inputReportEmitTimer: ReturnType<typeof setTimeout> | null = null;
 
   #managerUnsubscribe: (() => void) | null = null;
   #prevManagerAttached = new Set<HIDDevice>();
@@ -79,6 +87,10 @@ export class WebHidBroker {
     this.detachWorkerPort(this.#workerPort ?? undefined);
     this.#managerUnsubscribe?.();
     this.#managerUnsubscribe = null;
+    if (this.#inputReportEmitTimer) {
+      clearTimeout(this.#inputReportEmitTimer);
+      this.#inputReportEmitTimer = null;
+    }
     this.#listeners.clear();
   }
 
@@ -99,6 +111,12 @@ export class WebHidBroker {
 
   isWorkerAttached(): boolean {
     return !!this.#workerPort;
+  }
+
+  getLastInputReportInfo(device: HIDDevice): WebHidLastInputReportInfo | null {
+    const deviceId = this.#deviceIdByDevice.get(device);
+    if (deviceId === undefined) return null;
+    return this.#lastInputReportInfo.get(deviceId) ?? null;
   }
 
   attachWorkerPort(port: MessagePort | Worker): void {
@@ -230,12 +248,16 @@ export class WebHidBroker {
       const data = new Uint8Array(src.byteLength);
       data.set(src);
 
+      const tsMs = typeof event.timeStamp === "number" ? event.timeStamp : undefined;
+      this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: data.byteLength });
+      this.#scheduleEmitForInputReports();
+
       const msg: HidInputReportMessage = {
         type: "hid.inputReport",
         deviceId,
         reportId: event.reportId,
         data,
-        tsMs: typeof event.timeStamp === "number" ? event.timeStamp : undefined,
+        tsMs,
       };
       this.#postToWorker(activeWorker, msg, [data.buffer]);
     };
@@ -281,11 +303,21 @@ export class WebHidBroker {
       }
     }
     this.#inputReportListeners.delete(deviceId);
+    this.#lastInputReportInfo.delete(deviceId);
 
     if (options.sendDetach && this.#workerPort) {
       const detachMsg: HidDetachMessage = { type: "hid.detach", deviceId };
       this.#postToWorker(this.#workerPort, detachMsg);
     }
+  }
+
+  #scheduleEmitForInputReports(): void {
+    if (this.#listeners.size === 0) return;
+    if (this.#inputReportEmitTimer) return;
+    this.#inputReportEmitTimer = setTimeout(() => {
+      this.#inputReportEmitTimer = null;
+      this.#emit();
+    }, 100);
   }
 
   async #handleSendReportRequest(msg: HidSendReportMessage): Promise<void> {

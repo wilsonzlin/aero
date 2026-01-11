@@ -707,16 +707,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     }
 
     if (isHidAttachMessage(data)) {
+      if (started) Atomics.add(status, StatusIndex.IoHidAttachCounter, 1);
       hidGuest.attach(data);
       return;
     }
 
     if (isHidDetachMessage(data)) {
+      if (started) Atomics.add(status, StatusIndex.IoHidDetachCounter, 1);
       hidGuest.detach(data);
       return;
     }
 
     if (isHidInputReportMessage(data)) {
+      if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
       hidGuest.inputReport(data);
       return;
     }

@@ -29,12 +29,14 @@ describe("bridgeHarnessDrainActions", () => {
       execute: async (action: UsbHostAction): Promise<UsbHostCompletion> => {
         callOrder.push(`execute:${action.id}`);
         switch (action.kind) {
+          case "controlIn":
+            return { kind: "controlIn", id: action.id, status: "stall" };
+          case "controlOut":
+            return { kind: "controlOut", id: action.id, status: "stall" };
           case "bulkIn":
             return { kind: "bulkIn", id: action.id, status: "stall" };
           case "bulkOut":
             return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: action.data.byteLength };
-          default:
-            throw new Error(`unreachable action kind: ${action.kind}`);
         }
       },
     };

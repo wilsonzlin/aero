@@ -363,6 +363,7 @@ function renderCapabilityTable(report: PlatformFeatureReport): HTMLTableElement 
     "jit_dynamic_wasm",
     "webgpu",
     "webusb",
+    "webhid",
     "webgl2",
     "opfs",
     "opfsSyncAccessHandle",
@@ -2592,11 +2593,11 @@ function renderWebHidPassthroughPanel(): HTMLElement {
   });
 
   const requestButton = el("button", {
-    text: "Request device…",
+    text: "Attach HID device (WebHID)…",
     onclick: async () => {
       error.textContent = "";
       try {
-        await webHidManager.requestAndAttachDevice([]);
+        await webHidManager.requestAndAttach();
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
       }
@@ -2616,6 +2617,12 @@ function renderWebHidPassthroughPanel(): HTMLElement {
     // do not implement the API.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return typeof (device as any).forget === "function";
+  };
+
+  const formatLastReport = (device: HIDDevice): string => {
+    const info = webHidBroker.getLastInputReportInfo(device);
+    if (!info) return "lastInput=— size=—";
+    return `lastInput=${info.tsMs.toFixed(1)}ms size=${info.byteLength} B`;
   };
 
   const render = (): void => {
@@ -2680,7 +2687,7 @@ function renderWebHidPassthroughPanel(): HTMLElement {
                 : null,
             ),
           )
-        : [el("li", { text: "No known devices. Use “Request device…” to grant access." })]),
+        : [el("li", { text: "No known devices. Use “Attach HID device (WebHID)…” to grant access." })]),
     );
 
     attachedList.replaceChildren(
@@ -2693,6 +2700,7 @@ function renderWebHidPassthroughPanel(): HTMLElement {
               el("span", { class: "mono", text: `path=${attachment.guestPath.join(".")}` }),
               el("span", { text: ` ${describeDevice(attachment.device)}` }),
               el("span", { class: "mono", text: attached ? " (attached)" : " (not attached)" }),
+              el("span", { class: "mono muted", text: ` ${formatLastReport(attachment.device)}` }),
               attached
                 ? null
                 : el("button", {

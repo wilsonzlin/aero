@@ -175,6 +175,14 @@ export class WebHidPassthroughManager {
     await this.refreshKnownDevices();
   }
 
+  /**
+   * Convenience wrapper for the runtime UI: request device permission with no
+   * filters and attach all selected devices.
+   */
+  async requestAndAttach(): Promise<void> {
+    await this.requestAndAttachDevice([]);
+  }
+
   async attachKnownDevice(device: HIDDevice): Promise<void> {
     const deviceId = this.#deviceIdFor(device);
     if (this.#devicePaths.has(deviceId)) {

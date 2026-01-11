@@ -43,6 +43,11 @@ export enum StatusIndex {
   IoReady = 10,
   JitReady = 11,
 
+  // I/O worker HID passthrough telemetry.
+  IoHidAttachCounter = 12,
+  IoHidDetachCounter = 13,
+  IoHidInputReportCounter = 14,
+
   // Device-bus state observed by the CPU worker.
   // These are primarily for debugging/observability until the real CPU core is wired up.
   CpuIrqBitmapLo = 32,

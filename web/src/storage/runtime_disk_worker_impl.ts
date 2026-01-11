@@ -516,15 +516,16 @@ async function openDiskFromMetadata(
       await baseDisk.close?.();
       throw err;
     }
+
+    throw new Error("openDiskFromMetadata(remote): unreachable");
   }
 
   if (meta.source !== "local") {
     throw new Error("expected local disk metadata");
   }
+
   const localMeta = meta;
-
   const readOnly = localMeta.kind === "cd" || localMeta.format === "iso";
-
   if (localMeta.backend === "opfs") {
     const fileName = localMeta.fileName;
     const sizeBytes = localMeta.sizeBytes;

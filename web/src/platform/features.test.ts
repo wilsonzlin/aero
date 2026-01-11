@@ -23,6 +23,7 @@ afterEach(() => {
     delete (navigator as unknown as { gpu?: unknown }).gpu;
     delete (navigator as unknown as { storage?: unknown }).storage;
     delete (navigator as unknown as { usb?: unknown }).usb;
+    delete (navigator as unknown as { hid?: unknown }).hid;
   }
 
   delete GLOBALS.AudioWorkletNode;
@@ -39,6 +40,7 @@ function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeature
     jit_dynamic_wasm: false,
     webgpu: false,
     webusb: false,
+    webhid: false,
     webgl2: false,
     opfs: false,
     opfsSyncAccessHandle: false,
@@ -81,6 +83,7 @@ describe("detectPlatformFeatures", () => {
     // Node's global `navigator` is extensible. Stub the fields used by our detector.
     (navigator as unknown as { gpu?: unknown }).gpu = {};
     (navigator as unknown as { usb?: unknown }).usb = {};
+    (navigator as unknown as { hid?: unknown }).hid = {};
     (navigator as unknown as { storage?: unknown }).storage = {
       getDirectory: () => Promise.resolve(null),
     };
@@ -92,6 +95,7 @@ describe("detectPlatformFeatures", () => {
     const report = detectPlatformFeatures();
     expect(report.webgpu).toBe(true);
     expect(report.webusb).toBe(true);
+    expect(report.webhid).toBe(true);
     expect(report.opfs).toBe(true);
     expect(report.audioWorklet).toBe(true);
     expect(report.offscreenCanvas).toBe(true);
@@ -113,6 +117,18 @@ describe("detectPlatformFeatures", () => {
     GLOBALS.isSecureContext = true;
     const secure = detectPlatformFeatures();
     expect(secure.webusb).toBe(true);
+  });
+
+  it("detects WebHID only in secure contexts with navigator.hid exposed", () => {
+    WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
+
+    (navigator as unknown as { hid?: unknown }).hid = {};
+    const insecure = detectPlatformFeatures();
+    expect(insecure.webhid).toBe(false);
+
+    GLOBALS.isSecureContext = true;
+    const secure = detectPlatformFeatures();
+    expect(secure.webhid).toBe(true);
   });
 });
 
