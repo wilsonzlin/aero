@@ -65,6 +65,29 @@ static void test_rx_init_sets_fixed_stream_id(void)
     VirtIoSndRxUninit(&rx);
 }
 
+static void test_rx_init_default_and_clamped_request_count(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 0u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(rx.RequestCount == 16u);
+    TEST_ASSERT(rx.FreeCount == 16u);
+    VirtIoSndRxUninit(&rx);
+
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1000u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(rx.RequestCount == (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ);
+    TEST_ASSERT(rx.FreeCount == (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ);
+    VirtIoSndRxUninit(&rx);
+}
+
 static void test_rx_submit_sg_validates_segments(void)
 {
     VIRTIOSND_RX_ENGINE rx;
@@ -224,6 +247,85 @@ static void test_rx_on_used_uses_registered_callback(void)
     VirtIoSndRxUninit(&rx);
 }
 
+static void test_rx_no_free_requests_drops_submission(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT seg;
+    VIRTIOSND_RX_REQUEST* req;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    seg.addr = 0x1000;
+    seg.len = 4;
+
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(rx.FreeCount == 0u);
+
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x2u);
+    TEST_ASSERT(status == STATUS_INSUFFICIENT_RESOURCES);
+    TEST_ASSERT(rx.DroppedDueToNoRequests == 1u);
+
+    /* Complete the first request so uninit runs with lists in a clean state. */
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+    req->StatusVa->status = VIRTIO_SND_S_OK;
+    VirtioSndHostQueuePushUsed(&q, req, (UINT32)(sizeof(VIRTIO_SND_PCM_STATUS) + 4u));
+    (VOID)VirtIoSndRxDrainCompletions(&rx, NULL, NULL);
+    TEST_ASSERT(rx.FreeCount == 1u);
+
+    VirtIoSndRxUninit(&rx);
+}
+
+static void test_rx_not_supp_sets_fatal(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT seg;
+    RX_COMPLETION_CAPTURE cap;
+    VIRTIOSND_RX_REQUEST* req;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    seg.addr = 0x1000;
+    seg.len = 4;
+    RtlZeroMemory(&cap, sizeof(cap));
+
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x123u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+    req->StatusVa->status = VIRTIO_SND_S_NOT_SUPP;
+    req->StatusVa->latency_bytes = 0u;
+    VirtioSndHostQueuePushUsed(&q, req, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    (VOID)VirtIoSndRxDrainCompletions(&rx, RxCompletionCb, &cap);
+
+    TEST_ASSERT(cap.Called == 1);
+    TEST_ASSERT(cap.Cookie == (void*)0x123u);
+    TEST_ASSERT(cap.CompletionStatus == STATUS_NOT_SUPPORTED);
+    TEST_ASSERT(cap.VirtioStatus == VIRTIO_SND_S_NOT_SUPP);
+    TEST_ASSERT(rx.FatalError == TRUE);
+    TEST_ASSERT(rx.CompletedByStatus[VIRTIO_SND_S_NOT_SUPP] == 1u);
+
+    /* Once fatal, submissions fail fast. */
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x456u);
+    TEST_ASSERT(status == STATUS_INVALID_DEVICE_STATE);
+
+    VirtIoSndRxUninit(&rx);
+}
+
 static void test_rx_used_len_clamps_payload_and_io_err_is_not_fatal(void)
 {
     VIRTIOSND_RX_ENGINE rx;
@@ -373,10 +475,13 @@ static void test_rx_used_len_too_small_sets_bad_msg_and_fatal(void)
 int main(void)
 {
     test_rx_init_sets_fixed_stream_id();
+    test_rx_init_default_and_clamped_request_count();
     test_rx_submit_sg_validates_segments();
     test_rx_submit_sg_rejects_payload_overflow();
     test_rx_submit_sg_builds_descriptor_chain();
     test_rx_on_used_uses_registered_callback();
+    test_rx_no_free_requests_drops_submission();
+    test_rx_not_supp_sets_fatal();
     test_rx_used_len_clamps_payload_and_io_err_is_not_fatal();
     test_rx_used_len_too_small_sets_bad_msg_and_fatal();
 

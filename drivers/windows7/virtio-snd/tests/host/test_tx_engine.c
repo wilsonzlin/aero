@@ -35,6 +35,43 @@ static void test_tx_init_sets_fixed_stream_id_and_can_suppress_interrupts(void)
     VirtioSndTxUninit(&tx);
 }
 
+static void test_tx_init_default_and_clamped_buffer_count(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 32u, 0u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(tx.BufferCount == 16u);
+    TEST_ASSERT(tx.FreeCount == 16u);
+    VirtioSndTxUninit(&tx);
+
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 32u, 100u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(tx.BufferCount == 64u);
+    TEST_ASSERT(tx.FreeCount == 64u);
+    VirtioSndTxUninit(&tx);
+}
+
+static void test_tx_init_rejects_unaligned_max_period_bytes(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 6u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+}
+
 static void test_tx_submit_period_wrap_copies_both_segments_and_builds_sg(void)
 {
     VIRTIOSND_TX_ENGINE tx;
@@ -196,6 +233,9 @@ static void test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits(void)
     status = VirtioSndTxInit(&tx, &dma, &q.Queue, 64u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
+    status = VirtioSndTxSubmitSg(&tx, segs, 0u);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
     status = VirtioSndTxSubmitSg(&tx, segs, (ULONG)(VIRTIOSND_TX_MAX_SEGMENTS + 1u));
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 
@@ -208,6 +248,17 @@ static void test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits(void)
     segs[0].Length = 2u;
     status = VirtioSndTxSubmitSg(&tx, segs, 1u);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* Zero-length segment => invalid parameter. */
+    segs[0].Length = 0u;
+    status = VirtioSndTxSubmitSg(&tx, segs, 1u);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* Total bytes > UINT32_MAX => invalid buffer size (before MaxPeriodBytes check). */
+    segs[0].Length = 0xFFFFFFFFu;
+    segs[1].Length = 4u;
+    status = VirtioSndTxSubmitSg(&tx, segs, 2u);
+    TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
 
     VirtioSndTxUninit(&tx);
 }
@@ -361,6 +412,8 @@ static void test_tx_not_supp_sets_fatal_but_io_err_does_not(void)
 int main(void)
 {
     test_tx_init_sets_fixed_stream_id_and_can_suppress_interrupts();
+    test_tx_init_default_and_clamped_buffer_count();
+    test_tx_init_rejects_unaligned_max_period_bytes();
     test_tx_submit_period_wrap_copies_both_segments_and_builds_sg();
     test_tx_no_free_buffers_drops_period();
     test_tx_queue_full_returns_buffer_to_pool();

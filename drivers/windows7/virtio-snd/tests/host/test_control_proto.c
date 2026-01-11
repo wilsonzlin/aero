@@ -117,6 +117,9 @@ static void test_pcm_simple_req_packing(void)
 
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, 0xDEADu);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    status = VirtioSndCtrlBuildPcmSimpleReq(&req, 2u, VIRTIO_SND_R_PCM_PREPARE);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 }
 
 static void test_pcm_info_resp_parsing(void)
@@ -162,6 +165,37 @@ static void test_pcm_info_resp_parsing(void)
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(out0.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
     TEST_ASSERT(out1.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+
+    /* Direction validation. */
+    info0.direction = VIRTIO_SND_D_INPUT;
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_DEVICE_PROTOCOL_ERROR);
+    info0.direction = VIRTIO_SND_D_OUTPUT;
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+
+    /* Format/rate validation. */
+    info0.formats = 0;
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+    info0.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+
+    info1.rates = 0;
+    RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+    info1.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
+
+    /* Channel range validation. */
+    info1.channels_min = 2;
+    RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+    info1.channels_min = 1;
+    RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
 
     /* Non-OK status is mapped via VirtioSndStatusToNtStatus. */
     hdr.status = VIRTIO_SND_S_NOT_SUPP;
