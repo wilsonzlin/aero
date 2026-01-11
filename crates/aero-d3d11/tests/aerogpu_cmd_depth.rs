@@ -807,7 +807,9 @@ fn aerogpu_cmd_d24s8_depth_testing_keeps_near_fragment() {
 
         // CLEAR (red + depth=1.0 + stencil=0)
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Clear as u32);
-        stream.extend_from_slice(&(AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL).to_le_bytes());
+        stream.extend_from_slice(
+            &(AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL).to_le_bytes(),
+        );
         stream.extend_from_slice(&1f32.to_bits().to_le_bytes()); // r
         stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // g
         stream.extend_from_slice(&0f32.to_bits().to_le_bytes()); // b
