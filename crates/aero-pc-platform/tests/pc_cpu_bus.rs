@@ -799,3 +799,39 @@ fn pc_cpu_bus_sync_cr3_flushes_long_mode_translation() {
     bus.sync(&state);
     assert_eq!(bus.read_u8(vaddr).unwrap(), 0xBB);
 }
+
+#[test]
+fn pc_cpu_bus_non_canonical_long_mode_is_gp0() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let state = long_state(0x1000, 0);
+    bus.sync(&state);
+
+    // Non-canonical for 48-bit canonical addressing (bit 48 set but upper bits are not sign
+    // extended).
+    let non_canonical = 0x0001_0000_0000_0000u64;
+    assert_eq!(bus.read_u8(non_canonical), Err(Exception::gp0()));
+}
+
+#[test]
+fn pc_cpu_bus_paging_disabled_truncates_linear_addresses_to_32bit() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    bus.platform.memory.write_u8(0, 0xAA);
+    bus.platform.memory.write_u8(0x1234, 0xBB);
+
+    let mut state = CpuState::new(CpuMode::Protected);
+    // Paging disabled.
+    state.control.cr0 = CR0_PE;
+    state.update_mode();
+    bus.sync(&state);
+
+    assert_eq!(bus.read_u8(0).unwrap(), 0xAA);
+    assert_eq!(bus.read_u8(0x1234).unwrap(), 0xBB);
+
+    // With paging disabled, x86 linear addresses are 32-bit.
+    assert_eq!(bus.read_u8(0x1_0000_0000).unwrap(), 0xAA);
+    assert_eq!(bus.read_u8(0x1_0000_0000 + 0x1234).unwrap(), 0xBB);
+}
