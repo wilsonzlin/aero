@@ -9,6 +9,15 @@ export interface RangeProxyResponse {
 
 export const DISK_BYTES_CONTENT_TYPE = "application/octet-stream";
 
+function computeContentLengthFromContentRange(contentRange: string): string | undefined {
+  const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange.trim());
+  if (!match) return undefined;
+  const start = BigInt(match[1]);
+  const end = BigInt(match[2]);
+  if (end < start) return undefined;
+  return (end - start + 1n).toString();
+}
+
 export function buildRangeProxyHeaders(params: {
   contentType: string | undefined;
   crossOriginResourcePolicy: CrossOriginResourcePolicy;
@@ -50,6 +59,9 @@ export function buildRangeProxyResponse(params: {
 
   if (typeof params.s3.ContentLength === "number") {
     headers["content-length"] = String(params.s3.ContentLength);
+  } else if (params.s3.ContentRange) {
+    const inferred = computeContentLengthFromContentRange(params.s3.ContentRange);
+    if (inferred) headers["content-length"] = inferred;
   }
   return { statusCode: isPartial ? 206 : 200, headers };
 }

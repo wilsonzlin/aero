@@ -66,7 +66,7 @@ describe("range proxy", () => {
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["content-range"]).toBe("bytes 0-99/100");
-    expect(res.headers).not.toHaveProperty("content-length");
+    expect(res.headers["content-length"]).toBe("100");
   });
 
   it("falls back to application/octet-stream when the upstream does not provide a Content-Type", () => {
