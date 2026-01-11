@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyWebUsbDevice, describeUsbClassCode, isProtectedInterfaceClass } from "../../../src/platform/webusb_protection";
+import { classifyWebUsbDevice, describeUsbClassCode, isProtectedInterfaceClass } from "./webusb_protection";
 
 type MockAlternate = {
   alternateSetting: number;
