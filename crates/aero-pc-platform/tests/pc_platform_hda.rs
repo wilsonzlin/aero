@@ -149,6 +149,9 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_intx() {
     // Bring controller out of reset.
     pc.memory.write_u32(bar0_base + 0x08, 1);
 
+    // Allow the device model to DMA from guest memory (CORB/RIRB) while processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
     // Set up CORB/RIRB to raise a CIS interrupt.
     let corb_base = 0x1000u64;
     let rirb_base = 0x2000u64;
@@ -175,7 +178,7 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_intx() {
         bdf.device,
         bdf.function,
         0x04,
-        0x0002 | (1 << 10),
+        0x0006 | (1 << 10),
     );
 
     pc.poll_pci_intx_lines();
@@ -186,7 +189,7 @@ fn pc_platform_respects_pci_interrupt_disable_bit_for_intx() {
     );
 
     // Re-enable INTx; since the HDA interrupt is still pending, it should now be delivered.
-    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
     pc.poll_pci_intx_lines();
 
     let pending = pc
@@ -231,6 +234,9 @@ fn pc_platform_routes_hda_intx_via_pci_intx_router() {
 
     // Bring controller out of reset.
     pc.memory.write_u32(bar0_base + 0x08, 1);
+
+    // Allow HDA CORB/RIRB DMA while processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 
     // Set up CORB/RIRB in guest memory so the controller can raise a CIS interrupt on response.
     let corb_base = 0x1000u64;
@@ -296,6 +302,10 @@ fn pc_platform_routes_hda_intx_via_ioapic_in_apic_mode() {
 
     // Bring controller out of reset.
     pc.memory.write_u32(bar0_base + 0x08, 1);
+
+    let bdf = HDA_ICH6.bdf;
+    // Allow HDA CORB/RIRB DMA while processing.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
 
     // Set up CORB/RIRB and queue one verb so we can generate a CIS interrupt.
     let corb_base = 0x1000u64;

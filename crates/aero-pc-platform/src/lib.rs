@@ -482,6 +482,20 @@ impl PcPlatform {
         let Some(hda) = self.hda.as_ref() else {
             return;
         };
+
+        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
+        let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
+        let bus_master_enabled = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .is_some_and(|cfg| (cfg.command() & (1 << 2)) != 0)
+        };
+        if !bus_master_enabled {
+            return;
+        };
+
         let mut hda = hda.borrow_mut();
         let mut mem = HdaDmaMemory {
             mem: RefCell::new(&mut self.memory),
