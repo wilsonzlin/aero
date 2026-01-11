@@ -399,12 +399,24 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       workerProbe && typeof workerProbe.requestDevice === 'object' && workerProbe.requestDevice !== null
         ? (workerProbe.requestDevice as { ok?: unknown; error?: unknown })
         : null;
-    const workerRequestDeviceText =
-      workerRequestDevice && workerRequestDevice.ok === true
-        ? 'resolved'
-        : workerRequestDevice && workerRequestDevice.ok === false
-          ? 'rejected'
-          : 'not run';
+    const workerRequestDeviceError =
+      workerRequestDevice &&
+      workerRequestDevice.ok === false &&
+      typeof workerRequestDevice.error === 'object' &&
+      workerRequestDevice.error !== null
+        ? (workerRequestDevice.error as { name?: unknown; message?: unknown })
+        : null;
+    const workerRequestDeviceText = (() => {
+      if (workerRequestDevice && workerRequestDevice.ok === true) return 'resolved';
+      if (workerRequestDevice && workerRequestDevice.ok === false) {
+        const name = typeof workerRequestDeviceError?.name === 'string' ? workerRequestDeviceError.name : null;
+        const message = typeof workerRequestDeviceError?.message === 'string' ? workerRequestDeviceError.message : null;
+        if (name && message) return `rejected: ${name}: ${message}`;
+        if (name) return `rejected: ${name}`;
+        return 'rejected';
+      }
+      return 'not run';
+    })();
 
     info.textContent =
       `isSecureContext=${(globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true}\n` +
@@ -441,10 +453,18 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     updateInfo();
     try {
       const resp = await runWebUsbProbeWorker({ type: 'probe' });
-      workerProbe =
-        resp && typeof resp === 'object' && !Array.isArray(resp)
-          ? ((resp as { report?: unknown }).report as Record<string, unknown> | null) ?? null
-          : null;
+      if (resp && typeof resp === 'object' && !Array.isArray(resp)) {
+        const msg = resp as { type?: unknown; report?: unknown; error?: unknown };
+        if (msg.type === 'probe-result' && msg.report && typeof msg.report === 'object') {
+          workerProbe = msg.report as Record<string, unknown>;
+        } else if (msg.type === 'error' && msg.error && typeof msg.error === 'object') {
+          const errObj = msg.error as { name?: unknown; message?: unknown };
+          workerProbeError = {
+            name: typeof errObj.name === 'string' ? errObj.name : 'Error',
+            message: typeof errObj.message === 'string' ? errObj.message : String(errObj),
+          };
+        }
+      }
       output.textContent = JSON.stringify(resp, null, 2);
       updateInfo();
     } catch (err) {
