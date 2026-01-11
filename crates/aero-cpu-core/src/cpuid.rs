@@ -65,9 +65,9 @@ pub struct CpuFeatures {
     /// Extended leaf 0x8000_0007 EDX feature bits (invariant TSC/power management).
     pub ext7_edx: u32,
 
-    /// Physical address width (CPUID.8000_0008H:EAX[7:0]).
+    /// Physical address width (`CPUID.8000_0008H:EAX[7:0]`).
     pub physical_address_bits: u8,
-    /// Linear address width (CPUID.8000_0008H:EAX[15:8]).
+    /// Linear address width (`CPUID.8000_0008H:EAX[15:8]`).
     pub linear_address_bits: u8,
 
     /// Topology information used by CPUID topology leaves.

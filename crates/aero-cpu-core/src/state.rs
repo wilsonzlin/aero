@@ -1132,7 +1132,7 @@ impl CpuState {
         crate::fxsave::ldmxcsr(&mut self.sse, src)
     }
 
-    /// `STMXCSR` convenience wrapper that writes MXCSR via [`mem::CpuBus`].
+    /// `STMXCSR` convenience wrapper that writes MXCSR via [`crate::mem::CpuBus`].
     pub fn stmxcsr_to_mem<B: CpuBus>(&self, bus: &mut B, addr: u64) -> Result<(), Exception> {
         if addr & 0b11 != 0 {
             return Err(Exception::gp0());
@@ -1140,7 +1140,7 @@ impl CpuState {
         bus.write_u32(addr, self.sse.mxcsr)
     }
 
-    /// `LDMXCSR` convenience wrapper that loads MXCSR via [`mem::CpuBus`].
+    /// `LDMXCSR` convenience wrapper that loads MXCSR via [`crate::mem::CpuBus`].
     pub fn ldmxcsr_from_mem<B: CpuBus>(&mut self, bus: &mut B, addr: u64) -> Result<(), Exception> {
         if addr & 0b11 != 0 {
             return Err(Exception::gp0());
@@ -1187,7 +1187,7 @@ impl CpuState {
     }
 
     /// `FXSAVE` convenience wrapper that writes the 512-byte (legacy) image into guest memory via
-    /// [`mem::CpuBus`].
+    /// [`crate::mem::CpuBus`].
     pub fn fxsave_to_mem<B: CpuBus>(&self, bus: &mut B, addr: u64) -> Result<(), Exception> {
         if addr & 0xF != 0 {
             return Err(Exception::gp0());
@@ -1199,7 +1199,7 @@ impl CpuState {
     }
 
     /// `FXSAVE64` convenience wrapper that writes the 512-byte (64-bit) image into guest memory via
-    /// [`mem::CpuBus`].
+    /// [`crate::mem::CpuBus`].
     pub fn fxsave64_to_mem<B: CpuBus>(&self, bus: &mut B, addr: u64) -> Result<(), Exception> {
         if addr & 0xF != 0 {
             return Err(Exception::gp0());
@@ -1211,7 +1211,7 @@ impl CpuState {
     }
 
     /// `FXRSTOR` convenience wrapper that reads the 512-byte (legacy) image from guest memory via
-    /// [`mem::CpuBus`].
+    /// [`crate::mem::CpuBus`].
     pub fn fxrstor_from_mem<B: CpuBus>(&mut self, bus: &mut B, addr: u64) -> Result<(), Exception> {
         if addr & 0xF != 0 {
             return Err(Exception::gp0());
@@ -1230,7 +1230,7 @@ impl CpuState {
     }
 
     /// `FXRSTOR64` convenience wrapper that reads the 512-byte (64-bit) image from guest memory via
-    /// [`mem::CpuBus`].
+    /// [`crate::mem::CpuBus`].
     pub fn fxrstor64_from_mem<B: CpuBus>(&mut self, bus: &mut B, addr: u64) -> Result<(), Exception> {
         if addr & 0xF != 0 {
             return Err(Exception::gp0());
