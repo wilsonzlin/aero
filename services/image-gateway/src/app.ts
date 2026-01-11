@@ -72,6 +72,75 @@ function assertIdentityContentEncoding(value: string | undefined): void {
   );
 }
 
+function parseSingleByteRangeHeader(
+  value: string
+): { start: bigint; end?: bigint; normalized: string } | undefined {
+  const trimmed = value.trim();
+  const match = /^bytes=(\d+)-(\d*)$/i.exec(trimmed);
+  if (!match) return undefined;
+  const startStr = match[1];
+  const endStr = match[2];
+  const start = BigInt(startStr);
+  const end = endStr ? BigInt(endStr) : undefined;
+  if (end !== undefined && end < start) return undefined;
+  return {
+    start,
+    end,
+    normalized: `bytes=${startStr}-${endStr}`,
+  };
+}
+
+async function sendRangeNotSatisfiable(params: {
+  reply: FastifyReply;
+  config: Config;
+  s3: S3Client;
+  store: ImageStore;
+  imageId: string;
+  record: ImageRecord;
+}): Promise<void> {
+  let totalSize = params.record.size;
+  if (typeof totalSize !== "number") {
+    let head: HeadObjectCommandOutput;
+    try {
+      head = await params.s3.send(
+        new HeadObjectCommand({
+          Bucket: params.config.s3Bucket,
+          Key: params.record.s3Key,
+        })
+      );
+    } catch (err) {
+      const maybeStatus = (
+        err as Partial<{ $metadata?: { httpStatusCode?: unknown } }>
+      ).$metadata?.httpStatusCode;
+      if (typeof maybeStatus === "number" && maybeStatus === 404) {
+        throw new ApiError(404, "Image object not found", "NOT_FOUND");
+      }
+      throw err;
+    }
+
+    totalSize = typeof head.ContentLength === "number" ? head.ContentLength : undefined;
+    const etag = typeof head.ETag === "string" ? head.ETag : undefined;
+    const lastModified =
+      head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined;
+
+    params.store.update(params.imageId, {
+      size: totalSize,
+      etag,
+      lastModified,
+    });
+  }
+
+  const headers = buildRangeProxyHeaders({
+    contentType: undefined,
+    crossOriginResourcePolicy: params.config.crossOriginResourcePolicy,
+  });
+  if (typeof totalSize === "number") {
+    headers["content-range"] = `bytes */${totalSize}`;
+  }
+
+  params.reply.status(416).headers(headers).send();
+}
+
 function sendIfRangePreconditionFailed(
   reply: FastifyReply,
   params: { etag: string; crossOriginResourcePolicy: Config["crossOriginResourcePolicy"] }
@@ -890,18 +959,34 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    const requestedRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
-    if (requestedRange) {
-      if (!requestedRange.startsWith("bytes=")) {
-        throw new ApiError(400, "Only bytes ranges are supported", "BAD_REQUEST");
-      }
-      if (requestedRange.includes(",")) {
-        throw new ApiError(
-          400,
-          "Only single-range requests are supported",
-          "BAD_REQUEST"
-        );
-      }
+    const rawRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
+    const parsedRange = rawRange ? parseSingleByteRangeHeader(rawRange) : undefined;
+    const requestedRange = parsedRange?.normalized;
+    if (rawRange && !requestedRange) {
+      await sendRangeNotSatisfiable({
+        reply,
+        config: deps.config,
+        s3: deps.s3,
+        store: deps.store,
+        imageId,
+        record,
+      });
+      return;
+    }
+    if (
+      parsedRange &&
+      typeof record.size === "number" &&
+      parsedRange.start >= BigInt(record.size)
+    ) {
+      await sendRangeNotSatisfiable({
+        reply,
+        config: deps.config,
+        s3: deps.s3,
+        store: deps.store,
+        imageId,
+        record,
+      });
+      return;
     }
 
     const ifRange =
@@ -1031,15 +1116,14 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           return;
         }
         if (maybeStatus === 416) {
-          const totalSize = record.size;
-          const headers = buildRangeProxyHeaders({
-            contentType: undefined,
-            crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+          await sendRangeNotSatisfiable({
+            reply,
+            config: deps.config,
+            s3: deps.s3,
+            store: deps.store,
+            imageId,
+            record,
           });
-          if (typeof totalSize === "number") {
-            headers["content-range"] = `bytes */${totalSize}`;
-          }
-          reply.status(416).headers(headers).send();
           return;
         }
         if (maybeStatus === 404) {

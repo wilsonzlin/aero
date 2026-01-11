@@ -397,6 +397,7 @@ describe("app", () => {
       s3Key: "images/user-1/image-1/v1/disk.img",
       uploadId: "upload-1",
       status: "complete",
+      size: 100,
     });
 
     const s3 = {
@@ -417,10 +418,14 @@ describe("app", () => {
       },
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({
-      error: { code: "BAD_REQUEST" },
-    });
+    expect(res.statusCode).toBe(416);
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["content-range"]).toBe("bytes */100");
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
   it("allows ranged GET when If-Range matches the current ETag", async () => {
