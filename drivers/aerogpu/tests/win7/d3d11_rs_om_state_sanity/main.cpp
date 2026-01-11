@@ -1,4 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_shader_compiler.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -10,10 +12,33 @@ struct Vertex {
   float color[4];
 };
 
-static int FailD3D11WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+static const char kStateHlsl[] = R"(struct VSIn {
+  float2 pos : POSITION;
+  float4 color : COLOR0;
+};
+
+struct VSOut {
+  float4 pos : SV_Position;
+  float4 color : COLOR0;
+};
+
+VSOut vs_main(VSIn input) {
+  VSOut o;
+  o.pos = float4(input.pos.xy, 0.0f, 1.0f);
+  o.color = input.color;
+  return o;
+}
+
+float4 ps_main(VSOut input) : SV_Target {
+  return input.color;
+}
+)";
+
+static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -22,6 +47,9 @@ static int FailD3D11WithRemovedReason(const char* test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
   }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
+  }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
@@ -29,11 +57,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_rs_om_state_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu] [--require-umd]",
+        "Usage: %s.exe [--dump] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -48,14 +78,14 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -80,16 +110,16 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                  feature_levels,
                                  ARRAYSIZE(feature_levels),
                                  D3D11_SDK_VERSION,
-                                 device.put(),
-                                 &chosen_level,
-                                 context.put());
+                                  device.put(),
+                                  &chosen_level,
+                                  context.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D11CreateDevice(HARDWARE)", hr);
+    return reporter.FailHresult("D3D11CreateDevice(HARDWARE)", hr);
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
   if (chosen_level < D3D_FEATURE_LEVEL_10_0) {
-    return aerogpu_test::Fail(kTestName, "feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
+    return reporter.Fail("feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
   }
 
   ComPtr<IDXGIDevice> dxgi_device;
@@ -99,9 +129,8 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(kTestName,
-                                         "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
-                                         hr_adapter);
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
+                                    hr_adapter);
       }
     } else {
       DXGI_ADAPTER_DESC ad;
@@ -109,8 +138,8 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
-          return aerogpu_test::FailHresult(
-              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)",
+                                      hr_desc);
         }
       } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
@@ -118,37 +147,33 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
         if (!allow_microsoft && ad.VendorId == 0x1414) {
-          return aerogpu_test::Fail(kTestName,
-                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                    "Install AeroGPU driver or pass --allow-microsoft.",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)ad.DeviceId);
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
         }
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) && !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
-                                    "or use --require-vid/--require-did)",
-                                    ad.Description);
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
         }
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
@@ -158,31 +183,40 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
   }
 
-  // Load precompiled shaders generated by build_vs2010.cmd.
+  // Compile shaders at runtime (no fxc.exe build-time dependency).
   const std::wstring dir = aerogpu_test::GetModuleDir();
-  const std::wstring vs_path = aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_vs.cso");
-  const std::wstring ps_path = aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_ps.cso");
-
   std::vector<unsigned char> vs_bytes;
   std::vector<unsigned char> ps_bytes;
-  std::string file_err;
-  if (!aerogpu_test::ReadFileBytes(vs_path, &vs_bytes, &file_err)) {
-    return aerogpu_test::Fail(kTestName, "failed to read %ls: %s", vs_path.c_str(), file_err.c_str());
+  std::string shader_err;
+  if (!aerogpu_test::CompileHlslToBytecode(kStateHlsl,
+                                           strlen(kStateHlsl),
+                                           "d3d11_rs_om_state_sanity.hlsl",
+                                           "vs_main",
+                                           "vs_4_0_level_9_1",
+                                           &vs_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
   }
-  if (!aerogpu_test::ReadFileBytes(ps_path, &ps_bytes, &file_err)) {
-    return aerogpu_test::Fail(kTestName, "failed to read %ls: %s", ps_path.c_str(), file_err.c_str());
+  if (!aerogpu_test::CompileHlslToBytecode(kStateHlsl,
+                                           strlen(kStateHlsl),
+                                           "d3d11_rs_om_state_sanity.hlsl",
+                                           "ps_main",
+                                           "ps_4_0_level_9_1",
+                                           &ps_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
   }
 
   ComPtr<ID3D11VertexShader> vs;
   hr = device->CreateVertexShader(&vs_bytes[0], vs_bytes.size(), NULL, vs.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateVertexShader", hr);
+    return reporter.FailHresult("CreateVertexShader", hr);
   }
 
   ComPtr<ID3D11PixelShader> ps;
   hr = device->CreatePixelShader(&ps_bytes[0], ps_bytes.size(), NULL, ps.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreatePixelShader", hr);
+    return reporter.FailHresult("CreatePixelShader", hr);
   }
 
   D3D11_INPUT_ELEMENT_DESC il[] = {
@@ -193,7 +227,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11InputLayout> input_layout;
   hr = device->CreateInputLayout(il, ARRAYSIZE(il), &vs_bytes[0], vs_bytes.size(), input_layout.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateInputLayout", hr);
+    return reporter.FailHresult("CreateInputLayout", hr);
   }
 
   const int kWidth = 64;
@@ -216,13 +250,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> rt_tex;
   hr = device->CreateTexture2D(&tex_desc, NULL, rt_tex.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(render target)", hr);
+    return reporter.FailHresult("CreateTexture2D(render target)", hr);
   }
 
   ComPtr<ID3D11RenderTargetView> rtv;
   hr = device->CreateRenderTargetView(rt_tex.get(), NULL, rtv.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView", hr);
+    return reporter.FailHresult("CreateRenderTargetView", hr);
   }
 
   // Create a readback staging texture.
@@ -235,7 +269,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> staging;
   hr = device->CreateTexture2D(&st_desc, NULL, staging.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging)", hr);
+    return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
   ID3D11RenderTargetView* rtvs[] = {rtv.get()};
@@ -297,7 +331,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   vb_init.pSysMem = fs_verts;
   hr = device->CreateBuffer(&vb_desc, &vb_init, vb_fs.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(vb_fs)", hr);
+    return reporter.FailHresult("CreateBuffer(vb_fs)", hr);
   }
 
   ComPtr<ID3D11Buffer> vb_cull;
@@ -305,7 +339,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   vb_init.pSysMem = cull_verts;
   hr = device->CreateBuffer(&vb_desc, &vb_init, vb_cull.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(vb_cull)", hr);
+    return reporter.FailHresult("CreateBuffer(vb_cull)", hr);
   }
 
   // Rasterizer state: scissor enabled, no culling.
@@ -320,7 +354,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11RasterizerState> rs_scissor;
   hr = device->CreateRasterizerState(&rs_desc_scissor, rs_scissor.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRasterizerState(scissor)", hr);
+    return reporter.FailHresult("CreateRasterizerState(scissor)", hr);
   }
 
   // Rasterizer state: cull backfaces, FrontCounterClockwise=FALSE (CW is front).
@@ -334,7 +368,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11RasterizerState> rs_cull_front_cw;
   hr = device->CreateRasterizerState(&rs_desc_cull, rs_cull_front_cw.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRasterizerState(cull front=CW)", hr);
+    return reporter.FailHresult("CreateRasterizerState(cull front=CW)", hr);
   }
 
   // Rasterizer state: cull backfaces, FrontCounterClockwise=TRUE (CCW is front).
@@ -343,7 +377,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11RasterizerState> rs_cull_front_ccw;
   hr = device->CreateRasterizerState(&rs_desc_cull, rs_cull_front_ccw.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRasterizerState(cull front=CCW)", hr);
+    return reporter.FailHresult("CreateRasterizerState(cull front=CCW)", hr);
   }
 
   // Rasterizer state: no culling (used for blend).
@@ -357,7 +391,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11RasterizerState> rs_no_cull;
   hr = device->CreateRasterizerState(&rs_desc_no_cull, rs_no_cull.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRasterizerState(no cull)", hr);
+    return reporter.FailHresult("CreateRasterizerState(no cull)", hr);
   }
 
   // Blend state: standard alpha blending.
@@ -377,7 +411,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   ComPtr<ID3D11BlendState> alpha_blend;
   hr = device->CreateBlendState(&blend_desc, alpha_blend.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBlendState(alpha)", hr);
+    return reporter.FailHresult("CreateBlendState(alpha)", hr);
   }
 
   // Blend state: blending disabled, but with a non-default color write mask (green channel only).
@@ -432,7 +466,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [scissor]", hr, device.get());
     }
 
     const uint32_t inside = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
@@ -440,14 +474,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
         aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
 
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor.bmp"),
-                                        kWidth,
-                                        kHeight,
-                                        map.pData,
-                                        (int)map.RowPitch,
-                                        &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: scissor BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
 
@@ -457,16 +490,15 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint32_t expected_red = 0xFFFF0000u;
     if ((inside & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
         (outside & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "scissor failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
-                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
-                                kHeight / 2,
-                                (unsigned long)inside,
-                                (unsigned long)expected_green,
-                                kWidth - 5,
-                                kHeight / 2,
-                                (unsigned long)outside,
-                                (unsigned long)expected_red);
+      return reporter.Fail(
+          "scissor failed: inside(5,%d)=0x%08lX expected ~0x%08lX, outside(%d,%d)=0x%08lX expected ~0x%08lX",
+          kHeight / 2,
+          (unsigned long)inside,
+          (unsigned long)expected_green,
+          kWidth - 5,
+          kHeight / 2,
+          (unsigned long)outside,
+          (unsigned long)expected_red);
     }
 
     // Verify that RSSetState(NULL) restores the default rasterizer state, which has scissor disabled.
@@ -483,7 +515,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor NULL state]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [scissor NULL state]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t inside_null =
@@ -532,7 +568,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor disabled]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [scissor disabled]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t inside_disabled =
@@ -591,34 +631,37 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [cull culled]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [cull culled]", hr, device.get());
     }
 
     const int cx = kWidth / 2;
     const int cy = kHeight / 2;
     const uint32_t center_culled = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_culled.bmp");
       std::string err;
       if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_culled.bmp"),
+              bmp_path,
               kWidth,
               kHeight,
               map.pData,
               (int)map.RowPitch,
               &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: cull(culled) BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
     if ((center_culled & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "cull failed (expected culled): center(%d,%d)=0x%08lX expected ~0x%08lX",
-                                cx,
-                                cy,
-                                (unsigned long)center_culled,
-                                (unsigned long)expected_red);
+      return reporter.Fail("cull failed (expected culled): center(%d,%d)=0x%08lX expected ~0x%08lX",
+                           cx,
+                           cy,
+                           (unsigned long)center_culled,
+                           (unsigned long)expected_red);
     }
 
     // Next: CullMode = NONE should draw regardless of winding/front-face config.
@@ -632,7 +675,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [cull none]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [cull none]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t center_no_cull = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -671,31 +718,34 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [cull drawn]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [cull drawn]", hr, device.get());
     }
 
     const uint32_t center_drawn = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_drawn.bmp");
       std::string err;
       if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_drawn.bmp"),
+              bmp_path,
               kWidth,
               kHeight,
               map.pData,
               (int)map.RowPitch,
               &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: cull(drawn) BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
     context->Unmap(staging.get(), 0);
 
     if ((center_drawn & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "cull failed (expected visible): center(%d,%d)=0x%08lX expected ~0x%08lX",
-                                cx,
-                                cy,
-                                (unsigned long)center_drawn,
-                                (unsigned long)expected_green);
+      return reporter.Fail("cull failed (expected visible): center(%d,%d)=0x%08lX expected ~0x%08lX",
+                           cx,
+                           cy,
+                           (unsigned long)center_drawn,
+                           (unsigned long)expected_green);
     }
 
     // Finally: RSSetState(NULL) should restore the default rasterizer state, which culls backfaces with
@@ -710,7 +760,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [cull NULL state]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [cull NULL state]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t center_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -758,7 +812,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [blend]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [blend]", hr, device.get());
     }
 
     const int cx = kWidth / 2;
@@ -766,14 +820,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint32_t center = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
 
     if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend.bmp");
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend.bmp"),
-                                        kWidth,
-                                        kHeight,
-                                        map.pData,
-                                        (int)map.RowPitch,
-                                        &err)) {
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: blend BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
     }
 
@@ -790,19 +843,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     if ((r < exp_r - tol || r > exp_r + tol) || (g < exp_g - tol || g > exp_g + tol) ||
         (b < exp_b - tol || b > exp_b + tol)) {
-      return aerogpu_test::Fail(kTestName,
-                                "blend failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~"
-                                "(r=%u g=%u b=%u) tol=%u",
-                                cx,
-                                cy,
-                                (unsigned long)center,
-                                (unsigned)r,
-                                (unsigned)g,
-                                (unsigned)b,
-                                (unsigned)exp_r,
-                                (unsigned)exp_g,
-                                (unsigned)exp_b,
-                                (unsigned)tol);
+      return reporter.Fail(
+          "blend failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~(r=%u g=%u b=%u) tol=%u",
+          cx,
+          cy,
+          (unsigned long)center,
+          (unsigned)r,
+          (unsigned)g,
+          (unsigned)b,
+          (unsigned)exp_r,
+          (unsigned)exp_g,
+          (unsigned)exp_b,
+          (unsigned)tol);
     }
 
     // Verify that disabling blending returns to unblended rendering.
@@ -816,7 +868,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [blend disabled]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [blend disabled]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t center_disabled = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -861,7 +917,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [write mask]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [write mask]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t center_mask = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -908,7 +968,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [blend factor]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [blend factor]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t center_bf = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -963,7 +1027,11 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     ZeroMemory(&map, sizeof(map));
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [sample mask]", hr, device.get());
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [sample mask]",
+                                        hr,
+                                        device.get());
     }
 
     const uint32_t center_sm0 = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -992,8 +1060,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

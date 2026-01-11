@@ -1,0 +1,198 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(aerogpu_win7_validation_suite LANGUAGES CXX)
+
+# These binaries are intended to run inside a Windows 7 guest VM. Keep the codebase
+# conservative (C++11) so it remains buildable with older MSVC toolsets (including
+# v141_xp) while still being easy to build on modern hosts.
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(MSVC)
+  # Match the original VS2010-era build scripts: /W4 /EHsc and a static CRT (/MT).
+  add_compile_options(/W4 /EHsc)
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+
+  # CMake 3.15+: prefer the target-level property, but keep a global default.
+  if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  endif()
+endif()
+
+# Keep the legacy layout: drop binaries next to run_all.cmd in win7/bin/.
+set(AEROGPU_TEST_BIN_DIR "${CMAKE_CURRENT_LIST_DIR}/bin")
+
+function(aerogpu_add_win7_test name)
+  add_executable(${name} ${ARGN})
+  target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_LIST_DIR}/common")
+
+  # Ensure a predictable output path even for multi-config generators (VS).
+  set_target_properties(${name} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${AEROGPU_TEST_BIN_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${AEROGPU_TEST_BIN_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${AEROGPU_TEST_BIN_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${AEROGPU_TEST_BIN_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${AEROGPU_TEST_BIN_DIR}"
+  )
+
+  if(MSVC)
+    set_property(TARGET ${name} PROPERTY
+      MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    )
+  endif()
+endfunction()
+
+aerogpu_add_win7_test(d3d9ex_dwm_probe
+  d3d9ex_dwm_probe/main.cpp
+)
+target_link_libraries(d3d9ex_dwm_probe PRIVATE user32 dwmapi)
+
+aerogpu_add_win7_test(d3d9ex_event_query
+  d3d9ex_event_query/main.cpp
+)
+target_link_libraries(d3d9ex_event_query PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(vblank_wait_sanity
+  vblank_wait_sanity/main.cpp
+)
+target_link_libraries(vblank_wait_sanity PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(vblank_wait
+  vblank_wait/main.cpp
+)
+target_link_libraries(vblank_wait PRIVATE user32 gdi32)
+
+aerogpu_add_win7_test(wait_vblank_pacing
+  wait_vblank_pacing/main.cpp
+)
+target_link_libraries(wait_vblank_pacing PRIVATE user32 gdi32)
+
+aerogpu_add_win7_test(vblank_wait_pacing
+  vblank_wait_pacing/main.cpp
+)
+target_link_libraries(vblank_wait_pacing PRIVATE user32 gdi32)
+
+aerogpu_add_win7_test(get_scanline_sanity
+  get_scanline_sanity/main.cpp
+)
+target_link_libraries(get_scanline_sanity PRIVATE user32 gdi32)
+
+aerogpu_add_win7_test(d3d9_raster_status_sanity
+  d3d9_raster_status_sanity/main.cpp
+)
+target_link_libraries(d3d9_raster_status_sanity PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9_raster_status_pacing
+  d3d9_raster_status_pacing/main.cpp
+)
+target_link_libraries(d3d9_raster_status_pacing PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(dwm_flush_pacing
+  dwm_flush_pacing/main.cpp
+)
+target_link_libraries(dwm_flush_pacing PRIVATE user32 dwmapi)
+
+aerogpu_add_win7_test(d3d9ex_triangle
+  d3d9ex_triangle/main.cpp
+)
+target_link_libraries(d3d9ex_triangle PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9ex_stretchrect
+  d3d9ex_stretchrect/main.cpp
+)
+target_link_libraries(d3d9ex_stretchrect PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9ex_query_latency
+  d3d9ex_query_latency/main.cpp
+)
+target_link_libraries(d3d9ex_query_latency PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9ex_shared_surface
+  d3d9ex_shared_surface/main.cpp
+)
+target_link_libraries(d3d9ex_shared_surface PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9ex_shared_surface_ipc
+  d3d9ex_shared_surface_ipc/main.cpp
+)
+target_link_libraries(d3d9ex_shared_surface_ipc PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9ex_shared_allocations
+  d3d9ex_shared_allocations/main.cpp
+)
+target_link_libraries(d3d9ex_shared_allocations PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d10_triangle
+  d3d10_triangle/main.cpp
+)
+target_link_libraries(d3d10_triangle PRIVATE user32 gdi32 d3d10 dxgi)
+
+aerogpu_add_win7_test(d3d10_1_triangle
+  d3d10_1_triangle/main.cpp
+)
+target_link_libraries(d3d10_1_triangle PRIVATE user32 gdi32 d3d10_1 d3d10 dxgi)
+
+aerogpu_add_win7_test(d3d11_triangle
+  d3d11_triangle/main.cpp
+)
+target_link_libraries(d3d11_triangle PRIVATE user32 gdi32 d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_caps_smoke
+  d3d11_caps_smoke/main.cpp
+)
+target_link_libraries(d3d11_caps_smoke PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_rs_om_state_sanity
+  d3d11_rs_om_state_sanity/main.cpp
+)
+target_link_libraries(d3d11_rs_om_state_sanity PRIVATE user32 gdi32 d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_geometry_shader_smoke
+  d3d11_geometry_shader_smoke/main.cpp
+)
+target_link_libraries(d3d11_geometry_shader_smoke PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_swapchain_rotate_sanity
+  d3d11_swapchain_rotate_sanity/main.cpp
+)
+target_link_libraries(d3d11_swapchain_rotate_sanity PRIVATE user32 gdi32 d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_map_dynamic_buffer_sanity
+  d3d11_map_dynamic_buffer_sanity/main.cpp
+)
+target_link_libraries(d3d11_map_dynamic_buffer_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_update_subresource_texture_sanity
+  d3d11_update_subresource_texture_sanity/main.cpp
+)
+target_link_libraries(d3d11_update_subresource_texture_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_texture_sampling_sanity
+  d3d11_texture_sampling_sanity/main.cpp
+)
+target_link_libraries(d3d11_texture_sampling_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_dynamic_constant_buffer_sanity
+  d3d11_dynamic_constant_buffer_sanity/main.cpp
+)
+target_link_libraries(d3d11_dynamic_constant_buffer_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_depth_test_sanity
+  d3d11_depth_test_sanity/main.cpp
+)
+target_link_libraries(d3d11_depth_test_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(readback_sanity
+  readback_sanity/main.cpp
+)
+target_link_libraries(readback_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(aerogpu_timeout_runner
+  timeout_runner/main.cpp
+)
+
+aerogpu_add_win7_test(aerogpu_test_runner
+  test_runner/main.cpp
+)
+target_link_libraries(aerogpu_test_runner PRIVATE user32 d3d9)

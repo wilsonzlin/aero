@@ -1,4 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_shader_compiler.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -10,10 +12,33 @@ struct Vertex {
   float color[4];
 };
 
-static int FailD3D11WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+static const char kDepthHlsl[] = R"(struct VSIn {
+  float3 pos : POSITION;
+  float4 color : COLOR0;
+};
+
+struct VSOut {
+  float4 pos : SV_Position;
+  float4 color : COLOR0;
+};
+
+VSOut vs_main(VSIn input) {
+  VSOut o;
+  o.pos = float4(input.pos.xyz, 1.0f);
+  o.color = input.color;
+  return o;
+}
+
+float4 ps_main(VSOut input) : SV_Target {
+  return input.color;
+}
+)";
+
+static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -22,6 +47,9 @@ static int FailD3D11WithRemovedReason(const char* test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
   }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
+  }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
@@ -29,11 +57,14 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_depth_test_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu] [--require-umd]",
+        "Usage: %s.exe [--dump] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -47,14 +78,14 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -77,11 +108,11 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
                                  feature_levels,
                                  ARRAYSIZE(feature_levels),
                                  D3D11_SDK_VERSION,
-                                 device.put(),
-                                 &chosen_level,
-                                 context.put());
+                                  device.put(),
+                                  &chosen_level,
+                                  context.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D11CreateDevice(HARDWARE)", hr);
+    return reporter.FailHresult("D3D11CreateDevice(HARDWARE)", hr);
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
@@ -93,10 +124,8 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(
-            kTestName,
-            "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
-            hr_adapter);
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
+                                    hr_adapter);
       }
     } else {
       DXGI_ADAPTER_DESC ad;
@@ -104,8 +133,8 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
-          return aerogpu_test::FailHresult(
-              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)",
+                                      hr_desc);
         }
       } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
@@ -113,39 +142,34 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
         if (!allow_microsoft && ad.VendorId == 0x1414) {
-          return aerogpu_test::Fail(kTestName,
-                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                    "Install AeroGPU driver or pass --allow-microsoft.",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)ad.DeviceId);
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
         }
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) &&
             !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
-                                    "or use --require-vid/--require-did)",
-                                    ad.Description);
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
         }
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(kTestName,
-                                     "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)",
-                                     hr);
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
@@ -155,33 +179,41 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
     }
   }
 
-  // Load precompiled shaders generated by build_vs2010.cmd.
+  // Compile shaders at runtime (no fxc.exe build-time dependency).
   const std::wstring dir = aerogpu_test::GetModuleDir();
-  const std::wstring vs_path = aerogpu_test::JoinPath(dir, L"d3d11_depth_test_sanity_vs.cso");
-  const std::wstring ps_path = aerogpu_test::JoinPath(dir, L"d3d11_depth_test_sanity_ps.cso");
 
   std::vector<unsigned char> vs_bytes;
   std::vector<unsigned char> ps_bytes;
-  std::string file_err;
-  if (!aerogpu_test::ReadFileBytes(vs_path, &vs_bytes, &file_err)) {
-    return aerogpu_test::Fail(
-        kTestName, "failed to read %ls: %s", vs_path.c_str(), file_err.c_str());
+  std::string shader_err;
+  if (!aerogpu_test::CompileHlslToBytecode(kDepthHlsl,
+                                           strlen(kDepthHlsl),
+                                           "d3d11_depth_test_sanity.hlsl",
+                                           "vs_main",
+                                           "vs_4_0_level_9_1",
+                                           &vs_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
   }
-  if (!aerogpu_test::ReadFileBytes(ps_path, &ps_bytes, &file_err)) {
-    return aerogpu_test::Fail(
-        kTestName, "failed to read %ls: %s", ps_path.c_str(), file_err.c_str());
+  if (!aerogpu_test::CompileHlslToBytecode(kDepthHlsl,
+                                           strlen(kDepthHlsl),
+                                           "d3d11_depth_test_sanity.hlsl",
+                                           "ps_main",
+                                           "ps_4_0_level_9_1",
+                                           &ps_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
   }
 
   ComPtr<ID3D11VertexShader> vs;
   hr = device->CreateVertexShader(&vs_bytes[0], vs_bytes.size(), NULL, vs.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateVertexShader", hr);
+    return reporter.FailHresult("CreateVertexShader", hr);
   }
 
   ComPtr<ID3D11PixelShader> ps;
   hr = device->CreatePixelShader(&ps_bytes[0], ps_bytes.size(), NULL, ps.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreatePixelShader", hr);
+    return reporter.FailHresult("CreatePixelShader", hr);
   }
 
   D3D11_INPUT_ELEMENT_DESC il[] = {
@@ -193,7 +225,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   hr = device->CreateInputLayout(
       il, ARRAYSIZE(il), &vs_bytes[0], vs_bytes.size(), input_layout.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateInputLayout", hr);
+    return reporter.FailHresult("CreateInputLayout", hr);
   }
 
   const int kWidth = 64;
@@ -216,13 +248,13 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> rt_tex;
   hr = device->CreateTexture2D(&rt_desc, NULL, rt_tex.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(render target)", hr);
+    return reporter.FailHresult("CreateTexture2D(render target)", hr);
   }
 
   ComPtr<ID3D11RenderTargetView> rtv;
   hr = device->CreateRenderTargetView(rt_tex.get(), NULL, rtv.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView", hr);
+    return reporter.FailHresult("CreateRenderTargetView", hr);
   }
 
   DXGI_FORMAT depth_format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -252,7 +284,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
         depth_format = DXGI_FORMAT_D32_FLOAT;
         continue;
       }
-      return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(depth)", hr);
+      return reporter.FailHresult("CreateTexture2D(depth)", hr);
     }
 
     hr = device->CreateDepthStencilView(depth_tex.get(), NULL, dsv.put());
@@ -261,7 +293,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
         depth_format = DXGI_FORMAT_D32_FLOAT;
         continue;
       }
-      return aerogpu_test::FailHresult(kTestName, "CreateDepthStencilView", hr);
+      return reporter.FailHresult("CreateDepthStencilView", hr);
     }
     break;
   }
@@ -283,7 +315,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   ComPtr<ID3D11DepthStencilState> dss;
   hr = device->CreateDepthStencilState(&dss_desc, dss.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateDepthStencilState", hr);
+    return reporter.FailHresult("CreateDepthStencilState", hr);
   }
 
   ID3D11RenderTargetView* rtvs[] = {rtv.get()};
@@ -350,7 +382,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> vb;
   hr = device->CreateBuffer(&vb_desc, &vb_init, vb.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(vertex)", hr);
+    return reporter.FailHresult("CreateBuffer(vertex)", hr);
   }
 
   UINT stride = sizeof(Vertex);
@@ -387,7 +419,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> staging;
   hr = device->CreateTexture2D(&st_desc, NULL, staging.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging)", hr);
+    return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
   context->CopyResource(staging.get(), rt_tex.get());
@@ -397,7 +429,7 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging.get(), 0);
@@ -418,14 +450,13 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   const uint32_t expected_center = 0xFF0000FFu;
 
   if (dump) {
+    const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_depth_test_sanity.bmp");
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_depth_test_sanity.bmp"),
-                                      kWidth,
-                                      kHeight,
-                                      map.pData,
-                                      (int)map.RowPitch,
-                                      &err)) {
+    if (!aerogpu_test::WriteBmp32BGRA(
+            bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+    } else {
+      reporter.AddArtifactPathW(bmp_path);
     }
   }
 
@@ -433,16 +464,15 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
 
   if ((corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
       (center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
-    return aerogpu_test::Fail(kTestName,
-                              "pixel mismatch: corner=0x%08lX expected 0x%08lX; center=0x%08lX expected 0x%08lX",
-                              (unsigned long)corner,
-                              (unsigned long)expected_corner,
-                              (unsigned long)center,
-                              (unsigned long)expected_center);
+    return reporter.Fail(
+        "pixel mismatch: corner=0x%08lX expected 0x%08lX; center=0x%08lX expected 0x%08lX",
+        (unsigned long)corner,
+        (unsigned long)expected_corner,
+        (unsigned long)center,
+        (unsigned long)expected_center);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

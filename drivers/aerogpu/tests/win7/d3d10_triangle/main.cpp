@@ -1,4 +1,7 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_shader_compiler.h"
+#include "..\\common\\aerogpu_test_shaders.h"
 
 #include <d3d10.h>
 #include <dxgi.h>
@@ -10,10 +13,11 @@ struct Vertex {
   float color[4];
 };
 
-static int FailD3D10WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D10Device* device) {
+static int FailD3D10WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D10Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -22,6 +26,9 @@ static int FailD3D10WithRemovedReason(const char* test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
   }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
+  }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
@@ -29,12 +36,13 @@ static int RunD3D10Triangle(int argc, char** argv) {
   const char* kTestName = "d3d10_triangle";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -49,14 +57,14 @@ static int RunD3D10Triangle(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -66,11 +74,11 @@ static int RunD3D10Triangle(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D10Triangle",
                                               L"AeroGPU D3D10 Triangle",
-                                              kWidth,
-                                              kHeight,
-                                              !hidden);
+                                               kWidth,
+                                               kHeight,
+                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   DXGI_SWAP_CHAIN_DESC scd;
@@ -99,11 +107,11 @@ static int RunD3D10Triangle(int argc, char** argv) {
                                              NULL,
                                              flags,
                                              D3D10_SDK_VERSION,
-                                             &scd,
-                                             swapchain.put(),
-                                             device.put());
+                                              &scd,
+                                              swapchain.put(),
+                                              device.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D10CreateDeviceAndSwapChain(HARDWARE)", hr);
+    return reporter.FailHresult("D3D10CreateDeviceAndSwapChain(HARDWARE)", hr);
   }
 
   // This test is specifically intended to exercise the D3D10 runtime path (d3d10.dll), which
@@ -119,9 +127,7 @@ static int RunD3D10Triangle(int argc, char** argv) {
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(kTestName,
-                                         "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
-                                         hr_adapter);
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)", hr_adapter);
       }
     } else {
       DXGI_ADAPTER_DESC ad;
@@ -129,8 +135,7 @@ static int RunD3D10Triangle(int argc, char** argv) {
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
-          return aerogpu_test::FailHresult(
-              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
         }
       } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
@@ -138,38 +143,34 @@ static int RunD3D10Triangle(int argc, char** argv) {
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
         if (!allow_microsoft && ad.VendorId == 0x1414) {
-          return aerogpu_test::Fail(kTestName,
-                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                    "Install AeroGPU driver or pass --allow-microsoft.",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)ad.DeviceId);
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
         }
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) &&
             !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
-                                    "or use --require-vid/--require-did)",
-                                    ad.Description);
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
         }
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
@@ -196,13 +197,13 @@ static int RunD3D10Triangle(int argc, char** argv) {
   ComPtr<ID3D10Texture2D> backbuffer;
   hr = swapchain->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)backbuffer.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer", hr);
+    return reporter.FailHresult("IDXGISwapChain::GetBuffer", hr);
   }
 
   ComPtr<ID3D10RenderTargetView> rtv;
   hr = device->CreateRenderTargetView(backbuffer.get(), NULL, rtv.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView", hr);
+    return reporter.FailHresult("CreateRenderTargetView", hr);
   }
 
   ID3D10RenderTargetView* rtvs[] = {rtv.get()};
@@ -217,31 +218,40 @@ static int RunD3D10Triangle(int argc, char** argv) {
   vp.MaxDepth = 1.0f;
   device->RSSetViewports(1, &vp);
 
-  // Load precompiled shaders generated by build_vs2010.cmd.
+  // Compile shaders at runtime (no fxc.exe build-time dependency).
   const std::wstring dir = aerogpu_test::GetModuleDir();
-  const std::wstring vs_path = aerogpu_test::JoinPath(dir, L"d3d10_triangle_vs.cso");
-  const std::wstring ps_path = aerogpu_test::JoinPath(dir, L"d3d10_triangle_ps.cso");
-
   std::vector<unsigned char> vs_bytes;
   std::vector<unsigned char> ps_bytes;
-  std::string file_err;
-  if (!aerogpu_test::ReadFileBytes(vs_path, &vs_bytes, &file_err)) {
-    return aerogpu_test::Fail(kTestName, "failed to read %ls: %s", vs_path.c_str(), file_err.c_str());
+  std::string shader_err;
+  if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestBasicColorHlsl,
+                                           strlen(aerogpu_test::kAeroGpuTestBasicColorHlsl),
+                                           "d3d10_triangle.hlsl",
+                                           "vs_main",
+                                           "vs_4_0",
+                                           &vs_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile vertex shader: %s", shader_err.c_str());
   }
-  if (!aerogpu_test::ReadFileBytes(ps_path, &ps_bytes, &file_err)) {
-    return aerogpu_test::Fail(kTestName, "failed to read %ls: %s", ps_path.c_str(), file_err.c_str());
+  if (!aerogpu_test::CompileHlslToBytecode(aerogpu_test::kAeroGpuTestBasicColorHlsl,
+                                           strlen(aerogpu_test::kAeroGpuTestBasicColorHlsl),
+                                           "d3d10_triangle.hlsl",
+                                           "ps_main",
+                                           "ps_4_0",
+                                           &ps_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
   }
 
   ComPtr<ID3D10VertexShader> vs;
   hr = device->CreateVertexShader(&vs_bytes[0], vs_bytes.size(), vs.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateVertexShader", hr);
+    return reporter.FailHresult("CreateVertexShader", hr);
   }
 
   ComPtr<ID3D10PixelShader> ps;
   hr = device->CreatePixelShader(&ps_bytes[0], ps_bytes.size(), ps.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreatePixelShader", hr);
+    return reporter.FailHresult("CreatePixelShader", hr);
   }
 
   D3D10_INPUT_ELEMENT_DESC il[] = {
@@ -252,11 +262,11 @@ static int RunD3D10Triangle(int argc, char** argv) {
   ComPtr<ID3D10InputLayout> input_layout;
   hr = device->CreateInputLayout(il,
                                  ARRAYSIZE(il),
-                                 &vs_bytes[0],
-                                 vs_bytes.size(),
-                                 input_layout.put());
+                                  &vs_bytes[0],
+                                  vs_bytes.size(),
+                                  input_layout.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateInputLayout", hr);
+    return reporter.FailHresult("CreateInputLayout", hr);
   }
 
   device->IASetInputLayout(input_layout.get());
@@ -290,7 +300,7 @@ static int RunD3D10Triangle(int argc, char** argv) {
   ComPtr<ID3D10Buffer> vb;
   hr = device->CreateBuffer(&bd, &init, vb.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(vertex)", hr);
+    return reporter.FailHresult("CreateBuffer(vertex)", hr);
   }
 
   UINT stride = sizeof(Vertex);
@@ -326,7 +336,7 @@ static int RunD3D10Triangle(int argc, char** argv) {
   ComPtr<ID3D10Texture2D> staging;
   hr = device->CreateTexture2D(&st_desc, NULL, staging.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging)", hr);
+    return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
   device->CopyResource(staging.get(), backbuffer.get());
@@ -336,7 +346,7 @@ static int RunD3D10Triangle(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = staging->Map(0, D3D10_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D10WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
+    return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(staging)", hr, device.get());
   }
   if (!map.pData) {
     staging->Unmap(0);
@@ -360,13 +370,16 @@ static int RunD3D10Triangle(int argc, char** argv) {
 
   if (dump) {
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d10_triangle.bmp"),
+    const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d10_triangle.bmp");
+    if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                       (int)bb_desc.Width,
                                       (int)bb_desc.Height,
                                       map.pData,
                                       (int)map.RowPitch,
                                       &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+    } else {
+      reporter.AddArtifactPathW(bmp_path);
     }
   }
 
@@ -374,19 +387,17 @@ static int RunD3D10Triangle(int argc, char** argv) {
 
   hr = swapchain->Present(0, 0);
   if (FAILED(hr)) {
-    return FailD3D10WithRemovedReason(kTestName, "IDXGISwapChain::Present", hr, device.get());
+    return FailD3D10WithRemovedReason(&reporter, kTestName, "IDXGISwapChain::Present", hr, device.get());
   }
 
   if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
-    return aerogpu_test::Fail(kTestName,
-                              "pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
-                              (unsigned long)center,
-                              (unsigned long)corner);
+    return reporter.Fail("pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+                         (unsigned long)center,
+                         (unsigned long)corner);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

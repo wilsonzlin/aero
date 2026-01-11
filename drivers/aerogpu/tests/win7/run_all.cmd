@@ -1,6 +1,14 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set "BIN=%~dp0bin"
+set "SUITE_RUNNER=%BIN%\\aerogpu_test_runner.exe"
+if exist "%SUITE_RUNNER%" (
+  rem Prefer the native runner when available (more robust than batch scripting).
+  "%SUITE_RUNNER%" %*
+  exit /b %errorlevel%
+)
+
 set "TIMEOUT_MS=%AEROGPU_TEST_TIMEOUT_MS%"
 if "%TIMEOUT_MS%"=="" set "TIMEOUT_MS=30000"
 
@@ -35,8 +43,6 @@ for %%A in (%*) do (
   )
   if not defined SKIP_ARG set "TEST_ARGS=!TEST_ARGS! !ARG!"
 )
-
-set "BIN=%~dp0bin"
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
 set /a FAILURES=0
 
@@ -105,7 +111,7 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--samples=N] [--iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--no-timeout] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--samples=N] [--iterations=N] [--stress-iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--no-timeout] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
@@ -118,6 +124,7 @@ echo   --display affects vblank_wait ^(defaults to primary display: \\.\DISPLAY1
 echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing.
 echo   --show affects d3d9ex_event_query, d3d9ex_shared_surface, and d3d9ex_shared_surface_ipc: show their windows (overrides --hidden).
 echo   d3d9ex_shared_surface validates cross-process pixel sharing by default; use --no-validate-sharing to skip readback validation ^(--dump always validates^).
+echo   --json emits machine-readable JSON. When aerogpu_test_runner.exe is present, it writes an aggregated suite report.
 echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 echo   Use --no-timeout to run without enforcing a timeout.
 exit /b 0

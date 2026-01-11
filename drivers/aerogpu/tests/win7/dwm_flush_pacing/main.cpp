@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <dwmapi.h>
 
@@ -12,18 +13,21 @@ static double QpcToMs(LONGLONG qpc_delta, LONGLONG qpc_freq) {
 static int RunDwmFlushPacing(int argc, char** argv) {
   const char* kTestName = "dwm_flush_pacing";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--json[=PATH]] [--allow-remote]", kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=120");
     aerogpu_test::PrintfStdout("Measures DWM pacing by timing successive DwmFlush() calls.");
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   uint32_t samples = 120;
   std::string samples_str;
   if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
+      return reporter.Fail("invalid --samples: %s", err.c_str());
     }
   }
 
@@ -31,11 +35,10 @@ static int RunDwmFlushPacing(int argc, char** argv) {
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
@@ -43,13 +46,13 @@ static int RunDwmFlushPacing(int argc, char** argv) {
   BOOL enabled = FALSE;
   HRESULT hr = DwmIsCompositionEnabled(&enabled);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "DwmIsCompositionEnabled", hr);
+    return reporter.FailHresult("DwmIsCompositionEnabled", hr);
   }
   if (!enabled) {
     aerogpu_test::PrintfStdout("INFO: %s: composition disabled; attempting to enable...", kTestName);
     hr = DwmEnableComposition(DWM_EC_ENABLECOMPOSITION);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "DwmEnableComposition(ENABLE)", hr);
+      return reporter.FailHresult("DwmEnableComposition(ENABLE)", hr);
     }
     // Poll for up to ~5 seconds.
     const DWORD start = GetTickCount();
@@ -58,25 +61,25 @@ static int RunDwmFlushPacing(int argc, char** argv) {
       enabled = FALSE;
       hr = DwmIsCompositionEnabled(&enabled);
       if (FAILED(hr)) {
-        return aerogpu_test::FailHresult(kTestName, "DwmIsCompositionEnabled(after enable)", hr);
+        return reporter.FailHresult("DwmIsCompositionEnabled(after enable)", hr);
       }
     }
   }
 
   if (!enabled) {
-    return aerogpu_test::Fail(kTestName, "composition is DISABLED; cannot measure DwmFlush pacing");
+    return reporter.Fail("composition is DISABLED; cannot measure DwmFlush pacing");
   }
 
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
   // Warm up once to avoid counting first-time initialization.
   hr = DwmFlush();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "DwmFlush(warmup)", hr);
+    return reporter.FailHresult("DwmFlush(warmup)", hr);
   }
 
   if (samples < 5) {
@@ -91,7 +94,7 @@ static int RunDwmFlushPacing(int argc, char** argv) {
   for (uint32_t i = 0; i < samples; ++i) {
     hr = DwmFlush();
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "DwmFlush", hr);
+      return reporter.FailHresult("DwmFlush", hr);
     }
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
@@ -118,6 +121,8 @@ static int RunDwmFlushPacing(int argc, char** argv) {
                              min_ms,
                              max_ms);
 
+  reporter.SetTimingSamplesMs(deltas_ms);
+
   // Heuristic pass/fail:
   //
   // - If DwmFlush returns almost immediately, DWM isn't pacing on vblank (or composition isn't really active).
@@ -126,14 +131,13 @@ static int RunDwmFlushPacing(int argc, char** argv) {
   // Keep these thresholds generous: this test is intended to detect "completely broken" pacing, not to
   // enforce perfect refresh accuracy.
   if (avg_ms < 2.0) {
-    return aerogpu_test::Fail(kTestName, "unexpectedly fast DwmFlush pacing (avg=%.3fms)", avg_ms);
+    return reporter.Fail("unexpectedly fast DwmFlush pacing (avg=%.3fms)", avg_ms);
   }
   if (max_ms > 250.0) {
-    return aerogpu_test::Fail(kTestName, "unexpectedly large DwmFlush gap (max=%.3fms)", max_ms);
+    return reporter.Fail("unexpectedly large DwmFlush gap (max=%.3fms)", max_ms);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

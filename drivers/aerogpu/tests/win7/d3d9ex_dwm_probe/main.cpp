@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <dwmapi.h>
 
@@ -7,26 +8,27 @@ static int RunDwmProbe(int argc, char** argv) {
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--json[=PATH]] [--allow-remote]", kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   // DWM is per-session; composition is typically disabled in RDP sessions.
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping composition check", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
   BOOL enabled = FALSE;
   HRESULT hr = DwmIsCompositionEnabled(&enabled);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "DwmIsCompositionEnabled", hr);
+    return reporter.FailHresult("DwmIsCompositionEnabled", hr);
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: composition initially %s",
@@ -37,7 +39,7 @@ static int RunDwmProbe(int argc, char** argv) {
     aerogpu_test::PrintfStdout("INFO: %s: attempting to enable composition...", kTestName);
     hr = DwmEnableComposition(DWM_EC_ENABLECOMPOSITION);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "DwmEnableComposition(ENABLE)", hr);
+      return reporter.FailHresult("DwmEnableComposition(ENABLE)", hr);
     }
 
     // Give DWM a moment to apply changes (poll up to ~5s).
@@ -47,7 +49,7 @@ static int RunDwmProbe(int argc, char** argv) {
       enabled = FALSE;
       hr = DwmIsCompositionEnabled(&enabled);
       if (FAILED(hr)) {
-        return aerogpu_test::FailHresult(kTestName, "DwmIsCompositionEnabled(after enable)", hr);
+        return reporter.FailHresult("DwmIsCompositionEnabled(after enable)", hr);
       }
       if (enabled) {
         break;
@@ -73,11 +75,10 @@ static int RunDwmProbe(int argc, char** argv) {
   }
 
   if (!enabled) {
-    return aerogpu_test::Fail(kTestName, "composition is DISABLED");
+    return reporter.Fail("composition is DISABLED");
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

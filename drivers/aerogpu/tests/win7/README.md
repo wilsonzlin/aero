@@ -8,22 +8,25 @@ For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-ta
 
 * `docs/graphics/win7-d3d11ddi-function-tables.md`
 
+For automation, tests can also optionally emit a machine-readable JSON report (`--json[=PATH]`) with a stable `schema_version`.
+
 The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built by default) used by `run_all.cmd` to enforce a per-test timeout. Override the default timeout by setting `AEROGPU_TEST_TIMEOUT_MS` in the environment.
 
 Both `build_all_vs2010.cmd` and `run_all.cmd` are driven by `tests_manifest.txt`, which defines the ordered list of tests in the suite.
 
 Common flags:
 
-  * `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests write raw `*.bin`).
-  * `--hidden` – hide windows for tests that create windows (useful for automation).
-  * `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`; overrides `--hidden`).
-  * `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
-  * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
-  * `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
-  * `--iterations=N` – for `d3d9ex_event_query`: number of query submissions to run (default 6).
-  * `--stress-iterations=N` – for `d3d9ex_event_query`: iterations per device in the multi-device stress phase (default 200).
-  * `--process-stress` – for `d3d9ex_event_query`: run the stress phase as two separate processes instead of two threads (useful for reproducing multi-process fence contention).
-  * `--wait-timeout-ms=N` – for `wait_vblank_pacing` and `vblank_wait_sanity`: per-wait timeout for `D3DKMTWaitForVerticalBlankEvent` (default 2000).
+* `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests write raw `*.bin`).
+* `--hidden` – hide windows for tests that create windows (useful for automation).
+* `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`; overrides `--hidden`).
+* `--json[=PATH]` – emit a machine-readable JSON report (includes a stable `schema_version`).
+* `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
+* `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
+* `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
+* `--iterations=N` – for `d3d9ex_event_query`: number of query submissions to run (default 6).
+* `--stress-iterations=N` – for `d3d9ex_event_query`: iterations per device in the multi-device stress phase (default 200).
+* `--process-stress` – for `d3d9ex_event_query`: run the stress phase as two separate processes instead of two threads (useful for reproducing multi-process fence contention).
+* `--wait-timeout-ms=N` – for `wait_vblank_pacing` and `vblank_wait_sanity`: per-wait timeout for `D3DKMTWaitForVerticalBlankEvent` (default 2000).
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
 * `--allow-non-aerogpu` – allow running on adapters whose description does not contain `AeroGPU` (by default, rendering tests expect to be running on an AeroGPU adapter).
@@ -36,11 +39,13 @@ Common flags:
 
 ```
 drivers/aerogpu/tests/win7/
+  CMakeLists.txt
   build_all_vs2010.cmd
   run_all.cmd
   tests_manifest.txt
   common/
   timeout_runner/
+  test_runner/
   d3d9ex_dwm_probe/
   d3d9ex_event_query/
   vblank_wait_sanity/
@@ -60,6 +65,7 @@ drivers/aerogpu/tests/win7/
   d3d10_triangle/
   d3d10_1_triangle/
   d3d11_triangle/
+  d3d11_caps_smoke/
   d3d11_rs_om_state_sanity/
   d3d11_geometry_shader_smoke/
   d3d11_swapchain_rotate_sanity/
@@ -80,21 +86,30 @@ drivers/aerogpu/tests/win7/
 
 ### Build toolchain
 
-The recommended build path is **Visual Studio 2010** (or the VS2010 toolchain) using `cl.exe`.
+The suite can be built on a modern Windows host using CMake + Visual Studio.
 
-* Visual Studio 2010 (or “Visual C++ 2010 Express” + Windows SDK 7.1)
-* **DirectX SDK (June 2010)** (recommended) – provides `fxc.exe` needed to compile the D3D10/D3D10.1/D3D11 shaders.
-  * Ensure `fxc.exe` is on `PATH` (e.g. add `%DXSDK_DIR%Utilities\bin\x86`).
+* Visual Studio 2019 or 2022 with C++ desktop development components
+* CMake 3.16+
+* A Windows SDK that still supports targeting/running on Windows 7 (commonly the **Windows 8.1 SDK**).
 
-> Note: The shader-based tests (D3D10/D3D10.1/D3D11) do **not** compile shaders at runtime. Shaders are compiled by `fxc.exe` during the build and written as `.cso` next to the `.exe`.
+> Toolset note: If you need the broadest Win7 compatibility (especially for old guests without newer VC runtimes),
+> build with a toolset that supports older targets (e.g. `-T v141_xp` if installed). The suite also defaults to a
+> static CRT (`/MT`) to reduce guest-side redistributable requirements.
 
-## Build (VS2010 command prompt)
+### D3D shader compiler DLL (guest runtime)
 
-Open the appropriate “Visual Studio 2010 Command Prompt” for your guest architecture and run:
+The shader-based tests (D3D10/D3D10.1/D3D11) compile their HLSL shaders at runtime via `D3DCompile`. On some Win7 installs, `d3dcompiler_47.dll`
+may not be present by default. If shader compilation fails, install a Windows update that provides it (e.g. KB4019990)
+or copy `d3dcompiler_47.dll` next to the test binaries in `win7/bin/`.
+
+## Build (recommended: CMake + Visual Studio)
+
+From a Visual Studio Developer Command Prompt (or any shell with CMake on PATH):
 
 ```cmd
 cd \path\to\repo\drivers\aerogpu\tests\win7
-build_all_vs2010.cmd
+cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
+cmake --build build --config Release
 ```
 
 Outputs are placed in:
@@ -107,8 +122,13 @@ drivers\aerogpu\tests\win7\bin\
 
 1. Add a new directory containing `main.cpp` and a `build_vs2010.cmd` that outputs `bin\<test_name>.exe`.
 2. Add `<test_name>` to `tests_manifest.txt` at the desired position.
+3. For the CMake build, add the new test target to `CMakeLists.txt` (linking the appropriate system libraries).
 
-No other scripts need to be edited: both `build_all_vs2010.cmd` and `run_all.cmd` iterate the manifest.
+### Legacy build scripts
+
+The `*_vs2010.cmd` scripts are retained for convenience, but they are not required for the modern build flow.
+
+No other scripts need to be edited: `build_all_vs2010.cmd`, `run_all.cmd`, and `aerogpu_test_runner.exe` iterate the manifest.
 
 ## Run
 
@@ -118,11 +138,29 @@ From the same directory:
 run_all.cmd
 ```
 
+Or run the native runner directly (preferred):
+
+```cmd
+bin\aerogpu_test_runner.exe
+```
+
 To also write BMP dumps next to the binaries:
 
 ```cmd
 run_all.cmd --dump
 ```
+
+### JSON output
+
+To write an aggregated suite report:
+
+```cmd
+bin\aerogpu_test_runner.exe --json
+```
+
+This produces (by default) `win7\bin\report.json` and also writes per-test reports next to it.
+
+Individual tests can also be run directly with `--json[=PATH]` to emit a single-test JSON report.
 
 For suite usage:
 
@@ -197,6 +235,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
+* `d3d11_caps_smoke` validates the expected D3D11 feature level and common format support bits used by the runtime
 * `d3d11_rs_om_state_sanity` validates D3D11 rasterizer + blend state correctness (scissor enable/disable + `RSSetState(NULL)`, cull mode/front-face, alpha blending + write mask + blend factor + sample mask) via readback
 * `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
 * `d3d11_swapchain_rotate_sanity` creates a 2-buffer swapchain, clears buffer0 red + buffer1 green, presents, then validates that DXGI rotated buffer identities (expects **buffer0 green + buffer1 red**)
