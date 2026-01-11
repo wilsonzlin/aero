@@ -8,7 +8,7 @@
 ;
 ; It intentionally matches only the Aero virtio contract v1 HWID
 ; (`PCI\VEN_1AF4&DEV_1059&REV_01`). Transitional/legacy virtio-snd IDs (e.g.
-; DEV_1018) and non-REV matches are intentionally excluded to avoid binding to
+; PCI\VEN_1AF4&DEV_1018) and non-REV matches are intentionally excluded to avoid binding to
 ; unsupported devices.
 ;
 ; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to

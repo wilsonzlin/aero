@@ -1183,7 +1183,7 @@ try {
             }
             if ($hasTransitional) {
                 $cfgStatus = "WARN"
-                $cfgDetails += "AERO_VIRTIO_SND_HWIDS contains DEV_1018 (virtio-snd transitional ID). Aero Win7 contract v1 is modern-only (DEV_1059)."
+                $cfgDetails += "AERO_VIRTIO_SND_HWIDS contains PCI\VEN_1AF4&DEV_1018 (virtio-snd transitional ID). Aero Win7 contract v1 is modern-only (PCI\VEN_1AF4&DEV_1059)."
             }
         }
         if ($cfgVirtioNetHwids -and $cfgVirtioNetHwids.Count -gt 0) {

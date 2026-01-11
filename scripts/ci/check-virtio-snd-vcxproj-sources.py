@@ -111,7 +111,7 @@ def validate_virtio_snd_inf_hwid_policy(inf_path: Path) -> None:
     """
     Enforce Aero virtio-snd INF HWID policy (contract v1 strict identity).
 
-    The runtime driver enforces contract identity (DEV_1059 + REV_01), so letting
+    The runtime driver enforces contract identity (`PCI\\VEN_1AF4&DEV_1059&REV_01`), so letting
     an INF bind to transitional or non-revision-gated IDs creates confusing
     "installs but won't start (Code 10)" behavior.
     """
@@ -124,13 +124,13 @@ def validate_virtio_snd_inf_hwid_policy(inf_path: Path) -> None:
 
         if "PCI\\VEN_1AF4&DEV_1018" in upper:
             fail(
-                f"virtio-snd INF must not match transitional DEV_1018: {inf_path.as_posix()}\n"
+                f"virtio-snd INF must not match transitional PCI\\VEN_1AF4&DEV_1018: {inf_path.as_posix()}\n"
                 f"  offending line: {line}"
             )
 
         if "PCI\\VEN_1AF4&DEV_1059" in upper and "&REV_01" not in upper:
             fail(
-                f"virtio-snd INF must gate DEV_1059 by REV_01: {inf_path.as_posix()}\n"
+                f"virtio-snd INF must gate PCI\\VEN_1AF4&DEV_1059 by REV_01: {inf_path.as_posix()}\n"
                 f"  offending line: {line}"
             )
 
@@ -140,8 +140,8 @@ def validate_virtio_snd_legacy_inf_policy(inf_path: Path) -> None:
     Enforce the opt-in transitional/QEMU virtio-snd INF policy.
 
     Requirements:
-      - Must match transitional DEV_1018 (without requiring REV_01).
-      - Must NOT match the Aero contract-v1 modern ID (DEV_1059) to avoid HWID overlap with the
+      - Must match transitional PCI\\VEN_1AF4&DEV_1018 (without requiring REV_01).
+      - Must NOT match the Aero contract-v1 modern ID (PCI\\VEN_1AF4&DEV_1059) to avoid HWID overlap with the
         shipped contract package.
       - Must reference wdmaud.sys (wdmaudio.sys is a common typo).
     """
@@ -157,7 +157,7 @@ def validate_virtio_snd_legacy_inf_policy(inf_path: Path) -> None:
 
         if "PCI\\VEN_1AF4&DEV_1059" in upper:
             fail(
-                f"virtio-snd legacy INF must not match Aero contract DEV_1059: {inf_path.as_posix()}\n"
+                f"virtio-snd legacy INF must not match Aero contract PCI\\VEN_1AF4&DEV_1059: {inf_path.as_posix()}\n"
                 f"  offending line: {line}"
             )
 
@@ -179,7 +179,7 @@ def validate_virtio_snd_legacy_inf_policy(inf_path: Path) -> None:
 
     if not has_transitional:
         fail(
-            f"virtio-snd legacy INF must match transitional DEV_1018: {inf_path.as_posix()}\n"
+            f"virtio-snd legacy INF must match transitional PCI\\VEN_1AF4&DEV_1018: {inf_path.as_posix()}\n"
             "  expected a line containing: PCI\\VEN_1AF4&DEV_1018"
         )
     if not has_wdmaud:

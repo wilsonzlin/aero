@@ -255,10 +255,10 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
       # If still ambiguous after filtering, require an explicit relative path.
       $preferPattern = $null
       switch ($entryWin.ToLowerInvariant()) {
-        "aerovblk.inf" { $preferPattern = "DEV_1042&REV_01" }
-        "aerovnet.inf" { $preferPattern = "DEV_1041&REV_01" }
-        "virtio-input.inf" { $preferPattern = "DEV_1052&REV_01" }
-        "aero-virtio-snd.inf" { $preferPattern = "DEV_1059&REV_01" }
+        "aerovblk.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1042&REV_01" }
+        "aerovnet.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1041&REV_01" }
+        "virtio-input.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&REV_01" }
+        "aero-virtio-snd.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1059&REV_01" }
       }
 
       if ($preferPattern) {

@@ -192,7 +192,7 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 #if defined(AERO_VIRTIO_SND_LEGACY)
 /*
  * Legacy/transitional validation for the optional QEMU build:
- * - Bind via INF to the transitional virtio-snd PCI ID (DEV_1018).
+ * - Bind via INF to the transitional virtio-snd PCI ID (PCI\VEN_1AF4&DEV_1018).
  * - Do not require the Aero contract Revision ID (REV_01).
  *
  * This keeps the default (contract) build strict while allowing bring-up on

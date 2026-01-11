@@ -9,7 +9,7 @@
 /*
  * Backend implementation used by the PortCls/WaveRT miniport to push PCM into the
  * Aero virtio-snd device via the legacy virtio-pci I/O-port transport (transitional
- * virtio-snd / `DEV_1018` style devices).
+ * virtio-snd / `PCI\VEN_1AF4&DEV_1018` style devices).
  *
  * Note: The Aero Windows 7 virtio contract v1 (`AERO-W7-VIRTIO`) is modern-only.
  * For virtio-pci modern bring-up (PCI vendor caps + BAR0 MMIO + INTx), see:
