@@ -42,9 +42,11 @@ For canonical C layout of the modern common configuration structure, see:
 
 - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
 
-For the canonical **WDF-free** virtio-pci modern transport library (STRICT/COMPAT mode) used by the Windows 7 guest drivers, see:
+For virtio-pci modern transport reference code in this repo, see:
 
-- `drivers/windows/virtio/pci-modern/`
+- `drivers/windows/virtio/pci-modern/` (generic WDF-free transport; used by `virtio-snd`)
+- `drivers/windows7/virtio/common/` (miniport-friendly transport shim; used by `virtio-blk`/`virtio-net`)
+- `drivers/win7/virtio/virtio-core/` (portable cap parsing + layout/identity; used by `virtio-input`)
 
 For a host-buildable Rust crate that locks down struct sizes/offsets used by both sides, see:
 
