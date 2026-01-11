@@ -206,13 +206,13 @@ typedef struct AEROGPU_CMD_SET_RENDER_TARGET_PAYLOAD {
 } AEROGPU_CMD_SET_RENDER_TARGET_PAYLOAD;
 
 typedef struct AEROGPU_CMD_SET_DEPTH_STENCIL_PAYLOAD {
-  uint32_t dsv_alloc_index; // 0 == unbind
+  aerogpu_u32 dsv_alloc_index; // 0 == unbind
 } AEROGPU_CMD_SET_DEPTH_STENCIL_PAYLOAD;
 
 // Primitive topology values mirror D3D11_PRIMITIVE_TOPOLOGY numeric values for
 // the small subset used in initial samples (e.g. TRIANGLELIST).
 typedef struct AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_PAYLOAD {
-  uint32_t topology; // D3D11_PRIMITIVE_TOPOLOGY numeric
+  aerogpu_u32 topology; // D3D11_PRIMITIVE_TOPOLOGY numeric
 } AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_PAYLOAD;
 
 typedef struct AEROGPU_CMD_SET_VIEWPORT_PAYLOAD {
@@ -241,8 +241,8 @@ typedef struct AEROGPU_CMD_DRAW_INDEXED_PAYLOAD {
 
 typedef struct AEROGPU_CMD_CLEAR_DSV_PAYLOAD {
   float depth;
-  uint32_t stencil; // lower 8 bits used
-  uint32_t flags;   // bit0: clear depth, bit1: clear stencil
+  aerogpu_u32 stencil; // lower 8 bits used
+  aerogpu_u32 flags;   // bit0: clear depth, bit1: clear stencil
 } AEROGPU_CMD_CLEAR_DSV_PAYLOAD;
 
 typedef struct AEROGPU_CMD_PRESENT_PAYLOAD {
