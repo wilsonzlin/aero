@@ -318,7 +318,7 @@ fn aerogpu_cmd_set_samplers_accepts_trailing_bytes() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd forward-compat test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -365,7 +365,7 @@ fn aerogpu_cmd_set_constant_buffers_accepts_trailing_bytes() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd forward-compat test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
