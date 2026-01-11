@@ -854,6 +854,11 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     const std::wstring expected_service = snd.is_transitional && !snd.is_modern
                                               ? kVirtioSndExpectedServiceTransitional
                                               : kVirtioSndExpectedServiceModern;
+    if (id_info.modern && !id_info.modern_rev01) {
+      log.Logf(
+          "virtio-snd: pci device pnp_id=%s missing REV_01 (Aero contract v1 expects REV_01; QEMU needs x-pci-revision=0x01)",
+          WideToUtf8(snd.instance_id).c_str());
+    }
     log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
              WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
              WideToUtf8(snd.inf_section).c_str(), WideToUtf8(expected_service).c_str());
