@@ -306,3 +306,72 @@ fn aerogpu_cmd_copy_texture2d_writeback_updates_guest_memory() {
         assert_eq!(out, src_pixels);
     });
 }
+
+#[test]
+fn aerogpu_cmd_copy_buffer_validates_bounds() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const BUF_A: u32 = 1;
+        const BUF_B: u32 = 2;
+
+        let guest_mem = VecGuestMemory::new(0);
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_BUFFER (BUF_A, host alloc)
+        let start = begin_cmd(&mut stream, OPCODE_CREATE_BUFFER);
+        stream.extend_from_slice(&BUF_A.to_le_bytes());
+        stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER).to_le_bytes());
+        stream.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_BUFFER (BUF_B, host alloc)
+        let start = begin_cmd(&mut stream, OPCODE_CREATE_BUFFER);
+        stream.extend_from_slice(&BUF_B.to_le_bytes());
+        stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER).to_le_bytes());
+        stream.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER (out of bounds)
+        let start = begin_cmd(&mut stream, OPCODE_COPY_BUFFER);
+        stream.extend_from_slice(&BUF_B.to_le_bytes());
+        stream.extend_from_slice(&BUF_A.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&32u64.to_le_bytes()); // size_bytes (too large)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let err = exec
+            .execute_cmd_stream(&stream, None, &guest_mem)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("COPY_BUFFER"), "unexpected error: {msg}");
+    });
+}
