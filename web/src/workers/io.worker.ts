@@ -164,9 +164,11 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
 }
 
 type WebHidPassthroughBridge = InstanceType<WasmApi["WebHidPassthroughBridge"]>;
+type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>;
+type HidPassthroughBridge = WebHidPassthroughBridge | UsbHidPassthroughBridge;
 
 class WasmHidGuestBridge implements HidGuestBridge {
-  readonly #bridges = new Map<number, WebHidPassthroughBridge>();
+  readonly #bridges = new Map<number, HidPassthroughBridge>();
 
   constructor(
     private readonly api: WasmApi,
@@ -176,23 +178,41 @@ class WasmHidGuestBridge implements HidGuestBridge {
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
 
-    let bridge: WebHidPassthroughBridge;
     try {
-      bridge = new this.api.WebHidPassthroughBridge(
-        msg.vendorId,
-        msg.productId,
-        undefined,
-        msg.productName,
-        undefined,
-        msg.collections,
-      );
+      const UsbBridge = this.api.UsbHidPassthroughBridge;
+      const synthesize = this.api.synthesize_webhid_report_descriptor;
+
+      let bridge: HidPassthroughBridge;
+      if (UsbBridge && synthesize) {
+        const reportDescriptorBytes = synthesize(msg.collections);
+        bridge = new UsbBridge(
+          msg.vendorId,
+          msg.productId,
+          undefined,
+          msg.productName,
+          undefined,
+          reportDescriptorBytes,
+          msg.hasInterruptOut,
+          undefined,
+          undefined,
+        );
+      } else {
+        bridge = new this.api.WebHidPassthroughBridge(
+          msg.vendorId,
+          msg.productId,
+          undefined,
+          msg.productName,
+          undefined,
+          msg.collections,
+        );
+      }
+
+      this.#bridges.set(msg.deviceId, bridge);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.host.error(`Failed to construct WebHidPassthroughBridge: ${message}`, msg.deviceId);
+      this.host.error(`Failed to construct WebHID passthrough bridge: ${message}`, msg.deviceId);
       return;
     }
-
-    this.#bridges.set(msg.deviceId, bridge);
   }
 
   detach(msg: HidDetachMessage): void {

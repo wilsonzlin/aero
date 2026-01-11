@@ -428,6 +428,95 @@ impl UsbHidBridge {
 // WebHID passthrough (physical HID devices -> guest-visible USB HID model)
 // -------------------------------------------------------------------------------------------------
 
+/// Generic USB HID passthrough device wrapper.
+///
+/// This is the low-level building block: callers provide a fully-formed HID
+/// report descriptor (`report_descriptor_bytes`) and specify whether the device
+/// needs an interrupt OUT endpoint (`has_interrupt_out`).
+///
+/// Higher-level helpers (like [`WebHidPassthroughBridge`]) can synthesize the
+/// report descriptor from WebHID metadata and then construct this device.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct UsbHidPassthroughBridge {
+    device: UsbHidPassthrough,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl UsbHidPassthroughBridge {
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        vendor_id: u16,
+        product_id: u16,
+        manufacturer: Option<String>,
+        product: Option<String>,
+        serial: Option<String>,
+        report_descriptor_bytes: Vec<u8>,
+        has_interrupt_out: bool,
+        interface_subclass: Option<u8>,
+        interface_protocol: Option<u8>,
+    ) -> Self {
+        let device = UsbHidPassthrough::new(
+            vendor_id,
+            product_id,
+            manufacturer.unwrap_or_else(|| "WebHID".to_string()),
+            product.unwrap_or_else(|| "WebHID HID Device".to_string()),
+            serial,
+            report_descriptor_bytes,
+            has_interrupt_out,
+            None,
+            interface_subclass,
+            interface_protocol,
+        );
+        Self { device }
+    }
+
+    pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| JsValue::from_str("reportId is out of range (expected 0..=255)"))?;
+        self.device.push_input_report(report_id, data);
+        Ok(())
+    }
+
+    /// Drain the next pending guest -> device HID report request.
+    ///
+    /// Returns `null` when no report is pending.
+    pub fn drain_next_output_report(&mut self) -> JsValue {
+        let Some(report) = self.device.pop_output_report() else {
+            return JsValue::NULL;
+        };
+
+        let report_type = match report.report_type {
+            2 => "output",
+            3 => "feature",
+            _ => "output",
+        };
+
+        let obj = Object::new();
+        // These Reflect::set calls should be infallible for a fresh object with string keys.
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("reportType"),
+            &JsValue::from_str(report_type),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("reportId"),
+            &JsValue::from_f64(f64::from(report.report_id)),
+        );
+        let data = Uint8Array::from(report.data.as_slice());
+        let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
+        obj.into()
+    }
+
+    /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
+    pub fn configured(&self) -> bool {
+        self.device.configured()
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct WebHidPassthroughBridge {

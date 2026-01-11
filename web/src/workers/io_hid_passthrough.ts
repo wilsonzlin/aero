@@ -3,6 +3,9 @@ import type { WasmApi } from "../runtime/wasm_context";
 
 type WebHidPassthroughBridgeCtor = WasmApi["WebHidPassthroughBridge"];
 type WebHidPassthroughBridge = InstanceType<NonNullable<WebHidPassthroughBridgeCtor>>;
+type UsbHidPassthroughBridgeCtor = WasmApi["UsbHidPassthroughBridge"];
+type UsbHidPassthroughBridge = InstanceType<NonNullable<UsbHidPassthroughBridgeCtor>>;
+type HidPassthroughBridge = WebHidPassthroughBridge | UsbHidPassthroughBridge;
 
 type OutputReportResult = ReturnType<WebHidPassthroughBridge["drain_next_output_report"]>;
 
@@ -25,7 +28,7 @@ function isOutputReport(value: unknown): value is NonNullable<OutputReportResult
 export class IoWorkerHidPassthrough {
   readonly #wasm: WasmApi;
   readonly #postMessage: (msg: HidSendReportMessage) => void;
-  readonly #devices = new Map<number, WebHidPassthroughBridge>();
+  readonly #devices = new Map<number, HidPassthroughBridge>();
 
   constructor(wasm: WasmApi, postMessage: (msg: HidSendReportMessage) => void) {
     this.#wasm = wasm;
@@ -33,26 +36,45 @@ export class IoWorkerHidPassthrough {
   }
 
   attach(msg: HidAttachMessage): void {
-    const Bridge = this.#wasm.WebHidPassthroughBridge;
-    if (typeof Bridge !== "function") {
-      throw new Error("WASM export WebHidPassthroughBridge is unavailable.");
-    }
+    const UsbBridge = this.#wasm.UsbHidPassthroughBridge;
+    const synthesize = this.#wasm.synthesize_webhid_report_descriptor;
+    const WebBridge = this.#wasm.WebHidPassthroughBridge;
 
     // Replace any existing handle for this ID.
     const prev = this.#devices.get(msg.deviceId);
     if (prev) prev.free();
 
-    // wasm-bindgen doesn't expose overloads; pass explicit args matching the Rust constructor:
-    // (vendorId, productId, manufacturer?, product?, serial?, collectionsJson).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bridge = new (Bridge as any)(
-      msg.vendorId,
-      msg.productId,
-      undefined,
-      msg.productName,
-      undefined,
-      msg.collections,
-    ) as WebHidPassthroughBridge;
+    let bridge: HidPassthroughBridge;
+    if (UsbBridge && synthesize) {
+      const reportDescriptorBytes = synthesize(msg.collections);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      bridge = new (UsbBridge as any)(
+        msg.vendorId,
+        msg.productId,
+        undefined,
+        msg.productName,
+        undefined,
+        reportDescriptorBytes,
+        msg.hasInterruptOut,
+        undefined,
+        undefined,
+      ) as UsbHidPassthroughBridge;
+    } else {
+      if (typeof WebBridge !== "function") {
+        throw new Error("WASM export WebHidPassthroughBridge is unavailable.");
+      }
+      // wasm-bindgen doesn't expose overloads; pass explicit args matching the Rust constructor:
+      // (vendorId, productId, manufacturer?, product?, serial?, collectionsJson).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      bridge = new (WebBridge as any)(
+        msg.vendorId,
+        msg.productId,
+        undefined,
+        msg.productName,
+        undefined,
+        msg.collections,
+      ) as WebHidPassthroughBridge;
+    }
 
     this.#devices.set(msg.deviceId, bridge);
   }

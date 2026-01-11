@@ -7,6 +7,7 @@ import { IoWorkerHidPassthrough } from "./io_hid_passthrough";
 describe("workers/IoWorkerHidPassthrough", () => {
   it("hid.attach constructs a bridge; hid.inputReport forwards; tick drains output reports", () => {
     const ctorSpy = vi.fn();
+    const synthesizeSpy = vi.fn(() => new Uint8Array([1, 2, 3]));
     let bridgeInstance: FakeBridge | null = null;
 
     class FakeBridge {
@@ -25,7 +26,8 @@ describe("workers/IoWorkerHidPassthrough", () => {
 
     const wasm = {
       // Minimal subset required by the IoWorkerHidPassthrough helper.
-      WebHidPassthroughBridge: FakeBridge,
+      synthesize_webhid_report_descriptor: synthesizeSpy,
+      UsbHidPassthroughBridge: FakeBridge,
     } as unknown as WasmApi;
 
     const mgr = new IoWorkerHidPassthrough(wasm, (msg) => posted.push(msg));
@@ -48,8 +50,13 @@ describe("workers/IoWorkerHidPassthrough", () => {
       undefined,
       attach.productName,
       undefined,
-      attach.collections,
+      synthesizeSpy.mock.results[0]!.value,
+      attach.hasInterruptOut,
+      undefined,
+      undefined,
     );
+    expect(synthesizeSpy).toHaveBeenCalledTimes(1);
+    expect(synthesizeSpy).toHaveBeenCalledWith(attach.collections);
 
     const input: HidInputReportMessage = {
       type: "hid.inputReport",

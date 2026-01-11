@@ -66,6 +66,28 @@ export interface WasmApi {
     };
 
     /**
+     * Generic USB HID passthrough bridge (accepts a pre-synthesized HID report descriptor).
+     *
+     * Optional while older wasm builds are still in circulation.
+     */
+    UsbHidPassthroughBridge?: new (
+        vendorId: number,
+        productId: number,
+        manufacturer: string | undefined,
+        product: string | undefined,
+        serial: string | undefined,
+        reportDescriptorBytes: Uint8Array,
+        hasInterruptOut: boolean,
+        interfaceSubclass?: number,
+        interfaceProtocol?: number,
+    ) => {
+        push_input_report(reportId: number, data: Uint8Array): void;
+        drain_next_output_report(): { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null;
+        configured(): boolean;
+        free(): void;
+    };
+
+    /**
      * WebUSB passthrough bridge (Rust `UsbPassthroughDevice` host action queue).
      *
      * Note: This is optional for older WASM builds.
@@ -330,6 +352,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         demo_render_rgba8888: mod.demo_render_rgba8888,
         UsbHidBridge: mod.UsbHidBridge,
         WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
+        UsbHidPassthroughBridge: mod.UsbHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
