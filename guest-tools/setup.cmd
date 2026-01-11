@@ -147,7 +147,6 @@ echo(%*
 exit /b 0
 
 :require_admin_stdout
-echo Checking for Administrator privileges...
 "%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
 if errorlevel 1 (
   echo ERROR: Administrator privileges are required.
