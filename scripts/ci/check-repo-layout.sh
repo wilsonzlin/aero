@@ -44,19 +44,8 @@ if grep -q "$retired_gpu_device_dir" Cargo.toml; then
   die "Cargo workspace must not include the retired $retired_gpu_device_dir member"
 fi
 
-# Guardrail: deprecated AeroGPU protocol header must not be reintroduced.
-#
-# Older docs/patches referenced an `aerogpu_alloc_privdata.h` header for
-# shared-surface interop. The canonical Win7/WDDM 1.1 contract stores
-# `alloc_id`/`share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
-# (UMD->KMD input, preserved across shared opens by dxgkrnl).
-deprecated_alloc_privdata_header="drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
-if [[ -f "$deprecated_alloc_privdata_header" ]]; then
-  die "$deprecated_alloc_privdata_header must not exist (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
-fi
-if git grep -n "aerogpu_alloc_privdata.h" -- docs drivers >/dev/null; then
-  die "stale references to aerogpu_alloc_privdata.h found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
-fi
+# AeroGPU KMD → UMD ShareToken payload header (canonical protocol ABI).
+need_file "drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
 
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
 # (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)

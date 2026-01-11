@@ -135,33 +135,6 @@ AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, alloc_id) == 
 AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, share_token) == 16);
 AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, reserved0) == 32);
 
-/*
- * Optional per-allocation private blob produced by the AeroGPU KMD for
- * shareable allocations. This blob is stored in guest memory and can be
- * forwarded across process boundaries via the AeroGPU host protocol.
- *
- * NOTE: This is NOT the WDDM private-driver-data buffer (UMD -> KMD input) above.
- * This struct is intentionally small and pointer-free so it is stable across
- * x86/x64 builds.
- */
-#define AEROGPU_ALLOC_PRIVDATA_MAGIC 0x44504C41u /* "ALPD" little-endian */
-#define AEROGPU_ALLOC_PRIVDATA_VERSION 1u
-
-#pragma pack(push, 1)
-typedef struct aerogpu_alloc_privdata {
-  aerogpu_wddm_u32 magic;   /* AEROGPU_ALLOC_PRIVDATA_MAGIC */
-  aerogpu_wddm_u32 version; /* AEROGPU_ALLOC_PRIVDATA_VERSION */
-  aerogpu_wddm_u64 share_token;
-  aerogpu_wddm_u64 reserved0;
-} aerogpu_alloc_privdata;
-#pragma pack(pop)
-
-AEROGPU_WDDM_ALLOC_STATIC_ASSERT(sizeof(aerogpu_alloc_privdata) == 24);
-AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_alloc_privdata, magic) == 0);
-AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_alloc_privdata, version) == 4);
-AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_alloc_privdata, share_token) == 8);
-AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_alloc_privdata, reserved0) == 16);
-
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
