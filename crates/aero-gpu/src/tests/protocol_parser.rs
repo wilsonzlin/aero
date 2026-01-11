@@ -993,6 +993,40 @@ fn protocol_skips_unknown_opcodes() {
 }
 
 #[test]
+fn protocol_accepts_legacy_set_blend_state_packet() {
+    let stream = build_stream(|out| {
+        // Legacy 28-byte SET_BLEND_STATE payload (no extended alpha/constant/sample-mask fields).
+        emit_packet(out, AeroGpuOpcode::SetBlendState as u32, |out| {
+            push_u32(out, 1); // enable
+            push_u32(out, 2); // src_factor
+            push_u32(out, 3); // dst_factor
+            push_u32(out, 4); // blend_op
+            out.push(0xF); // color_write_mask
+            out.extend_from_slice(&[0u8; 3]); // reserved0[3]
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 1);
+
+    match &parsed.cmds[0] {
+        AeroGpuCmd::SetBlendState { state } => {
+            assert_eq!(state.enable, 1);
+            assert_eq!(state.src_factor, 2);
+            assert_eq!(state.dst_factor, 3);
+            assert_eq!(state.blend_op, 4);
+            assert_eq!(state.color_write_mask, 0xF);
+            assert_eq!(state.src_factor_alpha, state.src_factor);
+            assert_eq!(state.dst_factor_alpha, state.dst_factor);
+            assert_eq!(state.blend_op_alpha, state.blend_op);
+            assert_eq!(state.blend_constant_rgba_f32, [0, 0, 0, 0]);
+            assert_eq!(state.sample_mask, 0xFFFF_FFFF);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+}
+
+#[test]
 fn protocol_rejects_misaligned_cmd_size_bytes() {
     let mut stream = Vec::new();
     push_u32(&mut stream, AEROGPU_CMD_STREAM_MAGIC);

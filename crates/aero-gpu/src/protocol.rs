@@ -718,20 +718,66 @@ pub fn parse_cmd_stream(
             }
 
             Some(AeroGpuOpcode::SetBlendState) => {
-                let cmd: protocol::AerogpuCmdSetBlendState = read_packed_prefix(packet)?;
-                let state = cmd.state;
+                // `SET_BLEND_STATE` was extended over time. Accept the legacy 28-byte packet and
+                // default missing fields (alpha params, blend constant, sample mask) so older
+                // guests can still be parsed.
+                if packet.len() < 28 {
+                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                }
+
+                let enable = read_u32_le(&packet[8..12]);
+                let src_factor = read_u32_le(&packet[12..16]);
+                let dst_factor = read_u32_le(&packet[16..20]);
+                let blend_op = read_u32_le(&packet[20..24]);
+                let color_write_mask = packet[24];
+
+                let src_factor_alpha = if packet.len() >= 32 {
+                    read_u32_le(&packet[28..32])
+                } else {
+                    src_factor
+                };
+                let dst_factor_alpha = if packet.len() >= 36 {
+                    read_u32_le(&packet[32..36])
+                } else {
+                    dst_factor
+                };
+                let blend_op_alpha = if packet.len() >= 40 {
+                    read_u32_le(&packet[36..40])
+                } else {
+                    blend_op
+                };
+
+                let mut blend_constant_rgba_f32 = [0u32; 4];
+                if packet.len() >= 44 {
+                    blend_constant_rgba_f32[0] = read_u32_le(&packet[40..44]);
+                }
+                if packet.len() >= 48 {
+                    blend_constant_rgba_f32[1] = read_u32_le(&packet[44..48]);
+                }
+                if packet.len() >= 52 {
+                    blend_constant_rgba_f32[2] = read_u32_le(&packet[48..52]);
+                }
+                if packet.len() >= 56 {
+                    blend_constant_rgba_f32[3] = read_u32_le(&packet[52..56]);
+                }
+                let sample_mask = if packet.len() >= 60 {
+                    read_u32_le(&packet[56..60])
+                } else {
+                    0xFFFF_FFFF
+                };
+
                 AeroGpuCmd::SetBlendState {
                     state: AeroGpuBlendState {
-                        enable: u32::from_le(state.enable),
-                        src_factor: u32::from_le(state.src_factor),
-                        dst_factor: u32::from_le(state.dst_factor),
-                        blend_op: u32::from_le(state.blend_op),
-                        color_write_mask: state.color_write_mask,
-                        src_factor_alpha: u32::from_le(state.src_factor_alpha),
-                        dst_factor_alpha: u32::from_le(state.dst_factor_alpha),
-                        blend_op_alpha: u32::from_le(state.blend_op_alpha),
-                        blend_constant_rgba_f32: state.blend_constant_rgba_f32.map(u32::from_le),
-                        sample_mask: u32::from_le(state.sample_mask),
+                        enable,
+                        src_factor,
+                        dst_factor,
+                        blend_op,
+                        color_write_mask,
+                        src_factor_alpha,
+                        dst_factor_alpha,
+                        blend_op_alpha,
+                        blend_constant_rgba_f32,
+                        sample_mask,
                     },
                 }
             }
