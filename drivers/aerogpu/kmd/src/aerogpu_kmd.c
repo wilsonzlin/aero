@@ -2542,9 +2542,12 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             queueDpc = TRUE;
 
             if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
+                KeMemoryBarrier();
+                const DXGK_INTERRUPT_TYPE vblankType = adapter->VblankInterruptType;
+
                 DXGKARGCB_NOTIFY_INTERRUPT notify;
                 RtlZeroMemory(&notify, sizeof(notify));
-                notify.InterruptType = adapter->VblankInterruptType;
+                notify.InterruptType = vblankType;
 
                 /*
                  * DXGKARGCB_NOTIFY_INTERRUPT uses an anonymous union. For vblank-style
@@ -2743,9 +2746,13 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
         if (!EnableInterrupt) {
             return STATUS_SUCCESS;
         }
+        /*
+         * Publish the interrupt type with proper ordering so the ISR can safely
+         * consume it without racing a partially-initialized value.
+         */
         adapter->VblankInterruptType = InterruptType;
-        adapter->VblankInterruptTypeValid = TRUE;
         KeMemoryBarrier();
+        adapter->VblankInterruptTypeValid = TRUE;
     } else if (InterruptType != adapter->VblankInterruptType) {
         return STATUS_SUCCESS;
     }
@@ -3513,6 +3520,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         out->vblank_interrupt_type = 0;
         if (adapter->VblankInterruptTypeValid) {
+            KeMemoryBarrier();
             out->flags |= AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID;
             out->vblank_interrupt_type = (uint32_t)adapter->VblankInterruptType;
         }
