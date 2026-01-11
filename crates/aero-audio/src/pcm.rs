@@ -75,12 +75,22 @@ impl StreamFormat {
 /// - mono: duplicated to L/R
 /// - >=2: first two channels
 pub fn decode_pcm_to_stereo_f32(input: &[u8], fmt: StreamFormat) -> Vec<[f32; 2]> {
+    let mut out = Vec::new();
+    decode_pcm_to_stereo_f32_into(input, fmt, &mut out);
+    out
+}
+
+/// Decode interleaved PCM data from the guest into a caller-provided output buffer.
+///
+/// `out` is cleared before writing.
+pub fn decode_pcm_to_stereo_f32_into(input: &[u8], fmt: StreamFormat, out: &mut Vec<[f32; 2]>) {
     let bytes_per_frame = fmt.bytes_per_frame();
+    out.clear();
     if bytes_per_frame == 0 {
-        return Vec::new();
+        return;
     }
     let frames = input.len() / bytes_per_frame;
-    let mut out = Vec::with_capacity(frames);
+    out.reserve(frames);
 
     for frame in 0..frames {
         let frame_off = frame * bytes_per_frame;
@@ -100,8 +110,6 @@ pub fn decode_pcm_to_stereo_f32(input: &[u8], fmt: StreamFormat) -> Vec<[f32; 2]
         };
         out.push([l, r]);
     }
-
-    out
 }
 
 /// Encode mono `f32` samples into interleaved PCM bytes as described by `fmt`.
@@ -111,12 +119,22 @@ pub fn decode_pcm_to_stereo_f32(input: &[u8], fmt: StreamFormat) -> Vec<[f32; 2]
 /// - 2+ channels: the mono signal is duplicated into the first two channels and
 ///   remaining channels are filled with silence.
 pub fn encode_mono_f32_to_pcm(input: &[f32], fmt: StreamFormat) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_mono_f32_to_pcm_into(input, fmt, &mut out);
+    out
+}
+
+/// Encode mono `f32` samples into interleaved PCM bytes as described by `fmt`, writing into `out`.
+///
+/// `out` is cleared before writing.
+pub fn encode_mono_f32_to_pcm_into(input: &[f32], fmt: StreamFormat, out: &mut Vec<u8>) {
     let bytes_per_frame = fmt.bytes_per_frame();
+    out.clear();
     if bytes_per_frame == 0 {
-        return Vec::new();
+        return;
     }
 
-    let mut out = vec![0u8; input.len() * bytes_per_frame];
+    out.resize(input.len() * bytes_per_frame, 0);
     let bps = fmt.bytes_per_sample();
     let channels = fmt.channels as usize;
 
@@ -128,8 +146,6 @@ pub fn encode_mono_f32_to_pcm(input: &[f32], fmt: StreamFormat) -> Vec<u8> {
             encode_one_sample(&mut out[off..off + bps], fmt.bits_per_sample, sample);
         }
     }
-
-    out
 }
 
 fn decode_one_sample(bytes: &[u8], bits_per_sample: u8) -> f32 {
@@ -265,7 +281,17 @@ impl LinearResampler {
 
     /// Produce up to `dst_frames` output frames, returning interleaved stereo.
     pub fn produce_interleaved_stereo(&mut self, dst_frames: usize) -> Vec<f32> {
-        let mut out = Vec::with_capacity(dst_frames * 2);
+        let mut out = Vec::new();
+        self.produce_interleaved_stereo_into(dst_frames, &mut out);
+        out
+    }
+
+    /// Produce up to `dst_frames` output frames, writing interleaved stereo samples into `out`.
+    ///
+    /// `out` is cleared before writing.
+    pub fn produce_interleaved_stereo_into(&mut self, dst_frames: usize, out: &mut Vec<f32>) {
+        out.clear();
+        out.reserve(dst_frames * 2);
         for _ in 0..dst_frames {
             let idx = self.src_pos.floor() as usize;
             let frac = self.src_pos - idx as f64;
@@ -290,7 +316,6 @@ impl LinearResampler {
             self.src_pos += self.step_src_per_dst;
             self.drop_consumed();
         }
-        out
     }
 
     fn drop_consumed(&mut self) {

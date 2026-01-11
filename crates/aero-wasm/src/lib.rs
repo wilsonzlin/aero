@@ -18,7 +18,7 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use js_sys::{SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
-use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32};
+use aero_audio::pcm::{decode_pcm_to_stereo_f32_into, LinearResampler, StreamFormat};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
@@ -445,6 +445,8 @@ impl SineTone {
 pub struct HdaPcmWriter {
     dst_sample_rate_hz: u32,
     resampler: LinearResampler,
+    decode_scratch: Vec<[f32; 2]>,
+    resample_out_scratch: Vec<f32>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -458,6 +460,8 @@ impl HdaPcmWriter {
         Ok(Self {
             dst_sample_rate_hz,
             resampler: LinearResampler::new(dst_sample_rate_hz, dst_sample_rate_hz),
+            decode_scratch: Vec::new(),
+            resample_out_scratch: Vec::new(),
         })
     }
 
@@ -517,11 +521,11 @@ impl HdaPcmWriter {
                 .reset_rates(fmt.sample_rate_hz, self.dst_sample_rate_hz);
         }
 
-        let decoded = decode_pcm_to_stereo_f32(pcm_bytes, fmt);
-        if decoded.is_empty() {
+        decode_pcm_to_stereo_f32_into(pcm_bytes, fmt, &mut self.decode_scratch);
+        if self.decode_scratch.is_empty() {
             return Ok(0);
         }
-        self.resampler.push_source_frames(&decoded);
+        self.resampler.push_source_frames(&self.decode_scratch);
 
         let capacity = bridge.capacity_frames();
         let level = bridge.buffer_level_frames();
@@ -530,10 +534,9 @@ impl HdaPcmWriter {
             return Ok(0);
         }
 
-        let out = self
-            .resampler
-            .produce_interleaved_stereo(free_frames as usize);
-        Ok(bridge.write_f32_interleaved(&out))
+        self.resampler
+            .produce_interleaved_stereo_into(free_frames as usize, &mut self.resample_out_scratch);
+        Ok(bridge.write_f32_interleaved(&self.resample_out_scratch))
     }
 }
 

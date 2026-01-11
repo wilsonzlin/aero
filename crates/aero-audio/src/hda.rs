@@ -1,7 +1,9 @@
 use crate::capture::{AudioCaptureSource, SilenceCaptureSource};
 use crate::clock::AudioFrameClock;
 use crate::mem::MemoryAccess;
-use crate::pcm::{decode_pcm_to_stereo_f32, encode_mono_f32_to_pcm, LinearResampler, StreamFormat};
+use crate::pcm::{
+    decode_pcm_to_stereo_f32_into, encode_mono_f32_to_pcm_into, LinearResampler, StreamFormat,
+};
 use crate::ring::AudioRingBuffer;
 use crate::sink::AudioSink;
 
@@ -126,6 +128,10 @@ struct StreamRuntime {
     resampler: LinearResampler,
     last_fmt_raw: u16,
     capture_frame_accum: u64,
+    dma_scratch: Vec<u8>,
+    decode_scratch: Vec<[f32; 2]>,
+    resample_out_scratch: Vec<f32>,
+    capture_mono_scratch: Vec<f32>,
 }
 
 impl StreamRuntime {
@@ -136,6 +142,10 @@ impl StreamRuntime {
             resampler: LinearResampler::new(output_rate_hz, output_rate_hz),
             last_fmt_raw: 0,
             capture_frame_accum: 0,
+            dma_scratch: Vec::new(),
+            decode_scratch: Vec::new(),
+            resample_out_scratch: Vec::new(),
+            capture_mono_scratch: Vec::new(),
         }
     }
 
@@ -145,6 +155,10 @@ impl StreamRuntime {
         self.resampler.reset_rates(output_rate_hz, output_rate_hz);
         self.last_fmt_raw = 0;
         self.capture_frame_accum = 0;
+        self.dma_scratch.clear();
+        self.decode_scratch.clear();
+        self.resample_out_scratch.clear();
+        self.capture_mono_scratch.clear();
     }
 }
 
@@ -165,6 +179,145 @@ fn read_bdl_entry(mem: &dyn MemoryAccess, base: u64, index: usize) -> BdlEntry {
         len,
         ioc: (flags & 1) != 0,
     }
+}
+
+fn dma_read_stream_bytes(
+    mem: &dyn MemoryAccess,
+    sd: &mut StreamDescriptor,
+    bdl_index: &mut u16,
+    bdl_offset: &mut u32,
+    mut bytes: usize,
+    out: &mut Vec<u8>,
+) -> bool {
+    out.clear();
+    if sd.cbl == 0 || bytes == 0 {
+        return false;
+    }
+
+    out.reserve(bytes);
+    let mut fire_ioc = false;
+
+    // BDPL is 128-byte aligned in hardware; low bits must read as 0.
+    let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64 & !0x7f);
+
+    while bytes > 0 {
+        let entry = read_bdl_entry(mem, bdl_base, *bdl_index as usize);
+        if entry.len == 0 {
+            break;
+        }
+
+        let remaining = entry
+            .len
+            .saturating_sub(*bdl_offset)
+            .min(bytes as u32) as usize;
+        if remaining == 0 {
+            // Move to next entry.
+            *bdl_offset = 0;
+            if *bdl_index >= sd.lvi {
+                *bdl_index = 0;
+            } else {
+                *bdl_index += 1;
+            }
+            continue;
+        }
+
+        let start = out.len();
+        out.resize(start + remaining, 0);
+        mem.read_physical(entry.addr + *bdl_offset as u64, &mut out[start..start + remaining]);
+
+        *bdl_offset += remaining as u32;
+        bytes -= remaining;
+
+        // Update LPIB, wrapping at CBL if set.
+        sd.lpib = sd.lpib.wrapping_add(remaining as u32);
+        if sd.cbl != 0 && sd.lpib >= sd.cbl {
+            sd.lpib %= sd.cbl;
+        }
+
+        if *bdl_offset >= entry.len {
+            *bdl_offset = 0;
+            if entry.ioc {
+                // Latch BCIS regardless of IOCE (IOCE only controls interrupt generation).
+                sd.ctl |= SD_STS_BCIS << 24;
+                if (sd.ctl & SD_CTL_IOCE) != 0 {
+                    fire_ioc = true;
+                }
+            }
+            if *bdl_index >= sd.lvi {
+                *bdl_index = 0;
+            } else {
+                *bdl_index += 1;
+            }
+        }
+    }
+
+    fire_ioc
+}
+
+fn dma_write_stream_bytes(
+    mem: &mut dyn MemoryAccess,
+    sd: &mut StreamDescriptor,
+    bdl_index: &mut u16,
+    bdl_offset: &mut u32,
+    mut bytes: &[u8],
+) -> (usize, bool) {
+    if sd.cbl == 0 || bytes.is_empty() {
+        return (0, false);
+    }
+
+    let mut written = 0usize;
+    let mut fire_ioc = false;
+
+    let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64 & !0x7f);
+
+    while !bytes.is_empty() {
+        let entry = read_bdl_entry(mem, bdl_base, *bdl_index as usize);
+        if entry.len == 0 {
+            break;
+        }
+
+        let remaining = entry
+            .len
+            .saturating_sub(*bdl_offset)
+            .min(bytes.len() as u32) as usize;
+        if remaining == 0 {
+            *bdl_offset = 0;
+            if *bdl_index >= sd.lvi {
+                *bdl_index = 0;
+            } else {
+                *bdl_index += 1;
+            }
+            continue;
+        }
+
+        mem.write_physical(entry.addr + *bdl_offset as u64, &bytes[..remaining]);
+        bytes = &bytes[remaining..];
+        written += remaining;
+
+        *bdl_offset += remaining as u32;
+
+        sd.lpib = sd.lpib.wrapping_add(remaining as u32);
+        if sd.cbl != 0 && sd.lpib >= sd.cbl {
+            sd.lpib %= sd.cbl;
+        }
+
+        if *bdl_offset >= entry.len {
+            *bdl_offset = 0;
+            if entry.ioc {
+                sd.ctl |= SD_STS_BCIS << 24;
+                if (sd.ctl & SD_CTL_IOCE) != 0 {
+                    fire_ioc = true;
+                }
+            }
+            if *bdl_index >= sd.lvi {
+                *bdl_index = 0;
+            } else {
+                *bdl_index += 1;
+            }
+        }
+    }
+
+    (written, fire_ioc)
 }
 
 fn supported_pcm_caps() -> u32 {
@@ -766,12 +919,13 @@ impl HdaController {
     ) {
         self.process_corb(mem);
 
-        let out_samples = self.process_output_stream(mem, 0, output_frames);
+        self.process_output_stream(mem, 0, output_frames);
+        let out_samples = &self.stream_rt[0].resample_out_scratch;
         if !out_samples.is_empty() {
             if let Some(ref mut sink) = sink {
-                sink.push_interleaved_f32(&out_samples);
+                sink.push_interleaved_f32(out_samples);
             } else {
-                self.audio_out.push_interleaved_stereo(&out_samples);
+                self.audio_out.push_interleaved_stereo(out_samples);
             }
         }
 
@@ -1268,34 +1422,41 @@ impl HdaController {
         mem: &mut dyn MemoryAccess,
         stream: usize,
         output_frames: usize,
-    ) -> Vec<f32> {
+    ) {
+        self.stream_rt[stream].resample_out_scratch.clear();
+
         if (self.gctl & GCTL_CRST) == 0 {
-            return Vec::new();
+            return;
         }
-        let sd = &self.streams[stream];
-        if (sd.ctl & (SD_CTL_SRST | SD_CTL_RUN)) != (SD_CTL_SRST | SD_CTL_RUN) {
-            return Vec::new();
-        }
-        let stream_num = ((sd.ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
-        if stream_num == 0 || stream_num != self.codec.output_stream_id() {
-            return Vec::new();
+        if (self.streams[stream].ctl & (SD_CTL_SRST | SD_CTL_RUN)) != (SD_CTL_SRST | SD_CTL_RUN) {
+            return;
         }
 
-        let fmt_raw = sd.fmt;
+        let stream_num =
+            ((self.streams[stream].ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
+        if stream_num == 0 || stream_num != self.codec.output_stream_id() {
+            return;
+        }
+
+        let fmt_raw = self.streams[stream].fmt;
         if fmt_raw == 0 {
-            return Vec::new();
+            return;
         }
 
         let fmt = StreamFormat::from_hda_format(fmt_raw);
+        let output_rate_hz = self.output_rate_hz;
+        let [gain_l, gain_r] = self.codec.output_gain_scalars();
 
-        let need_src = {
+        let mut fire_ioc = false;
+        {
+            let sd = &mut self.streams[stream];
             let rt = &mut self.stream_rt[stream];
+
             if rt.last_fmt_raw != fmt_raw
                 || rt.resampler.src_rate_hz() != fmt.sample_rate_hz
-                || rt.resampler.dst_rate_hz() != self.output_rate_hz
+                || rt.resampler.dst_rate_hz() != output_rate_hz
             {
-                rt.resampler
-                    .reset_rates(fmt.sample_rate_hz, self.output_rate_hz);
+                rt.resampler.reset_rates(fmt.sample_rate_hz, output_rate_hz);
                 rt.last_fmt_raw = fmt_raw;
                 rt.bdl_index = 0;
                 rt.bdl_offset = 0;
@@ -1304,30 +1465,38 @@ impl HdaController {
             // Ensure the resampler has enough source frames queued to synthesize the requested output.
             let required_src = rt.resampler.required_source_frames(output_frames);
             let queued_src = rt.resampler.queued_source_frames();
-            required_src.saturating_sub(queued_src)
-        };
+            let need_src = required_src.saturating_sub(queued_src);
 
-        if need_src > 0 {
-            let bytes = need_src * fmt.bytes_per_frame();
-            let raw = self.dma_read_stream_bytes(mem, stream, bytes);
-            let decoded = decode_pcm_to_stereo_f32(&raw, fmt);
-            self.stream_rt[stream]
-                .resampler
-                .push_source_frames(&decoded);
+            if need_src > 0 {
+                let bytes = need_src * fmt.bytes_per_frame();
+                fire_ioc |= dma_read_stream_bytes(
+                    mem,
+                    sd,
+                    &mut rt.bdl_index,
+                    &mut rt.bdl_offset,
+                    bytes,
+                    &mut rt.dma_scratch,
+                );
+                decode_pcm_to_stereo_f32_into(&rt.dma_scratch, fmt, &mut rt.decode_scratch);
+                if !rt.decode_scratch.is_empty() {
+                    rt.resampler.push_source_frames(&rt.decode_scratch);
+                }
+            }
+
+            rt.resampler
+                .produce_interleaved_stereo_into(output_frames, &mut rt.resample_out_scratch);
+            Self::apply_codec_output_controls(&mut rt.resample_out_scratch, gain_l, gain_r);
         }
 
-        let mut out = self.stream_rt[stream]
-            .resampler
-            .produce_interleaved_stereo(output_frames);
-        self.apply_codec_output_controls(&mut out);
-        out
+        if fire_ioc {
+            self.raise_stream_interrupt(stream);
+        }
     }
 
-    fn apply_codec_output_controls(&self, samples: &mut [f32]) {
+    fn apply_codec_output_controls(samples: &mut [f32], gain_l: f32, gain_r: f32) {
         if samples.is_empty() {
             return;
         }
-        let [gain_l, gain_r] = self.codec.output_gain_scalars();
         if gain_l == 1.0 && gain_r == 1.0 {
             return;
         }
@@ -1361,17 +1530,17 @@ impl HdaController {
             return;
         }
 
-        let sd = &self.streams[stream];
-        if (sd.ctl & (SD_CTL_SRST | SD_CTL_RUN)) != (SD_CTL_SRST | SD_CTL_RUN) {
+        let ctl = self.streams[stream].ctl;
+        if (ctl & (SD_CTL_SRST | SD_CTL_RUN)) != (SD_CTL_SRST | SD_CTL_RUN) {
             return;
         }
 
-        let stream_num = ((sd.ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
+        let stream_num = ((ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
         if stream_num == 0 || stream_num != self.codec.input_stream_id() {
             return;
         }
 
-        let fmt_raw = sd.fmt;
+        let fmt_raw = self.streams[stream].fmt;
         if fmt_raw == 0 {
             return;
         }
@@ -1404,192 +1573,55 @@ impl HdaController {
             return;
         }
 
-        let need_src = {
+        let fire_ioc;
+        {
             let rt = &mut self.stream_rt[stream];
+
             let required_src = rt.resampler.required_source_frames(dst_frames);
             let queued_src = rt.resampler.queued_source_frames();
-            required_src.saturating_sub(queued_src)
-        };
+            let need_src = required_src.saturating_sub(queued_src);
 
-        if need_src > 0 {
-            let mut mono = vec![0.0f32; need_src];
-            let got = capture.read_mono_f32(&mut mono);
-            if got < need_src {
-                mono[got..].fill(0.0);
+            if need_src > 0 {
+                rt.capture_mono_scratch.resize(need_src, 0.0);
+                let got = capture.read_mono_f32(&mut rt.capture_mono_scratch);
+                if got < need_src {
+                    rt.capture_mono_scratch[got..].fill(0.0);
+                }
+
+                rt.decode_scratch.resize(need_src, [0.0; 2]);
+                for (dst, &s) in rt.decode_scratch.iter_mut().zip(&rt.capture_mono_scratch) {
+                    *dst = [s, s];
+                }
+                rt.resampler.push_source_frames(&rt.decode_scratch);
             }
 
-            let stereo: Vec<[f32; 2]> = mono.iter().map(|&s| [s, s]).collect();
-            self.stream_rt[stream]
-                .resampler
-                .push_source_frames(&stereo);
-        }
+            rt.resampler
+                .produce_interleaved_stereo_into(dst_frames, &mut rt.resample_out_scratch);
+            let produced_frames = rt.resample_out_scratch.len() / 2;
+            if produced_frames == 0 {
+                return;
+            }
 
-        let stereo = self.stream_rt[stream]
-            .resampler
-            .produce_interleaved_stereo(dst_frames);
-        if stereo.is_empty() {
-            return;
-        }
+            rt.capture_mono_scratch.resize(produced_frames, 0.0);
+            for i in 0..produced_frames {
+                rt.capture_mono_scratch[i] = rt.resample_out_scratch[i * 2];
+            }
+            encode_mono_f32_to_pcm_into(&rt.capture_mono_scratch, fmt, &mut rt.dma_scratch);
 
-        // Downmix back to mono (the resampler operates on stereo).
-        let produced_frames = stereo.len() / 2;
-        let mut mono = Vec::with_capacity(produced_frames);
-        for frame in 0..produced_frames {
-            mono.push(stereo[frame * 2]);
-        }
-
-        let bytes = encode_mono_f32_to_pcm(&mono, fmt);
-        let _ = self.dma_write_stream_bytes(mem, stream, &bytes);
-    }
-
-    fn dma_read_stream_bytes(
-        &mut self,
-        mem: &mut dyn MemoryAccess,
-        stream: usize,
-        mut bytes: usize,
-    ) -> Vec<u8> {
-        if self.streams[stream].cbl == 0 {
-            return Vec::new();
-        }
-
-        let mut out = Vec::with_capacity(bytes);
-        let mut fire_ioc = false;
-
-        {
             let sd = &mut self.streams[stream];
-            let rt = &mut self.stream_rt[stream];
-
-            // BDPL is 128-byte aligned in hardware; low bits must read as 0.
-            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64 & !0x7f);
-
-            while bytes > 0 {
-                let entry = read_bdl_entry(mem, bdl_base, rt.bdl_index as usize);
-                if entry.len == 0 {
-                    break;
-                }
-
-                let remaining = entry.len.saturating_sub(rt.bdl_offset).min(bytes as u32) as usize;
-                if remaining == 0 {
-                    // Move to next entry.
-                    rt.bdl_offset = 0;
-                    if rt.bdl_index >= sd.lvi {
-                        rt.bdl_index = 0;
-                    } else {
-                        rt.bdl_index += 1;
-                    }
-                    continue;
-                }
-
-                let mut chunk = vec![0u8; remaining];
-                mem.read_physical(entry.addr + rt.bdl_offset as u64, &mut chunk);
-                out.extend_from_slice(&chunk);
-
-                rt.bdl_offset += remaining as u32;
-                bytes -= remaining;
-
-                // Update LPIB, wrapping at CBL if set.
-                sd.lpib = sd.lpib.wrapping_add(remaining as u32);
-                if sd.cbl != 0 && sd.lpib >= sd.cbl {
-                    sd.lpib %= sd.cbl;
-                }
-
-                if rt.bdl_offset >= entry.len {
-                    rt.bdl_offset = 0;
-                    if entry.ioc {
-                        // Latch BCIS regardless of IOCE (IOCE only controls interrupt generation).
-                        sd.ctl |= SD_STS_BCIS << 24;
-                        if (sd.ctl & SD_CTL_IOCE) != 0 {
-                            fire_ioc = true;
-                        }
-                    }
-                    if rt.bdl_index >= sd.lvi {
-                        rt.bdl_index = 0;
-                    } else {
-                        rt.bdl_index += 1;
-                    }
-                }
-            }
+            let (_, ioc) = dma_write_stream_bytes(
+                mem,
+                sd,
+                &mut rt.bdl_index,
+                &mut rt.bdl_offset,
+                &rt.dma_scratch,
+            );
+            fire_ioc = ioc;
         }
 
         if fire_ioc {
             self.raise_stream_interrupt(stream);
         }
-
-        out
-    }
-
-    fn dma_write_stream_bytes(
-        &mut self,
-        mem: &mut dyn MemoryAccess,
-        stream: usize,
-        mut bytes: &[u8],
-    ) -> usize {
-        if self.streams[stream].cbl == 0 {
-            return 0;
-        }
-
-        let mut written = 0usize;
-        let mut fire_ioc = false;
-
-        {
-            let sd = &mut self.streams[stream];
-            let rt = &mut self.stream_rt[stream];
-
-            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64 & !0x7f);
-
-            while !bytes.is_empty() {
-                let entry = read_bdl_entry(mem, bdl_base, rt.bdl_index as usize);
-                if entry.len == 0 {
-                    break;
-                }
-
-                let remaining =
-                    entry.len.saturating_sub(rt.bdl_offset).min(bytes.len() as u32) as usize;
-                if remaining == 0 {
-                    // Move to next entry.
-                    rt.bdl_offset = 0;
-                    if rt.bdl_index >= sd.lvi {
-                        rt.bdl_index = 0;
-                    } else {
-                        rt.bdl_index += 1;
-                    }
-                    continue;
-                }
-
-                mem.write_physical(entry.addr + rt.bdl_offset as u64, &bytes[..remaining]);
-                bytes = &bytes[remaining..];
-                written += remaining;
-
-                rt.bdl_offset += remaining as u32;
-
-                // Update LPIB, wrapping at CBL if set.
-                sd.lpib = sd.lpib.wrapping_add(remaining as u32);
-                if sd.cbl != 0 && sd.lpib >= sd.cbl {
-                    sd.lpib %= sd.cbl;
-                }
-
-                if rt.bdl_offset >= entry.len {
-                    rt.bdl_offset = 0;
-                    if entry.ioc {
-                        sd.ctl |= SD_STS_BCIS << 24;
-                        if (sd.ctl & SD_CTL_IOCE) != 0 {
-                            fire_ioc = true;
-                        }
-                    }
-                    if rt.bdl_index >= sd.lvi {
-                        rt.bdl_index = 0;
-                    } else {
-                        rt.bdl_index += 1;
-                    }
-                }
-            }
-        }
-
-        if fire_ioc {
-            self.raise_stream_interrupt(stream);
-        }
-
-        written
     }
 }
 
@@ -1904,5 +1936,82 @@ mod tests {
         assert_eq!(resp, 0x1af4_1620);
         assert!(hda.take_irq());
         assert_ne!(hda.mmio_read(REG_INTSTS, 4) as u32 & INTSTS_CIS, 0);
+    }
+
+    #[test]
+    fn process_reuses_stream_scratch_buffers() {
+        let mut hda = HdaController::new();
+        let mut mem = GuestMemory::new(0x10_000);
+
+        hda.mmio_write(REG_GCTL, 4, GCTL_CRST as u64);
+
+        // Configure the codec to use stream ID 1 for output and stream ID 2 for capture.
+        hda.codec_mut().execute_verb(2, verb_12(0x706, 0x10));
+        hda.codec_mut().execute_verb(4, verb_12(0x706, 0x20));
+
+        let out_bdl_base = 0x1000u64;
+        let out_buf_base = 0x3000u64;
+        let out_buf_len = 0x2000u32;
+        mem.write_u64(out_bdl_base, out_buf_base);
+        mem.write_u32(out_bdl_base + 8, out_buf_len);
+        mem.write_u32(out_bdl_base + 12, 0);
+
+        {
+            let sd = hda.stream_mut(0);
+            sd.ctl = SD_CTL_SRST | SD_CTL_RUN | ((1u32) << SD_CTL_STRM_SHIFT);
+            sd.cbl = out_buf_len;
+            sd.lvi = 0;
+            sd.fmt = 0x0011; // 48kHz, 16-bit, stereo
+            sd.bdpl = out_bdl_base as u32;
+            sd.bdpu = 0;
+        }
+
+        let in_bdl_base = 0x2000u64;
+        let in_buf_base = 0x5000u64;
+        let in_buf_len = 0x2000u32;
+        mem.write_u64(in_bdl_base, in_buf_base);
+        mem.write_u32(in_bdl_base + 8, in_buf_len);
+        mem.write_u32(in_bdl_base + 12, 0);
+
+        {
+            let sd = hda.stream_mut(1);
+            sd.ctl = SD_CTL_SRST | SD_CTL_RUN | ((2u32) << SD_CTL_STRM_SHIFT);
+            sd.cbl = in_buf_len;
+            sd.lvi = 0;
+            sd.fmt = 0x0010; // 48kHz, 16-bit, mono
+            sd.bdpl = in_bdl_base as u32;
+            sd.bdpu = 0;
+        }
+
+        let frames = 480usize; // 10ms at 48kHz.
+
+        // Warmup: allow the scratch buffers to grow to their steady-state capacities.
+        for _ in 0..10 {
+            hda.process(&mut mem, frames);
+        }
+
+        let caps_out = (
+            hda.stream_rt[0].dma_scratch.capacity(),
+            hda.stream_rt[0].decode_scratch.capacity(),
+            hda.stream_rt[0].resample_out_scratch.capacity(),
+        );
+        let caps_in = (
+            hda.stream_rt[1].dma_scratch.capacity(),
+            hda.stream_rt[1].decode_scratch.capacity(),
+            hda.stream_rt[1].resample_out_scratch.capacity(),
+            hda.stream_rt[1].capture_mono_scratch.capacity(),
+        );
+
+        for _ in 0..1000 {
+            hda.process(&mut mem, frames);
+            assert_eq!(hda.stream_rt[0].dma_scratch.capacity(), caps_out.0);
+            assert_eq!(hda.stream_rt[0].decode_scratch.capacity(), caps_out.1);
+            assert_eq!(hda.stream_rt[0].resample_out_scratch.capacity(), caps_out.2);
+
+            assert_eq!(hda.stream_rt[1].dma_scratch.capacity(), caps_in.0);
+            assert_eq!(hda.stream_rt[1].decode_scratch.capacity(), caps_in.1);
+            assert_eq!(hda.stream_rt[1].resample_out_scratch.capacity(), caps_in.2);
+            assert_eq!(hda.stream_rt[1].capture_mono_scratch.capacity(), caps_in.3);
+        }
     }
 }
