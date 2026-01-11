@@ -22,6 +22,7 @@ aero-protocol = { path = "../../emulator/protocol" }
 aero-storage = { path = "../aero-storage" }
 font8x8 = "0.3"
 memory = { path = "../memory" }
+aero-net-stack = { path = "../aero-net-stack" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 nt-packetlib = { path = "../nt-packetlib" }
 serde = { version = "1", features = ["derive"] }

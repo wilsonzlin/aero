@@ -1,11 +1,14 @@
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::e1000::E1000Device;
+use super::stack::{
+    Action, DnsResolved, Millis, NetStackBackend, StackConfig, TcpProxyEvent, UdpProxyEvent,
+    UdpTransport,
+};
 use super::NetworkBackend;
-use super::stack::dns::DnsUpstream;
-use super::stack::{NetConfig, NetCounters, NetworkStack, ProxyAction, ProxyEvent, StackOutput};
 use crate::io::virtio::devices::net::VirtioNetDevice;
 use crate::io::virtio::vio_core::VirtQueueError;
 use memory::GuestMemory;
@@ -33,10 +36,23 @@ pub trait NetTraceRedactor: Send + Sync {
     fn redact_tcp_proxy(
         &self,
         direction: ProxyDirection,
-        connection_id: u64,
+        connection_id: u32,
         data: &[u8],
     ) -> Option<Vec<u8>> {
         let _ = (direction, connection_id);
+        Some(data.to_vec())
+    }
+
+    fn redact_udp_proxy(
+        &self,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        let _ = (direction, transport, remote_ip, src_port, dst_port);
         Some(data.to_vec())
     }
 }
@@ -45,6 +61,7 @@ pub trait NetTraceRedactor: Send + Sync {
 pub struct NetTraceConfig {
     pub capture_ethernet: bool,
     pub capture_tcp_proxy: bool,
+    pub capture_udp_proxy: bool,
     pub redactor: Option<Arc<dyn NetTraceRedactor>>,
 }
 
@@ -53,6 +70,7 @@ impl Default for NetTraceConfig {
         Self {
             capture_ethernet: true,
             capture_tcp_proxy: false,
+            capture_udp_proxy: false,
             redactor: None,
         }
     }
@@ -68,7 +86,16 @@ enum TraceRecord {
     TcpProxy {
         timestamp_ns: u64,
         direction: ProxyDirection,
-        connection_id: u64,
+        connection_id: u32,
+        data: Vec<u8>,
+    },
+    UdpProxy {
+        timestamp_ns: u64,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
         data: Vec<u8>,
     },
 }
@@ -122,16 +149,17 @@ impl NetTracer {
             None => frame.to_vec(),
         };
 
-        self.records.lock().expect("net trace lock poisoned").push(
-            TraceRecord::Ethernet {
+        self.records
+            .lock()
+            .expect("net trace lock poisoned")
+            .push(TraceRecord::Ethernet {
                 timestamp_ns,
                 direction,
                 frame,
-            },
-        );
+            });
     }
 
-    pub fn record_tcp_proxy(&self, direction: ProxyDirection, connection_id: u64, data: &[u8]) {
+    pub fn record_tcp_proxy(&self, direction: ProxyDirection, connection_id: u32, data: &[u8]) {
         let ts = now_unix_timestamp_ns();
         self.record_tcp_proxy_at(ts, direction, connection_id, data);
     }
@@ -140,7 +168,7 @@ impl NetTracer {
         &self,
         timestamp_ns: u64,
         direction: ProxyDirection,
-        connection_id: u64,
+        connection_id: u32,
         data: &[u8],
     ) {
         if !self.is_enabled() || !self.cfg.capture_tcp_proxy {
@@ -155,14 +183,71 @@ impl NetTracer {
             None => data.to_vec(),
         };
 
-        self.records.lock().expect("net trace lock poisoned").push(
-            TraceRecord::TcpProxy {
+        self.records
+            .lock()
+            .expect("net trace lock poisoned")
+            .push(TraceRecord::TcpProxy {
                 timestamp_ns,
                 direction,
                 connection_id,
                 data,
+            });
+    }
+
+    pub fn record_udp_proxy(
+        &self,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+    ) {
+        let ts = now_unix_timestamp_ns();
+        self.record_udp_proxy_at(ts, direction, transport, remote_ip, src_port, dst_port, data);
+    }
+
+    pub fn record_udp_proxy_at(
+        &self,
+        timestamp_ns: u64,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+    ) {
+        if !self.is_enabled() || !self.cfg.capture_udp_proxy {
+            return;
+        }
+
+        let data = match &self.cfg.redactor {
+            Some(redactor) => match redactor.redact_udp_proxy(
+                direction,
+                transport.clone(),
+                remote_ip,
+                src_port,
+                dst_port,
+                data,
+            ) {
+                Some(data) => data,
+                None => return,
             },
-        );
+            None => data.to_vec(),
+        };
+
+        self.records
+            .lock()
+            .expect("net trace lock poisoned")
+            .push(TraceRecord::UdpProxy {
+                timestamp_ns,
+                direction,
+                transport,
+                remote_ip,
+                src_port,
+                dst_port,
+                data,
+            });
     }
 
     pub fn export_pcapng(&self) -> Vec<u8> {
@@ -185,11 +270,14 @@ impl NetTracer {
 
         let mut writer = pcapng::PcapngWriter::new("aero");
         let eth_if = writer.add_interface(pcapng::LinkType::Ethernet, "guest-eth0");
-        let tcp_proxy_if = if records.iter().any(|r| matches!(r, TraceRecord::TcpProxy { .. })) {
-            Some(writer.add_interface(pcapng::LinkType::User0, "tcp-proxy"))
-        } else {
-            None
-        };
+        let tcp_proxy_if = records
+            .iter()
+            .any(|r| matches!(r, TraceRecord::TcpProxy { .. }))
+            .then(|| writer.add_interface(pcapng::LinkType::User0, "tcp-proxy"));
+        let udp_proxy_if = records
+            .iter()
+            .any(|r| matches!(r, TraceRecord::UdpProxy { .. }))
+            .then(|| writer.add_interface(pcapng::LinkType::User1, "udp-proxy"));
 
         for record in records {
             match record {
@@ -223,6 +311,29 @@ impl NetTracer {
                     let pseudo = tcp_proxy_pseudo_packet(connection_id, direction, &data);
                     writer.write_packet(tcp_proxy_if, timestamp_ns, &pseudo, Some(pkt_dir));
                 }
+                TraceRecord::UdpProxy {
+                    timestamp_ns,
+                    direction,
+                    transport,
+                    remote_ip,
+                    src_port,
+                    dst_port,
+                    data,
+                } => {
+                    let Some(udp_proxy_if) = udp_proxy_if else {
+                        continue;
+                    };
+
+                    let pkt_dir = match direction {
+                        ProxyDirection::GuestToRemote => pcapng::PacketDirection::Outbound,
+                        ProxyDirection::RemoteToGuest => pcapng::PacketDirection::Inbound,
+                    };
+
+                    let pseudo = udp_proxy_pseudo_packet(
+                        transport, remote_ip, src_port, dst_port, direction, &data,
+                    );
+                    writer.write_packet(udp_proxy_if, timestamp_ns, &pseudo, Some(pkt_dir));
+                }
             }
         }
 
@@ -230,88 +341,155 @@ impl NetTracer {
     }
 }
 
-pub struct TracedNetworkStack<U: DnsUpstream> {
+pub struct TracedNetworkStack {
     tracer: Arc<NetTracer>,
-    inner: NetworkStack<U>,
+    inner: NetStackBackend,
 }
 
-impl<U: DnsUpstream> TracedNetworkStack<U> {
-    pub fn new(tracer: Arc<NetTracer>, cfg: NetConfig, dns_upstream: U) -> Self {
-        Self {
-            tracer,
-            inner: NetworkStack::new(cfg, dns_upstream),
-        }
+impl TracedNetworkStack {
+    pub fn new(tracer: Arc<NetTracer>, cfg: StackConfig) -> Self {
+        Self::from_backend(tracer, NetStackBackend::new(cfg))
+    }
+
+    pub fn from_backend(tracer: Arc<NetTracer>, inner: NetStackBackend) -> Self {
+        Self { tracer, inner }
     }
 
     pub fn tracer(&self) -> &NetTracer {
         &self.tracer
     }
 
-    pub fn inner(&self) -> &NetworkStack<U> {
+    pub fn inner(&self) -> &NetStackBackend {
         &self.inner
     }
 
-    pub fn inner_mut(&mut self) -> &mut NetworkStack<U> {
+    pub fn inner_mut(&mut self) -> &mut NetStackBackend {
         &mut self.inner
     }
 
-    pub fn into_inner(self) -> NetworkStack<U> {
+    pub fn into_inner(self) -> NetStackBackend {
         self.inner
     }
 
-    pub fn config(&self) -> &NetConfig {
-        self.inner.config()
+    pub fn now_ms(&self) -> Millis {
+        self.inner.now_ms()
     }
 
-    pub fn counters(&self) -> NetCounters {
-        self.inner.counters()
+    pub fn transmit_at(&mut self, frame: Vec<u8>, now_ms: Millis) {
+        self.tracer.record_ethernet(FrameDirection::GuestTx, &frame);
+        self.inner.transmit_at(frame, now_ms);
     }
 
-    pub fn process_frame_from_guest(&mut self, frame: &[u8]) -> StackOutput {
-        self.tracer.record_ethernet(FrameDirection::GuestTx, frame);
-        let out = self.inner.process_frame_from_guest(frame);
-        self.record_stack_output(&out);
-        out
+    pub fn push_tcp_event(&mut self, event: TcpProxyEvent, now_ms: Millis) {
+        self.record_tcp_proxy_event(&event);
+        self.inner.push_tcp_event(event, now_ms);
     }
 
-    pub fn process_proxy_event(&mut self, event: ProxyEvent) -> StackOutput {
-        self.record_proxy_event(&event);
-        let out = self.inner.process_proxy_event(event);
-        self.record_stack_output(&out);
-        out
+    pub fn push_udp_event(&mut self, event: UdpProxyEvent, now_ms: Millis) {
+        self.record_udp_proxy_event(&event);
+        self.inner.push_udp_event(event, now_ms);
     }
 
-    fn record_stack_output(&self, out: &StackOutput) {
-        for frame in &out.frames_to_guest {
-            self.tracer.record_ethernet(FrameDirection::GuestRx, frame);
+    pub fn push_dns_resolved(&mut self, resolved: DnsResolved, now_ms: Millis) {
+        self.inner.push_dns_resolved(resolved, now_ms);
+    }
+
+    pub fn drain_actions(&mut self) -> Vec<Action> {
+        let actions = self.inner.drain_actions();
+        for action in &actions {
+            self.record_action(action);
         }
-
-        for action in &out.proxy_actions {
-            self.record_proxy_action(action);
-        }
+        actions
     }
 
-    fn record_proxy_action(&self, action: &ProxyAction) {
+    pub fn drain_frames(&mut self) -> Vec<Vec<u8>> {
+        let frames = self.inner.drain_frames();
+        for frame in &frames {
+            self.tracer
+                .record_ethernet(FrameDirection::GuestRx, frame);
+        }
+        frames
+    }
+
+    fn record_action(&self, action: &Action) {
         match action {
-            ProxyAction::TcpSend { conn_id, data } => {
-                self.tracer
-                    .record_tcp_proxy(ProxyDirection::GuestToRemote, *conn_id, data);
+            Action::TcpProxySend {
+                connection_id,
+                data,
+            } => {
+                self.tracer.record_tcp_proxy(
+                    ProxyDirection::GuestToRemote,
+                    *connection_id,
+                    data,
+                );
             }
-            ProxyAction::TcpConnect { .. } | ProxyAction::TcpClose { .. } | ProxyAction::UdpSend { .. } => {}
+            Action::UdpProxySend {
+                transport,
+                src_port,
+                dst_ip,
+                dst_port,
+                data,
+            } => {
+                self.tracer.record_udp_proxy(
+                    ProxyDirection::GuestToRemote,
+                    transport.clone(),
+                    *dst_ip,
+                    *src_port,
+                    *dst_port,
+                    data,
+                );
+            }
+            Action::EmitFrame(_)
+            | Action::TcpProxyConnect { .. }
+            | Action::TcpProxyClose { .. }
+            | Action::DnsResolve { .. } => {}
         }
     }
 
-    fn record_proxy_event(&self, event: &ProxyEvent) {
-        match event {
-            ProxyEvent::TcpData { conn_id, data } => {
-                self.tracer
-                    .record_tcp_proxy(ProxyDirection::RemoteToGuest, *conn_id, data);
-            }
-            ProxyEvent::TcpConnected { .. }
-            | ProxyEvent::TcpConnectFailed { .. }
-            | ProxyEvent::TcpClosed { .. }
-            | ProxyEvent::UdpData { .. } => {}
+    fn record_tcp_proxy_event(&self, event: &TcpProxyEvent) {
+        if let TcpProxyEvent::Data {
+            connection_id,
+            data,
+        } = event
+        {
+            self.tracer.record_tcp_proxy(
+                ProxyDirection::RemoteToGuest,
+                *connection_id,
+                data,
+            );
         }
+    }
+
+    fn record_udp_proxy_event(&self, event: &UdpProxyEvent) {
+        self.tracer.record_udp_proxy(
+            ProxyDirection::RemoteToGuest,
+            self.udp_transport_hint(),
+            event.src_ip,
+            event.src_port,
+            event.dst_port,
+            &event.data,
+        );
+    }
+
+    fn udp_transport_hint(&self) -> UdpTransport {
+        if self.inner.stack().config().webrtc_udp {
+            UdpTransport::WebRtc
+        } else {
+            UdpTransport::Proxy
+        }
+    }
+}
+
+impl NetworkBackend for TracedNetworkStack {
+    fn transmit(&mut self, frame: Vec<u8>) {
+        self.tracer.record_ethernet(FrameDirection::GuestTx, &frame);
+        self.inner.transmit(frame);
+    }
+
+    fn poll_receive(&mut self) -> Option<Vec<u8>> {
+        let frame = NetworkBackend::poll_receive(&mut self.inner)?;
+        self.tracer.record_ethernet(FrameDirection::GuestRx, &frame);
+        Some(frame)
     }
 }
 
@@ -384,7 +562,7 @@ fn duration_to_ns(dur: Duration) -> u64 {
         .saturating_add(u64::from(dur.subsec_nanos()))
 }
 
-fn tcp_proxy_pseudo_packet(connection_id: u64, direction: ProxyDirection, payload: &[u8]) -> Vec<u8> {
+fn tcp_proxy_pseudo_packet(connection_id: u32, direction: ProxyDirection, payload: &[u8]) -> Vec<u8> {
     const MAGIC: [u8; 4] = *b"ATCP";
 
     let dir = match direction {
@@ -396,7 +574,38 @@ fn tcp_proxy_pseudo_packet(connection_id: u64, direction: ProxyDirection, payloa
     buf.extend_from_slice(&MAGIC);
     buf.push(dir);
     buf.extend_from_slice(&[0u8; 3]);
-    buf.extend_from_slice(&connection_id.to_le_bytes());
+    buf.extend_from_slice(&(connection_id as u64).to_le_bytes());
+    buf.extend_from_slice(payload);
+    buf
+}
+
+fn udp_proxy_pseudo_packet(
+    transport: UdpTransport,
+    remote_ip: Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+    direction: ProxyDirection,
+    payload: &[u8],
+) -> Vec<u8> {
+    const MAGIC: [u8; 4] = *b"AUDP";
+
+    let dir = match direction {
+        ProxyDirection::GuestToRemote => 0u8,
+        ProxyDirection::RemoteToGuest => 1u8,
+    };
+    let transport = match transport {
+        UdpTransport::WebRtc => 0u8,
+        UdpTransport::Proxy => 1u8,
+    };
+
+    let mut buf = Vec::with_capacity(16 + payload.len());
+    buf.extend_from_slice(&MAGIC);
+    buf.push(dir);
+    buf.push(transport);
+    buf.extend_from_slice(&[0u8; 2]);
+    buf.extend_from_slice(&remote_ip.octets());
+    buf.extend_from_slice(&src_port.to_le_bytes());
+    buf.extend_from_slice(&dst_port.to_le_bytes());
     buf.extend_from_slice(payload);
     buf
 }

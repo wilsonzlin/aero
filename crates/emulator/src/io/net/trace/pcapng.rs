@@ -2,6 +2,7 @@
 pub enum LinkType {
     Ethernet,
     User0,
+    User1,
 }
 
 impl LinkType {
@@ -9,6 +10,7 @@ impl LinkType {
         match self {
             LinkType::Ethernet => 1,
             LinkType::User0 => 147,
+            LinkType::User1 => 148,
         }
     }
 }
@@ -230,4 +232,3 @@ mod tests {
         assert!(found, "missing if_tsresol option");
     }
 }
-
