@@ -59,8 +59,12 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/package-drivers.ps1' -Version '${{ github.ref_name }}' -MakeFatImage -FatImageStrict
 
-      - name: Setup Rust toolchain (for aero_packager)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust (for aero_packager)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          cache: false
+          locked: auto
 
       - name: Package Guest Tools media (ci/package-guest-tools.ps1)
         shell: pwsh

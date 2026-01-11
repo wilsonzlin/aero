@@ -1,0 +1,139 @@
+name: Setup Rust
+description: Install a Rust toolchain + optional targets/components, configure caching, and expose Cargo.lock policy.
+
+inputs:
+  toolchain:
+    description: Rust toolchain to install (stable, nightly, or an explicit toolchain like 1.92.0 / nightly-YYYY-MM-DD).
+    required: false
+    default: stable
+  targets:
+    description: Rust targets to install (comma-separated or whitespace-delimited).
+    required: false
+    default: ""
+  components:
+    description: Rust components to install (comma-separated or whitespace-delimited).
+    required: false
+    default: ""
+  cache:
+    description: Enable caching via Swatinem/rust-cache@v2.
+    required: false
+    default: "true"
+  locked:
+    description: Cargo.lock policy (auto, always, never).
+    required: false
+    default: auto
+
+outputs:
+  cargo_locked_flag:
+    description: Either '--locked' or an empty string (per Cargo.lock policy).
+    value: ${{ steps.cargo-locked.outputs.cargo_locked_flag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Rust setup inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Rust setup"
+        echo "toolchain: ${{ inputs.toolchain }}"
+        echo "targets: ${{ inputs.targets }}"
+        echo "components: ${{ inputs.components }}"
+        echo "cache: ${{ inputs.cache }}"
+        echo "locked: ${{ inputs.locked }}"
+        echo "::endgroup::"
+
+    - name: Resolve toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        requested="${{ inputs.toolchain }}"
+        resolved="$requested"
+
+        if [[ -z "$requested" ]]; then
+          echo "::error::setup-rust: 'toolchain' input must not be empty."
+          exit 1
+        fi
+
+        # Aero pins stable via rust-toolchain.toml. When callers request "stable"
+        # we resolve it to the pinned version to keep CI reproducible.
+        if [[ "$requested" == "stable" && -f rust-toolchain.toml ]]; then
+          pinned="$(python3 -c 'import pathlib,tomllib; data=tomllib.loads(pathlib.Path("rust-toolchain.toml").read_text(encoding="utf-8")); print((data.get("toolchain") or {}).get("channel",""))')"
+          if [[ -n "$pinned" ]]; then
+            resolved="$pinned"
+          fi
+        fi
+
+        echo "toolchain=$resolved" >> "$GITHUB_OUTPUT"
+
+        echo "::group::Resolved Rust toolchain"
+        echo "requested: $requested"
+        echo "resolved: $resolved"
+        echo "::endgroup::"
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ steps.toolchain.outputs.toolchain }}
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
+
+    - name: Rust cache
+      if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@v2
+
+    - name: Determine Cargo.lock flag
+      id: cargo-locked
+      shell: bash
+      run: |
+        set -euo pipefail
+        policy="${{ inputs.locked }}"
+        flag=""
+
+        case "$policy" in
+          always)
+            flag="--locked"
+            ;;
+          never)
+            flag=""
+            ;;
+          auto)
+            if [[ -f Cargo.lock ]]; then
+              flag="--locked"
+            else
+              flag=""
+            fi
+            ;;
+          *)
+            echo "::error::Invalid locked policy '$policy' (expected auto|always|never)."
+            exit 1
+            ;;
+        esac
+
+        echo "cargo_locked_flag=$flag" >> "$GITHUB_OUTPUT"
+
+        echo "::group::Cargo.lock policy"
+        if [[ -n "$flag" ]]; then
+          echo "Using cargo $flag"
+        else
+          echo "Not using cargo --locked"
+        fi
+        if [[ -f Cargo.lock ]]; then
+          echo "Cargo.lock: present"
+        else
+          echo "Cargo.lock: missing"
+        fi
+        echo "::endgroup::"
+
+    - name: Rust versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Rust versions"
+        rustc --version
+        cargo --version
+        rustup show active-toolchain || true
+        rustup target list --installed || true
+        rustup component list --installed || true
+        echo "::endgroup::"

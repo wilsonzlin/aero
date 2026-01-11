@@ -35,9 +35,12 @@ jobs:
         run: npm run test:unit:coverage
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
         with:
+          toolchain: stable
           components: llvm-tools-preview
+          locked: auto
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -45,7 +48,7 @@ jobs:
       - name: Run Rust tests with coverage (lcov)
         run: |
           mkdir -p target/coverage
-          cargo llvm-cov --workspace --lcov --output-path target/coverage/rust.lcov
+          cargo llvm-cov ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --lcov --output-path target/coverage/rust.lcov
 
       - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v4

@@ -36,9 +36,13 @@ jobs:
             echo "No Cargo.toml found at repository root; skipping cargo-deny."
           fi
 
-      - name: Install Rust toolchain
+      - name: Setup Rust
         if: steps.rust.outputs.has_rust == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          cache: false
+          locked: auto
 
       - name: Install cargo-deny
         if: steps.rust.outputs.has_rust == 'true'

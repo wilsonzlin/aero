@@ -68,23 +68,11 @@ jobs:
 
       - name: Setup Rust
         if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        if: matrix.language == 'rust'
-        uses: Swatinem/rust-cache@v2
-
-      - name: Use --locked when Cargo.lock exists
-        if: matrix.language == 'rust'
-        id: cargo-locked
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f Cargo.lock ]]; then
-            echo "locked=--locked" >> "$GITHUB_OUTPUT"
-          else
-            echo "locked=" >> "$GITHUB_OUTPUT"
-          fi
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: auto
 
       - name: Determine Node workspace directory
         if: matrix.language == 'javascript-typescript'
@@ -141,7 +129,7 @@ jobs:
       - name: Build (Rust)
         if: matrix.language == 'rust'
         shell: bash
-        run: cargo check ${{ steps.cargo-locked.outputs.locked }} --workspace --all-targets
+        run: cargo check ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-targets
 
       - name: Build (Go)
         if: matrix.language == 'go'

@@ -19,6 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: auto
       - name: cargo test (virtio protocol)
-        run: cargo test --manifest-path drivers/protocol/virtio/Cargo.toml
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path drivers/protocol/virtio/Cargo.toml

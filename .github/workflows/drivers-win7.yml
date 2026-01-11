@@ -197,9 +197,13 @@ jobs:
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1' -MakeFatImage
 
-      - name: Setup Rust toolchain (for aero_packager)
+      - name: Setup Rust (for aero_packager)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          cache: false
+          locked: auto
 
       - name: Package Guest Tools media (ci/package-guest-tools.ps1)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'

@@ -133,15 +133,13 @@ jobs:
           nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
           echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust toolchain (pinned nightly for threaded WASM)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust (pinned nightly for threaded WASM)
+        uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ steps.toolchains.outputs.nightly }}
           targets: wasm32-unknown-unknown
           components: rust-src
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+          locked: auto
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
@@ -158,29 +156,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
         with:
+          toolchain: stable
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Use --locked when Cargo.lock exists
-        id: cargo-locked
-        run: |
-          set -euo pipefail
-          if [[ -f Cargo.lock ]]; then
-            echo "locked=--locked" >> "$GITHUB_OUTPUT"
-          else
-            echo "locked=" >> "$GITHUB_OUTPUT"
-          fi
+          locked: auto
 
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
       - name: Generate test fixtures
-        run: cargo run ${{ steps.cargo-locked.outputs.locked }} -p xtask -- fixtures
+        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- fixtures
 
       - name: Ensure fixtures are checked in (determinism)
         run: git diff --exit-code -- tests/fixtures/boot
@@ -189,7 +177,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy ${{ steps.cargo-locked.outputs.locked }} --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-targets --all-features -- -D warnings
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -200,10 +188,10 @@ jobs:
         run: mkdir -p test-results
 
       - name: cargo nextest (workspace)
-        run: cargo nextest run ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features --exclude aero-storage-server --junit-path test-results/rust-workspace.xml
+        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-features --exclude aero-storage-server --junit-path test-results/rust-workspace.xml
 
       - name: cargo test (doc tests)
-        run: cargo test ${{ steps.cargo-locked.outputs.locked }} --workspace --all-features --doc
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-features --doc
 
       - name: cargo nextest (guest tools packager)
         run: cargo nextest run --manifest-path tools/packaging/aero_packager/Cargo.toml --locked --junit-path test-results/rust-aero-packager.xml
@@ -212,7 +200,7 @@ jobs:
         run: cargo nextest run --manifest-path server/disk-gateway/Cargo.toml --locked --junit-path test-results/rust-disk-gateway.xml
 
       - name: cargo nextest (aero-storage-server)
-        run: cargo nextest run ${{ steps.cargo-locked.outputs.locked }} -p aero-storage-server --all-features --junit-path test-results/rust-aero-storage-server.xml
+        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-storage-server --all-features --junit-path test-results/rust-aero-storage-server.xml
 
       - name: Publish Rust test report
         if: always()
@@ -308,21 +296,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Use --locked when Cargo.lock exists
-        id: cargo-locked
-        run: |
-          set -euo pipefail
-          if [[ -f Cargo.lock ]]; then
-            echo "locked=--locked" >> "$GITHUB_OUTPUT"
-          else
-            echo "locked=" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: auto
 
       - name: Install QEMU + tooling
         run: |
@@ -339,7 +318,7 @@ jobs:
           git diff --exit-code
 
       - name: Run QEMU boot tests
-        run: cargo test ${{ steps.cargo-locked.outputs.locked }} -p emulator --test boot_sector --test freedos_boot
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p emulator --test boot_sector --test freedos_boot
 
   wasm:
     name: WASM (wasm-pack build + test)
@@ -350,13 +329,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+          locked: auto
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -498,14 +476,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: always
 
       - name: cargo build
-        run: cargo build --locked --workspace
+        run: cargo build ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace
 
       - name: Build offline cert injector (Windows)
         if: matrix.os == 'windows-latest'
@@ -583,8 +562,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: auto
 
       - name: Determine Node workspace directory
         id: node-dir
@@ -674,11 +656,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: auto
 
       - name: Setup Node
         uses: actions/setup-node@v4

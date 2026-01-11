@@ -54,18 +54,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: auto
 
       - name: cargo test (tools/packaging/aero_packager)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p out/guest-tools-packager
-          cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml 2>&1 | tee out/guest-tools-packager/cargo-test.log
+          cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml 2>&1 | tee out/guest-tools-packager/cargo-test.log
 
       - name: Validate Guest Tools config vs packaging spec
         shell: bash

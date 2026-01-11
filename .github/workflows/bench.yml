@@ -35,11 +35,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: always
 
       - name: Select benchmark profile
         run: |
@@ -83,9 +84,9 @@ jobs:
           PY
 
           if command -v taskset >/dev/null 2>&1; then
-            taskset -c 0 cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
           else
-            cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
           fi
 
           # Criterion writes benchmark results to `target/criterion`. Move the results
@@ -116,9 +117,9 @@ jobs:
           PY
 
           if command -v taskset >/dev/null 2>&1; then
-            taskset -c 0 cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
           else
-            cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
           fi
 
           rm -rf target/bench-new/criterion
@@ -150,9 +151,9 @@ jobs:
           PY
 
           if command -v taskset >/dev/null 2>&1; then
-            taskset -c 0 cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
           else
-            cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
           fi
 
           rm -rf target/bench-new/criterion
