@@ -664,6 +664,320 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
 }
 
 #[test]
+fn copy_buffer_writeback_roundtrips_bytes() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x20_000);
+
+        const ALLOC_DST: u32 = 1;
+        let dst_gpa = 0x1000u64;
+        let dst_size = 256usize;
+        let dst_init = vec![0xEEu8; dst_size];
+        guest.write(dst_gpa, &dst_init).expect("write dst init");
+
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_DST);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, dst_gpa);
+            push_u64(&mut out, dst_size as u64);
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        let src_pattern: Vec<u8> = (0u8..=255u8).collect();
+        assert_eq!(src_pattern.len(), dst_size);
+
+        let src_offset = 16u64;
+        let dst_offset = 32u64;
+        let copy_size = 64u64;
+
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER SRC (handle=1) host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, dst_size as u64);
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE to SRC.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, src_pattern.len() as u64);
+                out.extend_from_slice(&src_pattern);
+            });
+
+            // CREATE_BUFFER DST (handle=2) guest-backed.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 2); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, dst_size as u64);
+                push_u32(out, ALLOC_DST);
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // COPY_BUFFER with WRITEBACK_DST.
+            emit_packet(out, AerogpuCmdOpcode::CopyBuffer as u32, |out| {
+                push_u32(out, 2); // dst_buffer
+                push_u32(out, 1); // src_buffer
+                push_u64(out, dst_offset);
+                push_u64(out, src_offset);
+                push_u64(out, copy_size);
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
+
+        let mut got = vec![0u8; dst_size];
+        guest.read(dst_gpa, &mut got).expect("read dst bytes");
+
+        let dst_offset_usize = dst_offset as usize;
+        let src_offset_usize = src_offset as usize;
+        let copy_size_usize = copy_size as usize;
+
+        assert_eq!(got[..dst_offset_usize], dst_init[..dst_offset_usize]);
+        assert_eq!(
+            got[dst_offset_usize..dst_offset_usize + copy_size_usize],
+            src_pattern[src_offset_usize..src_offset_usize + copy_size_usize]
+        );
+        assert_eq!(
+            got[dst_offset_usize + copy_size_usize..],
+            dst_init[dst_offset_usize + copy_size_usize..]
+        );
+    });
+}
+
+#[test]
+fn copy_texture2d_writeback_roundtrips_bytes() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let mut guest = VecGuestMemory::new(0x20_000);
+
+        const ALLOC_DST: u32 = 1;
+        let width = 7u32;
+        let height = 4u32;
+        let row_pitch = 32u32; // larger than width*4; not wgpu-aligned
+
+        let dst_gpa = 0x1000u64;
+        let dst_size = (row_pitch * height) as usize;
+        let dst_init = vec![0x11u8; dst_size];
+        guest
+            .write(dst_gpa, &dst_init)
+            .expect("write dst init texture bytes");
+
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_DST);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, dst_gpa);
+            push_u64(&mut out, dst_size as u64);
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        // Patterned RGBA8 source texture (tightly packed).
+        let mut src_bytes = vec![0u8; (width * height * 4) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 4) as usize;
+                src_bytes[idx] = x as u8;
+                src_bytes[idx + 1] = y as u8;
+                src_bytes[idx + 2] = (x as u8).wrapping_add(y as u8);
+                src_bytes[idx + 3] = 0xFF;
+            }
+        }
+
+        let dst_x = 1u32;
+        let dst_y = 2u32;
+        let src_x = 2u32;
+        let src_y = 1u32;
+        let copy_w = 3u32;
+        let copy_h = 2u32;
+
+        let stream = build_stream(|out| {
+            // CREATE_TEXTURE2D SRC (handle=1) host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE to SRC.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, src_bytes.len() as u64);
+                out.extend_from_slice(&src_bytes);
+            });
+
+            // CREATE_TEXTURE2D DST (handle=2) guest-backed.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, row_pitch);
+                push_u32(out, ALLOC_DST);
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // COPY_TEXTURE2D with WRITEBACK_DST.
+            emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                push_u32(out, 2); // dst_texture
+                push_u32(out, 1); // src_texture
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, dst_x);
+                push_u32(out, dst_y);
+                push_u32(out, src_x);
+                push_u32(out, src_y);
+                push_u32(out, copy_w);
+                push_u32(out, copy_h);
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
+
+        let mut got = vec![0u8; dst_size];
+        guest.read(dst_gpa, &mut got).expect("read dst bytes");
+
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y as usize * row_pitch as usize) + (x as usize * 4);
+                let px = &got[idx..idx + 4];
+
+                let in_rect =
+                    x >= dst_x && x < (dst_x + copy_w) && y >= dst_y && y < (dst_y + copy_h);
+                if in_rect {
+                    let sx = src_x + (x - dst_x);
+                    let sy = src_y + (y - dst_y);
+                    let expected = [
+                        sx as u8,
+                        sy as u8,
+                        (sx as u8).wrapping_add(sy as u8),
+                        0xFF,
+                    ];
+                    assert_eq!(px, expected);
+                } else {
+                    assert_eq!(px, [0x11, 0x11, 0x11, 0x11]);
+                }
+            }
+
+            // Verify the row padding bytes were not clobbered.
+            let pad_start = (y as usize * row_pitch as usize) + (width as usize * 4);
+            let pad_end = (y as usize + 1) * row_pitch as usize;
+            assert!(pad_start <= pad_end);
+            assert_eq!(&got[pad_start..pad_end], &dst_init[pad_start..pad_end]);
+        }
+    });
+}
+
+#[test]
 fn copy_buffer_executes_before_draw() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {
