@@ -2779,7 +2779,7 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
   std::lock_guard<std::mutex> lock(ctx->mutex);
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
   cmd->scanout_id = 0;
-  bool vsync = (pPresent->SyncInterval == 1);
+  bool vsync = (pPresent->SyncInterval != 0);
   if (vsync && ctx->device && ctx->device->adapter && ctx->device->adapter->umd_private_valid) {
     vsync = (ctx->device->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
   }
@@ -5176,7 +5176,7 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
   cmd->scanout_id = 0;
-  cmd->flags = (pPresent->SyncInterval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  cmd->flags = (pPresent->SyncInterval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
   dev->next_submit_is_present = true;
 #endif

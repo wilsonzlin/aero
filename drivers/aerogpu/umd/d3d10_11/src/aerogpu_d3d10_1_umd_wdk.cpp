@@ -2545,7 +2545,7 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
   cmd->scanout_id = 0;
-  bool vsync = (pPresent->SyncInterval == 1);
+  bool vsync = (pPresent->SyncInterval != 0);
   if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
     vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
   }
