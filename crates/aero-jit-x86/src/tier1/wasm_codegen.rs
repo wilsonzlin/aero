@@ -288,6 +288,28 @@ impl Tier1WasmCodegen {
         func.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
         if options.inline_tlb {
+            // Cache the code-version table pointer and length in locals so the RAM write fast-path
+            // can bump code page versions without repeated loads from `cpu_ptr`.
+            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            func.instruction(&Instruction::I32Load(memarg(
+                jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
+                2,
+            )));
+            func.instruction(&Instruction::I64ExtendI32U);
+            func.instruction(&Instruction::LocalSet(
+                layout.code_version_table_ptr_local(),
+            ));
+
+            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            func.instruction(&Instruction::I32Load(memarg(
+                jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+                2,
+            )));
+            func.instruction(&Instruction::I64ExtendI32U);
+            func.instruction(&Instruction::LocalSet(
+                layout.code_version_table_len_local(),
+            ));
+
             // Load JIT metadata (guest RAM base and TLB salt).
             func.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));
             func.instruction(&Instruction::I64Load(memarg(
@@ -414,8 +436,16 @@ impl LocalsLayout {
         self.rflags_local() + 1
     }
 
-    fn ram_base_local(self) -> u32 {
+    fn code_version_table_ptr_local(self) -> u32 {
         self.next_rip_local() + 1
+    }
+
+    fn code_version_table_len_local(self) -> u32 {
+        self.code_version_table_ptr_local() + 1
+    }
+
+    fn ram_base_local(self) -> u32 {
+        self.code_version_table_len_local() + 1
     }
 
     fn tlb_salt_local(self) -> u32 {
@@ -447,9 +477,9 @@ impl LocalsLayout {
     }
 
     fn total_i64_locals(self) -> u32 {
-        // gpr[16] + rip + rflags + next_rip + ram_base + tlb_salt +
+        // gpr[16] + rip + rflags + next_rip + code_version_table ptr/len + ram_base + tlb_salt +
         // scratch locals (vaddr, vpn, tlb_data, scratch) + values
-        16 + 1 + 1 + 1 + 1 + 1 + 4 + self.values
+        16 + 1 + 1 + 1 + 2 + 1 + 1 + 4 + self.values
     }
 }
 
@@ -1066,13 +1096,10 @@ impl Emitter<'_> {
     /// correctness we bump for all writes that hit RAM.
     fn emit_bump_code_version_fastpath(&mut self) {
         // If the runtime hasn't configured a version table, skip.
-        self.func
-            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-        self.func.instruction(&Instruction::I32Load(memarg(
-            jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
-            2,
-        )));
-        self.func.instruction(&Instruction::I32Eqz);
+        self.func.instruction(&Instruction::LocalGet(
+            self.layout.code_version_table_len_local(),
+        ));
+        self.func.instruction(&Instruction::I64Eqz);
         self.func.instruction(&Instruction::If(BlockType::Empty));
         self.func.instruction(&Instruction::Else);
         {
@@ -1085,36 +1112,23 @@ impl Emitter<'_> {
             self.func
                 .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
             self.func.instruction(&Instruction::I64ShrU); // -> page (i64)
+            self.func
+                .instruction(&Instruction::LocalTee(self.layout.scratch_vpn_local()));
 
             // Bounds check: page < table_len.
-            self.func
-                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-            self.func.instruction(&Instruction::I32Load(memarg(
-                jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
-                2,
-            )));
-            self.func.instruction(&Instruction::I64ExtendI32U);
+            self.func.instruction(&Instruction::LocalGet(
+                self.layout.code_version_table_len_local(),
+            ));
             self.func.instruction(&Instruction::I64LtU);
 
             self.func.instruction(&Instruction::If(BlockType::Empty));
             {
                 // addr = table_ptr + page * 4
+                self.func.instruction(&Instruction::LocalGet(
+                    self.layout.code_version_table_ptr_local(),
+                ));
                 self.func
-                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                self.func.instruction(&Instruction::I32Load(memarg(
-                    jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
-                    2,
-                )));
-                self.func.instruction(&Instruction::I64ExtendI32U);
-
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
-                self.func
-                    .instruction(&Instruction::I64Const(crate::PAGE_BASE_MASK as i64));
-                self.func.instruction(&Instruction::I64And);
-                self.func
-                    .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
-                self.func.instruction(&Instruction::I64ShrU);
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
 
                 self.func.instruction(&Instruction::I64Const(4));
                 self.func.instruction(&Instruction::I64Mul);
