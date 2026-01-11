@@ -34,10 +34,10 @@ In practice, different header/runtime combinations can expose different callback
 1. `pfnPresentCb` for present submissions and `pfnRenderCb` for render submissions, and
 2. falls back to `pfnSubmitCommandCb` (`D3DDDIARG_SUBMITCOMMAND`) when needed.
 
-For present submissions specifically, some runtimes only expose `pfnRenderCb` + a present bit in the callback args; others route directly through `pfnSubmitCommandCb`. AeroGPU supports both:
+For present submissions specifically, some runtimes expose only `pfnRenderCb` (with an explicit “present” bit in the callback args) while others route present work through `pfnSubmitCommandCb` (bypassing `DxgkDdiPresent`). AeroGPU supports both:
 
-- when a callback arg struct can explicitly signal “present”, the UMD sets that bit, and
-- when dxgkrnl routes straight to `DxgkDdiSubmitCommand` (no prior `DxgkDdiRender`/`DxgkDdiPresent`), the KMD can still classify present vs render via `AEROGPU_DMA_PRIV::Type` and build the per-submit allocation table on-demand from the submit args.
+- when the callback arg struct can explicitly signal “present”, the UMD sets that bit so dxgkrnl routes the submit through `DxgkDdiPresent`; and
+- otherwise, the UMD uses `pfnSubmitCommandCb` and relies on the stamped `AEROGPU_DMA_PRIV.Type` (and the KMD’s “build meta from allocation list” fallback) to keep submission classification and allocation-table attachment correct.
 
 The UMD logs the available callback pointers once at `CreateDevice` so Win7 bring-up can confirm which path the runtime is using.
 
