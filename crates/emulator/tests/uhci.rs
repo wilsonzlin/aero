@@ -894,6 +894,106 @@ fn uhci_control_in_no_data_pending_naks_status_out_until_ready() {
 }
 
 #[test]
+fn uhci_control_in_large_data_stage_is_chunked_across_multiple_in_tds() {
+    #[derive(Clone, Debug)]
+    struct LargeControlInDevice {
+        data: Vec<u8>,
+    }
+
+    impl UsbDeviceModel for LargeControlInDevice {
+        fn handle_control_request(
+            &mut self,
+            setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            if setup.bm_request_type == 0xc0 && setup.b_request == 0x10 {
+                ControlResponse::Data(self.data.clone())
+            } else {
+                ControlResponse::Stall
+            }
+        }
+    }
+
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let data: Vec<u8> = (0u8..100).collect();
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(LargeControlInDevice { data: data.clone() }));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Vendor DeviceToHost control transfer with a 100-byte data stage.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0xc0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00],
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // Data stage: 64 bytes then 36 bytes.
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 64),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        TD3,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, 64),
+        BUF_DATA + 64,
+    );
+    write_td(
+        &mut mem,
+        TD3,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + data.len()),
+        data
+    );
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    let st2 = mem.read_u32(TD2 as u64 + 4);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(
+        st1 & 0x7ff,
+        63,
+        "first IN TD should report 64 bytes transferred"
+    );
+    assert_eq!(
+        st2 & 0x7ff,
+        35,
+        "second IN TD should report 36 bytes transferred"
+    );
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
+}
+
+#[test]
 fn uhci_control_out_pending_acks_data_stage_and_naks_status_in() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
@@ -1024,6 +1124,100 @@ fn uhci_control_out_no_data_pending_naks_status_in_until_ready() {
 
     let st1 = mem.read_u32(TD1 as u64 + 4);
     assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
+}
+
+#[test]
+fn uhci_control_out_large_data_stage_is_buffered_across_multiple_out_tds() {
+    #[derive(Clone, Debug)]
+    struct CaptureControlOutDevice {
+        received: Rc<RefCell<Vec<u8>>>,
+    }
+
+    impl UsbDeviceModel for CaptureControlOutDevice {
+        fn handle_control_request(
+            &mut self,
+            setup: SetupPacket,
+            data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            if setup.bm_request_type != 0x40 || setup.b_request != 0x11 {
+                return ControlResponse::Stall;
+            }
+
+            let Some(data_stage) = data_stage else {
+                return ControlResponse::Stall;
+            };
+
+            self.received.borrow_mut().extend_from_slice(data_stage);
+            ControlResponse::Ack
+        }
+    }
+
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let received = Rc::new(RefCell::new(Vec::new()));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(CaptureControlOutDevice {
+            received: received.clone(),
+        }),
+    );
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    let payload: Vec<u8> = (0u8..100).collect();
+
+    // Vendor HostToDevice control transfer with a 100-byte OUT data stage.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[0x40, 0x11, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00],
+    );
+    mem.write_physical(BUF_DATA as u64, &payload[..64]);
+    mem.write_physical((BUF_DATA + 64) as u64, &payload[64..]);
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // Data stage: 64 bytes then 36 bytes.
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 0, 1, 64),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        TD3,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 0, 1, 36),
+        BUF_DATA + 64,
+    );
+    // Status stage (IN ZLP).
+    write_td(
+        &mut mem,
+        TD3,
+        1,
+        td_status(true, true),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(&*received.borrow(), &payload);
     let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
     assert_eq!(qh_elem, 1);
 }
