@@ -9,12 +9,13 @@ cannot run on Linux/macOS. The extracted directory can be passed to:
   pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot <out-root>
 
 The output directory preserves the original virtio-win on-disk structure, but only
-for the Win7-relevant subtrees Aero uses.
+for the Win7-relevant subtrees Aero uses, plus common root-level license/notice files.
 """
 
 import argparse
 import dataclasses
 import datetime as _dt
+import fnmatch
 import hashlib
 import json
 import shutil
@@ -29,6 +30,16 @@ ARCH_CANDIDATES_AMD64 = ["amd64", "x64"]
 ARCH_CANDIDATES_X86 = ["x86", "i386"]
 
 DEFAULT_PROVENANCE_FILENAME = "virtio-win-provenance.json"
+
+NOTICE_FILE_PATTERNS = [
+    "LICENSE*",
+    "COPYING*",
+    "NOTICE*",
+    "EULA*",
+    "AUTHORS*",
+    "CREDITS*",
+    "README*",
+]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -61,6 +72,14 @@ def _utc_now_iso() -> str:
     # `datetime.UTC` was introduced in Python 3.11; use `timezone.utc` for compatibility
     # with the Python versions commonly available on CI runners.
     return _dt.datetime.now(tz=_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _is_notice_file(name: str) -> bool:
+    lowered = name.casefold()
+    for pat in NOTICE_FILE_PATTERNS:
+        if fnmatch.fnmatch(lowered, pat.casefold()):
+            return True
+    return False
 
 
 def _ensure_empty_dir(path: Path, *, clean: bool) -> None:
@@ -221,7 +240,7 @@ def _detect_7z_sep(paths_raw: Iterable[str]) -> str:
     return "/"  # default
 
 
-def _list_iso_paths_with_7z(sevenz: str, iso_path: Path) -> tuple[list[str], str]:
+def _list_iso_paths_with_7z(sevenz: str, iso_path: Path) -> tuple[list[str], str, dict[str, bool]]:
     proc = subprocess.run(
         [sevenz, "l", "-slt", str(iso_path)],
         check=True,
@@ -230,6 +249,8 @@ def _list_iso_paths_with_7z(sevenz: str, iso_path: Path) -> tuple[list[str], str
     )
     in_entries = False
     paths_raw: list[str] = []
+    is_folder_raw: dict[str, bool] = {}
+    current_path: Optional[str] = None
     for line in proc.stdout.splitlines():
         if line.startswith("----------"):
             in_entries = True
@@ -239,27 +260,47 @@ def _list_iso_paths_with_7z(sevenz: str, iso_path: Path) -> tuple[list[str], str
         if line.startswith("Path = "):
             p = line[len("Path = ") :].strip()
             if p:
+                current_path = p
                 paths_raw.append(p)
+        elif line.startswith("Folder = ") and current_path:
+            v = line[len("Folder = ") :].strip()
+            is_folder_raw[current_path] = v == "+"
 
     sep = _detect_7z_sep(paths_raw)
     # Normalize to "/" for tree building.
     paths_norm = [p.replace("\\", "/") for p in paths_raw]
-    return paths_norm, sep
+    is_folder_norm = {k.replace("\\", "/"): v for (k, v) in is_folder_raw.items()}
+    return paths_norm, sep, is_folder_norm
 
 
-def _extract_with_7z(sevenz: str, iso_path: Path, out_root: Path, targets: list[_ExtractTarget], sep: str) -> None:
+def _extract_with_7z(
+    sevenz: str,
+    iso_path: Path,
+    out_root: Path,
+    targets: list[_ExtractTarget],
+    extra_paths: list[str],
+    sep: str,
+) -> None:
     if not targets:
         raise SystemExit("nothing to extract (no matching driver paths found)")
 
     # 7z accepts directory paths to extract an entire subtree. We pass the exact
     # paths discovered from the listing (preserving case) for robustness.
     archive_paths = [t.iso_path(sep) for t in targets]
+    for p in extra_paths:
+        archive_paths.append(p.replace("/", sep))
+    archive_paths = sorted(set(archive_paths))
 
     cmd = [sevenz, "x", "-y", f"-o{out_root}", str(iso_path), *archive_paths]
     subprocess.run(cmd, check=True)
 
 
-def _extract_with_pycdlib(iso_path: Path, out_root: Path, targets: list[_ExtractTarget]) -> None:
+def _extract_with_pycdlib(
+    iso_path: Path,
+    out_root: Path,
+    targets: list[_ExtractTarget],
+    notice_joliet_paths: list[str],
+) -> None:
     try:
         import pycdlib  # type: ignore
     except ModuleNotFoundError as e:
@@ -291,6 +332,11 @@ def _extract_with_pycdlib(iso_path: Path, out_root: Path, targets: list[_Extract
 
         if not files:
             raise SystemExit("no matching files found to extract (pycdlib)")
+
+        # Root-level license/notice files.
+        for jp in notice_joliet_paths:
+            dest_rel = jp.lstrip("/")
+            files.append((jp, dest_rel))
 
         for jp, dest_rel in files:
             dest = out_root / dest_rel
@@ -349,22 +395,34 @@ def main() -> int:
 
     targets: list[_ExtractTarget]
     missing_optional: list[dict[str, Any]]
+    extracted_notice_files: list[str] = []
     backend_used = backend
 
     sep_for_7z = "/"
     if backend == "7z":
         assert sevenz is not None
         try:
-            paths_norm, sep_for_7z = _list_iso_paths_with_7z(sevenz, iso_path)
+            paths_norm, sep_for_7z, is_folder = _list_iso_paths_with_7z(sevenz, iso_path)
             tree = _build_tree_from_paths(paths_norm)
             targets, missing_optional = _select_extract_targets(tree)
-            _extract_with_7z(sevenz, iso_path, out_root, targets, sep_for_7z)
+
+            # Root-level license/notice files (best-effort).
+            for p in paths_norm:
+                if "/" in p:
+                    continue
+                if is_folder.get(p, False):
+                    continue
+                if _is_notice_file(p):
+                    extracted_notice_files.append(p)
+
+            _extract_with_7z(sevenz, iso_path, out_root, targets, extracted_notice_files, sep_for_7z)
         except subprocess.CalledProcessError as e:
             # In auto mode, fall back to a pure-Python extractor if 7z is present but
             # can't read the ISO on this platform.
             if args.backend != "auto":
                 raise SystemExit(f"7z failed to read/extract ISO: {e}") from e
             backend_used = "pycdlib"
+            extracted_notice_files = []
             print(
                 "warning: 7z extraction failed; falling back to pycdlib.\n"
                 f"7z stderr:\n{e.stderr or ''}",
@@ -397,12 +455,17 @@ def main() -> int:
                     all_paths.append(f"{root.rstrip('/')}/{d}")
                 for f in files:
                     all_paths.append(f"{root.rstrip('/')}/{f}")
+                if root == "/":
+                    for f in files:
+                        if _is_notice_file(f):
+                            extracted_notice_files.append(f)
         finally:
             iso.close()
 
         tree = _build_tree_from_paths(all_paths)
         targets, missing_optional = _select_extract_targets(tree)
-        _extract_with_pycdlib(iso_path, out_root, targets)
+        notice_joliet_paths = ["/" + f for f in extracted_notice_files]
+        _extract_with_pycdlib(iso_path, out_root, targets, notice_joliet_paths)
 
     # Quick sanity check: ensure each extracted target directory exists.
     # (This protects against 7z selection quirks.)
@@ -439,6 +502,7 @@ def main() -> int:
         },
         "backend": backend_used,
         "extracted": extracted,
+        "extracted_notice_files": extracted_notice_files,
         "missing_optional": missing_optional,
     }
 

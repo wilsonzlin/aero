@@ -259,6 +259,10 @@ pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root -N
 `drivers/scripts/make-driver-pack.ps1` will ingest this file when present so the produced
 driver pack `manifest.json` can record the original ISO hash even when using `-VirtioWinRoot`.
 
+The extractor also copies common root-level license/notice files (e.g. `LICENSE*`, `NOTICE*`,
+`README*`) into the extracted root so subsequent packaging can propagate them into
+`licenses/virtio-win/`.
+
 This produces a staging directory (by default) at:
 
 `drivers\out\aero-win7-driver-pack\`
