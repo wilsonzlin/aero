@@ -52,6 +52,7 @@ constexpr bool NtSuccess(NTSTATUS st) {
 }
 
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 
 static uint64_t AllocateShareToken() {
   uint64_t token = 0;
@@ -6024,8 +6025,8 @@ static HRESULT MapLocked11(Device* dev,
       const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
       const UINT64 timeout = do_not_wait ? 0ull : ~0ull;
       const HRESULT wait_hr = WaitForFence(dev, fence, timeout);
-      if (wait_hr == kDxgiErrorWasStillDrawing) {
-        return wait_hr;
+      if (wait_hr == kDxgiErrorWasStillDrawing || (do_not_wait && wait_hr == kHrPending)) {
+        return kDxgiErrorWasStillDrawing;
       }
       if (FAILED(wait_hr)) {
         SetError(dev, wait_hr);
@@ -6114,8 +6115,9 @@ static HRESULT MapLocked11(Device* dev,
   }
 
   const HRESULT lock_hr = CallCbMaybeHandle(cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock);
-  if (lock_hr == kDxgiErrorWasStillDrawing) {
-    return lock_hr;
+  const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+  if (lock_hr == kDxgiErrorWasStillDrawing || (do_not_wait && lock_hr == kHrPending)) {
+    return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(lock_hr)) {
     SetError(dev, lock_hr);
