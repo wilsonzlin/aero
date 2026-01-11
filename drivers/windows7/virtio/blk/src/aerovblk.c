@@ -380,7 +380,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   }
 
   st = AeroVirtioQueryQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, &queueSize, &notifyOff);
-  if (!NT_SUCCESS(st) || queueSize != (USHORT)AEROVBLK_QUEUE_SIZE) {
+  if (!NT_SUCCESS(st) || queueSize != (USHORT)AEROVBLK_QUEUE_SIZE || notifyOff != (USHORT)AEROVBLK_QUEUE_INDEX) {
     AeroVirtioFailDevice(&devExt->Vdev);
     return FALSE;
   }
@@ -827,6 +827,8 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   PVOID base;
   UCHAR pciCfg[0x40];
   ULONG bytesRead;
+  USHORT vendorId;
+  USHORT deviceId;
   USHORT hwQueueSize;
   USHORT notifyOff;
   ULONGLONG hostFeatures;
@@ -864,7 +866,13 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
    */
   RtlZeroMemory(pciCfg, sizeof(pciCfg));
   bytesRead = StorPortGetBusData(devExt, PCIConfiguration, configInfo->SystemIoBusNumber, configInfo->SlotNumber, pciCfg, sizeof(pciCfg));
-  if (bytesRead < 0x09 || pciCfg[0x08] != (UCHAR)AEROVBLK_VIRTIO_PCI_REVISION_ID) {
+  if (bytesRead < 0x09) {
+    return SP_RETURN_NOT_FOUND;
+  }
+  RtlCopyMemory(&vendorId, pciCfg + 0x00, sizeof(vendorId));
+  RtlCopyMemory(&deviceId, pciCfg + 0x02, sizeof(deviceId));
+  if (vendorId != (USHORT)AEROVBLK_PCI_VENDOR_ID || deviceId != (USHORT)AEROVBLK_PCI_DEVICE_ID ||
+      pciCfg[0x08] != (UCHAR)AEROVBLK_VIRTIO_PCI_REVISION_ID) {
     return SP_RETURN_NOT_FOUND;
   }
 
@@ -880,7 +888,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
 
   /* Validate queue 0 size (contract v1: 128). */
   st = AeroVirtioQueryQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, &hwQueueSize, &notifyOff);
-  if (!NT_SUCCESS(st) || hwQueueSize != (USHORT)AEROVBLK_QUEUE_SIZE) {
+  if (!NT_SUCCESS(st) || hwQueueSize != (USHORT)AEROVBLK_QUEUE_SIZE || notifyOff != (USHORT)AEROVBLK_QUEUE_INDEX) {
     return SP_RETURN_NOT_FOUND;
   }
   devExt->QueueNotifyOff = notifyOff;
