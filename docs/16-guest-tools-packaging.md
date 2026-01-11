@@ -19,6 +19,12 @@ To convert those CI outputs into the packager input layout and build the distrib
 pwsh -File ci/package-guest-tools.ps1
 ```
 
+Convenience wrapper (same behaviour, located alongside other driver scripts):
+
+```powershell
+pwsh -File drivers/scripts/make-guest-tools-from-ci.ps1
+```
+
 By default this will:
 
 - stage drivers into the layout expected by `aero_packager`:
