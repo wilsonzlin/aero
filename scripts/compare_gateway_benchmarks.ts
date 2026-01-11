@@ -1,0 +1,190 @@
+/**
+ * Compare two aero-gateway benchmark reports and fail on regressions/instability.
+ *
+ * Output:
+ *   - <out-dir>/compare.md
+ *   - <out-dir>/summary.json
+ *
+ * Exit codes:
+ *   0 = pass
+ *   1 = regression
+ *   2 = unstable (extreme variance detected)
+ */
+import fs from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+
+import { buildCompareResult, exitCodeForStatus, renderCompareMarkdown } from "../tools/perf/lib/compare_core.mjs";
+import {
+  DEFAULT_PROFILE,
+  DEFAULT_THRESHOLDS_FILE,
+  getSuiteThresholds,
+  loadThresholdPolicy,
+  pickThresholdProfile,
+} from "../tools/perf/lib/thresholds.mjs";
+import { normaliseBenchResult } from "../bench/history.js";
+
+function usage(exitCode: number) {
+  const msg = `
+Usage:
+  node --experimental-strip-types scripts/compare_gateway_benchmarks.ts --baseline <gateway.json> --candidate <gateway.json> --out-dir <dir>
+
+Options:
+  --baseline <path>          Baseline gateway bench report (required)
+  --candidate <path>         Candidate gateway bench report (required; alias: --current)
+  --current <path>           Alias for --candidate
+  --out-dir <dir>            Output directory (required; alias: --outDir)
+  --outDir <dir>             Alias for --out-dir
+  --thresholds-file <path>   Threshold policy file (default: ${DEFAULT_THRESHOLDS_FILE})
+  --profile <name>           Threshold profile (default: ${DEFAULT_PROFILE})
+
+Override flags (optional):
+  --thresholdPct <n>         Override maxRegressionPct for all gateway metrics (percent)
+  --cvThreshold <n>          Override extremeCvThreshold for all gateway metrics
+
+Environment overrides (optional):
+  GATEWAY_PERF_REGRESSION_THRESHOLD_PCT=15
+  GATEWAY_PERF_EXTREME_CV_THRESHOLD=0.5
+`.trim();
+  console.log(msg);
+  process.exit(exitCode);
+}
+
+function parseArgs(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {
+    "thresholds-file": DEFAULT_THRESHOLDS_FILE,
+    profile: DEFAULT_PROFILE,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (!a?.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1];
+    if (v && !v.startsWith("--")) {
+      out[k] = v;
+      i += 1;
+    } else {
+      out[k] = "true";
+    }
+  }
+  return out;
+}
+
+function isFiniteNumber(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n);
+}
+
+async function readJson(file: string): Promise<any> {
+  return JSON.parse(await fs.readFile(file, "utf8"));
+}
+
+function metricStatsFromHistoryMetric(metric: any): { value: number; cv: number | null; n: number | null } | null {
+  if (!metric || typeof metric !== "object") return null;
+  const value = metric.value;
+  if (!isFiniteNumber(value)) return null;
+  const cv = isFiniteNumber(metric.samples?.cv) ? metric.samples.cv : null;
+  const n = isFiniteNumber(metric.samples?.n) ? metric.samples.n : null;
+  return { value, cv, n };
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help === "true") usage(0);
+
+  const baselinePath = args.baseline;
+  const candidatePath = args.candidate ?? args.current;
+  const outDir = args["out-dir"] ?? args.outDir;
+  const thresholdsFile = args["thresholds-file"] ?? DEFAULT_THRESHOLDS_FILE;
+  const profileArg = args.profile ?? DEFAULT_PROFILE;
+
+  if (!baselinePath || !candidatePath || !outDir) {
+    console.error("--baseline, --candidate, and --out-dir are required");
+    usage(1);
+  }
+
+  await fs.mkdir(outDir, { recursive: true });
+
+  const [baselineRaw, candidateRaw] = await Promise.all([readJson(baselinePath), readJson(candidatePath)]);
+  const baseline = normaliseBenchResult(baselineRaw);
+  const candidate = normaliseBenchResult(candidateRaw);
+
+  const baseGateway = baseline.scenarios?.gateway?.metrics ?? {};
+  const candGateway = candidate.scenarios?.gateway?.metrics ?? {};
+
+  const thresholdsPolicy = await loadThresholdPolicy(thresholdsFile);
+  const { name: profileName, profile } = pickThresholdProfile(thresholdsPolicy, profileArg);
+  const suiteThresholds = getSuiteThresholds(profile, "gateway");
+
+  const cases: any[] = [];
+  for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
+    const better = (threshold as any)?.better;
+    if (better !== "lower" && better !== "higher") {
+      throw new Error(`thresholds: gateway.metrics.${metricName}.better must be "lower" or "higher"`);
+    }
+
+    const b = baseGateway[metricName];
+    const c = candGateway[metricName];
+    const unit = (b?.unit ?? c?.unit ?? "").toString();
+
+    cases.push({
+      scenario: "gateway",
+      metric: metricName,
+      unit,
+      better,
+      threshold,
+      baseline: metricStatsFromHistoryMetric(b),
+      candidate: metricStatsFromHistoryMetric(c),
+    });
+  }
+
+  // Optional overrides (useful for debugging / emergency CI tuning).
+  const cliThresholdPct = args.thresholdPct ? Number(args.thresholdPct) / 100 : null;
+  const cliCvThreshold = args.cvThreshold ? Number(args.cvThreshold) : null;
+  const envThresholdPct = process.env.GATEWAY_PERF_REGRESSION_THRESHOLD_PCT
+    ? Number(process.env.GATEWAY_PERF_REGRESSION_THRESHOLD_PCT) / 100
+    : null;
+  const envExtremeCv = process.env.GATEWAY_PERF_EXTREME_CV_THRESHOLD
+    ? Number(process.env.GATEWAY_PERF_EXTREME_CV_THRESHOLD)
+    : null;
+
+  const overrideMaxRegressionPct =
+    (isFiniteNumber(cliThresholdPct) && cliThresholdPct > 0 && cliThresholdPct) ||
+    (isFiniteNumber(envThresholdPct) && envThresholdPct > 0 && envThresholdPct) ||
+    null;
+  const overrideExtremeCv =
+    (isFiniteNumber(cliCvThreshold) && cliCvThreshold > 0 && cliCvThreshold) ||
+    (isFiniteNumber(envExtremeCv) && envExtremeCv > 0 && envExtremeCv) ||
+    null;
+
+  if (overrideMaxRegressionPct != null || overrideExtremeCv != null) {
+    for (const c of cases) {
+      if (overrideMaxRegressionPct != null) c.threshold = { ...c.threshold, maxRegressionPct: overrideMaxRegressionPct };
+      if (overrideExtremeCv != null) c.threshold = { ...c.threshold, extremeCvThreshold: overrideExtremeCv };
+    }
+  }
+
+  const result = buildCompareResult({
+    suite: "gateway",
+    profile: profileName,
+    thresholdsFile,
+    baselineMeta: baseline.environment ?? null,
+    candidateMeta: candidate.environment ?? null,
+    cases,
+  });
+
+  const markdown = renderCompareMarkdown(result, { title: "Gateway perf comparison" });
+  await Promise.all([
+    fs.writeFile(path.join(outDir, "compare.md"), markdown),
+    fs.writeFile(path.join(outDir, "summary.json"), JSON.stringify(result, null, 2)),
+  ]);
+
+  process.exitCode = exitCodeForStatus(result.status);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err?.stack ?? String(err));
+    process.exitCode = 1;
+  });
+}
+

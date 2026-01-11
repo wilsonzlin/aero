@@ -1,0 +1,110 @@
+name: Gateway Perf (smoke)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-perf-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gateway-perf-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      GATEWAY_PERF_REGRESSION_THRESHOLD_PCT: "15"
+    steps:
+      - name: Checkout (candidate)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: head
+
+      - name: Checkout (baseline)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Determine Node workspace directory (candidate)
+        id: node-dir-head
+        run: node base/scripts/ci/detect_node_workspace.mjs --root head >> "$GITHUB_OUTPUT"
+
+      - name: Determine Node workspace directory (baseline)
+        id: node-dir-base
+        run: node base/scripts/ci/detect_node_workspace.mjs --root base >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: base/.nvmrc
+          cache: npm
+          cache-dependency-path: |
+            ${{ steps.node-dir-head.outputs.lockfile }}
+            ${{ steps.node-dir-base.outputs.lockfile }}
+
+      - name: Install dependencies (baseline)
+        run: npm ci
+        working-directory: ${{ steps.node-dir-base.outputs.dir }}
+
+      - name: Install dependencies (candidate)
+        run: npm ci
+        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+
+      - name: Run gateway bench (baseline)
+        working-directory: ${{ steps.node-dir-base.outputs.dir }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/head/gateway-perf-results/base"
+          npm -w backend/aero-gateway run build
+          node backend/aero-gateway/bench/run.mjs \
+            --mode smoke \
+            --json "$GITHUB_WORKSPACE/head/gateway-perf-results/base/raw.json"
+
+      - name: Run gateway bench (candidate)
+        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+        run: |
+          set -euo pipefail
+          mkdir -p gateway-perf-results/head gateway-perf-results/compare
+          npm -w backend/aero-gateway run build
+          node backend/aero-gateway/bench/run.mjs \
+            --mode smoke \
+            --json "$GITHUB_WORKSPACE/head/gateway-perf-results/head/raw.json"
+
+      - name: Compare gateway perf (job summary)
+        working-directory: head
+        run: |
+          set +e
+          node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+            --baseline gateway-perf-results/base/raw.json \
+            --candidate gateway-perf-results/head/raw.json \
+            --out-dir gateway-perf-results/compare \
+            --thresholds-file bench/perf_thresholds.json \
+            --profile pr-smoke \
+            --thresholdPct ${{ env.GATEWAY_PERF_REGRESSION_THRESHOLD_PCT }}
+          status=$?
+          if [[ -f gateway-perf-results/compare/compare.md ]]; then
+            cat gateway-perf-results/compare/compare.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No gateway perf comparison produced (compare.md missing)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $status
+
+      - name: Upload gateway perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-perf-smoke-${{ github.run_id }}
+          path: head/gateway-perf-results
+          if-no-files-found: error
+          retention-days: 14
+
