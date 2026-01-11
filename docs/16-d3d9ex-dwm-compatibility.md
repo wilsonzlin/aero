@@ -92,10 +92,11 @@ HRESULT PresentEx(
 
 Minimum viable behavior:
 
-- Submit a host “present” command with:
-  - Swapchain ID / backbuffer resource ID
-  - `dwFlags`
-  - (Optional) a fence ID for completion tracking
+- Emit an `AEROGPU_CMD_PRESENT_EX` packet (see `drivers/aerogpu/protocol/aerogpu_cmd.h`) with:
+  - `scanout_id` (0 for MVP),
+  - `flags` (`AEROGPU_PRESENT_FLAG_VSYNC` if vsync paced), and
+  - `d3d9_present_flags = dwFlags`.
+  - Completion tracking is done via the submission fence (`aerogpu_submit_desc.signal_fence` in `drivers/aerogpu/protocol/aerogpu_ring.h`), not via a per-command fence payload.
 - Return:
   - `S_OK` if accepted for execution
   - `D3DERR_WASSTILLDRAWING` if `D3DPRESENT_DONOTWAIT` is set and the queue is “full” (see **frame latency** below)
@@ -173,11 +174,11 @@ Define a guest/host handle model that does **not** attempt to expose host OS han
 
 - Guest UMD treats `HANDLE` as an opaque **share token**.
 - On “export” (resource creation with `pSharedHandle != nullptr`):
-  1. Guest derives a stable `share_token` and writes it to `*pSharedHandle`.
-  2. Guest informs the host: `(share_token → host_resource_id)` mapping is created.
+   1. Guest derives a stable `share_token` and writes it to `*pSharedHandle`.
+   2. Guest informs the host: `(share_token → resource_handle)` mapping is created (via `AEROGPU_CMD_EXPORT_SHARED_SURFACE`).
 - On “import” (open from a shared handle token):
-  1. Guest passes the `share_token` to the host.
-  2. Host returns an existing host-side resource ID or errors if unknown.
+   1. Guest passes the `share_token` to the host and requests an alias handle (via `AEROGPU_CMD_IMPORT_SHARED_SURFACE`).
+   2. Host validates `share_token` and binds the requested alias `out_resource_handle` to the exported resource (or errors if unknown).
 
 **Key invariant:** the token must be stable across processes inside the guest VM. In real Windows this stability is provided via NT handles + `DuplicateHandle`; in Aero, stability is provided by the virtualization driver + host mapping table.
 
@@ -202,7 +203,7 @@ Ex clients expect `D3DPOOL_DEFAULT` resources to behave like true GPU resources:
 Recommended approach:
 
 - Treat the device as “always operational” unless the host explicitly signals fatal device removal.
-- Keep a resource table keyed by resource ID; `ResetEx` updates presentation parameters but does not invalidate existing resources unless format/size constraints require it.
+- Keep a resource table keyed by protocol `resource_handle` (or equivalent internal ID); `ResetEx` updates presentation parameters but does not invalidate existing resources unless format/size constraints require it.
 
 ---
 
@@ -216,10 +217,11 @@ Add Ex-specific operations to the GPU command ABI (guest → host):
 
 Payload includes:
 
-- `swapchain_id`
-- `dw_flags` (D3D9Ex `PresentEx` flags)
-- optional `source_rect`, `dest_rect` (can be ignored initially)
-- **fence_id** (for completion tracking)
+- `scanout_id`
+- `flags` (`AEROGPU_PRESENT_FLAG_*`)
+- `d3d9_present_flags` (raw D3D9Ex `PresentEx` `dwFlags`)
+
+Fence completion is tracked via the submission descriptor (`aerogpu_submit_desc.signal_fence`), not in the `PRESENT_EX` packet itself.
 
 #### Shared surface export/import
 
@@ -232,19 +234,18 @@ If the host is the sole renderer (WebGPU), “export” typically means “make 
 
 #### Flush/fence operations
 
-Add commands:
+The versioned AeroGPU ABI does not require a separate “insert fence” command:
+each ring submission carries a `signal_fence` value.
 
-- `INSERT_FENCE { fence_id }` (optional if every submit carries a fence)
-- `FLUSH {}` (ensure all prior work is scheduled)
+The command stream does define an explicit flush point:
 
-### 2) Event ring / IRQ messages (host → guest)
+- `AEROGPU_CMD_FLUSH {}` (ensure all prior work is scheduled)
 
-Host signals completion via an event ring buffer:
+### 2) Fence/completion signaling (host → guest)
 
-- `FENCE_SIGNALED { fence_id }`
-- `PRESENT_COMPLETED { swapchain_id, present_count, qpc_time }` (or folded into fence completion)
+Fence completion is signaled via the ring/MMIO contract (`drivers/aerogpu/protocol/aerogpu_ring.h` and `aerogpu_pci.h`):
 
-The guest uses these events to:
+The guest uses fence completion to:
 
 - unblock `PresentEx` when frame latency is exceeded
 - implement `GetPresentStats` / `GetLastPresentCount` accurately
@@ -259,7 +260,7 @@ Define a single fence namespace per device:
 - Guest allocates monotonically increasing `fence_id` values (`u64` recommended).
 - Every GPU submission may include a `fence_id`; `PresentEx` should always include one.
 - Host promises:
-  - `FENCE_SIGNALED(fence_id)` is emitted after all GPU work prior to and including that submission is complete (or at least “present-safe”).
+  - the device-visible completed fence value monotonically advances to at least `fence_id` once all GPU work prior to and including that submission is complete (or at least “present-safe”).
 
 Guest-side rules:
 
