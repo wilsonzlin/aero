@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "udpRelay": {
+    "v1": {
+      "guestPort": 10000,
+      "remoteIpv4": [192, 0, 2, 1],
+      "remotePort": 53,
+      "payloadUtf8": "abc",
+      "frameHex": "2710c00002010035616263"
+    },
+    "v2_ipv6": {
+      "guestPort": 48879,
+      "addressFamily": 6,
+      "remoteIpHex": "20010db8000000000000000000000001",
+      "remotePort": 51966,
+      "payloadHex": "010203",
+      "frameHex": "a2020600beef20010db8000000000000000000000001cafe010203"
+    }
+  },
+  "tcpMux": {
+    "v1": {
+      "subprotocol": "aero-tcp-mux-v1",
+      "frames": {
+        "open": {
+          "msgType": 1,
+          "streamId": 42,
+          "host": "example.com",
+          "port": 443,
+          "metadata": "{\"a\":1}",
+          "payloadHex": "000b6578616d706c652e636f6d01bb00077b2261223a317d",
+          "frameHex": "010000002a00000018000b6578616d706c652e636f6d01bb00077b2261223a317d"
+        },
+        "data": {
+          "msgType": 2,
+          "streamId": 42,
+          "payloadHex": "68656c6c6f",
+          "frameHex": "020000002a0000000568656c6c6f"
+        },
+        "close": {
+          "msgType": 3,
+          "streamId": 42,
+          "flags": 1,
+          "payloadHex": "01",
+          "frameHex": "030000002a0000000101"
+        },
+        "error": {
+          "msgType": 4,
+          "streamId": 42,
+          "code": 3,
+          "message": "bad",
+          "payloadHex": "00030003626164",
+          "frameHex": "040000002a0000000700030003626164"
+        }
+      }
+    }
+  }
+}

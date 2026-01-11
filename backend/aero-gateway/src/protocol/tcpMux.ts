@@ -13,7 +13,6 @@ export const TcpMuxMsgType = {
   PING: 5,
   PONG: 6,
 } as const;
-
 export type TcpMuxMsgType = (typeof TcpMuxMsgType)[keyof typeof TcpMuxMsgType];
 
 export const TcpMuxCloseFlags = {

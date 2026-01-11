@@ -4,12 +4,14 @@ on:
   push:
     paths:
       - proxy/webrtc-udp-relay/**
+      - tests/protocol-vectors/**
       - .github/workflows/webrtc-udp-relay.yml
     paths-ignore:
       - "**/*.md"
   pull_request:
     paths:
       - proxy/webrtc-udp-relay/**
+      - tests/protocol-vectors/**
       - .github/workflows/webrtc-udp-relay.yml
     paths-ignore:
       - "**/*.md"
