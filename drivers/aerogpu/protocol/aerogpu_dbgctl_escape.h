@@ -74,11 +74,11 @@ enum aerogpu_dbgctl_vblank_flags {
  */
 typedef struct aerogpu_escape_query_device_v2_out {
   aerogpu_escape_header hdr;
-  uint32_t detected_mmio_magic;
-  uint32_t abi_version_u32;
-  uint64_t features_lo;
-  uint64_t features_hi;
-  uint64_t reserved0;
+  aerogpu_escape_u32 detected_mmio_magic;
+  aerogpu_escape_u32 abi_version_u32;
+  aerogpu_escape_u64 features_lo;
+  aerogpu_escape_u64 features_hi;
+  aerogpu_escape_u64 reserved0;
 } aerogpu_escape_query_device_v2_out;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_device_v2_out) == 48);
@@ -90,8 +90,8 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_v2_out, reserv
 
 typedef struct aerogpu_escape_query_fence_out {
   aerogpu_escape_header hdr;
-  uint64_t last_submitted_fence;
-  uint64_t last_completed_fence;
+  aerogpu_escape_u64 last_submitted_fence;
+  aerogpu_escape_u64 last_completed_fence;
 } aerogpu_escape_query_fence_out;
 
 /* Must remain stable across x86/x64. */
@@ -104,28 +104,28 @@ AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 32);
  * entry (see `aerogpu_ring.h`).
  */
 typedef struct aerogpu_dbgctl_ring_desc {
-  uint64_t signal_fence;
-  uint64_t cmd_gpa;
-  uint32_t cmd_size_bytes;
-  uint32_t flags;
+  aerogpu_escape_u64 signal_fence;
+  aerogpu_escape_u64 cmd_gpa;
+  aerogpu_escape_u32 cmd_size_bytes;
+  aerogpu_escape_u32 flags;
 } aerogpu_dbgctl_ring_desc;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_ring_desc) == 24);
 
 typedef struct aerogpu_escape_dump_ring_inout {
   aerogpu_escape_header hdr;
-  uint32_t ring_id;
-  uint32_t ring_size_bytes;
+  aerogpu_escape_u32 ring_id;
+  aerogpu_escape_u32 ring_size_bytes;
   /*
    * Ring indices.
    *
    * `head` and `tail` are monotonically increasing indices (not masked).
    * The slot is `(index % entry_count)`.
    */
-  uint32_t head;
-  uint32_t tail;
-  uint32_t desc_count;
-  uint32_t desc_capacity;
+  aerogpu_escape_u32 head;
+  aerogpu_escape_u32 tail;
+  aerogpu_escape_u32 desc_count;
+  aerogpu_escape_u32 desc_capacity;
   aerogpu_dbgctl_ring_desc desc[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
 } aerogpu_escape_dump_ring_inout;
 
@@ -138,28 +138,28 @@ enum aerogpu_dbgctl_ring_format {
 };
 
 typedef struct aerogpu_dbgctl_ring_desc_v2 {
-  uint64_t fence; /* signal_fence */
-  uint64_t cmd_gpa;
-  uint32_t cmd_size_bytes;
-  uint32_t flags;
-  uint64_t alloc_table_gpa;
-  uint32_t alloc_table_size_bytes;
-  uint32_t reserved0;
+  aerogpu_escape_u64 fence; /* signal_fence */
+  aerogpu_escape_u64 cmd_gpa;
+  aerogpu_escape_u32 cmd_size_bytes;
+  aerogpu_escape_u32 flags;
+  aerogpu_escape_u64 alloc_table_gpa;
+  aerogpu_escape_u32 alloc_table_size_bytes;
+  aerogpu_escape_u32 reserved0;
 } aerogpu_dbgctl_ring_desc_v2;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_ring_desc_v2) == 40);
 
 typedef struct aerogpu_escape_dump_ring_v2_inout {
   aerogpu_escape_header hdr;
-  uint32_t ring_id;
-  uint32_t ring_format; /* enum aerogpu_dbgctl_ring_format */
-  uint32_t ring_size_bytes;
-  uint32_t head;
-  uint32_t tail;
-  uint32_t desc_count;
-  uint32_t desc_capacity;
-  uint32_t reserved0;
-  uint32_t reserved1;
+  aerogpu_escape_u32 ring_id;
+  aerogpu_escape_u32 ring_format; /* enum aerogpu_dbgctl_ring_format */
+  aerogpu_escape_u32 ring_size_bytes;
+  aerogpu_escape_u32 head;
+  aerogpu_escape_u32 tail;
+  aerogpu_escape_u32 desc_count;
+  aerogpu_escape_u32 desc_capacity;
+  aerogpu_escape_u32 reserved0;
+  aerogpu_escape_u32 reserved1;
   aerogpu_dbgctl_ring_desc_v2 desc[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
 } aerogpu_escape_dump_ring_v2_inout;
 
@@ -167,10 +167,10 @@ AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_ring_v2_inout) == (52 + 
 
 typedef struct aerogpu_escape_selftest_inout {
   aerogpu_escape_header hdr;
-  uint32_t timeout_ms;
-  uint32_t passed;
-  uint32_t error_code;
-  uint32_t reserved0;
+  aerogpu_escape_u32 timeout_ms;
+  aerogpu_escape_u32 passed;
+  aerogpu_escape_u32 error_code;
+  aerogpu_escape_u32 reserved0;
 } aerogpu_escape_selftest_inout;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_selftest_inout) == 32);
@@ -183,9 +183,9 @@ typedef struct aerogpu_escape_query_vblank_out {
    * NOTE: Only source 0 is currently implemented. KMDs may ignore non-zero
    * inputs and always return source 0 data.
    */
-  uint32_t vidpn_source_id;
-  uint32_t irq_enable;
-  uint32_t irq_status;
+  aerogpu_escape_u32 vidpn_source_id;
+  aerogpu_escape_u32 irq_enable;
+  aerogpu_escape_u32 irq_status;
   /*
    * Flags:
    * - Bit 31: flags are valid (newer KMDs). If clear, tooling should assume
@@ -193,11 +193,11 @@ typedef struct aerogpu_escape_query_vblank_out {
    *   `AEROGPU_FEATURE_VBLANK` was present.
    * - Bit 0: vblank registers are supported/valid.
    */
-  uint32_t flags;
-  uint64_t vblank_seq;
-  uint64_t last_vblank_time_ns;
-  uint32_t vblank_period_ns;
-  uint32_t reserved0;
+  aerogpu_escape_u32 flags;
+  aerogpu_escape_u64 vblank_seq;
+  aerogpu_escape_u64 last_vblank_time_ns;
+  aerogpu_escape_u32 vblank_period_ns;
+  aerogpu_escape_u32 reserved0;
 } aerogpu_escape_query_vblank_out;
 
 #define AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID (1u << 31)
