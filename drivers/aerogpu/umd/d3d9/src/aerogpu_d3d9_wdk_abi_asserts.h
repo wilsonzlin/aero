@@ -282,16 +282,51 @@ AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
                                  AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetRenderTarget);
 #endif
 
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetDepthStencil)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetDepthStencil,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetDepthStencil);
+#endif
+
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexDecl)
 AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
                                  pfnCreateVertexDecl,
                                  AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexDecl);
 #endif
 
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetVertexDecl)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetVertexDecl,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetVertexDecl);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyVertexDecl)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDestroyVertexDecl,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyVertexDecl);
+#endif
+
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateShader)
 AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
                                  pfnCreateShader,
                                  AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateShader);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetShader)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(
+    D3D9DDI_DEVICEFUNCS, pfnSetShader, AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetShader);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyShader)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnDestroyShader,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnDestroyShader);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetShaderConstF)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetShaderConstF,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetShaderConstF);
 #endif
 
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnCreateVertexShader)
@@ -350,6 +385,30 @@ AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
 AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
                                  pfnSetViewport,
                                  AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetViewport);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetScissorRect)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetScissorRect,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetScissorRect);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetTexture)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetTexture,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetTexture);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetSamplerState)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetSamplerState,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetSamplerState);
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetRenderState)
+AEROGPU_D3D9_WDK_ASSERT_OFFSETOF(D3D9DDI_DEVICEFUNCS,
+                                 pfnSetRenderState,
+                                 AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetRenderState);
 #endif
 
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDI_DEVICEFUNCS_pfnSetStreamSource)

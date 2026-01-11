@@ -1211,6 +1211,44 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == 20,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnLock offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUnlock) == 24,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUnlock offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetRenderTarget) == 28,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetRenderTarget offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetDepthStencil) == 32,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetDepthStencil offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetViewport) == 36,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetViewport offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetScissorRect) == 40,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetScissorRect offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetTexture) == 44,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetTexture offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetSamplerState) == 48,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetSamplerState offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetRenderState) == 52,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetRenderState offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateVertexDecl) == 56,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateVertexDecl offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetVertexDecl) == 60,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetVertexDecl offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyVertexDecl) == 64,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyVertexDecl offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetFVF) == 68,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetFVF offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateShader) == 72,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateShader offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetShader) == 76,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetShader offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyShader) == 80,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyShader offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetShaderConstF) == 84,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetShaderConstF offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetStreamSource) == 88,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetStreamSource offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetIndices) == 92,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetIndices offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnBeginScene) == 96,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnBeginScene offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnEndScene) == 100,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnEndScene offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == 104,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateSwapChain offset drift (x86)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == 108,
@@ -1290,6 +1328,44 @@ static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == 40,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnLock offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUnlock) == 48,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUnlock offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetRenderTarget) == 56,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetRenderTarget offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetDepthStencil) == 64,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetDepthStencil offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetViewport) == 72,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetViewport offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetScissorRect) == 80,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetScissorRect offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetTexture) == 88,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetTexture offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetSamplerState) == 96,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetSamplerState offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetRenderState) == 104,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetRenderState offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateVertexDecl) == 112,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateVertexDecl offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetVertexDecl) == 120,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetVertexDecl offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyVertexDecl) == 128,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyVertexDecl offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetFVF) == 136,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetFVF offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateShader) == 144,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateShader offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetShader) == 152,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetShader offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyShader) == 160,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyShader offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetShaderConstF) == 168,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetShaderConstF offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetStreamSource) == 176,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetStreamSource offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetIndices) == 184,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetIndices offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnBeginScene) == 192,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnBeginScene offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnEndScene) == 200,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnEndScene offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == 208,
               "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateSwapChain offset drift (x64)");
 static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == 216,
