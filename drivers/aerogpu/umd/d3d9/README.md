@@ -48,16 +48,14 @@ Cross-process shared resources are expressed explicitly in the command stream:
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token`: handle
 values are process-local and not stable cross-process.
 
-Canonical contract: `share_token` is a **UMD-generated**, stable cross-process token
-persisted in the preserved WDDM allocation private driver data blob
-(`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-dxgkrnl returns the same bytes when another process opens the shared resource, so both
-processes observe the same `share_token`.
+Canonical contract: `share_token` comes from the KMD-owned per-allocation ShareToken
+returned to the UMD via allocation private driver data
+(`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). In the current AeroGPU D3D9 UMD:
 
 - `alloc_id` is derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
-- `share_token` is generated via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`) and persisted in `aerogpu_wddm_alloc_priv.share_token`.
+- `share_token` is read from the KMD allocation private driver data payload (`struct aerogpu_alloc_privdata`) and used as the protocol token for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the cross-process validation test.
 

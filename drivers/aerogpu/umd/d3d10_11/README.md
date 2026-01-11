@@ -88,10 +88,9 @@ On Win7/WDDM 1.1, `share_token` must be stable across guest processes. AeroGPU d
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token` (handle
 values are process-local and not stable cross-process).
 
-On Win7/WDDM 1.1, the guest UMD persists a collision-resistant `share_token` in the
-preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`
-in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the same bytes
-on cross-process opens, so both processes observe the same `share_token`.
+Canonical contract: on Win7/WDDM 1.1, `share_token` comes from the KMD-owned
+per-allocation ShareToken returned to the UMD via allocation private driver data
+(`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
 
 The preserved WDDM allocation private-data blob (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`)
 is treated as **UMD → KMD input** and is used to persist a stable `alloc_id` across

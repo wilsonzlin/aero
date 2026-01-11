@@ -194,9 +194,9 @@ This enables compact command streams that use small IDs instead of repeating GPA
 - For D3D9Ex shared surfaces, `share_token` (as used by
   `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
   processes and must not be derived from process-local handle values.
-  The D3D9 UMD generates a collision-resistant token and persists it in the
-  preserved WDDM allocation private driver data blob
-  (`aerogpu_wddm_alloc_priv.share_token`; see `aerogpu_wddm_alloc.h`).
+  Canonical contract: `share_token` comes from the KMD-owned per-allocation
+  ShareToken returned to the UMD via allocation private driver data
+  (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
 - The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
   the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 

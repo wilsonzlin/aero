@@ -14,31 +14,35 @@ That `HANDLE` is an **NT handle**, which means:
 
 Therefore: **AeroGPU must not use the numeric D3D shared `HANDLE` value as a protocol share identifier.**
 
-## AeroGPU contract: `share_token` is a stable token persisted in WDDM allocation private data
+## AeroGPU contract: `share_token` is a stable token provided by the KMD
 
 In the AeroGPU guest↔host command stream, shared surfaces are keyed by a stable `u64 share_token`:
 
 - `struct aerogpu_cmd_export_shared_surface` (`drivers/aerogpu/protocol/aerogpu_cmd.h`)
 - `struct aerogpu_cmd_import_shared_surface` (`drivers/aerogpu/protocol/aerogpu_cmd.h`)
 
-On Win7/WDDM 1.1, `share_token` is persisted by the guest UMD in WDDM allocation private
-driver data (`aerogpu_wddm_alloc_priv.share_token` in
-`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). For shared allocations, dxgkrnl
-preserves these bytes and returns them verbatim when another process opens the shared
-resource, so the opening UMD instance observes the same `share_token`.
+On Win7/WDDM 1.1, `share_token` comes from the **KMD-owned per-allocation ShareToken**
+and is returned to the UMD via the allocation private driver data payload:
+
+- `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`
+
+The UMD uses this value as the AeroGPU protocol `share_token` for
+`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
 
 ## Expected flow (UMD ↔ KMD ↔ host)
 
 ### 1) Create shared resource → export (token)
 
 1. Producer creates a shareable resource (`pSharedHandle != NULL` in the D3D API/DDI).
-2. The UMD generates a collision-resistant `share_token` and writes it into `aerogpu_wddm_alloc_priv.share_token` (allocation private driver data).
+2. The UMD reads `share_token` from the KMD allocation private driver data payload
+   (`struct aerogpu_alloc_privdata`).
 3. The UMD sends `AEROGPU_CMD_EXPORT_SHARED_SURFACE` with `share_token`.
 
 ### 2) Open shared resource → import (token)
 
 1. The OS duplicates/inherits the shared `HANDLE` into the consumer process.
-2. Consumer opens the resource; dxgkrnl returns the preserved allocation private driver data so the UMD can recover the same `share_token`.
+2. Consumer opens the resource; the KMD returns the same `share_token` via
+   `struct aerogpu_alloc_privdata` so the UMD can recover it.
 3. The UMD sends `AEROGPU_CMD_IMPORT_SHARED_SURFACE` with `share_token`.
 
 At no point should the AeroGPU protocol key off the user-mode `HANDLE` numeric value.
