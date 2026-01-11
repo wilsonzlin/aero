@@ -28,9 +28,14 @@ Implementation references (current repo):
   - WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts`
   - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
   - WebUSB UHCI harness panel (main thread): `web/src/usb/webusb_uhci_harness_panel.ts`
-  - WebUSB UHCI harness panel (I/O worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
+- WebUSB UHCI harness panel (I/O worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Repo-root WebUSB demo broker/client RPC; not the passthrough wire contract): `src/platform/webusb_{broker,client,protocol}.ts`
+
+Note: An early WebUSB passthrough prototype lived in `crates/aero-wasm/src/usb_passthrough.rs`.
+It has been removed in favor of the single canonical `UsbPassthroughBridge` WASM export in
+`crates/aero-wasm/src/lib.rs` that uses `aero_usb::passthrough::{UsbHostAction, UsbHostCompletion}`
+with `serde_wasm_bindgen`.
 
 Note: `crates/emulator` contains a legacy UHCI + passthrough model used by native/emulator tests. Per
 [ADR 0015](./adr/0015-canonical-usb-stack.md), the browser/WASM runtime
