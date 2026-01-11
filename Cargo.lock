@@ -104,6 +104,8 @@ dependencies = [
  "futures-intrusive",
  "naga 24.0.0",
  "pollster",
+ "tracing",
+ "tracing-subscriber",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "wgpu",
