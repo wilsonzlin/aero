@@ -61,8 +61,10 @@ pub struct PerfSnapshot {
 impl PerfSnapshot {
     pub fn delta_since(self, earlier: PerfSnapshot) -> PerfDelta {
         PerfDelta {
-            instructions_executed: self.instructions_executed - earlier.instructions_executed,
-            rep_iterations: self.rep_iterations - earlier.rep_iterations,
+            instructions_executed: self
+                .instructions_executed
+                .saturating_sub(earlier.instructions_executed),
+            rep_iterations: self.rep_iterations.saturating_sub(earlier.rep_iterations),
         }
     }
 }
@@ -291,7 +293,12 @@ impl PerfMonitor {
 
     pub fn update(&mut self, snapshot: PerfSnapshot, now: Instant) -> PerfMonitorSample {
         let delta = snapshot.delta_since(self.prev_snapshot);
-        let wall_time_delta = now.duration_since(self.prev_wall_time);
+        // `Instant::duration_since` panics when `now < prev_wall_time`. Callers should always
+        // supply monotonic timestamps, but avoid crashing the emulator on clock skew or
+        // test harness mistakes.
+        let wall_time_delta = now
+            .checked_duration_since(self.prev_wall_time)
+            .unwrap_or(Duration::ZERO);
         let mips = compute_mips(delta.instructions_executed, wall_time_delta);
         self.mips_window.push(mips);
 
