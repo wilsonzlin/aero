@@ -190,7 +190,9 @@ export function mountWebUsbDiagnosticsPanel(host: HTMLElement): () => void {
     if (!usb) return;
 
     try {
-      selectedDevice = await usb.requestDevice({ filters: [] });
+      // Some Chromium versions reject `filters: []` outright. Using a single empty
+      // filter is a best-effort "match all" request for diagnostics purposes.
+      selectedDevice = await usb.requestDevice({ filters: [{} as USBDeviceFilter] });
       status.textContent = `Selected ${describeDevice(selectedDevice)}.`;
       await refreshKnownDevices();
     } catch (err) {
@@ -317,4 +319,3 @@ export function mountWebUsbDiagnosticsPanel(host: HTMLElement): () => void {
     }
   };
 }
-

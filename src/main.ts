@@ -20,6 +20,7 @@ import { VmCoordinator } from './emulator/vmCoordinator.js';
 import { MicCapture } from '../web/src/audio/mic_capture';
 import type { AeroConfig } from '../web/src/config/aero_config';
 import { WorkerCoordinator } from '../web/src/runtime/coordinator';
+import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webusb_troubleshooting';
 
 declare global {
   interface Window {
@@ -257,11 +258,62 @@ async function runWebUsbProbeWorker(
 function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const info = el('pre', { text: '' });
   const output = el('pre', { text: '' });
+  const errorTitle = el('div', { class: 'bad', text: '' });
+  const errorDetails = el('div', { class: 'hint', text: '' });
+  const errorRaw = el('pre', { class: 'mono', text: '' });
+  const errorHints = el('ul');
   const vendorIdInput = el('input', { type: 'text', placeholder: '0x1234 (optional)' }) as HTMLInputElement;
   const productIdInput = el('input', { type: 'text', placeholder: '0x5678 (optional)' }) as HTMLInputElement;
+  const interfaceSelect = el('select') as HTMLSelectElement;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let selectedDevice: any | null = null;
+
+  function clearError(): void {
+    errorTitle.textContent = '';
+    errorDetails.textContent = '';
+    errorRaw.textContent = '';
+    errorHints.replaceChildren();
+  }
+
+  function showError(err: unknown): void {
+    const explained = explainWebUsbError(err);
+    errorTitle.textContent = explained.title;
+    errorDetails.textContent = explained.details ?? '';
+    errorRaw.textContent = formatWebUsbError(err);
+    errorHints.replaceChildren(...explained.hints.map((h) => el('li', { text: h })));
+  }
+
+  function refreshInterfaceSelect(): void {
+    interfaceSelect.replaceChildren();
+    if (!selectedDevice) {
+      interfaceSelect.append(el('option', { value: '', text: '(no device selected)' }));
+      return;
+    }
+
+    // Prefer the active configuration if selected; otherwise fall back to the first
+    // descriptor configuration so we can still show interface info pre-open.
+    const cfg = selectedDevice.configuration ?? selectedDevice.configurations?.[0] ?? null;
+    const ifaces = cfg?.interfaces ?? [];
+    if (!Array.isArray(ifaces) || ifaces.length === 0) {
+      interfaceSelect.append(el('option', { value: '', text: '(no interfaces found)' }));
+      return;
+    }
+
+    for (const iface of ifaces) {
+      const num = iface?.interfaceNumber;
+      const alt = iface?.alternates?.[0];
+      const cls = typeof alt?.interfaceClass === 'number' ? alt.interfaceClass : null;
+      const sub = typeof alt?.interfaceSubclass === 'number' ? alt.interfaceSubclass : null;
+      const proto = typeof alt?.interfaceProtocol === 'number' ? alt.interfaceProtocol : null;
+      const label =
+        cls === null
+          ? `#${num}`
+          : `#${num} (class=0x${cls.toString(16).padStart(2, '0')} sub=0x${(sub ?? 0).toString(16).padStart(2, '0')} proto=0x${(proto ?? 0).toString(16).padStart(2, '0')})`;
+
+      interfaceSelect.append(el('option', { value: String(num), text: label }));
+    }
+  }
 
   function updateInfo(): void {
     const userActivation = (navigator as unknown as { userActivation?: { isActive?: boolean; hasBeenActive?: boolean } })
@@ -272,14 +324,21 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       `userActivation.isActive=${userActivation?.isActive ?? 'n/a'}\n` +
       `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? 'n/a'}\n` +
       `selectedDevice=${selectedDevice ? JSON.stringify(summarizeUsbDevice(selectedDevice)) : 'none'}\n`;
-  }
 
-  updateInfo();
+    const hasSelected = !!selectedDevice;
+    const enabled = report.webusb && hasSelected;
+    openButton.disabled = !enabled;
+    closeButton.disabled = !enabled;
+    claimButton.disabled = !enabled;
+    interfaceSelect.disabled = !enabled;
+    refreshInterfaceSelect();
+  }
 
   const requestButton = el('button', {
     text: 'Request USB device (chooser)',
     onclick: async () => {
       output.textContent = '';
+      clearError();
       selectedDevice = null;
       updateInfo();
 
@@ -321,7 +380,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         updateInfo();
         output.textContent = JSON.stringify({ selected: summarizeUsbDevice(selectedDevice) }, null, 2);
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        showError(err);
       }
     },
   });
@@ -330,6 +389,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     text: 'List permitted devices (getDevices)',
     onclick: async () => {
       output.textContent = '';
+      clearError();
       if (!report.webusb) {
         output.textContent = 'WebUSB is unavailable (navigator.usb is undefined).';
         return;
@@ -352,15 +412,103 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
           2,
         );
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        showError(err);
       }
     },
   });
+
+  const openButton = el('button', {
+    text: 'Open selected device',
+    onclick: async () => {
+      output.textContent = '';
+      clearError();
+      if (!selectedDevice) {
+        output.textContent = 'Select a device first (Request USB device).';
+        return;
+      }
+      try {
+        if (!selectedDevice.opened) {
+          await selectedDevice.open();
+        }
+        updateInfo();
+        output.textContent = 'Device opened.';
+      } catch (err) {
+        showError(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const closeButton = el('button', {
+    text: 'Close selected device',
+    onclick: async () => {
+      output.textContent = '';
+      clearError();
+      if (!selectedDevice) {
+        output.textContent = 'Select a device first (Request USB device).';
+        return;
+      }
+      try {
+        await selectedDevice.close();
+        updateInfo();
+        output.textContent = 'Device closed.';
+      } catch (err) {
+        showError(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  const claimButton = el('button', {
+    text: 'Claim interface',
+    onclick: async () => {
+      output.textContent = '';
+      clearError();
+      if (!selectedDevice) {
+        output.textContent = 'Select a device first (Request USB device).';
+        return;
+      }
+
+      try {
+        if (!selectedDevice.opened) {
+          await selectedDevice.open();
+        }
+      } catch (err) {
+        showError(err);
+        updateInfo();
+        return;
+      }
+
+      try {
+        if (!selectedDevice.configuration) {
+          const cfg = selectedDevice.configurations?.[0]?.configurationValue ?? 1;
+          await selectedDevice.selectConfiguration(cfg);
+        }
+      } catch (err) {
+        showError(err);
+        updateInfo();
+        return;
+      }
+
+      updateInfo();
+      const ifaceNum = Number.parseInt(interfaceSelect.value, 10);
+      if (!Number.isFinite(ifaceNum)) {
+        output.textContent = 'Select an interface first.';
+        return;
+      }
+
+      try {
+        await selectedDevice.claimInterface(ifaceNum);
+        output.textContent = `Claimed interface ${ifaceNum}.`;
+      } catch (err) {
+        showError(err);
+      }
+    },
+  }) as HTMLButtonElement;
 
   const workerProbeButton = el('button', {
     text: 'Probe worker WebUSB (WorkerNavigator.usb)',
     onclick: async () => {
       output.textContent = '';
+      clearError();
       try {
         const resp = await runWebUsbProbeWorker({ type: 'probe' });
         output.textContent = JSON.stringify(resp, null, 2);
@@ -374,6 +522,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     text: 'Try sending selected device to worker (structured clone)',
     onclick: async () => {
       output.textContent = '';
+      clearError();
       if (!selectedDevice) {
         output.textContent = 'Select a device first (Request USB device).';
         return;
@@ -387,6 +536,9 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       }
     },
   });
+
+  // Initialize info + control state.
+  updateInfo();
 
   return el(
     'div',
@@ -408,8 +560,13 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       requestButton,
       listButton,
     ),
+    el('div', { class: 'row' }, openButton, closeButton, interfaceSelect, claimButton),
     el('div', { class: 'row' }, workerProbeButton, cloneButton),
     output,
+    errorTitle,
+    errorDetails,
+    errorRaw,
+    errorHints,
   );
 }
 
