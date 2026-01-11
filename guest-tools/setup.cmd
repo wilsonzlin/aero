@@ -641,6 +641,8 @@ set "TARGET=%~2"
 
 for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 2^>nul') do (
   set "LINE=%%L"
+  rem Ensure the line doesn't contain embedded quotes that would break subsequent parsing.
+  set "LINE=!LINE:"=!"
   set "LEFT="
   set "RIGHT="
   for /f "tokens=1,* delims==" %%A in ("!LINE!") do (
