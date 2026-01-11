@@ -1,0 +1,92 @@
+import { expect, test } from "@playwright/test";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state", async ({ page }) => {
+  await page.goto("/web/blank.html");
+
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = dirname(dirname(dirname(thisDir)));
+  const wasmPaths = [
+    join(repoRoot, "web", "src", "wasm", "pkg-single-gpu", "aero_gpu_wasm_bg.wasm"),
+    join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu", "aero_gpu_wasm_bg.wasm"),
+    join(repoRoot, "web", "src", "wasm", "pkg-single-gpu-dev", "aero_gpu_wasm_bg.wasm"),
+    join(repoRoot, "web", "src", "wasm", "pkg-threaded-gpu-dev", "aero_gpu_wasm_bg.wasm"),
+  ];
+  test.skip(
+    !wasmPaths.some((p) => existsSync(p)),
+    "aero-gpu-wasm bundle is missing (run `cd web && npm run wasm:build:single`).",
+  );
+
+  await page.setContent(`
+    <script type="module">
+      import initAeroGpuWasm, { destroy_gpu, submit_aerogpu } from "/web/src/wasm/aero-gpu.ts";
+      import {
+        AerogpuCmdWriter,
+        AEROGPU_RESOURCE_USAGE_TEXTURE,
+      } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
+      import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+
+      (async () => {
+        try {
+          await initAeroGpuWasm();
+
+          const makeStream = (w) => {
+            const writer = new AerogpuCmdWriter();
+            writer.createTexture2d(
+              /* textureHandle */ 1,
+              /* usageFlags */ AEROGPU_RESOURCE_USAGE_TEXTURE,
+              AerogpuFormat.R8G8B8A8Unorm,
+              w >>> 0,
+              64,
+              1,
+              1,
+              (w * 4) >>> 0,
+              0,
+              0,
+            );
+            writer.present(0, 0);
+            return writer.finish();
+          };
+
+          const stream0 = makeStream(64);
+          const stream1 = makeStream(32);
+
+          /** @type {any} */
+          let result0 = null;
+          /** @type {any} */
+          let result1 = null;
+          /** @type {string | null} */
+          let err1 = null;
+
+          result0 = submit_aerogpu(stream0, 1n);
+          destroy_gpu();
+          try {
+            result1 = submit_aerogpu(stream1, 2n);
+          } catch (err) {
+            err1 = String(err);
+          }
+
+          window.__AERO_WASM_DESTROY_GPU_RESULT__ = {
+            result0,
+            result1,
+            err1,
+          };
+        } catch (err) {
+          window.__AERO_WASM_DESTROY_GPU_RESULT__ = { error: String(err) };
+        }
+      })();
+    </script>
+  `);
+
+  await page.waitForFunction(() => (window as any).__AERO_WASM_DESTROY_GPU_RESULT__);
+  const result = await page.evaluate(() => (window as any).__AERO_WASM_DESTROY_GPU_RESULT__);
+
+  expect(result.error ?? null).toBeNull();
+  expect(result.err1 ?? null).toBeNull();
+  expect(result.result0?.presentCount ?? null).toBe(1n);
+  // destroy_gpu() should reset the monotonic present counter for submit_aerogpu().
+  expect(result.result1?.presentCount ?? null).toBe(1n);
+});
+

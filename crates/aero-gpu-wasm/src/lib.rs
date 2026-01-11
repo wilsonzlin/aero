@@ -2624,6 +2624,14 @@ mod wasm {
         D3D9_STATE.with(|slot| {
             *slot.borrow_mut() = None;
         });
+        // `submit_aerogpu`/`submit_aerogpu_d3d9` are backed by a lightweight command processor
+        // that caches resource descriptors, shared-surface mappings, and monotonic counters.
+        //
+        // Reset it alongside the GPU state so callers can safely reuse protocol handles after a
+        // teardown/re-init cycle (e.g. GPU worker runtime restarts).
+        PROCESSOR.with(|processor| {
+            *processor.borrow_mut() = AeroGpuCommandProcessor::new();
+        });
         Ok(())
     }
 }
