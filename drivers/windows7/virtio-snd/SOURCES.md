@@ -75,3 +75,6 @@ the WDK build pulls these sources directly). Key paths:
   (plus `virtio_pci_cap_parser.h`)
 - `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
   (plus other `virtio-core/include` headers used for spec constants/layouts)
+- `drivers/windows7/virtio/common/include/virtqueue_split.h`
+  (SG entry definitions used by `virtiosnd_sg_core`; this is independent of the
+  `drivers/windows/virtio/common` split-virtqueue implementation linked into the driver)

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #pragma once
 
 #include <ntddk.h>
@@ -30,4 +32,3 @@ extern "C" NTSTATUS CreateMiniportTopology(
     _In_ REFCLSID RefClassId,
     _In_opt_ PUNKNOWN OuterUnknown,
     _In_ POOL_TYPE PoolType);
-

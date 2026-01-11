@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #include "topology_miniport.h"
 
 #include "trace.h"
