@@ -1633,6 +1633,75 @@ mod tests {
     }
 
     #[test]
+    fn buffered_bytes_and_volatile_roundtrip_for_output_and_feature() {
+        // When both Buffered Bytes (bit8) and Volatile (bit7) are set for Output/Feature main items,
+        // the descriptor must use a 2-byte payload (bit8 is out of range for the 1-byte encoding)
+        // and the parser must still pick up the bit7 Volatile flag.
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: true,
+                    is_absolute: true,
+                    is_buffered_bytes: true,
+                    is_volatile: true,
+                    is_constant: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            feature_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: true,
+                    is_absolute: true,
+                    is_buffered_bytes: true,
+                    is_volatile: true,
+                    is_constant: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 0,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(3).any(|w| w == [0x92, 0x80, 0x01]),
+            "expected Output volatile+buffered bytes encoding (0x92 0x80 0x01): {desc:02x?}"
+        );
+        assert!(
+            desc.windows(3).any(|w| w == [0xB2, 0x80, 0x01]),
+            "expected Feature volatile+buffered bytes encoding (0xB2 0x80 0x01): {desc:02x?}"
+        );
+
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed.collections);
+    }
+
+    #[test]
     fn parse_expands_keyboard_modifier_usage_range() {
         let parsed = parse_report_descriptor(&keyboard::HID_REPORT_DESCRIPTOR).unwrap();
         assert!(!parsed.truncated_ranges);
