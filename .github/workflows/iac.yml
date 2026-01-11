@@ -8,6 +8,8 @@ on:
       - deploy/docker-compose.yml
       - docker-compose.yml
       - compose.yaml
+      - scripts/headers.json
+      - scripts/ci/check-security-headers.mjs
       - scripts/ci/check-deploy-manifests.mjs
       - .github/workflows/iac.yml
   push:
@@ -19,6 +21,8 @@ on:
       - deploy/docker-compose.yml
       - docker-compose.yml
       - compose.yaml
+      - scripts/headers.json
+      - scripts/ci/check-security-headers.mjs
       - scripts/ci/check-deploy-manifests.mjs
       - .github/workflows/iac.yml
   merge_group:
@@ -28,6 +32,8 @@ on:
       - deploy/docker-compose.yml
       - docker-compose.yml
       - compose.yaml
+      - scripts/headers.json
+      - scripts/ci/check-security-headers.mjs
       - scripts/ci/check-deploy-manifests.mjs
       - .github/workflows/iac.yml
   schedule:
