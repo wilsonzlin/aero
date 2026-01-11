@@ -37,17 +37,21 @@ extern "C" {
 #endif
 
 _Must_inspect_result_
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtIoSndDmaInit(_In_ PDEVICE_OBJECT PhysicalDeviceObject, _Out_ PVIRTIOSND_DMA_CONTEXT Ctx);
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtIoSndDmaUninit(_Inout_ PVIRTIOSND_DMA_CONTEXT Ctx);
 
 _Must_inspect_result_
+_IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtIoSndAllocCommonBuffer(
     _In_ PVIRTIOSND_DMA_CONTEXT Ctx,
     _In_ SIZE_T Size,
     _In_ BOOLEAN CacheEnabled,
     _Out_ PVIRTIOSND_DMA_BUFFER Out);
 
+_IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtIoSndFreeCommonBuffer(_In_ PVIRTIOSND_DMA_CONTEXT Ctx, _Inout_ PVIRTIOSND_DMA_BUFFER Buf);
 
 #ifdef __cplusplus

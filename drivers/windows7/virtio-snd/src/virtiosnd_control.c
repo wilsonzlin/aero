@@ -40,6 +40,16 @@ typedef struct _VIRTIOSND_CTRL_REQUEST {
     VIRTIOSND_CONTROL* Owner;
     volatile NTSTATUS CompletionStatus;
 
+    /*
+     * Common buffers are allocated at PASSIVE_LEVEL. Some WDKs do not document
+     * FreeCommonBuffer as DISPATCH_LEVEL-safe, and control requests can time out
+     * (send thread drops its ref, then the completion path runs later in a DPC).
+     *
+     * To keep teardown deterministic, we free request DMA buffers at PASSIVE_LEVEL
+     * by queuing a work item if the last reference is dropped at DISPATCH_LEVEL.
+     */
+    WORK_QUEUE_ITEM FreeWorkItem;
+
     VIRTIOSND_DMA_BUFFER DmaBuf;
     ULONG ReqOffset;
     ULONG RespOffset;
@@ -62,24 +72,41 @@ typedef struct _VIRTIOSND_CTRL_REQUEST {
     volatile ULONG VirtioStatus;
 } VIRTIOSND_CTRL_REQUEST;
 
+static VOID VirtioSndCtrlRequestDestroy(_In_ VIRTIOSND_CTRL_REQUEST* Req)
+{
+    VIRTIOSND_CONTROL* ctrl;
+    KIRQL oldIrql;
+
+    NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+
+    ctrl = Req->Owner;
+    if (ctrl != NULL) {
+        KeAcquireSpinLock(&ctrl->ReqLock, &oldIrql);
+        RemoveEntryList(&Req->Link);
+        if (IsListEmpty(&ctrl->ReqList)) {
+            KeSetEvent(&ctrl->ReqIdleEvent, IO_NO_INCREMENT, FALSE);
+        }
+        KeReleaseSpinLock(&ctrl->ReqLock, oldIrql);
+    }
+
+    VirtIoSndFreeCommonBuffer(ctrl ? ctrl->DmaCtx : NULL, &Req->DmaBuf);
+}
+
+static VOID VirtioSndCtrlRequestFreeWorkItem(_In_ PVOID Context)
+{
+    VirtioSndCtrlRequestDestroy((VIRTIOSND_CTRL_REQUEST*)Context);
+}
+
 static __forceinline VOID
 VirtioSndCtrlRequestRelease(_In_ VIRTIOSND_CTRL_REQUEST* Req)
 {
     if (InterlockedDecrement(&Req->RefCount) == 0) {
-        VIRTIOSND_CONTROL* ctrl;
-        KIRQL oldIrql;
-
-        ctrl = Req->Owner;
-        if (ctrl != NULL) {
-            KeAcquireSpinLock(&ctrl->ReqLock, &oldIrql);
-            RemoveEntryList(&Req->Link);
-            if (IsListEmpty(&ctrl->ReqList)) {
-                KeSetEvent(&ctrl->ReqIdleEvent, IO_NO_INCREMENT, FALSE);
-            }
-            KeReleaseSpinLock(&ctrl->ReqLock, oldIrql);
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+            VirtioSndCtrlRequestDestroy(Req);
+        } else {
+            ExInitializeWorkItem(&Req->FreeWorkItem, VirtioSndCtrlRequestFreeWorkItem, Req);
+            ExQueueWorkItem(&Req->FreeWorkItem, DelayedWorkQueue);
         }
-
-        VirtIoSndFreeCommonBuffer(ctrl ? ctrl->DmaCtx : NULL, &Req->DmaBuf);
     }
 }
 

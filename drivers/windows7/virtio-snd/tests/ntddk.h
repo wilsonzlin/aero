@@ -151,6 +151,37 @@ static __forceinline void ExFreePoolWithTag(void *ptr, ULONG tag)
     free(ptr);
 }
 
+/* ---- Work item shims ---- */
+
+typedef void (*PWORKER_THREAD_ROUTINE)(PVOID Parameter);
+
+typedef enum _WORK_QUEUE_TYPE {
+    DelayedWorkQueue = 0,
+} WORK_QUEUE_TYPE;
+
+typedef struct _WORK_QUEUE_ITEM {
+    PWORKER_THREAD_ROUTINE WorkerRoutine;
+    PVOID Parameter;
+} WORK_QUEUE_ITEM, *PWORK_QUEUE_ITEM;
+
+static __forceinline void ExInitializeWorkItem(_Out_ PWORK_QUEUE_ITEM Item, _In_ PWORKER_THREAD_ROUTINE Routine, _In_opt_ PVOID Parameter)
+{
+    Item->WorkerRoutine = Routine;
+    Item->Parameter = Parameter;
+}
+
+static __forceinline void ExQueueWorkItem(_Inout_ PWORK_QUEUE_ITEM Item, _In_ WORK_QUEUE_TYPE QueueType)
+{
+    PWORKER_THREAD_ROUTINE routine;
+    PVOID parameter;
+
+    UNREFERENCED_PARAMETER(QueueType);
+
+    routine = Item->WorkerRoutine;
+    parameter = Item->Parameter;
+    routine(parameter);
+}
+
 /* ---- Interlocked operations (single-process host tests) ---- */
 
 static __forceinline LONG InterlockedIncrement(volatile LONG *addend) { return __sync_add_and_fetch(addend, 1); }
