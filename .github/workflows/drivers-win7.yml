@@ -164,6 +164,46 @@ jobs:
             )
           }
 
+          function Test-HasInfInTree {
+            param([Parameter(Mandatory = $true)][string]$RootDir)
+
+            if (!(Test-Path -LiteralPath $RootDir -PathType Container)) {
+              return $false
+            }
+
+            # Mirror ci/build-drivers.ps1 INF discovery: require at least one INF under the
+            # driver root, excluding common build output directories.
+            $exclude = @{
+              'obj' = $true
+              'out' = $true
+              'build' = $true
+              'target' = $true
+            }
+
+            $stack = New-Object System.Collections.Generic.Stack[string]
+            $stack.Push((Resolve-Path -LiteralPath $RootDir).Path)
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              try {
+                $inf = Get-ChildItem -LiteralPath $current -File -Filter '*.inf' -ErrorAction Stop | Select-Object -First 1
+                if ($inf) { return $true }
+
+                $dirs = Get-ChildItem -LiteralPath $current -Directory -ErrorAction Stop
+                foreach ($dir in $dirs) {
+                  $name = $dir.Name.ToLowerInvariant()
+                  if ($exclude.ContainsKey($name)) { continue }
+                  $stack.Push($dir.FullName)
+                }
+              } catch {
+                # If we can't inspect the directory tree, err on the side of running CI so we
+                # don't silently skip a buildable driver.
+                return $true
+              }
+            }
+
+            return $false
+          }
+
           function Test-SlnHasBuildableProjects {
             param([Parameter(Mandatory = $true)][string]$SlnPath)
 
@@ -265,6 +305,7 @@ jobs:
               Name = $displayName
               Kind = $kind
               BuildPath = $buildPath
+              Directory = $dirResolved
             }
           }
 
@@ -302,6 +343,7 @@ jobs:
           $buildable = New-Object System.Collections.Generic.List[object]
           foreach ($t in $targets) {
             if ($t.Kind -eq 'vcxproj') {
+              if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
               if (-not (Test-IsMakefileVcxproj -Path $t.BuildPath)) {
                 [void]$buildable.Add($t)
               }
@@ -309,6 +351,7 @@ jobs:
             }
 
             if ($t.Kind -eq 'sln') {
+              if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
               if (Test-SlnHasBuildableProjects -SlnPath $t.BuildPath) {
                 [void]$buildable.Add($t)
               }
@@ -320,7 +363,7 @@ jobs:
           }
 
           if ($buildable.Count -eq 0) {
-            Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project under drivers/<name>/ or drivers/<group>/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
+            Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project with an .inf under drivers/<name>/ or drivers/<group>/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
