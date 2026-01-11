@@ -30,7 +30,7 @@ The Rust codebase is a workspace rooted at:
 
 #### Crate naming convention (important)
 
-Crates should use `aero-foo` **kebab-case** package names and matching `crates/aero-foo/`
+Crates should use `aero-foo` **lowercase kebab-case** package names and matching `crates/aero-foo/`
 directories. Note that Rust `use` paths still normalize `-` → `_` (e.g. `aero-cpu-core` is
 imported as `aero_cpu_core`).
 
