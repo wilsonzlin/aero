@@ -143,6 +143,15 @@ pub fn encode_pong(payload: Option<&[u8]>) -> Result<Vec<u8>, EncodeError> {
     )
 }
 
+pub fn encode_error(payload: Option<&[u8]>) -> Result<Vec<u8>, EncodeError> {
+    encode_with_limits(
+        L2_TUNNEL_TYPE_ERROR,
+        0,
+        payload.unwrap_or_default(),
+        &Limits::default(),
+    )
+}
+
 pub fn decode_with_limits<'a>(
     buf: &'a [u8],
     limits: &Limits,
@@ -210,6 +219,15 @@ mod tests {
         let pong = decode_message(&pong_wire).unwrap();
         assert_eq!(pong.msg_type, L2_TUNNEL_TYPE_PONG);
         assert_eq!(pong.payload, payload.as_slice());
+    }
+
+    #[test]
+    fn roundtrip_error() {
+        let payload = [0u8, 1, 0, 3, b'a', b'b', b'c'];
+        let wire = encode_error(Some(&payload)).unwrap();
+        let decoded = decode_message(&wire).unwrap();
+        assert_eq!(decoded.msg_type, L2_TUNNEL_TYPE_ERROR);
+        assert_eq!(decoded.payload, payload.as_slice());
     }
 
     #[test]
