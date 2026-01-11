@@ -475,16 +475,14 @@ struct AeroGpuDevice {
   aerogpu::d3d10_11::WddmSubmit wddm_submit;
 
   aerogpu::CmdWriter cmd;
+  // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
+  // allocation list. This allows the KMD to attach an allocation table so the
+  // host can resolve `backing_alloc_id` values in the AeroGPU command stream.
   std::vector<uint32_t> wddm_submit_allocation_handles;
 
   // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
-
-  // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
-  // allocation list. This allows the KMD to attach an allocation table so the
-  // host can resolve `backing_alloc_id` values in the AeroGPU command stream.
-  std::vector<uint32_t> wddm_submit_allocation_handles;
 
   // Monitored fence state for Win7/WDDM 1.1.
   // These fields are expected to be initialized by the real WDDM submission path.
