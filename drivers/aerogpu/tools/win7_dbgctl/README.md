@@ -24,6 +24,8 @@ Minimum supported commands:
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
   Use `--vblank-samples` to observe changes over time and estimate the effective Hz/jitter.
 
+  Alias: `aerogpu_dbgctl --query-vblank`
+
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
 

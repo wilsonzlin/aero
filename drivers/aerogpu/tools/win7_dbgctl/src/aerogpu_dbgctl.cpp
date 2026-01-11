@@ -91,7 +91,7 @@ static void PrintUsage() {
            L"  --query-version\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
-           L"  --dump-vblank\n"
+           L"  --dump-vblank  (alias: --query-vblank)\n"
            L"  --selftest\n");
 }
 
@@ -561,6 +561,12 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
     if (wcscmp(a, L"--dump-vblank") == 0) {
+      if (!SetCommand(CMD_DUMP_VBLANK)) {
+        return 1;
+      }
+      continue;
+    }
+    if (wcscmp(a, L"--query-vblank") == 0) {
       if (!SetCommand(CMD_DUMP_VBLANK)) {
         return 1;
       }
