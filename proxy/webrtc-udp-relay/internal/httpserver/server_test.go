@@ -619,6 +619,7 @@ func TestOriginMiddleware_Preflight(t *testing.T) {
 
 func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 	t.Setenv("AERO_ICE_SERVERS_JSON", "[")
+	t.Setenv("AUTH_MODE", "none")
 
 	cfg, err := config.Load([]string{"--listen-addr", "127.0.0.1:0"})
 	if err != nil {

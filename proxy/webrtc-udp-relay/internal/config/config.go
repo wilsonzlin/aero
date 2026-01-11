@@ -580,6 +580,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if maxUDPBindingsPerSession <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
 	}
+	if authMode == AuthModeAPIKey && strings.TrimSpace(apiKey) == "" {
+		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvAPIKey, EnvAuthMode, AuthModeAPIKey)
+	}
 	if authMode == AuthModeJWT && strings.TrimSpace(jwtSecret) == "" {
 		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvJWTSecret, EnvAuthMode, AuthModeJWT)
 	}

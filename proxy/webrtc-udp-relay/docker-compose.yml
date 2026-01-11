@@ -11,9 +11,9 @@ x-relay-env-base: &relay-env-base
   #
   # In production, set AUTH_MODE=api_key or AUTH_MODE=jwt and provide the
   # matching API_KEY/JWT_SECRET.
-  AUTH_MODE: ${AUTH_MODE:-none}
-  API_KEY: ${API_KEY:-}
-  JWT_SECRET: ${JWT_SECRET:-}
+  AUTH_MODE: "${AUTH_MODE:-none}"
+  API_KEY: "${API_KEY:-}"
+  JWT_SECRET: "${JWT_SECRET:-}"
 
 x-relay-base: &relay-base
   build:

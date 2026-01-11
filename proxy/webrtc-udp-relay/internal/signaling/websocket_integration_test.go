@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
-	xwebsocket "golang.org/x/net/websocket"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
@@ -28,8 +28,8 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
-		Authorizer:          AllowAllAuthorizer{},
 		ICEGatheringTimeout: 2 * time.Second,
+		Authorizer:          AllowAllAuthorizer{},
 	})
 
 	mux := http.NewServeMux()
@@ -38,7 +38,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 	defer ts.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
-	ws, err := xwebsocket.Dial(wsURL, "", ts.URL)
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
@@ -73,14 +73,13 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 	readErr := make(chan error, 1)
 	go func() {
 		for {
-			var raw string
-			err := xwebsocket.Message.Receive(ws, &raw)
+			_, raw, err := ws.ReadMessage()
 			if err != nil {
 				readErr <- err
 				return
 			}
 
-			msg, err := ParseSignalMessage([]byte(raw))
+			msg, err := ParseSignalMessage(raw)
 			if err != nil {
 				readErr <- err
 				return
@@ -129,6 +128,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 	}()
 
 	offerSent := make(chan struct{})
+	var wsWriteMu sync.Mutex
 	var localCandidateBufMu sync.Mutex
 	var localCandidateBuf []webrtc.ICECandidateInit
 
@@ -140,7 +140,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 
 		select {
 		case <-offerSent:
-			_ = sendWS(ws, SignalMessage{
+			_ = sendWS(ws, &wsWriteMu, SignalMessage{
 				Type:      MessageTypeCandidate,
 				Candidate: ptr(CandidateFromPion(init)),
 			})
@@ -159,7 +159,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 		t.Fatalf("set local offer: %v", err)
 	}
 
-	if err := sendWS(ws, SignalMessage{
+	if err := sendWS(ws, &wsWriteMu, SignalMessage{
 		Type: MessageTypeOffer,
 		SDP:  ptr(SDPFromPion(offer)),
 	}); err != nil {
@@ -172,7 +172,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 	localCandidateBuf = nil
 	localCandidateBufMu.Unlock()
 	for _, cand := range buf {
-		_ = sendWS(ws, SignalMessage{
+		_ = sendWS(ws, &wsWriteMu, SignalMessage{
 			Type:      MessageTypeCandidate,
 			Candidate: ptr(CandidateFromPion(cand)),
 		})
@@ -198,10 +198,12 @@ func (e *protocolError) Error() string {
 	return string(b)
 }
 
-func sendWS(conn *xwebsocket.Conn, msg SignalMessage) error {
+func sendWS(conn *websocket.Conn, writeMu *sync.Mutex, msg SignalMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	return xwebsocket.Message.Send(conn, string(data))
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return conn.WriteMessage(websocket.TextMessage, data)
 }

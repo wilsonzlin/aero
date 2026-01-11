@@ -14,7 +14,9 @@ func lookupMap(m map[string]string) func(string) (string, bool) {
 }
 
 func TestDefaultsDev(t *testing.T) {
-	cfg, err := load(func(string) (string, bool) { return "", false }, nil)
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey: "secret",
+	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -64,6 +66,7 @@ func TestDefaultsDev(t *testing.T) {
 
 func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                 "secret",
 		EnvMaxDatagramPayloadBytes: "1400",
 	}), nil)
 	if err != nil {
@@ -75,7 +78,9 @@ func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
 }
 
 func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
-	cfg, err := load(func(string) (string, bool) { return "", false }, []string{"--mode", "prod"})
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey: "secret",
+	}), []string{"--mode", "prod"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -88,7 +93,9 @@ func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
 }
 
 func TestLogFormatExplicitOverride(t *testing.T) {
-	cfg, err := load(func(string) (string, bool) { return "", false }, []string{"--mode", "prod", "--log-format", "text"})
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey: "secret",
+	}), []string{"--mode", "prod", "--log-format", "text"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -99,6 +106,7 @@ func TestLogFormatExplicitOverride(t *testing.T) {
 
 func TestWebRTCUDPPortRange_RequiresBoth(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:           "secret",
 		EnvWebRTCUDPPortMin: "40000",
 	}), nil)
 	if err == nil {
@@ -108,6 +116,7 @@ func TestWebRTCUDPPortRange_RequiresBoth(t *testing.T) {
 
 func TestWebRTCUDPPortRange_TooSmall(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:           "secret",
 		EnvWebRTCUDPPortMin: "40000",
 		EnvWebRTCUDPPortMax: "40010",
 	}), nil)
@@ -121,6 +130,7 @@ func TestWebRTCUDPPortRange_TooSmall(t *testing.T) {
 
 func TestWebRTCUDPPortRange_OK(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:           "secret",
 		EnvWebRTCUDPPortMin: "40000",
 		EnvWebRTCUDPPortMax: "40199",
 	}), nil)
@@ -137,6 +147,7 @@ func TestWebRTCUDPPortRange_OK(t *testing.T) {
 
 func TestWebRTCNAT1To1IPsAndCandidateType(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                       "secret",
 		EnvWebRTCNAT1To1IPs:             "203.0.113.10, 203.0.113.11",
 		EnvWebRTCNAT1To1IPCandidateType: "srflx",
 	}), nil)
@@ -153,6 +164,7 @@ func TestWebRTCNAT1To1IPsAndCandidateType(t *testing.T) {
 
 func TestWebRTCNAT1To1IPs_InvalidCandidateType(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                       "secret",
 		EnvWebRTCNAT1To1IPCandidateType: "nope",
 	}), nil)
 	if err == nil {
@@ -162,6 +174,7 @@ func TestWebRTCNAT1To1IPs_InvalidCandidateType(t *testing.T) {
 
 func TestWebRTCNAT1To1IPs_InvalidIPs(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:           "secret",
 		EnvWebRTCNAT1To1IPs: "nope",
 	}), nil)
 	if err == nil {
@@ -171,6 +184,7 @@ func TestWebRTCNAT1To1IPs_InvalidIPs(t *testing.T) {
 
 func TestWebRTCUDPListenIP(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:            "secret",
 		EnvWebRTCUDPListenIP: "10.0.0.123",
 	}), nil)
 	if err != nil {
@@ -183,6 +197,7 @@ func TestWebRTCUDPListenIP(t *testing.T) {
 
 func TestWebRTCUDPListenIP_Invalid(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:            "secret",
 		EnvWebRTCUDPListenIP: "bad.ip",
 	}), nil)
 	if err == nil {
@@ -190,8 +205,19 @@ func TestWebRTCUDPListenIP_Invalid(t *testing.T) {
 	}
 }
 
+func TestAuthModeAPIKey_RequiresAPIKey(t *testing.T) {
+	_, err := load(func(string) (string, bool) { return "", false }, nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), EnvAPIKey) {
+		t.Fatalf("err=%v, expected mention of %s", err, EnvAPIKey)
+	}
+}
+
 func TestL2BackendWSURL_ValidatesSchemeAndHost(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:         "secret",
 		EnvL2BackendWSURL: "http://example.com/l2",
 	}), nil)
 	if err == nil {
@@ -199,6 +225,7 @@ func TestL2BackendWSURL_ValidatesSchemeAndHost(t *testing.T) {
 	}
 
 	_, err = load(lookupMap(map[string]string{
+		EnvAPIKey:         "secret",
 		EnvL2BackendWSURL: "ws:///l2",
 	}), nil)
 	if err == nil {
@@ -208,6 +235,7 @@ func TestL2BackendWSURL_ValidatesSchemeAndHost(t *testing.T) {
 
 func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:            "secret",
 		EnvL2BackendWSURL:    "ws://127.0.0.1:8090/l2",
 		EnvL2MaxMessageBytes: "2048",
 	}), nil)

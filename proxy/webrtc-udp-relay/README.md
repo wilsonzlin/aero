@@ -178,11 +178,11 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `GET /webrtc/ice` → ICE server list for browser clients: `{"iceServers":[...]}`
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
   - when `AUTH_MODE != none`, also requires the same credentials as signaling endpoints (to avoid leaking TURN REST credentials to unauthenticated callers)
-- `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md`
-- `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow)
-- `GET /webrtc/signal` → WebSocket signaling (trickle ICE)
-- `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback)
-- `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`)
+- `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md` (requires auth when `AUTH_MODE != none`)
+- `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow) (requires auth when `AUTH_MODE != none`)
+- `GET /webrtc/signal` → WebSocket signaling (trickle ICE) (requires auth when `AUTH_MODE != none`)
+- `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback) (requires auth when `AUTH_MODE != none`)
+- `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`) (requires auth when `AUTH_MODE != none`)
   - guarded by the same origin policy as signaling endpoints
 
 ## Implemented

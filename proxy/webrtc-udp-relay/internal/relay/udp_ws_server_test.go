@@ -679,7 +679,7 @@ func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
 	relayCfg := DefaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -707,11 +707,7 @@ func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
 		t.Fatalf("WriteMessage datagram: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, outPkt, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
 
 	outFrame, err := udpproto.Decode(outPkt)
 	if err != nil {

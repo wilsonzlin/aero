@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
+
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
-	"golang.org/x/net/websocket"
 )
 
 func TestServer_EnforcesMaxSessions(t *testing.T) {
@@ -41,11 +42,11 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 	defer ts.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
-	ws1, err := websocket.Dial(wsURL, "", ts.URL)
+	ws1, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial first websocket: %v", err)
 	}
-	defer ws1.Close()
+	t.Cleanup(func() { _ = ws1.Close() })
 
 	offerSDP := func() SDP {
 		pc, err := api.NewPeerConnection(webrtc.Configuration{})
@@ -70,26 +71,26 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		return SDPFromPion(*local)
 	}()
 
-	if err := sendWS(ws1, SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
+	if err := ws1.WriteJSON(SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
 		t.Fatalf("send offer: %v", err)
 	}
 
-	ws2, err := websocket.Dial(wsURL, "", ts.URL)
+	ws2, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial second websocket: %v", err)
 	}
-	defer ws2.Close()
+	t.Cleanup(func() { _ = ws2.Close() })
 
-	if err := sendWS(ws2, SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
+	if err := ws2.WriteJSON(SignalMessage{Type: MessageTypeOffer, SDP: ptr(offerSDP)}); err != nil {
 		t.Fatalf("send offer ws2: %v", err)
 	}
 
-	_ = ws2.SetDeadline(time.Now().Add(5 * time.Second))
-	var raw string
-	if err := websocket.Message.Receive(ws2, &raw); err != nil {
+	_ = ws2.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, raw, err := ws2.ReadMessage()
+	if err != nil {
 		t.Fatalf("receive: %v", err)
 	}
-	msg, err := ParseSignalMessage([]byte(raw))
+	msg, err := ParseSignalMessage(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

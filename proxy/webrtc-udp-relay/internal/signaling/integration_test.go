@@ -60,6 +60,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		ICEServers:  cfg.ICEServers,
 		RelayConfig: relayCfg,
 		Policy:      destPolicy,
+		Authorizer:  signaling.AllowAllAuthorizer{},
 	})
 	signalingSrv.RegisterRoutes(httpSrv.Mux())
 
@@ -245,6 +246,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 		ICEServers:  cfg.ICEServers,
 		RelayConfig: relayCfg,
 		Policy:      destPolicy,
+		Authorizer:  signaling.AllowAllAuthorizer{},
 	})
 	signalingSrv.RegisterRoutes(httpSrv.Mux())
 

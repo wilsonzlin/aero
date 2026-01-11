@@ -245,6 +245,65 @@ func TestAuth_JWT_WebRTCOffer(t *testing.T) {
 	})
 }
 
+func TestAuth_APIKey_Offer(t *testing.T) {
+	cfg := config.Config{
+		AuthMode: config.AuthModeAPIKey,
+		APIKey:   "secret",
+	}
+	ts, m := startSignalingServer(t, cfg)
+
+	body, err := json.Marshal(signaling.OfferRequest{
+		Version: signaling.Version1,
+		Offer: signaling.SessionDescription{
+			Type: "offer",
+			SDP:  "v=0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal offer: %v", err)
+	}
+
+	do := func(apiKey string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/offer", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			req.Header.Set("X-API-Key", apiKey)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		return resp
+	}
+
+	resp := do("")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing api key status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	_ = resp.Body.Close()
+
+	resp = do("wrong")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad api key status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	_ = resp.Body.Close()
+
+	if got := m.Get(metrics.AuthFailure); got < 2 {
+		t.Fatalf("auth failure metric=%d, want >= 2", got)
+	}
+
+	resp = do("secret")
+	// We used a dummy SDP, so we expect the relay to reject it with 400. This
+	// confirms auth was accepted and we reached SDP parsing.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("good api key status=%d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	_ = resp.Body.Close()
+}
+
 func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeAPIKey,
@@ -511,6 +570,59 @@ func TestWebSocketRejectsBinaryBeforeAuth(t *testing.T) {
 	}
 	if !websocket.IsCloseError(err, websocket.CloseUnsupportedData) {
 		t.Fatalf("expected unsupported data close; got %v", err)
+	}
+}
+
+func TestWebSocketRejectsOfferBeforeAuth(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeAPIKey,
+		APIKey:                        "secret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, m := startSignalingServer(t, cfg)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	offer := signaling.SDP{Type: "offer", SDP: "v=0"}
+	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offer}); err != nil {
+		t.Fatalf("write offer: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := c.ReadMessage()
+	if err != nil {
+		if websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+			if m.Get(metrics.AuthFailure) == 0 {
+				t.Fatalf("expected auth_failure metric increment")
+			}
+			return
+		}
+		t.Fatalf("read: %v", err)
+	}
+	parsed, err := signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.Type != signaling.MessageTypeError || parsed.Code != "unauthorized" {
+		t.Fatalf("unexpected server message: %#v", parsed)
+	}
+	if m.Get(metrics.AuthFailure) == 0 {
+		t.Fatalf("expected auth_failure metric increment")
+	}
+
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected close error")
+	}
+	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("expected policy violation close; got %v", err)
 	}
 }
 

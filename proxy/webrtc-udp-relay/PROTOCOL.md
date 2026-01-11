@@ -371,36 +371,36 @@ This endpoint waits for ICE gathering to complete so that candidates are embedde
 
 **Endpoint:** `GET /webrtc/signal` (upgrades to WebSocket)
 
+#### Signaling authentication
+
+When `AUTH_MODE != none`, signaling endpoints require authentication.
+
+Supported auth modes:
+
+- `AUTH_MODE=none`: no authentication.
+- `AUTH_MODE=api_key`: API key authentication.
+- `AUTH_MODE=jwt`: JWT (HS256) authentication.
+
+WebSocket credentials can be provided via either:
+
+1. **URL query string** (works for all clients):
+   - `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
+   - `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
+2. **First WebSocket message** (recommended when possible):
+
+   ```json
+   {"type":"auth","apiKey":"..."}
+   ```
+
+   or:
+
+   ```json
+   {"type":"auth","token":"..."}
+   ```
+
+If `AUTH_MODE != none`, the client MUST authenticate within `SIGNALING_AUTH_TIMEOUT`. If the timeout is hit, credentials are invalid, or if the client sends `offer`/`candidate` before authenticating, the server closes the WebSocket with close code **1008** (policy violation). The server may send a `{type:"error", code:"unauthorized"}` message immediately before closing.
+
 All signaling messages are JSON objects with a required `type` field.
-
-#### Authentication
-
-Browsers can't set arbitrary headers on the WebSocket upgrade request, so the relay supports two auth delivery options.
-
-- `AUTH_MODE=none`: no credentials required.
-- `AUTH_MODE=api_key`: API key required.
-- `AUTH_MODE=jwt`: JWT (HS256) required.
-
-When `AUTH_MODE != none`, clients MUST authenticate using **one** of:
-
-1. **Preferred:** send credentials in the first WebSocket message:
-
-```json
-{ "type": "auth", "apiKey": "..." }
-```
-
-or:
-
-```json
-{ "type": "auth", "token": "..." }
-```
-
-2. **Fallback (non-browser tooling):** include credentials in the WebSocket URL query string:
-
-- `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
-- `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
-
-The server enforces `SIGNALING_AUTH_TIMEOUT` for unauthenticated sockets and will close the connection if authentication does not complete in time.
 
 #### Client → Server messages
 
@@ -472,10 +472,12 @@ Error `code` values are currently best-effort and intended for debugging:
 
 - `bad_message` (invalid JSON / schema)
 - `unexpected_message` (invalid ordering such as candidate-before-offer)
-- `unauthorized`
+- `unauthorized` (authentication required / invalid credentials)
 - `too_many_sessions`
 - `rate_limited`
 - `internal_error`
+
+Authentication failures result in a WebSocket close (policy violation). The relay may send an `unauthorized` error message immediately before closing; see "Signaling authentication" above.
 
 #### WebSocket flow
 
