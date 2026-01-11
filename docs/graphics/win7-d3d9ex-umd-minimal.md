@@ -301,6 +301,10 @@ If you implement only one blend mode initially, make sure you cover standard pre
 
 **Rule:** if your backend is async (WebGPU, Vulkan, etc), the query completion path must be backed by a real fence/timeline so progress is guaranteed.
 
+Guest-side validation:
+
+* `drivers/aerogpu/tests/win7/d3d9ex_event_query` verifies `D3DQUERYTYPE_EVENT` completion behavior and that `GetData(D3DGETDATA_DONOTFLUSH)` remains non-blocking (DWM relies on this polling pattern).
+
 ---
 
 ## 3) Capability reporting (what to report so Aero enables)
