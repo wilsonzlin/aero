@@ -124,7 +124,8 @@ try {
     // deployments by visiting e.g.:
     //   https://localhost/?l2Token=sekrit&l2TokenTransport=subprotocol
     //
-    // If not set, the default (cookie-only) compose stack still succeeds.
+    // If not set, the default compose stack still succeeds (no token required unless `/l2`
+    // is configured with token/JWT auth).
     let protocols = "aero-l2-tunnel-v1";
     if (l2Token) {
       if (l2TokenTransport === "query" || l2TokenTransport === "both") {
