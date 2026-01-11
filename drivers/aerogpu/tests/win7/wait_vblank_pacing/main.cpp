@@ -431,15 +431,17 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   }
 
   const double avg_ms = sum / (double)collected;
+  const double hz = (avg_ms > 0.0) ? (1000.0 / avg_ms) : 0.0;
 
   aerogpu_test::PrintfStdout(
       "INFO: %s: D3DKMTWaitForVerticalBlankEvent pacing over %u samples: avg=%.3fms min=%.3fms "
-      "max=%.3fms (wait_timeout_ms=%lu)",
+      "max=%.3fms (%.2f Hz, wait_timeout_ms=%lu)",
       kTestName,
       (unsigned)collected,
       avg_ms,
       min_ms,
       max_ms,
+      hz,
       (unsigned long)wait_timeout_ms);
 
   if (avg_ms < 2.0) {
