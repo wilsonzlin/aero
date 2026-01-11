@@ -3,8 +3,12 @@
 Permissive license: **MIT OR Apache-2.0** (see `LICENSE-MIT` and `LICENSE-APACHE`).
 
 This directory contains a small, reusable C library intended to be shared by all
-Windows 7 SP1 x86/x64 Aero guest drivers that speak **virtio-pci legacy /
-transitional** (I/O port register set) with **split virtqueues** (vring).
+Windows 7 SP1 x86/x64 Aero guest drivers that speak virtio.
+
+It currently contains two transport implementations:
+
+- **Legacy/transitional:** `virtio_pci_legacy.*` (I/O port register set)
+- **Modern-only (WDM):** `virtio_pci_modern_wdm.*` (virtio 1.0+ PCI vendor caps + MMIO)
 
 ## What is implemented
 
@@ -104,3 +108,23 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+## Modern virtio-pci (WDM-only) transport
+
+`include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c` provide a
+**WDM-only** virtio-pci **modern** transport implementation tailored for the
+[`AERO-W7-VIRTIO`](../../../../docs/windows7-virtio-driver-contract.md) contract:
+
+- Discover PCI vendor capabilities (COMMON/NOTIFY/ISR/DEVICE) using the portable
+  capability parser from `drivers/win7/virtio/virtio-core/portable/`.
+- Map BAR0 MMIO with `MmMapIoSpace(MmNonCached)`.
+- Serialize `common_cfg` selector registers (`*_feature_select`, `queue_select`)
+  with a per-device `KSPIN_LOCK`.
+- Negotiate `VIRTIO_F_VERSION_1` and caller-supplied feature bits.
+- Program split virtqueues via `common_cfg` and notify via the notify region.
+
+IRQL notes (see SAL annotations in the header):
+
+- `VirtioPciModernWdmInit` / `VirtioPciModernWdmMapBars` / `VirtioPciModernWdmUnmapBars` / `VirtioPciModernWdmUninit`:
+  **PASSIVE_LEVEL**
+- Queue/config/notify helpers: **<= DISPATCH_LEVEL**
