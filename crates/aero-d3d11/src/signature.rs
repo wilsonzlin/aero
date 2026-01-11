@@ -7,7 +7,7 @@
 
 use core::fmt;
 
-use aero_dxbc::parse_signature_chunk as parse_dxbc_signature_chunk;
+use aero_dxbc::parse_signature_chunk_with_fourcc as parse_dxbc_signature_chunk;
 
 use crate::{DxbcFile, FourCC};
 
@@ -110,7 +110,7 @@ pub fn parse_signature_chunk(
     fourcc: FourCC,
     bytes: &[u8],
 ) -> Result<DxbcSignature, SignatureError> {
-    let chunk = parse_dxbc_signature_chunk(bytes).map_err(|err| {
+    let chunk = parse_dxbc_signature_chunk(fourcc, bytes).map_err(|err| {
         if err.context().contains("UTF-8") || err.context().contains("utf-8") {
             SignatureError::InvalidUtf8 {
                 fourcc,
