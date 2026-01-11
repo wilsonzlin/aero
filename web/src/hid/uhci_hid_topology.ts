@@ -55,6 +55,14 @@ export class UhciHidTopologyManager {
     })();
   }
 
+  #normalizeDevicePath(path: GuestUsbPath): GuestUsbPath {
+    // Root port 0 is reserved for the external hub. If a caller tries to attach a device
+    // directly at `[0]` (legacy direct-attach semantics), remap to the direct-attach fallback
+    // root port 1 so we don't clobber the hub.
+    if (path.length === 1 && path[0] === 0) return [1];
+    return path;
+  }
+
   setUhciBridge(bridge: UhciTopologyBridge | null): void {
     if (this.#uhci !== bridge) {
       // Hub attachments are per-controller state; if we swap bridges (or clear),
@@ -88,7 +96,7 @@ export class UhciHidTopologyManager {
   }
 
   attachDevice(deviceId: number, path: GuestUsbPath, kind: UhciHidPassthroughDeviceKind, device: unknown): void {
-    this.#devices.set(deviceId, { path, kind, device });
+    this.#devices.set(deviceId, { path: this.#normalizeDevicePath(path), kind, device });
     this.#maybeAttachDevice(deviceId);
   }
 

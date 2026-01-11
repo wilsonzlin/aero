@@ -27,6 +27,22 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
   });
 
+  it("remaps legacy direct attaches at root port 0 to the direct-attach fallback root port 1", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.setUhciBridge(uhci);
+    mgr.attachDevice(1, [0], "webhid", dev);
+
+    // Hub should remain on root port 0.
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+
+    expect(uhci.detach_at_path).toHaveBeenCalledTimes(1);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([1]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([1], dev);
+  });
+
   it("defers device attachment until the UHCI bridge is available", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
