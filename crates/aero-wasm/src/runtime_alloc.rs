@@ -24,7 +24,7 @@ use linked_list_allocator::LockedHeap;
 
 use crate::guest_layout::{RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES};
 
-extern "C" {
+unsafe extern "C" {
     static __heap_base: u8;
 }
 
@@ -65,7 +65,7 @@ impl RuntimeAllocator {
     unsafe fn init(&self) {
         // `&__heap_base as *const u8` yields the heap base pointer as a linear
         // memory address (wasm-ld provides it as a global).
-        let heap_base = &__heap_base as *const u8 as usize;
+        let heap_base = unsafe { &__heap_base as *const u8 as usize };
 
         // Clamp the heap end to the *actual* current memory size so the allocator
         // remains safe even in non-worker contexts where the module is
@@ -84,19 +84,23 @@ impl RuntimeAllocator {
             return;
         }
 
-        self.heap.lock().init(heap_base, heap_end - heap_base);
+        unsafe {
+            self.heap
+                .lock()
+                .init(heap_base as *mut u8, heap_end - heap_base);
+        }
     }
 }
 
 unsafe impl GlobalAlloc for RuntimeAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.ensure_init();
-        GlobalAlloc::alloc(&self.heap, layout)
+        unsafe { GlobalAlloc::alloc(&self.heap, layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         self.ensure_init();
-        GlobalAlloc::dealloc(&self.heap, ptr, layout)
+        unsafe { GlobalAlloc::dealloc(&self.heap, ptr, layout) }
     }
 }
 
