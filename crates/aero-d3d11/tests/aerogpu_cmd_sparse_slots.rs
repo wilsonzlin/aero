@@ -64,6 +64,33 @@ fn end_cmd(stream: &mut Vec<u8>, start: usize) {
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
 }
 
+fn patch_semantic_case_insensitive(mut dxbc: Vec<u8>) -> Vec<u8> {
+    // DXBC signature chunks store semantic strings with their original spelling, while D3D
+    // semantic matching is case-insensitive. The executor hashes signature semantics to map ILAY
+    // elements to shader input registers, so this test forces mixed-case semantics in the DXBC to
+    // ensure the hashing canonicalizes appropriately.
+    //
+    // Keep lengths identical so the DXBC container remains structurally valid.
+    for (from, to) in [(b"POSITION\0".as_slice(), b"position\0".as_slice()), (b"COLOR\0".as_slice(), b"color\0".as_slice())]
+    {
+        assert_eq!(from.len(), to.len());
+        let mut replaced = 0usize;
+        for off in 0..=dxbc.len().saturating_sub(from.len()) {
+            if &dxbc[off..off + from.len()] == from {
+                dxbc[off..off + from.len()].copy_from_slice(to);
+                replaced += 1;
+            }
+        }
+        assert!(
+            replaced > 0,
+            "expected to find semantic string {:?} in DXBC fixture",
+            std::str::from_utf8(from).unwrap_or("<non-utf8>")
+        );
+    }
+
+    dxbc
+}
+
 #[test]
 fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
     pollster::block_on(async {
@@ -116,7 +143,7 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
         ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
 
-        let dxbc_vs = DXBC_VS_PASSTHROUGH;
+        let dxbc_vs = patch_semantic_case_insensitive(DXBC_VS_PASSTHROUGH.to_vec());
         let dxbc_ps = DXBC_PS_PASSTHROUGH;
 
         let mut stream = Vec::new();
@@ -232,7 +259,7 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
         stream.extend_from_slice(&(dxbc_vs.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        stream.extend_from_slice(dxbc_vs);
+        stream.extend_from_slice(&dxbc_vs);
         stream.resize(stream.len() + (align4(dxbc_vs.len()) - dxbc_vs.len()), 0);
         end_cmd(&mut stream, start);
 
