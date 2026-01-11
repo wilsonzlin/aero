@@ -843,7 +843,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     if (!any) {
       wprintf(L" (none)");
     }
-  wprintf(L"\n");
+    wprintf(L"\n");
   }
 
   DumpFenceSnapshot();
