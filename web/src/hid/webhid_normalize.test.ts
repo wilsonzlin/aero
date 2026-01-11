@@ -144,12 +144,12 @@ describe("normalizeCollections(WebHID)", () => {
     expect(() => normalizeCollections([root])).toThrow(/reportId/i);
   });
 
-  it("validates isRange implies usages.length >= 2", () => {
+  it("rejects isRange items with a single usage when usageMinimum != usageMaximum", () => {
     const root = mockCollection({
       inputReports: [
         mockReport({
           reportId: 1,
-          items: [mockItem({ isRange: true, usages: u32([1]), usageMinimum: 1, usageMaximum: 1 })],
+          items: [mockItem({ isRange: true, usages: u32([1]), usageMinimum: 1, usageMaximum: 2 })],
         }),
       ] as unknown as HidReportInfo[],
     });

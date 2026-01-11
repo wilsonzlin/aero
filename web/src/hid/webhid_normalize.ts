@@ -136,9 +136,14 @@ function isContiguousUsageRange(usages: readonly number[]): boolean {
 
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   const rawUsages = item.usages;
-  if (item.isRange && rawUsages.length < 2) {
+  // WebHID's isRange flag can be set even for a degenerate range where `usageMinimum === usageMaximum`.
+  // In that case the normalized representation uses a single-element `usages: [usageMinimum]` list.
+  //
+  // Reject the ambiguous case where the caller claims a non-degenerate range but only provides a
+  // single usage entry; our normalizer would otherwise "collapse" the range when deriving min/max.
+  if (item.isRange && rawUsages.length === 1 && item.usageMinimum !== item.usageMaximum) {
     throw new Error(
-      `Invalid HID report item: isRange=true requires usages.length>=2 (got ${rawUsages.length})`,
+      `Invalid HID report item: isRange=true with usageMinimum!=usageMaximum requires usages.length!=1 (got 1)`,
     );
   }
 
