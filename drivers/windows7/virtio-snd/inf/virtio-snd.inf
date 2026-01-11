@@ -30,14 +30,13 @@ CatalogFile = virtio-snd.cat
 ; contract v1 is intentionally **modern-only**; configure the hypervisor for
 ; modern enumeration (e.g. QEMU `disable-legacy=on`) so Windows sees `DEV_1059`.
 ;
-; The REV_01 match is listed first to prefer contract v1 devices; the driver still
-; validates Revision ID at runtime.
+; Match `REV_01` in the INF to avoid binding to unsupported contract versions.
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12
