@@ -334,6 +334,13 @@ HRESULT create_context_common(const CallbacksT* callbacks,
     *dma_private_data_size_out = 0;
     if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
       *dma_private_data_size_out = data.DmaBufferPrivateDataSize;
+    } else if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+      // Some WDK vintages expose `pDmaBufferPrivateData` without also carrying a
+      // size field. In that case, use the fixed Win7 AeroGPU contract size (as
+      // configured via DXGK_DRIVERCAPS::DmaBufferPrivateDataSize).
+      if (data.pDmaBufferPrivateData) {
+        *dma_private_data_size_out = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      }
     }
   }
 
@@ -886,6 +893,11 @@ void extract_alloc_outputs(SubmissionBuffers* out, const D3DDDICB_ALLOCATE& allo
   __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
     out->dma_private_data_bytes = alloc.DmaBufferPrivateDataSize;
   }
+  __if_not_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
+    if (out->dma_private_data) {
+      out->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+    }
+  }
 }
 
 void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
@@ -933,6 +945,13 @@ void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
     __if_exists(D3DDDICB_DEALLOCATE::DmaBufferPrivateDataSize) {
       __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
         dealloc.DmaBufferPrivateDataSize = alloc.DmaBufferPrivateDataSize;
+      }
+      __if_not_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
+        __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
+          if (alloc.pDmaBufferPrivateData) {
+            dealloc.DmaBufferPrivateDataSize = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+          }
+        }
       }
     }
 
@@ -1045,6 +1064,11 @@ HRESULT acquire_submit_buffers_get_command_buffer(const D3DDDI_DEVICECALLBACKS* 
     }
     __if_exists(D3DDDICB_GETCOMMANDINFO::DmaBufferPrivateDataSize) {
       out->dma_private_data_bytes = info.DmaBufferPrivateDataSize;
+    }
+    __if_not_exists(D3DDDICB_GETCOMMANDINFO::DmaBufferPrivateDataSize) {
+      if (out->dma_private_data) {
+        out->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      }
     }
 
     if (!out->command_buffer || out->command_buffer_bytes == 0) {
