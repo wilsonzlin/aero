@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #include "virtio_bits.h"
-#include "virtqueue_split.h"
+#include "virtqueue_split_legacy.h"
 
 #include "test_os.h"
 
@@ -93,4 +93,3 @@ void fake_pci_modern_mmio_write32(fake_pci_device_modern_t *dev, uint32_t offset
 void fake_pci_modern_process_queue(fake_pci_device_modern_t *dev, uint16_t queue_index);
 
 #endif /* AERO_VIRTIO_FAKE_PCI_DEVICE_MODERN_H_ */
-

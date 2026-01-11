@@ -8,7 +8,7 @@ add_executable(virtio_common_tests
     test_os.c
     fake_pci_device.c
     fake_pci_device_modern.c
-    ${CMAKE_CURRENT_LIST_DIR}/../src/virtqueue_split.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtqueue_split_legacy.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_legacy.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_pci_modern.c
 )

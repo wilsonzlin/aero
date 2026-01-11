@@ -87,14 +87,14 @@ the build pulls these sources directly).
 
 Contract v1 (virtio-pci modern) references:
 
-- Canonical virtio-pci modern transport (PCI vendor capability parsing + BAR0 MMIO):
+- Canonical virtio-pci modern transport (PCI capability discovery + BAR0 MMIO mapping):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
     (plus `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h`)
 - Aero contract identity validation (`AERO-W7-VIRTIO` v1 / PCI revision gating):
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
     (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
 - Split virtqueue implementation:
-  - `drivers/windows7/virtio/common/src/virtqueue_split.c` (plus `drivers/windows7/virtio/common/include/virtqueue_split.h`)
+  - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
 - Virtio PCI capability parsing:
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
 - INTx ISR/DPC helper:
@@ -102,7 +102,7 @@ Contract v1 (virtio-pci modern) references:
 - Spec constants/layouts (headers):
   - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
 - Shared SG entry definition used by `virtiosnd_sg_*` helpers:
-  - `drivers/windows7/virtio/common/include/virtqueue_split.h` (`virtio_sg_entry_t`)
+  - `drivers/windows7/virtio/common/include/virtqueue_split_legacy.h` (`virtio_sg_entry_t`)
 
 Legacy virtio-pci I/O-port support (out of contract; retained for compatibility experiments):
 

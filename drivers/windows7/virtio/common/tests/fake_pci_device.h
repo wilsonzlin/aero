@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "virtio_pci_legacy.h"
-#include "virtqueue_split.h"
+#include "virtqueue_split_legacy.h"
 
 #include "test_os.h"
 
@@ -59,4 +59,3 @@ void fake_pci_write32(fake_pci_device_t *dev, uint32_t offset, uint32_t value);
 void fake_pci_process_queue(fake_pci_device_t *dev, uint16_t queue_index);
 
 #endif /* AERO_VIRTIO_FAKE_PCI_DEVICE_H_ */
-

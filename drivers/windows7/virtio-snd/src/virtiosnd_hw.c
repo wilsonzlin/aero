@@ -429,22 +429,22 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
         VIRTIOSND_TRACE("queue %lu enabled (size=%u)\n", q, (UINT)size);
 
-        if (Dx->QueueSplit[q].Ring.vaddr != NULL) {
+        if (Dx->QueueSplit[q].Ring.Va != NULL) {
             VIRTIOSND_TRACE(
                 "queue %lu ring: VA=%p DMA=%I64x bytes=%Iu\n",
                 q,
-                Dx->QueueSplit[q].Ring.vaddr,
-                (ULONGLONG)Dx->QueueSplit[q].Ring.paddr,
-                Dx->QueueSplit[q].Ring.size);
+                Dx->QueueSplit[q].Ring.Va,
+                (ULONGLONG)Dx->QueueSplit[q].Ring.DmaAddr,
+                Dx->QueueSplit[q].Ring.Size);
 
             VIRTIOSND_TRACE(
                 "queue %lu desc VA=%p PA=%I64x | avail VA=%p PA=%I64x | used VA=%p PA=%I64x\n",
                 q,
-                Dx->QueueSplit[q].Vq.desc,
+                Dx->QueueSplit[q].Vq->desc,
                 (ULONGLONG)descPa,
-                Dx->QueueSplit[q].Vq.avail,
+                Dx->QueueSplit[q].Vq->avail,
                 (ULONGLONG)availPa,
-                Dx->QueueSplit[q].Vq.used,
+                Dx->QueueSplit[q].Vq->used,
                 (ULONGLONG)usedPa);
         }
     }

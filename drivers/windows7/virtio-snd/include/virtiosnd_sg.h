@@ -5,14 +5,9 @@
 #include <ntddk.h>
 
 /*
- * Use the Aero Windows 7 virtio common SG entry shape (virtio_sg_entry_t).
- *
- * Note: This header name conflicts with the newer virtqueue implementation
- * under drivers/windows/virtio/common. Use an explicit relative include to
- * avoid accidental header resolution changes when include paths vary between
- * drivers.
+ * Use the legacy Aero Windows 7 virtio common SG entry shape (virtio_sg_entry_t).
  */
-#include "../../virtio/common/include/virtqueue_split.h"
+#include "virtqueue_split_legacy.h"
 
 /*
  * DISPATCH_LEVEL-safe helpers for converting an MDL-backed circular PCM buffer

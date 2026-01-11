@@ -93,7 +93,7 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PreprocessorDefinitions>_KERNEL_MODE;_WIN32_WINNT=0x0601;WINVER=0x0601;NTDDI_VERSION=NTDDI_WIN7;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\pci-modern;$(ProjectDir)..\virtio\common\include;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\windows\virtio\pci-modern;$(ProjectDir)..\virtio\common\include;$(ProjectDir)..\..\win7\virtio\virtio-core\include;$(ProjectDir)..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -134,7 +134,7 @@
 
   <ItemGroup>
     <ClCompile Include="src\**\*.c" />
-    <ClCompile Include="..\virtio\common\src\virtqueue_split.c" />
+    <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c" />
     <ClCompile Include="..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c" />

@@ -15,9 +15,9 @@ TARGETPATH=obj
 #
 # This driver links against:
 #   - canonical virtio-pci modern transport: drivers/windows/virtio/pci-modern
-#   - shared virtqueue/split-ring implementation: drivers/windows7/virtio/common
+#   - shared split-ring virtqueue engine: drivers/windows/virtio/common
 #
-INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\pci-modern;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
+INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common;..\..\..\windows\virtio\pci-modern;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 TARGETLIBS=$(TARGETLIBS) \
   $(DDK_LIB_PATH)\portcls.lib \
@@ -45,6 +45,6 @@ SOURCES= \
     virtiosnd_sg.c \
     virtiosnd_sg_core.c \
     virtiosnd_sg_tx.c \
-    ..\..\virtio\common\src\virtqueue_split.c \
+    ..\..\..\windows\virtio\common\virtqueue_split.c \
     ..\..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c

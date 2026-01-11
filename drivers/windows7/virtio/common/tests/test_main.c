@@ -8,7 +8,7 @@
 
 #include "virtio_pci_legacy.h"
 #include "virtio_pci_modern.h"
-#include "virtqueue_split.h"
+#include "virtqueue_split_legacy.h"
 
 #include "fake_pci_device.h"
 #include "fake_pci_device_modern.h"

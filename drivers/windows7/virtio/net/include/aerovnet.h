@@ -2,8 +2,7 @@
 
 #include <ndis.h>
 
-/* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
-#include "../../../../windows/virtio/common/virtqueue_split.h"
+#include "virtqueue_split.h"
 #include "virtio_pci_modern_transport.h"
 
 // Driver identity

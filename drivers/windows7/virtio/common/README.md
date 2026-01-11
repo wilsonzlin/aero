@@ -31,7 +31,7 @@ And additional shared helpers:
 
 - **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
-- **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
+- **Split virtqueues (legacy):** `virtqueue_split_legacy.*` (portable split ring implementation retained for transitional/QEMU testing)
 - **Legacy queue helper:** `virtio_queue.*` (alloc + PFN queue programming + notify)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
@@ -196,8 +196,9 @@ must link **exactly one** of them.
 
 ### Virtqueues
 
-- `include/virtqueue_split.h` + `src/virtqueue_split.c`
-  - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
+- `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
+  - Legacy portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
+  - Aero contract v1 drivers should use `drivers/windows/virtio/common/virtqueue_split.{c,h}` instead.
 
 - `include/virtio_queue.h` + `src/virtio_queue.c`
   - Windows kernel convenience wrapper around **legacy/transitional** split rings:

@@ -45,7 +45,7 @@ on:
 
 jobs:
   virtio-snd-vcxproj-guardrail:
-    name: Guardrail (virtio-snd.vcxproj uses modern backend)
+    name: Guardrails (virtio-snd.vcxproj + virtqueue_split headers)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -56,6 +56,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
+
+      - name: Check Win7 virtqueue_split header ambiguity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-win7-virtqueue-split-headers.py
 
   virtio-host-tests-linux:
     name: Virtio host tests (Linux, ${{ matrix.cc }})

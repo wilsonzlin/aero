@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 /*
- * Split virtqueue implementation (vring) for virtio-pci legacy/transitional
- * devices.
+ * Legacy split virtqueue implementation (vring) for virtio-pci
+ * legacy/transitional devices.
+ *
+ * Aero contract v1 (modern-only) drivers must use the shared split virtqueue
+ * engine under `drivers/windows/virtio/common/virtqueue_split.{c,h}` instead.
  *
  * This implements the in-memory ring layout and descriptor management. It does
  * not perform transport-specific operations (like kicking via PCI notify).
  */
 
-#ifndef AERO_VIRTQUEUE_SPLIT_H_
-#define AERO_VIRTQUEUE_SPLIT_H_
+#ifndef AERO_VIRTQUEUE_SPLIT_LEGACY_H_
+#define AERO_VIRTQUEUE_SPLIT_LEGACY_H_
 
 #include "virtio_os.h"
 
@@ -178,4 +181,4 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq);
  */
 virtio_bool_t virtqueue_split_pop_used(virtqueue_split_t *vq, void **out_cookie, uint32_t *out_len);
 
-#endif /* AERO_VIRTQUEUE_SPLIT_H_ */
+#endif /* AERO_VIRTQUEUE_SPLIT_LEGACY_H_ */
