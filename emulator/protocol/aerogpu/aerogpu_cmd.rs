@@ -1,6 +1,7 @@
 //! AeroGPU command stream layouts.
 //!
 //! Source of truth: `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+//! ABI is validated by `emulator/protocol/tests/aerogpu_abi.rs` and `emulator/protocol/tests/aerogpu_abi.test.ts`.
 
 use super::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError};
 
@@ -73,6 +74,7 @@ pub enum AerogpuCmdOpcode {
     SetVertexBuffers = 0x500,
     SetIndexBuffer = 0x501,
     SetPrimitiveTopology = 0x502,
+
     SetTexture = 0x510,
     SetSamplerState = 0x511,
     SetRenderState = 0x512,
@@ -186,6 +188,10 @@ pub struct AerogpuCmdCreateBuffer {
     pub reserved0: u64,
 }
 
+impl AerogpuCmdCreateBuffer {
+    pub const SIZE_BYTES: usize = 40;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdCreateTexture2d {
@@ -203,12 +209,20 @@ pub struct AerogpuCmdCreateTexture2d {
     pub reserved0: u64,
 }
 
+impl AerogpuCmdCreateTexture2d {
+    pub const SIZE_BYTES: usize = 56;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdDestroyResource {
     pub hdr: AerogpuCmdHdr,
     pub resource_handle: AerogpuHandle,
     pub reserved0: u32,
+}
+
+impl AerogpuCmdDestroyResource {
+    pub const SIZE_BYTES: usize = 16;
 }
 
 #[repr(C, packed)]
@@ -219,6 +233,10 @@ pub struct AerogpuCmdResourceDirtyRange {
     pub reserved0: u32,
     pub offset_bytes: u64,
     pub size_bytes: u64,
+}
+
+impl AerogpuCmdResourceDirtyRange {
+    pub const SIZE_BYTES: usize = 32;
 }
 
 #[repr(C, packed)]
@@ -287,12 +305,20 @@ pub struct AerogpuCmdCreateShaderDxbc {
     pub reserved0: u32,
 }
 
+impl AerogpuCmdCreateShaderDxbc {
+    pub const SIZE_BYTES: usize = 24;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdDestroyShader {
     pub hdr: AerogpuCmdHdr,
     pub shader_handle: AerogpuHandle,
     pub reserved0: u32,
+}
+
+impl AerogpuCmdDestroyShader {
+    pub const SIZE_BYTES: usize = 16;
 }
 
 #[repr(C, packed)]
@@ -303,6 +329,10 @@ pub struct AerogpuCmdBindShaders {
     pub ps: AerogpuHandle,
     pub cs: AerogpuHandle,
     pub reserved0: u32,
+}
+
+impl AerogpuCmdBindShaders {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 #[repr(C, packed)]
@@ -318,6 +348,7 @@ pub struct AerogpuCmdSetShaderConstantsF {
 impl AerogpuCmdSetShaderConstantsF {
     pub const SIZE_BYTES: usize = 24;
 }
+
 pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" LE
 pub const AEROGPU_INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
 
@@ -333,6 +364,7 @@ pub struct AerogpuInputLayoutBlobHeader {
 impl AerogpuInputLayoutBlobHeader {
     pub const SIZE_BYTES: usize = 16;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuInputLayoutElementDxgi {
@@ -348,6 +380,7 @@ pub struct AerogpuInputLayoutElementDxgi {
 impl AerogpuInputLayoutElementDxgi {
     pub const SIZE_BYTES: usize = 28;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdCreateInputLayout {
@@ -360,6 +393,7 @@ pub struct AerogpuCmdCreateInputLayout {
 impl AerogpuCmdCreateInputLayout {
     pub const SIZE_BYTES: usize = 20;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdDestroyInputLayout {
@@ -371,6 +405,7 @@ pub struct AerogpuCmdDestroyInputLayout {
 impl AerogpuCmdDestroyInputLayout {
     pub const SIZE_BYTES: usize = 16;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetInputLayout {
@@ -382,6 +417,7 @@ pub struct AerogpuCmdSetInputLayout {
 impl AerogpuCmdSetInputLayout {
     pub const SIZE_BYTES: usize = 16;
 }
+
 /* ------------------------------ Pipeline state ---------------------------- */
 
 #[repr(u32)]
@@ -416,11 +452,19 @@ pub struct AerogpuBlendState {
     pub reserved0: [u8; 3],
 }
 
+impl AerogpuBlendState {
+    pub const SIZE_BYTES: usize = 20;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetBlendState {
     pub hdr: AerogpuCmdHdr,
     pub state: AerogpuBlendState,
+}
+
+impl AerogpuCmdSetBlendState {
+    pub const SIZE_BYTES: usize = 28;
 }
 
 #[repr(u32)]
@@ -448,11 +492,19 @@ pub struct AerogpuDepthStencilState {
     pub reserved0: [u8; 2],
 }
 
+impl AerogpuDepthStencilState {
+    pub const SIZE_BYTES: usize = 20;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetDepthStencilState {
     pub hdr: AerogpuCmdHdr,
     pub state: AerogpuDepthStencilState,
+}
+
+impl AerogpuCmdSetDepthStencilState {
+    pub const SIZE_BYTES: usize = 28;
 }
 
 #[repr(u32)]
@@ -481,11 +533,19 @@ pub struct AerogpuRasterizerState {
     pub reserved0: u32,
 }
 
+impl AerogpuRasterizerState {
+    pub const SIZE_BYTES: usize = 24;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetRasterizerState {
     pub hdr: AerogpuCmdHdr,
     pub state: AerogpuRasterizerState,
+}
+
+impl AerogpuCmdSetRasterizerState {
+    pub const SIZE_BYTES: usize = 32;
 }
 
 /* ------------------------- Render targets / state ------------------------- */
@@ -501,6 +561,10 @@ pub struct AerogpuCmdSetRenderTargets {
     pub colors: [AerogpuHandle; AEROGPU_MAX_RENDER_TARGETS],
 }
 
+impl AerogpuCmdSetRenderTargets {
+    pub const SIZE_BYTES: usize = 48;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetViewport {
@@ -513,6 +577,10 @@ pub struct AerogpuCmdSetViewport {
     pub max_depth_f32: u32,
 }
 
+impl AerogpuCmdSetViewport {
+    pub const SIZE_BYTES: usize = 32;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetScissor {
@@ -521,6 +589,10 @@ pub struct AerogpuCmdSetScissor {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+impl AerogpuCmdSetScissor {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 /* ------------------------------ Input assembler --------------------------- */
@@ -546,6 +618,10 @@ pub struct AerogpuCmdSetVertexBuffers {
     pub buffer_count: u32,
 }
 
+impl AerogpuCmdSetVertexBuffers {
+    pub const SIZE_BYTES: usize = 16;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetIndexBuffer {
@@ -554,6 +630,10 @@ pub struct AerogpuCmdSetIndexBuffer {
     pub format: u32,
     pub offset_bytes: u32,
     pub reserved0: u32,
+}
+
+impl AerogpuCmdSetIndexBuffer {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 #[repr(C, packed)]
@@ -567,6 +647,7 @@ pub struct AerogpuCmdSetPrimitiveTopology {
 impl AerogpuCmdSetPrimitiveTopology {
     pub const SIZE_BYTES: usize = 16;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetTexture {
@@ -580,6 +661,7 @@ pub struct AerogpuCmdSetTexture {
 impl AerogpuCmdSetTexture {
     pub const SIZE_BYTES: usize = 24;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetSamplerState {
@@ -593,6 +675,7 @@ pub struct AerogpuCmdSetSamplerState {
 impl AerogpuCmdSetSamplerState {
     pub const SIZE_BYTES: usize = 24;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetRenderState {
@@ -604,6 +687,7 @@ pub struct AerogpuCmdSetRenderState {
 impl AerogpuCmdSetRenderState {
     pub const SIZE_BYTES: usize = 16;
 }
+
 /* -------------------------------- Drawing -------------------------------- */
 
 pub const AEROGPU_CLEAR_COLOR: u32 = 1u32 << 0;
@@ -620,6 +704,10 @@ pub struct AerogpuCmdClear {
     pub stencil: u32,
 }
 
+impl AerogpuCmdClear {
+    pub const SIZE_BYTES: usize = 36;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdDraw {
@@ -628,6 +716,10 @@ pub struct AerogpuCmdDraw {
     pub instance_count: u32,
     pub first_vertex: u32,
     pub first_instance: u32,
+}
+
+impl AerogpuCmdDraw {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 #[repr(C, packed)]
@@ -639,6 +731,10 @@ pub struct AerogpuCmdDrawIndexed {
     pub first_index: u32,
     pub base_vertex: i32,
     pub first_instance: u32,
+}
+
+impl AerogpuCmdDrawIndexed {
+    pub const SIZE_BYTES: usize = 28;
 }
 
 /* ------------------------------ Presentation ------------------------------ */
@@ -654,6 +750,10 @@ pub struct AerogpuCmdPresent {
     pub flags: u32,
 }
 
+impl AerogpuCmdPresent {
+    pub const SIZE_BYTES: usize = 16;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdPresentEx {
@@ -662,6 +762,10 @@ pub struct AerogpuCmdPresentEx {
     pub flags: u32,
     pub d3d9_present_flags: u32,
     pub reserved0: u32,
+}
+
+impl AerogpuCmdPresentEx {
+    pub const SIZE_BYTES: usize = 24;
 }
 
 #[repr(C, packed)]
@@ -673,6 +777,10 @@ pub struct AerogpuCmdExportSharedSurface {
     pub share_token: u64,
 }
 
+impl AerogpuCmdExportSharedSurface {
+    pub const SIZE_BYTES: usize = 24;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdImportSharedSurface {
@@ -682,12 +790,20 @@ pub struct AerogpuCmdImportSharedSurface {
     pub share_token: u64,
 }
 
+impl AerogpuCmdImportSharedSurface {
+    pub const SIZE_BYTES: usize = 24;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdFlush {
     pub hdr: AerogpuCmdHdr,
     pub reserved0: u32,
     pub reserved1: u32,
+}
+
+impl AerogpuCmdFlush {
+    pub const SIZE_BYTES: usize = 16;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

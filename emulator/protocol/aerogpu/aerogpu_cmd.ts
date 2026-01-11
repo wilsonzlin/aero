@@ -1,6 +1,10 @@
 // AeroGPU command stream layouts.
 //
 // Source of truth: `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+//
+// Keep this file in lockstep with the C header above; ABI is validated by:
+// - `cargo test -p aero-protocol`
+// - `npm run test:protocol`
 
 import { AEROGPU_ABI_VERSION_U32, parseAndValidateAbiVersionU32 } from "./aerogpu_pci.ts";
 
@@ -8,6 +12,12 @@ export type AerogpuHandle = number;
 
 export const AEROGPU_CMD_STREAM_MAGIC = 0x444d4341; // "ACMD" LE
 export const AEROGPU_CMD_STREAM_FLAG_NONE = 0;
+
+export const AerogpuCmdStreamFlags = {
+  None: 0,
+} as const;
+
+export type AerogpuCmdStreamFlags = (typeof AerogpuCmdStreamFlags)[keyof typeof AerogpuCmdStreamFlags];
 
 export const AEROGPU_CMD_STREAM_HEADER_SIZE = 24;
 export const AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC = 0;
@@ -50,8 +60,31 @@ export const AEROGPU_CMD_HDR_SIZE = 8;
 export const AEROGPU_CMD_HDR_OFF_OPCODE = 0;
 export const AEROGPU_CMD_HDR_OFF_SIZE_BYTES = 4;
 
+export interface AerogpuCmdHdr {
+  opcode: number;
+  sizeBytes: number;
+}
+
+export function decodeCmdHdr(view: DataView, byteOffset = 0): AerogpuCmdHdr {
+  if (view.byteLength < byteOffset + AEROGPU_CMD_HDR_SIZE) {
+    throw new Error("Buffer too small for aerogpu_cmd_hdr");
+  }
+
+  const opcode = view.getUint32(byteOffset + AEROGPU_CMD_HDR_OFF_OPCODE, true);
+  const sizeBytes = view.getUint32(byteOffset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
+  if (sizeBytes < AEROGPU_CMD_HDR_SIZE) {
+    throw new Error(`cmd.size_bytes too small: ${sizeBytes}`);
+  }
+  if (sizeBytes % 4 !== 0) {
+    throw new Error(`cmd.size_bytes is not 4-byte aligned: ${sizeBytes}`);
+  }
+
+  return { opcode, sizeBytes };
+}
+
 export const AerogpuCmdOpcode = {
   Nop: 0,
+  // Packet payload is UTF-8 bytes (no NUL terminator); padded to 4-byte alignment.
   DebugMarker: 1,
 
   CreateBuffer: 0x100,
@@ -81,6 +114,7 @@ export const AerogpuCmdOpcode = {
   SetVertexBuffers: 0x500,
   SetIndexBuffer: 0x501,
   SetPrimitiveTopology: 0x502,
+
   SetTexture: 0x510,
   SetSamplerState: 0x511,
   SetRenderState: 0x512,
@@ -191,13 +225,11 @@ export const AEROGPU_MAX_RENDER_TARGETS = 8;
 export const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC = 0x59414c49; // "ILAY" LE
 export const AEROGPU_INPUT_LAYOUT_BLOB_VERSION = 1;
 
-export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_MAGIC = 0;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_VERSION = 4;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_ELEMENT_COUNT = 8;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_RESERVED0 = 12;
 
-export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_NAME_HASH = 0;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_INDEX = 4;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_DXGI_FORMAT = 8;
@@ -213,27 +245,38 @@ export const AEROGPU_CLEAR_STENCIL = 1 << 2;
 export const AEROGPU_PRESENT_FLAG_NONE = 0;
 export const AEROGPU_PRESENT_FLAG_VSYNC = 1 << 0;
 
-// Selected packet sizes (in bytes) from the C header for layout conformance tests.
+// Packet/struct sizes (in bytes) from the C header for ABI conformance tests.
 export const AEROGPU_CMD_CREATE_BUFFER_SIZE = 40;
 export const AEROGPU_CMD_CREATE_TEXTURE2D_SIZE = 56;
 export const AEROGPU_CMD_DESTROY_RESOURCE_SIZE = 16;
 export const AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE = 32;
+// Payload: aerogpu_cmd_upload_resource + data[size_bytes] + 4-byte alignment padding.
 export const AEROGPU_CMD_UPLOAD_RESOURCE_SIZE = 32;
 export const AEROGPU_CMD_COPY_BUFFER_SIZE = 48;
 export const AEROGPU_CMD_COPY_TEXTURE2D_SIZE = 64;
+// Payload: aerogpu_cmd_create_shader_dxbc + dxbc_bytes[dxbc_size_bytes] + 4-byte alignment padding.
 export const AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE = 24;
 export const AEROGPU_CMD_DESTROY_SHADER_SIZE = 16;
 export const AEROGPU_CMD_BIND_SHADERS_SIZE = 24;
+// Payload: aerogpu_cmd_set_shader_constants_f + float data[vec4_count * 4] + 4-byte alignment padding.
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE = 24;
+export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
+// Payload: aerogpu_cmd_create_input_layout + blob[blob_size_bytes] + 4-byte alignment padding.
 export const AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE = 20;
 export const AEROGPU_CMD_DESTROY_INPUT_LAYOUT_SIZE = 16;
 export const AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE = 16;
+export const AEROGPU_BLEND_STATE_SIZE = 20;
 export const AEROGPU_CMD_SET_BLEND_STATE_SIZE = 28;
+export const AEROGPU_DEPTH_STENCIL_STATE_SIZE = 20;
 export const AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE = 28;
+export const AEROGPU_RASTERIZER_STATE_SIZE = 24;
 export const AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE = 32;
 export const AEROGPU_CMD_SET_RENDER_TARGETS_SIZE = 48;
 export const AEROGPU_CMD_SET_VIEWPORT_SIZE = 32;
 export const AEROGPU_CMD_SET_SCISSOR_SIZE = 24;
+export const AEROGPU_VERTEX_BUFFER_BINDING_SIZE = 16;
+// Payload: aerogpu_cmd_set_vertex_buffers + aerogpu_vertex_buffer_binding[buffer_count].
 export const AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE = 16;
 export const AEROGPU_CMD_SET_INDEX_BUFFER_SIZE = 24;
 export const AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE = 16;
@@ -248,28 +291,6 @@ export const AEROGPU_CMD_PRESENT_EX_SIZE = 24;
 export const AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE = 24;
 export const AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE = 24;
 export const AEROGPU_CMD_FLUSH_SIZE = 16;
-
-export interface AerogpuCmdHdr {
-  opcode: number;
-  sizeBytes: number;
-}
-
-export function decodeCmdHdr(view: DataView, byteOffset = 0): AerogpuCmdHdr {
-  if (view.byteLength < byteOffset + AEROGPU_CMD_HDR_SIZE) {
-    throw new Error("Buffer too small for aerogpu_cmd_hdr");
-  }
-
-  const opcode = view.getUint32(byteOffset + AEROGPU_CMD_HDR_OFF_OPCODE, true);
-  const sizeBytes = view.getUint32(byteOffset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
-  if (sizeBytes < AEROGPU_CMD_HDR_SIZE) {
-    throw new Error(`cmd_hdr.size_bytes too small: ${sizeBytes}`);
-  }
-  if (sizeBytes % 4 !== 0) {
-    throw new Error(`cmd_hdr.size_bytes not 4-byte aligned: ${sizeBytes}`);
-  }
-
-  return { opcode, sizeBytes };
-}
 
 export interface AerogpuVertexBufferBinding {
   buffer: AerogpuHandle;
