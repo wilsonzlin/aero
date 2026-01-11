@@ -316,7 +316,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long)major,
           (unsigned long)minor);
 
-  if (q.detected_mmio_magic == AEROGPU_MMIO_MAGIC) {
+  if (q.features_lo != 0 || q.features_hi != 0) {
     wprintf(L"AeroGPU features:\n");
     wprintf(L"  lo=0x%I64x hi=0x%I64x\n", (unsigned long long)q.features_lo, (unsigned long long)q.features_hi);
     wprintf(L"  decoded:");

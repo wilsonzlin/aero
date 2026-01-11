@@ -67,7 +67,9 @@ enum aerogpu_dbgctl_vblank_flags {
  *
  * - `features_lo/hi` is a 128-bit feature bitset. New devices should report
  *   their FEATURES_LO/HI (lower 64 bits) in `features_lo` with `features_hi=0`.
- *   Legacy devices must return 0 for both.
+ *   Legacy devices may return 0 for both. If a legacy device model also exposes
+ *   the versioned FEATURES_LO/HI registers, drivers may report them here for
+ *   tooling/debug purposes.
  */
 typedef struct aerogpu_escape_query_device_v2_out {
   aerogpu_escape_header hdr;
