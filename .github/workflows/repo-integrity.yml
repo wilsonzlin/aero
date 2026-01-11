@@ -1,0 +1,35 @@
+name: Repo integrity (virtio-snd MSBuild guardrails)
+
+on:
+  pull_request:
+    paths:
+      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
+      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj.filters"
+      - "drivers/windows7/virtio-snd/inf/*.inf"
+  push:
+    branches: ["main"]
+    paths:
+      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
+      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj.filters"
+      - "drivers/windows7/virtio-snd/inf/*.inf"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-integrity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  virtio-snd-vcxproj:
+    name: virtio-snd.vcxproj source sanity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check virtio-snd project sources (modern vs legacy)
+        run: python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
+
