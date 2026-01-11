@@ -848,6 +848,63 @@ static void test_identity_contract_v1_bad_revision(void) {
     expect_identity_result("identity_contract_v1_bad_revision.res", res, VIRTIO_PCI_IDENTITY_ERR_REVISION_MISMATCH);
 }
 
+static void test_identity_contract_v1_bad_vendor(void) {
+    uint8_t cfg[256];
+    const uint16_t allowed_ids[] = { 0x1052 };
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], 0x1234);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_validate_aero_contract_v1(
+        cfg, sizeof(cfg),
+        allowed_ids, sizeof(allowed_ids) / sizeof(allowed_ids[0]),
+        &id);
+
+    expect_identity_result("identity_contract_v1_bad_vendor.res", res, VIRTIO_PCI_IDENTITY_ERR_VENDOR_MISMATCH);
+}
+
+static void test_identity_contract_v1_device_not_modern(void) {
+    uint8_t cfg[256];
+    const uint16_t allowed_ids[] = { 0x1052 };
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1000); /* legacy/transitional range */
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_validate_aero_contract_v1(
+        cfg, sizeof(cfg),
+        allowed_ids, sizeof(allowed_ids) / sizeof(allowed_ids[0]),
+        &id);
+
+    expect_identity_result("identity_contract_v1_device_not_modern.res", res, VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_MODERN);
+}
+
+static void test_identity_contract_v1_device_not_allowed(void) {
+    uint8_t cfg[256];
+    const uint16_t allowed_ids[] = { 0x1052 };
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1059);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_validate_aero_contract_v1(
+        cfg, sizeof(cfg),
+        allowed_ids, sizeof(allowed_ids) / sizeof(allowed_ids[0]),
+        &id);
+
+    expect_identity_result("identity_contract_v1_device_not_allowed.res", res, VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_ALLOWED);
+}
+
 int main(void) {
     test_valid_all_caps();
     test_aero_layout_validation_ok();
@@ -879,6 +936,9 @@ int main(void) {
     test_missing_device_cfg();
     test_identity_contract_v1_ok();
     test_identity_contract_v1_bad_revision();
+    test_identity_contract_v1_bad_vendor();
+    test_identity_contract_v1_device_not_modern();
+    test_identity_contract_v1_device_not_allowed();
 
     if (tests_failed == 0) {
         printf("virtio_pci_cap_parser_test: %d checks passed\n", tests_run);
