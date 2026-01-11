@@ -371,6 +371,7 @@ fn run_vertex_shader(ir: &ShaderIr, inputs: &HashMap<u16, Vec4>, constants: &[Ve
     let empty_t = HashMap::new();
     for inst in &ir.ops {
         match inst.op {
+            Op::Nop => {}
             Op::End => break,
             Op::Mov => {
                 let dst = inst.dst.unwrap();
@@ -487,6 +488,7 @@ fn run_pixel_shader(
 
     for inst in &ir.ops {
         match inst.op {
+            Op::Nop => {}
             Op::End => break,
             Op::Mov => {
                 let dst = inst.dst.unwrap();

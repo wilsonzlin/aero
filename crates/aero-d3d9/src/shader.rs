@@ -92,6 +92,7 @@ pub struct Dst {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Op {
+    Nop,
     Mov,
     Add,
     Mul,
@@ -209,6 +210,7 @@ fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
 fn opcode_to_op(opcode: u16) -> Option<Op> {
     // Based on D3DSHADER_INSTRUCTION_OPCODE_TYPE values.
     match opcode {
+        0x0000 => Some(Op::Nop),
         0x0001 => Some(Op::Mov),
         0x0002 => Some(Op::Add),
         0x0004 => Some(Op::Mad),
@@ -261,7 +263,30 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
         let opcode = (token & 0xFFFF) as u16;
-        let param_count = ((token >> 24) & 0xFF) as usize;
+        // D3D9 instruction length is encoded in bits 24..27 (4 bits). Higher bits in the same
+        // byte are flags (predication/co-issue) and must not affect operand count.
+        let param_count = ((token >> 24) & 0x0F) as usize;
+
+        // Comments are variable-length data blocks that should be skipped.
+        // Layout: opcode=0xFFFE, length in DWORDs in bits 16..30.
+        if opcode == 0xFFFE {
+            let comment_len = ((token >> 16) & 0x7FFF) as usize;
+            if idx + comment_len > words.len() {
+                return Err(ShaderError::UnexpectedEof);
+            }
+            idx += comment_len;
+            continue;
+        }
+
+        // Declarations (DCL) are not currently used by the minimal WGSL backend; skip them.
+        // The operand count is still encoded in bits 24..27.
+        if opcode == 0x001F {
+            if idx + param_count > words.len() {
+                return Err(ShaderError::UnexpectedEof);
+            }
+            idx += param_count;
+            continue;
+        }
 
         let op = opcode_to_op(opcode).ok_or(ShaderError::UnsupportedOpcode(opcode))?;
         if op == Op::End {
@@ -280,6 +305,12 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         }
 
         let inst = match op {
+            Op::Nop => Instruction {
+                op,
+                dst: None,
+                src: Vec::new(),
+                sampler: None,
+            },
             Op::Mov | Op::Add | Op::Mul | Op::Mad | Op::Dp3 | Op::Dp4 => {
                 if params.len() < 2 {
                     return Err(ShaderError::UnexpectedEof);
@@ -476,12 +507,18 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n\n");
 
     let mut sampler_bindings = HashMap::new();
-    // Allocate bindings: (texture, sampler) pairs, starting at binding 1.
-    let mut next_binding = 1u32;
+    // Allocate bindings: (texture, sampler) pairs.
+    //
+    // IMPORTANT: Binding numbers must be stable across shader stages. Using a sequential allocator
+    // based on "samplers used by this stage" can produce mismatched binding locations when (for
+    // example) the vertex shader samples from `s1` while the pixel shader samples from `s0`.
+    //
+    // Derive binding numbers from the D3D9 sampler register index instead:
+    //   texture binding = 1 + 2*s
+    //   sampler binding = 2 + 2*s
     for &s in &ir.used_samplers {
-        let tex_binding = next_binding;
-        let samp_binding = next_binding + 1;
-        next_binding += 2;
+        let tex_binding = 1u32 + u32::from(s) * 2;
+        let samp_binding = tex_binding + 1;
         sampler_bindings.insert(s, (tex_binding, samp_binding));
         wgsl.push_str(&format!(
             "@group(0) @binding({}) var tex{}: texture_2d<f32>;\n",
@@ -644,6 +681,7 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
 
 fn emit_inst(wgsl: &mut String, inst: &Instruction) {
     match inst.op {
+        Op::Nop => {}
         Op::End => {}
         Op::Mov => {
             let dst = inst.dst.unwrap();

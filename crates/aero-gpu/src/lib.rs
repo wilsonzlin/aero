@@ -44,6 +44,7 @@ pub mod hal;
 pub mod pipeline_cache;
 pub mod pipeline_key;
 pub mod profiler;
+pub mod aerogpu_d3d9;
 pub mod command_processor_d3d9;
 pub mod protocol_d3d11;
 pub mod protocol_d3d9;
