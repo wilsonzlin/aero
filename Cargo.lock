@@ -202,6 +202,7 @@ name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
  "aero-d3d9",
+ "aero-protocol",
  "aero-shared",
  "bcdec_rs",
  "bitflags 2.10.0",

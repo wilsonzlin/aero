@@ -1,4 +1,4 @@
-use aero_gpu::aerogpu_executor::{AeroGpuExecutor, AllocEntry, AllocTable};
+use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
@@ -125,27 +125,43 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let mut guest = VecGuestMemory::new(0x10_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         let vb_gpa = 0x1000u64;
         let tex_gpa = 0x2000u64;
-        let alloc_table = AllocTable::new([
-            (
-                ALLOC_VB,
-                AllocEntry {
-                    gpa: vb_gpa,
-                    size_bytes: 0x100,
-                },
-            ),
-            (
-                ALLOC_TEX,
-                AllocEntry {
-                    gpa: tex_gpa,
-                    size_bytes: 0x100,
-                },
-            ),
-        ]);
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, 0x434F_4C41); // "ALOC"
+            push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 2); // entry_count
+            push_u32(&mut out, 32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_VB);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, vb_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            push_u32(&mut out, ALLOC_TEX);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, tex_gpa);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -263,8 +279,23 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
         });
 
-        exec.execute_cmd_stream(&stream, &guest, Some(&alloc_table))
-            .expect("execute command stream");
+        let cmd_gpa = 0x9000u64;
+        guest
+            .write(cmd_gpa, &stream)
+            .expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
 
         let rt_tex = exec.texture(3).expect("render target texture");
         let rgba = readback_rgba8(

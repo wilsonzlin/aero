@@ -11,6 +11,7 @@ use std::ops::Range;
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 
 const AEROGPU_CMD_STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD" LE
+const AEROGPU_ALLOC_TABLE_MAGIC: u32 = aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
 
 // Selected opcodes from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 const OP_CREATE_BUFFER: u32 = 0x100;
@@ -44,6 +45,8 @@ const CLEAR_COLOR: u32 = 1u32 << 0;
 
 const STREAM_HEADER_SIZE: usize = 24;
 const CMD_HDR_SIZE: usize = 8;
+const ALLOC_TABLE_HEADER_SIZE: usize = 24;
+const ALLOC_ENTRY_SIZE: usize = 32;
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ExecutorError> {
     let slice = bytes
@@ -86,6 +89,26 @@ pub enum ExecutorError {
     GuestMemory(#[from] GuestMemoryError),
 }
 
+#[derive(Debug, Clone)]
+pub enum ExecutorEvent {
+    Error { at: usize, message: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionReport {
+    pub packets_processed: u32,
+    pub events: Vec<ExecutorEvent>,
+}
+
+impl ExecutionReport {
+    pub fn is_ok(&self) -> bool {
+        !self
+            .events
+            .iter()
+            .any(|e| matches!(e, ExecutorEvent::Error { .. }))
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct AllocEntry {
     pub gpa: u64,
@@ -106,6 +129,87 @@ impl AllocTable {
 
     pub fn get(&self, alloc_id: u32) -> Option<&AllocEntry> {
         self.entries.get(&alloc_id)
+    }
+
+    pub fn decode_from_guest_memory(
+        guest_memory: &dyn GuestMemory,
+        table_gpa: u64,
+        table_size_bytes: u32,
+    ) -> Result<Self, ExecutorError> {
+        if table_gpa == 0 || table_size_bytes == 0 {
+            return Err(ExecutorError::Validation(
+                "alloc table gpa/size must be non-zero".into(),
+            ));
+        }
+
+        let table_size = table_size_bytes as usize;
+        if table_size < ALLOC_TABLE_HEADER_SIZE {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table size_bytes too small (got {table_size_bytes}, need {ALLOC_TABLE_HEADER_SIZE})"
+            )));
+        }
+
+        let mut header = [0u8; ALLOC_TABLE_HEADER_SIZE];
+        guest_memory.read(table_gpa, &mut header)?;
+
+        let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        if magic != AEROGPU_ALLOC_TABLE_MAGIC {
+            return Err(ExecutorError::Validation(format!(
+                "invalid alloc table magic 0x{magic:08x}"
+            )));
+        }
+
+        let size_bytes = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let size_usize = size_bytes as usize;
+        if size_usize < ALLOC_TABLE_HEADER_SIZE || size_usize > table_size {
+            return Err(ExecutorError::Validation(format!(
+                "invalid alloc table header size_bytes={size_bytes} (provided buffer size={table_size_bytes})"
+            )));
+        }
+
+        let entry_count = u32::from_le_bytes(header[12..16].try_into().unwrap());
+        let entry_stride_bytes = u32::from_le_bytes(header[16..20].try_into().unwrap());
+        if entry_stride_bytes < ALLOC_ENTRY_SIZE as u32 {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table entry_stride_bytes={entry_stride_bytes} too small (min {ALLOC_ENTRY_SIZE})"
+            )));
+        }
+
+        let required = ALLOC_TABLE_HEADER_SIZE as u64
+            + (entry_count as u64).saturating_mul(entry_stride_bytes as u64);
+        if required > size_bytes as u64 {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table requires {required} bytes but header size_bytes={size_bytes}"
+            )));
+        }
+
+        let mut table = AllocTable::default();
+        for i in 0..entry_count {
+            let entry_gpa = table_gpa
+                + ALLOC_TABLE_HEADER_SIZE as u64
+                + (i as u64) * (entry_stride_bytes as u64);
+            let mut entry_bytes = [0u8; ALLOC_ENTRY_SIZE];
+            guest_memory.read(entry_gpa, &mut entry_bytes)?;
+
+            let alloc_id = u32::from_le_bytes(entry_bytes[0..4].try_into().unwrap());
+            if alloc_id == 0 {
+                return Err(ExecutorError::Validation(
+                    "alloc table entry alloc_id must be non-zero".into(),
+                ));
+            }
+            if table.entries.contains_key(&alloc_id) {
+                return Err(ExecutorError::Validation(format!(
+                    "alloc table contains duplicate alloc_id={alloc_id}"
+                )));
+            }
+
+            let gpa = u64::from_le_bytes(entry_bytes[8..16].try_into().unwrap());
+            let size_bytes = u64::from_le_bytes(entry_bytes[16..24].try_into().unwrap());
+
+            table.entries.insert(alloc_id, AllocEntry { gpa, size_bytes });
+        }
+
+        Ok(table)
     }
 }
 
@@ -301,57 +405,157 @@ fn fs_main() -> @location(0) vec4<f32> {
         self.textures.get(&handle).map(|t| &t.texture)
     }
 
+    pub fn process_cmd_stream(
+        &mut self,
+        bytes: &[u8],
+        guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
+    ) -> ExecutionReport {
+        match self.execute_cmd_stream_internal(bytes, guest_memory, alloc_table) {
+            Ok(packets_processed) => ExecutionReport {
+                packets_processed,
+                events: Vec::new(),
+            },
+            Err((at, err, packets_processed)) => ExecutionReport {
+                packets_processed,
+                events: vec![ExecutorEvent::Error {
+                    at,
+                    message: err.to_string(),
+                }],
+            },
+        }
+    }
+
+    pub fn process_submission_from_guest_memory(
+        &mut self,
+        guest_memory: &dyn GuestMemory,
+        cmd_gpa: u64,
+        cmd_size_bytes: u32,
+        alloc_table_gpa: u64,
+        alloc_table_size_bytes: u32,
+    ) -> ExecutionReport {
+        let cmd_size = cmd_size_bytes as usize;
+        let mut cmd_bytes = vec![0u8; cmd_size];
+        if let Err(err) = guest_memory.read(cmd_gpa, &mut cmd_bytes) {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!("failed to read command stream: {err}"),
+                }],
+            };
+        }
+
+        let alloc_table = if alloc_table_gpa != 0 && alloc_table_size_bytes != 0 {
+            match AllocTable::decode_from_guest_memory(
+                guest_memory,
+                alloc_table_gpa,
+                alloc_table_size_bytes,
+            ) {
+                Ok(table) => Some(table),
+                Err(err) => {
+                    return ExecutionReport {
+                        packets_processed: 0,
+                        events: vec![ExecutorEvent::Error {
+                            at: 0,
+                            message: format!("failed to decode alloc table: {err}"),
+                        }],
+                    };
+                }
+            }
+        } else {
+            None
+        };
+
+        match alloc_table.as_ref() {
+            Some(table) => self.process_cmd_stream(&cmd_bytes, guest_memory, Some(table)),
+            None => self.process_cmd_stream(&cmd_bytes, guest_memory, None),
+        }
+    }
+
     pub fn execute_cmd_stream(
         &mut self,
         bytes: &[u8],
         guest_memory: &dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
+        self.execute_cmd_stream_internal(bytes, guest_memory, alloc_table)
+            .map(|_| ())
+            .map_err(|(_, err, _)| err)
+    }
+
+    fn execute_cmd_stream_internal(
+        &mut self,
+        bytes: &[u8],
+        guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
+    ) -> Result<u32, (usize, ExecutorError, u32)> {
+        let mut packets_processed = 0u32;
         if bytes.len() < STREAM_HEADER_SIZE {
-            return Err(ExecutorError::TruncatedStream);
+            return Err((0, ExecutorError::TruncatedStream, packets_processed));
         }
 
-        let magic = read_u32_le(bytes, 0)?;
+        let magic = match bytes.get(0..4) {
+            Some(v) => u32::from_le_bytes(v.try_into().unwrap()),
+            None => return Err((0, ExecutorError::TruncatedStream, packets_processed)),
+        };
         if magic != AEROGPU_CMD_STREAM_MAGIC {
-            return Err(ExecutorError::BadStreamMagic(magic));
+            return Err((0, ExecutorError::BadStreamMagic(magic), packets_processed));
         }
-        let size_bytes = read_u32_le(bytes, 8)?;
+        let size_bytes = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
         let size_bytes_usize = size_bytes as usize;
         if size_bytes_usize < STREAM_HEADER_SIZE || size_bytes_usize > bytes.len() {
-            return Err(ExecutorError::BadStreamSize {
-                size_bytes,
-                buffer_len: bytes.len(),
-            });
+            return Err((
+                0,
+                ExecutorError::BadStreamSize {
+                    size_bytes,
+                    buffer_len: bytes.len(),
+                },
+                packets_processed,
+            ));
         }
 
         let mut offset = STREAM_HEADER_SIZE;
         while offset < size_bytes_usize {
+            let cmd_offset = offset;
             if offset + CMD_HDR_SIZE > size_bytes_usize {
-                return Err(ExecutorError::TruncatedStream);
+                return Err((cmd_offset, ExecutorError::TruncatedStream, packets_processed));
             }
 
-            let opcode = read_u32_le(bytes, offset)?;
-            let cmd_size_bytes = read_u32_le(bytes, offset + 4)?;
+            let opcode = read_u32_le(bytes, offset)
+                .map_err(|e| (cmd_offset, e, packets_processed))?;
+            let cmd_size_bytes = read_u32_le(bytes, offset + 4)
+                .map_err(|e| (cmd_offset, e, packets_processed))?;
             if cmd_size_bytes < CMD_HDR_SIZE as u32 {
-                return Err(ExecutorError::InvalidPacketSize(cmd_size_bytes));
+                return Err((
+                    cmd_offset,
+                    ExecutorError::InvalidPacketSize(cmd_size_bytes),
+                    packets_processed,
+                ));
             }
             if cmd_size_bytes % 4 != 0 {
-                return Err(ExecutorError::MisalignedPacketSize(cmd_size_bytes));
+                return Err((
+                    cmd_offset,
+                    ExecutorError::MisalignedPacketSize(cmd_size_bytes),
+                    packets_processed,
+                ));
             }
 
             let cmd_size = cmd_size_bytes as usize;
             let end = offset + cmd_size;
             if end > size_bytes_usize {
-                return Err(ExecutorError::TruncatedStream);
+                return Err((cmd_offset, ExecutorError::TruncatedStream, packets_processed));
             }
 
             let cmd_bytes = &bytes[offset..end];
-            self.exec_packet(opcode, cmd_bytes, guest_memory, alloc_table)?;
+            self.exec_packet(opcode, cmd_bytes, guest_memory, alloc_table)
+                .map_err(|e| (cmd_offset, e, packets_processed))?;
 
+            packets_processed += 1;
             offset = end;
         }
 
-        Ok(())
+        Ok(packets_processed)
     }
 
     fn exec_packet(

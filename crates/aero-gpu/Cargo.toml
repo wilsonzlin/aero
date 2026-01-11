@@ -25,6 +25,7 @@ blake3 = "1.5.0"
 # Shared-memory framebuffer protocol (CPU worker ↔ GPU worker).
 aero-d3d9 = { path = "../aero-d3d9" }
 aero-shared = { path = "../aero-shared" }
+aero-protocol = { path = "../../emulator/protocol" }
 
 [dev-dependencies]
 pollster = "0.3"
