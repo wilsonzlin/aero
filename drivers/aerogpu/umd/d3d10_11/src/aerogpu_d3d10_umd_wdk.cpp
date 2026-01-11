@@ -2515,12 +2515,50 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
 
     if (bytes && dst_off + bytes <= dst->storage.size() && src_left + bytes <= src->storage.size()) {
-      std::memcpy(dst->storage.data() + static_cast<size_t>(dst_off),
-                  src->storage.data() + static_cast<size_t>(src_left),
-                  static_cast<size_t>(bytes));
+      std::memmove(dst->storage.data() + static_cast<size_t>(dst_off),
+                   src->storage.data() + static_cast<size_t>(src_left),
+                   static_cast<size_t>(bytes));
     }
 
-    if (!SupportsTransfer(dev)) {
+    if (bytes) {
+      const uint64_t end = dst_off + bytes;
+      if (end < dst_off) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      const uint64_t upload_offset = dst_off & ~3ull;
+      const uint64_t upload_end = AlignUpU64(end, 4);
+      const uint64_t upload_size = upload_end - upload_offset;
+      if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      if (upload_offset > static_cast<uint64_t>(dst->storage.size())) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      const size_t remaining = dst->storage.size() - static_cast<size_t>(upload_offset);
+      if (upload_size > static_cast<uint64_t>(remaining)) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+
+      const uint8_t* payload = dst->storage.data() + static_cast<size_t>(upload_offset);
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(upload_size));
+      if (!upload) {
+        SetError(hDevice, E_FAIL);
+        return;
+      }
+      upload->resource_handle = dst->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = upload_offset;
+      upload->size_bytes = upload_size;
+    }
+
+    const bool transfer_aligned = (((dst_off | src_left | bytes) & 3ull) == 0);
+    const bool same_buffer = (dst->handle == src->handle);
+    if (!SupportsTransfer(dev) || !transfer_aligned || same_buffer) {
       return;
     }
 

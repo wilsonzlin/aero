@@ -5820,12 +5820,16 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     const uint64_t bytes = std::min(std::min(requested, max_src), max_dst);
 
     if (bytes && dst->storage.size() >= dst_off + bytes && src->storage.size() >= src_left + bytes) {
-      std::memcpy(dst->storage.data() + static_cast<size_t>(dst_off),
-                  src->storage.data() + static_cast<size_t>(src_left),
-                  static_cast<size_t>(bytes));
+      std::memmove(dst->storage.data() + static_cast<size_t>(dst_off),
+                   src->storage.data() + static_cast<size_t>(src_left),
+                   static_cast<size_t>(bytes));
     }
 
-    if (!SupportsTransfer(dev)) {
+    EmitUploadLocked(dev, dst, dst_off, bytes);
+
+    const bool transfer_aligned = (((dst_off | src_left | bytes) & 3ull) == 0);
+    const bool same_buffer = (dst->handle == src->handle);
+    if (!SupportsTransfer(dev) || !transfer_aligned || same_buffer) {
       return;
     }
 
