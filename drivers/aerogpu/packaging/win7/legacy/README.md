@@ -19,6 +19,7 @@ This requires building the emulator with the legacy device model enabled:
 CI-produced driver packages (and Guest Tools media built from them) include a legacy-binding INF under:
 
 - `legacy\aerogpu.inf` (sourced from `drivers/aerogpu/legacy/aerogpu.inf`)
+- Optional (if you stage DX11 payloads): `legacy\aerogpu_dx11.inf` (sourced from `drivers/aerogpu/legacy/aerogpu_dx11.inf`)
 
 This avoids staging two different `aerogpu.inf` files at the package root (CI packaging flattens INF files by name)
 while still keeping the legacy INF's `SourceDisksNames` relative path pointing at the package root (the parent

@@ -22,7 +22,9 @@ Packaging is controlled by `drivers/aerogpu/ci-package.json`. By default, CI pac
 - Included:
   - `aerogpu.inf` (canonical HWID binding: `A3A0:0001`)
   - `legacy/aerogpu.inf` (legacy HWID binding: `1AED:0001`; shipped under `legacy/` to avoid INF name collisions)
-- Not included: `aerogpu_dx11.inf` (optional D3D10/11 UMD variant)
+- Not included:
+  - `aerogpu_dx11.inf` (optional D3D10/11 UMD variant)
+  - `legacy/aerogpu_dx11.inf` (optional legacy D3D10/11 UMD variant)
 
 ### Getting the optional DX11 INF (`aerogpu_dx11.inf`)
 
@@ -83,7 +85,7 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 
 ### Optional (D3D10/11)
 
-Only needed if you install using `aerogpu_dx11.inf`:
+Only needed if you install using `aerogpu_dx11.inf` or `legacy/aerogpu_dx11.inf`:
 
 | File | Arch | Destination after install |
 |------|------|---------------------------|
