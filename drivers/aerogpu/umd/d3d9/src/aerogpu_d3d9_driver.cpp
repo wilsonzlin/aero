@@ -692,11 +692,43 @@ HRESULT wait_for_fence(Adapter* adapter, uint64_t fence_value) {
   if (!adapter || fence_value == 0) {
     return S_OK;
   }
-  std::unique_lock<std::mutex> lock(adapter->fence_mutex);
-  if (adapter->completed_fence < fence_value) {
-    adapter->fence_cv.wait(lock, [&] { return adapter->completed_fence >= fence_value; });
+
+  // Never wait indefinitely inside a DDI call: readback/copy paths can be hit by
+  // untrusted user-mode callers, and a GPU hang must not wedge the entire
+  // process.
+  const uint64_t deadline = monotonic_ms() + 2000;
+
+  while (monotonic_ms() < deadline) {
+    {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      if (adapter->completed_fence >= fence_value) {
+        return S_OK;
+      }
+    }
+
+    // Refresh from the KMD when available; refresh_fence_snapshot is internally
+    // throttled to avoid expensive escapes in tight polling loops.
+    (void)refresh_fence_snapshot(adapter);
+
+    {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      if (adapter->completed_fence >= fence_value) {
+        return S_OK;
+      }
+    }
+
+    sleep_ms(1);
   }
-  return S_OK;
+
+  // Final check after the timeout.
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    if (adapter->completed_fence >= fence_value) {
+      return S_OK;
+    }
+  }
+
+  return kD3dErrWasStillDrawing;
 }
 
 bool is_supported_readback_format(uint32_t d3d9_format) {
