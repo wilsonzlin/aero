@@ -409,16 +409,22 @@ export function renderCompareMarkdown(params: {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const baselinePath = args.baseline;
-  const currentPath = args.current;
-  const thresholdPct = args.thresholdPct ? Number(args.thresholdPct) : 15;
-  const outDir = args.outDir ?? "storage-perf-results";
+  const currentPath = args.current ?? args.candidate;
+  const thresholdPct = args.thresholdPct
+    ? Number(args.thresholdPct)
+    : process.env.STORAGE_PERF_REGRESSION_THRESHOLD_PCT
+      ? Number(process.env.STORAGE_PERF_REGRESSION_THRESHOLD_PCT)
+      : 15;
+  const outDir = args.outDir ?? args["out-dir"] ?? "storage-perf-results";
 
-  const outputMd = args.outputMd ?? path.join(outDir, "compare.md");
+  const outputMd = args.outputMd ?? args["output-md"] ?? path.join(outDir, "compare.md");
   const outputJson =
-    args.outputJson ?? (args.json === "true" ? path.join(outDir, "compare.json") : null);
+    args.outputJson ??
+    args["output-json"] ??
+    (args.json === "true" ? path.join(outDir, "compare.json") : null);
 
   if (!baselinePath || !currentPath) {
-    throw new Error("Missing required args: --baseline <path> --current <path>");
+    throw new Error("Missing required args: --baseline <path> --current <path> (or --candidate <path>)");
   }
   if (!Number.isFinite(thresholdPct) || thresholdPct <= 0) {
     throw new Error("--thresholdPct must be a positive number");
