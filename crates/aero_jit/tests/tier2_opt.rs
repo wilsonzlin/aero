@@ -42,12 +42,12 @@ fn v(idx: u32) -> ValueId {
 fn make_random_state(rng: &mut ChaCha8Rng) -> T2State {
     let mut state = T2State::default();
     for r in ALL_REGS {
-        state.cpu.set_gpr(r, rng.gen());
+        state.cpu.gpr[r.as_u8() as usize] = rng.gen();
     }
-    state.rflags = 0x2;
+    state.cpu.rflags = aero_jit::abi::RFLAGS_RESERVED1;
     for flag in [Flag::Cf, Flag::Pf, Flag::Af, Flag::Zf, Flag::Sf, Flag::Of] {
         if rng.gen() {
-            state.rflags |= 1u64 << flag.rflags_bit();
+            state.cpu.rflags |= 1u64 << flag.rflags_bit();
         }
     }
     state
@@ -417,7 +417,7 @@ fn regalloc_cached_exec_reduces_cpu_state_traffic() {
 
     let env = RuntimeEnv::default();
     let mut cpu0 = T2State::default();
-    cpu0.cpu.set_gpr(Gpr::Rax, 10);
+    cpu0.cpu.gpr[Gpr::Rax.as_u8() as usize] = 10;
     let mut cpu1 = cpu0.clone();
     let mut bus0 = SimpleBus::new(65536);
     let mut bus1 = bus0.clone();
@@ -513,14 +513,14 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     let mut env = RuntimeEnv::default();
     env.code_page_versions.insert(0, 7);
     let mut cpu_interp = T2State::default();
-    cpu_interp.cpu.set_gpr(Gpr::Rax, 0);
+    cpu_interp.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
     assert_eq!(
         run_function(&func, &env, &mut SimpleBus::new(65536), &mut cpu_interp, 1_000_000),
         RunExit::Returned
     );
 
     let mut cpu_trace = T2State::default();
-    cpu_trace.cpu.set_gpr(Gpr::Rax, 0);
+    cpu_trace.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
     let opt = optimize_trace(&mut trace.ir, &OptConfig::default());
     let mut bus = SimpleBus::new(65536);
     let exit = run_trace_with_cached_regs(
@@ -577,7 +577,10 @@ fn memory_load_store_roundtrip() {
     let mut state = T2State::default();
     let res = run_trace(&trace, &env, &mut bus, &mut state, 1);
     assert_eq!(res.exit, RunExit::Returned);
-    assert_eq!(state.cpu.get_gpr(Gpr::Rax), 0x1122_3344_5566_7788);
+    assert_eq!(
+        state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
 
     let got_mem = u64::from_le_bytes(
         bus.mem()[0x100..0x108]
@@ -652,8 +655,8 @@ fn memory_ops_not_misoptimized_across_store() {
     assert_eq!(base.exit, opt.exit);
     assert_eq!(base_state, opt_state);
     assert_eq!(bus0.mem(), bus1.mem());
-    assert_eq!(opt_state.cpu.get_gpr(Gpr::Rcx), 1);
-    assert_eq!(opt_state.cpu.get_gpr(Gpr::Rdx), 2);
+    assert_eq!(opt_state.cpu.gpr[Gpr::Rcx.as_u8() as usize], 1);
+    assert_eq!(opt_state.cpu.gpr[Gpr::Rdx.as_u8() as usize], 2);
 }
 
 #[test]

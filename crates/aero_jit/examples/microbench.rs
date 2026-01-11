@@ -90,7 +90,7 @@ fn main() {
     );
     eprintln!(
         "final rax baseline={} optimized={}",
-        base.cpu.get_gpr(Gpr::Rax),
-        opt_state.cpu.get_gpr(Gpr::Rax)
+        base.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize]
     );
 }

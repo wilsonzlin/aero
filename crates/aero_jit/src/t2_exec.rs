@@ -6,14 +6,30 @@ use aero_types::Flag;
 use crate::t2_ir::{
     eval_binop, FlagMask, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
 };
-use crate::CpuState;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct T2State {
-    pub cpu: CpuState,
-    /// Architectural RFLAGS value (subset of status flags currently modeled by Tier-2).
-    pub rflags: u64,
+    pub cpu: aero_cpu_core::state::CpuState,
 }
+
+impl Default for T2State {
+    fn default() -> Self {
+        Self {
+            cpu: aero_cpu_core::state::CpuState::default(),
+        }
+    }
+}
+
+impl PartialEq for T2State {
+    fn eq(&self, other: &Self) -> bool {
+        // Tier-2 IR currently only observes GPRs, RIP and RFLAGS.
+        self.cpu.gpr == other.cpu.gpr
+            && self.cpu.rip == other.cpu.rip
+            && self.cpu.rflags == other.cpu.rflags
+    }
+}
+
+impl Eq for T2State {}
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeEnv {
@@ -81,7 +97,7 @@ fn exec_instr(
                 cache.read_reg(reg, &state.cpu, stats)
             } else {
                 stats.reg_loads += 1;
-                state.cpu.get_gpr(reg)
+                state.cpu.gpr[reg.as_u8() as usize]
             };
             values[dst.index()] = val;
         }
@@ -91,14 +107,14 @@ fn exec_instr(
                 cache.write_reg(reg, val, &mut state.cpu, stats);
             } else {
                 stats.reg_stores += 1;
-                state.cpu.set_gpr(reg, val);
+                state.cpu.gpr[reg.as_u8() as usize] = val;
             }
         }
         Instr::LoadFlag { dst, flag } => {
-            values[dst.index()] = get_flag(state.rflags, flag) as u64;
+            values[dst.index()] = get_flag(state.cpu.rflags, flag) as u64;
         }
         Instr::SetFlags { mask, values: fv } => {
-            apply_flag_mask(&mut state.rflags, mask, fv);
+            apply_flag_mask(&mut state.cpu.rflags, mask, fv);
         }
         Instr::BinOp {
             dst,
@@ -112,7 +128,7 @@ fn exec_instr(
             let (res, computed) = eval_binop(op, lhs, rhs);
             values[dst.index()] = res;
             if !flags.is_empty() {
-                apply_flag_mask(&mut state.rflags, flags, computed);
+                apply_flag_mask(&mut state.cpu.rflags, flags, computed);
             }
         }
         Instr::Addr {
@@ -331,25 +347,36 @@ impl RegCache {
         }
     }
 
-    fn read_reg(&mut self, reg: aero_types::Gpr, cpu: &CpuState, stats: &mut ExecStats) -> u64 {
+    fn read_reg(
+        &mut self,
+        reg: aero_types::Gpr,
+        cpu: &aero_cpu_core::state::CpuState,
+        stats: &mut ExecStats,
+    ) -> u64 {
         let idx = reg.as_u8() as usize;
         if !self.cached[idx] {
             stats.reg_loads += 1;
-            return cpu.get_gpr(reg);
+            return cpu.gpr[idx];
         }
         if !self.valid[idx] {
             stats.reg_loads += 1;
-            self.locals[idx] = cpu.get_gpr(reg);
+            self.locals[idx] = cpu.gpr[idx];
             self.valid[idx] = true;
         }
         self.locals[idx]
     }
 
-    fn write_reg(&mut self, reg: aero_types::Gpr, value: u64, cpu: &mut CpuState, stats: &mut ExecStats) {
+    fn write_reg(
+        &mut self,
+        reg: aero_types::Gpr,
+        value: u64,
+        cpu: &mut aero_cpu_core::state::CpuState,
+        stats: &mut ExecStats,
+    ) {
         let idx = reg.as_u8() as usize;
         if !self.cached[idx] {
             stats.reg_stores += 1;
-            cpu.set_gpr(reg, value);
+            cpu.gpr[idx] = value;
             return;
         }
         self.locals[idx] = value;
@@ -357,12 +384,12 @@ impl RegCache {
         self.dirty[idx] = true;
     }
 
-    fn spill(&mut self, cpu: &mut CpuState, stats: &mut ExecStats) {
+    fn spill(&mut self, cpu: &mut aero_cpu_core::state::CpuState, stats: &mut ExecStats) {
         for reg in all_gprs() {
             let idx = reg.as_u8() as usize;
             if self.cached[idx] && self.dirty[idx] {
                 stats.reg_stores += 1;
-                cpu.set_gpr(reg, self.locals[idx]);
+                cpu.gpr[idx] = self.locals[idx];
                 self.dirty[idx] = false;
             }
         }
@@ -422,4 +449,5 @@ fn apply_flag_mask(rflags: &mut u64, mask: FlagMask, values: FlagValues) {
     if mask.intersects(FlagMask::OF) {
         set_flag(rflags, Flag::Of, values.of);
     }
+    *rflags |= crate::abi::RFLAGS_RESERVED1;
 }
