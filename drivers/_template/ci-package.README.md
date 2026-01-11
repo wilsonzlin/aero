@@ -61,6 +61,9 @@ Declare that the driver package requires a WDF coinstaller (`WdfCoInstaller*.dll
 - This is a Microsoft WDK redistributable and is **not shipped by default**.
 - Do **not** commit `WdfCoInstaller*.dll` into the repo; CI will refuse to package if it finds
   one under `drivers/<driver>/`.
+- `wdfCoInstaller.kmdfVersion` is required (example: `1.11`).
+  - If `wdfCoInstaller.dllName` is omitted, CI derives it from `kmdfVersion` (example: `1.11` → `WdfCoInstaller01011.dll`).
+  - If provided, `dllName` must be a simple filename (not a path).
 - To include it, you must:
   1. declare `wdfCoInstaller` in the manifest, and
   2. run `ci/make-catalogs.ps1` with `-IncludeWdfCoInstaller`.
