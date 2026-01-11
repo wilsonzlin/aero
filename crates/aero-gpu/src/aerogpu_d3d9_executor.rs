@@ -28,6 +28,8 @@ pub struct AerogpuD3d9Executor {
     dummy_texture_view: wgpu::TextureView,
     dummy_sampler: wgpu::Sampler,
 
+    presented_scanouts: HashMap<u32, u32>,
+
     state: State,
     encoder: Option<wgpu::CommandEncoder>,
 }
@@ -332,12 +334,30 @@ impl AerogpuD3d9Executor {
             constants_buffer,
             dummy_texture_view,
             dummy_sampler,
+            presented_scanouts: HashMap::new(),
             state: State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             encoder: None,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.shader_cache = shader::ShaderCache::default();
+        self.resources.clear();
+        self.shaders.clear();
+        self.input_layouts.clear();
+        self.presented_scanouts.clear();
+        self.state = State {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        };
+        self.encoder = None;
+
+        // Avoid leaking constants across resets; the next draw will rewrite what it needs.
+        self.queue
+            .write_buffer(&self.constants_buffer, 0, &[0u8; 256 * 16]);
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -348,6 +368,14 @@ impl AerogpuD3d9Executor {
         &self.queue
     }
 
+    pub fn poll(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        self.device.poll(wgpu::Maintain::Poll);
+    }
+
     pub fn execute_cmd_stream(&mut self, bytes: &[u8]) -> Result<(), AerogpuD3d9Error> {
         let stream = parse_cmd_stream(bytes)?;
         for cmd in stream.cmds {
@@ -355,6 +383,17 @@ impl AerogpuD3d9Executor {
         }
         // Make sure we don't keep uploads queued indefinitely if the guest forgets to present.
         self.flush()
+    }
+
+    pub async fn read_presented_scanout_rgba8(
+        &self,
+        scanout_id: u32,
+    ) -> Result<Option<(u32, u32, Vec<u8>)>, AerogpuD3d9Error> {
+        let Some(&handle) = self.presented_scanouts.get(&scanout_id) else {
+            return Ok(None);
+        };
+        let (w, h, rgba8) = self.readback_texture_rgba8(handle).await?;
+        Ok(Some((w, h, rgba8)))
     }
 
     pub async fn readback_texture_rgba8(
@@ -835,15 +874,35 @@ impl AerogpuD3d9Executor {
                 self.encoder = Some(encoder);
                 result
             }
-            AeroGpuCmd::Present { .. } | AeroGpuCmd::PresentEx { .. } | AeroGpuCmd::Flush => {
+            AeroGpuCmd::Present { scanout_id, .. } => {
+                self.record_present(scanout_id);
                 self.flush()
             }
+            AeroGpuCmd::PresentEx { scanout_id, .. } => {
+                self.record_present(scanout_id);
+                self.flush()
+            }
+            AeroGpuCmd::Flush => self.flush(),
             AeroGpuCmd::ExportSharedSurface { .. } | AeroGpuCmd::ImportSharedSurface { .. } => {
                 // Sharing handled at higher layers for now.
                 Ok(())
             }
             AeroGpuCmd::ResourceDirtyRange { .. } => Ok(()),
         }
+    }
+
+    fn record_present(&mut self, scanout_id: u32) {
+        let rt = &self.state.render_targets;
+        if rt.color_count == 0 {
+            self.presented_scanouts.remove(&scanout_id);
+            return;
+        }
+        let color0 = rt.colors[0];
+        if color0 == 0 {
+            self.presented_scanouts.remove(&scanout_id);
+            return;
+        }
+        self.presented_scanouts.insert(scanout_id, color0);
     }
 
     fn ensure_encoder(&mut self) {

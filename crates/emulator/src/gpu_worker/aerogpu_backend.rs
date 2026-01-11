@@ -131,15 +131,15 @@ impl AeroGpuCommandBackend for ImmediateAeroGpuBackend {
 
 #[cfg(feature = "aerogpu-native")]
 pub struct NativeAeroGpuBackend {
-    exec: aero_gpu::AeroGpuAcmdExecutor,
+    exec: aero_gpu::AerogpuD3d9Executor,
     completed: VecDeque<AeroGpuBackendCompletion>,
 }
 
 #[cfg(feature = "aerogpu-native")]
 impl NativeAeroGpuBackend {
     pub fn new_headless() -> Result<Self, String> {
-        let exec = pollster::block_on(aero_gpu::AeroGpuAcmdExecutor::new_headless())
-            .map_err(|e| e.to_string())?;
+        let exec = pollster::block_on(aero_gpu::AerogpuD3d9Executor::new_headless())
+            .map_err(|e| format!("failed to initialize native AerogpuD3d9Executor backend: {e}"))?;
         Ok(Self {
             exec,
             completed: VecDeque::new(),
@@ -159,9 +159,10 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
         _mem: &mut dyn MemoryBus,
         submission: AeroGpuBackendSubmission,
     ) -> Result<(), String> {
-        let result = self
-            .exec
-            .execute_submission(&submission.cmd_stream, submission.alloc_table.as_deref());
+        let result = self.exec.execute_cmd_stream(&submission.cmd_stream);
+
+        // Block until GPU work is complete so guest fences match execution progress.
+        self.exec.poll();
 
         // Never drop completions on error; fences must always make progress.
         self.completed.push_back(AeroGpuBackendCompletion {
