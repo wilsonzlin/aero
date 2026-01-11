@@ -4,8 +4,8 @@ use aero_gpu_wasm::{
     clear_guest_memory, destroy_gpu, init_aerogpu_d3d9, read_guest_memory, set_guest_memory,
     submit_aerogpu_d3d9,
 };
-use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
-use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_TABLE_MAGIC};
+use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_VERSION_U32, AerogpuFormat};
+use aero_protocol::aerogpu::aerogpu_ring::{AEROGPU_ALLOC_TABLE_MAGIC, AerogpuAllocEntry};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use js_sys::Uint8Array;
 use wasm_bindgen::JsValue;
@@ -101,9 +101,8 @@ async fn copy_buffer_writeback_updates_guest_memory() {
 
     let mut expected = guest.clone();
     let dst_copy_base = dst_base + DST_COPY_OFF as usize;
-    expected[dst_copy_base..dst_copy_base + COPY_SIZE as usize].copy_from_slice(
-        &guest[src_copy_base..src_copy_base + COPY_SIZE as usize],
-    );
+    expected[dst_copy_base..dst_copy_base + COPY_SIZE as usize]
+        .copy_from_slice(&guest[src_copy_base..src_copy_base + COPY_SIZE as usize]);
 
     let guest_u8 = Uint8Array::from(guest.as_slice());
     set_guest_memory(guest_u8);
@@ -115,12 +114,20 @@ async fn copy_buffer_writeback_updates_guest_memory() {
     writer.copy_buffer_writeback_dst(DST, SRC, DST_COPY_OFF, SRC_COPY_OFF, COPY_SIZE);
     let cmd_bytes = writer.finish();
 
-    submit_aerogpu_d3d9(Uint8Array::from(cmd_bytes.as_slice()), 1, 0, Some(alloc_table))
-        .await
-        .expect("submit_aerogpu_d3d9");
+    submit_aerogpu_d3d9(
+        Uint8Array::from(cmd_bytes.as_slice()),
+        1,
+        0,
+        Some(alloc_table),
+    )
+    .await
+    .expect("submit_aerogpu_d3d9");
 
     let after = read_guest_all();
-    assert_eq!(after, expected, "guest memory should reflect COPY_BUFFER writeback");
+    assert_eq!(
+        after, expected,
+        "guest memory should reflect COPY_BUFFER writeback"
+    );
 
     destroy_gpu().expect("destroy_gpu (post)");
     clear_guest_memory();
@@ -171,9 +178,7 @@ async fn copy_texture2d_writeback_updates_guest_memory() {
                 (x ^ y) as u8,
                 0xFFu8, // alpha
             ];
-            let off = src_base
-                + (y as usize * ROW_PITCH as usize)
-                + (x as usize * BPP as usize);
+            let off = src_base + (y as usize * ROW_PITCH as usize) + (x as usize * BPP as usize);
             guest[off..off + 4].copy_from_slice(&px);
         }
     }
@@ -183,12 +188,8 @@ async fn copy_texture2d_writeback_updates_guest_memory() {
     for row in 0..COPY_H {
         let src_row = (SRC_Y + row) as usize;
         let dst_row = (DST_Y + row) as usize;
-        let src_off = src_base
-            + src_row * ROW_PITCH as usize
-            + (SRC_X * BPP) as usize;
-        let dst_off = dst_base
-            + dst_row * ROW_PITCH as usize
-            + (DST_X * BPP) as usize;
+        let src_off = src_base + src_row * ROW_PITCH as usize + (SRC_X * BPP) as usize;
+        let dst_off = dst_base + dst_row * ROW_PITCH as usize + (DST_X * BPP) as usize;
         expected[dst_off..dst_off + bytes_per_row as usize]
             .copy_from_slice(&guest[src_off..src_off + bytes_per_row as usize]);
     }
@@ -228,9 +229,14 @@ async fn copy_texture2d_writeback_updates_guest_memory() {
     );
     let cmd_bytes = writer.finish();
 
-    submit_aerogpu_d3d9(Uint8Array::from(cmd_bytes.as_slice()), 1, 0, Some(alloc_table))
-        .await
-        .expect("submit_aerogpu_d3d9");
+    submit_aerogpu_d3d9(
+        Uint8Array::from(cmd_bytes.as_slice()),
+        1,
+        0,
+        Some(alloc_table),
+    )
+    .await
+    .expect("submit_aerogpu_d3d9");
 
     let after = read_guest_all();
     assert_eq!(
@@ -241,4 +247,3 @@ async fn copy_texture2d_writeback_updates_guest_memory() {
     destroy_gpu().expect("destroy_gpu (post)");
     clear_guest_memory();
 }
-
