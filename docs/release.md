@@ -64,6 +64,9 @@ GitHub Actions produces these artifacts via:
 - `sha-<short>` (always)
 - `latest` **only on pushes to `main`** (default branch)
 
+For non-tag publishes (e.g. the `latest` image built from `main`), the gateway embeds
+`version: "sha-<short>"` in `GET /version` so the running container is self-describing.
+
 ---
 
 ## Web deployment (Netlify / Vercel / Cloudflare Pages)
