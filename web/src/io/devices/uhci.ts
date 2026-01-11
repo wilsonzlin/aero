@@ -46,7 +46,9 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
   readonly revisionId = 0x01;
   readonly irqLine = UHCI_IRQ_LINE;
 
-  readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "io", size: UHCI_IO_BAR_SIZE }, null, null, null, null, null];
+  // Intel PIIX3/4 place the UHCI I/O register window in BAR4 (offset 0x20).
+  // Keep that layout so Windows' in-box UHCI driver can find the registers.
+  readonly bars: ReadonlyArray<PciBar | null> = [null, null, null, null, { kind: "io", size: UHCI_IO_BAR_SIZE }, null];
 
   readonly #bridge: UhciControllerBridgeLike;
   readonly #irqSink: IrqSink;
@@ -63,7 +65,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
 
   ioRead(barIndex: number, offset: number, size: number): number {
     if (this.#destroyed) return defaultReadValue(size);
-    if (barIndex !== 0) return defaultReadValue(size);
+    if (barIndex !== 4) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
     try {
       const value = this.#bridge.io_read(offset >>> 0, size >>> 0) >>> 0;
@@ -75,7 +77,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
 
   ioWrite(barIndex: number, offset: number, size: number, value: number): void {
     if (this.#destroyed) return;
-    if (barIndex !== 0) return;
+    if (barIndex !== 4) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
     try {
       this.#bridge.io_write(offset >>> 0, size >>> 0, maskToSize(value >>> 0, size));
