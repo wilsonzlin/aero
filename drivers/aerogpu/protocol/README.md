@@ -37,7 +37,9 @@ This directory currently contains two PCI/MMIO ABIs:
 
 - **Versioned ABI (current)** – `aerogpu_pci.h` + `aerogpu_ring.h` + `aerogpu_cmd.h`, PCI `A3A0:0001` (`VEN_A3A0&DEV_0001`).
   - Uses the major/minor compatibility model below (major breaking, minor forwards compatible).
+  - Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`.
 - **Legacy bring-up ABI** – `aerogpu_protocol.h`, PCI `1AED:0001` (`VEN_1AED&DEV_0001`).
+  - Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`.
 
 Both IDs are project-specific (not PCI-SIG assigned). Both identify as a display controller (`0x03`), VGA-compatible subclass (`0x00`).
 

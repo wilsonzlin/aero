@@ -15,7 +15,7 @@ The command stream does **not** reference resources by “allocation-list index�
 
 - **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream.
 - **Backing allocation IDs** (`alloc_id`): a stable 32-bit ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`.
-  - `alloc_id` is **UMD-owned** and is stored in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv`).
+  - `alloc_id` is **UMD-owned** and is stored in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   - The KMD validates it and uses it to build the per-submit `aerogpu_alloc_table` mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator.
   - The current bring-up UMD uses host-allocated resources and typically sets `backing_alloc_id = 0`.
 
