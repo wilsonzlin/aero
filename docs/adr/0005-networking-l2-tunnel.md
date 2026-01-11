@@ -75,13 +75,14 @@ If/when a WebRTC transport is used for L2 tunneling:
 
 - The DataChannel **MUST be reliable** (no frame loss).
    - (I.e. do **not** use `maxRetransmits`/`maxPacketLifeTime` / “partial reliability”.)
-- The DataChannel **MUST be ordered** (`ordered: true`).
+- The DataChannel **MAY be unordered** (`ordered: false` is allowed).
 
 Rationale: an L2 tunnel carries TCP/UDP/IP/ARP/DHCP frames; dropping frames breaks correctness (and
 can create hard-to-debug “random” guest networking failures). Additionally, the current proxy-side
 stack (`crates/aero-net-stack`) terminates guest TCP and intentionally does not implement full TCP
 segment reassembly; unordered delivery at the tunnel layer can cause spurious retransmits and
-throughput collapse.
+throughput collapse. For best performance with the current stack, prefer ordered delivery, but do
+not rely on ordering for correctness.
 
 ### Security posture (auth, origin, egress policy)
 
@@ -122,9 +123,9 @@ Minimum requirements for production deployments:
 ## Consequences
 
 - **Higher bandwidth overhead:** L2 tunneling carries Ethernet/IP/TCP “chatter” (ACKs, retransmits, ARP/DHCP/broadcast) over the WAN. Expect higher baseline bandwidth than socket-level relaying.
-- **WebRTC must be reliable + ordered for L2:** if WebRTC is introduced, it cannot use
-  lossy/partially reliable settings, and with the current proxy-side stack it must not allow
-  out-of-order delivery.
+- **WebRTC must be reliable for L2 (unordered ok):** if WebRTC is introduced, it cannot use
+  lossy/partially reliable settings. Unordered delivery is allowed, but may reduce throughput with
+  the current proxy-side stack due to limited TCP segment reassembly.
 - **Operational complexity:** running a dedicated `aero-l2-proxy` adds:
   - another service to deploy/monitor/scale
   - stateful per-VM session management (timeouts, cleanup, quotas)
