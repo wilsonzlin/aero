@@ -358,18 +358,43 @@ int main(void) {
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, size_bytes);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, entry_count);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, entry_stride_bytes);
+  PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, reserved0);
 
+  PRINT_OFF("aerogpu_alloc_entry", struct aerogpu_alloc_entry, alloc_id);
+  PRINT_OFF("aerogpu_alloc_entry", struct aerogpu_alloc_entry, flags);
   PRINT_OFF("aerogpu_alloc_entry", struct aerogpu_alloc_entry, gpa);
   PRINT_OFF("aerogpu_alloc_entry", struct aerogpu_alloc_entry, size_bytes);
+  PRINT_OFF("aerogpu_alloc_entry", struct aerogpu_alloc_entry, reserved0);
 
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, desc_size_bytes);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, flags);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, context_id);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, engine_id);
   PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, cmd_gpa);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, cmd_size_bytes);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, cmd_reserved0);
   PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, alloc_table_gpa);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, alloc_table_size_bytes);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, alloc_table_reserved0);
   PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, signal_fence);
+  PRINT_OFF("aerogpu_submit_desc", struct aerogpu_submit_desc, reserved0);
 
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, magic);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, abi_version);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, size_bytes);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, entry_count);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, entry_stride_bytes);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, flags);
   PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, head);
   PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, tail);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, reserved0);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, reserved1);
+  PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, reserved2);
 
+  PRINT_OFF("aerogpu_fence_page", struct aerogpu_fence_page, magic);
+  PRINT_OFF("aerogpu_fence_page", struct aerogpu_fence_page, abi_version);
   PRINT_OFF("aerogpu_fence_page", struct aerogpu_fence_page, completed_fence);
+  PRINT_OFF("aerogpu_fence_page", struct aerogpu_fence_page, reserved0);
 
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, size_bytes);
   PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, struct_version);

@@ -470,7 +470,91 @@ fn rust_layout_matches_c_headers() {
     assert_size!(AerogpuFencePage, "aerogpu_fence_page");
     assert_size!(AerogpuUmdPrivateV1, "aerogpu_umd_private_v1");
 
+    assert_off!(
+        AerogpuAllocTableHeader,
+        magic,
+        "aerogpu_alloc_table_header",
+        "magic"
+    );
+    assert_off!(
+        AerogpuAllocTableHeader,
+        abi_version,
+        "aerogpu_alloc_table_header",
+        "abi_version"
+    );
+    assert_off!(
+        AerogpuAllocTableHeader,
+        size_bytes,
+        "aerogpu_alloc_table_header",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuAllocTableHeader,
+        entry_count,
+        "aerogpu_alloc_table_header",
+        "entry_count"
+    );
+    assert_off!(
+        AerogpuAllocTableHeader,
+        entry_stride_bytes,
+        "aerogpu_alloc_table_header",
+        "entry_stride_bytes"
+    );
+    assert_off!(
+        AerogpuAllocTableHeader,
+        reserved0,
+        "aerogpu_alloc_table_header",
+        "reserved0"
+    );
+
+    assert_off!(AerogpuAllocEntry, alloc_id, "aerogpu_alloc_entry", "alloc_id");
+    assert_off!(AerogpuAllocEntry, flags, "aerogpu_alloc_entry", "flags");
+    assert_off!(AerogpuAllocEntry, gpa, "aerogpu_alloc_entry", "gpa");
+    assert_off!(
+        AerogpuAllocEntry,
+        size_bytes,
+        "aerogpu_alloc_entry",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuAllocEntry,
+        reserved0,
+        "aerogpu_alloc_entry",
+        "reserved0"
+    );
+
+    assert_off!(
+        AerogpuSubmitDesc,
+        desc_size_bytes,
+        "aerogpu_submit_desc",
+        "desc_size_bytes"
+    );
+    assert_off!(AerogpuSubmitDesc, flags, "aerogpu_submit_desc", "flags");
+    assert_off!(
+        AerogpuSubmitDesc,
+        context_id,
+        "aerogpu_submit_desc",
+        "context_id"
+    );
+    assert_off!(
+        AerogpuSubmitDesc,
+        engine_id,
+        "aerogpu_submit_desc",
+        "engine_id"
+    );
     assert_off!(AerogpuSubmitDesc, cmd_gpa, "aerogpu_submit_desc", "cmd_gpa");
+    assert_off!(
+        AerogpuSubmitDesc,
+        cmd_size_bytes,
+        "aerogpu_submit_desc",
+        "cmd_size_bytes"
+    );
+    assert_off!(
+        AerogpuSubmitDesc,
+        cmd_reserved0,
+        "aerogpu_submit_desc",
+        "cmd_reserved0"
+    );
     assert_off!(
         AerogpuSubmitDesc,
         alloc_table_gpa,
@@ -479,17 +563,94 @@ fn rust_layout_matches_c_headers() {
     );
     assert_off!(
         AerogpuSubmitDesc,
+        alloc_table_size_bytes,
+        "aerogpu_submit_desc",
+        "alloc_table_size_bytes"
+    );
+    assert_off!(
+        AerogpuSubmitDesc,
+        alloc_table_reserved0,
+        "aerogpu_submit_desc",
+        "alloc_table_reserved0"
+    );
+    assert_off!(
+        AerogpuSubmitDesc,
         signal_fence,
         "aerogpu_submit_desc",
         "signal_fence"
     );
+    assert_off!(
+        AerogpuSubmitDesc,
+        reserved0,
+        "aerogpu_submit_desc",
+        "reserved0"
+    );
+
+    assert_off!(AerogpuRingHeader, magic, "aerogpu_ring_header", "magic");
+    assert_off!(
+        AerogpuRingHeader,
+        abi_version,
+        "aerogpu_ring_header",
+        "abi_version"
+    );
+    assert_off!(
+        AerogpuRingHeader,
+        size_bytes,
+        "aerogpu_ring_header",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuRingHeader,
+        entry_count,
+        "aerogpu_ring_header",
+        "entry_count"
+    );
+    assert_off!(
+        AerogpuRingHeader,
+        entry_stride_bytes,
+        "aerogpu_ring_header",
+        "entry_stride_bytes"
+    );
+    assert_off!(AerogpuRingHeader, flags, "aerogpu_ring_header", "flags");
     assert_off!(AerogpuRingHeader, head, "aerogpu_ring_header", "head");
     assert_off!(AerogpuRingHeader, tail, "aerogpu_ring_header", "tail");
+    assert_off!(
+        AerogpuRingHeader,
+        reserved0,
+        "aerogpu_ring_header",
+        "reserved0"
+    );
+    assert_off!(
+        AerogpuRingHeader,
+        reserved1,
+        "aerogpu_ring_header",
+        "reserved1"
+    );
+    assert_off!(
+        AerogpuRingHeader,
+        reserved2,
+        "aerogpu_ring_header",
+        "reserved2"
+    );
+
+    assert_off!(AerogpuFencePage, magic, "aerogpu_fence_page", "magic");
+    assert_off!(
+        AerogpuFencePage,
+        abi_version,
+        "aerogpu_fence_page",
+        "abi_version"
+    );
     assert_off!(
         AerogpuFencePage,
         completed_fence,
         "aerogpu_fence_page",
         "completed_fence"
+    );
+    assert_off!(
+        AerogpuFencePage,
+        reserved0,
+        "aerogpu_fence_page",
+        "reserved0"
     );
 
     // Variable-length packets (must remain stable for parsing).
