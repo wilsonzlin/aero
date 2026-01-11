@@ -280,7 +280,10 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
                     fence: submission.signal_fence,
                     error: Some(err.clone()),
                 });
-                return Err(err);
+                // Backends must never block fence progress on errors; surface the failure via the
+                // completion record (the executor will raise ERROR IRQ / malformed_submissions from
+                // that), but still accept the submission so it is not double-counted.
+                return Ok(());
             }
         };
 
@@ -299,7 +302,8 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
             error: result.as_ref().err().map(|e| e.to_string()),
         });
 
-        result.map_err(|e| e.to_string())
+        // Always accept the submission; execution failures are reported via `completion.error`.
+        Ok(())
     }
 
     fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
