@@ -131,6 +131,13 @@ let hdaDemoCapacityFrames = 0;
 let hdaDemoSampleRate = 0;
 let hdaDemoNextStatsMs = 0;
 
+function hdaDemoTargetFrames(capacityFrames: number, sampleRate: number): number {
+  // Default to ~200ms buffered, but scale up for larger ring buffers so the demo has
+  // more slack when the CPU worker is temporarily stalled (e.g. during GC) or when
+  // WASM startup runs long in CI/headless environments.
+  return Math.min(capacityFrames, Math.max(Math.floor(sampleRate / 5), Math.floor(capacityFrames / 4)));
+}
+
 function readDemoNumber(demo: unknown, key: string): number | undefined {
   if (!demo || typeof demo !== "object") return undefined;
   const record = demo as Record<string, unknown>;
@@ -156,7 +163,7 @@ function maybePostHdaDemoStats(): void {
 
   const capacity = hdaDemoCapacityFrames;
   const sampleRate = hdaDemoSampleRate;
-  const targetFrames = Math.min(capacity, Math.floor(sampleRate / 5));
+  const targetFrames = hdaDemoTargetFrames(capacity, sampleRate);
   const msg: AudioOutputHdaDemoStatsMessage = {
     type: "audioOutputHdaDemo.stats",
     bufferLevelFrames: ringBufferLevelFrames(hdaDemoHeader, capacity),
@@ -255,8 +262,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   hdaDemoCapacityFrames = capacityFrames;
   hdaDemoSampleRate = sampleRate;
 
-  // Keep ~200ms buffered.
-  const targetFrames = Math.min(capacityFrames, Math.floor(sampleRate / 5));
+  const targetFrames = hdaDemoTargetFrames(capacityFrames, sampleRate);
   // Prime up to the target fill level (without overrunning if the buffer is already full).
   const level = ringBufferLevelFrames(header, capacityFrames);
   const prime = Math.max(0, targetFrames - level);
@@ -269,7 +275,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   hdaDemoTimer = ctx.setInterval(() => {
     if (!hdaDemoInstance || !hdaDemoHeader) return;
     const level = ringBufferLevelFrames(hdaDemoHeader, hdaDemoCapacityFrames);
-    const target = Math.min(hdaDemoCapacityFrames, Math.floor(hdaDemoSampleRate / 5));
+    const target = hdaDemoTargetFrames(hdaDemoCapacityFrames, hdaDemoSampleRate);
     const need = Math.max(0, target - level);
     if (need > 0) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
