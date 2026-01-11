@@ -154,6 +154,15 @@ pub const VIRTIO_SND_PCM_FMT_S16: u8 = 0x05;
 pub const VIRTIO_SND_PCM_RATE_48000: u8 = 0x07;
 
 pub const VIRTIO_SND_D_OUTPUT: u8 = 0x00;
+pub const VIRTIO_SND_D_INPUT: u8 = 0x01;
+
+pub const VIRTIO_SND_PCM_FMT_MASK_S16: u64 = 1u64 << VIRTIO_SND_PCM_FMT_S16;
+pub const VIRTIO_SND_PCM_RATE_MASK_48000: u64 = 1u64 << VIRTIO_SND_PCM_RATE_48000;
+
+pub const VIRTIO_SND_QUEUE_CONTROL: u16 = 0;
+pub const VIRTIO_SND_QUEUE_EVENT: u16 = 1;
+pub const VIRTIO_SND_QUEUE_TX: u16 = 2;
+pub const VIRTIO_SND_QUEUE_RX: u16 = 3;
 
 /// virtio-snd PCM_INFO request (`struct virtio_snd_pcm_info_req`).
 #[repr(C)]
@@ -208,6 +217,9 @@ pub struct VirtioSndTxHdr {
   pub stream_id: u32,
   pub reserved: u32,
 }
+
+/// virtio-snd RX header (identical layout to [`VirtioSndTxHdr`]).
+pub type VirtioSndRxHdr = VirtioSndTxHdr;
 
 /// virtio-snd PCM status (`struct virtio_snd_pcm_status`).
 #[repr(C)]

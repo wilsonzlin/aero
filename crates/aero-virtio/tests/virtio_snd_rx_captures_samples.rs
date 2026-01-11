@@ -16,6 +16,7 @@ use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 struct TestCaptureSource {
     samples: Vec<f32>,
     pos: usize,
+    dropped: u64,
 }
 
 impl AudioCaptureSource for TestCaptureSource {
@@ -28,6 +29,12 @@ impl AudioCaptureSource for TestCaptureSource {
         dst[..take].copy_from_slice(&self.samples[self.pos..self.pos + take]);
         self.pos += take;
         take
+    }
+
+    fn take_dropped_samples(&mut self) -> u64 {
+        let dropped = self.dropped;
+        self.dropped = 0;
+        dropped
     }
 }
 
@@ -219,8 +226,9 @@ fn submit_rx_chain(
 #[test]
 fn virtio_snd_rx_captures_samples() {
     let capture = TestCaptureSource {
-        samples: vec![0.0, 0.5, -0.5, 2.0],
+        samples: vec![0.0, 0.5, -0.5, 2.0, 0.25],
         pos: 0,
+        dropped: 7,
     };
 
     let snd = VirtioSnd::new_with_capture(aero_audio::ring::AudioRingBuffer::new_stereo(8), capture);
@@ -380,18 +388,20 @@ fn virtio_snd_rx_captures_samples() {
     mem.write(rx_payload, &[0xffu8; 8]).unwrap();
     mem.write(rx_resp, &[0xffu8; 8]).unwrap();
 
+    let mut rx_avail_idx = 0u16;
     submit_rx_chain(
         &mut dev,
         &mut mem,
         &caps,
         rx_desc,
         rx_avail,
-        0,
+        rx_avail_idx,
         rx_hdr,
         rx_payload,
         8,
         rx_resp,
     );
+    rx_avail_idx += 1;
 
     let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
     assert_eq!(u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()), VIRTIO_SND_S_OK);
@@ -404,5 +414,41 @@ fn virtio_snd_rx_captures_samples() {
         *slot = i16::from_le_bytes(payload_bytes[off..off + 2].try_into().unwrap());
     }
     assert_eq!(got, [0, 16_384, -16_384, 32_767]);
-}
 
+    // Second RX request: request 4 samples again, but the capture source only has
+    // one sample remaining. The rest should be silence, and telemetry should
+    // count the underrun + dropped samples.
+    mem.write(rx_payload, &[0xffu8; 8]).unwrap();
+    mem.write(rx_resp, &[0xffu8; 8]).unwrap();
+    submit_rx_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        rx_desc,
+        rx_avail,
+        rx_avail_idx,
+        rx_hdr,
+        rx_payload,
+        8,
+        rx_resp,
+    );
+
+    let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
+    assert_eq!(u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()), VIRTIO_SND_S_OK);
+    assert_eq!(u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()), 0);
+
+    let payload_bytes = mem.get_slice(rx_payload, 8).unwrap();
+    for (i, slot) in got.iter_mut().enumerate() {
+        let off = i * 2;
+        *slot = i16::from_le_bytes(payload_bytes[off..off + 2].try_into().unwrap());
+    }
+    assert_eq!(got, [8_192, 0, 0, 0]);
+
+    let telem = dev
+        .device_mut::<VirtioSnd<aero_audio::ring::AudioRingBuffer, TestCaptureSource>>()
+        .unwrap()
+        .capture_telemetry();
+    assert_eq!(telem.dropped_samples, 7);
+    assert_eq!(telem.underrun_samples, 3);
+    assert_eq!(telem.underrun_responses, 1);
+}
