@@ -553,7 +553,18 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   if (Notify) {
     BOOLEAN ShouldKick;
 
-    ShouldKick = VirtqSplitKickPrepare(Adapter->RxVq.Vq);
+    /*
+     * Contract v1 uses "always notify" semantics (EVENT_IDX is not offered).
+     *
+     * Even if the device sets VIRTQ_USED_F_NO_NOTIFY, Aero drivers still notify
+     * after publishing new available entries to keep behavior deterministic and
+     * avoid relying on suppression bits that are out of scope for the contract.
+     */
+    ShouldKick = (Adapter->RxVq.Vq->num_added != 0);
+    if (Adapter->RxVq.Vq->event_idx) {
+      /* If EVENT_IDX is enabled, respect the standard virtio suppression logic. */
+      ShouldKick = VirtqSplitKickPrepare(Adapter->RxVq.Vq);
+    }
     if (ShouldKick) {
       KeMemoryBarrier();
       (VOID)VirtioPciModernTransportNotifyQueue(&Adapter->Transport, Adapter->RxVq.QueueIndex);
@@ -620,7 +631,18 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   if (Notified) {
     BOOLEAN ShouldKick;
 
-    ShouldKick = VirtqSplitKickPrepare(Adapter->TxVq.Vq);
+    /*
+     * Contract v1 uses "always notify" semantics (EVENT_IDX is not offered).
+     *
+     * Even if the device sets VIRTQ_USED_F_NO_NOTIFY, Aero drivers still notify
+     * after publishing new available entries to keep behavior deterministic and
+     * avoid relying on suppression bits that are out of scope for the contract.
+     */
+    ShouldKick = (Adapter->TxVq.Vq->num_added != 0);
+    if (Adapter->TxVq.Vq->event_idx) {
+      /* If EVENT_IDX is enabled, respect the standard virtio suppression logic. */
+      ShouldKick = VirtqSplitKickPrepare(Adapter->TxVq.Vq);
+    }
     if (ShouldKick) {
       KeMemoryBarrier();
       (VOID)VirtioPciModernTransportNotifyQueue(&Adapter->Transport, Adapter->TxVq.QueueIndex);
@@ -1377,7 +1399,18 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
       {
         BOOLEAN ShouldKick;
 
-        ShouldKick = VirtqSplitKickPrepare(Adapter->TxVq.Vq);
+        /*
+         * Contract v1 uses "always notify" semantics (EVENT_IDX is not offered).
+         *
+         * Even if the device sets VIRTQ_USED_F_NO_NOTIFY, Aero drivers still notify
+         * after publishing new available entries to keep behavior deterministic and
+         * avoid relying on suppression bits that are out of scope for the contract.
+         */
+        ShouldKick = (Adapter->TxVq.Vq->num_added != 0);
+        if (Adapter->TxVq.Vq->event_idx) {
+          /* If EVENT_IDX is enabled, respect the standard virtio suppression logic. */
+          ShouldKick = VirtqSplitKickPrepare(Adapter->TxVq.Vq);
+        }
         if (ShouldKick) {
           KeMemoryBarrier();
           (VOID)VirtioPciModernTransportNotifyQueue(&Adapter->Transport, Adapter->TxVq.QueueIndex);
