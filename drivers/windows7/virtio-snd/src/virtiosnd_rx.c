@@ -74,18 +74,8 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
     if (count == 0) {
         count = 16u;
     }
-    /*
-     * Clamp request contexts to the backing virtqueue size when available so we
-     * never preallocate more request state than the device can have in flight.
-     *
-     * Note: the RX engine is generic over the queue implementation, so this is a
-     * best-effort optimization based on the current split-virtqueue context.
-     */
-    if (Queue->Ctx != NULL) {
-        const VIRTIOSND_QUEUE_SPLIT* qs = (const VIRTIOSND_QUEUE_SPLIT*)Queue->Ctx;
-        if (qs->Vq != NULL && qs->QueueSize != 0 && count > (ULONG)qs->QueueSize) {
-            count = (ULONG)qs->QueueSize;
-        }
+    if (count > (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ) {
+        count = (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ;
     }
 
     RtlZeroMemory(Rx, sizeof(*Rx));
