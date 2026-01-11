@@ -2258,9 +2258,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   }
 
   if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D) {
-    const uint32_t mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1;
     const bool is_shared = (pDesc->MiscFlags & kD3D11ResourceMiscShared) != 0;
-    if (is_shared && mip_levels != 1) {
+    const uint32_t requested_mip_levels = pDesc->MipLevels;
+    const uint32_t mip_levels = requested_mip_levels ? requested_mip_levels : 1;
+    if (is_shared && requested_mip_levels != 1) {
       // MVP: shared surfaces are single-allocation only.
       return E_NOTIMPL;
     }

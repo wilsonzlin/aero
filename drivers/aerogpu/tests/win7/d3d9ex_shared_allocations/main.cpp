@@ -224,6 +224,32 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
                                aerogpu_test::HresultToString(hr).c_str());
   }
 
+  // ---------------------------------------------------------------------------
+  // Case C: shared texture with Levels=0 (full mip chain request).
+  //
+  // D3D9 CreateTexture semantics: Levels=0 means "create the full mip chain",
+  // which would typically imply multiple allocations. AeroGPU's MVP shared-surface
+  // support intentionally rejects this to keep shared resources single-allocation.
+  // ---------------------------------------------------------------------------
+  HANDLE shared_full_chain_handle = NULL;
+  ComPtr<IDirect3DTexture9> shared_full_chain_tex;
+  hr = dev->CreateTexture(128,
+                          128,
+                          0, // full chain
+                          0,
+                          D3DFMT_A8R8G8B8,
+                          D3DPOOL_DEFAULT,
+                          shared_full_chain_tex.put(),
+                          &shared_full_chain_handle);
+  if (SUCCEEDED(hr)) {
+    return aerogpu_test::Fail(kTestName,
+                              "CreateTexture(shared Levels=0) unexpectedly succeeded (handle=%p)",
+                              shared_full_chain_handle);
+  }
+  aerogpu_test::PrintfStdout("INFO: %s: CreateTexture(shared Levels=0) failed with %s (expected)",
+                             kTestName,
+                             aerogpu_test::HresultToString(hr).c_str());
+
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
 }

@@ -167,7 +167,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_shared_surface_ipc` creates a shared D3D9Ex render-target texture in one process, duplicates the shared handle into a second process (asserting the numeric handle value differs), and validates the consumer can read back the producer’s clear color
 * `d3d9ex_shared_allocations` exercises allocation behavior for shared resources:
   * creates a non-shared mip chain texture (Levels=4) as a baseline for `NumAllocations` logging
-  * creates a shared render-target surface and attempts a shared mipmapped texture (Levels=4)
+  * creates a shared render-target surface and attempts shared textures that would imply multiple mips (Levels=4 and Levels=0/full chain), which may be rejected by the MVP single-allocation policy
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback

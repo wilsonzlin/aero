@@ -1490,8 +1490,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
   const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
   const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
-  const uint32_t mip_levels = std::max(1u, pCreateResource->mip_levels);
-  if (wants_shared && mip_levels != 1) {
+  const uint32_t requested_mip_levels = pCreateResource->mip_levels;
+  const uint32_t mip_levels = std::max(1u, requested_mip_levels);
+  if (wants_shared && requested_mip_levels != 1) {
     // MVP: shared surfaces must be single-allocation (no mip chains/arrays).
     return kD3DErrInvalidCall;
   }
