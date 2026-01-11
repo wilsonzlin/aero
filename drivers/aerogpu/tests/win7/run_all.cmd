@@ -172,6 +172,11 @@ if not exist "%EXE%" (
   if exist "%ROOT%%NAME%\" (
     echo FAIL: %NAME% ^(missing binary: %EXE%^) 
     set /a FAILURES+=1
+    rem If JSON output is requested, attempt to write a fallback report via the timeout runner.
+    rem (It will fail quickly because the child binary is missing.)
+    if exist "%RUNNER%" (
+      "%RUNNER%" "!TIMEOUT_MS!" "%EXE%" %* >NUL
+    )
   ) else (
     echo INFO: skipping %NAME% ^(not present in this checkout^)
   )
