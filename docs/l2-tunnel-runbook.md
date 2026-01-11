@@ -236,7 +236,8 @@ Single-origin flow:
 #### b) Cross-origin / non-browser clients: API key or JWT
 
 - API key: `AERO_L2_AUTH_MODE=api_key` + `AERO_L2_API_KEY=...`
-  - Legacy alias: `AERO_L2_TOKEN=...` (used when `AERO_L2_AUTH_MODE` is unset).
+  - Legacy alias: `AERO_L2_TOKEN=...` (used when `AERO_L2_AUTH_MODE` is unset; also accepted as a
+    fallback value for `AERO_L2_API_KEY`).
 - JWT (HS256): `AERO_L2_AUTH_MODE=jwt` + `AERO_L2_JWT_SECRET=...`
 - Optional: `AERO_L2_AUTH_MODE=cookie_or_jwt` when you want to accept either a cookie session or a
   JWT (useful when mixing same-origin browser clients with WebRTC relay L2 bridging).

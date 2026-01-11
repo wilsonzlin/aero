@@ -183,7 +183,8 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
   - query params: `?token=...` / `?apiKey=...`, or
   - `Sec-WebSocket-Protocol: aero-l2-token.<credential>` (requires the credential be valid for the
     WebSocket subprotocol token grammar; prefer query mode for JWTs).
-- `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset).
+- `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset and also
+  accepted as a fallback value for `AERO_L2_API_KEY` in `api_key` mode).
 
 When using the gateway session bootstrap, prefer `endpoints.l2` from `POST /session` instead of
 hardcoding `/l2`.
