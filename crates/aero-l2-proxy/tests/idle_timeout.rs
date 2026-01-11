@@ -180,6 +180,21 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
 
     let _ = ws_sender.send(Message::Close(None)).await;
 
+    // Drain the close handshake so the server tears down the session before we fetch metrics.
+    // Otherwise, the idle timeout can fire while the test is awaiting the HTTP response.
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(msg) = ws_receiver.next().await {
+            match msg {
+                Ok(Message::Close(_)) => break,
+                Ok(_) => continue,
+                // Some servers may reset the TCP socket after sending a close frame (or without a
+                // close handshake). Treat this as "closed" for this test.
+                Err(_) => break,
+            }
+        }
+    })
+    .await;
+
     let body = reqwest::get(metrics_url(addr))
         .await
         .unwrap()
