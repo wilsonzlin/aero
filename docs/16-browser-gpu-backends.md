@@ -519,7 +519,7 @@ Example developer workflow:
 
 ```bash
 npm ci
-npx playwright install
+npx playwright install --with-deps chromium firefox webkit
 npx playwright test
 ```
 
