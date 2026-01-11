@@ -2890,8 +2890,9 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const refreshUi = (): void => {
     const workerReady = !!attachedIoWorker;
     const selected = !!selectedInfo;
-    runDeviceButton.disabled = !workerReady || !selected;
-    runConfigButton.disabled = !workerReady || !selected;
+    const controlsDisabled = !workerReady || !selected || pending;
+    runDeviceButton.disabled = controlsDisabled;
+    runConfigButton.disabled = controlsDisabled;
     configTotalLenHint = null;
     runConfigFullButton.hidden = true;
 
@@ -2947,7 +2948,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
           if (truncated) {
             configTotalLenHint = totalLen;
             runConfigFullButton.hidden = false;
-            runConfigFullButton.disabled = !workerReady || !selected;
+            runConfigFullButton.disabled = controlsDisabled;
             runConfigFullButton.textContent = `Run GET_DESCRIPTOR(Configuration full, len=${totalLen})`;
           }
           resultLine.textContent = `Result: success (config totalLen=${totalLen} interfaces=${numInterfaces}${truncated ? ` truncated=${bytes.byteLength}` : ""})`;
@@ -2995,7 +2996,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         if (!selectedInfo || selectedInfo.vendorId !== next.vendorId || selectedInfo.productId !== next.productId) {
           lastResult = null;
           lastRequest = "deviceDescriptor";
-          pending = !!attachedIoWorker;
+          pending = false;
         }
         selectedInfo = next;
         selectedError = null;
@@ -3027,8 +3028,8 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     }
     attachedIoWorker = ioWorker;
     lastResult = null;
-    pending = !!attachedIoWorker && !!selectedInfo;
-    if (pending) lastRequest = "deviceDescriptor";
+    pending = false;
+    if (attachedIoWorker && selectedInfo) lastRequest = "deviceDescriptor";
     if (attachedIoWorker) {
       attachedIoWorker.addEventListener("message", onMessage);
     } else {
