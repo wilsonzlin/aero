@@ -98,6 +98,7 @@ fn parses_and_translates_sm4_ps_passthrough_fixture() {
     assert!(wgsl.contains("@fragment"));
     assert!(wgsl.contains("return input.v1"));
 }
+
 #[test]
 fn parses_and_translates_sm4_vs_matrix_fixture() {
     let bytes = load_fixture("vs_matrix.dxbc");
@@ -181,4 +182,42 @@ fn parses_and_translates_sm4_ps_sample_fixture() {
         .bindings
         .iter()
         .any(|b| matches!(b.kind, BindingKind::Sampler { slot: 0 })));
+}
+
+#[test]
+fn parses_and_translates_sm4_ps_ld_fixture() {
+    let bytes = load_fixture("ps_ld.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_SHDR).is_some(), "missing SHDR chunk");
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
+    assert_eq!(program.stage, ShaderStage::Pixel);
+
+    let module = program.decode().expect("SM4 decode failed");
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Ld { .. })),
+        "expected ld instruction"
+    );
+
+    let translated = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
+        .expect("signature-driven translation failed");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated.wgsl.contains("textureLoad(t0"));
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 })));
+    assert!(!translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Sampler { .. })));
 }

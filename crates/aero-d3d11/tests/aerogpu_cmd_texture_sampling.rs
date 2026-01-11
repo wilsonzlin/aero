@@ -214,68 +214,6 @@ fn build_ps_sample_t0_s0_dxbc(u: f32, v: f32) -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
-fn build_ps_ld_t0_dxbc() -> Vec<u8> {
-    // Minimal SM4-ish PS token stream:
-    //   ld o0, l(0, 0, 0, 0), t0
-    //   ret
-    //
-    // We include a dummy COLOR0 input to satisfy WebGPU's stage-interface validation: our
-    // VS fixture writes `@location(1)` (COLOR0) and WebGPU requires that the fragment stage
-    // declares a matching input, even if unused.
-    let isgn = build_signature_chunk(&[
-        SigParam {
-            semantic_name: "SV_Position",
-            semantic_index: 0,
-            register: 0,
-            mask: 0x0f,
-        },
-        SigParam {
-            semantic_name: "COLOR",
-            semantic_index: 0,
-            register: 1,
-            mask: 0x0f,
-        },
-    ]);
-    let osgn = build_signature_chunk(&[SigParam {
-        semantic_name: "SV_Target",
-        semantic_index: 0,
-        register: 0,
-        mask: 0x0f,
-    }]);
-
-    let version_token = 0x40u32; // ps_4_0
-    let ld_opcode_token = 0x4cu32 | (10u32 << 11);
-    let ret_token = 0x3eu32 | (1u32 << 11);
-
-    let dst_o0 = 0x0010_f022u32;
-    let imm_vec4 = 0x0000_f042u32;
-    let t0 = 0x0010_0072u32;
-
-    let mut tokens = vec![
-        version_token,
-        0, // length patched below
-        ld_opcode_token,
-        dst_o0,
-        0, // o0 index
-        imm_vec4,
-        0,
-        0,
-        0,
-        0,
-        t0,
-        0, // t0 index
-        ret_token,
-    ];
-    tokens[1] = tokens.len() as u32;
-
-    let mut shdr = Vec::with_capacity(tokens.len() * 4);
-    for t in tokens {
-        shdr.extend_from_slice(&t.to_le_bytes());
-    }
-
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
-}
-
 fn build_ps_constant_color_dxbc(color: [f32; 4]) -> Vec<u8> {
     // Minimal SM4-ish PS token stream:
     //   mov o0, l(r, g, b, a)
@@ -939,7 +877,7 @@ fn aerogpu_cmd_renders_with_texture_load_ps() {
         }];
 
         let dxbc_vs = load_fixture("vs_passthrough.dxbc");
-        let dxbc_ps = build_ps_ld_t0_dxbc();
+        let dxbc_ps = load_fixture("ps_ld.dxbc");
         let ilay = load_fixture("ilay_pos3_color.bin");
 
         // 2x2 uniform green texture. `ld` should not require a sampler binding.
