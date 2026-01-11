@@ -44,18 +44,6 @@ for (const filename of workflowFiles) {
   const contents = fs.readFileSync(filePath, "utf8");
   const lines = contents.split(/\r?\n/);
 
-  // Reject any "node-version:" usage. We want workflows to load the canonical Node
-  // version from `.nvmrc` via `node-version-file`.
-  for (let i = 0; i < lines.length; i += 1) {
-    if (/^\s*node-version\s*:/.test(lines[i])) {
-      errors.push({
-        file: filename,
-        line: i + 1,
-        message: "Found 'node-version:'. Use 'node-version-file: .nvmrc' instead.",
-      });
-    }
-  }
-
   for (let i = 0; i < lines.length; i += 1) {
     if (!/^\s*-\s*uses:\s*actions\/setup-node@v4\b/.test(lines[i])) continue;
 
@@ -65,6 +53,15 @@ for (const filename of workflowFiles) {
       // New step at the same indentation -> end of current step.
       if (new RegExp(`^\\s{${indent}}-\\s`).test(lines[j])) break;
       stepLines.push(lines[j]);
+    }
+
+    const hasNodeVersion = stepLines.some((line) => /^\s*node-version\s*:/.test(line));
+    if (hasNodeVersion) {
+      errors.push({
+        file: filename,
+        line: i + 1,
+        message: "actions/setup-node@v4 uses 'node-version:'. Use 'node-version-file: .nvmrc' instead.",
+      });
     }
 
     const nodeVersionFileLine = stepLines.find((line) => /^\s*node-version-file\s*:/.test(line));
@@ -93,10 +90,12 @@ if (errors.length) {
   console.error("error: Node workflow pinning violations detected.");
   console.error("");
   console.error("This repo standardizes Node.js via the root `.nvmrc`.");
-  console.error("All GitHub workflows must use:");
-  console.error("  uses: actions/setup-node@v4");
+  console.error("Any workflow step that uses `actions/setup-node@v4` must use:");
   console.error("  with:");
   console.error("    node-version-file: .nvmrc");
+  console.error("");
+  console.error("For workflows that checkout into a subdirectory (actions/checkout `path:`),");
+  console.error("use the corresponding path (e.g. head/.nvmrc).");
   console.error("");
   console.error("Violations:");
   for (const err of errors) {
