@@ -28,6 +28,8 @@ const CACHE_FILE_NAME: &str = "cache.bin";
 pub const DEFAULT_SECTOR_SIZE: u64 = 512;
 pub const DEFAULT_CHUNK_SIZE: u64 = 1024 * 1024; // 1MiB
 
+const CACHE_META_VERSION: u32 = 2;
+
 #[derive(Debug, Error, Clone)]
 pub enum StreamingDiskError {
     #[error("remote server does not support HTTP Range requests")]
@@ -120,6 +122,7 @@ impl Default for StreamingDiskOptions {
 
 /// Persistent cache backend used for storing fetched chunks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize)]
 pub enum StreamingCacheBackend {
     /// Store chunks as individual files under `cache_dir/chunks/`.
     Directory,
@@ -404,16 +407,24 @@ struct CacheMeta {
     total_size: u64,
     validator: Option<String>,
     chunk_size: u64,
+    #[serde(default)]
+    cache_backend: Option<StreamingCacheBackend>,
     downloaded: RangeSet,
 }
 
 impl CacheMeta {
-    fn new(total_size: u64, validator: Option<String>, chunk_size: u64) -> Self {
+    fn new(
+        total_size: u64,
+        validator: Option<String>,
+        chunk_size: u64,
+        cache_backend: StreamingCacheBackend,
+    ) -> Self {
         Self {
-            version: 1,
+            version: CACHE_META_VERSION,
             total_size,
             validator,
             chunk_size,
+            cache_backend: Some(cache_backend),
             downloaded: RangeSet::new(),
         }
     }
@@ -433,7 +444,15 @@ impl JsonMetaStore {
             return Ok(None);
         }
         let raw = fs::read_to_string(&self.path)?;
-        Ok(Some(serde_json::from_str(&raw)?))
+        match serde_json::from_str(&raw) {
+            Ok(meta) => Ok(Some(meta)),
+            Err(_) => {
+                // Cache metadata is best-effort; treat corruption as an invalidation rather than a
+                // fatal error.
+                let _ = fs::remove_file(&self.path);
+                Ok(None)
+            }
+        }
     }
 
     fn save(&self, meta: &CacheMeta) -> Result<(), StreamingDiskError> {
@@ -479,6 +498,7 @@ struct StreamingDiskInner {
     request_headers: HeaderMap,
     total_size: u64,
     validator: Option<String>,
+    cache_backend: StreamingCacheBackend,
     cache: Arc<dyn ChunkStore>,
     meta_store: JsonMetaStore,
     meta_write_lock: AsyncMutex<()>,
@@ -539,6 +559,8 @@ impl StreamingDisk {
             }
         }
 
+        let backend_ok = cache_backend_looks_populated(&config.cache_dir, config.cache_backend, total_size);
+
         let cache: Arc<dyn ChunkStore> = match config.cache_backend {
             StreamingCacheBackend::Directory => Arc::new(DirectoryChunkStore::create(
                 config.cache_dir.join(CHUNKS_DIR_NAME),
@@ -556,10 +578,12 @@ impl StreamingDisk {
 
         let downloaded = match meta_store.load()? {
             Some(meta)
-                if meta.version == 1
+                if meta.version == CACHE_META_VERSION
                     && meta.total_size == total_size
                     && meta.chunk_size == config.options.chunk_size
-                    && meta.validator == validator =>
+                    && meta.validator == validator
+                    && meta.cache_backend == Some(config.cache_backend)
+                    && backend_ok =>
             {
                 meta.downloaded
             }
@@ -568,12 +592,22 @@ impl StreamingDisk {
                 // *not* part of the cache identity (it may embed ephemeral auth material).
                 cache.clear()?;
                 meta_store.remove()?;
-                let fresh = CacheMeta::new(total_size, validator.clone(), config.options.chunk_size);
+                let fresh = CacheMeta::new(
+                    total_size,
+                    validator.clone(),
+                    config.options.chunk_size,
+                    config.cache_backend,
+                );
                 meta_store.save(&fresh)?;
                 RangeSet::new()
             }
             None => {
-                let fresh = CacheMeta::new(total_size, validator.clone(), config.options.chunk_size);
+                let fresh = CacheMeta::new(
+                    total_size,
+                    validator.clone(),
+                    config.options.chunk_size,
+                    config.cache_backend,
+                );
                 meta_store.save(&fresh)?;
                 RangeSet::new()
             }
@@ -586,6 +620,7 @@ impl StreamingDisk {
                 request_headers,
                 total_size,
                 validator,
+                cache_backend: config.cache_backend,
                 cache,
                 meta_store,
                 meta_write_lock: AsyncMutex::new(()),
@@ -890,10 +925,11 @@ impl StreamingDisk {
         let meta = {
             let state = self.inner.state.lock().await;
             CacheMeta {
-                version: 1,
+                version: CACHE_META_VERSION,
                 total_size: self.inner.total_size,
                 validator: self.inner.validator.clone(),
                 chunk_size: self.inner.options.chunk_size,
+                cache_backend: Some(self.inner.cache_backend),
                 downloaded: state.downloaded.clone(),
             }
         };
@@ -1110,6 +1146,23 @@ fn build_header_map(headers: &[(String, String)]) -> Result<HeaderMap, Streaming
         out.insert(name, value);
     }
     Ok(out)
+}
+
+fn cache_backend_looks_populated(
+    cache_dir: &Path,
+    backend: StreamingCacheBackend,
+    total_size: u64,
+) -> bool {
+    match backend {
+        StreamingCacheBackend::Directory => cache_dir.join(CHUNKS_DIR_NAME).is_dir(),
+        StreamingCacheBackend::SparseFile => {
+            let path = cache_dir.join(CACHE_FILE_NAME);
+            match fs::metadata(path) {
+                Ok(meta) => meta.len() == total_size,
+                Err(_) => false,
+            }
+        }
+    }
 }
 
 fn parse_total_size_from_content_range(content_range: &str) -> Result<u64, StreamingDiskError> {
