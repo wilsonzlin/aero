@@ -11,6 +11,7 @@
 #include <cwchar>
 #include <initializer_list>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <thread>
 #include <type_traits>
