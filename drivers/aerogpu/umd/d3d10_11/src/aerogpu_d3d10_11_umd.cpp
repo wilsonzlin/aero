@@ -4214,14 +4214,12 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       struct MsaaQualityLevels {
         UINT Format;
         UINT SampleCount;
-        UINT Flags;
         UINT NumQualityLevels;
       };
       if (data_size < sizeof(MsaaQualityLevels)) {
         return E_INVALIDARG;
       }
       auto* ms = reinterpret_cast<MsaaQualityLevels*>(data);
-      ms->Flags = 0;
       ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
       return S_OK;
     }
@@ -7839,7 +7837,6 @@ struct AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT2 {
 struct AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS {
   uint32_t Format;
   uint32_t SampleCount;
-  uint32_t Flags;
   uint32_t NumQualityLevels;
 };
 
@@ -7931,7 +7928,6 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
       }
       auto* ms = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(data);
       // No MSAA support yet; report only the implicit 1x case.
-      ms->Flags = 0;
       ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
       return S_OK;
     }
