@@ -310,8 +310,8 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
                     error: Some(err.clone()),
                 });
                 // Backends must never block fence progress on errors; surface the failure via the
-                // completion record (the executor will raise ERROR IRQ / malformed_submissions from
-                // that), but still accept the submission so it is not double-counted.
+                // completion record (the executor will raise ERROR IRQ / gpu_exec_errors from that),
+                // but still accept the submission so it is not double-counted.
                 return Ok(());
             }
         };
