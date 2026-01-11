@@ -178,7 +178,8 @@ In the current TypeScript runtime this role is split between:
 ### Forwarding mechanism
 
 The WebHID handle is main-thread-only, so input/output report traffic is forwarded across the
-main-thread ↔ worker boundary using one of two mechanisms (selected at runtime):
+main-thread ↔ worker boundary using runtime-selected mechanisms. The implementation prefers
+SharedArrayBuffer ring buffers when available, and otherwise falls back to `postMessage`.
 
 #### Default / legacy path: `postMessage` + transferred `ArrayBuffer`s
 
@@ -190,16 +191,41 @@ Protocol schema + validators:
 
 - `web/src/hid/hid_proxy_protocol.ts` (`hid.inputReport`, `hid.sendReport`)
 
-#### Fast path: SharedArrayBuffer ring buffers (`hid.ringAttach`)
+#### Fast path: SharedArrayBuffer ring buffers
+
+When `globalThis.crossOriginIsolated === true` (COOP/COEP enabled) and `SharedArrayBuffer`/`Atomics`
+are available, the runtime uses SAB-backed rings to avoid per-report `postMessage` overhead on
+high-frequency devices.
+
+There are currently **two** ring types involved:
+
+##### Input reports (main thread → worker): IPC `RingBuffer` (`hid.ring.init`)
+
+For high-frequency WebHID `inputreport` events, the main thread initializes an IPC-style
+`RingBuffer` and sends it to the I/O worker via:
+
+`{ type: "hid.ring.init", sab: SharedArrayBuffer, offsetBytes }`
+
+Input reports are encoded as compact, versioned binary records (magic + version + header + bytes)
+and pushed into the ring with `tryPushWithWriter(...)`. This path is best-effort: when the ring is
+full, reports are dropped and a drop counter is incremented.
+
+Implementation pointers:
+
+- Ring buffer: `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
+- Record codec: `web/src/hid/hid_input_report_ring.ts` (magic `"HIDR"`, versioned header)
+- Message schema: `web/src/hid/hid_proxy_protocol.ts` (`hid.ring.init`)
+- Main thread producer: `web/src/hid/webhid_broker.ts` (`#maybeInitInputReportRing`, `inputreport` listener)
+- Worker drain loop: `web/src/workers/io_hid_input_ring.ts` (`drainIoHidInputRing`)
+
+##### Output/feature reports (worker → main thread): HID `HidReportRing` (`hid.ringAttach`)
 
 When `globalThis.crossOriginIsolated === true` (COOP/COEP enabled) and `SharedArrayBuffer`/`Atomics`
 are available, `WebHidBroker` allocates two SharedArrayBuffers and sends them to the worker via
 `{ type: "hid.ringAttach", inputRing, outputRing }`:
 
 - **`inputRing` (main thread → worker):**
-  - main thread writes WebHID `inputreport` events into the ring as `(deviceId, reportId, bytes)`.
-  - the I/O worker drains the ring once per tick and forwards records into the guest-side HID device
-    model (`push_input_report` in the WASM bridge).
+  - Legacy/compatibility SAB ring for input reports. Newer runtimes prefer `hid.ring.init` above.
 - **`outputRing` (worker → main thread):**
   - the I/O worker writes output/feature report requests into the ring as
     `(deviceId, reportType, reportId, bytes)`.
@@ -214,10 +240,8 @@ Implementation pointers:
 
 - Ring buffer: `web/src/usb/hid_report_ring.ts` (`HidReportRing`)
 - Message schema: `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`)
-- Main thread setup + drain:
-  - `web/src/hid/webhid_broker.ts` (`#attachRings`, `#drainOutputRing`, input-report forwarding)
-- Worker-side attach + drain:
-  - `web/src/workers/io.worker.ts` (`attachHidRings`, `drainHidInputRing`, `hidHostSink.sendReport`)
+- Main thread setup + drain: `web/src/hid/webhid_broker.ts` (`#attachRings`, `#drainOutputRing`)
+- Worker-side attach: `web/src/workers/io.worker.ts` (`attachHidRings`, `hidHostSink.sendReport`)
 
 Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern browsers. When the
 page is not `crossOriginIsolated`, the runtime automatically falls back to the `postMessage` path.
