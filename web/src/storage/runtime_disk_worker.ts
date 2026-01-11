@@ -7,11 +7,11 @@ import { IdbCowDisk } from "./idb_cow";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
-import { pickDefaultBackend, type DiskBackend, type DiskImageMetadata } from "./metadata";
+import { hasOpfsSyncAccessHandle, pickDefaultBackend, type DiskBackend, type DiskImageMetadata } from "./metadata";
 import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
 import { opfsDeleteDisk } from "./import_export";
-import { defaultRemoteRangeUrl } from "./remote_range_disk";
+import { RemoteRangeDisk, defaultRemoteRangeUrl } from "./remote_range_disk";
 import {
   deserializeRuntimeDiskSnapshot,
   serializeRuntimeDiskSnapshot,
@@ -426,6 +426,25 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
 
 async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise<DiskEntry> {
   const cacheBackend: DiskBackend = options?.cacheBackend ?? pickDefaultBackend();
+  const cacheLimitBytes = options?.cacheLimitBytes;
+  // `RemoteRangeDisk` uses OPFS sparse files (requires SyncAccessHandle) and does not
+  // implement cache eviction. Only select it when OPFS is explicitly requested and
+  // caching hasn't been disabled via `cacheLimitBytes: null`.
+  if (cacheBackend === "opfs" && cacheLimitBytes !== null && hasOpfsSyncAccessHandle()) {
+    const fetchFn =
+      options?.credentials && options.credentials !== "same-origin"
+        ? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, credentials: options.credentials })) // respect caller auth mode
+        : fetch;
+    const imageKey = options?.cacheImageId ? `${options.cacheImageId}:${options.cacheVersion ?? "1"}` : undefined;
+    const disk = await RemoteRangeDisk.open(url, {
+      imageKey,
+      chunkSize: options?.blockSize,
+      readAheadChunks: options?.prefetchSequentialBlocks,
+      fetchFn,
+    });
+    return { disk, readOnly: true, io: emptyIoTelemetry(), backendSnapshot: null };
+  }
+
   const disk = await RemoteStreamingDisk.open(url, { ...options, cacheBackend });
   return { disk, readOnly: true, io: emptyIoTelemetry(), backendSnapshot: null };
 }
