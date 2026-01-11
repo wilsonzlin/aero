@@ -150,10 +150,27 @@ impl WasmCodegen {
 
 ### Interpreter Optimization
 
-For cold code that doesn't warrant JIT compilation:
+The canonical interpreter is **Tier-0** (`aero_cpu_core::interp::tier0`), which is designed to be the
+baseline execution tier shared by:
+
+- the unit-test harness (`exec::Vcpu` + `exec::Tier0Interpreter`), and
+- future tiered/JIT execution (`exec::ExecDispatcher`).
+
+Tier-0’s hot loop is essentially repeated calls to `interp::tier0::exec::step(&mut CpuState, &mut impl CpuBus)`
+plus out-of-line handling for:
+
+- assists (`aero_cpu_core::assist`), and
+- interrupt/exception delivery (`aero_cpu_core::interrupts`).
+
+See [`docs/02-cpu-emulation.md`](./02-cpu-emulation.md) for the concrete execution-loop shape and the
+JIT ABI constraints around `CpuState`.
+
+> Note: A legacy “threaded interpreter” implementation exists behind `--features legacy-interp`
+> (`aero_cpu_core::cpu` + `aero_cpu_core::bus`). It is not the primary path and is mainly kept for
+> regression benchmarking.
 
 ```rust
-/// Threaded interpreter using computed goto pattern
+/// (Legacy, `legacy-interp`) Threaded interpreter using a dispatch table.
 pub struct ThreadedInterpreter {
     // Dispatch table indexed by opcode
     dispatch_table: [fn(&mut CpuState, &mut MemoryBus, u64) -> u64; 256],
