@@ -26,26 +26,6 @@
 // allocations referenced by a submission, and tracking read/write intent via the
 // WDDM WriteOperation flag.
 
-// If we are not building with the Win7 WDK headers, provide a tiny compat
-// surface for the types we use so the repo can build in non-WDK environments.
-#if !defined(AEROGPU_D3D9_USE_WDK_DDI)
-typedef uint32_t D3DKMT_HANDLE;
-
-typedef struct _D3DDDI_ALLOCATIONLIST {
-  D3DKMT_HANDLE hAllocation;
-  union {
-    struct {
-      UINT WriteOperation : 1;
-      UINT DoNotRetireInstance : 1;
-      UINT Offer : 1;
-      UINT Reserved : 29;
-    };
-    UINT Value;
-  };
-  UINT AllocationListSlotId;
-} D3DDDI_ALLOCATIONLIST;
-#endif
-
 namespace aerogpu {
 
 using WddmAllocationHandle = decltype(std::declval<D3DDDI_ALLOCATIONLIST>().hAllocation);

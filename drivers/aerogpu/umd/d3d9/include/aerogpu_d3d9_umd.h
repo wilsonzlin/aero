@@ -429,6 +429,171 @@ typedef struct _D3DDDI_LOCKEDBOX {
   uint32_t SlicePitch;
 } D3DDDI_LOCKEDBOX;
 
+// ---- Minimal Win7/WDDM 1.1 device callbacks ----------------------------------
+//
+// For WDDM submissions the D3D9 runtime passes a `D3DDDI_DEVICECALLBACKS` table
+// during CreateDevice. The UMD must call into this table to create a kernel-mode
+// device/context and to submit DMA buffers (Render/Present).
+//
+// We intentionally define a small ABI slice here so the UMD can be built without
+// WDK headers. The layouts are validated via:
+//   drivers/aerogpu/umd/d3d9/tools/wdk_abi_probe/
+//
+// Notes:
+// - Win7 kernel handles (`D3DKMT_HANDLE`) are always 32-bit.
+// - AeroGPU uses a "no patch list" strategy and submits with NumPatchLocations=0.
+// - The runtime may rotate the DMA buffer / allocation list pointers over time;
+//   render/present callbacks can return updated pointers for the next submission.
+
+typedef uint32_t D3DKMT_HANDLE;
+
+typedef struct _D3DDDI_ALLOCATIONLIST {
+  D3DKMT_HANDLE hAllocation;
+  union {
+    struct {
+      UINT WriteOperation : 1;
+      UINT DoNotRetireInstance : 1;
+      UINT Offer : 1;
+      UINT Reserved : 29;
+    };
+    UINT Value;
+  };
+  UINT AllocationListSlotId;
+} D3DDDI_ALLOCATIONLIST;
+
+// Patch list is unused by AeroGPU ("no patch list" strategy). Keep a placeholder
+// type so we can hold pointers/sizes provided by the runtime.
+typedef struct _D3DDDI_PATCHLOCATIONLIST {
+  UINT dummy;
+} D3DDDI_PATCHLOCATIONLIST;
+
+typedef struct _D3DDDIARG_CREATEDEVICE {
+  void* hAdapter;
+  D3DKMT_HANDLE hDevice; // out
+} D3DDDIARG_CREATEDEVICE;
+
+typedef struct _D3DDDIARG_DESTROYDEVICE {
+  D3DKMT_HANDLE hDevice;
+} D3DDDIARG_DESTROYDEVICE;
+
+typedef struct _D3DDDIARG_CREATECONTEXTFLAGS {
+  union {
+    struct {
+      UINT NullRendering : 1;
+      UINT Reserved : 31;
+    };
+    UINT Value;
+  };
+} D3DDDIARG_CREATECONTEXTFLAGS;
+
+typedef struct _D3DDDIARG_CREATECONTEXT {
+  D3DKMT_HANDLE hDevice;
+  UINT NodeOrdinal;
+  UINT EngineAffinity;
+  D3DDDIARG_CREATECONTEXTFLAGS Flags;
+  D3DKMT_HANDLE hContext;    // out
+  D3DKMT_HANDLE hSyncObject; // out
+  void* pCommandBuffer;      // out
+  UINT CommandBufferSize;    // out (bytes)
+  D3DDDI_ALLOCATIONLIST* pAllocationList; // out
+  UINT AllocationListSize;               // out (entries)
+  D3DDDI_PATCHLOCATIONLIST* pPatchLocationList; // out
+  UINT PatchLocationListSize;                   // out (entries)
+  void* pDmaBufferPrivateData;   // out (optional; sized by KMD caps)
+  UINT DmaBufferPrivateDataSize; // out (bytes)
+  void* pPrivateDriverData;      // in
+  UINT PrivateDriverDataSize;    // in
+} D3DDDIARG_CREATECONTEXT;
+
+typedef struct _D3DDDIARG_DESTROYCONTEXT {
+  D3DKMT_HANDLE hContext;
+} D3DDDIARG_DESTROYCONTEXT;
+
+typedef struct _D3DDDIARG_DESTROYSYNCHRONIZATIONOBJECT {
+  D3DKMT_HANDLE hSyncObject;
+} D3DDDIARG_DESTROYSYNCHRONIZATIONOBJECT;
+
+typedef struct _D3DDDICB_RENDER {
+  D3DKMT_HANDLE hContext;
+  void* pCommandBuffer;
+  UINT CommandLength;     // bytes used
+  UINT CommandBufferSize; // bytes capacity
+  D3DDDI_ALLOCATIONLIST* pAllocationList;
+  UINT AllocationListSize; // entries capacity
+  UINT NumAllocations;     // entries used
+  D3DDDI_PATCHLOCATIONLIST* pPatchLocationList;
+  UINT PatchLocationListSize; // entries capacity
+  UINT NumPatchLocations;     // entries used
+  void* pDmaBufferPrivateData;
+  UINT DmaBufferPrivateDataSize; // bytes
+  // Win7/WDDM 1.1 submission fences are 32-bit (ULONG).
+  UINT SubmissionFenceId; // out
+  void* pNewCommandBuffer; // out
+  UINT NewCommandBufferSize;
+  D3DDDI_ALLOCATIONLIST* pNewAllocationList; // out
+  UINT NewAllocationListSize;
+  D3DDDI_PATCHLOCATIONLIST* pNewPatchLocationList; // out
+  UINT NewPatchLocationListSize;
+} D3DDDICB_RENDER;
+
+typedef struct _D3DDDICB_PRESENT {
+  D3DKMT_HANDLE hContext;
+  void* pCommandBuffer;
+  UINT CommandLength;     // bytes used
+  UINT CommandBufferSize; // bytes capacity
+  D3DDDI_ALLOCATIONLIST* pAllocationList;
+  UINT AllocationListSize; // entries capacity
+  UINT NumAllocations;     // entries used
+  D3DDDI_PATCHLOCATIONLIST* pPatchLocationList;
+  UINT PatchLocationListSize; // entries capacity
+  UINT NumPatchLocations;     // entries used
+  void* pDmaBufferPrivateData;
+  UINT DmaBufferPrivateDataSize; // bytes
+  UINT SubmissionFenceId; // out
+  void* pNewCommandBuffer; // out
+  UINT NewCommandBufferSize;
+  D3DDDI_ALLOCATIONLIST* pNewAllocationList; // out
+  UINT NewAllocationListSize;
+  D3DDDI_PATCHLOCATIONLIST* pNewPatchLocationList; // out
+  UINT NewPatchLocationListSize;
+} D3DDDICB_PRESENT;
+
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_CREATEDEVICE)(D3DDDIARG_CREATEDEVICE* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_DESTROYDEVICE)(D3DDDIARG_DESTROYDEVICE* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_CREATECONTEXT)(D3DDDIARG_CREATECONTEXT* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_CREATECONTEXT2)(D3DDDIARG_CREATECONTEXT* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_DESTROYCONTEXT)(D3DDDIARG_DESTROYCONTEXT* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_DESTROYSYNCOBJECT)(D3DDDIARG_DESTROYSYNCHRONIZATIONOBJECT* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_RENDER)(D3DDDICB_RENDER* pData);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3DDDICB_PRESENT)(D3DDDICB_PRESENT* pData);
+
+typedef struct _D3DDDI_DEVICECALLBACKS {
+  // Device/context lifecycle.
+  PFND3DDDICB_CREATEDEVICE pfnCreateDeviceCb;
+  PFND3DDDICB_DESTROYDEVICE pfnDestroyDeviceCb;
+  PFND3DDDICB_CREATECONTEXT2 pfnCreateContextCb2;
+  PFND3DDDICB_CREATECONTEXT pfnCreateContextCb;
+  PFND3DDDICB_DESTROYCONTEXT pfnDestroyContextCb;
+  PFND3DDDICB_DESTROYSYNCOBJECT pfnDestroySynchronizationObjectCb;
+
+  // DMA buffer management. (Not currently used by the D3D9 UMD; we submit using
+  // the runtime-provided "current" DMA buffer pointers returned by CreateContext
+  // and/or rotated through in/out submit structs.)
+  void* pfnAllocateCb;
+  void* pfnDeallocateCb;
+  void* pfnGetCommandBufferCb;
+
+  // Submission callbacks.
+  PFND3DDDICB_RENDER pfnRenderCb;
+  PFND3DDDICB_PRESENT pfnPresentCb;
+
+  // Optional sync/lock/error helpers (not used by AeroGPU D3D9; reserved for ABI).
+  void* pfnWaitForSynchronizationObjectCb;
+  void* pfnLockCb;
+  void* pfnUnlockCb;
+  void* pfnSetErrorCb;
+} D3DDDI_DEVICECALLBACKS;
+
 // ---- Adapter open ABI ---------------------------------------------------------
 typedef struct _D3DDDIARG_OPENADAPTER {
   UINT Interface;
@@ -486,9 +651,7 @@ typedef struct _D3D9DDIARG_CREATEDEVICE {
   D3DDDI_HADAPTER hAdapter;
   D3DDDI_HDEVICE hDevice; // out
   uint32_t Flags;
-  // WDK builds provide a D3DDDI_DEVICECALLBACKS pointer here; portable builds
-  // keep it opaque.
-  const void* pCallbacks;
+  const D3DDDI_DEVICECALLBACKS* pCallbacks; // runtime callbacks (WDDM submission)
 } D3D9DDIARG_CREATEDEVICE;
 
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CLOSEADAPTER)(D3DDDI_HADAPTER hAdapter);

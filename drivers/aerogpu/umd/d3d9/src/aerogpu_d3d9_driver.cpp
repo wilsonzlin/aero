@@ -2050,7 +2050,7 @@ uint32_t allocate_umd_alloc_id(Adapter* adapter) {
 }
 
 namespace {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
 template <typename T, typename = void>
 struct has_pfnRenderCb : std::false_type {};
 template <typename T>
@@ -2547,7 +2547,7 @@ uint64_t submit(Device* dev, bool is_present) {
 
   bool submitted_to_kmd = false;
   uint64_t submission_fence = 0;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
   // WDDM submission path: hand the runtime-provided DMA/alloc list buffers back
   // to dxgkrnl via the device callbacks captured at CreateDevice time.
   //
@@ -2623,7 +2623,7 @@ uint64_t submit(Device* dev, bool is_present) {
   // return a "too-new" fence.
   uint64_t per_submission_fence = 0;
   bool updated = false;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
   if (submitted_to_kmd) {
     // Critical: capture the exact per-submission fence returned by the runtime
     // callback for *this* submission (SubmissionFenceId/NewFenceValue).
@@ -3115,7 +3115,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
     flush_locked(dev);
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
   dev->wddm_context.destroy(dev->wddm_callbacks);
   wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
   dev->wddm_device = 0;
@@ -8388,6 +8388,135 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   auto dev = std::make_unique<Device>(adapter);
   pCreateDevice->hDevice.pDrvPrivate = dev.get();
+
+#if defined(_WIN32)
+  if (pCreateDevice->pCallbacks) {
+    dev->wddm_callbacks = *pCreateDevice->pCallbacks;
+
+    HRESULT hr = wddm_create_device(dev->wddm_callbacks, adapter, &dev->wddm_device);
+    if (FAILED(hr)) {
+      aerogpu::logf("aerogpu-d3d9: CreateDeviceCb failed hr=0x%08x (falling back to stub submission)\n", static_cast<unsigned>(hr));
+      dev->wddm_callbacks = {};
+      dev->wddm_device = 0;
+    } else {
+      hr = wddm_create_context(dev->wddm_callbacks, dev->wddm_device, &dev->wddm_context);
+      if (FAILED(hr)) {
+        aerogpu::logf("aerogpu-d3d9: CreateContextCb failed hr=0x%08x (falling back to stub submission)\n", static_cast<unsigned>(hr));
+        wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+        dev->wddm_device = 0;
+        dev->wddm_callbacks = {};
+      } else {
+        // If the adapter wasn't opened through a path that initialized our KMD query
+        // helper (e.g. missing HDC at OpenAdapter time), opportunistically initialize
+        // it here. This enables fence polling when hSyncObject is absent/zero.
+        if (!adapter->kmd_query_available.load(std::memory_order_acquire)) {
+          bool kmd_ok = false;
+          if (adapter->luid.LowPart != 0 || adapter->luid.HighPart != 0) {
+            kmd_ok = adapter->kmd_query.InitFromLuid(adapter->luid);
+          }
+          if (!kmd_ok) {
+            HDC hdc = GetDC(nullptr);
+            if (hdc) {
+              kmd_ok = adapter->kmd_query.InitFromHdc(hdc);
+              ReleaseDC(nullptr, hdc);
+            }
+          }
+          adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+        }
+
+        // Validate the runtime-provided submission buffers. These must be present for
+        // DMA buffer construction.
+        const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
+            sizeof(aerogpu_cmd_stream_header) + align_up(sizeof(aerogpu_cmd_set_render_targets), 4));
+        if (!dev->wddm_context.pCommandBuffer ||
+            dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
+            !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
+            !dev->wddm_context.pDmaBufferPrivateData ||
+            dev->wddm_context.DmaBufferPrivateDataSize < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
+          aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
+                        "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u (need>=%u) sync=0x%08x\n",
+                        dev->wddm_context.pCommandBuffer,
+                        static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
+                        dev->wddm_context.pAllocationList,
+                        static_cast<unsigned>(dev->wddm_context.AllocationListSize),
+                        dev->wddm_context.pPatchLocationList,
+                        static_cast<unsigned>(dev->wddm_context.PatchLocationListSize),
+                        dev->wddm_context.pDmaBufferPrivateData,
+                        static_cast<unsigned>(dev->wddm_context.DmaBufferPrivateDataSize),
+                        static_cast<unsigned>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES),
+                        static_cast<unsigned>(dev->wddm_context.hSyncObject));
+
+          dev->wddm_context.destroy(dev->wddm_callbacks);
+          wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+          dev->wddm_device = 0;
+          dev->wddm_callbacks = {};
+        } else {
+          {
+            static std::once_flag wddm_diag_once;
+            const bool patch_list_present =
+                dev->wddm_context.pPatchLocationList && dev->wddm_context.PatchLocationListSize != 0;
+
+            const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
+            const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
+            const WddmHandle kmt_adapter = static_cast<WddmHandle>(adapter->kmd_query.GetKmtAdapterHandle());
+            const bool has_wait_fn = (load_d3dkmt_wait_for_sync_object() != nullptr);
+
+            const char* wait_mode = "polling";
+            if (has_sync_object && kmt_adapter != 0 && has_wait_fn) {
+              wait_mode = "sync_object";
+            } else if (kmd_query_available) {
+              wait_mode = "kmd_query";
+            }
+
+            std::call_once(wddm_diag_once, [patch_list_present, wait_mode, has_sync_object, kmd_query_available] {
+              aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
+                            patch_list_present ? "present" : "absent");
+              aerogpu::logf("aerogpu-d3d9: fence_wait=%s (hSyncObject=%s kmd_query=%s)\n",
+                            wait_mode,
+                            has_sync_object ? "present" : "absent",
+                            kmd_query_available ? "available" : "unavailable");
+            });
+          }
+
+          aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x hSyncObject=0x%08x "
+                        "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u dma_priv=%p bytes=%u\n",
+                        static_cast<unsigned>(dev->wddm_device),
+                        static_cast<unsigned>(dev->wddm_context.hContext),
+                        static_cast<unsigned>(dev->wddm_context.hSyncObject),
+                        dev->wddm_context.pCommandBuffer,
+                        static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
+                        dev->wddm_context.pAllocationList,
+                        static_cast<unsigned>(dev->wddm_context.AllocationListSize),
+                        dev->wddm_context.pPatchLocationList,
+                        static_cast<unsigned>(dev->wddm_context.PatchLocationListSize),
+                        dev->wddm_context.pDmaBufferPrivateData,
+                        static_cast<unsigned>(dev->wddm_context.DmaBufferPrivateDataSize));
+
+          // Wire the command stream builder to the runtime-provided DMA buffer so all
+          // command emission paths write directly into `pCommandBuffer` (no per-submit
+          // std::vector allocations). This is a prerequisite for real Win7 D3D9UMDDI
+          // submission plumbing.
+          if (dev->wddm_context.pCommandBuffer &&
+              dev->wddm_context.CommandBufferSize >= sizeof(aerogpu_cmd_stream_header)) {
+            dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
+          }
+
+          // Bind the per-submit allocation list tracker to the runtime-provided buffers
+          // so allocation tracking works immediately (e.g. shared surface CreateResource
+          // can reference its backing allocation before the first submit()).
+          dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
+                                         dev->wddm_context.AllocationListSize,
+                                         adapter->max_allocation_list_slot_id);
+        }
+      }
+    }
+  } else {
+    static std::once_flag wddm_callbacks_missing_once;
+    std::call_once(wddm_callbacks_missing_once, [] {
+      aerogpu::logf("aerogpu-d3d9: CreateDevice missing WDDM callbacks; submissions will be stubbed\n");
+    });
+  }
+#endif
 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
   pDeviceFuncs->pfnDestroyDevice = device_destroy;

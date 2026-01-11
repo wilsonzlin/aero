@@ -22,7 +22,7 @@ struct has_pfnDestroyContextCb : std::false_type {};
 template <typename T>
 struct has_pfnDestroyContextCb<T, std::void_t<decltype(std::declval<T>().pfnDestroyContextCb)>> : std::true_type {};
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
 
 template <typename Fn>
 struct fn_first_param;
@@ -234,7 +234,7 @@ void WddmContext::reset_submission_buffers() {
 }
 
 void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
   destroy_sync_object_if_present(callbacks, hSyncObject);
   destroy_context_if_present(callbacks, hContext);
 #else
@@ -256,7 +256,7 @@ void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
   patch_location_entries_used = 0;
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32)
 
 HRESULT wddm_create_device(const WddmDeviceCallbacks& callbacks, void* hAdapter, WddmHandle* hDeviceOut) {
   return create_device_from_callbacks(callbacks, hAdapter, hDeviceOut);
