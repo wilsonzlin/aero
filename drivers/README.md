@@ -60,6 +60,7 @@ Notes:
   - Or use the pure-Python backend: `python3 -m pip install pycdlib` and pass `--backend pycdlib`.
 - `make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
 - See `tools/virtio-win/README.md` for extractor details (outputs, provenance, backends).
+- Convenience: `drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command.
 
 Output:
 
