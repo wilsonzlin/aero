@@ -15,8 +15,8 @@ typedef struct _VIRTIOSND_WAVERT_MINIPORT {
     IMiniportWaveRT Interface;
     LONG RefCount;
 
-    PVIRTIOSND_DEVICE_EXTENSION Dx;
     PVIRTIOSND_BACKEND Backend;
+    PVIRTIOSND_DEVICE_EXTENSION Dx;
 
     KSPIN_LOCK Lock;
     PVIRTIOSND_WAVERT_STREAM Stream;
@@ -39,52 +39,70 @@ typedef struct _VIRTIOSND_WAVERT_STREAM {
 
     PKEVENT NotificationEvent;
 
-    PVOID Buffer;
-    ULONG BufferBytes;
+    VIRTIOSND_DMA_BUFFER BufferDma;
+    ULONG BufferSize;
     PMDL BufferMdl;
 
-    KSAUDIO_POSITION* PositionRegister;
-    ULONGLONG* ClockRegister;
+    KSAUDIO_POSITION *PositionRegister;
+    ULONGLONG *ClockRegister;
     ULONG PacketCount;
 
     ULONG PeriodBytes;
-    ULONG PeriodFrames;
+    ULONGLONG Period100ns;
     ULONG PeriodMs;
 
-    ULONGLONG LinearPositionBytes;
-    ULONG RingPositionBytes;
+    ULONGLONG QpcFrequency;
 
-    BOOLEAN FatalError;
-    NTSTATUS FatalNtStatus;
+    /*
+     * Clock state (render-only, QPC-derived).
+     *
+     * While in KSSTATE_RUN:
+     *   linearFrames = StartLinearFrames + floor((NowQpc - StartQpc) * SampleRate / QpcFrequency)
+     *
+     * While not running, position reporting is frozen at FrozenLinearFrames / FrozenQpc.
+     */
+    ULONGLONG StartQpc;
+    ULONGLONG StartLinearFrames;
+    ULONGLONG FrozenLinearFrames;
+    ULONGLONG FrozenQpc;
+
+    /*
+     * Playback submission tracking (bytes).
+     *
+     * Submitted* describes the next period boundary to be submitted to the backend,
+     * in the same linear/ring coordinate space as the WaveRT cyclic buffer.
+     */
+    ULONGLONG SubmittedLinearPositionBytes;
+    ULONG SubmittedRingPositionBytes;
 } VIRTIOSND_WAVERT_STREAM, *PVIRTIOSND_WAVERT_STREAM;
 
 // Forward declarations for vtables.
 static const IMiniportWaveRTVtbl g_VirtIoSndWaveRtMiniportVtbl;
 static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl;
 
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_AddRef(_In_ IMiniportWaveRT* This);
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWaveRT* This);
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_AddRef(_In_ IMiniportWaveRT *This);
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWaveRT *This);
 
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_AddRef(_In_ IMiniportWaveRTStream* This);
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveRTStream* This);
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_AddRef(_In_ IMiniportWaveRTStream *This);
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveRTStream *This);
 
 static PVIRTIOSND_WAVERT_MINIPORT
-VirtIoSndWaveRtMiniportFromInterface(_In_ IMiniportWaveRT* Interface)
+VirtIoSndWaveRtMiniportFromInterface(_In_ IMiniportWaveRT *Interface)
 {
     return CONTAINING_RECORD(Interface, VIRTIOSND_WAVERT_MINIPORT, Interface);
 }
 
 static PVIRTIOSND_WAVERT_STREAM
-VirtIoSndWaveRtStreamFromInterface(_In_ IMiniportWaveRTStream* Interface)
+VirtIoSndWaveRtStreamFromInterface(_In_ IMiniportWaveRTStream *Interface)
 {
     return CONTAINING_RECORD(Interface, VIRTIOSND_WAVERT_STREAM, Interface);
 }
 
 static BOOLEAN
-VirtIoSndWaveRt_IsFormatSupported(_In_ const KSDATAFORMAT* DataFormat)
+VirtIoSndWaveRt_IsFormatSupported(_In_ const KSDATAFORMAT *DataFormat)
 {
-    const KSDATAFORMAT_WAVEFORMATEXTENSIBLE* fmt;
-    const WAVEFORMATEX* wfx;
+    const KSDATAFORMAT_WAVEFORMATEXTENSIBLE *fmt;
+    const WAVEFORMATEX *wfx;
 
     if (DataFormat == NULL) {
         return FALSE;
@@ -99,7 +117,7 @@ VirtIoSndWaveRt_IsFormatSupported(_In_ const KSDATAFORMAT* DataFormat)
         return FALSE;
     }
 
-    wfx = &((const KSDATAFORMAT_WAVEFORMATEX*)DataFormat)->WaveFormatEx;
+    wfx = &((const KSDATAFORMAT_WAVEFORMATEX *)DataFormat)->WaveFormatEx;
 
     if (wfx->nSamplesPerSec != VIRTIOSND_SAMPLE_RATE ||
         wfx->nChannels != VIRTIOSND_CHANNELS ||
@@ -121,7 +139,7 @@ VirtIoSndWaveRt_IsFormatSupported(_In_ const KSDATAFORMAT* DataFormat)
         return FALSE;
     }
 
-    fmt = (const KSDATAFORMAT_WAVEFORMATEXTENSIBLE*)DataFormat;
+    fmt = (const KSDATAFORMAT_WAVEFORMATEXTENSIBLE *)DataFormat;
     if (!IsEqualGUID(&fmt->WaveFormatExt.SubFormat, &KSDATAFORMAT_SUBTYPE_PCM)) {
         return FALSE;
     }
@@ -137,135 +155,48 @@ VirtIoSndWaveRt_IsFormatSupported(_In_ const KSDATAFORMAT* DataFormat)
     return TRUE;
 }
 
-static NTSTATUS
-VirtIoSndWaveRtAllocateCyclicBuffer(
-    _Inout_ PVIRTIOSND_WAVERT_STREAM Stream,
-    _In_ ULONG RequestedBufferSize,
-    _Out_ ULONG* ActualBufferSize,
-    _Out_ ULONG* ActualNotificationCount,
-    _Outptr_ PMDL* BufferMdl,
-    _Outptr_ PVOID* Buffer)
+static VOID
+VirtIoSndWaveRtGetPositionSnapshot(
+    _In_ PVIRTIOSND_WAVERT_STREAM Stream,
+    _In_ ULONGLONG NowQpc,
+    _Out_ ULONGLONG *OutLinearFrames,
+    _Out_opt_ PULONG OutRingBytes,
+    _Out_opt_ ULONGLONG *OutQpc
+    )
 {
-    ULONG size;
-    ULONG notifications;
-    ULONG periodBytes;
-    PVOID mem;
-    PMDL mdl;
-    PMDL oldMdl;
-    PVOID oldBuffer;
-    KIRQL oldIrql;
+    ULONGLONG linearFrames;
+    ULONGLONG qpc;
+    ULONG ringBytes;
 
-    if (Stream == NULL || ActualBufferSize == NULL || ActualNotificationCount == NULL || BufferMdl == NULL || Buffer == NULL) {
-        return STATUS_INVALID_PARAMETER;
+    linearFrames = Stream->FrozenLinearFrames;
+    qpc = Stream->FrozenQpc;
+
+    if (Stream->State == KSSTATE_RUN && Stream->QpcFrequency != 0) {
+        ULONGLONG deltaQpc;
+        ULONGLONG elapsedFrames;
+
+        qpc = NowQpc;
+
+        deltaQpc = 0;
+        if (NowQpc >= Stream->StartQpc) {
+            deltaQpc = NowQpc - Stream->StartQpc;
+        }
+
+        elapsedFrames = (deltaQpc * (ULONGLONG)VIRTIOSND_SAMPLE_RATE) / Stream->QpcFrequency;
+        linearFrames = Stream->StartLinearFrames + elapsedFrames;
     }
 
-    periodBytes = Stream->PeriodBytes;
-    if (periodBytes == 0) {
-        periodBytes = VIRTIOSND_PERIOD_BYTES;
+    ringBytes = 0;
+    if (Stream->BufferSize != 0) {
+        ringBytes = (ULONG)((linearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN) % (ULONGLONG)Stream->BufferSize);
     }
 
-    if (RequestedBufferSize < periodBytes * 2u) {
-        size = periodBytes * 2u;
-    } else {
-        size = RequestedBufferSize;
+    *OutLinearFrames = linearFrames;
+    if (OutRingBytes != NULL) {
+        *OutRingBytes = ringBytes;
     }
-
-    size = (size + (periodBytes - 1u)) / periodBytes;
-    size *= periodBytes;
-
-    notifications = size / periodBytes;
-
-    mem = ExAllocatePoolWithTag(NonPagedPool, size, VIRTIOSND_POOL_TAG);
-    if (mem == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-    RtlZeroMemory(mem, size);
-
-    mdl = IoAllocateMdl(mem, size, FALSE, FALSE, NULL);
-    if (mdl == NULL) {
-        ExFreePoolWithTag(mem, VIRTIOSND_POOL_TAG);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-    MmBuildMdlForNonPagedPool(mdl);
-
-    KeAcquireSpinLock(&Stream->Lock, &oldIrql);
-    oldMdl = Stream->BufferMdl;
-    oldBuffer = Stream->Buffer;
-    Stream->Buffer = mem;
-    Stream->BufferBytes = size;
-    Stream->BufferMdl = mdl;
-    KeReleaseSpinLock(&Stream->Lock, oldIrql);
-
-    if (oldMdl != NULL) {
-        IoFreeMdl(oldMdl);
-    }
-    if (oldBuffer != NULL) {
-        ExFreePoolWithTag(oldBuffer, VIRTIOSND_POOL_TAG);
-    }
-
-    *ActualBufferSize = size;
-    *ActualNotificationCount = notifications;
-    *BufferMdl = mdl;
-    *Buffer = mem;
-    return STATUS_SUCCESS;
-}
-
-static __forceinline ULONGLONG VirtIoSndWaveRtQueryQpc(VOID)
-{
-    LARGE_INTEGER qpc = KeQueryPerformanceCounter(NULL);
-    return (ULONGLONG)qpc.QuadPart;
-}
-
-static __forceinline ULONG VirtIoSndWaveRtStateRank(_In_ KSSTATE State)
-{
-    switch (State) {
-    case KSSTATE_STOP:
-        return 0;
-    case KSSTATE_ACQUIRE:
-        return 1;
-    case KSSTATE_PAUSE:
-        return 2;
-    case KSSTATE_RUN:
-        return 3;
-    default:
-        return 0;
-    }
-}
-
-static VOID VirtIoSndWaveRtResetPositionLocked(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
-{
-    Stream->LinearPositionBytes = 0;
-    Stream->RingPositionBytes = 0;
-    Stream->PacketCount = 0;
-
-    Stream->FatalError = FALSE;
-    Stream->FatalNtStatus = STATUS_SUCCESS;
-
-    if (Stream->PositionRegister != NULL) {
-        Stream->PositionRegister->PlayOffset = 0;
-        Stream->PositionRegister->WriteOffset = 0;
-    }
-    if (Stream->ClockRegister != NULL) {
-        *Stream->ClockRegister = 0;
-    }
-}
-
-static VOID VirtIoSndWaveRtUpdateRegistersLocked(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_ ULONGLONG QpcNow)
-{
-    ULONG play;
-
-    play = Stream->RingPositionBytes;
-    if (Stream->BufferBytes != 0) {
-        play %= Stream->BufferBytes;
-    } else {
-        play = 0;
-    }
-
-    if (Stream->PositionRegister != NULL) {
-        Stream->PositionRegister->PlayOffset = play;
-    }
-    if (Stream->ClockRegister != NULL) {
-        *Stream->ClockRegister = QpcNow;
+    if (OutQpc != NULL) {
+        *OutQpc = qpc;
     }
 }
 
@@ -299,6 +230,8 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 {
     LARGE_INTEGER dueTime;
     KIRQL oldIrql;
+    ULONGLONG period100ns;
+    ULONG periodMs;
 
     KeResetEvent(&Stream->DpcIdleEvent);
 
@@ -306,8 +239,32 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
     Stream->Stopping = FALSE;
     KeReleaseSpinLock(&Stream->Lock, oldIrql);
 
-    dueTime.QuadPart = -(LONGLONG)((ULONGLONG)Stream->PeriodMs * 10ull * 1000ull); // relative (100ns)
-    KeSetTimerEx(&Stream->Timer, dueTime, (LONG)Stream->PeriodMs, &Stream->TimerDpc);
+    period100ns = Stream->Period100ns;
+    periodMs = Stream->PeriodMs;
+
+    if (period100ns == 0 || periodMs == 0) {
+        period100ns = 10 * 1000 * 10;
+        periodMs = 10;
+    }
+
+    dueTime.QuadPart = -(LONGLONG)period100ns;
+    KeSetTimerEx(&Stream->Timer, dueTime, (LONG)periodMs, &Stream->TimerDpc);
+}
+
+static VOID
+VirtIoSndWaveRtUpdateRegisters(
+    _Inout_ PVIRTIOSND_WAVERT_STREAM Stream,
+    _In_ ULONG RingPositionBytes,
+    _In_ ULONGLONG Qpc
+    )
+{
+    if (Stream->PositionRegister != NULL) {
+        Stream->PositionRegister->PlayOffset = RingPositionBytes;
+    }
+
+    if (Stream->ClockRegister != NULL) {
+        *Stream->ClockRegister = Qpc;
+    }
 }
 
 static VOID
@@ -315,107 +272,133 @@ VirtIoSndWaveRtDpcRoutine(
     _In_ PKDPC Dpc,
     _In_opt_ PVOID DeferredContext,
     _In_opt_ PVOID SystemArgument1,
-    _In_opt_ PVOID SystemArgument2)
+    _In_opt_ PVOID SystemArgument2
+    )
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = (PVIRTIOSND_WAVERT_STREAM)DeferredContext;
     KIRQL oldIrql;
     ULONG periodBytes;
-    ULONG bufferBytes;
-    ULONG startOffset;
-    PVOID buffer;
+    ULONG bufferSize;
+    UINT64 bufferDma;
     PKEVENT notifyEvent;
     PVIRTIOSND_BACKEND backend;
+    LARGE_INTEGER qpc;
     ULONGLONG qpcValue;
-    NTSTATUS status;
+    ULONGLONG linearFrames;
+    ULONG playOffsetBytes;
+    ULONGLONG playLinearBytes;
+    ULONGLONG submittedLinearBytes;
+    ULONG submittedRingBytes;
+    ULONG leadPeriods;
+    ULONGLONG leadBytes;
+    ULONG submitBudget;
 
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(SystemArgument1);
     UNREFERENCED_PARAMETER(SystemArgument2);
 
-    stream = (PVIRTIOSND_WAVERT_STREAM)DeferredContext;
     if (stream == NULL) {
         return;
     }
 
     InterlockedIncrement(&stream->DpcActive);
 
-    notifyEvent = NULL;
-    qpcValue = VirtIoSndWaveRtQueryQpc();
-
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
 
-    backend = (stream->Miniport != NULL) ? stream->Miniport->Backend : NULL;
-    if (stream->Stopping || stream->State != KSSTATE_RUN || stream->FatalError || backend == NULL || stream->Buffer == NULL ||
-        stream->BufferBytes == 0 || stream->PeriodBytes == 0 || stream->PeriodBytes > stream->BufferBytes) {
+    if (stream->Stopping || stream->State != KSSTATE_RUN || stream->BufferDma.Va == NULL || stream->BufferSize == 0 || stream->PeriodBytes == 0 ||
+        stream->PeriodBytes > stream->BufferSize) {
         KeReleaseSpinLock(&stream->Lock, oldIrql);
         goto Exit;
     }
 
     periodBytes = stream->PeriodBytes;
-    bufferBytes = stream->BufferBytes;
-    buffer = stream->Buffer;
-
-    startOffset = stream->RingPositionBytes;
-    if (startOffset >= bufferBytes) {
-        startOffset %= bufferBytes;
-    }
-
+    bufferSize = stream->BufferSize;
+    bufferDma = stream->BufferDma.DmaAddr;
     notifyEvent = stream->NotificationEvent;
+    backend = stream->Miniport->Backend;
+
     if (notifyEvent != NULL) {
         ObReferenceObject(notifyEvent);
     }
 
+    qpc = KeQueryPerformanceCounter(NULL);
+    qpcValue = (ULONGLONG)qpc.QuadPart;
+
+    VirtIoSndWaveRtGetPositionSnapshot(stream, qpcValue, &linearFrames, &playOffsetBytes, NULL);
+    playLinearBytes = linearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+
+    stream->PacketCount += 1;
+    VirtIoSndWaveRtUpdateRegisters(stream, playOffsetBytes, qpcValue);
+
+    submittedLinearBytes = stream->SubmittedLinearPositionBytes;
+    submittedRingBytes = stream->SubmittedRingPositionBytes;
+
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-    {
-        ULONG remaining;
-        ULONG first;
-        ULONG second;
-
-        remaining = bufferBytes - startOffset;
-        first = (remaining < periodBytes) ? remaining : periodBytes;
-        second = periodBytes - first;
-
-        status = VirtIoSndBackend_WritePeriod(
-            backend,
-            (const UCHAR*)buffer + startOffset,
-            first,
-            (second != 0) ? buffer : NULL,
-            second);
-    }
-
-    if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
-        /* Backpressure: don't advance position or signal the notification event. */
-        if (notifyEvent != NULL) {
-            ObDereferenceObject(notifyEvent);
+    if (backend != NULL) {
+        /*
+         * Keep a small bounded lead of audio submitted to the device.
+         *
+         * Note: SubmittedLinearPositionBytes advances in whole periods, while the
+         * play cursor can be fractional within a period due to QPC-based timing.
+         */
+        leadPeriods = bufferSize / periodBytes;
+        if (leadPeriods > 0) {
+            leadPeriods -= 1;
         }
-        goto Exit;
-    }
-
-    if (!NT_SUCCESS(status)) {
-        KeAcquireSpinLock(&stream->Lock, &oldIrql);
-        stream->FatalError = TRUE;
-        stream->FatalNtStatus = status;
-        stream->Stopping = TRUE;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-        KeCancelTimer(&stream->Timer);
-        KeRemoveQueueDpc(&stream->TimerDpc);
-
-        if (notifyEvent != NULL) {
-            KeSetEvent(notifyEvent, IO_NO_INCREMENT, FALSE);
-            ObDereferenceObject(notifyEvent);
+        if (leadPeriods == 0) {
+            leadPeriods = 1;
         }
-        goto Exit;
+        if (leadPeriods > 3) {
+            leadPeriods = 3;
+        }
+
+        leadBytes = (ULONGLONG)leadPeriods * (ULONGLONG)periodBytes;
+
+        /*
+         * If we've fallen behind, realign the submission pointer to the current
+         * play position. Any gap is treated as an underrun.
+         */
+        if (submittedLinearBytes < playLinearBytes) {
+            submittedLinearBytes = playLinearBytes;
+            submittedRingBytes = playOffsetBytes;
+        }
+
+        submitBudget = 8;
+
+        while (submitBudget-- != 0) {
+            ULONGLONG queuedBytes;
+            ULONG remaining;
+            ULONG first;
+            ULONG second;
+            NTSTATUS writeStatus;
+
+            queuedBytes = submittedLinearBytes - playLinearBytes;
+            if (queuedBytes >= leadBytes) {
+                break;
+            }
+
+            remaining = bufferSize - submittedRingBytes;
+            first = (remaining < periodBytes) ? remaining : periodBytes;
+            second = periodBytes - first;
+
+            writeStatus = VirtIoSndBackend_WritePeriod(backend,
+                                                       bufferDma + (UINT64)submittedRingBytes,
+                                                       first,
+                                                       (second != 0) ? bufferDma : 0,
+                                                       second);
+            if (!NT_SUCCESS(writeStatus)) {
+                break;
+            }
+
+            submittedRingBytes = (submittedRingBytes + periodBytes) % bufferSize;
+            submittedLinearBytes += periodBytes;
+        }
     }
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
-    if (!stream->Stopping && stream->State == KSSTATE_RUN && stream->Buffer != NULL && stream->BufferBytes == bufferBytes) {
-        stream->LinearPositionBytes += periodBytes;
-        stream->RingPositionBytes = (startOffset + periodBytes) % bufferBytes;
-        stream->PacketCount += 1;
-        VirtIoSndWaveRtUpdateRegistersLocked(stream, qpcValue);
-    }
+    stream->SubmittedLinearPositionBytes = submittedLinearBytes;
+    stream->SubmittedRingPositionBytes = submittedRingBytes;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
     if (notifyEvent != NULL) {
@@ -434,9 +417,10 @@ Exit:
 // IUnknown / IMiniportWaveRT
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_QueryInterface(
-    _In_ IMiniportWaveRT* This,
+    _In_ IMiniportWaveRT *This,
     _In_ REFIID Riid,
-    _Outptr_ PVOID* Object)
+    _Outptr_ PVOID *Object
+    )
 {
     if (Object == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -444,7 +428,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_QueryInterface(
 
     *Object = NULL;
 
-    if (IsEqualGUID(Riid, &IID_IUnknown) || IsEqualGUID(Riid, &IID_IMiniport) || IsEqualGUID(Riid, &IID_IMiniportWaveRT)) {
+    if (IsEqualGUID(Riid, &IID_IUnknown) ||
+        IsEqualGUID(Riid, &IID_IMiniport) ||
+        IsEqualGUID(Riid, &IID_IMiniportWaveRT)) {
         *Object = This;
         (VOID)VirtIoSndWaveRtMiniport_AddRef(This);
         return STATUS_SUCCESS;
@@ -453,13 +439,13 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_QueryInterface(
     return STATUS_INVALID_PARAMETER;
 }
 
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_AddRef(_In_ IMiniportWaveRT* This)
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_AddRef(_In_ IMiniportWaveRT *This)
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     return (ULONG)InterlockedIncrement(&miniport->RefCount);
 }
 
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWaveRT* This)
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWaveRT *This)
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     LONG ref = InterlockedDecrement(&miniport->RefCount);
@@ -474,21 +460,20 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWav
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
-    _In_ IMiniportWaveRT* This,
+    _In_ IMiniportWaveRT *This,
     _In_opt_ PUNKNOWN UnknownAdapter,
     _In_ PRESOURCELIST ResourceList,
     _In_ PPORTWAVERT Port,
-    _Outptr_opt_result_maybenull_ PSERVICEGROUP* ServiceGroup)
+    _Outptr_opt_result_maybenull_ PSERVICEGROUP *ServiceGroup
+    )
 {
-    PVIRTIOSND_WAVERT_MINIPORT miniport;
+    PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     PVIRTIOSND_DEVICE_EXTENSION dx;
     BOOLEAN forceNullBackend;
     NTSTATUS status;
 
     UNREFERENCED_PARAMETER(ResourceList);
     UNREFERENCED_PARAMETER(Port);
-
-    miniport = VirtIoSndWaveRtMiniportFromInterface(This);
 
     if (ServiceGroup != NULL) {
         *ServiceGroup = NULL;
@@ -519,42 +504,44 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
     }
 
     status = VirtIoSndBackendNull_Create(&miniport->Backend);
-    if (!NT_SUCCESS(status)) {
-        return status;
+    if (NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE("wavert: using null backend\n");
     }
-
-    VIRTIOSND_TRACE("wavert: using null backend\n");
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDescription(
-    _In_ IMiniportWaveRT* This,
-    _Outptr_ PPCFILTER_DESCRIPTOR* OutFilterDescriptor);
+    _In_ IMiniportWaveRT *This,
+    _Outptr_ PPCFILTER_DESCRIPTOR *OutFilterDescriptor
+    );
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
-    _In_ IMiniportWaveRT* This,
+    _In_ IMiniportWaveRT *This,
     _In_ ULONG PinId,
     _In_ PIRP Irp,
     _In_ PKSDATARANGE DataRange,
     _In_ PKSDATARANGE MatchingDataRange,
     _In_ ULONG OutputBufferLength,
     _Out_writes_bytes_to_(OutputBufferLength, *ResultantFormatLength) PVOID ResultantFormat,
-    _Out_ PULONG ResultantFormatLength);
+    _Out_ PULONG ResultantFormatLength
+    );
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
-    _In_ IMiniportWaveRT* This,
-    _Outptr_ PMINIPORTWAVERTSTREAM* OutStream,
+    _In_ IMiniportWaveRT *This,
+    _Outptr_ PMINIPORTWAVERTSTREAM *OutStream,
     _In_opt_ PUNKNOWN OuterUnknown,
     _In_ POOL_TYPE PoolType,
     _In_ PPORTWAVERTSTREAM PortStream,
     _In_ ULONG Pin,
     _In_ BOOLEAN Capture,
     _In_ PKSDATAFORMAT DataFormat,
-    _Out_opt_ PULONG StreamId);
+    _Out_opt_ PULONG StreamId
+    );
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDeviceDescription(
-    _In_ IMiniportWaveRT* This,
-    _Out_ PDEVICE_DESCRIPTION DeviceDescription);
+    _In_ IMiniportWaveRT *This,
+    _Out_ PDEVICE_DESCRIPTION DeviceDescription
+    );
 
 static const KSDATARANGE_AUDIO g_VirtIoSndWaveRtDataRangePcm = {
     {
@@ -591,7 +578,7 @@ static const KSPIN_DESCRIPTOR g_VirtIoSndWaveRtKsPinDescriptorRender = {
     1,
     (PKSPIN_MEDIUM)g_VirtIoSndWaveRtPinMediums,
     RTL_NUMBER_OF(g_VirtIoSndWaveRtPinDataRanges),
-    (PKSDATARANGE*)g_VirtIoSndWaveRtPinDataRanges,
+    (PKSDATARANGE *)g_VirtIoSndWaveRtPinDataRanges,
     KSPIN_DATAFLOW_IN,
     KSPIN_COMMUNICATION_SINK,
     &KSNODETYPE_SPEAKER,
@@ -643,31 +630,31 @@ static const PCFILTER_DESCRIPTOR g_VirtIoSndWaveRtFilterDescriptor = {
 };
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDescription(
-    _In_ IMiniportWaveRT* This,
-    _Outptr_ PPCFILTER_DESCRIPTOR* OutFilterDescriptor)
+    _In_ IMiniportWaveRT *This,
+    _Outptr_ PPCFILTER_DESCRIPTOR *OutFilterDescriptor
+    )
 {
     UNREFERENCED_PARAMETER(This);
-
     if (OutFilterDescriptor == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-
     *OutFilterDescriptor = (PPCFILTER_DESCRIPTOR)&g_VirtIoSndWaveRtFilterDescriptor;
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
-    _In_ IMiniportWaveRT* This,
+    _In_ IMiniportWaveRT *This,
     _In_ ULONG PinId,
     _In_ PIRP Irp,
     _In_ PKSDATARANGE DataRange,
     _In_ PKSDATARANGE MatchingDataRange,
     _In_ ULONG OutputBufferLength,
     _Out_writes_bytes_to_(OutputBufferLength, *ResultantFormatLength) PVOID ResultantFormat,
-    _Out_ PULONG ResultantFormatLength)
+    _Out_ PULONG ResultantFormatLength
+    )
 {
     KSDATAFORMAT_WAVEFORMATEXTENSIBLE format;
-    KSDATARANGE_AUDIO* requested;
+    KSDATARANGE_AUDIO *requested;
 
     UNREFERENCED_PARAMETER(This);
     UNREFERENCED_PARAMETER(Irp);
@@ -691,9 +678,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
         return STATUS_NO_MATCH;
     }
 
-    requested = (KSDATARANGE_AUDIO*)DataRange;
-    if (requested->MaximumChannels < VIRTIOSND_CHANNELS || requested->MinimumBitsPerSample > VIRTIOSND_BITS_PER_SAMPLE ||
-        requested->MaximumBitsPerSample < VIRTIOSND_BITS_PER_SAMPLE || requested->MinimumSampleFrequency > VIRTIOSND_SAMPLE_RATE ||
+    requested = (KSDATARANGE_AUDIO *)DataRange;
+    if (requested->MaximumChannels < VIRTIOSND_CHANNELS ||
+        requested->MinimumBitsPerSample > VIRTIOSND_BITS_PER_SAMPLE ||
+        requested->MaximumBitsPerSample < VIRTIOSND_BITS_PER_SAMPLE ||
+        requested->MinimumSampleFrequency > VIRTIOSND_SAMPLE_RATE ||
         requested->MaximumSampleFrequency < VIRTIOSND_SAMPLE_RATE) {
         return STATUS_NO_MATCH;
     }
@@ -729,17 +718,18 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
-    _In_ IMiniportWaveRT* This,
-    _Outptr_ PMINIPORTWAVERTSTREAM* OutStream,
+    _In_ IMiniportWaveRT *This,
+    _Outptr_ PMINIPORTWAVERTSTREAM *OutStream,
     _In_opt_ PUNKNOWN OuterUnknown,
     _In_ POOL_TYPE PoolType,
     _In_ PPORTWAVERTSTREAM PortStream,
     _In_ ULONG Pin,
     _In_ BOOLEAN Capture,
     _In_ PKSDATAFORMAT DataFormat,
-    _Out_opt_ PULONG StreamId)
+    _Out_opt_ PULONG StreamId
+    )
 {
-    PVIRTIOSND_WAVERT_MINIPORT miniport;
+    PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     PVIRTIOSND_WAVERT_STREAM stream;
     KIRQL oldIrql;
 
@@ -761,8 +751,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
         return STATUS_NO_MATCH;
     }
 
-    miniport = VirtIoSndWaveRtMiniportFromInterface(This);
-
     stream = (PVIRTIOSND_WAVERT_STREAM)ExAllocatePoolWithTag(NonPagedPool, sizeof(*stream), VIRTIOSND_POOL_TAG);
     if (stream == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -780,14 +768,16 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
     KeInitializeEvent(&stream->DpcIdleEvent, NotificationEvent, TRUE);
 
     stream->PeriodBytes = VIRTIOSND_PERIOD_BYTES;
-    stream->PeriodFrames = VIRTIOSND_PERIOD_BYTES / VIRTIOSND_BLOCK_ALIGN;
-    stream->PeriodMs = (stream->PeriodFrames * 1000u) / VIRTIOSND_SAMPLE_RATE;
-    if (stream->PeriodMs == 0) {
-        stream->PeriodMs = 1;
+    stream->PeriodMs = VIRTIOSND_PERIOD_BYTES / (VIRTIOSND_AVG_BYTES_PER_SEC / 1000);
+    stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
+    {
+        LARGE_INTEGER qpcFreq;
+        (VOID)KeQueryPerformanceCounter(&qpcFreq);
+        stream->QpcFrequency = (ULONGLONG)qpcFreq.QuadPart;
     }
 
-    stream->PositionRegister = (KSAUDIO_POSITION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(KSAUDIO_POSITION), VIRTIOSND_POOL_TAG);
-    stream->ClockRegister = (ULONGLONG*)ExAllocatePoolWithTag(NonPagedPool, sizeof(ULONGLONG), VIRTIOSND_POOL_TAG);
+    stream->PositionRegister = (KSAUDIO_POSITION *)ExAllocatePoolWithTag(NonPagedPool, sizeof(KSAUDIO_POSITION), VIRTIOSND_POOL_TAG);
+    stream->ClockRegister = (ULONGLONG *)ExAllocatePoolWithTag(NonPagedPool, sizeof(ULONGLONG), VIRTIOSND_POOL_TAG);
     if (stream->PositionRegister == NULL || stream->ClockRegister == NULL) {
         if (stream->PositionRegister != NULL) {
             ExFreePoolWithTag(stream->PositionRegister, VIRTIOSND_POOL_TAG);
@@ -801,9 +791,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
 
     RtlZeroMemory(stream->PositionRegister, sizeof(*stream->PositionRegister));
     *stream->ClockRegister = 0;
-
-    stream->FatalError = FALSE;
-    stream->FatalNtStatus = STATUS_SUCCESS;
 
     KeAcquireSpinLock(&miniport->Lock, &oldIrql);
     if (miniport->Stream != NULL) {
@@ -827,11 +814,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDeviceDescription(
-    _In_ IMiniportWaveRT* This,
-    _Out_ PDEVICE_DESCRIPTION DeviceDescription)
+    _In_ IMiniportWaveRT *This,
+    _Out_ PDEVICE_DESCRIPTION DeviceDescription
+    )
 {
     UNREFERENCED_PARAMETER(This);
-
     if (DeviceDescription == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -858,9 +845,10 @@ static const IMiniportWaveRTVtbl g_VirtIoSndWaveRtMiniportVtbl = {
 // IMiniportWaveRTStream
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_QueryInterface(
-    _In_ IMiniportWaveRTStream* This,
+    _In_ IMiniportWaveRTStream *This,
     _In_ REFIID Riid,
-    _Outptr_ PVOID* Object)
+    _Outptr_ PVOID *Object
+    )
 {
     if (Object == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -877,47 +865,34 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_QueryInterface(
     return STATUS_INVALID_PARAMETER;
 }
 
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_AddRef(_In_ IMiniportWaveRTStream* This)
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_AddRef(_In_ IMiniportWaveRTStream *This)
 {
     PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     return (ULONG)InterlockedIncrement(&stream->RefCount);
 }
 
-static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveRTStream* This)
+static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveRTStream *This)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
-    LONG ref;
-
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-    ref = InterlockedDecrement(&stream->RefCount);
-
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
+    LONG ref = InterlockedDecrement(&stream->RefCount);
     if (ref == 0) {
         KIRQL oldIrql;
-        KSSTATE state;
         PKEVENT oldEvent;
-        PVIRTIOSND_BACKEND backend;
 
         VirtIoSndWaveRtStopTimer(stream);
 
-        backend = (stream->Miniport != NULL) ? stream->Miniport->Backend : NULL;
-
+        oldEvent = NULL;
         KeAcquireSpinLock(&stream->Lock, &oldIrql);
-        state = stream->State;
         oldEvent = stream->NotificationEvent;
         stream->NotificationEvent = NULL;
         KeReleaseSpinLock(&stream->Lock, oldIrql);
-
         if (oldEvent != NULL) {
             ObDereferenceObject(oldEvent);
         }
 
-        if (backend != NULL && KeGetCurrentIrql() == PASSIVE_LEVEL) {
-            if (state == KSSTATE_RUN) {
-                (VOID)VirtIoSndBackend_Stop(backend);
-            }
-            if (state != KSSTATE_STOP) {
-                (VOID)VirtIoSndBackend_Release(backend);
-            }
+        if (stream->Miniport != NULL && stream->Miniport->Backend != NULL) {
+            (VOID)VirtIoSndBackend_Stop(stream->Miniport->Backend);
+            (VOID)VirtIoSndBackend_Release(stream->Miniport->Backend);
         }
 
         if (stream->Miniport != NULL) {
@@ -932,9 +907,7 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
             IoFreeMdl(stream->BufferMdl);
         }
 
-        if (stream->Buffer != NULL) {
-            ExFreePoolWithTag(stream->Buffer, VIRTIOSND_POOL_TAG);
-        }
+        VirtIoSndFreeCommonBuffer((stream->Miniport && stream->Miniport->Dx) ? &stream->Miniport->Dx->DmaCtx : NULL, &stream->BufferDma);
 
         ExFreePoolWithTag(stream->PositionRegister, VIRTIOSND_POOL_TAG);
         ExFreePoolWithTag(stream->ClockRegister, VIRTIOSND_POOL_TAG);
@@ -946,27 +919,31 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
         ExFreePoolWithTag(stream, VIRTIOSND_POOL_TAG);
         return 0;
     }
-
     return (ULONG)ref;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetFormat(_In_ IMiniportWaveRTStream* This, _In_ PKSDATAFORMAT DataFormat)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetFormat(_In_ IMiniportWaveRTStream *This, _In_ PKSDATAFORMAT DataFormat)
 {
     UNREFERENCED_PARAMETER(This);
-
     if (!VirtIoSndWaveRt_IsFormatSupported(DataFormat)) {
         return STATUS_NO_MATCH;
     }
-
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportWaveRTStream* This, _In_ KSSTATE State)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportWaveRTStream *This, _In_ KSSTATE State)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
-    PVIRTIOSND_BACKEND backend;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     KIRQL oldIrql;
-    KSSTATE current;
+    KSSTATE oldState;
+    LARGE_INTEGER nowQpc;
+    LARGE_INTEGER qpcFreq;
+    ULONGLONG nowQpcValue;
+    PVIRTIOSND_BACKEND backend;
+    ULONG bufferSize;
+    ULONG periodBytes;
+    UINT64 bufferDma;
+    PVOID bufferVa;
     NTSTATUS status;
 
     if (State != KSSTATE_STOP && State != KSSTATE_ACQUIRE && State != KSSTATE_PAUSE && State != KSSTATE_RUN) {
@@ -977,279 +954,362 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-    backend = (stream->Miniport != NULL) ? stream->Miniport->Backend : NULL;
+    nowQpc = KeQueryPerformanceCounter(&qpcFreq);
+    nowQpcValue = (ULONGLONG)nowQpc.QuadPart;
 
-    if (backend == NULL) {
-        return STATUS_INVALID_DEVICE_STATE;
-    }
+    backend = (stream->Miniport != NULL) ? stream->Miniport->Backend : NULL;
+    status = STATUS_SUCCESS;
+    bufferSize = 0;
+    periodBytes = 0;
+    bufferDma = 0;
+    bufferVa = NULL;
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
-    if (stream->FatalError) {
-        NTSTATUS st = stream->FatalNtStatus;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-        return st;
-    }
-    current = stream->State;
-    KeReleaseSpinLock(&stream->Lock, oldIrql);
+    oldState = stream->State;
 
-    if (current == State) {
+    if (oldState == State) {
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
         return STATUS_SUCCESS;
     }
 
-    status = STATUS_SUCCESS;
+    /*
+     * Maintain QPC-derived position state:
+     *  - Leaving RUN: freeze at the transition time.
+     *  - Entering RUN: start a new QPC segment anchored at the frozen linear frame count.
+     *  - STOP: reset counters and registers.
+     */
+    if (oldState == KSSTATE_RUN && State != KSSTATE_RUN) {
+        ULONGLONG deltaQpc;
+        ULONGLONG elapsedFrames;
+        ULONG ringBytes;
 
-    /* Apply state transitions in steps (STOP < ACQUIRE < PAUSE < RUN). */
-    while (VirtIoSndWaveRtStateRank(current) < VirtIoSndWaveRtStateRank(State)) {
-        if (current == KSSTATE_STOP) {
-            ULONG bufBytes;
-            ULONG notifCount;
-            ULONG periodBytes;
-
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            if (stream->Buffer == NULL || stream->BufferBytes == 0) {
-                KeReleaseSpinLock(&stream->Lock, oldIrql);
-                /* Default to a conservative 100ms buffer (10 periods) if not allocated yet. */
-                status = VirtIoSndWaveRtAllocateCyclicBuffer(
-                    stream,
-                    VIRTIOSND_PERIOD_BYTES * 10u,
-                    &bufBytes,
-                    &notifCount,
-                    &stream->BufferMdl,
-                    &stream->Buffer);
-                if (!NT_SUCCESS(status)) {
-                    return status;
-                }
-            } else {
-                KeReleaseSpinLock(&stream->Lock, oldIrql);
-            }
-
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            bufBytes = stream->BufferBytes;
-            periodBytes = stream->PeriodBytes;
-            VirtIoSndWaveRtResetPositionLocked(stream);
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-            if (bufBytes == 0 || periodBytes == 0 || periodBytes > bufBytes) {
-                return STATUS_INVALID_DEVICE_STATE;
-            }
-
-            status = VirtIoSndBackend_SetParams(backend, bufBytes, periodBytes);
-            if (!NT_SUCCESS(status)) {
-                return status;
-            }
-
-            status = VirtIoSndBackend_Prepare(backend);
-            if (!NT_SUCCESS(status)) {
-                (VOID)VirtIoSndBackend_Release(backend);
-                return status;
-            }
-
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            stream->State = KSSTATE_ACQUIRE;
-            VirtIoSndWaveRtUpdateRegistersLocked(stream, VirtIoSndWaveRtQueryQpc());
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-            current = KSSTATE_ACQUIRE;
-            continue;
+        deltaQpc = 0;
+        if (nowQpcValue >= stream->StartQpc) {
+            deltaQpc = nowQpcValue - stream->StartQpc;
         }
 
-        if (current == KSSTATE_ACQUIRE) {
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            stream->State = KSSTATE_PAUSE;
-            VirtIoSndWaveRtUpdateRegistersLocked(stream, VirtIoSndWaveRtQueryQpc());
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-            current = KSSTATE_PAUSE;
-            continue;
+        elapsedFrames = 0;
+        if (stream->QpcFrequency != 0) {
+            elapsedFrames = (deltaQpc * (ULONGLONG)VIRTIOSND_SAMPLE_RATE) / stream->QpcFrequency;
         }
 
-        if (current == KSSTATE_PAUSE) {
-            status = VirtIoSndBackend_Start(backend);
-            if (!NT_SUCCESS(status)) {
-                return status;
-            }
+        stream->FrozenLinearFrames = stream->StartLinearFrames + elapsedFrames;
+        stream->FrozenQpc = nowQpcValue;
 
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            stream->State = KSSTATE_RUN;
-            VirtIoSndWaveRtUpdateRegistersLocked(stream, VirtIoSndWaveRtQueryQpc());
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-            VirtIoSndWaveRtStartTimer(stream);
-
-            current = KSSTATE_RUN;
-            continue;
+        ringBytes = 0;
+        if (stream->BufferSize != 0) {
+            ringBytes = (ULONG)((stream->FrozenLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN) % (ULONGLONG)stream->BufferSize);
         }
-
-        break;
+        VirtIoSndWaveRtUpdateRegisters(stream, ringBytes, nowQpcValue);
     }
 
-    while (VirtIoSndWaveRtStateRank(current) > VirtIoSndWaveRtStateRank(State)) {
-        if (current == KSSTATE_RUN) {
-            VirtIoSndWaveRtStopTimer(stream);
+    if (oldState == KSSTATE_STOP && State == KSSTATE_ACQUIRE) {
+        stream->FrozenLinearFrames = 0;
+        stream->FrozenQpc = 0;
+        stream->StartQpc = 0;
+        stream->StartLinearFrames = 0;
+        stream->SubmittedLinearPositionBytes = 0;
+        stream->SubmittedRingPositionBytes = 0;
+        stream->PacketCount = 0;
 
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            stream->State = KSSTATE_PAUSE;
-            VirtIoSndWaveRtUpdateRegistersLocked(stream, VirtIoSndWaveRtQueryQpc());
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
+        if (stream->PositionRegister != NULL) {
+            stream->PositionRegister->PlayOffset = 0;
+            stream->PositionRegister->WriteOffset = 0;
+        }
+        if (stream->ClockRegister != NULL) {
+            *stream->ClockRegister = 0;
+        }
+    }
 
-            (VOID)VirtIoSndBackend_Stop(backend);
+    bufferSize = stream->BufferSize;
+    periodBytes = stream->PeriodBytes;
+    bufferDma = stream->BufferDma.DmaAddr;
+    bufferVa = stream->BufferDma.Va;
 
-            current = KSSTATE_PAUSE;
-            continue;
+    stream->State = State;
+    KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+    /*
+     * Map stream state transitions onto the minimal virtio-snd PCM control state
+     * machine (stream 0).
+     */
+
+    /*
+     * Timer transitions.
+     *
+     * Stop the timer first on any transition away from RUN so no DPC can race
+     * with backend control operations (which are PASSIVE_LEVEL only).
+     */
+    if (oldState == KSSTATE_RUN && State != KSSTATE_RUN) {
+        VirtIoSndWaveRtStopTimer(stream);
+    } else if (State == KSSTATE_STOP || State == KSSTATE_ACQUIRE || State == KSSTATE_PAUSE) {
+        VirtIoSndWaveRtStopTimer(stream);
+    }
+
+    /*
+     * KSSTATE <-> virtio-snd PCM control mapping (render stream 0):
+     *
+     *  STOP -> ACQUIRE : SET_PARAMS + PREPARE
+     *  ACQUIRE/PAUSE -> RUN : START
+     *  RUN -> PAUSE : STOP
+     *  PAUSE/ACQUIRE -> STOP : RELEASE
+     *  RUN -> STOP : STOP + RELEASE
+     */
+    status = STATUS_SUCCESS;
+    if (backend != NULL) {
+        if (oldState == KSSTATE_STOP && State == KSSTATE_ACQUIRE) {
+            if (bufferSize != 0 && periodBytes != 0) {
+                (VOID)VirtIoSndBackend_SetParams(backend, bufferSize, periodBytes);
+                (VOID)VirtIoSndBackend_Prepare(backend);
+            }
+        } else if ((oldState == KSSTATE_ACQUIRE || oldState == KSSTATE_PAUSE) && State == KSSTATE_RUN) {
+            status = VirtIoSndBackend_Start(backend);
+        } else if (oldState == KSSTATE_RUN && State == KSSTATE_PAUSE) {
+            status = VirtIoSndBackend_Stop(backend);
+        } else if (State == KSSTATE_STOP) {
+            if (oldState == KSSTATE_RUN) {
+                (VOID)VirtIoSndBackend_Stop(backend);
+            }
+            status = VirtIoSndBackend_Release(backend);
+        } else if (oldState == KSSTATE_RUN && State == KSSTATE_ACQUIRE) {
+            status = VirtIoSndBackend_Stop(backend);
+        } else if (oldState == KSSTATE_STOP && State == KSSTATE_RUN) {
+            if (bufferSize != 0 && periodBytes != 0) {
+                (VOID)VirtIoSndBackend_SetParams(backend, bufferSize, periodBytes);
+                (VOID)VirtIoSndBackend_Prepare(backend);
+            }
+            status = VirtIoSndBackend_Start(backend);
+        }
+    }
+
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    if (State == KSSTATE_RUN) {
+        ULONGLONG playLinearBytes;
+        ULONGLONG submittedLinearBytes;
+        ULONG submittedRingBytes;
+        ULONG leadPeriods;
+        ULONGLONG leadBytes;
+        ULONG submitBudget;
+        ULONG startOffsetBytes;
+        ULONGLONG startLinearFrames;
+
+        if (bufferVa == NULL || bufferSize == 0 || periodBytes == 0 || periodBytes > bufferSize) {
+            return STATUS_INVALID_DEVICE_STATE;
         }
 
-        if (current == KSSTATE_PAUSE) {
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            stream->State = KSSTATE_ACQUIRE;
-            VirtIoSndWaveRtUpdateRegistersLocked(stream, VirtIoSndWaveRtQueryQpc());
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-            current = KSSTATE_ACQUIRE;
-            continue;
+        /*
+         * Anchor the RUN segment at the current frozen position and capture the
+         * submission pointer. This happens after the backend START transition so
+         * our software clock matches when the device is allowed to render.
+         */
+        nowQpc = KeQueryPerformanceCounter(&qpcFreq);
+        nowQpcValue = (ULONGLONG)nowQpc.QuadPart;
+
+        KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        stream->QpcFrequency = (ULONGLONG)qpcFreq.QuadPart;
+        stream->StartQpc = nowQpcValue;
+        stream->StartLinearFrames = stream->FrozenLinearFrames;
+
+        startLinearFrames = stream->StartLinearFrames;
+        startOffsetBytes = 0;
+        if (bufferSize != 0) {
+            startOffsetBytes = (ULONG)((startLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN) % (ULONGLONG)bufferSize);
         }
 
-        if (current == KSSTATE_ACQUIRE) {
-            PKEVENT oldEvent;
+        VirtIoSndWaveRtUpdateRegisters(stream, startOffsetBytes, nowQpcValue);
 
-            VirtIoSndWaveRtStopTimer(stream);
+        stream->SubmittedLinearPositionBytes = startLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+        stream->SubmittedRingPositionBytes = startOffsetBytes;
 
-            (VOID)VirtIoSndBackend_Release(backend);
+        playLinearBytes = stream->SubmittedLinearPositionBytes;
+        submittedLinearBytes = stream->SubmittedLinearPositionBytes;
+        submittedRingBytes = stream->SubmittedRingPositionBytes;
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-            KeAcquireSpinLock(&stream->Lock, &oldIrql);
-            oldEvent = stream->NotificationEvent;
-            stream->NotificationEvent = NULL;
-            VirtIoSndWaveRtResetPositionLocked(stream);
-            stream->State = KSSTATE_STOP;
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-            if (oldEvent != NULL) {
-                ObDereferenceObject(oldEvent);
+        /* Prime the device with a small lead of audio before the periodic timer starts. */
+        if (backend != NULL) {
+            leadPeriods = bufferSize / periodBytes;
+            if (leadPeriods > 0) {
+                leadPeriods -= 1;
+            }
+            if (leadPeriods == 0) {
+                leadPeriods = 1;
+            }
+            if (leadPeriods > 3) {
+                leadPeriods = 3;
             }
 
-            current = KSSTATE_STOP;
-            continue;
+            leadBytes = (ULONGLONG)leadPeriods * (ULONGLONG)periodBytes;
+            submitBudget = 8;
+
+            while (submitBudget-- != 0) {
+                ULONGLONG queuedBytes;
+                ULONG remaining;
+                ULONG first;
+                ULONG second;
+                NTSTATUS writeStatus;
+
+                queuedBytes = submittedLinearBytes - playLinearBytes;
+                if (queuedBytes >= leadBytes) {
+                    break;
+                }
+
+                remaining = bufferSize - submittedRingBytes;
+                first = (remaining < periodBytes) ? remaining : periodBytes;
+                second = periodBytes - first;
+
+                writeStatus = VirtIoSndBackend_WritePeriod(backend,
+                                                           bufferDma + (UINT64)submittedRingBytes,
+                                                           first,
+                                                           (second != 0) ? bufferDma : 0,
+                                                           second);
+                if (!NT_SUCCESS(writeStatus)) {
+                    break;
+                }
+
+                submittedRingBytes = (submittedRingBytes + periodBytes) % bufferSize;
+                submittedLinearBytes += periodBytes;
+            }
         }
 
-        break;
+        KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        stream->SubmittedLinearPositionBytes = submittedLinearBytes;
+        stream->SubmittedRingPositionBytes = submittedRingBytes;
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+        VirtIoSndWaveRtStartTimer(stream);
+    } else if (State == KSSTATE_STOP) {
+        PKEVENT oldEvent;
+
+        oldEvent = NULL;
+        KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        stream->FrozenLinearFrames = 0;
+        stream->FrozenQpc = 0;
+        stream->StartQpc = 0;
+        stream->StartLinearFrames = 0;
+        stream->SubmittedLinearPositionBytes = 0;
+        stream->SubmittedRingPositionBytes = 0;
+        stream->PacketCount = 0;
+        oldEvent = stream->NotificationEvent;
+        stream->NotificationEvent = NULL;
+        if (stream->PositionRegister != NULL) {
+            stream->PositionRegister->PlayOffset = 0;
+            stream->PositionRegister->WriteOffset = 0;
+        }
+        if (stream->ClockRegister != NULL) {
+            *stream->ClockRegister = 0;
+        }
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+        if (oldEvent != NULL) {
+            ObDereferenceObject(oldEvent);
+        }
     }
 
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetState(_In_ IMiniportWaveRTStream* This, _Out_ PKSSTATE State)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetState(_In_ IMiniportWaveRTStream *This, _Out_ PKSSTATE State)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     KIRQL oldIrql;
-
     if (State == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     *State = stream->State;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPosition(_In_ IMiniportWaveRTStream* This, _Out_ PULONG64 Position)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPosition(_In_ IMiniportWaveRTStream *This, _Out_ PULONG64 Position)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     KIRQL oldIrql;
-    ULONGLONG qpcNow;
-    ULONGLONG frames;
-
+    LARGE_INTEGER qpc;
+    ULONGLONG linearFrames;
     if (Position == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-    qpcNow = VirtIoSndWaveRtQueryQpc();
-
+    qpc = KeQueryPerformanceCounter(NULL);
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
-    if (stream->FatalError) {
-        NTSTATUS st = stream->FatalNtStatus;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-        return st;
-    }
-
-    frames = stream->LinearPositionBytes / (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
-    VirtIoSndWaveRtUpdateRegistersLocked(stream, qpcNow);
+    VirtIoSndWaveRtGetPositionSnapshot(stream, (ULONGLONG)qpc.QuadPart, &linearFrames, NULL, NULL);
     KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-    *Position = frames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+    *Position = linearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS STDMETHODCALLTYPE
 VirtIoSndWaveRtStream_GetPresentationPosition(
-    _In_ IMiniportWaveRTStream* This,
-    _Out_ PKSAUDIO_PRESENTATION_POSITION Position)
+    _In_ IMiniportWaveRTStream *This,
+    _Out_ PKSAUDIO_PRESENTATION_POSITION Position
+    )
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     KIRQL oldIrql;
-    ULONGLONG qpcNow;
-    ULONGLONG frames;
-
+    LARGE_INTEGER nowQpc;
+    ULONGLONG qpcValue;
+    ULONGLONG linearFrames;
+    ULONGLONG qpcForPosition;
     if (Position == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-    qpcNow = VirtIoSndWaveRtQueryQpc();
+    nowQpc = KeQueryPerformanceCounter(NULL);
+    qpcValue = (ULONGLONG)nowQpc.QuadPart;
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
-    if (stream->FatalError) {
-        NTSTATUS st = stream->FatalNtStatus;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-        return st;
-    }
-
-    frames = stream->LinearPositionBytes / (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
-    VirtIoSndWaveRtUpdateRegistersLocked(stream, qpcNow);
+    VirtIoSndWaveRtGetPositionSnapshot(stream, qpcValue, &linearFrames, NULL, &qpcForPosition);
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
-    Position->u64PositionInFrames = frames;
-    Position->u64QPCPosition = qpcNow;
+    Position->u64PositionInFrames = linearFrames;
+    Position->u64QPCPosition = qpcForPosition;
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetCurrentPadding(_In_ IMiniportWaveRTStream* This, _Out_ PULONG PaddingFrames)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetCurrentPadding(_In_ IMiniportWaveRTStream *This, _Out_ PULONG PaddingFrames)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
-    KIRQL oldIrql;
-    ULONGLONG qpcNow;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
+    LARGE_INTEGER nowQpc;
+    ULONGLONG qpcValue;
+    ULONGLONG qpcForPosition;
+    ULONGLONG linearFrames;
+    ULONG playBytes;
     ULONG64 play;
     ULONG64 write;
     ULONG64 diff;
+    KIRQL oldIrql;
     ULONG bufferBytes;
 
     if (PaddingFrames == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-    qpcNow = VirtIoSndWaveRtQueryQpc();
-
-    KeAcquireSpinLock(&stream->Lock, &oldIrql);
-
-    if (stream->FatalError) {
-        NTSTATUS st = stream->FatalNtStatus;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-        return st;
-    }
-
-    if (stream->PositionRegister == NULL || stream->BufferBytes == 0) {
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
+    if (stream->PositionRegister == NULL || stream->BufferSize == 0) {
         *PaddingFrames = 0;
         return STATUS_SUCCESS;
     }
 
-    VirtIoSndWaveRtUpdateRegistersLocked(stream, qpcNow);
-    bufferBytes = stream->BufferBytes;
-    play = stream->PositionRegister->PlayOffset % bufferBytes;
-    write = stream->PositionRegister->WriteOffset % bufferBytes;
+    nowQpc = KeQueryPerformanceCounter(NULL);
+    qpcValue = (ULONGLONG)nowQpc.QuadPart;
+
+    KeAcquireSpinLock(&stream->Lock, &oldIrql);
+    VirtIoSndWaveRtGetPositionSnapshot(stream, qpcValue, &linearFrames, &playBytes, &qpcForPosition);
+    VirtIoSndWaveRtUpdateRegisters(stream, playBytes, qpcForPosition);
+    write = stream->PositionRegister->WriteOffset;
+    bufferBytes = stream->BufferSize;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+    if (bufferBytes == 0) {
+        *PaddingFrames = 0;
+        return STATUS_SUCCESS;
+    }
+
+    play = playBytes;
 
     if (write >= play) {
         diff = write - play;
@@ -1261,16 +1321,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetCurrentPadding(_In_ I
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetNotificationEvent(
-    _In_ IMiniportWaveRTStream* This,
-    _In_opt_ PKEVENT NotificationEvent)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetNotificationEvent(_In_ IMiniportWaveRTStream *This, _In_opt_ PKEVENT NotificationEvent)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     KIRQL oldIrql;
     PKEVENT oldEvent;
-
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     oldEvent = stream->NotificationEvent;
     if (NotificationEvent != NULL) {
@@ -1282,21 +1337,16 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetNotificationEvent(
     if (oldEvent != NULL) {
         ObDereferenceObject(oldEvent);
     }
-
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPacketCount(_In_ IMiniportWaveRTStream* This, _Out_ PULONG PacketCount)
+static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPacketCount(_In_ IMiniportWaveRTStream *This, _Out_ PULONG PacketCount)
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     KIRQL oldIrql;
-
     if (PacketCount == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     *PacketCount = stream->PacketCount;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
@@ -1304,10 +1354,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPacketCount(_In_ IMin
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPositionRegister(
-    _In_ IMiniportWaveRTStream* This,
-    _Out_ PKSRTAUDIO_HWREGISTER PositionRegister)
+    _In_ IMiniportWaveRTStream *This,
+    _Out_ PKSRTAUDIO_HWREGISTER PositionRegister
+    )
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     struct {
         PVOID Register;
         ULONG RegisterSize;
@@ -1319,8 +1370,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPositionRegister(
     if (PositionRegister == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
 
     tmp.Register = stream->PositionRegister;
     tmp.RegisterSize = sizeof(KSAUDIO_POSITION);
@@ -1334,10 +1383,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPositionRegister(
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetClockRegister(
-    _In_ IMiniportWaveRTStream* This,
-    _Out_ PKSRTAUDIO_HWREGISTER ClockRegister)
+    _In_ IMiniportWaveRTStream *This,
+    _Out_ PKSRTAUDIO_HWREGISTER ClockRegister
+    )
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     struct {
         PVOID Register;
         ULONG RegisterSize;
@@ -1349,8 +1399,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetClockRegister(
     if (ClockRegister == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
 
     tmp.Register = stream->ClockRegister;
     tmp.RegisterSize = sizeof(ULONGLONG);
@@ -1364,82 +1412,168 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetClockRegister(
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotification(
-    _In_ IMiniportWaveRTStream* This,
+    _In_ IMiniportWaveRTStream *This,
     _In_ ULONG RequestedBufferSize,
     _In_ ULONG RequestedNotificationCount,
     _Out_ PULONG ActualBufferSize,
     _Out_ PULONG ActualNotificationCount,
-    _Outptr_ PMDL* BufferMdl,
-    _Outptr_ PVOID* Buffer)
+    _Outptr_ PMDL *BufferMdl,
+    _Outptr_ PVOID *Buffer
+    )
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
+    NTSTATUS status;
+    PVIRTIOSND_DMA_CONTEXT dmaCtx;
+    const ULONG bytesPerMs = VIRTIOSND_AVG_BYTES_PER_SEC / 1000;
+    ULONG notifications;
+    ULONG periodBytes;
+    ULONG size;
+    VIRTIOSND_DMA_BUFFER dmaBuf;
+    PMDL mdl;
+    PMDL oldMdl;
+    VIRTIOSND_DMA_BUFFER oldDma;
     KIRQL oldIrql;
     KSSTATE state;
-
-    UNREFERENCED_PARAMETER(RequestedNotificationCount);
 
     if (ActualBufferSize == NULL || ActualNotificationCount == NULL || BufferMdl == NULL || Buffer == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     state = stream->State;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
+    if (state == KSSTATE_RUN || InterlockedCompareExchange(&stream->DpcActive, 0, 0) != 0) {
+        return STATUS_DEVICE_BUSY;
+    }
 
-    if (state != KSSTATE_STOP) {
-        /* Once acquired, the cyclic buffer size must remain stable. */
-        KeAcquireSpinLock(&stream->Lock, &oldIrql);
-        if (stream->Buffer != NULL && stream->BufferMdl != NULL) {
-            *ActualBufferSize = stream->BufferBytes;
-            *ActualNotificationCount = (stream->PeriodBytes != 0) ? (stream->BufferBytes / stream->PeriodBytes) : 0;
-            *BufferMdl = stream->BufferMdl;
-            *Buffer = stream->Buffer;
-            KeReleaseSpinLock(&stream->Lock, oldIrql);
-            return STATUS_SUCCESS;
+    notifications = RequestedNotificationCount;
+    if (notifications == 0) {
+        notifications = 4;
+    }
+    if (notifications < 2) {
+        notifications = 2;
+    }
+    if (notifications > 256) {
+        notifications = 256;
+    }
+
+    size = RequestedBufferSize;
+    if (size < bytesPerMs * notifications) {
+        size = bytesPerMs * notifications;
+    }
+
+    periodBytes = (size + notifications - 1) / notifications;
+    periodBytes = (periodBytes + (bytesPerMs - 1)) / bytesPerMs;
+    periodBytes *= bytesPerMs;
+    if (periodBytes < bytesPerMs) {
+        periodBytes = bytesPerMs;
+    }
+
+    size = periodBytes * notifications;
+    if ((size / notifications) != periodBytes) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    dmaCtx = (stream->Miniport && stream->Miniport->Dx) ? &stream->Miniport->Dx->DmaCtx : NULL;
+    RtlZeroMemory(&dmaBuf, sizeof(dmaBuf));
+    status = VirtIoSndAllocCommonBuffer(dmaCtx, size, FALSE, &dmaBuf);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    RtlZeroMemory(dmaBuf.Va, size);
+
+    mdl = IoAllocateMdl(dmaBuf.Va, size, FALSE, FALSE, NULL);
+    if (mdl == NULL) {
+        VirtIoSndFreeCommonBuffer(dmaCtx, &dmaBuf);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    MmBuildMdlForNonPagedPool(mdl);
+
+    KeAcquireSpinLock(&stream->Lock, &oldIrql);
+    oldMdl = stream->BufferMdl;
+    oldDma = stream->BufferDma;
+
+    stream->BufferMdl = mdl;
+    stream->BufferDma = dmaBuf;
+    stream->BufferSize = size;
+
+    stream->PeriodBytes = periodBytes;
+    stream->PeriodMs = periodBytes / bytesPerMs;
+    stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
+
+    stream->FrozenLinearFrames = 0;
+    stream->FrozenQpc = 0;
+    stream->StartQpc = 0;
+    stream->StartLinearFrames = 0;
+    stream->SubmittedLinearPositionBytes = 0;
+    stream->SubmittedRingPositionBytes = 0;
+    stream->PacketCount = 0;
+
+    if (stream->PositionRegister != NULL) {
+        stream->PositionRegister->PlayOffset = 0;
+        stream->PositionRegister->WriteOffset = 0;
+    }
+    if (stream->ClockRegister != NULL) {
+        *stream->ClockRegister = 0;
+    }
+    KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+    if (oldMdl != NULL) {
+        IoFreeMdl(oldMdl);
+    }
+    VirtIoSndFreeCommonBuffer(dmaCtx, &oldDma);
+
+    if (stream->Miniport != NULL && stream->Miniport->Backend != NULL) {
+        (VOID)VirtIoSndBackend_SetParams(stream->Miniport->Backend, size, periodBytes);
+        if (state != KSSTATE_STOP) {
+            (VOID)VirtIoSndBackend_Prepare(stream->Miniport->Backend);
         }
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-        return STATUS_DEVICE_BUSY;
     }
 
-    if (InterlockedCompareExchange(&stream->DpcActive, 0, 0) != 0) {
-        return STATUS_DEVICE_BUSY;
-    }
-
-    return VirtIoSndWaveRtAllocateCyclicBuffer(
-        stream, RequestedBufferSize, ActualBufferSize, ActualNotificationCount, BufferMdl, Buffer);
+    *ActualBufferSize = size;
+    *ActualNotificationCount = notifications;
+    *BufferMdl = mdl;
+    *Buffer = dmaBuf.Va;
+    return STATUS_SUCCESS;
 }
 
 static VOID STDMETHODCALLTYPE VirtIoSndWaveRtStream_FreeBufferWithNotification(
-    _In_ IMiniportWaveRTStream* This,
+    _In_ IMiniportWaveRTStream *This,
     _In_ PMDL BufferMdl,
-    _In_ PVOID Buffer)
+    _In_ PVOID Buffer
+    )
 {
-    PVIRTIOSND_WAVERT_STREAM stream;
+    PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
+    PVIRTIOSND_DMA_CONTEXT dmaCtx;
+    PMDL oldMdl;
+    VIRTIOSND_DMA_BUFFER oldDma;
     KIRQL oldIrql;
 
-    stream = VirtIoSndWaveRtStreamFromInterface(This);
-
     VirtIoSndWaveRtStopTimer(stream);
+
+    dmaCtx = (stream->Miniport && stream->Miniport->Dx) ? &stream->Miniport->Dx->DmaCtx : NULL;
+
+    KeAcquireSpinLock(&stream->Lock, &oldIrql);
+    oldMdl = stream->BufferMdl;
+    oldDma = stream->BufferDma;
+    if (oldMdl == BufferMdl && oldDma.Va == Buffer) {
+        stream->BufferMdl = NULL;
+        RtlZeroMemory(&stream->BufferDma, sizeof(stream->BufferDma));
+        stream->BufferSize = 0;
+    } else {
+        RtlZeroMemory(&oldDma, sizeof(oldDma));
+    }
+    KeReleaseSpinLock(&stream->Lock, oldIrql);
 
     if (BufferMdl != NULL) {
         IoFreeMdl(BufferMdl);
     }
 
-    if (Buffer != NULL) {
-        ExFreePoolWithTag(Buffer, VIRTIOSND_POOL_TAG);
-    }
-
-    KeAcquireSpinLock(&stream->Lock, &oldIrql);
-    if (stream->Buffer == Buffer) {
-        stream->Buffer = NULL;
-        stream->BufferBytes = 0;
-    }
-    if (stream->BufferMdl == BufferMdl) {
-        stream->BufferMdl = NULL;
-    }
-    KeReleaseSpinLock(&stream->Lock, oldIrql);
+    VirtIoSndFreeCommonBuffer(dmaCtx, &oldDma);
 }
 
 static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl = {
@@ -1461,7 +1595,7 @@ static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl = {
 };
 
 NTSTATUS
-VirtIoSndMiniportWaveRT_Create(_Outptr_result_maybenull_ PUNKNOWN* OutUnknown)
+VirtIoSndMiniportWaveRT_Create(_Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport;
 

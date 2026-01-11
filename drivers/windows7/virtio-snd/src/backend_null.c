@@ -62,17 +62,17 @@ static NTSTATUS VirtIoSndBackendNull_Release(_In_ PVOID Context)
 static NTSTATUS
 VirtIoSndBackendNull_WritePeriod(
     _In_ PVOID Context,
-    _In_opt_ const VOID *Pcm1,
+    _In_ UINT64 Pcm1DmaAddr,
     _In_ SIZE_T Pcm1Bytes,
-    _In_opt_ const VOID *Pcm2,
+    _In_ UINT64 Pcm2DmaAddr,
     _In_ SIZE_T Pcm2Bytes
     )
 {
     PVIRTIOSND_BACKEND_NULL ctx = (PVIRTIOSND_BACKEND_NULL)Context;
-    UNREFERENCED_PARAMETER(Pcm1);
-    UNREFERENCED_PARAMETER(Pcm2);
+    UNREFERENCED_PARAMETER(Pcm1DmaAddr);
+    UNREFERENCED_PARAMETER(Pcm2DmaAddr);
 
-    ctx->TotalBytesWritten += (ULONGLONG)(Pcm1Bytes + Pcm2Bytes);
+    ctx->TotalBytesWritten += (ULONGLONG)Pcm1Bytes + (ULONGLONG)Pcm2Bytes;
 
     if (ctx->Running) {
         VIRTIOSND_TRACE(

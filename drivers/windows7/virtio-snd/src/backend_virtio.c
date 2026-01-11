@@ -221,9 +221,9 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
 static NTSTATUS
 VirtIoSndBackendVirtio_WritePeriod(
     _In_ PVOID Context,
-    _In_opt_ const VOID *Pcm1,
+    _In_ UINT64 Pcm1DmaAddr,
     _In_ SIZE_T Pcm1Bytes,
-    _In_opt_ const VOID *Pcm2,
+    _In_ UINT64 Pcm2DmaAddr,
     _In_ SIZE_T Pcm2Bytes
     )
 {
@@ -232,6 +232,8 @@ VirtIoSndBackendVirtio_WritePeriod(
     ULONG periodBytes;
     SIZE_T totalBytes;
     NTSTATUS status;
+    VIRTIOSND_TX_SEGMENT segments[2];
+    ULONG segmentCount;
 
     ctx = VirtIoSndBackendVirtioFromContext(Context);
     if (ctx == NULL || ctx->Dx == NULL) {
@@ -259,6 +261,32 @@ VirtIoSndBackendVirtio_WritePeriod(
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
+    if ((totalBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    segmentCount = 0;
+    if (Pcm1Bytes != 0) {
+        if (Pcm1Bytes > MAXULONG) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+        segments[segmentCount].Address.QuadPart = (LONGLONG)Pcm1DmaAddr;
+        segments[segmentCount].Length = (ULONG)Pcm1Bytes;
+        segmentCount++;
+    }
+    if (Pcm2Bytes != 0) {
+        if (Pcm2Bytes > MAXULONG) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+        segments[segmentCount].Address.QuadPart = (LONGLONG)Pcm2DmaAddr;
+        segments[segmentCount].Length = (ULONG)Pcm2Bytes;
+        segmentCount++;
+    }
+
+    if (segmentCount == 0) {
+        return STATUS_SUCCESS;
+    }
+
     /*
      * Drain completions proactively so small TX buffer pools don't starve.
      *
@@ -270,13 +298,24 @@ VirtIoSndBackendVirtio_WritePeriod(
         return STATUS_DEVICE_HARDWARE_ERROR;
     }
 
-    status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, FALSE);
+    /* Ensure PCM stores are ordered before publishing the TX descriptors. */
+    KeMemoryBarrier();
+
+    status = VirtIoSndHwSubmitTxSg(dx, segments, segmentCount);
     if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
         (VOID)VirtIoSndHwDrainTxCompletions(dx);
         if (dx->Tx.FatalError) {
             return STATUS_DEVICE_HARDWARE_ERROR;
         }
-        status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, FALSE);
+
+        status = VirtIoSndHwSubmitTxSg(dx, segments, segmentCount);
+        if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
+            /*
+             * No buffers available right now. Treat as a dropped period so the WaveRT engine
+             * can keep moving; the host side is expected to output silence on underrun.
+             */
+            return STATUS_SUCCESS;
+        }
     }
 
     (VOID)VirtIoSndHwDrainTxCompletions(dx);

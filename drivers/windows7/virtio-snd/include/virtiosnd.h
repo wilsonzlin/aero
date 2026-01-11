@@ -47,7 +47,9 @@
 #define VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC (VIRTIOSND_SAMPLE_RATE * VIRTIOSND_CAPTURE_BLOCK_ALIGN)
 
 //
-// Fixed timer period (10ms).
+// Default timer period (10ms). The WaveRT miniport derives its actual timer
+// period from the buffer size + notification count requested by PortCls, but
+// needs a non-zero default prior to buffer allocation.
 //
 #define VIRTIOSND_PERIOD_FRAMES 480
 #define VIRTIOSND_PERIOD_BYTES (VIRTIOSND_PERIOD_FRAMES * VIRTIOSND_BLOCK_ALIGN)
@@ -73,6 +75,16 @@
 
 typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     ULONG Signature;
+
+    /*
+     * WDM device objects.
+     *
+     * When running as a PortCls adapter, Self is the PortCls-created FDO and
+     * Pdo is the PCI PDO. LowerDeviceObject is kept for virtio-pci transport
+     * helper code that issues IRPs (e.g. QUERY_INTERFACE for PCI config access).
+     *
+     * In a typical PCI stack, LowerDeviceObject is the PDO itself.
+     */
     PDEVICE_OBJECT Self;
     PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT LowerDeviceObject;
