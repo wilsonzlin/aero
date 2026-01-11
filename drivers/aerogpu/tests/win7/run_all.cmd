@@ -56,6 +56,7 @@ call :run_test d3d9ex_triangle !TEST_ARGS!
 call :run_test d3d9ex_query_latency !TEST_ARGS!
 call :run_test d3d9ex_shared_surface !TEST_ARGS!
 call :run_test d3d9ex_shared_allocations !TEST_ARGS!
+call :run_test d3d10_triangle !TEST_ARGS!
 call :run_test d3d11_triangle !TEST_ARGS!
 call :run_test readback_sanity !TEST_ARGS!
 
