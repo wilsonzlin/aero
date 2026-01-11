@@ -6,6 +6,12 @@ This document captures the shared plumbing required to build **virtio 1.0 PCI â€
 
 The goal is to describe what needs to exist *before* writing any device-specific virtio driver.
 
+For the definitive Aero interoperability contract (virtio device IDs, required features, queue sizes, and transport rules), treat:
+
+- [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO`)
+
+as authoritative. If this document ever disagrees with the contract, the contract wins.
+
 ---
 
 ## Virtio 1.0 PCI modern transport

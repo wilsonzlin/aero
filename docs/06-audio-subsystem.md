@@ -8,6 +8,7 @@ Canonical implementation pointers (to avoid duplicated stacks):
 
 - `crates/aero-audio/src/hda.rs` — canonical HDA device model (playback + capture) + PCM helpers.
 - `crates/aero-virtio/src/devices/snd.rs` — canonical virtio-snd device model.
+- `docs/windows7-virtio-driver-contract.md` — definitive Windows 7 virtio device/transport contract (`AERO-W7-VIRTIO`, includes virtio-snd).
 - `crates/platform/src/audio/worklet_bridge.rs` — AudioWorklet output ring buffer (`SharedArrayBuffer`) layout.
 - `crates/platform/src/audio/mic_bridge.rs` — microphone capture ring buffer (`SharedArrayBuffer`) layout.
 - `web/src/platform/audio.ts` + `web/src/platform/audio-worklet-processor.js` — AudioWorklet consumer implementation.
@@ -730,6 +731,9 @@ Host code provides microphone samples via `aero_audio::capture::AudioCaptureSour
 `HdaController::process_*_with_capture(...)`.
 
 ### virtio-snd capture exposure (guest)
+
+Guest-visible virtio-snd behavior (stream ids, queues, formats) is specified by the
+[`AERO-W7-VIRTIO` contract](./windows7-virtio-driver-contract.md#34-virtio-snd-audio).
 
 The canonical `aero-virtio` virtio-snd device model exposes an additional fixed-format capture stream:
 
