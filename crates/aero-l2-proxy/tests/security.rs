@@ -123,6 +123,8 @@ async fn origin_required_by_default_rejects_missing_origin() {
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
 
     let cfg = ProxyConfig::from_env().unwrap();
@@ -166,6 +168,8 @@ async fn origin_allowlist_and_open_mode() {
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
 
     // Allowlist enforcement.
     {
@@ -242,6 +246,8 @@ async fn token_required_query_and_subprotocol() {
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
 
     let cfg = ProxyConfig::from_env().unwrap();
@@ -285,6 +291,44 @@ async fn token_required_query_and_subprotocol() {
         .await
         .expect_err("expected wrong token to be rejected");
     assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn host_allowlist_rejects_mismatch() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::set("AERO_L2_ALLOWED_HOSTS", "allowed.test");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // Matching host succeeds (with default-port normalization).
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("host", HeaderValue::from_static("allowed.test:80"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Mismatched host is rejected.
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("host", HeaderValue::from_static("blocked.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected host allowlist to reject mismatched Host");
+    assert_http_status(err, StatusCode::FORBIDDEN);
 
     proxy.shutdown().await;
 }
@@ -417,6 +461,8 @@ async fn max_connections_enforced() {
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _max_conn = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "1");
 
@@ -458,6 +504,8 @@ async fn byte_quota_closes_connection() {
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _quota = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "100");
 
@@ -597,6 +645,8 @@ async fn fps_quota_closes_connection() {
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "2");
 

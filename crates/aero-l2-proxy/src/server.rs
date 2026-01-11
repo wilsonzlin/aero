@@ -537,6 +537,66 @@ fn enforce_security(
         }
     }
 
+    if !state.cfg.security.allowed_hosts.is_empty() {
+        let trust_proxy = state.cfg.security.trust_proxy_host;
+        let scheme = effective_host_scheme(headers, trust_proxy);
+        let raw_host = effective_host_value(headers, trust_proxy);
+        let Some(raw_host) = raw_host else {
+            state.metrics.upgrade_reject_host_missing();
+            tracing::warn!(
+                reason = "host_missing",
+                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                host = "<missing>",
+                "rejected l2 websocket upgrade",
+            );
+            return Err(Box::new(
+                (StatusCode::FORBIDDEN, "missing Host header".to_string()).into_response(),
+            ));
+        };
+
+        let Some(host) = normalize_host_for_compare(&raw_host, scheme) else {
+            state.metrics.upgrade_reject_host_invalid();
+            tracing::warn!(
+                reason = "host_invalid",
+                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                host = %raw_host,
+                "rejected l2 websocket upgrade",
+            );
+            return Err(Box::new(
+                (StatusCode::FORBIDDEN, "malformed Host header".to_string()).into_response(),
+            ));
+        };
+
+        let is_allowed = state.cfg.security.allowed_hosts.iter().any(|allowed| {
+            normalize_host_for_compare(allowed, scheme).is_some_and(|allowed| allowed == host)
+        });
+
+        if !is_allowed {
+            state.metrics.upgrade_reject_host_not_allowed();
+            tracing::warn!(
+                reason = "host_not_allowed",
+                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                host = %host,
+                "rejected l2 websocket upgrade",
+            );
+            return Err(Box::new(
+                (StatusCode::FORBIDDEN, format!("Host not allowed: {host}")).into_response(),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -556,6 +616,153 @@ fn origin_from_headers(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|v| !v.is_empty())
+}
+
+#[derive(Debug, Copy, Clone)]
+enum HostScheme {
+    Http,
+    Https,
+}
+
+impl HostScheme {
+    fn default_port(self) -> u16 {
+        match self {
+            HostScheme::Http => 80,
+            HostScheme::Https => 443,
+        }
+    }
+}
+
+fn effective_host_scheme(headers: &HeaderMap, trust_proxy: bool) -> HostScheme {
+    if trust_proxy {
+        if let Some(proto) =
+            forwarded_param(headers, "proto").or_else(|| header_list_value(headers, "x-forwarded-proto"))
+        {
+            let proto = proto.to_ascii_lowercase();
+            if matches!(proto.as_str(), "https" | "wss") {
+                return HostScheme::Https;
+            }
+            if matches!(proto.as_str(), "http" | "ws") {
+                return HostScheme::Http;
+            }
+        }
+    }
+
+    // Fall back to Origin scheme when present (useful for browser clients when proxy proto headers
+    // are not configured).
+    if let Some(origin) = origin_from_headers(headers) {
+        let origin = origin.to_ascii_lowercase();
+        if origin.starts_with("https://") || origin.starts_with("wss://") {
+            return HostScheme::Https;
+        }
+        if origin.starts_with("http://") || origin.starts_with("ws://") {
+            return HostScheme::Http;
+        }
+    }
+
+    HostScheme::Http
+}
+
+fn effective_host_value(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
+    if trust_proxy {
+        if let Some(host) = forwarded_param(headers, "host") {
+            return Some(host);
+        }
+        if let Some(host) = header_list_value(headers, "x-forwarded-host") {
+            return Some(host);
+        }
+    }
+
+    headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string())
+}
+
+fn normalize_host_for_compare(raw: &str, scheme: HostScheme) -> Option<String> {
+    let raw = raw.split(',').next().unwrap_or("").trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let raw = raw
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(raw);
+
+    // Reject whitespace anywhere in the host value; if it exists, callers should treat it as
+    // malformed.
+    if raw.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+
+    let raw = raw.to_ascii_lowercase();
+
+    if let Some(rest) = raw.strip_prefix('[') {
+        let end = rest.find(']')?;
+        let host = format!("[{}]", &rest[..end]);
+        let rest = &rest[end + 1..];
+        if rest.is_empty() {
+            return Some(host);
+        }
+        let port_str = rest.strip_prefix(':')?;
+        let port = port_str.parse::<u16>().ok()?;
+        if port == scheme.default_port() {
+            return Some(host);
+        }
+        return Some(format!("{host}:{port}"));
+    }
+
+    if let Some((host, port_str)) = raw.rsplit_once(':') {
+        if host.is_empty() || host.contains(':') {
+            return None;
+        }
+        if port_str.is_empty() || !port_str.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let port = port_str.parse::<u16>().ok()?;
+        if port == scheme.default_port() {
+            return Some(host.to_string());
+        }
+        return Some(format!("{host}:{port}"));
+    }
+
+    Some(raw)
+}
+
+fn header_list_value(headers: &HeaderMap, name: &'static str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+}
+
+fn forwarded_param(headers: &HeaderMap, param: &str) -> Option<String> {
+    let value = headers.get("forwarded")?.to_str().ok()?;
+    let first = value.split(',').next()?.trim();
+    for part in first.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (k, v) = part.split_once('=')?;
+        if !k.trim().eq_ignore_ascii_case(param) {
+            continue;
+        }
+        let v = v.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or(v);
+        if v.is_empty() {
+            return None;
+        }
+        return Some(v.to_string());
+    }
+    None
 }
 
 fn token_present(

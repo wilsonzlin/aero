@@ -11,6 +11,9 @@ pub struct Metrics {
 struct MetricsInner {
     next_session_id: AtomicU64,
 
+    // WebSocket upgrade
+    upgrade_rejected_total: AtomicU64,
+
     // Sessions
     sessions_active: AtomicU64,
     sessions_total: AtomicU64,
@@ -18,6 +21,9 @@ struct MetricsInner {
     // Upgrade rejections
     upgrade_reject_origin_missing_total: AtomicU64,
     upgrade_reject_origin_not_allowed_total: AtomicU64,
+    upgrade_reject_host_missing_total: AtomicU64,
+    upgrade_reject_host_invalid_total: AtomicU64,
+    upgrade_reject_host_not_allowed_total: AtomicU64,
     upgrade_reject_auth_missing_total: AtomicU64,
     upgrade_reject_auth_invalid_total: AtomicU64,
     upgrade_reject_max_connections_total: AtomicU64,
@@ -57,10 +63,14 @@ impl Metrics {
         Self {
             inner: Arc::new(MetricsInner {
                 next_session_id: AtomicU64::new(1),
+                upgrade_rejected_total: AtomicU64::new(0),
                 sessions_active: AtomicU64::new(0),
                 sessions_total: AtomicU64::new(0),
                 upgrade_reject_origin_missing_total: AtomicU64::new(0),
                 upgrade_reject_origin_not_allowed_total: AtomicU64::new(0),
+                upgrade_reject_host_missing_total: AtomicU64::new(0),
+                upgrade_reject_host_invalid_total: AtomicU64::new(0),
+                upgrade_reject_host_not_allowed_total: AtomicU64::new(0),
                 upgrade_reject_auth_missing_total: AtomicU64::new(0),
                 upgrade_reject_auth_invalid_total: AtomicU64::new(0),
                 upgrade_reject_max_connections_total: AtomicU64::new(0),
@@ -87,6 +97,12 @@ impl Metrics {
         self.inner.next_session_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    pub fn upgrade_rejected(&self) {
+        self.inner
+            .upgrade_rejected_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn session_opened(&self) {
         self.inner.sessions_total.fetch_add(1, Ordering::Relaxed);
         self.inner.sessions_active.fetch_add(1, Ordering::Relaxed);
@@ -102,30 +118,56 @@ impl Metrics {
     }
 
     pub fn upgrade_reject_origin_missing(&self) {
+        self.upgrade_rejected();
         self.inner
             .upgrade_reject_origin_missing_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn upgrade_reject_origin_not_allowed(&self) {
+        self.upgrade_rejected();
         self.inner
             .upgrade_reject_origin_not_allowed_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn upgrade_reject_host_missing(&self) {
+        self.upgrade_rejected();
+        self.inner
+            .upgrade_reject_host_missing_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_reject_host_invalid(&self) {
+        self.upgrade_rejected();
+        self.inner
+            .upgrade_reject_host_invalid_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_reject_host_not_allowed(&self) {
+        self.upgrade_rejected();
+        self.inner
+            .upgrade_reject_host_not_allowed_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn upgrade_reject_auth_missing(&self) {
+        self.upgrade_rejected();
         self.inner
             .upgrade_reject_auth_missing_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn upgrade_reject_auth_invalid(&self) {
+        self.upgrade_rejected();
         self.inner
             .upgrade_reject_auth_invalid_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn upgrade_reject_max_connections(&self) {
+        self.upgrade_rejected();
         self.inner
             .upgrade_reject_max_connections_total
             .fetch_add(1, Ordering::Relaxed);
@@ -217,6 +259,7 @@ impl Metrics {
     }
 
     pub fn render_prometheus(&self) -> String {
+        let upgrade_rejected_total = self.inner.upgrade_rejected_total.load(Ordering::Relaxed);
         let sessions_active = self.inner.sessions_active.load(Ordering::Relaxed);
         let sessions_total = self.inner.sessions_total.load(Ordering::Relaxed);
         let upgrade_reject_origin_missing_total = self
@@ -226,6 +269,18 @@ impl Metrics {
         let upgrade_reject_origin_not_allowed_total = self
             .inner
             .upgrade_reject_origin_not_allowed_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_host_missing_total = self
+            .inner
+            .upgrade_reject_host_missing_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_host_invalid_total = self
+            .inner
+            .upgrade_reject_host_invalid_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_host_not_allowed_total = self
+            .inner
+            .upgrade_reject_host_not_allowed_total
             .load(Ordering::Relaxed);
         let upgrade_reject_auth_missing_total = self
             .inner
@@ -254,6 +309,8 @@ impl Metrics {
 
         let mut out = String::new();
 
+        push_counter(&mut out, "l2_upgrade_rejected_total", upgrade_rejected_total);
+
         push_gauge(&mut out, "l2_sessions_active", sessions_active);
         push_counter(&mut out, "l2_sessions_total", sessions_total);
 
@@ -266,6 +323,21 @@ impl Metrics {
             &mut out,
             "l2_upgrade_reject_origin_not_allowed_total",
             upgrade_reject_origin_not_allowed_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_host_missing_total",
+            upgrade_reject_host_missing_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_host_invalid_total",
+            upgrade_reject_host_invalid_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_host_not_allowed_total",
+            upgrade_reject_host_not_allowed_total,
         );
         push_counter(
             &mut out,

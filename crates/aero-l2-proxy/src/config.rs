@@ -11,6 +11,20 @@ pub struct SecurityConfig {
     /// Comma-separated allowlist of exact Origin strings. `"*"` allows any Origin value (but still
     /// requires the header unless `open=1`).
     pub allowed_origins: AllowedOrigins,
+    /// Comma-separated allowlist of exact Host values accepted at WebSocket upgrade time.
+    ///
+    /// - Compared case-insensitively (hostnames are lowercased).
+    /// - Default ports are ignored during comparisons (`:80` for `http/ws`, `:443` for
+    ///   `https/wss`).
+    ///
+    /// When unset/empty, Host validation is disabled.
+    pub allowed_hosts: Vec<String>,
+    /// When enabled, prefer proxy-provided host headers (`Forwarded: host=` or
+    /// `X-Forwarded-Host`) over `Host` for allowlist validation.
+    ///
+    /// This should only be enabled when running behind a trusted reverse proxy that strips or
+    /// overwrites these headers from untrusted clients.
+    pub trust_proxy_host: bool,
     /// Authentication mode for `/l2` WebSocket upgrades.
     pub auth_mode: AuthMode,
     /// Static API key value (only used for `auth_mode=api_key`).
@@ -45,6 +59,8 @@ impl Default for SecurityConfig {
         Self {
             open: false,
             allowed_origins: AllowedOrigins::default(),
+            allowed_hosts: Vec::new(),
+            trust_proxy_host: false,
             auth_mode: AuthMode::None,
             api_key: None,
             jwt_secret: None,
@@ -168,6 +184,22 @@ impl SecurityConfig {
             None
         };
 
+        let allowed_hosts = std::env::var("AERO_L2_ALLOWED_HOSTS")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let trust_proxy_host = std::env::var("AERO_L2_TRUST_PROXY_HOST")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .unwrap_or(false);
+
         let max_connections = std::env::var("AERO_L2_MAX_CONNECTIONS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -186,6 +218,8 @@ impl SecurityConfig {
         Ok(Self {
             open,
             allowed_origins,
+            allowed_hosts,
+            trust_proxy_host,
             auth_mode,
             api_key,
             jwt_secret,
