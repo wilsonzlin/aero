@@ -9,6 +9,7 @@ SMOKE_FRONTEND_ROOT="$ROOT_DIR/deploy/static"
 SMOKE_WASM_NAME="__aero_smoke_${PROJECT_NAME}.wasm"
 SMOKE_WASM_PATH="$SMOKE_FRONTEND_ROOT/assets/$SMOKE_WASM_NAME"
 SMOKE_WASM_DIR="$(dirname "$SMOKE_WASM_PATH")"
+SMOKE_WEBRTC_API_KEY="__aero_smoke_${PROJECT_NAME}"
 
 compose() {
   AERO_DOMAIN=localhost \
@@ -22,6 +23,8 @@ compose() {
     AERO_GATEWAY_IMAGE="aero-gateway:${PROJECT_NAME}" \
     AERO_L2_PROXY_IMAGE="aero-l2-proxy:${PROJECT_NAME}" \
     AERO_WEBRTC_UDP_RELAY_IMAGE="aero-webrtc-udp-relay:${PROJECT_NAME}" \
+    AUTH_MODE=api_key \
+    API_KEY="$SMOKE_WEBRTC_API_KEY" \
     TRUST_PROXY=1 \
     CROSS_ORIGIN_ISOLATION=0 \
     AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
@@ -73,7 +76,7 @@ fi
 
 echo "deploy smoke: waiting for https://localhost/webrtc/ice" >&2
 for _ in $(seq 1 60); do
-  if curl -kfsS https://localhost/webrtc/ice >/dev/null 2>&1; then
+  if curl -kfsS -H "X-API-Key: $SMOKE_WEBRTC_API_KEY" https://localhost/webrtc/ice >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -81,7 +84,8 @@ done
 
 fetch_headers() {
   local url="$1"
-  curl -kfsS -D- -o /dev/null "$url" | tr -d '\r'
+  shift
+  curl -kfsS "$@" -D- -o /dev/null "$url" | tr -d '\r'
 }
 
 assert_header_exact() {
@@ -109,7 +113,7 @@ assert_header_exact() {
 
 root_headers="$(fetch_headers https://localhost/)"
 health_headers="$(fetch_headers https://localhost/healthz)"
-webrtc_headers="$(fetch_headers https://localhost/webrtc/ice)"
+webrtc_headers="$(fetch_headers https://localhost/webrtc/ice -H "X-API-Key: $SMOKE_WEBRTC_API_KEY")"
 wasm_headers="$(fetch_headers "https://localhost/assets/$SMOKE_WASM_NAME")"
 
 assert_header_exact "Cache-Control" "no-cache" "$root_headers"
@@ -147,7 +151,7 @@ done
 assert_header_exact "Cache-Control" "public, max-age=31536000, immutable" "$wasm_headers"
 assert_header_exact "Content-Type" "application/wasm" "$wasm_headers"
 
-webrtc_body="$(curl -kfsS https://localhost/webrtc/ice)"
+webrtc_body="$(curl -kfsS -H "X-API-Key: $SMOKE_WEBRTC_API_KEY" https://localhost/webrtc/ice)"
 if ! echo "$webrtc_body" | grep -Eq '\"iceServers\"[[:space:]]*:'; then
   echo "deploy smoke: unexpected /webrtc/ice body: $webrtc_body" >&2
   exit 1

@@ -407,8 +407,10 @@ See also: `docs/l2-tunnel-runbook.md` (production checklist).
 # Gateway liveness (should return 200 + {"ok":true}):
 curl -k https://localhost/healthz
 
-# UDP relay ICE discovery (should return 200 + {"iceServers":[...]}):
-curl -k https://localhost/webrtc/ice
+# UDP relay ICE discovery:
+# - If AUTH_MODE=none: should return 200 + {"iceServers":[...]} with no credentials.
+# - If AUTH_MODE=api_key (default): requires an API key (X-API-Key) matching API_KEY.
+curl -k -H "X-API-Key: <API_KEY>" https://localhost/webrtc/ice
 
 # Session bootstrap (sets a Secure cookie when behind the TLS proxy and returns relay config):
 curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
