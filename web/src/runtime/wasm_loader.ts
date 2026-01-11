@@ -50,6 +50,19 @@ export interface WasmApi {
         free(): void;
     };
 
+    /**
+     * WebUSB passthrough bridge (Rust `UsbPassthroughDevice` host action queue).
+     *
+     * Note: This is optional for older WASM builds.
+     */
+    UsbPassthroughBridge?: new () => {
+        drain_actions(): unknown;
+        push_completion(completion: unknown): void;
+        reset(): void;
+        pending_summary(): unknown;
+        free(): void;
+    };
+
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
         framebufferOffsetBytes: number,
@@ -256,6 +269,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_load_u32: mod.mem_load_u32,
         demo_render_rgba8888: mod.demo_render_rgba8888,
         UsbHidBridge: mod.UsbHidBridge,
+        UsbPassthroughBridge: mod.UsbPassthroughBridge,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
