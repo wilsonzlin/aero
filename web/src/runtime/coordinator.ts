@@ -20,6 +20,8 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
+  type SetAudioRingBufferMessage,
+  type SetMicrophoneRingBufferMessage,
   type WorkerInitMessage,
   type WasmReadyMessage,
   decodeProtocolMessage,
@@ -89,10 +91,10 @@ export class WorkerCoordinator {
   private micSampleRate = 0;
   // Optional SharedArrayBuffer-backed audio output ring buffer attachment. This
   // is set by the UI and forwarded to the CPU worker when available.
-  private audioOutRingBuffer: SharedArrayBuffer | null = null;
-  private audioOutSampleRate = 0;
-  private audioOutChannelCount = 0;
-  private audioOutCapacityFrames = 0;
+  private audioRingBuffer: SharedArrayBuffer | null = null;
+  private audioCapacityFrames = 0;
+  private audioChannelCount = 0;
+  private audioDstSampleRate = 0;
   private activeConfig: AeroConfig | null = null;
   private configVersion = 0;
   private workerConfigAckVersions: Partial<Record<WorkerRole, number>> = {};
@@ -325,6 +327,16 @@ export class WorkerCoordinator {
     return Atomics.load(this.shared.status, StatusIndex.IoInputEventCounter);
   }
 
+  getAudioProducerBufferLevelFrames(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.AudioBufferLevelFrames) >>> 0;
+  }
+
+  getAudioProducerUnderrunCount(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.AudioUnderrunCount) >>> 0;
+  }
+
   getIoWorker(): Worker | null {
     return this.workers.io?.worker ?? null;
   }
@@ -353,15 +365,15 @@ export class WorkerCoordinator {
         type: "setMicrophoneRingBuffer",
         ringBuffer,
         sampleRate: this.micSampleRate,
-      });
+      } satisfies SetMicrophoneRingBufferMessage);
     }
   }
 
-  setAudioOutputRingBuffer(
+  setAudioRingBuffer(
     ringBuffer: SharedArrayBuffer | null,
-    sampleRate: number,
-    channelCount: number,
     capacityFrames: number,
+    channelCount: number,
+    dstSampleRate: number,
   ): void {
     if (ringBuffer !== null) {
       const Sab = globalThis.SharedArrayBuffer;
@@ -369,24 +381,26 @@ export class WorkerCoordinator {
         throw new Error("SharedArrayBuffer is unavailable; audio output requires crossOriginIsolated.");
       }
       if (!(ringBuffer instanceof Sab)) {
-        throw new Error("setAudioOutputRingBuffer expects a SharedArrayBuffer or null.");
+        throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
       }
     }
 
-    this.audioOutRingBuffer = ringBuffer;
-    this.audioOutSampleRate = (sampleRate ?? 0) | 0;
-    this.audioOutChannelCount = (channelCount ?? 0) | 0;
-    this.audioOutCapacityFrames = (capacityFrames ?? 0) | 0;
+    this.audioRingBuffer = ringBuffer;
+    this.audioCapacityFrames = capacityFrames >>> 0;
+    this.audioChannelCount = channelCount >>> 0;
+    this.audioDstSampleRate = dstSampleRate >>> 0;
 
     const info = this.workers.cpu;
     if (info) {
-      info.worker.postMessage({
-        type: "setAudioOutputRingBuffer",
-        ringBuffer,
-        sampleRate: this.audioOutSampleRate,
-        channelCount: this.audioOutChannelCount,
-        capacityFrames: this.audioOutCapacityFrames,
-      });
+      info.worker.postMessage(
+        {
+          type: "setAudioRingBuffer",
+          ringBuffer,
+          capacityFrames: this.audioCapacityFrames,
+          channelCount: this.audioChannelCount,
+          dstSampleRate: this.audioDstSampleRate,
+        } satisfies SetAudioRingBufferMessage,
+      );
     }
   }
 
@@ -423,17 +437,19 @@ export class WorkerCoordinator {
           type: "setMicrophoneRingBuffer",
           ringBuffer: this.micRingBuffer,
           sampleRate: this.micSampleRate,
-        });
+        } satisfies SetMicrophoneRingBufferMessage);
       }
 
-      if (role === "cpu" && this.audioOutRingBuffer) {
-        info.worker.postMessage({
-          type: "setAudioOutputRingBuffer",
-          ringBuffer: this.audioOutRingBuffer,
-          sampleRate: this.audioOutSampleRate,
-          channelCount: this.audioOutChannelCount,
-          capacityFrames: this.audioOutCapacityFrames,
-        });
+      if (role === "cpu" && this.audioRingBuffer) {
+        info.worker.postMessage(
+          {
+            type: "setAudioRingBuffer",
+            ringBuffer: this.audioRingBuffer,
+            capacityFrames: this.audioCapacityFrames,
+            channelCount: this.audioChannelCount,
+            dstSampleRate: this.audioDstSampleRate,
+          } satisfies SetAudioRingBufferMessage,
+        );
       }
 
       // Kick the worker to start its minimal demo loop.

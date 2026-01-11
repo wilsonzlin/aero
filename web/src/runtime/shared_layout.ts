@@ -22,6 +22,11 @@ export enum StatusIndex {
   IoInputBatchCounter = 2,
   IoInputEventCounter = 3,
 
+  // Audio telemetry (producer-side). Values are updated by the worker producing
+  // audio for the AudioWorklet ring buffer.
+  AudioBufferLevelFrames = 4,
+  AudioUnderrunCount = 5,
+
   CpuReady = 8,
   GpuReady = 9,
   IoReady = 10,

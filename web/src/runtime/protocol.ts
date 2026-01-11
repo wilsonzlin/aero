@@ -131,6 +131,20 @@ export type WorkerInitMessage = {
   };
 };
 
+export type SetMicrophoneRingBufferMessage = {
+  type: "setMicrophoneRingBuffer";
+  ringBuffer: SharedArrayBuffer | null;
+  sampleRate: number;
+};
+
+export type SetAudioRingBufferMessage = {
+  type: "setAudioRingBuffer";
+  ringBuffer: SharedArrayBuffer | null;
+  capacityFrames: number;
+  channelCount: number;
+  dstSampleRate: number;
+};
+
 /**
  * Structured config update pushed from the coordinator to workers.
  *
@@ -155,7 +169,11 @@ export type ConfigAckMessage = {
   version: number;
 };
 
-export type CoordinatorToWorkerPostMessage = WorkerInitMessage | ConfigUpdateMessage;
+export type CoordinatorToWorkerPostMessage =
+  | WorkerInitMessage
+  | ConfigUpdateMessage
+  | SetMicrophoneRingBufferMessage
+  | SetAudioRingBufferMessage;
 export type WorkerToCoordinatorPostMessage = ReadyMessage | ErrorMessage | WasmReadyMessage | ConfigAckMessage;
 
 const textEncoder = new TextEncoder();

@@ -1543,11 +1543,11 @@ function renderAudioPanel(): HTMLElement {
           output.context.sampleRate,
         );
 
-        workerCoordinator.setAudioOutputRingBuffer(
+        workerCoordinator.setAudioRingBuffer(
           output.ringBuffer.buffer,
-          output.context.sampleRate,
-          output.ringBuffer.channelCount,
           output.ringBuffer.capacityFrames,
+          output.ringBuffer.channelCount,
+          output.context.sampleRate,
         );
 
         await output.resume();
@@ -1555,6 +1555,19 @@ function renderAudioPanel(): HTMLElement {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
       }
+
+      toneTimer = window.setInterval(() => {
+        const metrics = output.getMetrics();
+        status.textContent =
+          `AudioContext: ${metrics.state}\n` +
+          `sampleRate: ${metrics.sampleRate}\n` +
+          `capacityFrames: ${metrics.capacityFrames}\n` +
+          `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
+          `underruns: ${metrics.underrunCount}\n` +
+          `overruns: ${metrics.overrunCount}\n` +
+          `producer.bufferLevelFrames: ${workerCoordinator.getAudioProducerBufferLevelFrames()}\n` +
+          `producer.underruns: ${workerCoordinator.getAudioProducerUnderrunCount()}`;
+      }, 50);
 
       status.textContent = "Audio initialized (worker tone backend).";
     },

@@ -35,6 +35,7 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
+  type SetAudioRingBufferMessage,
   type WorkerInitMessage,
   decodeProtocolMessage,
   encodeProtocolMessage,
@@ -62,20 +63,13 @@ let perfInstructions = 0n;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
-type SetAudioOutputRingBufferMessage = {
-  type: "setAudioOutputRingBuffer";
-  ringBuffer: SharedArrayBuffer | null;
-  sampleRate?: number;
-  channelCount?: number;
-  capacityFrames?: number;
-};
 
 let wasmApi: WasmApi | null = null;
 
-let audioOutRingBuffer: SharedArrayBuffer | null = null;
-let audioOutSampleRate = 0;
-let audioOutChannelCount = 0;
-let audioOutCapacityFrames = 0;
+let audioRingBuffer: SharedArrayBuffer | null = null;
+let audioDstSampleRate = 0;
+let audioChannelCount = 0;
+let audioCapacityFrames = 0;
 
 let workletBridge: unknown | null = null;
 let sineTone: { write: (...args: unknown[]) => number; free?: () => void } | null = null;
@@ -92,20 +86,26 @@ function detachAudioOutput(): void {
     (workletBridge as { free(): void }).free();
   }
   workletBridge = null;
+  nextAudioFillDeadlineMs = 0;
+
+  if (typeof status !== "undefined") {
+    Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
+    Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
+  }
 }
 
 function maybeInitAudioOutput(): void {
   detachAudioOutput();
 
-  if (!audioOutRingBuffer) return;
+  if (!audioRingBuffer) return;
   if (!wasmApi?.attach_worklet_bridge || !wasmApi?.SineTone) return;
-  if (audioOutCapacityFrames <= 0 || audioOutChannelCount <= 0) return;
+  if (audioCapacityFrames <= 0 || audioChannelCount <= 0) return;
 
   // Try to initialize the WASM-side bridge + sine generator. This is a best-effort
   // path (used by the Playwright AudioWorklet worker smoke test).
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    workletBridge = (wasmApi.attach_worklet_bridge as any)(audioOutRingBuffer, audioOutCapacityFrames, audioOutChannelCount);
+    workletBridge = (wasmApi.attach_worklet_bridge as any)(audioRingBuffer, audioCapacityFrames, audioChannelCount);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sineTone = new (wasmApi.SineTone as any)() as { write: (...args: unknown[]) => number; free?: () => void };
     nextAudioFillDeadlineMs = performance.now();
@@ -115,21 +115,22 @@ function maybeInitAudioOutput(): void {
   }
 }
 
-function attachAudioOutputRingBuffer(ringBuffer: SharedArrayBuffer | null, msg: Partial<SetAudioOutputRingBufferMessage>): void {
+function attachAudioRingBuffer(msg: SetAudioRingBufferMessage): void {
+  const ringBuffer = msg.ringBuffer;
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
     if (typeof Sab === "undefined") {
       throw new Error("SharedArrayBuffer is unavailable; audio output requires crossOriginIsolated.");
     }
     if (!(ringBuffer instanceof Sab)) {
-      throw new Error("setAudioOutputRingBuffer expects a SharedArrayBuffer or null.");
+      throw new Error("setAudioRingBuffer expects a SharedArrayBuffer or null.");
     }
   }
 
-  audioOutRingBuffer = ringBuffer;
-  audioOutSampleRate = (msg.sampleRate ?? 0) | 0;
-  audioOutChannelCount = (msg.channelCount ?? 0) | 0;
-  audioOutCapacityFrames = (msg.capacityFrames ?? 0) | 0;
+  audioRingBuffer = ringBuffer;
+  audioDstSampleRate = msg.dstSampleRate >>> 0;
+  audioChannelCount = msg.channelCount >>> 0;
+  audioCapacityFrames = msg.capacityFrames >>> 0;
 
   maybeInitAudioOutput();
 }
@@ -141,7 +142,7 @@ let diskDemoResponses = 0;
 let nextIoIpcId = 1;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage | SetAudioOutputRingBufferMessage>;
+  const msg = ev.data as Partial<WorkerInitMessage | ConfigUpdateMessage | SetAudioRingBufferMessage>;
   if (msg?.kind === "config.update") {
     currentConfig = (msg as ConfigUpdateMessage).config;
     currentConfigVersion = (msg as ConfigUpdateMessage).version;
@@ -149,9 +150,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
-  if ((msg as Partial<SetAudioOutputRingBufferMessage>).type === "setAudioOutputRingBuffer") {
-    const audioMsg = msg as Partial<SetAudioOutputRingBufferMessage>;
-    attachAudioOutputRingBuffer((audioMsg.ringBuffer as SharedArrayBuffer | null) ?? null, audioMsg);
+  if ((msg as Partial<SetAudioRingBufferMessage>)?.type === "setAudioRingBuffer") {
+    attachAudioRingBuffer(msg as SetAudioRingBufferMessage);
     return;
   }
 
@@ -325,28 +325,36 @@ async function runLoop(): Promise<void> {
     if (running) {
       const now = performance.now();
 
-      if (workletBridge && sineTone && audioOutSampleRate > 0 && audioOutCapacityFrames > 0) {
+      if (workletBridge && sineTone && audioDstSampleRate > 0 && audioCapacityFrames > 0) {
         if (nextAudioFillDeadlineMs === 0) nextAudioFillDeadlineMs = now;
         if (now >= nextAudioFillDeadlineMs) {
           let level = 0;
-          const bridge = workletBridge as { buffer_level_frames?: () => number };
-          if (typeof bridge.buffer_level_frames === "function") {
-            level = bridge.buffer_level_frames() | 0;
-          }
+          let underruns = 0;
+          const bridge = workletBridge as { buffer_level_frames?: () => number; underrun_count?: () => number };
+          if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
+          if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
 
-          const targetFrames = Math.min(audioOutCapacityFrames, Math.floor(audioOutSampleRate / 5)); // ~200ms
+          const targetFrames = Math.min(audioCapacityFrames, Math.floor(audioDstSampleRate / 5)); // ~200ms
           const need = Math.max(0, targetFrames - level);
           if (need > 0) {
-            const maxWriteFrames = Math.min(need, Math.min(targetFrames, Math.floor(audioOutSampleRate / 10))); // cap to ~100ms
+            const maxWriteFrames = Math.min(need, Math.min(targetFrames, Math.floor(audioDstSampleRate / 10))); // cap to ~100ms
             if (maxWriteFrames > 0) {
-              sineTone.write(workletBridge, maxWriteFrames, 440, audioOutSampleRate, 0.1);
+              sineTone.write(workletBridge, maxWriteFrames, 440, audioDstSampleRate, 0.1);
             }
           }
+
+          // Export a tiny amount of producer-side telemetry for the UI.
+          if (typeof bridge.buffer_level_frames === "function") level = bridge.buffer_level_frames() | 0;
+          if (typeof bridge.underrun_count === "function") underruns = bridge.underrun_count() | 0;
+          Atomics.store(status, StatusIndex.AudioBufferLevelFrames, level);
+          Atomics.store(status, StatusIndex.AudioUnderrunCount, underruns);
 
           nextAudioFillDeadlineMs = now + audioFillIntervalMs;
         }
       } else {
         nextAudioFillDeadlineMs = 0;
+        Atomics.store(status, StatusIndex.AudioBufferLevelFrames, 0);
+        Atomics.store(status, StatusIndex.AudioUnderrunCount, 0);
       }
 
       if (now >= nextHeartbeatMs) {
