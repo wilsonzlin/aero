@@ -209,6 +209,31 @@ impl SystemSegmentRegister {
 }
 
 impl CpuState {
+    /// Temporarily execute a memory access as a supervisor ("system") access,
+    /// regardless of the current CPL.
+    ///
+    /// x86 system structure reads (GDT/LDT/TSS/IDT) are not subject to paging
+    /// user/supervisor checks, even when the CPU is executing with CPL3. Our
+    /// paging adapter (`PagingBus`) caches CPL, so emulate that hardware behavior
+    /// by temporarily forcing `CS.RPL=0` and syncing the bus.
+    fn with_supervisor_access<B: CpuBus, R>(
+        &mut self,
+        bus: &mut B,
+        f: impl FnOnce(&mut B) -> R,
+    ) -> R {
+        if self.cpl() != 3 {
+            return f(bus);
+        }
+
+        let old_cs = self.segments.cs.selector;
+        self.segments.cs.selector &= !0b11;
+        bus.sync(self);
+        let res = f(bus);
+        self.segments.cs.selector = old_cs;
+        bus.sync(self);
+        res
+    }
+
     pub fn set_gdtr(&mut self, base: u64, limit: u16) {
         self.tables.gdtr.base = base;
         self.tables.gdtr.limit = limit;
@@ -261,9 +286,9 @@ impl CpuState {
         }
     }
 
-    pub fn read_descriptor_8(
-        &self,
-        bus: &mut impl CpuBus,
+    pub fn read_descriptor_8<B: CpuBus>(
+        &mut self,
+        bus: &mut B,
         selector: u16,
     ) -> Result<Descriptor, Exception> {
         let index = selector_index(selector);
@@ -274,13 +299,13 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let raw_low = bus.read_u64(table.base + byte_off)?;
+        let raw_low = self.with_supervisor_access(bus, |bus| bus.read_u64(table.base + byte_off))?;
         Ok(parse_descriptor_8(raw_low))
     }
 
-    pub fn read_system_descriptor(
-        &self,
-        bus: &mut impl CpuBus,
+    pub fn read_system_descriptor<B: CpuBus>(
+        &mut self,
+        bus: &mut B,
         selector: u16,
         long_mode: bool,
     ) -> Result<SystemDescriptor, Exception> {
@@ -293,12 +318,15 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let raw_low = bus.read_u64(table.base + byte_off)?;
+        let raw_low =
+            self.with_supervisor_access(bus, |bus| bus.read_u64(table.base + byte_off))?;
         let desc = parse_descriptor_8(raw_low);
         match desc {
             Descriptor::System(sys) => {
                 if long_mode {
-                    let raw_high = bus.read_u64(table.base + byte_off + 8)?;
+                    let raw_high = self.with_supervisor_access(bus, |bus| {
+                        bus.read_u64(table.base + byte_off + 8)
+                    })?;
                     Ok(parse_system_descriptor_16(raw_low, raw_high))
                 } else {
                     Ok(sys)
@@ -318,7 +346,8 @@ impl CpuState {
             return Ok(());
         }
 
-        let desc = self.read_system_descriptor(bus, selector, self.ia32e_active())?;
+        let ia32e_active = self.ia32e_active();
+        let desc = self.read_system_descriptor(bus, selector, ia32e_active)?;
         if !desc.attrs.present {
             return Err(Exception::np(selector));
         }
@@ -340,7 +369,8 @@ impl CpuState {
             return Err(Exception::gp(selector));
         }
 
-        let desc = self.read_system_descriptor(bus, selector, self.ia32e_active())?;
+        let ia32e_active = self.ia32e_active();
+        let desc = self.read_system_descriptor(bus, selector, ia32e_active)?;
         if !desc.attrs.present {
             return Err(Exception::np(selector));
         }
