@@ -244,7 +244,9 @@ impl PhysicalMemory {
         if self.a20_enabled {
             addr
         } else {
-            addr & 0x000F_FFFF
+            // When A20 is disabled, the A20 address line is forced low, aliasing
+            // addresses that differ only by bit 20.
+            addr & !(1u64 << 20)
         }
     }
 
@@ -314,5 +316,39 @@ impl MemoryAccess for PhysicalMemory {
         let idx = self.to_index(addr);
         let end = idx + len;
         &self.data[idx..end]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a20_disabled_aliases_only_bit20() {
+        // Ensure A20 masking matches real hardware: bit 20 forced low, higher
+        // address bits unaffected.
+        let mut mem = PhysicalMemory::new(4 * 1024 * 1024);
+
+        // 2MiB (bit 21 set) and 3MiB (bit 21 + bit 20 set) should alias when A20 is disabled.
+        mem.write_u8(0x0020_0000, 0x11);
+        mem.write_u8(0x0030_0000, 0x22);
+
+        assert_eq!(mem.read_u8(0x0020_0000), 0x22);
+        assert_eq!(mem.read_u8(0x0030_0000), 0x22);
+
+        // Higher bits must not be cleared (no 1MiB wraparound).
+        assert_eq!(mem.read_u8(0x0000_0000), 0x00);
+    }
+
+    #[test]
+    fn a20_enabled_preserves_distinct_addresses() {
+        let mut mem = PhysicalMemory::new(4 * 1024 * 1024);
+        mem.set_a20_enabled(true);
+
+        mem.write_u8(0x0020_0000, 0x11);
+        mem.write_u8(0x0030_0000, 0x22);
+
+        assert_eq!(mem.read_u8(0x0020_0000), 0x11);
+        assert_eq!(mem.read_u8(0x0030_0000), 0x22);
     }
 }
