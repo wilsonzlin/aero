@@ -87,9 +87,9 @@ Notes:
 - `collectionType` is emitted as the 1-byte collection type value used by the HID specification (e.g. `Application`, `Physical`, …).
 - We **do not** emit `Push`/`Pop`; each report item is emitted with the global state it needs (see below).
 
-Collection type codes (as used by the WebHID API, our normalization layer, and by HID):
+Collection type codes (HID `Collection(...)` payload byte):
 
-| WebHID string enum (`type`) | `collectionType` / `Collection(...)` byte |
+| WebHID collection type (`type`) | `collectionType` / `Collection(...)` byte |
 | --- | ---: |
 | `physical` | `0x00` |
 | `application` | `0x01` |
@@ -102,7 +102,10 @@ Collection type codes (as used by the WebHID API, our normalization layer, and b
 JSON note:
 
 - Normalized JSON emitted by `webhid_normalize.ts` uses a numeric `collectionType` code (`0..=6`), matching the HID `Collection(...)` payload byte.
-- For compatibility and debugging, Rust also accepts the WebHID field name `type` as an alias for `collectionType` (either the string enum like `"application"` or a numeric code `0..=6`).
+- The WebHID `type` field may appear as either:
+  - the string enum form (as shown in the table above), or
+  - the numeric HID code (`0..=6`) in some typings/spec revisions.
+  Both the TypeScript normalizer and Rust deserializer accept either representation.
 
 ### Reports (`HIDReportInfo`)
 
