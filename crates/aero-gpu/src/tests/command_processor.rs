@@ -559,5 +559,8 @@ fn command_processor_rejects_dirty_range_for_destroyed_shared_surface_handle() {
     });
 
     let err = proc.process_submission(&stream, 0).unwrap_err();
-    assert!(matches!(err, CommandProcessorError::UnknownResourceHandle(0x10)));
+    assert!(matches!(
+        err,
+        CommandProcessorError::UnknownResourceHandle(0x10)
+    ));
 }

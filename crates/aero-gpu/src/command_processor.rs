@@ -607,7 +607,9 @@ impl AeroGpuCommandProcessor {
                     {
                         underlying
                     } else if self.shared_surface_refcounts.contains_key(&resource_handle) {
-                        return Err(CommandProcessorError::UnknownResourceHandle(resource_handle));
+                        return Err(CommandProcessorError::UnknownResourceHandle(
+                            resource_handle,
+                        ));
                     } else {
                         resource_handle
                     };
