@@ -586,31 +586,14 @@ WddmAllocationHandle extract_primary_wddm_allocation_handle(const ArgsT& args) {
 }
 #endif
 
-WddmAllocationHandle get_wddm_allocation_from_create_resource(const D3D9DDIARG_CREATERESOURCE* args) {
+WddmAllocationHandle get_wddm_allocation_from_create_resource(const AEROGPU_D3D9DDIARG_CREATERESOURCE* args) {
   if (!args) {
     return 0;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  // In WDK builds, the runtime provides a real `D3D9DDIARG_CREATERESOURCE`. Pull
-  // allocation handles from the official struct.
-  return extract_primary_wddm_allocation_handle(*args);
-#else
   return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
-#endif
 }
 
-WddmAllocationHandle get_wddm_allocation_from_open_resource(const D3D9DDIARG_OPENRESOURCE* args) {
-  if (!args) {
-    return 0;
-  }
-
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  return extract_primary_wddm_allocation_handle(*args);
-#else
-  return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
-#endif
-}
 } // namespace
 
 uint64_t qpc_now() {
@@ -3335,7 +3318,7 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
 
 HRESULT AEROGPU_D3D9_CALL device_create_resource(
     D3DDDI_HDEVICE hDevice,
-    D3D9DDIARG_CREATERESOURCE* pCreateResource) {
+    AEROGPU_D3D9DDIARG_CREATERESOURCE* pCreateResource) {
   const uint64_t type_format =
       pCreateResource ? d3d9_trace_pack_u32_u32(pCreateResource->type, pCreateResource->format) : 0;
   const uint64_t wh = pCreateResource ? d3d9_trace_pack_u32_u32(pCreateResource->width, pCreateResource->height) : 0;
@@ -3756,7 +3739,7 @@ WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* 
 
 static HRESULT device_open_resource_impl(
     D3DDDI_HDEVICE hDevice,
-    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
   if (!hDevice.pDrvPrivate || !pOpenResource) {
     return E_INVALIDARG;
   }
@@ -3766,16 +3749,8 @@ static HRESULT device_open_resource_impl(
     return E_FAIL;
   }
 
-  const void* priv_data = nullptr;
-  uint32_t priv_data_size = 0;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  const auto* wdk_open = reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(pOpenResource);
-  priv_data = wdk_open->pPrivateDriverData;
-  priv_data_size = static_cast<uint32_t>(wdk_open->PrivateDriverDataSize);
-#else
-  priv_data = pOpenResource->pPrivateDriverData;
-  priv_data_size = pOpenResource->private_driver_data_size;
-#endif
+  const void* priv_data = pOpenResource->pPrivateDriverData;
+  const uint32_t priv_data_size = pOpenResource->private_driver_data_size;
 
   if (!priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
     return E_INVALIDARG;
@@ -3801,11 +3776,7 @@ static HRESULT device_open_resource_impl(
   res->backing_alloc_id = priv.alloc_id;
   res->backing_offset_bytes = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  res->wddm_hAllocation = get_wddm_allocation_from_openresource(reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(pOpenResource));
-#else
   res->wddm_hAllocation = static_cast<WddmAllocationHandle>(pOpenResource->wddm_hAllocation);
-#endif
   if (dev->wddm_context.hContext != 0 && res->backing_alloc_id != 0 && res->wddm_hAllocation == 0) {
     logf("aerogpu-d3d9: OpenResource missing WDDM hAllocation (alloc_id=%u)\n", res->backing_alloc_id);
     return E_FAIL;
@@ -3912,18 +3883,13 @@ static HRESULT device_open_resource_impl(
         static_cast<unsigned>(res->backing_alloc_id),
         static_cast<unsigned>(res->wddm_hAllocation));
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  auto* wdk_out = reinterpret_cast<D3D9DDIARG_OPENRESOURCE*>(pOpenResource);
-  wdk_out->hResource.pDrvPrivate = res.release();
-#else
   pOpenResource->hResource.pDrvPrivate = res.release();
-#endif
   return S_OK;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_open_resource(
     D3DDDI_HDEVICE hDevice,
-    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
   uint64_t arg0 = d3d9_trace_arg_ptr(hDevice.pDrvPrivate);
   uint64_t arg1 = d3d9_trace_arg_ptr(pOpenResource);
   uint64_t arg2 = 0;
@@ -3939,7 +3905,7 @@ HRESULT AEROGPU_D3D9_CALL device_open_resource(
 
 HRESULT AEROGPU_D3D9_CALL device_open_resource2(
     D3DDDI_HDEVICE hDevice,
-    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
   uint64_t arg0 = d3d9_trace_arg_ptr(hDevice.pDrvPrivate);
   uint64_t arg1 = d3d9_trace_arg_ptr(pOpenResource);
   uint64_t arg2 = 0;
@@ -5018,7 +4984,7 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
 
 HRESULT AEROGPU_D3D9_CALL device_lock(
     D3DDDI_HDEVICE hDevice,
-    const D3D9DDIARG_LOCK* pLock,
+    const AEROGPU_D3D9DDIARG_LOCK* pLock,
     D3DDDI_LOCKEDBOX* pLockedBox) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceLock,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -5086,7 +5052,7 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
 
 HRESULT AEROGPU_D3D9_CALL device_unlock(
     D3DDDI_HDEVICE hDevice,
-    const D3D9DDIARG_UNLOCK* pUnlock) {
+    const AEROGPU_D3D9DDIARG_UNLOCK* pUnlock) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceUnlock,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pUnlock ? d3d9_trace_arg_ptr(pUnlock->hResource.pDrvPrivate) : 0,
@@ -7168,7 +7134,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
 HRESULT AEROGPU_D3D9_CALL device_present_ex(
     D3DDDI_HDEVICE hDevice,
-    const D3D9DDIARG_PRESENTEX* pPresentEx) {
+    const AEROGPU_D3D9DDIARG_PRESENTEX* pPresentEx) {
   const uint64_t wnd = pPresentEx ? d3d9_trace_arg_ptr(pPresentEx->hWnd) : 0;
   const uint64_t sync_flags =
       pPresentEx ? d3d9_trace_pack_u32_u32(pPresentEx->sync_interval, pPresentEx->d3d9_present_flags) : 0;
@@ -7477,7 +7443,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
 HRESULT AEROGPU_D3D9_CALL device_present(
     D3DDDI_HDEVICE hDevice,
-    const D3D9DDIARG_PRESENT* pPresent) {
+    const AEROGPU_D3D9DDIARG_PRESENT* pPresent) {
   const uint64_t sc_ptr = pPresent ? d3d9_trace_arg_ptr(pPresent->hSwapChain.pDrvPrivate) : 0;
   const uint64_t src_ptr = pPresent ? d3d9_trace_arg_ptr(pPresent->hSrc.pDrvPrivate) : 0;
   const uint64_t sync_flags = pPresent ? d3d9_trace_pack_u32_u32(pPresent->sync_interval, pPresent->flags) : 0;
@@ -8443,6 +8409,14 @@ static HRESULT AEROGPU_D3D9_CALL wdk_device_create_resource(
 
   AEROGPU_D3D9DDIARG_CREATERESOURCE args{};
   std::memcpy(&args, pCreateResource, sizeof(args));
+  // Some WDK header vintages expose the primary WDDM allocation handle via
+  // indirection (arrays/structs) instead of a direct `hAllocation` field. Mirror
+  // the runtime's choice into AeroGPU's portable `wddm_hAllocation` so the core
+  // implementation can track the allocation without depending on WDK layout.
+  const auto extracted_alloc = extract_primary_wddm_allocation_handle(*pCreateResource);
+  if (extracted_alloc != 0) {
+    args.wddm_hAllocation = static_cast<uint32_t>(extracted_alloc);
+  }
   const HRESULT hr = device_create_resource(hDevice, &args);
   std::memcpy(pCreateResource, &args, sizeof(args));
   return hr;
@@ -8459,6 +8433,10 @@ static HRESULT AEROGPU_D3D9_CALL wdk_device_open_resource(
 
   AEROGPU_D3D9DDIARG_OPENRESOURCE args{};
   std::memcpy(&args, pOpenResource, sizeof(args));
+  const auto extracted_alloc = get_wddm_allocation_from_openresource(pOpenResource);
+  if (extracted_alloc != 0) {
+    args.wddm_hAllocation = static_cast<uint32_t>(extracted_alloc);
+  }
   const HRESULT hr = device_open_resource(hDevice, &args);
   std::memcpy(pOpenResource, &args, sizeof(args));
   return hr;
@@ -8475,6 +8453,10 @@ static HRESULT AEROGPU_D3D9_CALL wdk_device_open_resource2(
 
   AEROGPU_D3D9DDIARG_OPENRESOURCE args{};
   std::memcpy(&args, pOpenResource, sizeof(args));
+  const auto extracted_alloc = get_wddm_allocation_from_openresource(pOpenResource);
+  if (extracted_alloc != 0) {
+    args.wddm_hAllocation = static_cast<uint32_t>(extracted_alloc);
+  }
   const HRESULT hr = device_open_resource2(hDevice, &args);
   std::memcpy(pOpenResource, &args, sizeof(args));
   return hr;
