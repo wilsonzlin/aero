@@ -4,6 +4,7 @@
 
 #include "trace.h"
 #include "virtiosnd_control.h"
+#include "virtiosnd_control_proto.h"
 
 #define VIRTIOSND_CTRL_REQ_TAG 'rCSV' /* 'VSCr' */
 #define VIRTIOSND_CTRL_TIMEOUT_DEFAULT_MS 1000u
@@ -286,16 +287,6 @@ VirtioSndCtrlUninit(VIRTIOSND_CONTROL* Ctrl)
     Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateIdle;
     Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
-}
-
-static BOOLEAN VirtioSndCtrlIsValidStreamId(_In_ ULONG StreamId)
-{
-    return (StreamId == VIRTIO_SND_PLAYBACK_STREAM_ID || StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? TRUE : FALSE;
-}
-
-static UCHAR VirtioSndCtrlFixedChannelsForStream(_In_ ULONG StreamId)
-{
-    return (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? 1 : 2;
 }
 
 VOID
@@ -672,18 +663,15 @@ VirtioSndCtrlPcmInfoQuery(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_
     VIRTIO_SND_PCM_INFO_REQ req;
     UCHAR resp[sizeof(ULONG) + (sizeof(VIRTIO_SND_PCM_INFO) * 2)];
     ULONG respLen;
-    ULONG virtioStatus;
-    VIRTIO_SND_PCM_INFO info0;
-    VIRTIO_SND_PCM_INFO info1;
 
     if (Ctrl == NULL || PlaybackInfo == NULL || CaptureInfo == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    RtlZeroMemory(&req, sizeof(req));
-    req.code = VIRTIO_SND_R_PCM_INFO;
-    req.start_id = 0;
-    req.count = 2;
+    status = VirtioSndCtrlBuildPcmInfoReq(&req);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
     status = VirtioSndCtrlSendSyncLocked(
@@ -693,7 +681,7 @@ VirtioSndCtrlPcmInfoQuery(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_
         resp,
         sizeof(resp),
         VIRTIOSND_CTRL_TIMEOUT_DEFAULT_MS,
-        &virtioStatus,
+        NULL,
         &respLen);
     ExReleaseFastMutex(&Ctrl->Mutex);
 
@@ -701,59 +689,7 @@ VirtioSndCtrlPcmInfoQuery(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_
         return status;
     }
 
-    if (respLen < sizeof(ULONG)) {
-#ifdef STATUS_DEVICE_PROTOCOL_ERROR
-        return STATUS_DEVICE_PROTOCOL_ERROR;
-#else
-        return STATUS_UNSUCCESSFUL;
-#endif
-    }
-
-    if (virtioStatus != VIRTIO_SND_S_OK) {
-        return VirtioSndStatusToNtStatus(virtioStatus);
-    }
-
-    if (respLen < sizeof(ULONG) + (sizeof(VIRTIO_SND_PCM_INFO) * 2)) {
-#ifdef STATUS_DEVICE_PROTOCOL_ERROR
-        return STATUS_DEVICE_PROTOCOL_ERROR;
-#else
-        return STATUS_UNSUCCESSFUL;
-#endif
-    }
-
-    RtlCopyMemory(&info0, resp + sizeof(ULONG), sizeof(info0));
-    RtlCopyMemory(&info1, resp + sizeof(ULONG) + sizeof(VIRTIO_SND_PCM_INFO), sizeof(info1));
-
-    if (info0.stream_id != VIRTIO_SND_PLAYBACK_STREAM_ID || info1.stream_id != VIRTIO_SND_CAPTURE_STREAM_ID) {
-#ifdef STATUS_DEVICE_PROTOCOL_ERROR
-        return STATUS_DEVICE_PROTOCOL_ERROR;
-#else
-        return STATUS_UNSUCCESSFUL;
-#endif
-    }
-    if (info0.direction != VIRTIO_SND_D_OUTPUT || info1.direction != VIRTIO_SND_D_INPUT) {
-#ifdef STATUS_DEVICE_PROTOCOL_ERROR
-        return STATUS_DEVICE_PROTOCOL_ERROR;
-#else
-        return STATUS_UNSUCCESSFUL;
-#endif
-    }
-
-    if ((info0.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info0.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0 ||
-        (info1.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info1.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    if (info0.channels_min > 2 || info0.channels_max < 2) {
-        return STATUS_NOT_SUPPORTED;
-    }
-    if (info1.channels_min > 1 || info1.channels_max < 1) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    *PlaybackInfo = info0;
-    *CaptureInfo = info1;
-    return STATUS_SUCCESS;
+    return VirtioSndCtrlParsePcmInfoResp(resp, respLen, PlaybackInfo, CaptureInfo);
 }
 
 NTSTATUS
@@ -800,40 +736,15 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
     ULONG respStatus;
     ULONG respLen;
     ULONG virtioStatus;
-    UCHAR channels;
-    ULONG frameBytes;
 
-    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
-        return STATUS_INVALID_PARAMETER;
-    }
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    channels = VirtioSndCtrlFixedChannelsForStream(StreamId);
-    frameBytes = (ULONG)channels * 2u; /* S16_LE => 2 bytes per sample */
-    if (frameBytes == 0) {
-        return STATUS_INVALID_PARAMETER;
+    status = VirtioSndCtrlBuildPcmSetParamsReq(&req, StreamId, BufferBytes, PeriodBytes);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
-
-    /*
-     * Validate period sizing up-front so callers don't accidentally submit
-     * misaligned PCM buffers.
-     */
-    if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes || (BufferBytes % frameBytes) != 0 || (PeriodBytes % frameBytes) != 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    RtlZeroMemory(&req, sizeof(req));
-    req.code = VIRTIO_SND_R_PCM_SET_PARAMS;
-    req.stream_id = StreamId;
-    req.buffer_bytes = BufferBytes;
-    req.period_bytes = PeriodBytes;
-    req.features = 0;
-    req.channels = channels;
-    req.format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
-    req.rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
-    req.padding = 0;
 
     if (Ctrl->StreamState[StreamId] != VirtioSndStreamStateIdle && Ctrl->StreamState[StreamId] != VirtioSndStreamStateParamsSet) {
         return STATUS_INVALID_DEVICE_STATE;
@@ -853,9 +764,9 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
         Ctrl->StreamState[StreamId] = VirtioSndStreamStateParamsSet;
         Ctrl->Params[StreamId].BufferBytes = BufferBytes;
         Ctrl->Params[StreamId].PeriodBytes = PeriodBytes;
-        Ctrl->Params[StreamId].Channels = channels;
-        Ctrl->Params[StreamId].Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
-        Ctrl->Params[StreamId].Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        Ctrl->Params[StreamId].Channels = req.channels;
+        Ctrl->Params[StreamId].Format = req.format;
+        Ctrl->Params[StreamId].Rate = req.rate;
     }
 
     return status;
@@ -887,13 +798,11 @@ VirtioSndCtrlSimpleStreamCmdLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG S
     ULONG respLen;
     ULONG virtioStatus;
 
-    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
-        return STATUS_INVALID_PARAMETER;
+    NTSTATUS buildStatus;
+    buildStatus = VirtioSndCtrlBuildPcmSimpleReq(&req, StreamId, Code);
+    if (!NT_SUCCESS(buildStatus)) {
+        return buildStatus;
     }
-
-    RtlZeroMemory(&req, sizeof(req));
-    req.code = Code;
-    req.stream_id = StreamId;
 
     return VirtioSndCtrlSendSyncLocked(
         Ctrl,

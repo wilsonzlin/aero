@@ -200,10 +200,24 @@ If you want virtio-snd to bind automatically on first boot (for example when bui
 - `tests/offline-install/README.md`
 
 ## Manual QEMU test plan
- 
+  
 For a repeatable manual bring-up/validation plan under QEMU, see:
 
 - `tests/qemu/README.md`
+
+## Host unit tests (Linux/macOS)
+
+Kernel drivers cannot run in CI, but parts of the virtio-snd protocol engines can
+be compiled and unit tested on the host (descriptor/SG building, framing, and
+status/state handling).
+
+From the repo root:
+
+```sh
+cmake -S drivers/windows7/virtio-snd/tests/host -B out/virtiosnd-host-tests
+cmake --build out/virtiosnd-host-tests
+ctest --test-dir out/virtiosnd-host-tests
+```
 
 ## Release packaging (optional)
 
