@@ -18,7 +18,7 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-machine = { path = "../aero-machine" }
 aero-usb = { path = "../aero-usb" }
 aero-shared = { path = "../aero-shared", optional = true }
-aero-ipc = { path = "../aero-ipc" }
+aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 wasm-bindgen = "0.2"
 
 [dev-dependencies]
