@@ -517,7 +517,10 @@ fn usb_hub_port_suspend_set_and_clear_feature() {
     );
 
     // Clear any change bits so suspend-change edges are observable.
-    for feature in [HUB_PORT_FEATURE_C_PORT_CONNECTION, HUB_PORT_FEATURE_C_PORT_ENABLE] {
+    for feature in [
+        HUB_PORT_FEATURE_C_PORT_CONNECTION,
+        HUB_PORT_FEATURE_C_PORT_ENABLE,
+    ] {
         assert_eq!(
             hub.handle_control_request(hub_clear_feature_port(1, feature), None),
             ControlResponse::Ack
@@ -708,4 +711,21 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
     };
     assert_eq!(cfg[22], 2);
     assert_eq!(cfg[23], 0);
+}
+
+#[test]
+fn usb_hub_interrupt_bitmap_respects_max_len() {
+    let mut hub = UsbHubDevice::with_port_count(8);
+    hub.attach(1, Box::new(DummyUsbDevice::default()));
+
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    let UsbInResult::Data(bitmap) = hub.handle_in_transfer(HUB_INTERRUPT_IN_EP, 1) else {
+        panic!("expected port-change bitmap");
+    };
+    assert_eq!(bitmap.len(), 1);
+    assert_ne!(bitmap[0] & 0x02, 0); // bit1 = port1 change
 }

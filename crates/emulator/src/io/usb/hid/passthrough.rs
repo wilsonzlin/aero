@@ -143,6 +143,10 @@ impl UsbDeviceModel for UsbHidPassthroughHandle {
             .handle_control_request(setup, data_stage)
     }
 
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        self.inner.borrow_mut().handle_in_transfer(ep_addr, max_len)
+    }
+
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.inner.borrow_mut().handle_interrupt_in(ep_addr)
     }
@@ -674,6 +678,18 @@ impl UsbDeviceModel for UsbHidPassthrough {
                 _ => ControlResponse::Stall,
             },
             _ => ControlResponse::Stall,
+        }
+    }
+
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        match self.handle_interrupt_in(ep_addr) {
+            UsbInResult::Data(mut data) => {
+                if data.len() > max_len {
+                    data.truncate(max_len);
+                }
+                UsbInResult::Data(data)
+            }
+            other => other,
         }
     }
 
@@ -1235,7 +1251,10 @@ mod tests {
         );
 
         dev.push_input_report(1, &[0xaa, 0xbb, 0xcc]);
-        assert_eq!(dev.handle_in_transfer(INTERRUPT_IN_EP, 64), UsbInResult::Nak);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
+        );
 
         configure_device(&mut dev);
         assert_eq!(
@@ -1495,7 +1514,10 @@ mod tests {
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
             UsbInResult::Data(vec![1, 0x02])
         );
-        assert_eq!(dev.handle_in_transfer(INTERRUPT_IN_EP, 64), UsbInResult::Nak);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
+        );
 
         dev.set_max_pending_output_reports(1);
         assert_eq!(
