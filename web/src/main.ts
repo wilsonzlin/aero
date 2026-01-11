@@ -44,6 +44,7 @@ import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from 
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
+import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
 import { UsbBroker } from "./usb/usb_broker";
 import { WebHidBroker } from "./hid/webhid_broker";
 import { WebHidPassthroughRuntime } from "./usb/webhid_passthrough_runtime";
@@ -281,6 +282,7 @@ function render(): void {
     renderMicrophonePanel(),
     renderWebUsbDiagnosticsPanel(report),
     renderWebUsbPanel(report),
+    renderWebUsbUhciHarnessPanel(report, wasmInitPromise),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
     renderWebUsbBrokerPanel(),

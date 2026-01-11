@@ -76,6 +76,18 @@ export interface WasmApi {
         free(): void;
     };
 
+    /**
+     * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
+     *
+     * Note: optional until all deployed WASM builds include it.
+     */
+    WebUsbUhciPassthroughHarness?: new () => {
+        tick(): void;
+        drain_actions(): unknown;
+        push_completion(completion: unknown): void;
+        free(): void;
+    };
+
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
         framebufferOffsetBytes: number,
