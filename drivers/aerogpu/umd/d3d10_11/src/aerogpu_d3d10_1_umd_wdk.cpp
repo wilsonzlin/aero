@@ -4938,6 +4938,36 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
       }
       break;
 
+    __if_exists(D3D10DDICAPS_TYPE_SHADER) {
+      case D3D10DDICAPS_TYPE_SHADER: {
+        // Shader model caps for FL10_0: VS/GS/PS are SM4.0.
+        //
+        // The exact struct layout varies across WDK revisions, but in practice it
+        // begins with UINT "version tokens" using the DXBC encoding:
+        //   (program_type << 16) | (major << 4) | minor
+        //
+        // Only write fields that fit to avoid overrunning DataSize.
+        constexpr auto ver_token = [](UINT program_type, UINT major, UINT minor) -> UINT {
+          return (program_type << 16) | (major << 4) | minor;
+        };
+        constexpr UINT kShaderTypePixel = 0;
+        constexpr UINT kShaderTypeVertex = 1;
+        constexpr UINT kShaderTypeGeometry = 2;
+
+        auto write_u32 = [&](size_t offset, UINT value) {
+          if (pCaps->DataSize < offset + sizeof(UINT)) {
+            return;
+          }
+          *reinterpret_cast<UINT*>(reinterpret_cast<uint8_t*>(pCaps->pData) + offset) = value;
+        };
+
+        write_u32(0, ver_token(kShaderTypePixel, 4, 0));
+        write_u32(sizeof(UINT), ver_token(kShaderTypeVertex, 4, 0));
+        write_u32(sizeof(UINT) * 2, ver_token(kShaderTypeGeometry, 4, 0));
+        break;
+      }
+    }
+
     case D3D10DDICAPS_TYPE_FORMAT_SUPPORT:
       if (pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
         auto* fmt = reinterpret_cast<D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData);
@@ -5053,6 +5083,36 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
         *reinterpret_cast<D3D10_FEATURE_LEVEL1*>(pCaps->pData) = D3D10_FEATURE_LEVEL_10_0;
       }
       break;
+
+    __if_exists(D3D10_1DDICAPS_TYPE_SHADER) {
+      case D3D10_1DDICAPS_TYPE_SHADER: {
+        // Shader model caps for FL10_0: VS/GS/PS are SM4.0.
+        //
+        // The exact struct layout varies across WDK revisions, but in practice it
+        // begins with UINT "version tokens" using the DXBC encoding:
+        //   (program_type << 16) | (major << 4) | minor
+        //
+        // Only write fields that fit to avoid overrunning DataSize.
+        constexpr auto ver_token = [](UINT program_type, UINT major, UINT minor) -> UINT {
+          return (program_type << 16) | (major << 4) | minor;
+        };
+        constexpr UINT kShaderTypePixel = 0;
+        constexpr UINT kShaderTypeVertex = 1;
+        constexpr UINT kShaderTypeGeometry = 2;
+
+        auto write_u32 = [&](size_t offset, UINT value) {
+          if (pCaps->DataSize < offset + sizeof(UINT)) {
+            return;
+          }
+          *reinterpret_cast<UINT*>(reinterpret_cast<uint8_t*>(pCaps->pData) + offset) = value;
+        };
+
+        write_u32(0, ver_token(kShaderTypePixel, 4, 0));
+        write_u32(sizeof(UINT), ver_token(kShaderTypeVertex, 4, 0));
+        write_u32(sizeof(UINT) * 2, ver_token(kShaderTypeGeometry, 4, 0));
+        break;
+      }
+    }
 
     case D3D10_1DDICAPS_TYPE_FORMAT_SUPPORT:
       if (pCaps->DataSize >= sizeof(D3D10_1DDIARG_FORMAT_SUPPORT)) {

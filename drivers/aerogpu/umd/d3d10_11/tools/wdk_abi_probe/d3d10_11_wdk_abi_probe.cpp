@@ -86,6 +86,10 @@ int main() {
               static_cast<unsigned>(D3D10DDICAPS_TYPE_FORMAT_SUPPORT));
   std::printf("  D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS   = %u\n",
               static_cast<unsigned>(D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS));
+  __if_exists(D3D10DDICAPS_TYPE_SHADER) {
+    std::printf("  D3D10DDICAPS_TYPE_SHADER                       = %u\n",
+                static_cast<unsigned>(D3D10DDICAPS_TYPE_SHADER));
+  }
 
   std::printf("  D3D10_1DDICAPS_TYPE_D3D10_FEATURE_LEVEL        = %u\n",
               static_cast<unsigned>(D3D10_1DDICAPS_TYPE_D3D10_FEATURE_LEVEL));
@@ -93,6 +97,10 @@ int main() {
               static_cast<unsigned>(D3D10_1DDICAPS_TYPE_FORMAT_SUPPORT));
   std::printf("  D3D10_1DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS = %u\n",
               static_cast<unsigned>(D3D10_1DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS));
+  __if_exists(D3D10_1DDICAPS_TYPE_SHADER) {
+    std::printf("  D3D10_1DDICAPS_TYPE_SHADER                     = %u\n",
+                static_cast<unsigned>(D3D10_1DDICAPS_TYPE_SHADER));
+  }
 
   std::printf("  D3D11DDICAPS_TYPE_THREADING                    = %u\n",
               static_cast<unsigned>(D3D11DDICAPS_TYPE_THREADING));
