@@ -104,7 +104,7 @@ CI signs:
 - `*.sys` (kernel-mode drivers)
 - `*.cat` (catalogs)
 
-Note: `Inf2Cat` catalogs include hashes for all INF-referenced files in the package (INF, SYS, DLL, etc). Signing the catalog covers user-mode DLL integrity, so CI does not Authenticode-sign `*.dll` files individually.
+Note: `Inf2Cat` catalogs include hashes for all INF-referenced files in the package (INF, SYS, DLL, etc). Windows PnP validates package contents against those hashes via the signed catalog, so Authenticode-signing `*.dll` files individually is optional.
 
 And verifies:
 
