@@ -29,6 +29,7 @@ By default this will:
   - `out/artifacts/guest-tools/aero-guest-tools.iso`
   - `out/artifacts/guest-tools/aero-guest-tools.zip`
   - `out/artifacts/guest-tools/manifest.json`
+  - `out/artifacts/guest-tools/aero-guest-tools.manifest.json` (alias of `manifest.json` for CI/release asset naming)
 
 The default packaging spec is:
 
@@ -103,6 +104,7 @@ The tool produces the following in the output directory:
 - `aero-guest-tools.iso`
 - `aero-guest-tools.zip`
 - `manifest.json`
+- `aero-guest-tools.manifest.json` (alias of `manifest.json`)
 
 The CI wrapper script (`ci/package-guest-tools.ps1`) also writes a copy of the manifest as
 `aero-guest-tools.manifest.json` to avoid collisions when packaging into a shared artifact directory.
