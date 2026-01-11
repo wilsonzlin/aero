@@ -535,6 +535,14 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_device_v2_out", "features_lo"),
         24
     );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_device_v2_out", "features_hi"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_device_v2_out", "reserved0"),
+        40
+    );
 
     assert_eq!(
         abi.offset("aerogpu_escape_query_vblank_out", "vidpn_source_id"),

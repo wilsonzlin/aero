@@ -456,6 +456,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_device_v2_out", "detected_mmio_magic"), 16);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "abi_version_u32"), 20);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "features_lo"), 24);
+  assert.equal(off("aerogpu_escape_query_device_v2_out", "features_hi"), 32);
+  assert.equal(off("aerogpu_escape_query_device_v2_out", "reserved0"), 40);
 
   assert.equal(off("aerogpu_escape_query_vblank_out", "vidpn_source_id"), 16);
   assert.equal(off("aerogpu_escape_query_vblank_out", "irq_enable"), 20);
