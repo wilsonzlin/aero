@@ -8,49 +8,50 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CLEAR_COLOR as CLEAR_COLOR,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL as USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER as USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET as USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_TEXTURE as USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER as USAGE_VERTEX_BUFFER,
+};
+use aero_protocol::aerogpu::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat};
+use aero_protocol::aerogpu::aerogpu_ring::{
+    AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
+    AEROGPU_ALLOC_TABLE_MAGIC,
+};
+
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 
-const AEROGPU_CMD_STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD" LE
-const AEROGPU_ALLOC_TABLE_MAGIC: u32 =
-    aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
-
 // Selected opcodes from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-const OP_CREATE_BUFFER: u32 = 0x100;
-const OP_CREATE_TEXTURE2D: u32 = 0x101;
-const OP_DESTROY_RESOURCE: u32 = 0x102;
-const OP_RESOURCE_DIRTY_RANGE: u32 = 0x103;
-const OP_UPLOAD_RESOURCE: u32 = 0x104;
+const OP_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+const OP_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+const OP_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
+const OP_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+const OP_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
 
-const OP_SET_RENDER_TARGETS: u32 = 0x400;
-const OP_SET_VERTEX_BUFFERS: u32 = 0x500;
-const OP_SET_INDEX_BUFFER: u32 = 0x501;
-const OP_SET_TEXTURE: u32 = 0x510;
+const OP_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+const OP_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+const OP_SET_INDEX_BUFFER: u32 = AerogpuCmdOpcode::SetIndexBuffer as u32;
+const OP_SET_TEXTURE: u32 = AerogpuCmdOpcode::SetTexture as u32;
 
-const OP_CLEAR: u32 = 0x600;
-const OP_DRAW: u32 = 0x601;
-const OP_DRAW_INDEXED: u32 = 0x602;
+const OP_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+const OP_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
+const OP_DRAW_INDEXED: u32 = AerogpuCmdOpcode::DrawIndexed as u32;
 
 // `enum aerogpu_format` from `aerogpu_pci.h`.
-const FMT_B8G8R8A8_UNORM: u32 = 1;
-const FMT_B8G8R8X8_UNORM: u32 = 2;
-const FMT_R8G8B8A8_UNORM: u32 = 3;
-const FMT_R8G8B8X8_UNORM: u32 = 4;
+const FMT_B8G8R8A8_UNORM: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
+const FMT_B8G8R8X8_UNORM: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
+const FMT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+const FMT_R8G8B8X8_UNORM: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
 
-// Resource usage flags from `aerogpu_cmd.h`.
-const USAGE_VERTEX_BUFFER: u32 = 1u32 << 0;
-const USAGE_INDEX_BUFFER: u32 = 1u32 << 1;
-const USAGE_CONSTANT_BUFFER: u32 = 1u32 << 2;
-const USAGE_TEXTURE: u32 = 1u32 << 3;
-const USAGE_RENDER_TARGET: u32 = 1u32 << 4;
-const USAGE_DEPTH_STENCIL: u32 = 1u32 << 5;
-
-// `enum aerogpu_clear_flags` from `aerogpu_cmd.h`.
-const CLEAR_COLOR: u32 = 1u32 << 0;
-
-const STREAM_HEADER_SIZE: usize = 24;
-const CMD_HDR_SIZE: usize = 8;
-const ALLOC_TABLE_HEADER_SIZE: usize = 24;
-const ALLOC_ENTRY_SIZE: usize = 32;
+const STREAM_HEADER_SIZE: usize = ProtocolCmdStreamHeader::SIZE_BYTES;
+const CMD_HDR_SIZE: usize = ProtocolCmdHdr::SIZE_BYTES;
+const ALLOC_TABLE_HEADER_SIZE: usize = ProtocolAllocTableHeader::SIZE_BYTES;
+const ALLOC_ENTRY_SIZE: usize = ProtocolAllocEntry::SIZE_BYTES;
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ExecutorError> {
     let slice = bytes
@@ -168,6 +169,16 @@ impl AllocTable {
             return Err(ExecutorError::Validation(format!(
                 "invalid alloc table magic 0x{magic:08x}"
             )));
+        }
+
+        let abi_version = u32::from_le_bytes(header[4..8].try_into().unwrap());
+        match parse_and_validate_abi_version_u32(abi_version) {
+            Ok(_) => {}
+            Err(AerogpuAbiError::UnsupportedMajor { found }) => {
+                return Err(ExecutorError::Validation(format!(
+                    "unsupported alloc table ABI major version {found}"
+                )));
+            }
         }
 
         let size_bytes = u32::from_le_bytes(header[8..12].try_into().unwrap());
@@ -531,6 +542,19 @@ fn fs_main() -> @location(0) vec4<f32> {
         if magic != AEROGPU_CMD_STREAM_MAGIC {
             return Err((0, ExecutorError::BadStreamMagic(magic), packets_processed));
         }
+
+        let abi_version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        match parse_and_validate_abi_version_u32(abi_version) {
+            Ok(_) => {}
+            Err(AerogpuAbiError::UnsupportedMajor { found }) => {
+                return Err((
+                    0,
+                    ExecutorError::Validation(format!("unsupported ABI major version {found}")),
+                    packets_processed,
+                ));
+            }
+        }
+
         let size_bytes = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
         let size_bytes_usize = size_bytes as usize;
         if size_bytes_usize < STREAM_HEADER_SIZE || size_bytes_usize > bytes.len() {

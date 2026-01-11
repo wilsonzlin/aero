@@ -1,4 +1,12 @@
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
+use aero_protocol::aerogpu::{
+    aerogpu_cmd::{
+        AerogpuCmdOpcode, AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    },
+    aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
+};
 
 fn push_u8(out: &mut Vec<u8>, v: u8) {
     out.push(v);
@@ -32,8 +40,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
 
     // aerogpu_cmd_stream_header (24 bytes)
-    push_u32(&mut out, 0x444D_4341); // "ACMD"
-    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
@@ -113,30 +121,26 @@ fn d3d9_cmd_stream_renders_deterministic_triangle() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-    const OPC_CREATE_BUFFER: u32 = 0x100;
-    const OPC_CREATE_TEXTURE2D: u32 = 0x101;
-    const OPC_UPLOAD_RESOURCE: u32 = 0x104;
-    const OPC_CREATE_SHADER_DXBC: u32 = 0x200;
-    const OPC_BIND_SHADERS: u32 = 0x202;
-    const OPC_SET_SHADER_CONSTANTS_F: u32 = 0x203;
-    const OPC_CREATE_INPUT_LAYOUT: u32 = 0x204;
-    const OPC_SET_INPUT_LAYOUT: u32 = 0x206;
-    const OPC_SET_RENDER_TARGETS: u32 = 0x400;
-    const OPC_SET_VIEWPORT: u32 = 0x401;
-    const OPC_SET_SCISSOR: u32 = 0x402;
-    const OPC_SET_VERTEX_BUFFERS: u32 = 0x500;
-    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = 0x502;
-    const OPC_CLEAR: u32 = 0x600;
-    const OPC_DRAW: u32 = 0x601;
-    const OPC_PRESENT: u32 = 0x700;
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
+    const OPC_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
+    const OPC_SET_SHADER_CONSTANTS_F: u32 = AerogpuCmdOpcode::SetShaderConstantsF as u32;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::CreateInputLayout as u32;
+    const OPC_SET_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::SetInputLayout as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
+    const OPC_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
+    const OPC_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+    const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+    const OPC_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
+    const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 
-    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
-    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
-    const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1 << 0;
-    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
-    const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
 
     const RT_HANDLE: u32 = 1;
     const VB_HANDLE: u32 = 2;

@@ -2,6 +2,7 @@ use crate::{
     parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError, AeroGpuOpcode,
     AEROGPU_CMD_STREAM_MAGIC,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
 use crate::protocol::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
 
@@ -28,7 +29,7 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
 
     // aerogpu_cmd_stream_header (24 bytes)
     push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
-    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
@@ -777,7 +778,7 @@ fn protocol_skips_unknown_opcodes() {
 fn protocol_rejects_misaligned_cmd_size_bytes() {
     let mut stream = Vec::new();
     push_u32(&mut stream, AEROGPU_CMD_STREAM_MAGIC);
-    push_u32(&mut stream, 0x0001_0000);
+    push_u32(&mut stream, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut stream, 0); // size_bytes patched later
     push_u32(&mut stream, 0);
     push_u32(&mut stream, 0);
@@ -819,7 +820,7 @@ fn protocol_rejects_truncated_variable_payload() {
 fn protocol_rejects_stream_size_bytes_smaller_than_header() {
     let mut stream = Vec::new();
     push_u32(&mut stream, AEROGPU_CMD_STREAM_MAGIC);
-    push_u32(&mut stream, 0x0001_0000);
+    push_u32(&mut stream, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut stream, 16); // size_bytes < header size (24)
     push_u32(&mut stream, 0);
     push_u32(&mut stream, 0);

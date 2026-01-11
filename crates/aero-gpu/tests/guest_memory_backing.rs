@@ -1,5 +1,10 @@
 use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
+use aero_protocol::aerogpu::{
+    aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC},
+    aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
+    aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC,
+};
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -17,8 +22,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
 
     // aerogpu_cmd_stream_header (24 bytes)
-    push_u32(&mut out, 0x444D_4341); // "ACMD"
-    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
@@ -135,8 +140,8 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             let mut out = Vec::new();
 
             // aerogpu_alloc_table_header (24 bytes)
-            push_u32(&mut out, 0x434F_4C41); // "ALOC"
-            push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
             push_u32(&mut out, 0); // size_bytes (patch later)
             push_u32(&mut out, 2); // entry_count
             push_u32(&mut out, 32); // entry_stride_bytes
@@ -179,7 +184,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         // Build a minimal command stream that draws using the guest-backed resources.
         let stream = build_stream(|out| {
             // CREATE_BUFFER (handle=1) backed by ALLOC_VB.
-            emit_packet(out, 0x100, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 1); // buffer_handle
                 push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
@@ -189,10 +194,10 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // CREATE_TEXTURE2D (handle=2) backed by ALLOC_TEX.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 1); // width
                 push_u32(out, 1); // height
                 push_u32(out, 1); // mip_levels
@@ -204,10 +209,10 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // CREATE_TEXTURE2D (handle=3) host-owned render target.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 3); // texture_handle
                 push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 4); // width
                 push_u32(out, 4); // height
                 push_u32(out, 1); // mip_levels
@@ -219,13 +224,13 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // RESOURCE_DIRTY_RANGE for buffer and texture.
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 1); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
             });
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 2); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -233,7 +238,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // SET_RENDER_TARGETS: color0 = texture 3.
-            emit_packet(out, 0x400, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
                 push_u32(out, 1); // color_count
                 push_u32(out, 0); // depth_stencil
                 push_u32(out, 3); // colors[0]
@@ -243,7 +248,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // CLEAR to black.
-            emit_packet(out, 0x600, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, 1); // flags: CLEAR_COLOR
                 push_f32_bits(out, 0.0);
                 push_f32_bits(out, 0.0);
@@ -254,7 +259,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // SET_TEXTURE (ps slot 0) = texture 2.
-            emit_packet(out, 0x510, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
                 push_u32(out, 1); // shader_stage: PIXEL
                 push_u32(out, 0); // slot
                 push_u32(out, 2); // texture handle
@@ -262,7 +267,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
-            emit_packet(out, 0x500, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
                 push_u32(out, 0); // start_slot
                 push_u32(out, 1); // buffer_count
                 push_u32(out, 1); // binding[0].buffer
@@ -272,7 +277,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             });
 
             // DRAW: 3 vertices.
-            emit_packet(out, 0x601, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
                 push_u32(out, 3); // vertex_count
                 push_u32(out, 1); // instance_count
                 push_u32(out, 0); // first_vertex
@@ -345,8 +350,8 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             let mut out = Vec::new();
 
             // aerogpu_alloc_table_header (24 bytes)
-            push_u32(&mut out, 0x434F_4C41); // "ALOC"
-            push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
             push_u32(&mut out, 0); // size_bytes (patch later)
             push_u32(&mut out, 3); // entry_count
             push_u32(&mut out, 32); // entry_stride_bytes
@@ -403,7 +408,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
 
         let stream = build_stream(|out| {
             // CREATE_BUFFER (handle=1) guest-backed vertex buffer.
-            emit_packet(out, 0x100, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 1); // buffer_handle
                 push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
@@ -413,7 +418,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // CREATE_BUFFER (handle=4) guest-backed index buffer.
-            emit_packet(out, 0x100, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 4); // buffer_handle
                 push_u32(out, 1u32 << 1); // usage_flags: INDEX_BUFFER
                 push_u64(out, ib_raw.len() as u64); // size_bytes
@@ -423,10 +428,10 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // CREATE_TEXTURE2D (handle=2) guest-backed sampled texture.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 1); // width
                 push_u32(out, 1); // height
                 push_u32(out, 1); // mip_levels
@@ -438,10 +443,10 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // CREATE_TEXTURE2D (handle=3) host-owned render target.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 3); // texture_handle
                 push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 4); // width
                 push_u32(out, 4); // height
                 push_u32(out, 1); // mip_levels
@@ -453,19 +458,19 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // RESOURCE_DIRTY_RANGE for vb, ib, texture.
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 1); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
             });
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 4); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
                 push_u64(out, ib_raw.len() as u64); // size_bytes
             });
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 2); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -473,7 +478,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // SET_RENDER_TARGETS: color0 = texture 3.
-            emit_packet(out, 0x400, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
                 push_u32(out, 1); // color_count
                 push_u32(out, 0); // depth_stencil
                 push_u32(out, 3); // colors[0]
@@ -483,7 +488,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // CLEAR to black.
-            emit_packet(out, 0x600, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, 1); // flags: CLEAR_COLOR
                 push_f32_bits(out, 0.0);
                 push_f32_bits(out, 0.0);
@@ -494,7 +499,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // SET_TEXTURE (ps slot 0) = texture 2.
-            emit_packet(out, 0x510, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
                 push_u32(out, 1); // shader_stage: PIXEL
                 push_u32(out, 0); // slot
                 push_u32(out, 2); // texture handle
@@ -502,7 +507,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
-            emit_packet(out, 0x500, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
                 push_u32(out, 0); // start_slot
                 push_u32(out, 1); // buffer_count
                 push_u32(out, 1); // binding[0].buffer
@@ -512,7 +517,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // SET_INDEX_BUFFER: buffer 4, uint16, offset 0.
-            emit_packet(out, 0x501, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetIndexBuffer as u32, |out| {
                 push_u32(out, 4); // buffer
                 push_u32(out, 0); // format: UINT16
                 push_u32(out, 0); // offset_bytes
@@ -520,7 +525,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             });
 
             // DRAW_INDEXED: 3 indices.
-            emit_packet(out, 0x602, |out| {
+            emit_packet(out, AerogpuCmdOpcode::DrawIndexed as u32, |out| {
                 push_u32(out, 3); // index_count
                 push_u32(out, 1); // instance_count
                 push_u32(out, 0); // first_index
@@ -591,7 +596,7 @@ fn upload_resource_updates_host_owned_resources() {
 
         let stream = build_stream(|out| {
             // CREATE_BUFFER (handle=1) host-owned.
-            emit_packet(out, 0x100, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 1); // buffer_handle
                 push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
@@ -601,10 +606,10 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // CREATE_TEXTURE2D (handle=2) host-owned sampled texture (1x1).
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 1); // width
                 push_u32(out, 1); // height
                 push_u32(out, 1); // mip_levels
@@ -616,10 +621,10 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // CREATE_TEXTURE2D (handle=3) host-owned render target.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 3); // texture_handle
                 push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 4); // width
                 push_u32(out, 4); // height
                 push_u32(out, 1); // mip_levels
@@ -631,7 +636,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // UPLOAD_RESOURCE buffer data.
-            emit_packet(out, 0x104, |out| {
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
                 push_u32(out, 1); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -640,7 +645,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // UPLOAD_RESOURCE texture data (solid red).
-            emit_packet(out, 0x104, |out| {
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
                 push_u32(out, 2); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -649,7 +654,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // SET_RENDER_TARGETS: color0 = texture 3.
-            emit_packet(out, 0x400, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
                 push_u32(out, 1); // color_count
                 push_u32(out, 0); // depth_stencil
                 push_u32(out, 3); // colors[0]
@@ -659,7 +664,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // CLEAR to black.
-            emit_packet(out, 0x600, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, 1); // flags: CLEAR_COLOR
                 push_f32_bits(out, 0.0);
                 push_f32_bits(out, 0.0);
@@ -670,7 +675,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // SET_TEXTURE (ps slot 0) = texture 2.
-            emit_packet(out, 0x510, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
                 push_u32(out, 1); // shader_stage: PIXEL
                 push_u32(out, 0); // slot
                 push_u32(out, 2); // texture handle
@@ -678,7 +683,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
-            emit_packet(out, 0x500, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
                 push_u32(out, 0); // start_slot
                 push_u32(out, 1); // buffer_count
                 push_u32(out, 1); // binding[0].buffer
@@ -688,7 +693,7 @@ fn upload_resource_updates_host_owned_resources() {
             });
 
             // DRAW: 3 vertices.
-            emit_packet(out, 0x601, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
                 push_u32(out, 3); // vertex_count
                 push_u32(out, 1); // instance_count
                 push_u32(out, 0); // first_vertex
@@ -755,8 +760,8 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             let mut out = Vec::new();
 
             // aerogpu_alloc_table_header (24 bytes)
-            push_u32(&mut out, 0x434F_4C41); // "ALOC"
-            push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
             push_u32(&mut out, 0); // size_bytes (patch later)
             push_u32(&mut out, 2); // entry_count
             push_u32(&mut out, 32); // entry_stride_bytes
@@ -806,7 +811,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
 
         let stream = build_stream(|out| {
             // CREATE_BUFFER (handle=1) backed by ALLOC_VB.
-            emit_packet(out, 0x100, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 1); // buffer_handle
                 push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
@@ -816,10 +821,10 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // CREATE_TEXTURE2D (handle=2) backed by ALLOC_TEX.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 1); // width
                 push_u32(out, 2); // height
                 push_u32(out, 1); // mip_levels
@@ -831,10 +836,10 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // CREATE_TEXTURE2D (handle=3) host-owned render target.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 3); // texture_handle
                 push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 4); // width
                 push_u32(out, 4); // height
                 push_u32(out, 1); // mip_levels
@@ -846,13 +851,13 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // RESOURCE_DIRTY_RANGE for buffer and texture.
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 1); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
             });
-            emit_packet(out, 0x103, |out| {
+            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
                 push_u32(out, 2); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -860,7 +865,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // SET_RENDER_TARGETS: color0 = texture 3.
-            emit_packet(out, 0x400, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
                 push_u32(out, 1); // color_count
                 push_u32(out, 0); // depth_stencil
                 push_u32(out, 3); // colors[0]
@@ -870,7 +875,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // SET_TEXTURE (ps slot 0) = texture 2.
-            emit_packet(out, 0x510, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
                 push_u32(out, 1); // shader_stage: PIXEL
                 push_u32(out, 0); // slot
                 push_u32(out, 2); // texture handle
@@ -878,7 +883,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
-            emit_packet(out, 0x500, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
                 push_u32(out, 0); // start_slot
                 push_u32(out, 1); // buffer_count
                 push_u32(out, 1); // binding[0].buffer
@@ -888,7 +893,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             });
 
             // DRAW: 3 vertices. This triggers the dirty-range flush.
-            emit_packet(out, 0x601, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
                 push_u32(out, 3); // vertex_count
                 push_u32(out, 1); // instance_count
                 push_u32(out, 0); // first_vertex
@@ -957,7 +962,7 @@ fn draw_to_bgra_render_target_is_supported() {
 
         let stream = build_stream(|out| {
             // CREATE_BUFFER (handle=1) host-owned.
-            emit_packet(out, 0x100, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
                 push_u32(out, 1); // buffer_handle
                 push_u32(out, 1u32 << 0); // usage_flags: VERTEX_BUFFER
                 push_u64(out, vb_bytes.len() as u64); // size_bytes
@@ -967,10 +972,10 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // CREATE_TEXTURE2D (handle=2) host-owned sampled texture (1x1), RGBA.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 2); // texture_handle
                 push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
-                push_u32(out, 3); // format: R8G8B8A8_UNORM
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format: R8G8B8A8_UNORM
                 push_u32(out, 1); // width
                 push_u32(out, 1); // height
                 push_u32(out, 1); // mip_levels
@@ -982,10 +987,10 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // CREATE_TEXTURE2D (handle=3) host-owned BGRA render target.
-            emit_packet(out, 0x101, |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
                 push_u32(out, 3); // texture_handle
                 push_u32(out, 1u32 << 4); // usage_flags: RENDER_TARGET
-                push_u32(out, 1); // format: B8G8R8A8_UNORM
+                push_u32(out, AerogpuFormat::B8G8R8A8Unorm as u32); // format: B8G8R8A8_UNORM
                 push_u32(out, 4); // width
                 push_u32(out, 4); // height
                 push_u32(out, 1); // mip_levels
@@ -997,7 +1002,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // UPLOAD_RESOURCE buffer data.
-            emit_packet(out, 0x104, |out| {
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
                 push_u32(out, 1); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -1006,7 +1011,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // UPLOAD_RESOURCE texture data (solid red RGBA).
-            emit_packet(out, 0x104, |out| {
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
                 push_u32(out, 2); // resource_handle
                 push_u32(out, 0); // reserved0
                 push_u64(out, 0); // offset_bytes
@@ -1015,7 +1020,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // SET_RENDER_TARGETS: color0 = texture 3.
-            emit_packet(out, 0x400, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
                 push_u32(out, 1); // color_count
                 push_u32(out, 0); // depth_stencil
                 push_u32(out, 3); // colors[0]
@@ -1025,7 +1030,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // CLEAR to black.
-            emit_packet(out, 0x600, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
                 push_u32(out, 1); // flags: CLEAR_COLOR
                 push_f32_bits(out, 0.0);
                 push_f32_bits(out, 0.0);
@@ -1036,7 +1041,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // SET_TEXTURE (ps slot 0) = texture 2.
-            emit_packet(out, 0x510, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
                 push_u32(out, 1); // shader_stage: PIXEL
                 push_u32(out, 0); // slot
                 push_u32(out, 2); // texture handle
@@ -1044,7 +1049,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
-            emit_packet(out, 0x500, |out| {
+            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
                 push_u32(out, 0); // start_slot
                 push_u32(out, 1); // buffer_count
                 push_u32(out, 1); // binding[0].buffer
@@ -1054,7 +1059,7 @@ fn draw_to_bgra_render_target_is_supported() {
             });
 
             // DRAW: 3 vertices.
-            emit_packet(out, 0x601, |out| {
+            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
                 push_u32(out, 3); // vertex_count
                 push_u32(out, 1); // instance_count
                 push_u32(out, 0); // first_vertex
