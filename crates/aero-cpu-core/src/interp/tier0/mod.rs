@@ -19,7 +19,9 @@ mod ops_x87;
 use crate::cpuid::{CpuFeatureSet, CpuFeatures};
 use crate::exception::{AssistReason, Exception};
 use crate::fpu::FpKind;
-use crate::linear_mem::{contiguous_masked_start, write_u16_wrapped, write_u32_wrapped, write_u64_wrapped};
+use crate::linear_mem::{
+    contiguous_masked_start, write_u16_wrapped, write_u32_wrapped, write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{mask_bits, CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};
 use aero_x86::{DecodedInst, Mnemonic};

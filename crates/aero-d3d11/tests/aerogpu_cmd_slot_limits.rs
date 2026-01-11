@@ -148,6 +148,9 @@ fn aerogpu_cmd_set_texture_rejects_slot_out_of_range() {
             .execute_cmd_stream(&stream, None, &guest_mem)
             .expect_err("expected SET_TEXTURE to reject out-of-range slot");
         let msg = format!("{err:#}");
-        assert!(msg.contains("SET_TEXTURE: slot out of supported range"), "{msg}");
+        assert!(
+            msg.contains("SET_TEXTURE: slot out of supported range"),
+            "{msg}"
+        );
     });
 }

@@ -3900,8 +3900,16 @@ impl AerogpuD3d9Executor {
             .copied()
             .unwrap_or(1);
 
-        let src_raw = if src_raw == 0 { d3d9::D3DBLEND_ONE } else { src_raw };
-        let dst_raw = if dst_raw == 0 { d3d9::D3DBLEND_ZERO } else { dst_raw };
+        let src_raw = if src_raw == 0 {
+            d3d9::D3DBLEND_ONE
+        } else {
+            src_raw
+        };
+        let dst_raw = if dst_raw == 0 {
+            d3d9::D3DBLEND_ZERO
+        } else {
+            dst_raw
+        };
         let op_raw = if op_raw == 0 { 1 } else { op_raw };
 
         match src_raw {
@@ -3917,12 +3925,20 @@ impl AerogpuD3d9Executor {
                 if let Some(factor) = d3d9_blend_to_aerogpu(src_raw) {
                     self.state.blend_state.src_factor_alpha = factor;
                 } else {
-                    debug!(state_id = d3d9::D3DRS_SRCBLENDALPHA, value = src_raw, "unknown D3D9 blend factor");
+                    debug!(
+                        state_id = d3d9::D3DRS_SRCBLENDALPHA,
+                        value = src_raw,
+                        "unknown D3D9 blend factor"
+                    );
                 }
                 if let Some(factor) = d3d9_blend_to_aerogpu(dst_raw) {
                     self.state.blend_state.dst_factor_alpha = factor;
                 } else {
-                    debug!(state_id = d3d9::D3DRS_DESTBLENDALPHA, value = dst_raw, "unknown D3D9 blend factor");
+                    debug!(
+                        state_id = d3d9::D3DRS_DESTBLENDALPHA,
+                        value = dst_raw,
+                        "unknown D3D9 blend factor"
+                    );
                 }
             }
         }
@@ -4398,10 +4414,7 @@ fn map_blend_state(state: BlendState) -> Option<wgpu::BlendState> {
         dst_factor: map_blend_factor(state.dst_factor_alpha),
         operation: map_blend_op(state.blend_op_alpha),
     };
-    Some(wgpu::BlendState {
-        color,
-        alpha,
-    })
+    Some(wgpu::BlendState { color, alpha })
 }
 
 fn map_blend_factor(factor: u32) -> wgpu::BlendFactor {
