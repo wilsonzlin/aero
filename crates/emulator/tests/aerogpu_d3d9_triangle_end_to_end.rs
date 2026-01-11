@@ -205,8 +205,8 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     let verts = [
         // Top triangle (draw)
         (-0.8f32, 0.0f32, 0.0f32, 1.0f32),
-        (0.8f32, 0.0f32, 0.0f32, 1.0f32),
         (0.0f32, 0.8f32, 0.0f32, 1.0f32),
+        (0.8f32, 0.0f32, 0.0f32, 1.0f32),
         // Bottom triangle (draw_indexed, using base_vertex=3)
         (-0.8f32, 0.0f32, 0.0f32, 1.0f32),
         (0.8f32, 0.0f32, 0.0f32, 1.0f32),
@@ -576,8 +576,8 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
     let verts = [
         // Top triangle (draw)
         (-0.8f32, 0.0f32, 0.0f32, 1.0f32),
-        (0.8f32, 0.0f32, 0.0f32, 1.0f32),
         (0.0f32, 0.8f32, 0.0f32, 1.0f32),
+        (0.8f32, 0.0f32, 0.0f32, 1.0f32),
         // Bottom triangle (draw_indexed, using base_vertex=3)
         (-0.8f32, 0.0f32, 0.0f32, 1.0f32),
         (0.8f32, 0.0f32, 0.0f32, 1.0f32),
@@ -1276,8 +1276,8 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     // Single triangle that covers the center pixel while leaving the top-left corner untouched.
     let verts = [
         (-0.5f32, -0.5f32, 0.0f32, 1.0f32),
-        (0.5f32, -0.5f32, 0.0f32, 1.0f32),
         (0.0f32, 0.5f32, 0.0f32, 1.0f32),
+        (0.5f32, -0.5f32, 0.0f32, 1.0f32),
     ];
     let mut vb_data = Vec::new();
     for (x, y, z, w) in verts {
