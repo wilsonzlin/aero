@@ -118,12 +118,7 @@ fn bar_write_u32(dev: &mut VirtioPciDevice, mem: &mut dyn GuestMemory, off: u64,
     dev.bar0_write(off, &val.to_le_bytes(), mem);
 }
 
-fn bar_write_u64_split(
-    dev: &mut VirtioPciDevice,
-    mem: &mut dyn GuestMemory,
-    off: u64,
-    val: u64,
-) {
+fn bar_write_u64_split(dev: &mut VirtioPciDevice, mem: &mut dyn GuestMemory, off: u64, val: u64) {
     bar_write_u32(dev, mem, off, val as u32);
     bar_write_u32(dev, mem, off + 4, (val >> 32) as u32);
 }
@@ -140,7 +135,12 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     let mut mem = WindowedGuestMemory::new(BASE, 0x20000);
 
     // Standard virtio modern init + feature negotiation (accept what the device offers).
-    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
     bar_write_u8(
         &mut dev,
         &mut mem,
@@ -228,4 +228,3 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     };
     assert_eq!(got, event);
 }
-

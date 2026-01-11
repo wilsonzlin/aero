@@ -40,7 +40,7 @@ type authTokenVectorsFile struct {
 	Schema    int `json:"schema"`
 	JWTTokens struct {
 		TestSecret string      `json:"testSecret"`
-		Vectors []jwtVector `json:"vectors"`
+		Vectors    []jwtVector `json:"vectors"`
 	} `json:"jwtTokens"`
 }
 

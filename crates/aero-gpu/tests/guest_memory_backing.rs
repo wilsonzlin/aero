@@ -1288,7 +1288,9 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
         );
 
         let mut readback = [0u8; 16];
-        guest.read(DST_GPA, &mut readback).expect("read dst sentinel");
+        guest
+            .read(DST_GPA, &mut readback)
+            .expect("read dst sentinel");
         assert_eq!(readback, [0xEE; 16]);
     });
 }
@@ -1559,7 +1561,9 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
         );
 
         let mut readback = vec![0u8; sentinel.len()];
-        guest.read(DST_GPA, &mut readback).expect("read dst sentinel");
+        guest
+            .read(DST_GPA, &mut readback)
+            .expect("read dst sentinel");
         assert_eq!(readback, sentinel);
     });
 }
