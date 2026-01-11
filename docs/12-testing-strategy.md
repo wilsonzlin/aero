@@ -43,136 +43,67 @@ This document describes *what* we test and *why*. For the practical, developer-f
 
 ### CPU Instruction Tests
 
+The canonical interpreter is Tier-0 (`aero_cpu_core::interp::tier0`). Instruction-level unit tests
+live under `crates/aero-cpu-core/tests/` and generally follow the same shape:
+
+- allocate a small `FlatTestBus` (linear-address bus)
+- load a short instruction sequence into guest memory
+- drive execution with `exec::Vcpu` + `exec::Tier0Interpreter`
+- assert on architectural state (`CpuState` registers/flags) and any exits (`Exception`, assists)
+
 ```rust
-#[cfg(test)]
-mod cpu_tests {
-    use super::*;
-    
-    #[test]
-    fn test_mov_reg_reg() {
-        let mut cpu = CpuEmulator::new();
-        
-        cpu.set_reg(Reg::RAX, 0);
-        cpu.set_reg(Reg::RBX, 0x12345678_9ABCDEF0);
-        
-        // MOV RAX, RBX (48 89 D8)
-        cpu.execute_bytes(&[0x48, 0x89, 0xD8]);
-        
-        assert_eq!(cpu.get_reg(Reg::RAX), 0x12345678_9ABCDEF0);
-        assert_eq!(cpu.rip, 3);
+use aero_cpu_core::exec::{Interpreter as _, Tier0Interpreter, Vcpu};
+use aero_cpu_core::mem::FlatTestBus;
+use aero_cpu_core::state::{CpuMode, RFLAGS_CF, RFLAGS_ZF};
+use aero_x86::Register;
+
+#[test]
+fn mov_and_add_update_registers_and_flags() {
+    let mut bus = FlatTestBus::new(0x2000);
+    let code_base = 0x100u64;
+
+    // MOV RAX, RBX; ADD RAX, 1; HLT
+    bus.load(
+        code_base,
+        &[
+            0x48, 0x89, 0xD8, // mov rax, rbx
+            0x48, 0x83, 0xC0, 0x01, // add rax, 1
+            0xF4, // hlt
+        ],
+    );
+
+    let mut vcpu = Vcpu::new_with_mode(CpuMode::Long, bus);
+    vcpu.cpu.state.set_rip(code_base);
+    vcpu.cpu.state.write_reg(Register::RBX, 0xFFFF_FFFF_FFFF_FFFF);
+
+    let mut interp = Tier0Interpreter::new(1024);
+    while !vcpu.cpu.state.halted {
+        interp.exec_block(&mut vcpu);
     }
-    
-    #[test]
-    fn test_add_flags() {
-        let mut cpu = CpuEmulator::new();
-        
-        // Test carry flag
-        cpu.set_reg(Reg::RAX, 0xFFFFFFFF_FFFFFFFF);
-        cpu.set_reg(Reg::RBX, 1);
-        cpu.execute_bytes(&[0x48, 0x01, 0xD8]);  // ADD RAX, RBX
-        
-        assert_eq!(cpu.get_reg(Reg::RAX), 0);
-        assert!(cpu.get_flag(Flag::CF));
-        assert!(cpu.get_flag(Flag::ZF));
-        assert!(!cpu.get_flag(Flag::SF));
-    }
-    
-    #[test]
-    fn test_overflow_flag() {
-        let mut cpu = CpuEmulator::new();
-        
-        // Signed overflow: 0x7FFFFFFF + 1
-        cpu.set_reg(Reg::EAX, 0x7FFFFFFF);
-        cpu.set_reg(Reg::EBX, 1);
-        cpu.execute_bytes(&[0x01, 0xD8]);  // ADD EAX, EBX
-        
-        assert_eq!(cpu.get_reg(Reg::EAX), 0x80000000);
-        assert!(cpu.get_flag(Flag::OF));
-        assert!(cpu.get_flag(Flag::SF));
-        assert!(!cpu.get_flag(Flag::CF));
-    }
-    
-    #[test]
-    fn test_div_by_zero() {
-        let mut cpu = CpuEmulator::new();
-        
-        cpu.set_reg(Reg::RAX, 100);
-        cpu.set_reg(Reg::RDX, 0);
-        cpu.set_reg(Reg::RCX, 0);
-        
-        let result = cpu.execute_bytes(&[0x48, 0xF7, 0xF1]);  // DIV RCX
-        
-        assert!(matches!(result, Err(Exception::DivideError)));
-    }
-    
-    // Parameterized tests for comprehensive coverage
-    #[test_case(0x00, 0x00, 0x00, false, false, true ; "0+0=0")]
-    #[test_case(0x01, 0x01, 0x02, false, false, false ; "1+1=2")]
-    #[test_case(0xFF, 0x01, 0x00, true, false, true ; "255+1=0 with carry")]
-    #[test_case(0x7F, 0x01, 0x80, false, true, false ; "127+1=128 with overflow")]
-    fn test_add_8bit(a: u8, b: u8, result: u8, cf: bool, of: bool, zf: bool) {
-        let mut cpu = CpuEmulator::new();
-        cpu.set_reg(Reg::AL, a as u64);
-        cpu.set_reg(Reg::BL, b as u64);
-        cpu.execute_bytes(&[0x00, 0xD8]);  // ADD AL, BL
-        
-        assert_eq!(cpu.get_reg(Reg::AL) as u8, result);
-        assert_eq!(cpu.get_flag(Flag::CF), cf);
-        assert_eq!(cpu.get_flag(Flag::OF), of);
-        assert_eq!(cpu.get_flag(Flag::ZF), zf);
-    }
+
+    assert_eq!(vcpu.cpu.state.read_reg(Register::RAX), 0);
+    assert!(vcpu.cpu.state.get_flag(RFLAGS_CF));
+    assert!(vcpu.cpu.state.get_flag(RFLAGS_ZF));
 }
 ```
+
+For patterns around faults/exceptions (turning an `Exception` into a pending event and delivering it
+through `CpuCore`), see [`docs/02-cpu-emulation.md`](./02-cpu-emulation.md).
 
 ### Memory Subsystem Tests
 
-```rust
-#[cfg(test)]
-mod memory_tests {
-    use super::*;
-    
-    #[test]
-    fn test_page_table_walk() {
-        let mut mmu = Mmu::new();
-        let mut memory = MemoryBus::new(4 * GB);
-        
-        // Set up 4-level page tables
-        setup_identity_mapping(&mut memory, 0, 4 * GB);
-        mmu.set_cr3(PAGE_TABLE_BASE);
-        mmu.enable_paging();
-        
-        // Test translation
-        let paddr = mmu.translate(0x1000, AccessType::Read);
-        assert_eq!(paddr, Ok(PhysAddr(0x1000)));
-    }
-    
-    #[test]
-    fn test_page_fault() {
-        let mut mmu = Mmu::new();
-        mmu.set_cr3(PAGE_TABLE_BASE);
-        mmu.enable_paging();
-        
-        // Access unmapped address
-        let result = mmu.translate(0xDEAD_BEEF_0000, AccessType::Read);
-        
-        assert!(matches!(result, Err(PageFault { .. })));
-    }
-    
-    #[test]
-    fn test_tlb_invalidation() {
-        let mut mmu = Mmu::new();
-        // ... setup
-        
-        // Populate TLB
-        mmu.translate(0x1000, AccessType::Read);
-        assert!(mmu.tlb_lookup(0x1000).is_some());
-        
-        // Invalidate
-        mmu.invlpg(0x1000);
-        assert!(mmu.tlb_lookup(0x1000).is_none());
-    }
-}
-```
+Paging and TLB behavior is implemented in `crates/aero-mmu` and integrated into the CPU core via
+`aero_cpu_core::PagingBus` (a `CpuBus` wrapper that performs translation and routes accesses to a
+physical `aero_mmu::MemoryBus`).
+
+Concrete, end-to-end paging tests (Tier-0 + paging + INVLPG/CR3/CR4/EFER interaction + fault
+delivery) live under:
+
+- [`crates/aero-cpu-core/tests/paging.rs`](../crates/aero-cpu-core/tests/paging.rs)
+
+And the core page table walker / TLB unit tests live under:
+
+- [`crates/aero-mmu/src/lib.rs`](../crates/aero-mmu/src/lib.rs) (implementation + internal tests)
 
 ### JIT vs Interpreter Memory Differential Tests
 
@@ -747,48 +678,15 @@ These tests are intended for Win7 VMs with AeroGPU installed and are not expecte
 
 ### Performance Benchmarks
 
-```rust
-#[bench]
-fn bench_instruction_throughput(b: &mut Bencher) {
-    let mut cpu = CpuEmulator::new();
-    let code = assemble("
-        mov rax, 1000000
-    loop:
-        dec rax
-        jnz loop
-        ret
-    ");
-    
-    b.iter(|| {
-        cpu.reset();
-        cpu.execute_until_ret(&code);
-    });
-}
+Rust microbenchmarks in this repo use Criterion and live under `crates/*/benches/`. For CPU work,
+start with:
 
-#[bench]
-fn bench_memory_bandwidth(b: &mut Bencher) {
-    let mut memory = MemoryBus::new(1 * GB);
-    let buffer = vec![0u8; 1 * MB];
-    
-    b.iter(|| {
-        for offset in (0..1 * GB).step_by(1 * MB) {
-            memory.write_bulk(offset, &buffer);
-        }
-    });
-    
-    b.bytes = 1 * GB as u64;
-}
+- `crates/aero-cpu-core/benches/` (Criterion harness)
 
-#[bench]
-fn bench_graphics_frame(b: &mut Bencher) {
-    let mut gpu = GpuEmulator::new_sync();
-    setup_aero_scene(&mut gpu);
-    
-    b.iter(|| {
-        gpu.render_frame();
-    });
-}
-```
+Note: the current `emulator_critical` microbench targets the legacy interpreter dispatch loop and
+is gated behind `--features legacy-interp` (see [`docs/TESTING.md`](./TESTING.md) for the exact
+commands used in CI). Tier-0 and future JIT microbenches should follow the same Criterion structure
+but drive `exec::Tier0Interpreter` / `exec::ExecDispatcher`.
 
 For D3D10/11 specifically, add a “many draws” microbench once the translation layer exists:
 

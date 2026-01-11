@@ -952,62 +952,101 @@ To maintain broad browser coverage, the GPU presenter should support a **main-th
 ### CPU Worker
 
 > Note: The snippet below is illustrative. The current wasm-bindgen entrypoint is `aero_wasm.js`
-> (built from `crates/aero-wasm`), and the worker harness lives under `web/src/runtime/`.
+> (built from `crates/aero-wasm`). The canonical CPU worker implementation lives in
+> `web/src/workers/cpu.worker.ts` and uses helpers in `web/src/runtime/`.
 
 ```javascript
-// cpu-worker.js
-import init, { CpuEmulator } from './aero_wasm.js';
+// cpu.worker.js (illustrative)
+import { initWasmForContext } from "/web/src/runtime/wasm_context";
+import {
+    CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+    CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+    CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+    CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES,
+    StatusIndex,
+    STATUS_INTS,
+    readGuestRamLayoutFromStatus,
+} from "/web/src/runtime/shared_layout";
 
-let emulator = null;
+// `WasmApi` exported by `crates/aero-wasm` (see `web/src/runtime/wasm_loader.ts`).
+let wasm = null;
+
+// Canonical full-system VM export (`aero_machine::Machine`).
+let machine = null;
+
+// Optional lightweight demo harness for the CPU worker (threaded build only).
+let cpuDemo = null;
+
 let guestMemory = null;
-let statusFlags = null; // Int32Array over `stateSab`
+let status = null; // Int32Array view into `controlSab`
 
 self.onmessage = async (event) => {
-    const { type, data } = event.data;
-    
-    switch (type) {
-        case 'init':
-            await init();
-            guestMemory = event.data.guestMemory;
-            statusFlags = new Int32Array(event.data.stateSab, 0, 256);
-            emulator = new CpuEmulator(guestMemory);
+    const msg = event.data;
+
+    switch (msg.kind) {
+        case "init": {
+            guestMemory = msg.guestMemory;
+            status = new Int32Array(msg.controlSab, 0, STATUS_INTS);
+
+            const { api } = await initWasmForContext({
+                variant: msg.wasmVariant ?? "auto",
+                memory: guestMemory,
+                module: msg.wasmModule,
+            });
+            wasm = api;
+
+            // Guest RAM layout is published by the coordinator in the status SAB.
+            const layout = readGuestRamLayoutFromStatus(status);
+
+            // Construct a full-system VM instance.
+            machine = new wasm.Machine(layout.guest_size);
+
+            // Optional CPU worker demo (writes frames/counters inside the module's
+            // linear memory).
+            if (wasm.CpuWorkerDemo && msg.sharedFramebufferOffsetBytes) {
+                const ramSizeBytes = guestMemory.buffer.byteLength >>> 0;
+                const framebufferLinearOffset = msg.sharedFramebufferOffsetBytes >>> 0;
+                const guestCounterLinearOffset =
+                    (layout.guest_base + CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES) >>> 0;
+
+                cpuDemo = new wasm.CpuWorkerDemo(
+                    ramSizeBytes,
+                    framebufferLinearOffset,
+                    CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+                    CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+                    CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+                    guestCounterLinearOffset,
+                );
+            }
             break;
-            
-        case 'run':
+        }
+        case "run":
             runEmulationLoop();
             break;
-            
-        case 'stop':
-            Atomics.store(statusFlags, STATUS_STOP_REQUESTED, 1);
+        case "stop":
+            Atomics.store(status, StatusIndex.StopRequested, 1);
             break;
     }
 };
 
 function runEmulationLoop() {
-    while (true) {
-        // Check for stop request
-        if (Atomics.load(statusFlags, STATUS_STOP_REQUESTED) === 1) {
-            Atomics.store(statusFlags, STATUS_STOP_REQUESTED, 0);
-            break;
+    while (Atomics.load(status, StatusIndex.StopRequested) === 0) {
+        // Execute a slice of guest work (full-system path).
+        //
+        // `run_slice` returns an object with a small enum-like `kind` field
+        // (Completed/Halted/ResetRequested/Assist/Exception) plus an instruction count.
+        const exit = machine.run_slice(10_000);
+        exit.free();
+
+        // Optional demo harness path (shared-memory pattern generator).
+        if (cpuDemo) {
+            const now = performance.now();
+            cpuDemo.tick(now);
+            cpuDemo.render_frame(0 /* frameSeq */, now);
         }
-        
-        // Execute instructions
-        const result = emulator.execute_batch(10000);
-        
-        // Handle events
-        if (result.interrupt_pending) {
-            self.postMessage({ type: 'interrupt', vector: result.vector });
-        }
-        
-         // Check if we need to wait
-         if (result.halted) {
-             Atomics.store(statusFlags, STATUS_CPU_RUNNING, 0);
-             Atomics.notify(statusFlags, STATUS_CPU_RUNNING, 1);
-             Atomics.wait(statusFlags, STATUS_CPU_RUNNING, 0);
-         }
-     }
- }
- ```
+    }
+}
+```
 
 ---
 
