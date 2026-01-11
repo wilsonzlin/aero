@@ -7,6 +7,10 @@ This note describes how to enable a **lightweight tracing facility** in the Aero
 
 Tracing is implemented with **`OutputDebugStringA`** and can be captured in a Windows 7 VM using **Sysinternals DebugView**.
 
+Related checklist (what the runtime might call once you switch to WDK headers):
+
+* `docs/graphics/win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbed for FL10_0 bring-up).
+
 ---
 
 ## 1) Enable tracing
@@ -89,4 +93,3 @@ The intent of this trace facility is to make those unexpected calls visible quic
 
 * implement the entrypoint, or
 * stop advertising the capability that triggers it.
-
