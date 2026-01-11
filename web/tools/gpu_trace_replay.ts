@@ -51,28 +51,113 @@
   //
   // Command streams start with magic "ACMD" (little-endian) and contain a
   // sequence of size-prefixed packets (unknown opcodes must be skipped).
-  const AEROGPU_CMD_STREAM_MAGIC = asciiBytes("ACMD");
-  const AEROGPU_CMD_STREAM_MAGIC_U32 = 0x444d4341; // "ACMD" LE
-  const AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES = 24;
-  const AEROGPU_CMD_HDR_SIZE_BYTES = 8;
+  //
+  // NOTE: This file is also used as a plain `<script>` without bundling. To
+  // keep it self-contained we embed fallback values here, but we opportunistically
+  // dynamic-import the canonical protocol mirrors when running under the Aero
+  // dev server (see `maybeInitAerogpuProtocol`).
+  let AEROGPU_CMD_STREAM_MAGIC = asciiBytes("ACMD");
+  let AEROGPU_CMD_STREAM_MAGIC_U32 = 0x444d4341; // "ACMD" LE
+  let AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES = 24;
+  let AEROGPU_CMD_HDR_SIZE_BYTES = 8;
 
-  const AEROGPU_CMD_CREATE_BUFFER = 0x0100;
-  const AEROGPU_CMD_CREATE_TEXTURE2D = 0x0101;
-  const AEROGPU_CMD_SET_RENDER_TARGETS = 0x0400;
-  const AEROGPU_CMD_SET_VIEWPORT = 0x0401;
-  const AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x0500;
-  const AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = 0x0502;
-  const AEROGPU_CMD_CLEAR = 0x0600;
-  const AEROGPU_CMD_DRAW = 0x0601;
-  const AEROGPU_CMD_PRESENT = 0x0700;
-  const AEROGPU_CMD_PRESENT_EX = 0x0701;
+  // Opcodes.
+  let AEROGPU_CMD_CREATE_BUFFER = 0x0100;
+  let AEROGPU_CMD_CREATE_TEXTURE2D = 0x0101;
+  let AEROGPU_CMD_SET_RENDER_TARGETS = 0x0400;
+  let AEROGPU_CMD_SET_VIEWPORT = 0x0401;
+  let AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x0500;
+  let AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = 0x0502;
+  let AEROGPU_CMD_CLEAR = 0x0600;
+  let AEROGPU_CMD_DRAW = 0x0601;
+  let AEROGPU_CMD_PRESENT = 0x0700;
+  let AEROGPU_CMD_PRESENT_EX = 0x0701;
 
-  const AEROGPU_CLEAR_COLOR = 1 << 0;
-  const AEROGPU_CLEAR_DEPTH = 1 << 1;
-  const AEROGPU_CLEAR_STENCIL = 1 << 2;
+  // Packet sizes (minimum size_bytes).
+  let AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES = 40;
+  let AEROGPU_CMD_CREATE_TEXTURE2D_SIZE_BYTES = 56;
+  let AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES = 48;
+  let AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = 32;
+  let AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = 16;
+  let AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES = 16;
+  let AEROGPU_CMD_CLEAR_SIZE_BYTES = 36;
+  let AEROGPU_CMD_DRAW_SIZE_BYTES = 24;
+  let AEROGPU_CMD_PRESENT_SIZE_BYTES = 16;
+  let AEROGPU_CMD_PRESENT_EX_SIZE_BYTES = 24;
 
-  const AEROGPU_FORMAT_R8G8B8A8_UNORM = 3;
-  const AEROGPU_TOPOLOGY_TRIANGLELIST = 4;
+  let AEROGPU_CLEAR_COLOR = 1 << 0;
+  let AEROGPU_CLEAR_DEPTH = 1 << 1;
+  let AEROGPU_CLEAR_STENCIL = 1 << 2;
+
+  let AEROGPU_FORMAT_R8G8B8A8_UNORM = 3;
+  let AEROGPU_TOPOLOGY_TRIANGLELIST = 4;
+
+  let decodeCmdStreamHeader = null;
+  let decodeCmdHdr = null;
+
+  let aerogpuProtocolInit = null;
+  async function maybeInitAerogpuProtocol() {
+    if (aerogpuProtocolInit) return aerogpuProtocolInit;
+    aerogpuProtocolInit = (async () => {
+      try {
+        const cmd = await import("/emulator/protocol/aerogpu/aerogpu_cmd.ts");
+        const pci = await import("/emulator/protocol/aerogpu/aerogpu_pci.ts");
+        if (!cmd) return;
+
+        if (typeof cmd.decodeCmdStreamHeader === "function") decodeCmdStreamHeader = cmd.decodeCmdStreamHeader;
+        if (typeof cmd.decodeCmdHdr === "function") decodeCmdHdr = cmd.decodeCmdHdr;
+
+        if (typeof cmd.AEROGPU_CMD_STREAM_MAGIC === "number") {
+          AEROGPU_CMD_STREAM_MAGIC_U32 = cmd.AEROGPU_CMD_STREAM_MAGIC >>> 0;
+          const b = new Uint8Array(4);
+          new DataView(b.buffer).setUint32(0, AEROGPU_CMD_STREAM_MAGIC_U32, true);
+          AEROGPU_CMD_STREAM_MAGIC = b;
+        }
+        if (typeof cmd.AEROGPU_CMD_STREAM_HEADER_SIZE === "number") {
+          AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES = cmd.AEROGPU_CMD_STREAM_HEADER_SIZE >>> 0;
+        }
+        if (typeof cmd.AEROGPU_CMD_HDR_SIZE === "number") AEROGPU_CMD_HDR_SIZE_BYTES = cmd.AEROGPU_CMD_HDR_SIZE >>> 0;
+
+        if (cmd.AerogpuCmdOpcode) {
+          if (typeof cmd.AerogpuCmdOpcode.CreateBuffer === "number") AEROGPU_CMD_CREATE_BUFFER = cmd.AerogpuCmdOpcode.CreateBuffer >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.CreateTexture2d === "number") AEROGPU_CMD_CREATE_TEXTURE2D = cmd.AerogpuCmdOpcode.CreateTexture2d >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetRenderTargets === "number") AEROGPU_CMD_SET_RENDER_TARGETS = cmd.AerogpuCmdOpcode.SetRenderTargets >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetViewport === "number") AEROGPU_CMD_SET_VIEWPORT = cmd.AerogpuCmdOpcode.SetViewport >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetVertexBuffers === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS = cmd.AerogpuCmdOpcode.SetVertexBuffers >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetPrimitiveTopology === "number") AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = cmd.AerogpuCmdOpcode.SetPrimitiveTopology >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.Clear === "number") AEROGPU_CMD_CLEAR = cmd.AerogpuCmdOpcode.Clear >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.Draw === "number") AEROGPU_CMD_DRAW = cmd.AerogpuCmdOpcode.Draw >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.Present === "number") AEROGPU_CMD_PRESENT = cmd.AerogpuCmdOpcode.Present >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.PresentEx === "number") AEROGPU_CMD_PRESENT_EX = cmd.AerogpuCmdOpcode.PresentEx >>> 0;
+        }
+
+        if (typeof cmd.AEROGPU_CMD_CREATE_BUFFER_SIZE === "number") AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES = cmd.AEROGPU_CMD_CREATE_BUFFER_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_CREATE_TEXTURE2D_SIZE === "number") AEROGPU_CMD_CREATE_TEXTURE2D_SIZE_BYTES = cmd.AEROGPU_CMD_CREATE_TEXTURE2D_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_RENDER_TARGETS_SIZE === "number") AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_RENDER_TARGETS_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE === "number") AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE === "number") AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES = cmd.AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_CLEAR_SIZE === "number") AEROGPU_CMD_CLEAR_SIZE_BYTES = cmd.AEROGPU_CMD_CLEAR_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_DRAW_SIZE === "number") AEROGPU_CMD_DRAW_SIZE_BYTES = cmd.AEROGPU_CMD_DRAW_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_PRESENT_SIZE === "number") AEROGPU_CMD_PRESENT_SIZE_BYTES = cmd.AEROGPU_CMD_PRESENT_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_PRESENT_EX_SIZE === "number") AEROGPU_CMD_PRESENT_EX_SIZE_BYTES = cmd.AEROGPU_CMD_PRESENT_EX_SIZE >>> 0;
+
+        if (typeof cmd.AEROGPU_CLEAR_COLOR === "number") AEROGPU_CLEAR_COLOR = cmd.AEROGPU_CLEAR_COLOR >>> 0;
+        if (typeof cmd.AEROGPU_CLEAR_DEPTH === "number") AEROGPU_CLEAR_DEPTH = cmd.AEROGPU_CLEAR_DEPTH >>> 0;
+        if (typeof cmd.AEROGPU_CLEAR_STENCIL === "number") AEROGPU_CLEAR_STENCIL = cmd.AEROGPU_CLEAR_STENCIL >>> 0;
+
+        if (cmd.AerogpuPrimitiveTopology && typeof cmd.AerogpuPrimitiveTopology.TriangleList === "number") {
+          AEROGPU_TOPOLOGY_TRIANGLELIST = cmd.AerogpuPrimitiveTopology.TriangleList >>> 0;
+        }
+        if (pci && pci.AerogpuFormat && typeof pci.AerogpuFormat.R8G8B8A8Unorm === "number") {
+          AEROGPU_FORMAT_R8G8B8A8_UNORM = pci.AerogpuFormat.R8G8B8A8Unorm >>> 0;
+        }
+      } catch (e) {
+        // Ignore; this tool can run standalone without the protocol mirrors.
+      }
+    })();
+    return aerogpuProtocolInit;
+  }
 
   function asciiBytes(s) {
     const out = new Uint8Array(s.length);
@@ -792,21 +877,31 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     }
 
     function executeAerogpuCmdStream(packetBytes) {
-      // `aerogpu_cmd_stream_header` (24 bytes) followed by `aerogpu_cmd_hdr` packets.
+      // `aerogpu_cmd_stream_header` followed by size-prefixed `aerogpu_cmd_hdr` packets.
       // Forward-compat rules: validate `size_bytes`, skip unknown opcodes.
-      if (packetBytes.byteLength < 24) fail("ACMD stream header out of bounds");
+      if (packetBytes.byteLength < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES) fail("ACMD stream header out of bounds");
       const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
 
-      const magic = readU32(pv, 0);
-      if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad ACMD magic");
+      let sizeBytes = 0;
+      if (decodeCmdStreamHeader) {
+        const hdr = decodeCmdStreamHeader(pv, 0);
+        sizeBytes = hdr.sizeBytes >>> 0;
+      } else {
+        const magic = readU32(pv, 0);
+        if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad ACMD magic");
 
-      const sizeBytes = readU32(pv, 8);
-      if (sizeBytes < 24) fail("ACMD size_bytes too small: " + sizeBytes);
+        const abiVersion = readU32(pv, 4);
+        const major = (abiVersion >>> 16) & 0xffff;
+        if (major !== 1) fail("unsupported ACMD ABI major: " + major);
+
+        sizeBytes = readU32(pv, 8);
+      }
+      if (sizeBytes < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES) fail("ACMD size_bytes too small: " + sizeBytes);
       if (sizeBytes > packetBytes.byteLength) fail("ACMD size_bytes out of bounds: " + sizeBytes);
 
       // Ignore flags and reserved fields for forward compatibility.
       const streamEnd = sizeBytes;
-      let off = 24;
+      let off = AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES;
 
       function clampI32(v) {
         if (!Number.isFinite(v)) return 0;
@@ -825,18 +920,25 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
       }
 
       while (off < streamEnd) {
-        if (off + 8 > streamEnd) fail("ACMD command header out of bounds");
-        const opcode = readU32(pv, off + 0);
-        const cmdSize = readU32(pv, off + 4);
-
-        if (cmdSize < 8) fail("ACMD cmd size_bytes too small: " + cmdSize);
-        if ((cmdSize & 3) !== 0) fail("ACMD cmd size_bytes not 4-byte aligned: " + cmdSize);
+        if (off + AEROGPU_CMD_HDR_SIZE_BYTES > streamEnd) fail("ACMD command header out of bounds");
+        let opcode = 0;
+        let cmdSize = 0;
+        if (decodeCmdHdr) {
+          const hdr = decodeCmdHdr(pv, off);
+          opcode = hdr.opcode >>> 0;
+          cmdSize = hdr.sizeBytes >>> 0;
+        } else {
+          opcode = readU32(pv, off + 0);
+          cmdSize = readU32(pv, off + 4);
+          if (cmdSize < AEROGPU_CMD_HDR_SIZE_BYTES) fail("ACMD cmd size_bytes too small: " + cmdSize);
+          if ((cmdSize & 3) !== 0) fail("ACMD cmd size_bytes not 4-byte aligned: " + cmdSize);
+        }
         if (off + cmdSize > streamEnd) fail("ACMD cmd overruns stream");
 
         switch (opcode) {
           case AEROGPU_CMD_SET_VIEWPORT: {
-            // struct aerogpu_cmd_set_viewport (32 bytes)
-            if (cmdSize < 32) fail("ACMD SET_VIEWPORT size_bytes too small: " + cmdSize);
+            // struct aerogpu_cmd_set_viewport
+            if (cmdSize < AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES) fail("ACMD SET_VIEWPORT size_bytes too small: " + cmdSize);
             const x = readF32(pv, off + 8);
             const y = readF32(pv, off + 12);
             const wf = readF32(pv, off + 16);
@@ -854,8 +956,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             break;
           }
           case AEROGPU_CMD_CLEAR: {
-            // struct aerogpu_cmd_clear (36 bytes)
-            if (cmdSize < 36) fail("ACMD CLEAR size_bytes too small: " + cmdSize);
+            // struct aerogpu_cmd_clear
+            if (cmdSize < AEROGPU_CMD_CLEAR_SIZE_BYTES) fail("ACMD CLEAR size_bytes too small: " + cmdSize);
             const flags = readU32(pv, off + 8);
             let mask = 0;
             if (flags & AEROGPU_CLEAR_COLOR) {
@@ -880,14 +982,14 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             break;
           }
           case AEROGPU_CMD_PRESENT: {
-            // struct aerogpu_cmd_present (16 bytes)
-            if (cmdSize < 16) fail("ACMD PRESENT size_bytes too small: " + cmdSize);
+            // struct aerogpu_cmd_present
+            if (cmdSize < AEROGPU_CMD_PRESENT_SIZE_BYTES) fail("ACMD PRESENT size_bytes too small: " + cmdSize);
             gl.finish();
             break;
           }
           case AEROGPU_CMD_PRESENT_EX: {
-            // struct aerogpu_cmd_present_ex (24 bytes)
-            if (cmdSize < 24) fail("ACMD PRESENT_EX size_bytes too small: " + cmdSize);
+            // struct aerogpu_cmd_present_ex
+            if (cmdSize < AEROGPU_CMD_PRESENT_EX_SIZE_BYTES) fail("ACMD PRESENT_EX size_bytes too small: " + cmdSize);
             gl.finish();
             break;
           }
@@ -1145,25 +1247,44 @@ void main() {
       );
       const bufLen = dv.byteLength;
       if (bufLen < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES) fail("cmd stream too small");
-      const magic = dv.getUint32(0, true);
-      if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad cmd stream magic");
-      const sizeBytes = dv.getUint32(8, true);
+
+      let sizeBytes = 0;
+      if (decodeCmdStreamHeader) {
+        const hdr = decodeCmdStreamHeader(dv, 0);
+        sizeBytes = hdr.sizeBytes >>> 0;
+      } else {
+        const magic = dv.getUint32(0, true);
+        if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad cmd stream magic");
+
+        const abiVersion = dv.getUint32(4, true);
+        const major = (abiVersion >>> 16) & 0xffff;
+        if (major !== 1) fail("unsupported cmd stream ABI major: " + major);
+
+        sizeBytes = dv.getUint32(8, true);
+      }
       if (sizeBytes < AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES || sizeBytes > bufLen) {
         fail("invalid cmd stream size_bytes=" + sizeBytes);
       }
 
       let off = AEROGPU_CMD_STREAM_HEADER_SIZE_BYTES;
       while (off < sizeBytes) {
-        if (off + AEROGPU_CMD_HDR_SIZE_BYTES > sizeBytes) {
-          fail("truncated cmd header at offset " + off);
-        }
-        const opcode = dv.getUint32(off + 0, true);
-        const cmdSizeBytes = dv.getUint32(off + 4, true);
-        if (cmdSizeBytes < AEROGPU_CMD_HDR_SIZE_BYTES) {
-          fail("invalid cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
-        }
-        if (cmdSizeBytes % 4 !== 0) {
-          fail("misaligned cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+        if (off + AEROGPU_CMD_HDR_SIZE_BYTES > sizeBytes) fail("truncated cmd header at offset " + off);
+
+        let opcode = 0;
+        let cmdSizeBytes = 0;
+        if (decodeCmdHdr) {
+          const hdr = decodeCmdHdr(dv, off);
+          opcode = hdr.opcode >>> 0;
+          cmdSizeBytes = hdr.sizeBytes >>> 0;
+        } else {
+          opcode = dv.getUint32(off + 0, true);
+          cmdSizeBytes = dv.getUint32(off + 4, true);
+          if (cmdSizeBytes < AEROGPU_CMD_HDR_SIZE_BYTES) {
+            fail("invalid cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+          }
+          if (cmdSizeBytes % 4 !== 0) {
+            fail("misaligned cmd size_bytes=" + cmdSizeBytes + " at offset " + off);
+          }
         }
         const end = off + cmdSizeBytes;
         if (end > sizeBytes) {
@@ -1172,7 +1293,7 @@ void main() {
 
         switch (opcode) {
           case AEROGPU_CMD_CREATE_BUFFER: {
-            if (cmdSizeBytes < 40) fail("CREATE_BUFFER packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES) fail("CREATE_BUFFER packet too small");
             const bufferHandle = dv.getUint32(off + 8, true);
             const sizeBytesU64 = readU64Big(dv, off + 16);
             const backingAllocId = dv.getUint32(off + 24, true);
@@ -1201,7 +1322,7 @@ void main() {
           }
 
           case AEROGPU_CMD_CREATE_TEXTURE2D: {
-            if (cmdSizeBytes < 56) fail("CREATE_TEXTURE2D packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_CREATE_TEXTURE2D_SIZE_BYTES) fail("CREATE_TEXTURE2D packet too small");
             const textureHandle = dv.getUint32(off + 8, true);
             const format = dv.getUint32(off + 16, true);
             const width = dv.getUint32(off + 20, true);
@@ -1252,7 +1373,7 @@ void main() {
           }
 
           case AEROGPU_CMD_SET_RENDER_TARGETS: {
-            if (cmdSizeBytes < 48) fail("SET_RENDER_TARGETS packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES) fail("SET_RENDER_TARGETS packet too small");
             const colorCount = dv.getUint32(off + 8, true);
             const rt0 = dv.getUint32(off + 16, true);
             bindRenderTarget(colorCount > 0 ? rt0 : null);
@@ -1260,7 +1381,7 @@ void main() {
           }
 
           case AEROGPU_CMD_SET_VIEWPORT: {
-            if (cmdSizeBytes < 32) fail("SET_VIEWPORT packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES) fail("SET_VIEWPORT packet too small");
             const x = dv.getFloat32(off + 8, true);
             const y = dv.getFloat32(off + 12, true);
             const wReq = dv.getFloat32(off + 16, true);
@@ -1273,7 +1394,7 @@ void main() {
           }
 
           case AEROGPU_CMD_CLEAR: {
-            if (cmdSizeBytes < 36) fail("CLEAR packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_CLEAR_SIZE_BYTES) fail("CLEAR packet too small");
             const flags = dv.getUint32(off + 8, true);
             if ((flags & AEROGPU_CLEAR_COLOR) !== 0) {
               const r = dv.getFloat32(off + 12, true);
@@ -1287,16 +1408,19 @@ void main() {
           }
 
           case AEROGPU_CMD_SET_VERTEX_BUFFERS: {
-            if (cmdSizeBytes < 32) fail("SET_VERTEX_BUFFERS packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES) fail("SET_VERTEX_BUFFERS packet too small");
             const startSlot = dv.getUint32(off + 8, true);
             const bufferCount = dv.getUint32(off + 12, true);
             if (startSlot !== 0) fail("SET_VERTEX_BUFFERS only supports start_slot=0");
+            const neededBytes = AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES + bufferCount * 16;
+            if (cmdSizeBytes < neededBytes) fail("SET_VERTEX_BUFFERS packet too small for bindings");
             if (bufferCount === 0) break;
 
             // First binding.
-            const bufHandle = dv.getUint32(off + 16, true);
-            const strideBytes = dv.getUint32(off + 20, true);
-            const offsetBytes = dv.getUint32(off + 24, true);
+            const bindOff = off + AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES;
+            const bufHandle = dv.getUint32(bindOff + 0, true);
+            const strideBytes = dv.getUint32(bindOff + 4, true);
+            const offsetBytes = dv.getUint32(bindOff + 8, true);
             const glBuf = buffers.get(bufHandle);
             if (!glBuf) fail("unknown vertex buffer handle=" + bufHandle);
             gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
@@ -1308,7 +1432,7 @@ void main() {
           }
 
           case AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY: {
-            if (cmdSizeBytes < 16) fail("SET_PRIMITIVE_TOPOLOGY packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES) fail("SET_PRIMITIVE_TOPOLOGY packet too small");
             const topology = dv.getUint32(off + 8, true);
             if (topology !== AEROGPU_TOPOLOGY_TRIANGLELIST) {
               fail("unsupported primitive topology " + topology);
@@ -1318,7 +1442,7 @@ void main() {
           }
 
           case AEROGPU_CMD_DRAW: {
-            if (cmdSizeBytes < 24) fail("DRAW packet too small");
+            if (cmdSizeBytes < AEROGPU_CMD_DRAW_SIZE_BYTES) fail("DRAW packet too small");
             const vertexCount = dv.getUint32(off + 8, true);
             const instanceCount = dv.getUint32(off + 12, true);
             const firstVertex = dv.getUint32(off + 16, true);
@@ -1329,6 +1453,36 @@ void main() {
           }
 
           case AEROGPU_CMD_PRESENT: {
+            if (cmdSizeBytes < AEROGPU_CMD_PRESENT_SIZE_BYTES) fail("PRESENT packet too small");
+            if (currentRenderTarget !== null && currentRenderTarget !== 0) {
+              const rt = textures.get(currentRenderTarget);
+              if (!rt) fail("missing current render target");
+
+              gl.bindFramebuffer(gl.READ_FRAMEBUFFER, rt.fb);
+              gl.readBuffer(gl.COLOR_ATTACHMENT0);
+              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+              gl.drawBuffers([gl.BACK]);
+              gl.blitFramebuffer(
+                0,
+                0,
+                rt.width,
+                rt.height,
+                0,
+                0,
+                canvas.width,
+                canvas.height,
+                gl.COLOR_BUFFER_BIT,
+                gl.NEAREST,
+              );
+              gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
+            gl.finish();
+            break;
+          }
+
+          case AEROGPU_CMD_PRESENT_EX: {
+            if (cmdSizeBytes < AEROGPU_CMD_PRESENT_EX_SIZE_BYTES) fail("PRESENT_EX packet too small");
+            // PresentEx is currently treated as Present for replay purposes.
             if (currentRenderTarget !== null && currentRenderTarget !== 0) {
               const rt = textures.get(currentRenderTarget);
               if (!rt) fail("missing current render target");
@@ -1630,7 +1784,6 @@ void main() {
           " (supported: 1 (minimal ABI v1) or 0x0001_xxxx (AeroGPU ABI v1))",
       );
     }
-
     let hasSubmissions = false;
     for (const subs of trace.frameSubmissions.values()) {
       if (subs.length > 0) {
@@ -1638,7 +1791,7 @@ void main() {
         break;
       }
     }
-
+    if (isAerogpuAbiV1) await maybeInitAerogpuProtocol();
     const backendName = (opts && opts.backend) || "webgl2";
     const backend = hasSubmissions
       ? !isAerogpuAbiV1
