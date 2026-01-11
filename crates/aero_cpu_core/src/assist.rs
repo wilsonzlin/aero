@@ -4,6 +4,7 @@ use crate::cpuid::{self, CpuFeatures};
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
 use crate::msr;
+use crate::segmentation::{LoadReason, Seg};
 use crate::state::{mask_bits, CpuMode, CpuState, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_TF};
 
 /// Runtime context needed by the Tier-0 assist layer.
@@ -262,6 +263,18 @@ fn is_seg_reg(reg: Register) -> bool {
         reg,
         Register::ES | Register::CS | Register::SS | Register::DS | Register::FS | Register::GS
     )
+}
+
+fn seg_from_reg(reg: Register) -> Result<Seg, Exception> {
+    Ok(match reg {
+        Register::ES => Seg::ES,
+        Register::CS => Seg::CS,
+        Register::SS => Seg::SS,
+        Register::DS => Seg::DS,
+        Register::FS => Seg::FS,
+        Register::GS => Seg::GS,
+        _ => return Err(Exception::InvalidOpcode),
+    })
 }
 
 fn is_ctrl_reg(reg: Register) -> bool {
@@ -1281,7 +1294,13 @@ fn instr_mov_privileged<B: CpuBus>(
             return Err(Exception::InvalidOpcode);
         }
         let selector = read_op_u16(state, bus, instr, 1, next_ip)?;
-        load_segment_descriptor(state, bus, seg, selector, seg == Register::SS)?;
+        let seg_enum = seg_from_reg(seg)?;
+        let reason = if seg_enum == Seg::SS {
+            LoadReason::Stack
+        } else {
+            LoadReason::Data
+        };
+        state.load_seg(bus, seg_enum, selector, reason)?;
         state.set_rip(next_ip);
         return Ok(());
     }
@@ -1376,7 +1395,13 @@ fn instr_pop_privileged<B: CpuBus>(
     }
     // POP segment always pops a 16-bit selector, even in 32-bit mode.
     let selector = pop_u16(state, bus)?;
-    load_segment_descriptor(state, bus, seg, selector, seg == Register::SS)
+    let seg_enum = seg_from_reg(seg)?;
+    let reason = if seg_enum == Seg::SS {
+        LoadReason::Stack
+    } else {
+        LoadReason::Data
+    };
+    state.load_seg(bus, seg_enum, selector, reason)
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1479,7 +1504,7 @@ fn far_jump<B: CpuBus>(state: &mut CpuState, bus: &mut B, selector: u16, offset:
             Ok(())
         }
         CpuMode::Protected | CpuMode::Long => {
-            load_segment_descriptor(state, bus, Register::CS, selector, false)?;
+            state.load_seg(bus, Seg::CS, selector, LoadReason::FarControlTransfer)?;
             state.set_rip(offset);
             Ok(())
         }
