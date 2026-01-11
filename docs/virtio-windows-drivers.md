@@ -281,7 +281,7 @@ This produces a staging directory (by default) at:
 
 The staging directory includes:
 
-- `manifest.json` (provenance, including virtio-win ISO hash/volume label/version hints when available)
+- `manifest.json` (provenance, including virtio-win ISO hash/volume label/version hints when available; also records which upstream license/notice files were copied when present)
 - `THIRD_PARTY_NOTICES.md` (redistribution notices)
 - `licenses/virtio-win/` (best-effort copy of upstream virtio-win license/notice files)
 
