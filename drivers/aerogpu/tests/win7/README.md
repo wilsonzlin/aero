@@ -171,7 +171,7 @@ You can find the correct VID/DID in the Win7 guest via:
 In a Win7 VM with AeroGPU installed and working correctly:
 
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
-* `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking and that `D3DQUERYTYPE_EVENT` eventually signals (window is hidden by default; pass `--show` to display it)
+* `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking (initial poll before `Flush`) and that `D3DQUERYTYPE_EVENT` eventually signals (window is hidden by default; pass `--show` to display it)
 * `vblank_wait_sanity` validates that `D3DKMTWaitForVerticalBlankEvent` blocks on vblank and does not show huge stalls (fails fast on missing/broken vblank interrupt wiring)
 * `wait_vblank_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on VidPn source 0 (AeroGPU MVP) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.
 * `vblank_wait` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on the selected display (default: primary) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.
