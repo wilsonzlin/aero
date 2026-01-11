@@ -4,6 +4,11 @@ This tool builds an ISO image that can be mounted inside Aero as a virtual CD-RO
 
 The ISO root includes `THIRD_PARTY_NOTICES.md` for redistribution attribution.
 
+If the input driver root includes a `manifest.json` (for example from
+`drivers/scripts/make-driver-pack.ps1`), it is copied into the ISO root as-is.
+You can additionally include `drivers/virtio/manifest.json` via `--include-manifest`
+(it is written as `virtio-manifest.json` if `manifest.json` already exists).
+
 ## Dependencies
 
 The builder shells out to an ISO authoring tool:

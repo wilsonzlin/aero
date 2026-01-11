@@ -217,7 +217,11 @@ def main() -> int:
     parser.add_argument(
         "--include-manifest",
         action="store_true",
-        help="Include the manifest.json in the ISO root (useful for debugging).",
+        help=(
+            "Include the drivers/virtio/manifest.json in the ISO root (useful for debugging). "
+            "If the chosen --drivers-root already contains manifest.json, the file is written "
+            "as virtio-manifest.json to avoid clobbering."
+        ),
     )
     args = parser.parse_args()
 
@@ -259,7 +263,12 @@ def main() -> int:
         _copy_third_party_notices(repo_root, drivers_root, stage_root)
         _write_readme(stage_root, readme_filename, label)
         if args.include_manifest:
-            shutil.copy2(args.manifest, stage_root / "manifest.json")
+            # If the chosen drivers root already includes a `manifest.json` (e.g. the
+            # output of `make-driver-pack.ps1`), avoid overwriting it.
+            dest_name = "manifest.json"
+            if (stage_root / dest_name).exists():
+                dest_name = "virtio-manifest.json"
+            shutil.copy2(args.manifest, stage_root / dest_name)
 
         if tool_kind == "imapi":
             _build_iso_with_imapi(stage_root, out_path, label)
