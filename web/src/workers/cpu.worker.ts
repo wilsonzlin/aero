@@ -150,7 +150,18 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   if (channelCount !== 2) throw new Error("channelCount must be 2 for HDA demo output");
   if (sampleRate <= 0) throw new Error("sampleRate must be > 0");
 
-  const { api } = await initWasmForContext();
+  // Prefer the single-threaded WASM build for this standalone demo mode.
+  // Playwright CI prebuilds `pkg-single` but not always `pkg-threaded`; forcing
+  // "single" avoids an extra failed fetch/compile attempt before falling back.
+  //
+  // If the single build is unavailable, fall back to the default auto selection.
+  let api: WasmApi;
+  try {
+    ({ api } = await initWasmForContext({ variant: "single" }));
+  } catch (err) {
+    console.warn("Failed to init single-threaded WASM for HDA demo; falling back to auto:", err);
+    ({ api } = await initWasmForContext());
+  }
   if (typeof api.HdaPlaybackDemo !== "function") {
     // Graceful degrade: nothing to do if the WASM build doesn't include the demo wrapper.
     console.warn("HdaPlaybackDemo wasm export is unavailable; skipping HDA audio demo.");
