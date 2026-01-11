@@ -196,7 +196,7 @@ VirtioSndTxSubmitPeriod(
     if (Tx->FreeCount == 0 || IsListEmpty(&Tx->FreeList)) {
         Tx->DroppedDueToNoBuffers++;
         KeReleaseSpinLock(&Tx->Lock, oldIrql);
-        return STATUS_DEVICE_BUSY;
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     entry = RemoveHeadList(&Tx->FreeList);
@@ -242,7 +242,7 @@ VirtioSndTxSubmitPeriod(
         InsertTailList(&Tx->FreeList, &buf->Link);
         Tx->FreeCount++;
         KeReleaseSpinLock(&Tx->Lock, oldIrql);
-        return (status == STATUS_INSUFFICIENT_RESOURCES) ? STATUS_DEVICE_BUSY : status;
+        return status;
     }
 
     InsertTailList(&Tx->InflightList, &buf->Link);

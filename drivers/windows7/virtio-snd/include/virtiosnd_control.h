@@ -40,6 +40,10 @@ typedef struct _VIRTIOSND_CONTROL {
     /* Control virtqueue (queue_index=VIRTIO_SND_QUEUE_CONTROL). */
     VIRTIOSND_QUEUE* ControlQ;
 
+    /* Tracks in-flight synchronous requests so stop/remove can cancel waiters. */
+    KSPIN_LOCK InflightLock;
+    LIST_ENTRY InflightList;
+
     /* Serializes control operations at PASSIVE_LEVEL (submit + wait + state). */
     FAST_MUTEX Mutex;
 
@@ -52,6 +56,16 @@ extern "C" {
 #endif
 
 VOID VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ VIRTIOSND_QUEUE* ControlQ);
+
+/*
+ * Cancel all in-flight synchronous control requests and wake any waiters.
+ *
+ * Called by the device STOP/REMOVE path after interrupts are quiesced and the
+ * device has been reset, so no further completions will arrive.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+VOID VirtioSndCtrlCancelAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ NTSTATUS CancelStatus);
 
 /*
  * Drain used completions from the control virtqueue and complete any in-flight

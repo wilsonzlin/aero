@@ -98,6 +98,9 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         case VIRTIOSND_QUEUE_TX:
             expectedSize = VIRTIOSND_QUEUE_SIZE_TXQ;
             break;
+        case VIRTIOSND_QUEUE_RX:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_RXQ;
+            break;
         default:
             expectedSize = 0;
             break;
@@ -174,13 +177,22 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
+    NTSTATUS cancelStatus;
+
     if (Dx == NULL) {
         return;
     }
 
+    cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
+
     VirtIoSndIntxDisconnect(Dx);
 
     VirtIoSndResetDeviceBestEffort(Dx);
+
+    /* Best-effort cancel any in-flight protocol operations before teardown. */
+    if (Dx->Started) {
+        VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
+    }
 
     VirtioSndTxUninit(&Dx->Tx);
 
@@ -247,6 +259,7 @@ NTSTATUS VirtIoSndStartHardware(
         goto fail;
     }
 
+    /* Initialize the protocol engines now that queues are available. */
     VirtioSndCtrlInit(&Dx->Control, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
 
     status = VirtIoSndIntxConnect(Dx);

@@ -23,6 +23,10 @@ typedef struct _VIRTIOSND_CTRL_REQUEST {
     LONG RefCount;
     KEVENT Event;
 
+    LIST_ENTRY InflightLink;
+    VIRTIOSND_CONTROL* Owner;
+    volatile NTSTATUS CompletionStatus;
+
     ULONG Code;
 
     PUCHAR ReqBuf;
@@ -90,6 +94,7 @@ VirtioSndCtrlAppendSg(
 static VOID
 VirtioSndCtrlCompleteRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req, _In_ ULONG UsedLen)
 {
+    KIRQL oldIrql;
     ULONG virtioStatus;
 
     Req->UsedLen = UsedLen;
@@ -99,6 +104,18 @@ VirtioSndCtrlCompleteRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req, _In_ ULONG Use
         virtioStatus = *(UNALIGNED const ULONG*)Req->RespBuf;
     }
     Req->VirtioStatus = virtioStatus;
+
+    Req->CompletionStatus = STATUS_SUCCESS;
+
+    /* Remove from the control engine's inflight list (best-effort). */
+    if (Req->Owner != NULL) {
+        KeAcquireSpinLock(&Req->Owner->InflightLock, &oldIrql);
+        if (!IsListEmpty(&Req->InflightLink)) {
+            RemoveEntryList(&Req->InflightLink);
+            InitializeListHead(&Req->InflightLink);
+        }
+        KeReleaseSpinLock(&Req->Owner->InflightLock, oldIrql);
+    }
 
     VIRTIOSND_TRACE(
         "ctrlq complete code=0x%08lx status=0x%08lx(%s) len=%lu\n",
@@ -120,10 +137,42 @@ VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ VIRTIOSND_QUEUE* ControlQ)
     RtlZeroMemory(Ctrl, sizeof(*Ctrl));
     Ctrl->ControlQ = ControlQ;
 
+    KeInitializeSpinLock(&Ctrl->InflightLock);
+    InitializeListHead(&Ctrl->InflightList);
+
     ExInitializeFastMutex(&Ctrl->Mutex);
 
     Ctrl->StreamState = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
+}
+
+VOID
+VirtioSndCtrlCancelAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ NTSTATUS CancelStatus)
+{
+    KIRQL oldIrql;
+
+    if (Ctrl == NULL) {
+        return;
+    }
+
+    KeAcquireSpinLock(&Ctrl->InflightLock, &oldIrql);
+    while (!IsListEmpty(&Ctrl->InflightList)) {
+        LIST_ENTRY* entry;
+        VIRTIOSND_CTRL_REQUEST* req;
+
+        entry = RemoveHeadList(&Ctrl->InflightList);
+        req = CONTAINING_RECORD(entry, VIRTIOSND_CTRL_REQUEST, InflightLink);
+        InitializeListHead(&req->InflightLink);
+
+        req->CompletionStatus = CancelStatus;
+
+        KeMemoryBarrier();
+        KeSetEvent(&req->Event, IO_NO_INCREMENT, FALSE);
+
+        /* Drop the queue-owned reference; no completion will arrive after reset. */
+        VirtioSndCtrlRequestRelease(req);
+    }
+    KeReleaseSpinLock(&Ctrl->InflightLock, oldIrql);
 }
 
 VOID
@@ -213,6 +262,9 @@ VirtioSndCtrlSendSyncLocked(
      */
     ctx->RefCount = 2;
     KeInitializeEvent(&ctx->Event, NotificationEvent, FALSE);
+    InitializeListHead(&ctx->InflightLink);
+    ctx->Owner = Ctrl;
+    ctx->CompletionStatus = STATUS_PENDING;
 
     ctx->Code = (ReqLen >= sizeof(ULONG)) ? *(UNALIGNED const ULONG*)Req : 0;
     ctx->ReqBuf = ((PUCHAR)ctx) + reqOffset;
@@ -243,9 +295,27 @@ VirtioSndCtrlSendSyncLocked(
 
     VIRTIOSND_TRACE("ctrlq send code=0x%08lx req_len=%lu resp_cap=%lu\n", ctx->Code, ReqLen, RespCap);
 
+    /* Track in-flight requests so STOP/REMOVE can cancel waiters. */
+    {
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Ctrl->InflightLock, &oldIrql);
+        InsertTailList(&Ctrl->InflightList, &ctx->InflightLink);
+        KeReleaseSpinLock(&Ctrl->InflightLock, oldIrql);
+    }
+
     status = VirtioSndQueueSubmit(Ctrl->ControlQ, sg, sgCount, ctx);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("ctrlq Submit failed: 0x%08X\n", (UINT)status);
+
+        {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&Ctrl->InflightLock, &oldIrql);
+            if (!IsListEmpty(&ctx->InflightLink)) {
+                RemoveEntryList(&ctx->InflightLink);
+                InitializeListHead(&ctx->InflightLink);
+            }
+            KeReleaseSpinLock(&Ctrl->InflightLock, oldIrql);
+        }
 
         /* Drop both references (no completion will arrive). */
         VirtioSndCtrlRequestRelease(ctx);
@@ -277,6 +347,14 @@ VirtioSndCtrlSendSyncLocked(
         /* Drop the send-thread reference; completion may still arrive. */
         VirtioSndCtrlRequestRelease(ctx);
         return waitStatus;
+    }
+
+    if (ctx->CompletionStatus != STATUS_SUCCESS) {
+        status = ctx->CompletionStatus;
+
+        /* Drop the send-thread reference. */
+        VirtioSndCtrlRequestRelease(ctx);
+        return status;
     }
 
     usedLen = ctx->UsedLen;

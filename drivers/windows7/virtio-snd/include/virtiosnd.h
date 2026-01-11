@@ -15,13 +15,14 @@
 /*
  * The Aero contract defines four virtqueues (control/event/tx/rx).
  *
- * This driver currently wires up control/event/tx only; rxq (capture) is not
- * implemented yet.
+ * This driver currently implements controlq + txq for playback. eventq and rxq
+ * are brought up but do not have protocol engines yet.
  */
 #define VIRTIOSND_QUEUE_CONTROL VIRTIO_SND_QUEUE_CONTROL
 #define VIRTIOSND_QUEUE_EVENT VIRTIO_SND_QUEUE_EVENT
 #define VIRTIOSND_QUEUE_TX VIRTIO_SND_QUEUE_TX
-#define VIRTIOSND_QUEUE_COUNT 3u
+#define VIRTIOSND_QUEUE_RX VIRTIO_SND_QUEUE_RX
+#define VIRTIOSND_QUEUE_COUNT 4u
 
 typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PDEVICE_OBJECT Self;
