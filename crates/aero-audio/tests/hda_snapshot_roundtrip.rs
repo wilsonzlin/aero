@@ -2,6 +2,7 @@
 
 use aero_audio::hda::HdaController;
 use aero_audio::mem::{GuestMemory, MemoryAccess};
+use aero_audio::capture::VecDequeCaptureSource;
 use aero_io_snapshot::io::audio::state::AudioWorkletRingState;
 
 const REG_GCTL: u64 = 0x08;
@@ -225,4 +226,95 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
     restored.process(&mut mem, frames_1);
     assert_eq!(restored.mmio_read(REG_SD0LPIB, 4) as u32, expected_lpib);
     assert_eq!(restored.audio_out.available_frames(), frames_1);
+}
+
+#[test]
+fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
+    let mut hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x40_000);
+
+    hda.mmio_write(REG_GCTL, 4, 0x1);
+
+    // Configure codec ADC (NID 4) to use stream 2, channel 0.
+    hda.codec_mut().execute_verb(4, verb_12(0x706, 0x20));
+
+    // 44.1kHz, 16-bit, mono.
+    let fmt_raw: u16 = (1 << 14) | (1 << 4) | 0x0;
+    hda.codec_mut().execute_verb(4, verb_4(0x2, fmt_raw));
+
+    // Give mic pin (NID 5) a non-default control value so we can verify codec capture state restores.
+    hda.codec_mut().execute_verb(5, verb_12(0x701, 1));
+    hda.codec_mut().execute_verb(5, verb_12(0x707, 0x55));
+
+    // Two-entry BDL so we exercise both bdl_offset and bdl_index restoration.
+    let bdl_base = 0x1000u64;
+    let buf0 = 0x2000u64;
+    let buf1 = 0x3000u64;
+
+    mem.write_u64(bdl_base + 0, buf0);
+    mem.write_u32(bdl_base + 8, 512);
+    mem.write_u32(bdl_base + 12, 0);
+
+    mem.write_u64(bdl_base + 16, buf1);
+    mem.write_u32(bdl_base + 24, 512);
+    mem.write_u32(bdl_base + 28, 0);
+
+    {
+        let sd = hda.stream_mut(1);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = 4096;
+        sd.lvi = 1;
+        sd.fmt = fmt_raw;
+        // SRST | RUN | stream number 2.
+        sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
+    }
+
+    // Use a non-integer ratio step to ensure the capture-frame accumulator is non-zero at snapshot time.
+    // With output_rate=48k and capture_rate=44.1k, output_frames=240 => 220 frames and a remainder.
+    let output_frames = 240usize;
+
+    let mut capture = VecDequeCaptureSource::new();
+    let samples: Vec<f32> = (0..2000)
+        .map(|i| (i as f32 / 2000.0) * 2.0 - 1.0)
+        .collect();
+    capture.push_samples(&samples);
+
+    hda.process_with_capture(&mut mem, output_frames, &mut capture);
+
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let snap = hda.snapshot_state(worklet_ring);
+
+    // Clone state at snapshot time so baseline and restored runs see identical guest RAM + capture source state.
+    let mut mem_expected = mem.clone();
+    let mut mem_restored = mem.clone();
+    let capture_expected = capture.clone();
+    let capture_restored = capture.clone();
+
+    let mut expected = hda.clone();
+    let mut expected_capture = capture_expected;
+    expected.process_with_capture(&mut mem_expected, output_frames, &mut expected_capture);
+    let expected_lpib = expected.stream_mut(1).lpib;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+    let mut restored_capture = capture_restored;
+    restored.process_with_capture(&mut mem_restored, output_frames, &mut restored_capture);
+
+    // If capture-frame accumulator isn't restored, this will typically be off by one frame (2 bytes).
+    assert_eq!(restored.stream_mut(1).lpib, expected_lpib);
+    assert_eq!(expected_lpib, (220 + 221) as u32 * 2);
+
+    // Verify codec capture state round-tripped via verbs.
+    assert_eq!(restored.codec_mut().execute_verb(4, verb_12(0xF06, 0)), 0x20);
+    assert_eq!(
+        restored.codec_mut().execute_verb(4, verb_12(0xA00, 0)),
+        fmt_raw as u32
+    );
+    assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF01, 0)), 1);
+    assert_eq!(restored.codec_mut().execute_verb(5, verb_12(0xF07, 0)), 0x55);
 }
