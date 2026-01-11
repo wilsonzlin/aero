@@ -25,7 +25,7 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
   - `VIRTIO_NET_F_MAC`
   - `VIRTIO_NET_F_STATUS` (link state)
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
-- INTx interrupt path (via virtio ISR register; read-to-ack)
+- INTx interrupt path (via virtio ISR register; read-to-ack). MSI-X is intentionally disabled; INTx is required.
 - No checksum offloads / TSO / LRO
 
 ## Files
@@ -52,3 +52,5 @@ For local development you can use either:
 Hardware IDs matched by `aerovnet.inf`:
 
 - `PCI\\VEN_1AF4&DEV_1000` (transitional virtio-net)
+
+Note: This driver uses the virtio-pci **modern MMIO** transport and does not implement the legacy I/O-port register map.
