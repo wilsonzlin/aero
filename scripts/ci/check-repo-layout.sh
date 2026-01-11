@@ -144,6 +144,14 @@ fi
 need_file "drivers/aerogpu/protocol/aerogpu_alloc.h"
 need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
 
+# Additional guardrails to keep docs/protocol commentary from regressing back to
+# the obsolete "share_token derived from D3D shared HANDLE" model.
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/ci/check-aerogpu-share-token-contract.py
+else
+  echo "warning: python3 not found; skipping AeroGPU share-token contract check" >&2
+fi
+
 # Guardrail: the repo must not reintroduce the deprecated
 # `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h` header (the removed
 # "KMD→UMD ShareToken" model). The canonical cross-process token is stored in
