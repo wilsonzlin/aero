@@ -11,8 +11,11 @@ The goal is to keep three moving parts coherent and spec-aligned:
 
 Implementation references (current repo):
 
-- Rust device model + host-action protocol: `crates/emulator/src/io/usb/passthrough.rs`
-- TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
+- Rust device model + canonical host-action wire types: `crates/aero-usb/src/passthrough.rs`
+- WASM export bridge (JS object conversion): `crates/aero-wasm/src/lib.rs` (`UsbPassthroughBridge`)
+- TS WebUSB backend + executor: `web/src/usb/webusb_{backend,executor}.ts`
+- Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
+- (Legacy Vite harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
 
 ---
 
@@ -68,26 +71,33 @@ Key properties:
 - One in-flight action per endpoint (recommended) to keep data-toggle behavior coherent
   (see [Bulk transfers](#bulk-transfers-packet-granularity-and-toggle-sync)).
 
-Current shapes (see `crates/emulator/src/io/usb/passthrough.rs`):
+Current shapes (canonical; see `crates/aero-usb/src/passthrough.rs` and `web/src/usb/webusb_backend.ts`):
 
 ```rust
 enum UsbHostAction {
-  ControlIn { id: u64, setup: SetupPacket, len: u16 },
+  ControlIn { id: u64, setup: SetupPacket },
   ControlOut { id: u64, setup: SetupPacket, data: Vec<u8> },
-  BulkIn { id: u64, ep: u8, len: usize },
-  BulkOut { id: u64, ep: u8, data: Vec<u8> },
+  BulkIn { id: u64, endpoint: u8, length: u32 },
+  BulkOut { id: u64, endpoint: u8, data: Vec<u8> },
 }
 
-enum UsbHostResult {
-  OkIn { data: Vec<u8> },
-  OkOut { bytes_written: usize },
+enum UsbHostCompletionIn {
+  Success { data: Vec<u8> },
   Stall,
-  Timeout,
-  Error(String),
+  Error { message: String },
+}
+
+enum UsbHostCompletionOut {
+  Success { bytesWritten: u32 },
+  Stall,
+  Error { message: String },
 }
 
 enum UsbHostCompletion {
-  Completed { id: u64, result: UsbHostResult },
+  ControlIn { id: u64, result: UsbHostCompletionIn },
+  ControlOut { id: u64, result: UsbHostCompletionOut },
+  BulkIn { id: u64, result: UsbHostCompletionIn },
+  BulkOut { id: u64, result: UsbHostCompletionOut },
 }
 ```
 
@@ -104,9 +114,13 @@ Cancellation behavior (important):
 - Stale completions are therefore expected and must be safely ignored (the Rust model already
   does this by checking `id` against in-flight state).
 
-In Aero, this cancellation is triggered by the UHCI control pipe: when a new SETUP arrives before
-the previous control transfer completes, `AttachedUsbDevice` invokes the device model hook
-`UsbDeviceModel::cancel_control_transfer()` (`crates/emulator/src/io/usb/core/mod.rs`).
+In Aero, the canonical passthrough state machine (`crates/aero-usb/src/passthrough.rs`) handles this
+internally: when a new SETUP differs from the in-flight one, it cancels the old request and drops
+any queued-but-undrained host action for it. Any eventual completion from the host is treated as
+stale and ignored by `id`.
+
+(The legacy emulator USB stack has a separate UHCI endpoint-0 control pipe that can also trigger
+cancellation via an explicit hook.)
 
 Idempotency / retry behavior (important):
 
@@ -121,9 +135,11 @@ Idempotency / retry behavior (important):
 
 Descriptor status (current code):
 
-- `UsbPassthroughDevice` currently returns empty device/config/HID descriptors. Full passthrough
-  enumeration requires synthesizing guest-visible descriptors from the physical device (including
-  `OTHER_SPEED_CONFIGURATION` fixups for UHCI/full-speed).
+- Enumeration for passthrough is performed by forwarding standard control requests
+  (e.g. `GET_DESCRIPTOR`) to the physical device over WebUSB.
+- For a full-speed UHCI guest, the production WebUSB backend will attempt to fetch
+  `OTHER_SPEED_CONFIGURATION` and rewrite it to a normal `CONFIGURATION` descriptor before returning
+  it (see `executeWebUsbControlIn` in `web/src/usb/webusb_backend.ts`).
 
 ### Layer 2 (host/TS): WebUSB executor + broker (main thread)
 
@@ -356,8 +372,8 @@ still the recommended shape to avoid subtle bugs once toggle tracking is impleme
 
 Mapping:
 
-- **Bulk OUT TD** → `UsbHostAction::BulkOut { ep, data }` → `USBDevice.transferOut(ep & 0x0f, ...)`
-- **Bulk IN TD** → `UsbHostAction::BulkIn { ep, len }` → `USBDevice.transferIn(ep & 0x0f, ...)`
+- **Bulk OUT TD** → `UsbHostAction::BulkOut { endpoint, data }` → `USBDevice.transferOut(endpoint & 0x0f, ...)`
+- **Bulk IN TD** → `UsbHostAction::BulkIn { endpoint, length }` → `USBDevice.transferIn(endpoint & 0x0f, ...)`
 
 (`ep` is passed through from the UHCI stack. For IN transfers it is typically an endpoint address
 with the direction bit set (`0x80 | ep_num`), while for OUT transfers it is typically just the
@@ -380,34 +396,32 @@ At the browser layer, WebUSB returns a `USBTransferStatus` (`"ok" | "stall" | "b
 `controlTransfer*` / `transfer*` calls, and can also throw `DOMException`s for other failures
 (permissions, disconnects, OS driver issues, etc).
 
-The WebUSB host integration should normalize those outcomes into `UsbHostResult` values, then send
-`UsbHostCompletion::Completed { id, result }` back to the Rust device model.
+The WebUSB host integration should normalize those outcomes into `UsbHostCompletion` objects (see
+above) and send them back to the Rust device model.
 
 Recommended normalization rules:
 
-- `status === "ok"` → `OkIn { data }` / `OkOut { bytes_written }`
-- `status === "stall"` → `Stall`
-- `status === "babble"` → `Error("babble")` (or `Timeout`), until we model babble explicitly at the UHCI level
-- thrown `DOMException` / other failures → `Error(...)` or `Timeout` (policy decision; current Rust mapping treats both as `STALL`)
+- `status === "ok"` → `{ status: "success", data }` / `{ status: "success", bytesWritten }`
+- `status === "stall"` → `{ status: "stall" }`
+- `status === "babble"` → `{ status: "error", message: "babble" }` (until we model babble explicitly at the UHCI level)
+- thrown `DOMException` / other failures → `{ status: "error", message: ... }`
 
 Guest-visible behavior is then derived from the Rust mapping in
-`crates/emulator/src/io/usb/passthrough.rs`:
+`crates/aero-usb/src/passthrough.rs` (and, when wired into UHCI, by the TD status mapping in
+`crates/aero-usb/src/uhci.rs`):
 
-| Host-side result (`UsbHostResult`) | Guest-visible outcome | Notes |
+| Host-side completion (`UsbHostCompletion`) | Guest-visible outcome | Notes |
 |---|---|---|
-| `OkIn { data }` | `DATA` (for IN TDs) | Data is truncated to `wLength` for control-IN and to the TD `max_len` for bulk IN. |
-| `OkOut { .. }` | `ACK` | OUT TD completes successfully. |
-| `Stall` | `STALL` | TD completes with STALLED; guest driver is responsible for recovery. |
-| `Timeout` | `STALL` (current behavior) | Passthrough currently treats timeouts as fatal to unblock the guest. |
-| `Error(_)` | `STALL` (current behavior) | Same as timeout. Consider a richer mapping later (e.g. CRC/timeout bit vs stall). |
+| `{ status: "success", data }` | `DATA` (for IN TDs) | Data is truncated to `wLength` for control-IN and to the TD `max_len` for bulk IN. |
+| `{ status: "success", bytesWritten }` | `ACK` | OUT TD completes successfully. |
+| `{ status: "stall" }` | `STALL` | TD completes with STALLED; guest driver is responsible for recovery. |
+| `{ status: "error", message }` | `TIMEOUT/CRC` (current behavior) | The passthrough model maps errors to `Timeout` to unblock the guest. |
 | (no completion yet; action in-flight) | `NAK` | Keep TD active so the UHCI schedule naturally retries without duplicating host work. |
 
-Implementation note: in the emulator UHCI scheduler, `Nak` is a first-class “retry later” outcome:
+Implementation note: in the `aero-usb` UHCI scheduler, `Nak` is a first-class “retry later” outcome:
 
-- `UsbInResult::Nak` / `UsbOutResult::Nak` set the TD NAK bit and keep the TD active
-  (`crates/emulator/src/io/usb/uhci/schedule.rs`).
-- For control transfers, `ControlResponse::Nak` propagates to a NAK on the relevant control TD via the
-  endpoint-0 state machine (`crates/emulator/src/io/usb/core/mod.rs`).
+- `UsbHandshake::Nak` sets the TD NAK bit and keeps the TD active (`crates/aero-usb/src/uhci.rs`).
+- `UsbHandshake::Timeout` completes the TD with the UHCI "timeout/CRC" error bit set.
 
 ---
 
@@ -450,8 +464,10 @@ Practical implications:
   typically valid (it is legal to transfer less than max packet size), but correctness
   depends on descriptors matching what the guest believes.
 
-In this repo, the minimal “rewrite OTHER_SPEED_CONFIGURATION → CONFIGURATION” helper is implemented
-as `other_speed_config_to_config` in `crates/emulator/src/io/usb/descriptor_fixups.rs`.
+In this repo, the production WebUSB backend attempts this by issuing
+`GET_DESCRIPTOR(OTHER_SPEED_CONFIGURATION)` first and rewriting the top-level `bDescriptorType` byte
+to `CONFIGURATION` before returning it to the guest (`executeWebUsbControlIn` in
+`web/src/usb/webusb_backend.ts`).
 
 ---
 

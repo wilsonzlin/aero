@@ -57,6 +57,17 @@ pub enum UsbHostAction {
     },
 }
 
+impl UsbHostAction {
+    fn id(&self) -> u64 {
+        match self {
+            UsbHostAction::ControlIn { id, .. } => *id,
+            UsbHostAction::ControlOut { id, .. } => *id,
+            UsbHostAction::BulkIn { id, .. } => *id,
+            UsbHostAction::BulkOut { id, .. } => *id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum UsbHostCompletionIn {
@@ -252,6 +263,19 @@ impl UsbPassthroughDevice {
         self.completions.remove(&id)
     }
 
+    fn drop_queued_action(&mut self, id: u64) {
+        self.actions.retain(|action| action.id() != id);
+    }
+
+    fn cancel_inflight_control(&mut self) {
+        if let Some(prev) = self.control_inflight.take() {
+            self.completions.remove(&prev.id);
+            // If the host has not dequeued the old action yet, drop it so we do not execute a stale
+            // control transfer after the guest has already moved on.
+            self.drop_queued_action(prev.id);
+        }
+    }
+
     fn map_in_result(setup: SetupPacket, result: UsbHostResult) -> ControlResponse {
         match result {
             UsbHostResult::OkIn { mut data } => {
@@ -294,9 +318,7 @@ impl UsbPassthroughDevice {
 
         if !same_as_inflight {
             // New SETUP while an older request is pending: abandon it.
-            if let Some(prev) = self.control_inflight.take() {
-                self.completions.remove(&prev.id);
-            }
+            self.cancel_inflight_control();
 
             let id = self.alloc_id();
             let action = if req_dir_in {
@@ -587,5 +609,69 @@ mod tests {
         });
 
         assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+    }
+
+    #[test]
+    fn new_setup_cancels_previous_inflight_and_drops_queued_action() {
+        let mut dev = UsbPassthroughDevice::new();
+
+        let setup1 = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: 4,
+        };
+        let setup2 = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0200,
+            w_index: 0,
+            w_length: 4,
+        };
+
+        assert_eq!(
+            dev.handle_control_request(setup1, None),
+            ControlResponse::Nak
+        );
+        let id1 = dev.pending_summary().inflight_control.expect("inflight id");
+
+        assert_eq!(
+            dev.handle_control_request(setup2, None),
+            ControlResponse::Nak
+        );
+        let id2 = dev.pending_summary().inflight_control.expect("inflight id");
+        assert_ne!(id1, id2);
+
+        // Only the newer request should remain queued for the host.
+        match dev.pop_action().expect("expected action") {
+            UsbHostAction::ControlIn { id, setup } => {
+                assert_eq!(id, id2);
+                assert_eq!(setup, setup2);
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+        assert!(dev.pop_action().is_none(), "stale action should be dropped");
+
+        // Stale completion must be ignored.
+        dev.push_completion(UsbHostCompletion::ControlIn {
+            id: id1,
+            result: UsbHostCompletionIn::Success {
+                data: vec![1, 2, 3],
+            },
+        });
+        assert_eq!(dev.pending_summary().queued_completions, 0);
+
+        dev.push_completion(UsbHostCompletion::ControlIn {
+            id: id2,
+            result: UsbHostCompletionIn::Success {
+                data: vec![9, 8, 7, 6],
+            },
+        });
+
+        assert_eq!(
+            dev.handle_control_request(setup2, None),
+            ControlResponse::Data(vec![9, 8, 7, 6])
+        );
     }
 }
