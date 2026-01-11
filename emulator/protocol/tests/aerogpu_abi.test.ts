@@ -510,6 +510,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_fence_page"), AEROGPU_FENCE_PAGE_SIZE);
   assert.equal(size("aerogpu_umd_private_v1"), AEROGPU_UMD_PRIVATE_V1_SIZE);
   assert.equal(size("aerogpu_wddm_alloc_priv"), 40);
+  assert.equal(size("aerogpu_alloc_privdata"), 24);
 
   // Escape ABI (driver-private; stable across x86/x64).
   assert.equal(size("aerogpu_escape_header"), 16);
@@ -612,13 +613,10 @@ test("TypeScript layout matches C headers", () => {
   );
   assert.equal(off("aerogpu_umd_private_v1", "flags"), AEROGPU_UMD_PRIVATE_V1_OFF_FLAGS);
 
-  assert.equal(off("aerogpu_wddm_alloc_priv", "magic"), 0);
-  assert.equal(off("aerogpu_wddm_alloc_priv", "version"), 4);
-  assert.equal(off("aerogpu_wddm_alloc_priv", "alloc_id"), 8);
-  assert.equal(off("aerogpu_wddm_alloc_priv", "flags"), 12);
-  assert.equal(off("aerogpu_wddm_alloc_priv", "share_token"), 16);
-  assert.equal(off("aerogpu_wddm_alloc_priv", "size_bytes"), 24);
-  assert.equal(off("aerogpu_wddm_alloc_priv", "reserved0"), 32);
+  assert.equal(off("aerogpu_alloc_privdata", "magic"), 0);
+  assert.equal(off("aerogpu_alloc_privdata", "version"), 4);
+  assert.equal(off("aerogpu_alloc_privdata", "share_token"), 8);
+  assert.equal(off("aerogpu_alloc_privdata", "reserved0"), 16);
 
   // Variable-length packets (must remain stable for parsing).
   assert.equal(off("aerogpu_cmd_create_shader_dxbc", "dxbc_size_bytes"), 16);
@@ -975,6 +973,9 @@ test("TypeScript layout matches C headers", () => {
     konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
     BigInt(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE),
   );
+
+  assert.equal(konst("AEROGPU_ALLOC_PRIVDATA_MAGIC"), 0x44504c41n);
+  assert.equal(konst("AEROGPU_ALLOC_PRIVDATA_VERSION"), 1n);
 
   assert.equal(konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"), 0x414c4c4fn);
   assert.equal(konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION"), 1n);
