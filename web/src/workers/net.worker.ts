@@ -8,7 +8,9 @@ import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
 import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
 import { L2TunnelTelemetry } from "../net/l2TunnelTelemetry";
 import { perf } from "../perf/perf";
+import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
+import { PerfWriter } from "../perf/writer.js";
 import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
@@ -45,6 +47,11 @@ let l2TunnelTelemetry: L2TunnelTelemetry | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+
+let perfWriter: PerfWriter | null = null;
+let perfFrameHeader: Int32Array | null = null;
+let perfLastFrameId = 0;
+let perfIoMs = 0;
 
 // Even when idle, wake periodically so pending tunnel→guest frames buffered due
 // to NET_RX backpressure get a chance to flush without waiting for NET_TX
@@ -130,6 +137,43 @@ function drainRuntimeCommands(): void {
   }
 }
 
+function isPerfActive(): boolean {
+  const header = perfFrameHeader;
+  return !!perfWriter && !!header && Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+}
+
+function maybeEmitPerfSample(): void {
+  if (!perfWriter || !perfFrameHeader) return;
+  const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+  const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+  if (!enabled) {
+    perfLastFrameId = frameId;
+    perfIoMs = 0;
+    return;
+  }
+  if (frameId === 0) {
+    // Perf is enabled, but the main thread hasn't published a frame ID yet.
+    // Keep accumulating so the first non-zero frame can include this interval.
+    perfLastFrameId = 0;
+    return;
+  }
+  if (perfLastFrameId === 0) {
+    // First observed frame ID after enabling perf. Only emit if we have some
+    // accumulated work; otherwise establish a baseline and wait for the next
+    // frame boundary.
+    if (perfIoMs <= 0) {
+      perfLastFrameId = frameId;
+      return;
+    }
+  }
+  if (frameId === perfLastFrameId) return;
+  perfLastFrameId = frameId;
+
+  const ioMs = perfIoMs > 0 ? perfIoMs : 0.01;
+  perfWriter.frameSample(frameId, { durations: { io_ms: ioMs } });
+  perfIoMs = 0;
+}
+
 async function runLoop(): Promise<void> {
   const forwarder = l2Forwarder;
   const txRing = netTxRing;
@@ -144,6 +188,9 @@ async function runLoop(): Promise<void> {
   // responsive to WebSocket and `postMessage()` events while avoiding spin.
   let lastTxBackpressureDrops = 0;
   while (Atomics.load(status, StatusIndex.StopRequested) !== 1) {
+    const perfActive = isPerfActive();
+    const t0 = perfActive ? nowMs() : 0;
+
     const now = nowMs();
     drainRuntimeCommands();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
@@ -158,6 +205,10 @@ async function runLoop(): Promise<void> {
     const txBackpressureDrops = stats.txDroppedTunnelBackpressure;
     const sawTxBackpressure = txBackpressureDrops !== lastTxBackpressureDrops;
     lastTxBackpressureDrops = txBackpressureDrops;
+
+    if (perfActive) perfIoMs += nowMs() - t0;
+    maybeEmitPerfSample();
+
     if (sawTxBackpressure) {
       await new Promise((resolve) => setTimeout(resolve, NET_TX_BACKPRESSURE_SLEEP_MS));
       continue;
@@ -240,6 +291,16 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         getStats: () => l2Forwarder!.stats(),
         emitLog: (level, message) => pushEvent({ kind: "log", level, message }),
       });
+
+      if (init.perfChannel) {
+        perfWriter = new PerfWriter(init.perfChannel.buffer, {
+          workerKind: init.perfChannel.workerKind,
+          runStartEpochMs: init.perfChannel.runStartEpochMs,
+        });
+        perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+        perfLastFrameId = 0;
+        perfIoMs = 0;
+      }
 
       // Apply any config already received before the init handshake completed.
       applyL2TunnelConfig(currentConfig);

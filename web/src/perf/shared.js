@@ -21,7 +21,7 @@ export function nowEpochMs() {
 
 export function createPerfChannel({
   capacity = 2048,
-  workerKinds = [WorkerKind.Main, WorkerKind.CPU, WorkerKind.GPU, WorkerKind.IO, WorkerKind.JIT],
+  workerKinds = [WorkerKind.Main, WorkerKind.CPU, WorkerKind.GPU, WorkerKind.IO, WorkerKind.JIT, WorkerKind.NET],
 } = {}) {
   const runStartEpochMs = nowEpochMs();
 
