@@ -186,7 +186,7 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 Because AeroGPU currently has both a legacy bring-up ABI (`ARGP`) and a newer versioned ABI (`AGPU`), UMDs should not hardcode assumptions about:
 
 - which BAR0/MMIO ABI they are running against,
-- which optional features are available (vblank timing, fence page, etc.).
+- which optional features are available (`AEROGPU_FEATURE_VBLANK`, `AEROGPU_FEATURE_FENCE_PAGE`, etc.).
 
 Instead, the UMD should call `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` early during adapter open and decode the returned `aerogpu_umd_private_v1` struct from:
 
@@ -194,10 +194,10 @@ Instead, the UMD should call `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)
 
 The blob provides:
 
-- `device_mmio_magic`: `"ARGP"` (legacy) vs `"AGPU"` (new)
-- `device_abi_version_u32`: legacy MMIO version or new ABI version
-- `device_features`: new ABI feature bitset (0 on legacy)
-- `flags`: convenience bits such as `HAS_VBLANK` and `HAS_FENCE_PAGE`
+- `device_mmio_magic`: `"ARGP"` (legacy) vs `"AGPU"` (new) (`AEROGPU_UMDPRIV_MMIO_MAGIC_*`)
+- `device_abi_version_u32`: legacy MMIO version or `AEROGPU_ABI_VERSION_U32` (`AEROGPU_MMIO_REG_ABI_VERSION`)
+- `device_features`: new ABI feature bitset (0 on legacy), matching `AEROGPU_FEATURE_*` from `drivers/aerogpu/protocol/aerogpu_pci.h`
+- `flags`: convenience bits such as `AEROGPU_UMDPRIV_FLAG_HAS_VBLANK` and `AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE`
 
 ### Capabilities: what we claim for MVP
  
