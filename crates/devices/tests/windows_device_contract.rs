@@ -1,5 +1,6 @@
 use aero_devices::pci::profile::{
-    PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_BLK, VIRTIO_NET, VIRTIO_SND,
+    PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE,
+    VIRTIO_NET, VIRTIO_SND,
 };
 
 fn parse_hex_u16(value: &str) -> u16 {
@@ -77,20 +78,68 @@ fn assert_contract_matches_profile(profile: PciDeviceProfile, contract: &serde_j
     );
     assert_has_pattern(&patterns, &expected_ven_dev);
 
-    // If a subsystem-qualified pattern is present, it must match the canonical profile.
-    if let Some((subsys_vendor, subsys_device)) = patterns.iter().find_map(|p| parse_subsys(p)) {
-        assert_eq!(
-            subsys_vendor, profile.subsystem_vendor_id,
-            "{}",
-            profile.name
-        );
-        assert_eq!(subsys_device, profile.subsystem_id, "{}", profile.name);
-    } else {
-        panic!(
-            "expected at least one SUBSYS-qualified HWID pattern for {}",
-            profile.name
-        );
-    }
+    let subsys: Vec<(u16, u16)> = patterns.iter().filter_map(|p| parse_subsys(p)).collect();
+    assert!(
+        !subsys.is_empty(),
+        "expected at least one SUBSYS-qualified HWID pattern for {}",
+        profile.name
+    );
+    assert!(
+        subsys
+            .iter()
+            .any(|(vendor, device)| *vendor == profile.subsystem_vendor_id && *device == profile.subsystem_id),
+        "expected a SUBSYS-qualified HWID pattern matching {:04X}:{:04X} for {}.\nFound:\n{subsys:#?}",
+        profile.subsystem_vendor_id,
+        profile.subsystem_id,
+        profile.name,
+    );
+}
+
+#[test]
+fn windows_device_contract_virtio_input_matches_pci_profile() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
+            .expect("parse windows-device-contract.json");
+
+    let devices = contract
+        .get("devices")
+        .and_then(|v| v.as_array())
+        .expect("windows-device-contract.json missing devices array");
+
+    let input = find_contract_device(devices, "virtio-input");
+
+    assert_contract_matches_profile(VIRTIO_INPUT_KEYBOARD, input);
+    assert_contract_matches_profile(VIRTIO_INPUT_MOUSE, input);
+
+    let patterns: Vec<String> = input
+        .get("hardware_id_patterns")
+        .and_then(|v| v.as_array())
+        .expect("device entry missing hardware_id_patterns")
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .expect("hardware_id_patterns must be strings")
+                .to_string()
+        })
+        .collect();
+
+    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052");
+    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4");
+    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4");
+
+    assert_eq!(VIRTIO_INPUT_KEYBOARD.vendor_id, PCI_VENDOR_ID_VIRTIO);
+    assert_eq!(
+        input.get("driver_service_name").and_then(|v| v.as_str()),
+        Some("aero_virtio_input")
+    );
+    assert_eq!(
+        input.get("inf_name").and_then(|v| v.as_str()),
+        Some("virtio-input.inf")
+    );
+    assert_eq!(
+        input.get("virtio_device_type").and_then(|v| v.as_u64()),
+        Some(18)
+    );
 }
 
 #[test]
