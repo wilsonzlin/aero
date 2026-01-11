@@ -89,6 +89,11 @@ Collection type codes (as used by the WebHID normalization layer and by HID):
 | `usageSwitch` | `0x05` |
 | `usageModifier` | `0x06` |
 
+JSON note:
+
+- In our normalized metadata JSON we keep `HIDCollectionInfo.type` in the WebHID string form shown above.
+- The Rust deserializer also accepts the numeric code (`0..=6`) and the legacy field name `collectionType` to make the synthesis code resilient to older fixtures/tools.
+
 ### Reports (`HIDReportInfo`)
 
 Each WebHID report group (`inputReports` / `outputReports` / `featureReports`) maps to a sequence of main items inside the current collection.

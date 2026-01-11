@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::de::{Error as DeError, Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 use super::report_descriptor;
@@ -13,7 +14,12 @@ use super::report_descriptor;
 pub struct HidCollectionInfo {
     pub usage_page: u32,
     pub usage: u32,
-    #[serde(rename = "type")]
+    // WebHID exposes `type` as a string enum (`"physical" | "application" | ...`).
+    //
+    // Accept `collectionType` (numeric code 0..6) as an alias for resilience because:
+    // - internal/older fixtures may have already canonicalized to the numeric code, and
+    // - the report descriptor encodes the collection type as a numeric payload anyway.
+    #[serde(rename = "type", alias = "collectionType")]
     pub collection_type: HidCollectionType,
     pub children: Vec<HidCollectionInfo>,
     pub input_reports: Vec<HidReportInfo>,
@@ -21,29 +27,98 @@ pub struct HidCollectionInfo {
     pub feature_reports: Vec<HidReportInfo>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[repr(u8)]
 pub enum HidCollectionType {
-    Physical,
-    Application,
-    Logical,
-    Report,
-    NamedArray,
-    UsageSwitch,
-    UsageModifier,
+    Physical = 0x00,
+    Application = 0x01,
+    Logical = 0x02,
+    Report = 0x03,
+    NamedArray = 0x04,
+    UsageSwitch = 0x05,
+    UsageModifier = 0x06,
 }
 
 impl HidCollectionType {
-    fn to_hid_value(self) -> u8 {
-        match self {
-            HidCollectionType::Physical => 0x00,
-            HidCollectionType::Application => 0x01,
-            HidCollectionType::Logical => 0x02,
-            HidCollectionType::Report => 0x03,
-            HidCollectionType::NamedArray => 0x04,
-            HidCollectionType::UsageSwitch => 0x05,
-            HidCollectionType::UsageModifier => 0x06,
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0x00 => Some(HidCollectionType::Physical),
+            0x01 => Some(HidCollectionType::Application),
+            0x02 => Some(HidCollectionType::Logical),
+            0x03 => Some(HidCollectionType::Report),
+            0x04 => Some(HidCollectionType::NamedArray),
+            0x05 => Some(HidCollectionType::UsageSwitch),
+            0x06 => Some(HidCollectionType::UsageModifier),
+            _ => None,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for HidCollectionType {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct HidCollectionTypeVisitor;
+
+        impl<'de> Visitor<'de> for HidCollectionTypeVisitor {
+            type Value = HidCollectionType;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                formatter.write_str("a HID collection type (string enum or numeric code 0..=6)")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                let code = u8::try_from(value)
+                    .map_err(|_| E::invalid_value(Unexpected::Unsigned(value), &self))?;
+                HidCollectionType::from_code(code).ok_or_else(|| {
+                    E::invalid_value(Unexpected::Unsigned(u64::from(code)), &self)
+                })
+            }
+
+            fn visit_i64<E>(self, value: i64) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                if value < 0 {
+                    return Err(E::invalid_value(Unexpected::Signed(value), &self));
+                }
+                self.visit_u64(value as u64)
+            }
+
+            fn visit_str<E>(self, value: &str) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                match value {
+                    "physical" => Ok(HidCollectionType::Physical),
+                    "application" => Ok(HidCollectionType::Application),
+                    "logical" => Ok(HidCollectionType::Logical),
+                    "report" => Ok(HidCollectionType::Report),
+                    "namedArray" => Ok(HidCollectionType::NamedArray),
+                    "usageSwitch" => Ok(HidCollectionType::UsageSwitch),
+                    "usageModifier" => Ok(HidCollectionType::UsageModifier),
+                    other => Err(E::invalid_value(Unexpected::Str(other), &self)),
+                }
+            }
+
+            fn visit_string<E>(self, value: String) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        deserializer.deserialize_any(HidCollectionTypeVisitor)
     }
 }
 
@@ -125,7 +200,7 @@ fn convert_collection(
     Ok(report_descriptor::HidCollectionInfo {
         usage_page: collection.usage_page,
         usage: collection.usage,
-        collection_type: collection.collection_type.to_hid_value(),
+        collection_type: collection.collection_type.code(),
         input_reports: collection
             .input_reports
             .iter()
