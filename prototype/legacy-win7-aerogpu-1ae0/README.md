@@ -16,7 +16,7 @@ Supported AeroGPU ABIs in this repo:
 
 Contents:
 
-- `guest/windows/`: archived Windows 7 WDDM 1.1 + D3D9 driver stack targeting the 1AE0 prototype.
+- `prototype/legacy-win7-aerogpu-1ae0/guest/windows/`: archived Windows 7 WDDM 1.1 + D3D9 driver stack targeting the 1AE0 prototype.
 - The matching host-side 1AE0 device model is **not** part of the current emulator codebase.
   (Only the 1AED legacy and A3A0 versioned AeroGPU devices are supported.) If you need the 1AE0
   host-side prototype for archaeology, retrieve it from git history.
