@@ -134,6 +134,11 @@ struct aerogpu_alloc_entry {
 /*
  * Fixed-size submission descriptor (64 bytes).
  * All fields are little-endian.
+ *
+ * Descriptor validation:
+ * - `cmd_gpa` and `cmd_size_bytes` must be both zero (empty submission) or both non-zero.
+ * - `alloc_table_gpa` and `alloc_table_size_bytes` must be both zero (absent) or both non-zero
+ *   (present).
  */
 #pragma pack(push, 1)
 struct aerogpu_submit_desc {

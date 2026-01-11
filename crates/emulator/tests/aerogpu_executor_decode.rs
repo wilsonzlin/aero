@@ -660,6 +660,54 @@ fn malformed_cmd_stream_size_sets_error_irq() {
 }
 
 #[test]
+fn inconsistent_cmd_stream_descriptor_sets_error_irq_and_advances_head() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    // cmd_gpa set but cmd_size_bytes=0 must be rejected.
+    write_submit_desc(&mut mem, desc0_gpa, 0x6000, 0, 0, 0, 5);
+
+    let desc1_gpa = desc0_gpa + u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    // cmd_size_bytes set but cmd_gpa=0 must also be rejected.
+    write_submit_desc(&mut mem, desc1_gpa, 0, 24, 0, 0, 6);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 2);
+    assert_eq!(regs.completed_fence, 6);
+    assert_eq!(regs.stats.malformed_submissions, 2);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let records: Vec<_> = exec.last_submissions.iter().collect();
+    assert_eq!(records.len(), 2);
+    for record in records {
+        assert!(
+            record.decode_errors.contains(
+                &emulator::gpu_worker::aerogpu_executor::AeroGpuSubmissionDecodeError::CmdStream(
+                    emulator::gpu_worker::aerogpu_executor::AeroGpuCmdStreamDecodeError::InconsistentDescriptor,
+                )
+            ),
+            "expected InconsistentDescriptor error, got: {:?}",
+            record.decode_errors
+        );
+    }
+}
+
+#[test]
 fn backend_submit_error_does_not_block_fence_completion() {
     #[derive(Default)]
     struct RejectBackend;

@@ -236,6 +236,12 @@ versions can append fields (and must be `<= ring.entry_stride_bytes`):
 | `0x30` | `u64` | `signal_fence` | Fence value to signal when the submission completes |
 | `0x38` | `u64` | `reserved0` | Must be 0 |
 
+Descriptor validation rules (from `aerogpu_ring.h`):
+
+- `cmd_gpa` and `cmd_size_bytes` must be both zero (empty submission) or both non-zero.
+- `alloc_table_gpa` and `alloc_table_size_bytes` must be both zero (absent) or both non-zero
+  (present).
+
 Submission flags (`enum aerogpu_submit_flags`):
 
 - `AEROGPU_SUBMIT_FLAG_PRESENT` (bit 0): submission contains a present (hint for scheduling/pacing)
