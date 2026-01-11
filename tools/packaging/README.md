@@ -56,11 +56,13 @@ If you want Guest Tools to include the upstream virtio drivers (`viostor`, `netk
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile full `
+  -Profile minimal `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
 ```
+
+To include best-effort Win7 audio/input drivers when present in your virtio-win version, use `-Profile full`.
 
 On Linux/macOS you can run the same wrapper under PowerShell 7 (`pwsh`). When `Mount-DiskImage`
 is unavailable, it automatically falls back to the cross-platform extractor:
@@ -68,7 +70,7 @@ is unavailable, it automatically falls back to the cross-platform extractor:
 ```bash
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
   -VirtioWinIso virtio-win.iso \
-  -Profile full \
+  -Profile minimal \
   -OutDir ./dist/guest-tools \
   -Version 0.0.0 \
   -BuildId local
@@ -76,12 +78,13 @@ pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
 
 Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
 
-Profiles:
+Profiles (defaults):
 
-- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json`
-- `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json`
+- `-Profile minimal` (default): uses `tools/packaging/specs/win7-virtio-win.json`
+- `-Profile full`: uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
+`-Drivers` also overrides the profile’s driver extraction list.
 
 Signing policy notes:
 

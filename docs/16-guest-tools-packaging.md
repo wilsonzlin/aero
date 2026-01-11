@@ -263,7 +263,7 @@ If you want the packaged Guest Tools ISO/zip to include the **virtio-win** drive
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile full `
+  -Profile minimal `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
@@ -276,7 +276,7 @@ is unavailable.
 ```bash
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
   -VirtioWinIso virtio-win.iso \
-  -Profile full \
+  -Profile minimal \
   -OutDir ./dist/guest-tools \
   -Version 0.0.0 \
   -BuildId local
@@ -291,10 +291,30 @@ pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 -VirtioWinRoot /tmp/vi
 
 Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
 
-Profiles:
+`-Profile` controls both:
 
-- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (required: `viostor` + `netkvm`, optional: `vioinput` + `viosnd`)
-- `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
+- the default driver set extracted from virtio-win (unless overridden by `-Drivers`), and
+- the default packaging spec (unless overridden by `-SpecPath`).
+
+Profiles (defaults):
+
+- `minimal` (default):
+  - `-Drivers @('viostor','netkvm')`
+  - `-SpecPath tools/packaging/specs/win7-virtio-win.json`
+- `full`:
+  - `-Drivers @('viostor','netkvm','viosnd','vioinput')`
+  - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+
+To include best-effort Win7 audio/input drivers when present in your virtio-win version:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local
+```
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 
@@ -302,6 +322,12 @@ Signing policy:
 
 - The wrapper defaults to `-SigningPolicy none` (appropriate for WHQL/production-signed virtio-win drivers).
 - If you are packaging test-signed/custom-signed drivers, override it (e.g. `-SigningPolicy testsigning`).
+
+Notes:
+
+- `-SpecPath` overrides the profile’s default spec selection.
+- `-Drivers` overrides the profile’s default driver list.
+- `-Profile full` does **not** enable `-StrictOptional` by default; missing `viosnd`/`vioinput` should remain best-effort unless strict mode is requested.
 
 ## Validation: required drivers + hardware IDs
 

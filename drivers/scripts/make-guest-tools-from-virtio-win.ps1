@@ -10,8 +10,8 @@ This script wraps:
 
 Use `-Profile` to choose a predictable driver set:
 
-- `full` (default): includes optional audio/input drivers when present
-- `minimal`: storage+network only (avoids optional-driver warnings and keeps outputs minimal)
+- `minimal` (default): storage+network only (aligned with the "minimal" packaging spec)
+- `full`: includes optional audio/input drivers when present (best-effort)
 
 Precedence:
 
@@ -58,12 +58,12 @@ param(
   # For virtio-win this is typically unnecessary (WHQL/production-signed), but it is
   # required when packaging test-signed/custom-signed driver bundles.
   [string]$CertPath,
- 
+
   # Packaging profile:
-  # - full: includes optional virtio audio/input drivers if present (default)
-  # - minimal: storage+network only
+  # - minimal: storage+network only (default)
+  # - full: includes optional virtio audio/input drivers if present
   [ValidateSet("minimal", "full")]
-  [string]$Profile = "full",
+  [string]$Profile = "minimal",
 
   # Optional: override which driver packages are extracted from virtio-win.
   [string[]]$Drivers,

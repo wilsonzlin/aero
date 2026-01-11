@@ -162,9 +162,8 @@ if ($resolvedGuestToolsProfile -eq "auto") {
   } elseif ($specBaseName -eq "win7-virtio-full.json") {
     $resolvedGuestToolsProfile = "full"
   } else {
-    # Best-effort fallback: default to full so the wrapper attempts to extract optional
-    # virtio drivers unless explicitly constrained by -Drivers.
-    $resolvedGuestToolsProfile = "full"
+    # Best-effort fallback: align with the wrapper default (minimal).
+    $resolvedGuestToolsProfile = "minimal"
   }
 }
 
@@ -630,11 +629,14 @@ if (-not $SkipGuestToolsDefaultsCheck) {
   }
 
   $defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
-  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
-    throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*minimal\s*$') {
+    throw "Expected defaults run to use -Profile minimal. See $guestToolsDefaultsLog"
   }
-  if ($defaultsLogText -notmatch 'win7-virtio-full\.json') {
-    throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch 'win7-virtio-win\.json') {
+    throw "Expected defaults run to select win7-virtio-win.json. See $guestToolsDefaultsLog"
+  }
+  if ($defaultsLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm\s*$') {
+    throw "Expected defaults run to extract only viostor,netkvm. See $guestToolsDefaultsLog"
   }
 
   $defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
@@ -655,8 +657,69 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     }
   }
 
-  # Default profile is 'full', so when optional drivers are present in the source, they should be
-  # present in the packaged output too.
+  # Default profile is 'minimal', so optional drivers should NOT be packaged by default.
+  foreach ($p in @(
+    "drivers/x86/viosnd/viosnd.inf",
+    "drivers/amd64/viosnd/viosnd.inf",
+    "drivers/x86/vioinput/vioinput.inf",
+    "drivers/amd64/vioinput/vioinput.inf"
+  )) {
+    if ($defaultsPaths -contains $p) {
+      throw "Did not expect optional driver file path to be packaged by default (-Profile minimal): $p"
+    }
+  }
+
+  # Validate -Profile full defaults without explicitly passing -SpecPath/-Drivers. This ensures
+  # the profile mapping remains stable and the resulting media includes optional drivers when present.
+  $guestToolsProfileFullOutDir = Join-Path $OutRoot "guest-tools-profile-full"
+  Ensure-EmptyDirectory -Path $guestToolsProfileFullOutDir
+  $guestToolsProfileFullLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-profile-full.log"
+  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (-Profile full)..."
+  $guestToolsProfileFullArgs = @(
+    "-OutDir", $guestToolsProfileFullOutDir,
+    "-Profile", "full",
+    "-Version", "0.0.0",
+    "-BuildId", "ci-profile-full",
+    "-CleanStage"
+  )
+  if ($TestIsoMode) {
+    $guestToolsProfileFullArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+  } else {
+    $guestToolsProfileFullArgs += @("-VirtioWinRoot", $syntheticRoot)
+  }
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsProfileFullArgs *>&1 | Tee-Object -FilePath $guestToolsProfileFullLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-guest-tools-from-virtio-win.ps1 (-Profile full) failed (exit $LASTEXITCODE). See $guestToolsProfileFullLog"
+  }
+
+  $profileFullLogText = Get-Content -LiteralPath $guestToolsProfileFullLog -Raw
+  if ($profileFullLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
+    throw "Expected -Profile full run to use profile=full. See $guestToolsProfileFullLog"
+  }
+  if ($profileFullLogText -notmatch 'win7-virtio-full\.json') {
+    throw "Expected -Profile full run to select win7-virtio-full.json. See $guestToolsProfileFullLog"
+  }
+  if ($profileFullLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm,\s*viosnd,\s*vioinput\s*$') {
+    throw "Expected -Profile full run to extract viostor,netkvm,viosnd,vioinput. See $guestToolsProfileFullLog"
+  }
+
+  $profileFullManifestPath = Join-Path $guestToolsProfileFullOutDir "manifest.json"
+  if (-not (Test-Path -LiteralPath $profileFullManifestPath -PathType Leaf)) {
+    throw "Expected Guest Tools -Profile full manifest not found: $profileFullManifestPath"
+  }
+  $profileFullManifest = Get-Content -LiteralPath $profileFullManifestPath -Raw | ConvertFrom-Json
+  if ($profileFullManifest.package.build_id -ne "ci-profile-full") {
+    throw "Guest Tools -Profile full manifest build_id mismatch: expected ci-profile-full, got $($profileFullManifest.package.build_id)"
+  }
+  if ($profileFullManifest.signing_policy -ne "none") {
+    throw "Guest Tools -Profile full manifest signing_policy mismatch: expected none, got $($profileFullManifest.signing_policy)"
+  }
+  $profileFullPaths = @($profileFullManifest.files | ForEach-Object { $_.path })
+  foreach ($p in $profileFullPaths) {
+    if ($p -like "certs/*" -and $p -ne "certs/README.md") {
+      throw "Did not expect certificate files to be packaged for signing_policy=none (-Profile full run): $p"
+    }
+  }
   if (-not $OmitOptionalDrivers) {
     foreach ($want in @(
       "drivers/x86/viosnd/viosnd.inf",
@@ -664,72 +727,9 @@ if (-not $SkipGuestToolsDefaultsCheck) {
       "drivers/x86/vioinput/vioinput.inf",
       "drivers/amd64/vioinput/vioinput.inf"
     )) {
-      if (-not ($defaultsPaths -contains $want)) {
-        throw "Defaults Guest Tools manifest missing expected optional driver file path: $want"
+      if (-not ($profileFullPaths -contains $want)) {
+        throw "Guest Tools -Profile full manifest missing expected optional driver file path: $want"
       }
-    }
-  }
-
-  # Validate -Profile minimal defaults without explicitly passing -SpecPath/-Drivers. This ensures
-  # the profile mapping remains stable and the resulting media doesn't accidentally pick up optional
-  # driver payloads.
-  $guestToolsProfileMinimalOutDir = Join-Path $OutRoot "guest-tools-profile-minimal"
-  Ensure-EmptyDirectory -Path $guestToolsProfileMinimalOutDir
-  $guestToolsProfileMinimalLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-profile-minimal.log"
-  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (-Profile minimal)..."
-  $guestToolsProfileMinimalArgs = @(
-    "-OutDir", $guestToolsProfileMinimalOutDir,
-    "-Profile", "minimal",
-    "-Version", "0.0.0",
-    "-BuildId", "ci-profile-minimal",
-    "-CleanStage"
-  )
-  if ($TestIsoMode) {
-    $guestToolsProfileMinimalArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
-  } else {
-    $guestToolsProfileMinimalArgs += @("-VirtioWinRoot", $syntheticRoot)
-  }
-  & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsProfileMinimalArgs *>&1 | Tee-Object -FilePath $guestToolsProfileMinimalLog
-  if ($LASTEXITCODE -ne 0) {
-    throw "make-guest-tools-from-virtio-win.ps1 (-Profile minimal) failed (exit $LASTEXITCODE). See $guestToolsProfileMinimalLog"
-  }
-
-  $profileMinimalLogText = Get-Content -LiteralPath $guestToolsProfileMinimalLog -Raw
-  if ($profileMinimalLogText -notmatch '(?m)^\s*profile\s*:\s*minimal\s*$') {
-    throw "Expected -Profile minimal run to use profile=minimal. See $guestToolsProfileMinimalLog"
-  }
-  if ($profileMinimalLogText -notmatch 'win7-virtio-win\.json') {
-    throw "Expected -Profile minimal run to select win7-virtio-win.json. See $guestToolsProfileMinimalLog"
-  }
-  if ($profileMinimalLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm\s*$') {
-    throw "Expected -Profile minimal run to extract only viostor,netkvm. See $guestToolsProfileMinimalLog"
-  }
-
-  $profileMinimalManifestPath = Join-Path $guestToolsProfileMinimalOutDir "manifest.json"
-  if (-not (Test-Path -LiteralPath $profileMinimalManifestPath -PathType Leaf)) {
-    throw "Expected Guest Tools -Profile minimal manifest not found: $profileMinimalManifestPath"
-  }
-  $profileMinimalManifest = Get-Content -LiteralPath $profileMinimalManifestPath -Raw | ConvertFrom-Json
-  if ($profileMinimalManifest.package.build_id -ne "ci-profile-minimal") {
-    throw "Guest Tools -Profile minimal manifest build_id mismatch: expected ci-profile-minimal, got $($profileMinimalManifest.package.build_id)"
-  }
-  if ($profileMinimalManifest.signing_policy -ne "none") {
-    throw "Guest Tools -Profile minimal manifest signing_policy mismatch: expected none, got $($profileMinimalManifest.signing_policy)"
-  }
-  $profileMinimalPaths = @($profileMinimalManifest.files | ForEach-Object { $_.path })
-  foreach ($p in $profileMinimalPaths) {
-    if ($p -like "certs/*" -and $p -ne "certs/README.md") {
-      throw "Did not expect certificate files to be packaged for signing_policy=none (-Profile minimal run): $p"
-    }
-  }
-  foreach ($p in @(
-    "drivers/x86/viosnd/viosnd.inf",
-    "drivers/amd64/viosnd/viosnd.inf",
-    "drivers/x86/vioinput/vioinput.inf",
-    "drivers/amd64/vioinput/vioinput.inf"
-  )) {
-    if ($profileMinimalPaths -contains $p) {
-      throw "Did not expect optional driver file path to be packaged under -Profile minimal: $p"
     }
   }
 

@@ -65,8 +65,8 @@ This spec is used by `drivers/scripts/make-guest-tools-from-aero-virtio.ps1` by 
 
 `drivers/scripts/make-guest-tools-from-virtio-win.ps1` supports an explicit packaging profile:
 
-- `-Profile full` (default): uses `win7-virtio-full.json` and extracts `viostor, netkvm, viosnd, vioinput`
-- `-Profile minimal`: uses `win7-virtio-win.json` and extracts `viostor, netkvm`
+- `-Profile minimal` (default): uses `win7-virtio-win.json` and extracts `viostor, netkvm`
+- `-Profile full`: uses `win7-virtio-full.json` and extracts `viostor, netkvm, viosnd, vioinput` (optional `viosnd`/`vioinput` are best-effort)
 
 Advanced overrides:
 

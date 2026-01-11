@@ -122,7 +122,7 @@ If you want the Guest Tools ISO (scripts + drivers; certificates are optional de
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile full `
+  -Profile minimal `
   -OutDir .\dist\guest-tools
 ```
 
@@ -136,8 +136,8 @@ On non-Windows hosts you have three options:
 
 Profiles:
 
-- `-Profile full` (default): includes optional virtio drivers when available (`vioinput`, `viosnd`)
-- `-Profile minimal`: storage + network only (`viostor`, `netkvm`)
+- `-Profile minimal` (default): storage + network only (`viostor`, `netkvm`)
+- `-Profile full`: includes optional virtio drivers when available (`vioinput`, `viosnd`)
 
 Signing policy:
 

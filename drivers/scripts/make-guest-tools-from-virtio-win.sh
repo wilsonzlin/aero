@@ -16,7 +16,7 @@ Options:
   --out-dir <dir>              Output directory (default: dist/guest-tools)
   --version <ver>              Package version (default: 0.0.0)
   --build-id <id>              Build ID (default: local)
-  --profile <minimal|full>     Packaging profile (default: full)
+  --profile <minimal|full>     Packaging profile (default: minimal)
   --signing-policy <policy>    Signing policy (none|testsigning|nointegritychecks) (default: none)
   --keep-extracted             Do not delete the temporary extracted virtio-win root
   -h, --help                   Show this help
@@ -36,7 +36,7 @@ virtio_iso=""
 out_dir="${repo_root}/dist/guest-tools"
 version="0.0.0"
 build_id="local"
-profile="full"
+profile="minimal"
 signing_policy="none"
 keep_extracted=0
 passthru_args=()
@@ -143,4 +143,3 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File "$guest_ps1" \
   -Profile "$profile" \
   -SigningPolicy "$signing_policy" \
   "${passthru_args[@]}"
-
