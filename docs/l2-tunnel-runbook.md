@@ -19,7 +19,7 @@ Start the proxy service.
 
 Current implementations in this repo:
 
-- Rust (minimal L2 WebSocket endpoint; currently only implements protocol keepalive echo):
+- Rust (production target: L2 tunnel termination + user-space NAT stack + egress policy):
 
 ```bash
 cargo run -p aero-l2-proxy
@@ -28,7 +28,7 @@ cargo run -p aero-l2-proxy
 # AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run -p aero-l2-proxy
 ```
 
-- Node (upgrade policy / quota enforcement; used by `tests/l2_proxy_security.test.js`):
+- Node (WebSocket upgrade policy / quota harness; **does not implement the L2 data plane**; used by `tests/l2_proxy_security.test.js`):
 
 ```bash
 node --experimental-strip-types proxy/aero-l2-proxy/src/index.ts
