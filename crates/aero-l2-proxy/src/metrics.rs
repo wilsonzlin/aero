@@ -309,7 +309,11 @@ impl Metrics {
 
         let mut out = String::new();
 
-        push_counter(&mut out, "l2_upgrade_rejected_total", upgrade_rejected_total);
+        push_counter(
+            &mut out,
+            "l2_upgrade_rejected_total",
+            upgrade_rejected_total,
+        );
 
         push_gauge(&mut out, "l2_sessions_active", sessions_active);
         push_counter(&mut out, "l2_sessions_total", sessions_total);

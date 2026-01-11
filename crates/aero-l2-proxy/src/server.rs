@@ -635,8 +635,8 @@ impl HostScheme {
 
 fn effective_host_scheme(headers: &HeaderMap, trust_proxy: bool) -> HostScheme {
     if trust_proxy {
-        if let Some(proto) =
-            forwarded_param(headers, "proto").or_else(|| header_list_value(headers, "x-forwarded-proto"))
+        if let Some(proto) = forwarded_param(headers, "proto")
+            .or_else(|| header_list_value(headers, "x-forwarded-proto"))
         {
             let proto = proto.to_ascii_lowercase();
             if matches!(proto.as_str(), "https" | "wss") {

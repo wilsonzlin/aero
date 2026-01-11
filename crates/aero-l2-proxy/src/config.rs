@@ -197,7 +197,12 @@ impl SecurityConfig {
 
         let trust_proxy_host = std::env::var("AERO_L2_TRUST_PROXY_HOST")
             .ok()
-            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .map(|v| {
+                matches!(
+                    v.trim(),
+                    "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+                )
+            })
             .unwrap_or(false);
 
         let max_connections = std::env::var("AERO_L2_MAX_CONNECTIONS")

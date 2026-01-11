@@ -675,7 +675,10 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
         if rel.is_empty() {
             continue;
         }
-        if rel == allowed_mapping_doc || allowed_prefixes.iter().any(|prefix| rel.starts_with(prefix))
+        if rel == allowed_mapping_doc
+            || allowed_prefixes
+                .iter()
+                .any(|prefix| rel.starts_with(prefix))
         {
             continue;
         }
