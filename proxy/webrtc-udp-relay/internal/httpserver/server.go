@@ -128,7 +128,7 @@ func (s *Server) registerRoutes() {
 			if err != nil {
 				if errors.Is(err, auth.ErrMissingCredentials) {
 					incAuthFailure()
-					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					WriteJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
 					return
 				}
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -142,7 +142,7 @@ func (s *Server) registerRoutes() {
 			if err := verifier.Verify(cred); err != nil {
 				if errors.Is(err, auth.ErrMissingCredentials) || errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrUnsupportedJWT) {
 					incAuthFailure()
-					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					WriteJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
 					return
 				}
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

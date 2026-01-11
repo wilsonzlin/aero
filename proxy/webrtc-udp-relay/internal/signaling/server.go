@@ -276,25 +276,25 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var req OfferRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
-		http.Error(w, "invalid offer", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad_message", "invalid offer")
 		return
 	}
 	if err := req.Validate(); err != nil {
 		if errors.Is(err, ErrUnsupportedVersion) {
-			http.Error(w, "unsupported protocol version", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_message", "unsupported protocol version")
 			return
 		}
-		http.Error(w, "invalid offer", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad_message", "invalid offer")
 		return
 	}
 	if s.WebRTC == nil {
-		http.Error(w, "webrtc api not configured", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "webrtc api not configured")
 		return
 	}
 
 	if err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer}); err != nil {
 		s.incMetric(metrics.AuthFailure)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 		return
 	}
 
@@ -303,11 +303,11 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		var err error
 		relaySession, err = s.Sessions.CreateSession()
 		if err == relay.ErrTooManySessions {
-			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSONError(w, http.StatusServiceUnavailable, "too_many_sessions", "too many sessions")
 			return
 		}
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal error")
 			return
 		}
 	}
@@ -330,7 +330,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanup)
 	if err != nil {
 		cleanupRelaySession()
-		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
 	s.trackWebRTCSession(sess)
@@ -342,21 +342,21 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		SDP:  req.Offer.SDP,
 	}); err != nil {
 		_ = sess.Close()
-		http.Error(w, "failed to set remote description", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad_message", "failed to set remote description")
 		return
 	}
 
 	answer, err := pc.CreateAnswer(nil)
 	if err != nil {
 		_ = sess.Close()
-		http.Error(w, "failed to create answer", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create answer")
 		return
 	}
 
 	gatherComplete := webrtc.GatheringCompletePromise(pc)
 	if err := pc.SetLocalDescription(answer); err != nil {
 		_ = sess.Close()
-		http.Error(w, "failed to set local description", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to set local description")
 		return
 	}
 	select {
@@ -369,7 +369,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	local := pc.LocalDescription()
 	if local == nil {
 		_ = sess.Close()
-		http.Error(w, "failed to gather local description", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to gather local description")
 		return
 	}
 
