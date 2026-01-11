@@ -49,7 +49,7 @@ Cross-process shared resources are expressed explicitly in the command stream:
 values are process-local and not stable cross-process.
 
 Canonical contract: on Win7/WDDM 1.1, the guest UMD generates a collision-resistant
-`share_token` and persists it in WDDM allocation private driver data
+`share_token` and persists it in the preserved WDDM allocation private driver data blob
 (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 dxgkrnl returns the same bytes on cross-process opens, so both processes observe the
 same `share_token`.
@@ -57,7 +57,7 @@ same `share_token`.
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). In the current AeroGPU D3D9 UMD:
 
 - `alloc_id` is derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
-- `share_token` is allocated from a cross-process monotonic counter (`ShareTokenAllocator`) and stored in `aerogpu_wddm_alloc_priv.share_token` for shared allocations so the consumer process can recover the same token on `OpenResource`.
+- `share_token` is generated via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`) and persisted in `aerogpu_wddm_alloc_priv.share_token`.
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the cross-process validation test.
 

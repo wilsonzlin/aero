@@ -195,12 +195,12 @@ Expected sequence:
 
 1. **Create shared resource → export (token)**
    - Producer process creates a shareable resource (`pSharedHandle != nullptr`).
-- The UMD generates a `share_token` and writes it into the preserved allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`).
+   - The UMD generates a collision-resistant `share_token` and writes it into the preserved allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`).
    - The UMD submits `EXPORT_SHARED_SURFACE { resource_handle, share_token }` so the host can map `share_token → resource`.
 
 2. **Open shared resource → import (token)**
    - Consumer process opens the resource via the OS shared handle mechanism (the handle must already be valid in the consumer process via `DuplicateHandle`/inheritance).
-- dxgkrnl returns the same preserved allocation private driver data bytes on `OpenResource`, so the opening UMD instance recovers the same `share_token`.
+   - dxgkrnl returns the preserved allocation private driver data bytes on `OpenResource`, so the opening UMD instance recovers the same `share_token`.
    - The UMD submits `IMPORT_SHARED_SURFACE { share_token } -> resource_handle` to obtain a host resource alias.
 
 **Key invariant:** `share_token` must be stable across processes inside the guest VM. The preserved allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`) is stable; user-mode `HANDLE` numeric values are not.
