@@ -33,6 +33,7 @@ if exist "%RUNNER%" (
 
 call :run_test d3d9ex_dwm_probe %*
 call :run_test dwm_flush_pacing %*
+call :run_test vblank_wait_pacing %*
 call :run_test d3d9ex_triangle %*
 call :run_test d3d11_triangle %*
 call :run_test readback_sanity %*
@@ -77,7 +78,7 @@ echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
-echo   --allow-remote only affects d3d9ex_dwm_probe; other tests ignore it.
+echo   --allow-remote skips tests that are expected to fail under RDP (SM_REMOTESESSION=1): d3d9ex_dwm_probe, dwm_flush_pacing, vblank_wait_pacing.
 echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 echo   Use --no-timeout to run without enforcing a timeout.
 exit /b 0
