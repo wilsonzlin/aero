@@ -414,6 +414,35 @@ fn snapshot_validate_rejects_devices_section_too_large() {
         .stderr(predicate::str::contains("devices section too large"));
 }
 
+#[test]
+fn snapshot_validate_accepts_unknown_sections() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("unknown_section.aerosnap");
+    write_snapshot(&snap);
+    let mut bytes = fs::read(&snap).unwrap();
+
+    // Append an unknown section with a tiny payload.
+    let mut section = Vec::new();
+    section.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes()); // id
+    section.extend_from_slice(&1u16.to_le_bytes()); // version
+    section.extend_from_slice(&0u16.to_le_bytes()); // flags
+    section.extend_from_slice(&4u64.to_le_bytes()); // len
+    section.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+    bytes.extend_from_slice(&section);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Deep validation should also tolerate unknown sections (restore_snapshot skips them).
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", "--deep", snap.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
 struct DiskSource;
 
 impl SnapshotSource for DiskSource {
