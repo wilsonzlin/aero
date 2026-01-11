@@ -117,6 +117,25 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --virtio-snd-wav-path ./out/virtio-snd.wav
 ```
 
+## Running in CI (self-hosted)
+
+This repo includes an **opt-in** GitHub Actions workflow that runs the host harness on a **self-hosted** runner:
+
+- Workflow: [`.github/workflows/win7-virtio-harness.yml`](../../../../.github/workflows/win7-virtio-harness.yml)
+- Trigger: `workflow_dispatch` only (no automatic PR runs)
+
+Because Windows images cannot be redistributed, the workflow expects a **pre-provisioned Win7 disk image** to already
+exist on the self-hosted runner.
+
+Required workflow inputs:
+
+- `disk_image_path` (required): path on the self-hosted runner to your prepared Win7 image (qcow2 recommended)
+- `timeout_seconds`: harness timeout (default `600`)
+- `snapshot`: run QEMU with `snapshot=on` so the base image is not modified (recommended)
+- `serial_log_path`: where to write COM1 output (default is under `out/win7-virtio-harness/` in the workspace)
+
+On completion, the workflow uploads the serial log and harness output as the `win7-virtio-harness` artifact.
+
 ## How the harness works
 
 - Starts a tiny HTTP server on `127.0.0.1:<HttpPort>`
