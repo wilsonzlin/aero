@@ -14,7 +14,9 @@ SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE=101
 SMOKE_WEBRTC_UDP_PORT_MIN=50000
 SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE - 1))
 SMOKE_SESSION_SECRET="__aero_smoke_session_${PROJECT_NAME}"
-SMOKE_COMPOSE_OVERRIDE_FILE="$(mktemp "${TMPDIR:-/tmp}/aero-smoke-compose-override-XXXXXX.yml")"
+# BSD `mktemp` requires the template X's at the end of the path component, so
+# avoid a `.yml` suffix for portability (docker compose accepts any filename).
+SMOKE_COMPOSE_OVERRIDE_FILE="$(mktemp "${TMPDIR:-/tmp}/aero-smoke-compose-override-XXXXXX")"
 
 cat >"$SMOKE_COMPOSE_OVERRIDE_FILE" <<'YAML'
 services:
@@ -694,7 +696,7 @@ function checkL2RejectsMissingCookie(path) {
   });
 }
 
-function checkL2RejectsMissingOrigin(path) {
+function checkL2RejectsMissingOrigin(cookiePair, path) {
   return new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString("base64");
 
@@ -706,6 +708,7 @@ function checkL2RejectsMissingOrigin(path) {
       "Sec-WebSocket-Version: 13",
       `Sec-WebSocket-Key: ${key}`,
       `Sec-WebSocket-Protocol: ${l2Protocol}`,
+      `Cookie: ${cookiePair}`,
       "",
       "",
     ].join("\r\n");
@@ -1311,7 +1314,7 @@ function checkUdpRelayToken(cookiePair) {
   }
 
   await checkL2RejectsMissingCookie(session.l2Path);
-  await checkL2RejectsMissingOrigin(session.l2Path);
+  await checkL2RejectsMissingOrigin(session.cookiePair, session.l2Path);
   const token = await checkUdpRelayToken(session.cookiePair);
   if (token !== session.udpRelayToken) {
     throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
