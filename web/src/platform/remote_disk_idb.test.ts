@@ -153,18 +153,22 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     if (!cache) throw new Error("expected idb cache");
 
     const originalClear = cache.clear.bind(cache);
-    let releaseClear: (() => void) | null = null;
+    // Don't model this as `(() => void) | null`: TS doesn't understand that the
+    // Promise executor runs synchronously, so it narrows the variable to `null`
+    // at callsites in the outer scope. Start with a no-op and replace it in the
+    // executor instead.
+    let releaseClear = () => {};
     const releasePromise = new Promise<void>((resolve) => {
-      releaseClear = resolve;
+      releaseClear = () => resolve();
     });
 
-    let started: (() => void) | null = null;
+    let started = () => {};
     const startedPromise = new Promise<void>((resolve) => {
-      started = resolve;
+      started = () => resolve();
     });
 
     cache.clear = async () => {
-      started?.();
+      started();
       await releasePromise;
       await originalClear();
     };
@@ -175,7 +179,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     const bytes = await disk.read(0, 16);
     expect(Array.from(bytes)).toEqual(Array.from(image.subarray(0, 16)));
 
-    releaseClear?.();
+    releaseClear();
     await clearPromise;
 
     const t = disk.getTelemetrySnapshot();
