@@ -505,7 +505,7 @@ The **Device Binding: Audio (virtio-snd)** check in `report.txt` is derived from
 `verify.ps1` reads `AERO_VIRTIO_SND_SERVICE` from `config\devices.cmd` and checks it first, then falls back to common service names:
 
 - `aeroviosnd` (Aero clean-room / in-tree driver)
-- `aeroviosnd_legacy` (Aero QEMU compatibility package; transitional virtio-snd)
+- `aeroviosnd_legacy` (Aero QEMU compatibility package; transitional virtio-snd `PCI\VEN_1AF4&DEV_1018`)
 - `viosnd` (upstream virtio-win)
 - `aerosnd`
 - `virtiosnd`
