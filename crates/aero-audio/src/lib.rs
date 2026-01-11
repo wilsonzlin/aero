@@ -9,6 +9,7 @@ pub mod clock;
 pub mod mem;
 pub mod pcm;
 pub mod ring;
+pub mod capture;
 pub mod sink;
 
 /// `SharedArrayBuffer` ring buffer layout used by the web `AudioWorkletProcessor`.

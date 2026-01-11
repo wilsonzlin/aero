@@ -104,6 +104,34 @@ pub fn decode_pcm_to_stereo_f32(input: &[u8], fmt: StreamFormat) -> Vec<[f32; 2]
     out
 }
 
+/// Encode mono `f32` samples into interleaved PCM bytes as described by `fmt`.
+///
+/// Channel mapping:
+/// - 1 channel: mono
+/// - 2+ channels: the mono signal is duplicated into the first two channels and
+///   remaining channels are filled with silence.
+pub fn encode_mono_f32_to_pcm(input: &[f32], fmt: StreamFormat) -> Vec<u8> {
+    let bytes_per_frame = fmt.bytes_per_frame();
+    if bytes_per_frame == 0 {
+        return Vec::new();
+    }
+
+    let mut out = vec![0u8; input.len() * bytes_per_frame];
+    let bps = fmt.bytes_per_sample();
+    let channels = fmt.channels as usize;
+
+    for (frame_idx, &mono) in input.iter().enumerate() {
+        let frame_off = frame_idx * bytes_per_frame;
+        for ch in 0..channels {
+            let sample = if ch <= 1 { mono } else { 0.0 };
+            let off = frame_off + ch * bps;
+            encode_one_sample(&mut out[off..off + bps], fmt.bits_per_sample, sample);
+        }
+    }
+
+    out
+}
+
 fn decode_one_sample(bytes: &[u8], bits_per_sample: u8) -> f32 {
     match bits_per_sample {
         8 => (bytes[0] as f32 - 128.0) / 128.0,
@@ -129,6 +157,41 @@ fn decode_one_sample(bytes: &[u8], bits_per_sample: u8) -> f32 {
         other => {
             let _ = other;
             0.0
+        }
+    }
+}
+
+fn encode_one_sample(out: &mut [u8], bits_per_sample: u8, sample: f32) {
+    match bits_per_sample {
+        8 => {
+            // 8-bit PCM is unsigned with a 128 bias.
+            let v = (sample.clamp(-1.0, 1.0) * 128.0 + 128.0).round();
+            let v = v.clamp(0.0, 255.0) as u8;
+            out[0] = v;
+        }
+        16 => {
+            let v = (sample.clamp(-1.0, 1.0) * 32768.0).round();
+            let v = v.clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+            out.copy_from_slice(&v.to_le_bytes());
+        }
+        20 => {
+            let v = (sample.clamp(-1.0, 1.0) * 524_288.0).round();
+            let v = v.clamp(-524_288.0, 524_287.0) as i32;
+            out.copy_from_slice(&v.to_le_bytes());
+        }
+        24 => {
+            let v = (sample.clamp(-1.0, 1.0) * 8_388_608.0).round();
+            let v = v.clamp(-8_388_608.0, 8_388_607.0) as i32;
+            out.copy_from_slice(&v.to_le_bytes());
+        }
+        32 => {
+            let v = (sample.clamp(-1.0, 1.0) * 2_147_483_648.0).round();
+            let v = v.clamp(i32::MIN as f32, i32::MAX as f32) as i32;
+            out.copy_from_slice(&v.to_le_bytes());
+        }
+        other => {
+            let _ = other;
+            out.fill(0);
         }
     }
 }

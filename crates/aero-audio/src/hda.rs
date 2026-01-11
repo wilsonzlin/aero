@@ -1,6 +1,7 @@
+use crate::capture::{AudioCaptureSource, SilenceCaptureSource};
 use crate::clock::AudioFrameClock;
 use crate::mem::MemoryAccess;
-use crate::pcm::{decode_pcm_to_stereo_f32, LinearResampler, StreamFormat};
+use crate::pcm::{decode_pcm_to_stereo_f32, encode_mono_f32_to_pcm, LinearResampler, StreamFormat};
 use crate::ring::AudioRingBuffer;
 use crate::sink::AudioSink;
 
@@ -115,6 +116,7 @@ struct StreamRuntime {
     bdl_offset: u32,
     resampler: LinearResampler,
     last_fmt_raw: u16,
+    capture_frame_accum: u64,
 }
 
 impl StreamRuntime {
@@ -124,6 +126,7 @@ impl StreamRuntime {
             bdl_offset: 0,
             resampler: LinearResampler::new(output_rate_hz, output_rate_hz),
             last_fmt_raw: 0,
+            capture_frame_accum: 0,
         }
     }
 
@@ -132,6 +135,7 @@ impl StreamRuntime {
         self.bdl_offset = 0;
         self.resampler.reset_rates(output_rate_hz, output_rate_hz);
         self.last_fmt_raw = 0;
+        self.capture_frame_accum = 0;
     }
 }
 
@@ -166,7 +170,9 @@ pub struct HdaCodec {
     revision_id: u32,
 
     output: CodecOutputWidget,
-    pin: CodecPinWidget,
+    output_pin: CodecPinWidget,
+    input: CodecInputWidget,
+    mic_pin: CodecPinWidget,
     afg_power_state: u8,
 }
 
@@ -179,6 +185,13 @@ struct CodecOutputWidget {
     amp_gain_right: u8,
     amp_mute_left: bool,
     amp_mute_right: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CodecInputWidget {
+    stream_id: u8,
+    channel: u8,
+    format: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +241,7 @@ impl HdaCodec {
                 amp_mute_left: false,
                 amp_mute_right: false,
             },
-            pin: CodecPinWidget {
+            output_pin: CodecPinWidget {
                 conn_select: 0,
                 // Pin Widget Control (PWCTL). Real codecs typically default to having the
                 // line-out pin enabled; keep the model usable without requiring the guest
@@ -236,6 +249,17 @@ impl HdaCodec {
                 pin_ctl: 0x40,
                 // Default config: line out, rear, green, 1/8" jack, association 1, sequence 0.
                 config_default: 0x0101_0000,
+            },
+            input: CodecInputWidget {
+                stream_id: 0,
+                channel: 0,
+                format: 0,
+            },
+            mic_pin: CodecPinWidget {
+                conn_select: 0,
+                pin_ctl: 0x00,
+                // Default config: microphone input, rear, 1/8" jack.
+                config_default: 0x01A1_0000,
             },
             afg_power_state: 0, // D0
         }
@@ -251,10 +275,14 @@ impl HdaCodec {
             return [0.0, 0.0];
         }
         // For the minimal model, treat pin_ctl==0 as disabled and non-zero as enabled.
-        if self.pin.pin_ctl == 0 {
+        if self.output_pin.pin_ctl == 0 {
             return [0.0, 0.0];
         }
         self.output.gain_scalars()
+    }
+
+    pub fn input_stream_id(&self) -> u8 {
+        self.input.stream_id
     }
 
     pub fn execute_verb(&mut self, nid: u8, verb_20: u32) -> u32 {
@@ -266,7 +294,9 @@ impl HdaCodec {
             0 => self.handle_root_verb(verb_id, payload8),
             1 => self.handle_afg_verb(verb_id, payload8),
             2 => self.handle_output_verb(verb_id, payload8, payload16),
-            3 => self.handle_pin_verb(verb_id, payload8),
+            3 => self.handle_output_pin_verb(verb_id, payload8),
+            4 => self.handle_input_verb(verb_id, payload8, payload16),
+            5 => self.handle_mic_pin_verb(verb_id, payload8),
             _ => 0,
         }
     }
@@ -318,25 +348,64 @@ impl HdaCodec {
         }
     }
 
-    fn handle_pin_verb(&mut self, verb_id: u16, payload8: u8) -> u32 {
+    fn handle_input_verb(&mut self, verb_id: u16, payload8: u8, payload16: u16) -> u32 {
         match verb_id {
-            0xF00 => self.get_parameter_pin(payload8),
-            0xF01 => self.pin.conn_select as u32,
-            0x701 => {
-                self.pin.conn_select = payload8;
+            0xF00 => self.get_parameter_input(payload8),
+            0xF06 => ((self.input.stream_id as u32) << 4) | (self.input.channel as u32),
+            0x706 => {
+                self.input.stream_id = payload8 >> 4;
+                self.input.channel = payload8 & 0x0f;
                 0
             }
-            0xF02 => self.get_connection_list_entry(payload8),
-            0xF07 => self.pin.pin_ctl as u32,
+            0xA00 => self.input.format as u32,
+            0x200..=0x2ff => {
+                // SET_CONVERTER_FORMAT (4-bit verb encoded in low 16 bits)
+                self.input.format = payload16;
+                0
+            }
+            _ => 0,
+        }
+    }
+
+    fn handle_output_pin_verb(&mut self, verb_id: u16, payload8: u8) -> u32 {
+        match verb_id {
+            0xF00 => self.get_parameter_output_pin(payload8),
+            0xF01 => self.output_pin.conn_select as u32,
+            0x701 => {
+                self.output_pin.conn_select = payload8;
+                0
+            }
+            0xF02 => self.get_output_connection_list_entry(payload8),
+            0xF07 => self.output_pin.pin_ctl as u32,
             0x707 => {
-                self.pin.pin_ctl = payload8;
+                self.output_pin.pin_ctl = payload8;
                 0
             }
             0xF09 => {
                 // GET_PIN_SENSE: report presence detect (bit31).
                 1 << 31
             }
-            0xF1C => self.pin.config_default,
+            0xF1C => self.output_pin.config_default,
+            _ => 0,
+        }
+    }
+
+    fn handle_mic_pin_verb(&mut self, verb_id: u16, payload8: u8) -> u32 {
+        match verb_id {
+            0xF00 => self.get_parameter_mic_pin(payload8),
+            0xF01 => self.mic_pin.conn_select as u32,
+            0x701 => {
+                self.mic_pin.conn_select = payload8;
+                0
+            }
+            0xF02 => self.get_mic_connection_list_entry(payload8),
+            0xF07 => self.mic_pin.pin_ctl as u32,
+            0x707 => {
+                self.mic_pin.pin_ctl = payload8;
+                0
+            }
+            0xF09 => 1 << 31,
+            0xF1C => self.mic_pin.config_default,
             _ => 0,
         }
     }
@@ -353,7 +422,7 @@ impl HdaCodec {
 
     fn get_parameter_afg(&self, param_id: u8) -> u32 {
         match param_id {
-            0x04 => (2u32 << 16) | 2u32, // widgets start at 2, count 2
+            0x04 => (2u32 << 16) | 4u32, // widgets start at 2, count 4
             0x05 => 0x01,                // audio function group
             0x08 => 0,                   // audio FG caps (minimal)
             _ => 0,
@@ -384,7 +453,19 @@ impl HdaCodec {
         }
     }
 
-    fn get_parameter_pin(&self, param_id: u8) -> u32 {
+    fn get_parameter_input(&self, param_id: u8) -> u32 {
+        match param_id {
+            0x09 => {
+                // Audio widget capabilities: type=audio input (1), stereo, in amp present, format override.
+                (0x1u32) | (1 << 4) | (1 << 5) | (1 << 8)
+            }
+            0x0A => 0,
+            0x0B => 0x0000_0001 | 0x0000_0010,
+            _ => 0,
+        }
+    }
+
+    fn get_parameter_output_pin(&self, param_id: u8) -> u32 {
         match param_id {
             0x09 => {
                 // Audio widget capabilities: type=pin complex (0x4), connection list, power control.
@@ -399,10 +480,31 @@ impl HdaCodec {
         }
     }
 
-    fn get_connection_list_entry(&self, index: u8) -> u32 {
+    fn get_parameter_mic_pin(&self, param_id: u8) -> u32 {
+        match param_id {
+            0x09 => (0x4u32) | (1 << 12) | (1 << 10),
+            0x0C => {
+                // PIN_CAP: input capable.
+                1 << 5
+            }
+            0x0E => 1,
+            _ => 0,
+        }
+    }
+
+    fn get_output_connection_list_entry(&self, index: u8) -> u32 {
         // One-entry connection list (index 0) to the output converter (NID 2).
         if index == 0 {
             2u32
+        } else {
+            0
+        }
+    }
+
+    fn get_mic_connection_list_entry(&self, index: u8) -> u32 {
+        // One-entry connection list (index 0) to the input converter (NID 4).
+        if index == 0 {
+            4u32
         } else {
             0
         }
@@ -515,9 +617,16 @@ pub struct HdaController {
 impl HdaController {
     pub fn new() -> Self {
         let output_rate_hz = 48_000;
-        let num_streams = 1;
+        let num_output_streams: usize = 1;
+        let num_input_streams: usize = 1;
+        let num_bidir_streams: usize = 0;
+        let num_streams = num_output_streams + num_input_streams + num_bidir_streams;
         Self {
-            gcap: (num_streams as u16) & 0x0f,
+            // GCAP: OSS=1, ISS=1, BSS=0, NSDO=1.
+            gcap: ((num_output_streams as u16) & 0xF)
+                | (((num_input_streams as u16) & 0xF) << 4)
+                | (((num_bidir_streams as u16) & 0xF) << 8)
+                | (1u16 << 12),
             vmin: 0x00,
             vmaj: 0x01,
             gctl: 0,
@@ -577,12 +686,8 @@ impl HdaController {
 
     /// Advance the HDA device by `output_frames` worth of host time.
     pub fn process(&mut self, mem: &mut dyn MemoryAccess, output_frames: usize) {
-        self.process_corb(mem);
-        let out_samples = self.process_output_stream(mem, 0, output_frames);
-        if !out_samples.is_empty() {
-            self.audio_out.push_interleaved_stereo(&out_samples);
-        }
-        self.update_position_buffer(mem);
+        let mut silence = SilenceCaptureSource;
+        self.process_inner(mem, output_frames, None, &mut silence);
     }
 
     /// Advance the HDA device by `output_frames` worth of host time, writing any produced audio
@@ -593,11 +698,55 @@ impl HdaController {
         output_frames: usize,
         sink: &mut dyn AudioSink,
     ) {
+        let mut silence = SilenceCaptureSource;
+        self.process_inner(mem, output_frames, Some(sink), &mut silence);
+    }
+
+    /// Advance the HDA device by `output_frames` worth of host time, pulling microphone samples
+    /// from `capture` and DMA'ing them into the guest capture stream.
+    pub fn process_with_capture(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        output_frames: usize,
+        capture: &mut dyn AudioCaptureSource,
+    ) {
+        self.process_inner(mem, output_frames, None, capture);
+    }
+
+    /// Like [`Self::process_into`], but also services the capture stream using `capture`.
+    pub fn process_into_with_capture(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        output_frames: usize,
+        sink: &mut dyn AudioSink,
+        capture: &mut dyn AudioCaptureSource,
+    ) {
+        self.process_inner(mem, output_frames, Some(sink), capture);
+    }
+
+    fn process_inner(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        output_frames: usize,
+        mut sink: Option<&mut dyn AudioSink>,
+        capture: &mut dyn AudioCaptureSource,
+    ) {
         self.process_corb(mem);
+
         let out_samples = self.process_output_stream(mem, 0, output_frames);
         if !out_samples.is_empty() {
-            sink.push_interleaved_f32(&out_samples);
+            if let Some(ref mut sink) = sink {
+                sink.push_interleaved_f32(&out_samples);
+            } else {
+                self.audio_out.push_interleaved_stereo(&out_samples);
+            }
         }
+
+        // Capture stream (stream descriptor 1).
+        if self.streams.len() > 1 {
+            self.process_capture_stream(mem, 1, output_frames, capture);
+        }
+
         self.update_position_buffer(mem);
     }
 
@@ -1037,6 +1186,98 @@ impl HdaController {
         }
     }
 
+    fn process_capture_stream(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        stream: usize,
+        output_frames: usize,
+        capture: &mut dyn AudioCaptureSource,
+    ) {
+        if (self.gctl & GCTL_CRST) == 0 {
+            return;
+        }
+
+        let sd = &self.streams[stream];
+        if (sd.ctl & SD_CTL_RUN) == 0 {
+            return;
+        }
+
+        let stream_num = ((sd.ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
+        if stream_num == 0 || stream_num != self.codec.input_stream_id() {
+            return;
+        }
+
+        let fmt_raw = sd.fmt;
+        if fmt_raw == 0 {
+            return;
+        }
+
+        let fmt = StreamFormat::from_hda_format(fmt_raw);
+
+        let dst_frames = {
+            let rt = &mut self.stream_rt[stream];
+            if rt.last_fmt_raw != fmt_raw
+                || rt.resampler.src_rate_hz() != self.output_rate_hz
+                || rt.resampler.dst_rate_hz() != fmt.sample_rate_hz
+            {
+                rt.resampler.reset_rates(self.output_rate_hz, fmt.sample_rate_hz);
+                rt.last_fmt_raw = fmt_raw;
+                rt.bdl_index = 0;
+                rt.bdl_offset = 0;
+                rt.capture_frame_accum = 0;
+            }
+
+            // Convert host time (output_frames @ output_rate_hz) into the number of guest-rate frames.
+            rt.capture_frame_accum = rt
+                .capture_frame_accum
+                .wrapping_add(output_frames as u64 * fmt.sample_rate_hz as u64);
+            let frames = (rt.capture_frame_accum / self.output_rate_hz as u64) as usize;
+            rt.capture_frame_accum %= self.output_rate_hz as u64;
+            frames
+        };
+
+        if dst_frames == 0 {
+            return;
+        }
+
+        let need_src = {
+            let rt = &mut self.stream_rt[stream];
+            let required_src = rt.resampler.required_source_frames(dst_frames);
+            let queued_src = rt.resampler.queued_source_frames();
+            required_src.saturating_sub(queued_src)
+        };
+
+        if need_src > 0 {
+            let mut mono = vec![0.0f32; need_src];
+            let got = capture.read_mono_f32(&mut mono);
+            if got < need_src {
+                mono[got..].fill(0.0);
+            }
+
+            let stereo: Vec<[f32; 2]> = mono.iter().map(|&s| [s, s]).collect();
+            self.stream_rt[stream]
+                .resampler
+                .push_source_frames(&stereo);
+        }
+
+        let stereo = self.stream_rt[stream]
+            .resampler
+            .produce_interleaved_stereo(dst_frames);
+        if stereo.is_empty() {
+            return;
+        }
+
+        // Downmix back to mono (the resampler operates on stereo).
+        let produced_frames = stereo.len() / 2;
+        let mut mono = Vec::with_capacity(produced_frames);
+        for frame in 0..produced_frames {
+            mono.push(stereo[frame * 2]);
+        }
+
+        let bytes = encode_mono_f32_to_pcm(&mono, fmt);
+        let _ = self.dma_write_stream_bytes(mem, stream, &bytes);
+    }
+
     fn dma_read_stream_bytes(
         &mut self,
         mem: &mut dyn MemoryAccess,
@@ -1106,6 +1347,77 @@ impl HdaController {
         }
 
         out
+    }
+
+    fn dma_write_stream_bytes(
+        &mut self,
+        mem: &mut dyn MemoryAccess,
+        stream: usize,
+        mut bytes: &[u8],
+    ) -> usize {
+        if self.streams[stream].cbl == 0 {
+            return 0;
+        }
+
+        let mut written = 0usize;
+        let mut fire_ioc = false;
+
+        {
+            let sd = &mut self.streams[stream];
+            let rt = &mut self.stream_rt[stream];
+
+            let bdl_base = ((sd.bdpu as u64) << 32) | (sd.bdpl as u64);
+
+            while !bytes.is_empty() {
+                let entry = read_bdl_entry(mem, bdl_base, rt.bdl_index as usize);
+                if entry.len == 0 {
+                    break;
+                }
+
+                let remaining =
+                    entry.len.saturating_sub(rt.bdl_offset).min(bytes.len() as u32) as usize;
+                if remaining == 0 {
+                    // Move to next entry.
+                    rt.bdl_offset = 0;
+                    if rt.bdl_index >= sd.lvi {
+                        rt.bdl_index = 0;
+                    } else {
+                        rt.bdl_index += 1;
+                    }
+                    continue;
+                }
+
+                mem.write_physical(entry.addr + rt.bdl_offset as u64, &bytes[..remaining]);
+                bytes = &bytes[remaining..];
+                written += remaining;
+
+                rt.bdl_offset += remaining as u32;
+
+                // Update LPIB, wrapping at CBL if set.
+                sd.lpib = sd.lpib.wrapping_add(remaining as u32);
+                if sd.cbl != 0 && sd.lpib >= sd.cbl {
+                    sd.lpib %= sd.cbl;
+                }
+
+                if rt.bdl_offset >= entry.len {
+                    rt.bdl_offset = 0;
+                    if entry.ioc && (sd.ctl & SD_CTL_IOCE) != 0 {
+                        fire_ioc = true;
+                    }
+                    if rt.bdl_index >= sd.lvi {
+                        rt.bdl_index = 0;
+                    } else {
+                        rt.bdl_index += 1;
+                    }
+                }
+            }
+        }
+
+        if fire_ioc {
+            self.raise_stream_interrupt(stream);
+        }
+
+        written
     }
 }
 
@@ -1178,6 +1490,8 @@ mod tests {
 
         // Root parameters.
         assert_eq!(codec.execute_verb(0, verb_12(0xF00, 0x00)), 0x1af4_1620);
+        // AFG widget enumeration should include both output and capture widgets.
+        assert_eq!(codec.execute_verb(1, verb_12(0xF00, 0x04)), (2u32 << 16) | 4u32);
 
         // Set converter stream/channel.
         assert_eq!(codec.execute_verb(2, verb_12(0x706, 0x10)), 0);
@@ -1193,6 +1507,13 @@ mod tests {
         let got = codec.execute_verb(2, verb_4(0xB, 1 << 13));
         assert_eq!(got & 0x7f, 0x22);
         assert_eq!((got >> 7) & 1, 1);
+
+        // Input converter + mic pin should support the basic capture verbs.
+        assert_eq!(codec.execute_verb(4, verb_12(0x706, 0x20)), 0);
+        assert_eq!(codec.execute_verb(4, verb_12(0xF06, 0)), 0x20);
+        assert_eq!(codec.execute_verb(4, verb_4(0x2, 0x0010)), 0);
+        assert_eq!(codec.execute_verb(4, verb_12(0xA00, 0)), 0x0010);
+        assert_eq!(codec.execute_verb(5, verb_12(0xF02, 0)), 4);
     }
 
     #[test]
