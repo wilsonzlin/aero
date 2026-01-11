@@ -18,6 +18,14 @@ This script uses `cargo metadata` (workspace truth) and checks for collisions of
 Additionally, it enforces the workspace naming convention from ADR 0007:
 
   - workspace packages must use kebab-case (no `_`) in `[package].name`.
+  - crate directories under `crates/` must be kebab-case (no `_`).
+  - library target crate names must match the normalized package name (rejects
+    custom `[lib].name` overrides).
+
+Finally, it checks for collisions between:
+
+  - package names after `-` → `_` normalization
+  - library target crate identifiers (per `cargo metadata` targets)
 """
 
 from __future__ import annotations
