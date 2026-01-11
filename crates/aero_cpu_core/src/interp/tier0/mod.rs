@@ -78,6 +78,9 @@ fn exec_decoded<B: CpuBus>(
     addr_size_override: bool,
 ) -> Result<ExecOutcome, Exception> {
     let mnem = decoded.instr.mnemonic();
+    if decoded.instr.has_lock_prefix() && !mnemonic_allows_lock_prefix(mnem) {
+        return Err(Exception::InvalidOpcode);
+    }
     if ops_atomics::handles_mnemonic(mnem) {
         return ops_atomics::exec(state, bus, decoded, next_ip);
     }
@@ -160,6 +163,31 @@ fn exec_decoded<B: CpuBus>(
         | Mnemonic::Mfence => Ok(ExecOutcome::Assist(AssistReason::Unsupported)),
         _ => Err(Exception::InvalidOpcode),
     }
+}
+
+fn mnemonic_allows_lock_prefix(m: Mnemonic) -> bool {
+    matches!(
+        m,
+        Mnemonic::Add
+            | Mnemonic::Adc
+            | Mnemonic::And
+            | Mnemonic::Btc
+            | Mnemonic::Btr
+            | Mnemonic::Bts
+            | Mnemonic::Cmpxchg
+            | Mnemonic::Cmpxchg8b
+            | Mnemonic::Cmpxchg16b
+            | Mnemonic::Dec
+            | Mnemonic::Inc
+            | Mnemonic::Neg
+            | Mnemonic::Not
+            | Mnemonic::Or
+            | Mnemonic::Sbb
+            | Mnemonic::Sub
+            | Mnemonic::Xadd
+            | Mnemonic::Xchg
+            | Mnemonic::Xor
+    )
 }
 
 pub(super) fn check_fp_available(state: &CpuState, kind: FpKind) -> Result<(), Exception> {
