@@ -682,6 +682,7 @@ fn protocol_parses_all_opcodes() {
             assert_eq!(state.front_ccw, 1);
             assert_eq!(state.scissor_enable, 0);
             assert_eq!(state.depth_bias, -1);
+            assert_eq!(state.flags, 0);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }

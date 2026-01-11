@@ -85,6 +85,7 @@ pub struct AeroGpuRasterizerState {
     pub front_ccw: u32,
     pub scissor_enable: u32,
     pub depth_bias: i32,
+    pub flags: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -805,6 +806,7 @@ pub fn parse_cmd_stream(
                         front_ccw: u32::from_le(state.front_ccw),
                         scissor_enable: u32::from_le(state.scissor_enable),
                         depth_bias: i32::from_le(state.depth_bias),
+                        flags: u32::from_le(state.flags),
                     },
                 }
             }
