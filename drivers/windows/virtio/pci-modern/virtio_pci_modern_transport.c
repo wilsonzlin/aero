@@ -816,6 +816,7 @@ VOID VirtioPciModernTransportDisableQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16
 NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 q)
 {
 	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
+	UINT16 qsz;
 	UINT16 notify_off;
 	UINT64 byte_off;
 
@@ -846,8 +847,13 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 	VirtioPciModernLock(t, &state);
 	t->CommonCfg->queue_select = q;
 	VirtioPciModernMb(t);
+	qsz = t->CommonCfg->queue_size;
 	notify_off = t->CommonCfg->queue_notify_off;
 	VirtioPciModernUnlock(t, state);
+
+	if (qsz == 0) {
+		return STATUS_NOT_FOUND;
+	}
 
 	byte_off = (UINT64)notify_off * (UINT64)t->NotifyOffMultiplier;
 	if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
@@ -879,7 +885,13 @@ NTSTATUS VirtioPciModernTransportReadDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *t
 	UINT8 gen1;
 	UINT8 gen2;
 
-	if (t == NULL || t->CommonCfg == NULL || t->DeviceCfg == NULL || buffer == NULL) {
+	if (t == NULL || t->CommonCfg == NULL || t->DeviceCfg == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+	if (length == 0) {
+		return STATUS_SUCCESS;
+	}
+	if (buffer == NULL) {
 		return STATUS_INVALID_PARAMETER;
 	}
 
@@ -917,7 +929,13 @@ NTSTATUS VirtioPciModernTransportWriteDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *
 	UINT8 gen1;
 	UINT8 gen2;
 
-	if (t == NULL || t->CommonCfg == NULL || t->DeviceCfg == NULL || buffer == NULL) {
+	if (t == NULL || t->CommonCfg == NULL || t->DeviceCfg == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+	if (length == 0) {
+		return STATUS_SUCCESS;
+	}
+	if (buffer == NULL) {
 		return STATUS_INVALID_PARAMETER;
 	}
 

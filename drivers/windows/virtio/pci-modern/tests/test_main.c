@@ -773,6 +773,25 @@ static void TestNotifyRejectInvalidQueue(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestNotifyRejectInvalidQueueCompat(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportNotifyQueue(&t, 1);
+	assert(st == STATUS_NOT_FOUND);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestDeviceConfigReadStable(void)
 {
 	FAKE_DEV dev;
@@ -798,6 +817,28 @@ static void TestDeviceConfigReadStable(void)
 	assert(buf[1] == 0xBB);
 	assert(buf[2] == 0xCC);
 	assert(buf[3] == 0xDD);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestDeviceConfigZeroLengthIsNoop(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	/* Zero-length access should succeed even with a NULL buffer. */
+	st = VirtioPciModernTransportReadDeviceConfig(&t, 0, NULL, 0);
+	assert(st == STATUS_SUCCESS);
+	st = VirtioPciModernTransportWriteDeviceConfig(&t, 0, NULL, 0);
+	assert(st == STATUS_SUCCESS);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -965,7 +1006,9 @@ int main(void)
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
 	TestNotifyRejectInvalidQueue();
+	TestNotifyRejectInvalidQueueCompat();
 	TestDeviceConfigReadStable();
+	TestDeviceConfigZeroLengthIsNoop();
 	TestDeviceConfigReadRetriesAndGetsLatest();
 	TestDeviceConfigReadFailsWhenGenerationNeverStabilizes();
 	TestDeviceConfigWriteRetriesAndSucceeds();
