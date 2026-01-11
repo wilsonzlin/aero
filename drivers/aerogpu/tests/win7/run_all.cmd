@@ -55,6 +55,7 @@ call :run_test dwm_flush_pacing !TEST_ARGS!
 call :run_test d3d9ex_triangle !TEST_ARGS!
 call :run_test d3d9ex_query_latency !TEST_ARGS!
 call :run_test d3d9ex_shared_surface !TEST_ARGS!
+call :run_test d3d9ex_shared_surface_ipc !TEST_ARGS!
 call :run_test d3d9ex_shared_allocations !TEST_ARGS!
 call :run_test d3d10_triangle !TEST_ARGS!
 call :run_test d3d10_1_triangle !TEST_ARGS!
