@@ -6,6 +6,36 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '../..');
 
+function extractComposeEnvVars(text) {
+  const vars = new Set();
+
+  // ${VAR}, ${VAR:-default}, etc.
+  for (const match of text.matchAll(/\$\{([A-Z0-9_]+)(?::-[^}]*)?\}/g)) {
+    vars.add(match[1]);
+  }
+
+  // Compose "passthrough env vars" in list form:
+  //   environment:
+  //     - FOO
+  //
+  // We only consider upper snake case tokens to avoid deleting common YAML keys.
+  for (const match of text.matchAll(/^\s*-\s*([A-Z0-9_]+)\s*$/gm)) {
+    vars.add(match[1]);
+  }
+
+  // Compose "passthrough env vars" in mapping form:
+  //   environment:
+  //     FOO:
+  //
+  // docker compose resolves these from the host environment/.env when present, so
+  // clear them to keep validation deterministic.
+  for (const match of text.matchAll(/^\s*([A-Z0-9_]+)\s*:\s*$/gm)) {
+    vars.add(match[1]);
+  }
+
+  return vars;
+}
+
 function readHeaderLines(filePath, maxLines = 25) {
   const text = readFileSync(filePath, 'utf8');
   return text.split(/\r?\n/).slice(0, maxLines);
@@ -100,14 +130,28 @@ function dockerComposeAvailable() {
 
 function validateComposeConfig(relPath) {
   const projectDir = dirname(relPath);
-  const args = ['compose', '-f', relPath];
+  const filePath = resolve(repoRoot, relPath);
+  const composeText = readFileSync(filePath, 'utf8');
+  const referencedEnvVars = extractComposeEnvVars(composeText);
+
+  // docker compose implicitly loads `<project_dir>/.env` and also interpolates
+  // values from the process environment. That makes local runs flaky (developer
+  // shells often have AERO_* vars set). Keep the validation deterministic by:
+  //  - forcing an empty env-file
+  //  - clearing any env vars referenced by the compose manifest
+  const env = { ...process.env };
+  for (const key of referencedEnvVars) {
+    delete env[key];
+  }
+
+  const args = ['compose', '--env-file', '/dev/null', '-f', relPath];
   if (projectDir && projectDir !== '.') {
     args.push('--project-directory', projectDir);
   }
   args.push('config', '-q');
   const cmd = `docker ${args.join(' ')}`;
 
-  const res = spawnSync('docker', args, { cwd: repoRoot, encoding: 'utf8' });
+  const res = spawnSync('docker', args, { cwd: repoRoot, env, encoding: 'utf8' });
   const output = [res.stdout, res.stderr].filter(Boolean).join('\n').trim();
   if (res.status === 0) {
     // docker compose can exit 0 while still printing warnings about unset
