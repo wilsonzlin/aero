@@ -65,7 +65,6 @@ impl AeroGpuRingHeader {
             return false;
         }
         if parse_and_validate_abi_version_u32(self.abi_version).is_err() {
-        if parse_and_validate_abi_version_u32(self.abi_version).is_err() {
             return false;
         }
         if self.entry_count == 0 || !self.entry_count.is_power_of_two() {
