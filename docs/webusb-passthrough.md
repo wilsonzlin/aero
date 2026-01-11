@@ -214,6 +214,9 @@ Implementation note: Aero’s UHCI model already has first-class NAK semantics:
 - `UsbHandshake::Nak` sets the TD’s NAK bit and leaves it active, so the same TD will be retried.
 - This is the intended mechanism for “WebUSB transfer pending” without blocking the worker.
 
+In code, see `crates/aero-usb/src/uhci.rs` (`UsbHandshake::Nak` branch) and the handshake enum in
+`crates/aero-usb/src/usb.rs`.
+
 ---
 
 ## Speed and descriptor handling (UHCI full-speed view)
@@ -308,6 +311,15 @@ Aero maintains a best-effort list for diagnostics and UX:
 
 These lists may differ slightly by Chromium version. When in doubt, verify on the target
 browser via `chrome://usb-internals` and keep the repo’s classifier in sync.
+
+### TODO: Protected interface class list (confirm and cite)
+
+TODO: Confirm the exact “protected interface class” policy used by the Chromium version we
+target (including whether any subclass/protocol combinations are treated specially), and
+record:
+
+- the Chromium source reference (file path / CL) and last-verified Chrome/Edge version
+- the final canonical list (class/subclass/protocol) used by Aero for compatibility docs
 
 ---
 
