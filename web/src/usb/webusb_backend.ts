@@ -304,14 +304,15 @@ export class WebUsbBackend {
     let firstClaimErr: unknown = null;
     for (const iface of configuration.interfaces) {
       const ifaceNum = iface.interfaceNumber;
-      if (this.claimedInterfaces.has(ifaceNum)) {
-        claimedAny = true;
-        continue;
-      }
       if (iface.claimed) {
         this.claimedInterfaces.add(ifaceNum);
         claimedAny = true;
         continue;
+      }
+      // Our local cache may be stale if the device was closed/reopened (claims are
+      // dropped). Only treat cached entries as claimed when the device reports it.
+      if (this.claimedInterfaces.has(ifaceNum)) {
+        this.claimedInterfaces.delete(ifaceNum);
       }
       if (interfaceIsWebUsbProtected(iface)) {
         // Skip interfaces that are likely blocked by Chromium's protected interface class list.

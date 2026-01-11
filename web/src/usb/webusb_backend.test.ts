@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { dataViewToUint8Array, executeWebUsbControlIn, parseBmRequestType, validateControlTransferDirection } from "./webusb_backend";
+import {
+  WebUsbBackend,
+  dataViewToUint8Array,
+  executeWebUsbControlIn,
+  parseBmRequestType,
+  validateControlTransferDirection,
+} from "./webusb_backend";
 
 function dataViewFromBytes(bytes: number[]): DataView {
   return new DataView(Uint8Array.from(bytes).buffer);
@@ -91,5 +97,123 @@ describe("executeWebUsbControlIn", () => {
     expect(controlTransferIn).toHaveBeenCalledTimes(2);
     expect(controlTransferIn.mock.calls[0]?.[0].value).toBe(0x0700);
     expect(controlTransferIn.mock.calls[1]?.[0].value).toBe(0x0200);
+  });
+});
+
+describe("WebUsbBackend.ensureOpenAndClaimed", () => {
+  function withFakeNavigatorUsb<T>(fn: () => Promise<T>): Promise<T> {
+    const nav = globalThis.navigator as unknown as Record<string, unknown>;
+    const originalUsbDescriptor = Object.getOwnPropertyDescriptor(nav, "usb");
+
+    Object.defineProperty(nav, "usb", { value: {}, configurable: true });
+
+    return fn().finally(() => {
+      if (originalUsbDescriptor) {
+        Object.defineProperty(nav, "usb", originalUsbDescriptor);
+      } else {
+        delete (nav as { usb?: unknown }).usb;
+      }
+    });
+  }
+
+  it("claims available interfaces but tolerates protected/failed claims", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
+      const iface2 = { interfaceNumber: 2, claimed: false, alternates: [], alternate: {} };
+      const config = { configurationValue: 1, interfaces: [iface1, iface2] };
+
+      const device: Partial<USBDevice> = {
+        vendorId: 0x1234,
+        productId: 0x5678,
+        opened: false,
+        configuration: null,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {
+          (device as any).opened = true;
+        }),
+        selectConfiguration: vi.fn(async (value: number) => {
+          expect(value).toBe(1);
+          (device as any).configuration = config;
+        }),
+        claimInterface: vi.fn(async (ifaceNum: number) => {
+          if (ifaceNum === 1) {
+            throw new Error("protected interface");
+          }
+          if (ifaceNum === 2) {
+            iface2.claimed = true;
+            return;
+          }
+          throw new Error(`unexpected iface ${ifaceNum}`);
+        }),
+      };
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const backend = new WebUsbBackend(device as USBDevice);
+        await backend.ensureOpenAndClaimed();
+        expect((device.open as any).mock.calls.length).toBe(1);
+        expect((device.selectConfiguration as any).mock.calls.length).toBe(1);
+        expect((device.claimInterface as any).mock.calls.length).toBe(2);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  it("throws when no interfaces can be claimed", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
+      const config = { configurationValue: 1, interfaces: [iface1] };
+
+      const device: Partial<USBDevice> = {
+        vendorId: 0x1234,
+        productId: 0x5678,
+        opened: true,
+        configuration: config as unknown as USBConfiguration,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {
+          throw new Error("nope");
+        }),
+      };
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const backend = new WebUsbBackend(device as USBDevice);
+        await expect(backend.ensureOpenAndClaimed()).rejects.toThrow("Failed to claim any USB interface");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  it("retries claim when cached state is stale (interface no longer claimed)", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
+      const config = { configurationValue: 1, interfaces: [iface1] };
+
+      const device: Partial<USBDevice> = {
+        vendorId: 0x1234,
+        productId: 0x5678,
+        opened: true,
+        configuration: config as unknown as USBConfiguration,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {
+          iface1.claimed = true;
+        }),
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      await backend.ensureOpenAndClaimed();
+      expect((device.claimInterface as any).mock.calls.length).toBe(1);
+
+      // Simulate the device being closed/reopened or the claim being lost.
+      iface1.claimed = false;
+      await backend.ensureOpenAndClaimed();
+      expect((device.claimInterface as any).mock.calls.length).toBe(2);
+    });
   });
 });
