@@ -29,7 +29,7 @@ const HUB_INTERRUPT_IN_EP: u8 = 0x81;
 struct DummyUsbDevice;
 
 impl UsbDeviceModel for DummyUsbDevice {
-    fn get_device_descriptor(&self) -> &'static [u8] {
+    fn get_device_descriptor(&self) -> &[u8] {
         // Minimal full-speed device descriptor (not enumerated by these tests).
         &[
             0x12, 0x01, 0x10, 0x01, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01,
@@ -37,7 +37,7 @@ impl UsbDeviceModel for DummyUsbDevice {
         ]
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
+    fn get_config_descriptor(&self) -> &[u8] {
         // Config(9) + Interface(9) = 18 bytes.
         &[
             0x09, 0x02, 18, 0x00, 0x01, 0x01, 0x00, 0x80, 50, 0x09, 0x04, 0x00, 0x00, 0x00, 0xff,
@@ -45,7 +45,7 @@ impl UsbDeviceModel for DummyUsbDevice {
         ]
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+    fn get_hid_report_descriptor(&self) -> &[u8] {
         &[]
     }
 
