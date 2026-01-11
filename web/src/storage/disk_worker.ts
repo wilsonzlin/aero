@@ -695,11 +695,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           // Legacy versions used a small binding file to associate the OPFS Range cache file with the
           // immutable remote base identity. Best-effort cleanup when the disk is deleted.
           await opfsDeleteDisk(`${meta.cache.fileName}.binding.json`);
-          // Legacy RemoteRangeDisk persisted its own small metadata file keyed by the remote base identity.
+          // Legacy RemoteRangeDisk persisted its own sparse cache + metadata keyed by the remote base identity.
           // Best-effort cleanup when deleting the disk.
           if (meta.remote.delivery === "range") {
             const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
             const cacheId = await stableCacheId(imageKey);
+            await opfsDeleteDisk(`remote-range-cache-${cacheId}.aerospar`);
             await opfsDeleteDisk(`remote-range-cache-${cacheId}.json`);
           }
           await opfsDeleteDisk(meta.cache.overlayFileName);
