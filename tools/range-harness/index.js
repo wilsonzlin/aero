@@ -18,17 +18,22 @@ if (typeof fetch !== 'function') {
   process.exit(1);
 }
 
+const DEFAULT_CHUNK_SIZE_BYTES = 1024 * 1024;
+const DEFAULT_COUNT = 32;
+const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_PASSES = 1;
+
 function printUsage(exitCode = 0) {
   const lines = [
     'Usage:',
-    '  node tools/range-harness/index.js --url <URL> [--chunk-size 1048576] [--count 32] [--concurrency 4] [--random|--sequential]',
+    `  node tools/range-harness/index.js --url <URL> [--chunk-size ${DEFAULT_CHUNK_SIZE_BYTES}] [--count ${DEFAULT_COUNT}] [--concurrency ${DEFAULT_CONCURRENCY}] [--random|--sequential]`,
     '',
     'Options:',
     '  --url <URL>            (required) HTTP/HTTPS URL to the disk image',
-    '  --chunk-size <bytes>   Size of each Range request (default: 1048576 = 1MiB)',
-    '  --count <N>            Number of range requests to perform (default: 32)',
-    '  --concurrency <N>      Number of in-flight requests (default: 4)',
-    '  --passes <N>           Repeat the same range plan N times (default: 1; useful for cache hit verification)',
+    `  --chunk-size <bytes>   Size of each Range request (default: ${DEFAULT_CHUNK_SIZE_BYTES} = 1MiB)`,
+    `  --count <N>            Number of range requests to perform (default: ${DEFAULT_COUNT})`,
+    `  --concurrency <N>      Number of in-flight requests (default: ${DEFAULT_CONCURRENCY})`,
+    `  --passes <N>           Repeat the same range plan N times (default: ${DEFAULT_PASSES}; useful for cache hit verification)`,
     '  --seed <N>             Seed for deterministic random ranges (only affects --random)',
     '  --unique               Avoid requesting the same chunk multiple times per pass (only affects --random)',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
@@ -75,12 +80,12 @@ function parseArgs(argv) {
   /** @type {Record<string, any>} */
   const opts = {
     url: null,
-    chunkSize: 1024 * 1024,
-    count: 32,
-    concurrency: 4,
+    chunkSize: DEFAULT_CHUNK_SIZE_BYTES,
+    count: DEFAULT_COUNT,
+    concurrency: DEFAULT_CONCURRENCY,
     mode: 'sequential',
     headers: {},
-    passes: 1,
+    passes: DEFAULT_PASSES,
     seed: null,
     unique: false,
     json: false,
