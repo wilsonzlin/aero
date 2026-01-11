@@ -234,16 +234,8 @@ fn build_ps_solid_red_dxbc() -> Vec<u8> {
     let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
     make_dxbc(&[
         (*b"SHEX", tokens_to_bytes(&tokens)),
-        // Minimal input signature so the translated WGSL `PsIn` struct is non-empty.
-        (
-            *b"ISGN",
-            build_sig_chunk(&[SigParam {
-                name: "SV_Position",
-                index: 0,
-                reg: 0,
-                mask: 0b1111,
-            }]),
-        ),
+        // Empty input signature; translator should emit a fragment entry point with no inputs.
+        (*b"ISGN", build_sig_chunk(&[])),
         (
             *b"OSGN",
             build_sig_chunk(&[SigParam {
