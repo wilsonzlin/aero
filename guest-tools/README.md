@@ -92,6 +92,8 @@ Optional flags:
 
 - `uninstall.cmd /force`  
   Skips the interactive "Continue with uninstall?" prompt (for automation). In `/force` mode, the script also skips the interactive prompts for disabling `testsigning` / `nointegritychecks` (leaves boot configuration unchanged).
+- `uninstall.cmd /quiet`  
+  Fully non-interactive alias for `/force /noreboot`.
 - `uninstall.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 

@@ -33,6 +33,8 @@ if /i "%~1"=="-h" goto :usage
 if /i "%~1"=="--help" goto :usage
 for %%A in (%*) do (
   if /i "%%~A"=="/force" set "ARG_FORCE=1"
+  if /i "%%~A"=="/quiet" set "ARG_FORCE=1"
+  if /i "%%~A"=="/quiet" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
@@ -84,7 +86,8 @@ exit /b 0
 echo Usage: uninstall.cmd [options]
 echo.
 echo Options:
-echo   /force              Non-interactive: skip confirmation and leave signature mode unchanged
+echo   /force, /quiet       Non-interactive: skip confirmation and leave signature mode unchanged
+echo                        (/quiet also implies /noreboot)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo.
 echo Logs are written to C:\AeroGuestTools\uninstall.log
