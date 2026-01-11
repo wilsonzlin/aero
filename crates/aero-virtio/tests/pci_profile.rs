@@ -68,6 +68,15 @@ fn assert_virtio_identity_matches_profile(dev: &VirtioPciDevice, profile: PciDev
         profile.name
     );
 
+    if let Some(pin) = profile.interrupt_pin {
+        assert_eq!(
+            read_u8(dev, 0x3d),
+            pin.to_config_u8(),
+            "{} interrupt pin",
+            profile.name
+        );
+    }
+
     let status = read_u16(dev, 0x06);
     assert_ne!(
         status & (1 << 4),
@@ -75,6 +84,27 @@ fn assert_virtio_identity_matches_profile(dev: &VirtioPciDevice, profile: PciDev
         "capability list bit not set for {}",
         profile.name
     );
+
+    // Ensure the expected BARs are present with the correct kind/type bits.
+    for bar in profile.bars {
+        let offset = 0x10u16 + u16::from(bar.index) * 4;
+        assert_eq!(
+            read_u32(dev, offset),
+            bar.initial_register_value(),
+            "{} BAR{} initial value",
+            profile.name,
+            bar.index
+        );
+        if bar.kind == aero_devices::pci::profile::PciBarKind::Mem64 {
+            assert_eq!(
+                read_u32(dev, offset + 4),
+                0,
+                "{} BAR{} high dword initial value",
+                profile.name,
+                bar.index
+            );
+        }
+    }
 }
 
 fn read_cap_bytes(dev: &VirtioPciDevice, cap_offset: u16, len: usize) -> Vec<u8> {
@@ -177,4 +207,28 @@ fn virtio_pci_transitional_exposes_legacy_io_bar_and_device_id() {
     // BAR2 should be present as an I/O BAR for the legacy register block.
     dev.config_write(0x18, &0xffff_ffffu32.to_le_bytes());
     assert_eq!(read_u32(&dev, 0x18), 0xffff_ff01);
+}
+
+#[test]
+fn virtio_pci_bar0_size_probe_reports_contract_len() {
+    let mut dev = VirtioPciDevice::new(
+        Box::new(VirtioNet::new(
+            LoopbackNet::default(),
+            [0x52, 0x54, 0x00, 0, 0, 4],
+        )),
+        Box::new(InterruptLog::default()),
+    );
+
+    // BAR0 is 64-bit MMIO. Probe the size via the standard PCI mechanism and verify we report
+    // the contract-required 0x4000 byte mapping.
+    dev.config_write(0x10, &0xffff_ffffu32.to_le_bytes());
+    dev.config_write(0x14, &0xffff_ffffu32.to_le_bytes());
+
+    let lo = read_u32(&dev, 0x10);
+    let hi = read_u32(&dev, 0x14);
+
+    // Mask out the BAR type bits (low nibble), then compute size from the returned mask.
+    let mask = (u64::from(hi) << 32) | u64::from(lo & 0xffff_fff0);
+    let size = (!mask).wrapping_add(1);
+    assert_eq!(size, 0x4000);
 }
