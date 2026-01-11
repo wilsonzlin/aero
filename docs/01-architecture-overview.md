@@ -328,7 +328,8 @@ Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32
 | Buffer | Type | Typical Size | Contents | Access Pattern |
 |--------|------|--------------|----------|----------------|
 | `guestMemory` | `WebAssembly.Memory` (`shared: true`) | **512MiB / 1GiB / 2GiB / 3GiB** (best-effort) | Guest physical RAM | Shared read/write; the only region directly accessible from wasm today |
-| `ipcSab` | `SharedArrayBuffer` | ~MiB (configurable) | IPC control block + ring buffers (cmd/evt per worker) | Atomics-driven ring buffer; `Atomics.wait` in workers, `Atomics.waitAsync`/polling on main |
+| `controlSab` | `SharedArrayBuffer` | ~KiB–MiB | Small status block + per-worker command/event rings (start/stop/config) | Atomics-driven ring buffer; `Atomics.wait` in workers, `Atomics.waitAsync`/polling on main |
+| `ioIpcSab` | `SharedArrayBuffer` | ~KiB–MiB | High-frequency device IPC rings (CPU/WASM ↔ IO worker, network TX/RX, etc) | AIPC header + Atomics-driven ring buffers (see `docs/ipc-protocol.md`) |
 
 This avoids >4GiB offsets entirely: each buffer is independently addressable and can be sized/failed independently.
 
