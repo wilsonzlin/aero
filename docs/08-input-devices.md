@@ -841,6 +841,8 @@ This avoids composite HID device complexity and lets Windows naturally bind the 
 ### Testing notes
 
 - **Reference implementation**: validate the guest driver + device model in QEMU first using `virtio-keyboard-pci` and `virtio-mouse-pci` (or `virtio-tablet-pci` if experimenting with absolute coordinates).
+  - For strict `AERO-W7-VIRTIO` **contract v1** driver testing, use **modern-only** virtio (`disable-legacy=on`) and force the **contract Revision ID** (`x-pci-revision=0x01`), since many QEMU virtio devices report `REV_00` by default.
+  - See: `drivers/windows7/virtio-input/tests/qemu/README.md` for full command lines.
 - **Windows 7 driver install**: plan on **test signing** for development (enable test mode and sign the KMDF driver with a test certificate) before tackling production signing/distribution.
 
 ---

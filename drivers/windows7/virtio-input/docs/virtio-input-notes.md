@@ -23,6 +23,11 @@ ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 The INF still matches `0x1011` for compatibility with transitional
 implementations.
 
+Contract v1 also encodes the major version in the PCI **Revision ID** (`REV_01`).
+Some QEMU virtio devices report `REV_00` by default; for contract-v1 testing under
+QEMU, pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`) on the
+`-device virtio-*-pci,...` arguments.
+
 If the emulator uses a non-standard ID, update:
 
 - `inf/virtio-input.inf` → `[Aero.NTx86]` and `[Aero.NTamd64]`
