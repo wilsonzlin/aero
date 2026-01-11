@@ -15,6 +15,7 @@ use aero_d3d9::runtime::{
     TextureFormat as RuntimeTextureFormat, VertexAttributeDesc, VertexDecl,
     VertexFormat as RuntimeVertexFormat,
 };
+use aero_d3d9::state::tracker::{ScissorRect, Viewport};
 use tracing::{debug, warn};
 
 use crate::protocol_d3d9::{
@@ -746,6 +747,80 @@ impl CommandProcessor {
                 runtime
                     .set_index_buffer(buffer_id, offset, map_index_format(format))
                     .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            Opcode::SetSamplerStateU32 => {
+                let stage_raw = p.read_u8().map_err(|e| e.message)?;
+                let slot = p.read_u8().map_err(|e| e.message)?;
+                p.skip(2).map_err(|e| e.message)?;
+                let state_id = p.read_u32_le().map_err(|e| e.message)?;
+                let value = p.read_u32_le().map_err(|e| e.message)?;
+                if p.remaining() != 0 {
+                    return Err("SetSamplerStateU32 payload must be exactly 16 bytes".into());
+                }
+
+                let stage = ShaderStage::from_u8(stage_raw)
+                    .ok_or_else(|| format!("unknown shader stage {stage_raw}"))?;
+                runtime.set_sampler_state_u32(map_shader_stage(stage), slot as u32, state_id, value);
+                Ok(())
+            }
+            Opcode::SetTexture => {
+                let stage_raw = p.read_u8().map_err(|e| e.message)?;
+                let slot = p.read_u8().map_err(|e| e.message)?;
+                p.skip(2).map_err(|e| e.message)?;
+                let texture_id = p.read_u32_le().map_err(|e| e.message)?;
+                if p.remaining() != 0 {
+                    return Err("SetTexture payload must be exactly 12 bytes".into());
+                }
+
+                let stage = ShaderStage::from_u8(stage_raw)
+                    .ok_or_else(|| format!("unknown shader stage {stage_raw}"))?;
+                let texture = if texture_id == 0 {
+                    None
+                } else {
+                    Some(texture_id)
+                };
+                runtime
+                    .set_texture(map_shader_stage(stage), slot as u32, texture)
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            Opcode::SetViewport => {
+                let x = f32::from_bits(p.read_u32_le().map_err(|e| e.message)?);
+                let y = f32::from_bits(p.read_u32_le().map_err(|e| e.message)?);
+                let width = f32::from_bits(p.read_u32_le().map_err(|e| e.message)?);
+                let height = f32::from_bits(p.read_u32_le().map_err(|e| e.message)?);
+                let min_depth = f32::from_bits(p.read_u32_le().map_err(|e| e.message)?);
+                let max_depth = f32::from_bits(p.read_u32_le().map_err(|e| e.message)?);
+                if p.remaining() != 0 {
+                    return Err("SetViewport payload must be exactly 28 bytes".into());
+                }
+
+                runtime.set_viewport(Viewport {
+                    x,
+                    y,
+                    width,
+                    height,
+                    min_depth,
+                    max_depth,
+                });
+                Ok(())
+            }
+            Opcode::SetScissorRect => {
+                let x = p.read_u32_le().map_err(|e| e.message)?;
+                let y = p.read_u32_le().map_err(|e| e.message)?;
+                let width = p.read_u32_le().map_err(|e| e.message)?;
+                let height = p.read_u32_le().map_err(|e| e.message)?;
+                if p.remaining() != 0 {
+                    return Err("SetScissorRect payload must be exactly 20 bytes".into());
+                }
+
+                runtime.set_scissor_rect(ScissorRect {
+                    x,
+                    y,
+                    width,
+                    height,
+                });
                 Ok(())
             }
             Opcode::Draw => {

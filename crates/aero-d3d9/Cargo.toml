@@ -13,6 +13,7 @@ futures-intrusive = "0.5"
 half = "2.7.1"
 hashbrown = "0.14"
 thiserror = "2.0.9"
+tracing = "0.1"
 # WebGPU pipeline creation/state translation.
 lru = "0.16"
 wgpu = "0.20"

@@ -2,6 +2,17 @@ use std::collections::HashMap;
 
 use futures_intrusive::channel::shared::oneshot_channel;
 use thiserror::Error;
+use tracing::debug;
+use wgpu::util::DeviceExt;
+
+use crate::state::{
+    topology::D3DPrimitiveType,
+    tracker::{
+        BlendFactor, BlendOp, ColorWriteMask, CompareFunc, CullMode, ScissorRect, ShaderKey,
+        StencilOp, VertexAttributeKey, VertexBufferLayoutKey, Viewport,
+    },
+    translate_pipeline_state, PipelineCache, PipelineKey,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeConfig {
@@ -196,6 +207,7 @@ struct SwapChainResource {
     desc: SwapChainDesc,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    view_srgb: Option<wgpu::TextureView>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -212,6 +224,7 @@ struct TextureResource {
     desc: TextureDesc,
     texture: wgpu::Texture,
     view_mip0: wgpu::TextureView,
+    view_mip0_srgb: Option<wgpu::TextureView>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -228,40 +241,21 @@ struct IndexBinding {
     format: IndexFormat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct ShaderId(u32);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct PipelineKey {
-    vs: ShaderId,
-    fs: ShaderId,
-    vertex_decl: VertexDecl,
-    color_format: ColorFormat,
-    cull_mode: CullMode,
-    has_depth: bool,
-    depth_test_enable: bool,
-    depth_write_enable: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum CullMode {
-    None,
-    Front,
-    Back,
-}
+const MAX_SAMPLERS: usize = 16;
+const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
+const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
 
 #[derive(Debug)]
 struct GraphicsState {
     color_target: Option<RenderTarget>,
     depth_stencil: Option<u32>,
-    vertex_shader: Option<ShaderId>,
-    fragment_shader: Option<ShaderId>,
     vertex_decl: Option<VertexDecl>,
     vertex_stream0: Option<VertexStreamBinding>,
     index_buffer: Option<IndexBinding>,
-    cull_mode: CullMode,
-    depth_test_enable: bool,
-    depth_write_enable: bool,
+    primitive_type: D3DPrimitiveType,
+    scissor_enable: bool,
+    scissor_rect: Option<ScissorRect>,
+    viewport: Option<Viewport>,
     encoder: Option<wgpu::CommandEncoder>,
     encoder_needs_clear: bool,
 }
@@ -271,14 +265,13 @@ impl Default for GraphicsState {
         Self {
             color_target: None,
             depth_stencil: None,
-            vertex_shader: None,
-            fragment_shader: None,
             vertex_decl: None,
             vertex_stream0: None,
             index_buffer: None,
-            cull_mode: CullMode::None,
-            depth_test_enable: false,
-            depth_write_enable: false,
+            primitive_type: D3DPrimitiveType::TriangleList,
+            scissor_enable: false,
+            scissor_rect: None,
+            viewport: None,
             encoder: None,
             encoder_needs_clear: true,
         }
@@ -295,11 +288,23 @@ pub struct D3D9Runtime {
     textures: HashMap<u32, TextureResource>,
 
     builtin_shader_module: Option<wgpu::ShaderModule>,
-    pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    pipelines: PipelineCache,
 
     constants_buffer: wgpu::Buffer,
     constants_bind_group: wgpu::BindGroup,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group: Option<wgpu::BindGroup>,
+    texture_bind_group_dirty: bool,
     pipeline_layout: wgpu::PipelineLayout,
+
+    default_texture_view: wgpu::TextureView,
+    default_sampler: wgpu::Sampler,
+    sampler_cache: [wgpu::Sampler; MAX_SAMPLERS],
+    bound_textures: [Option<u32>; MAX_SAMPLERS],
+
+    tracker: crate::state::StateTracker,
+    render_states: Vec<u32>,
+    sampler_states: [Vec<u32>; MAX_SAMPLERS],
 
     state: GraphicsState,
     fences: HashMap<u32, u64>,
@@ -307,15 +312,44 @@ pub struct D3D9Runtime {
 
 impl D3D9Runtime {
     pub async fn new(config: RuntimeConfig) -> Result<Self, RuntimeError> {
+        #[cfg(all(unix, not(target_arch = "wasm32")))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir().join(format!(
+                    "aero-d3d9-xdg-runtime-{}-microtests",
+                    std::process::id()
+                ));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
         let instance = wgpu::Instance::default();
-        let adapter = instance
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or(RuntimeError::AdapterNotFound)?;
+        {
+            Some(adapter) => adapter,
+            None => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: true,
+                })
+                .await
+                .ok_or(RuntimeError::AdapterNotFound)?,
+        };
 
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("aero-d3d9-device"),
@@ -328,24 +362,48 @@ impl D3D9Runtime {
             .await
             .map_err(|e| RuntimeError::RequestDevice(e.to_string()))?;
 
-        let constants_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("aero-d3d9-constants-bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+        let constants_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("aero-d3d9-constants-bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let mut texture_entries = Vec::with_capacity(MAX_SAMPLERS * 2);
+        for slot in 0..MAX_SAMPLERS {
+            texture_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: (slot * 2) as u32,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
             });
+            texture_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: (slot * 2 + 1) as u32,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            });
+        }
+
+        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("aero-d3d9-textures-bgl"),
+            entries: &texture_entries,
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("aero-d3d9-pipeline-layout"),
-            bind_group_layouts: &[&constants_bind_group_layout],
+            bind_group_layouts: &[&constants_bind_group_layout, &texture_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -371,6 +429,65 @@ impl D3D9Runtime {
             bytemuck::bytes_of(&[1.0f32, 1.0, 1.0, 1.0]),
         );
 
+        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aero-d3d9-default-texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &default_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[0u8, 0, 0, 0],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let default_texture_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("aero-d3d9-default-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let sampler_cache = std::array::from_fn(|_| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("aero-d3d9-sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            })
+        });
+
         Ok(Self {
             config,
             device,
@@ -379,10 +496,20 @@ impl D3D9Runtime {
             swapchains: HashMap::new(),
             textures: HashMap::new(),
             builtin_shader_module: None,
-            pipelines: HashMap::new(),
+            pipelines: PipelineCache::new(256),
             constants_buffer,
             constants_bind_group,
+            texture_bind_group_layout,
+            texture_bind_group: None,
+            texture_bind_group_dirty: true,
             pipeline_layout,
+            default_texture_view,
+            default_sampler,
+            sampler_cache,
+            bound_textures: [None; MAX_SAMPLERS],
+            tracker: crate::state::StateTracker::default(),
+            render_states: Vec::new(),
+            sampler_states: std::array::from_fn(|_| Vec::new()),
             state: GraphicsState::default(),
             fences: HashMap::new(),
         })
@@ -410,8 +537,13 @@ impl D3D9Runtime {
         if self.swapchains.contains_key(&swapchain_id) {
             return Err(RuntimeError::SwapChainAlreadyExists(swapchain_id));
         }
-
+ 
         let format = desc.format.to_wgpu();
+        let view_formats = match format {
+            wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
+            wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
+            _ => Vec::new(),
+        };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d9-swapchain-texture"),
             size: wgpu::Extent3d {
@@ -426,10 +558,23 @@ impl D3D9Runtime {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
+            view_formats: &view_formats,
         });
-
+ 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view_srgb = match format {
+            wgpu::TextureFormat::Rgba8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("aero-d3d9-swapchain-view-srgb"),
+                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                ..Default::default()
+            })),
+            wgpu::TextureFormat::Bgra8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("aero-d3d9-swapchain-view-srgb"),
+                format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                ..Default::default()
+            })),
+            _ => None,
+        };
 
         self.swapchains.insert(
             swapchain_id,
@@ -437,6 +582,7 @@ impl D3D9Runtime {
                 desc,
                 texture,
                 view,
+                view_srgb,
             },
         );
         Ok(())
@@ -463,6 +609,11 @@ impl D3D9Runtime {
         }
 
         let format = desc.format.to_wgpu();
+        let view_formats = match format {
+            wgpu::TextureFormat::Rgba8Unorm => vec![wgpu::TextureFormat::Rgba8UnormSrgb],
+            wgpu::TextureFormat::Bgra8Unorm => vec![wgpu::TextureFormat::Bgra8UnormSrgb],
+            _ => Vec::new(),
+        };
         let usage = map_texture_usage(desc.usage)
             | wgpu::TextureUsages::COPY_DST
             | wgpu::TextureUsages::COPY_SRC;
@@ -479,7 +630,7 @@ impl D3D9Runtime {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
-            view_formats: &[],
+            view_formats: &view_formats,
         });
 
         let view_mip0 = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -492,6 +643,29 @@ impl D3D9Runtime {
             format: None,
             aspect: wgpu::TextureAspect::All,
         });
+        let view_mip0_srgb = match format {
+            wgpu::TextureFormat::Rgba8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("aero-d3d9-texture-mip0-srgb"),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                aspect: wgpu::TextureAspect::All,
+            })),
+            wgpu::TextureFormat::Bgra8Unorm => Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("aero-d3d9-texture-mip0-srgb"),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+                aspect: wgpu::TextureAspect::All,
+            })),
+            _ => None,
+        };
 
         self.textures.insert(
             texture_id,
@@ -499,6 +673,7 @@ impl D3D9Runtime {
                 desc,
                 texture,
                 view_mip0,
+                view_mip0_srgb,
             },
         );
         Ok(())
@@ -597,6 +772,14 @@ impl D3D9Runtime {
             self.state.depth_stencil = None;
         }
 
+        for slot in 0..MAX_SAMPLERS {
+            if self.bound_textures[slot] == Some(texture_id) {
+                self.bound_textures[slot] = None;
+                self.tracker.textures[slot] = None;
+                self.texture_bind_group_dirty = true;
+            }
+        }
+
         Ok(())
     }
 
@@ -636,25 +819,240 @@ impl D3D9Runtime {
 
         self.state.color_target = color;
         self.state.depth_stencil = depth_stencil;
+
+        let mut color_formats = Vec::new();
+        if let Some(target) = self.state.color_target {
+            let fmt = match target {
+                RenderTarget::SwapChain(id) => self
+                    .swapchains
+                    .get(&id)
+                    .ok_or(RuntimeError::UnknownSwapChain(id))?
+                    .desc
+                    .format
+                    .to_wgpu(),
+                RenderTarget::Texture(id) => self
+                    .textures
+                    .get(&id)
+                    .ok_or(RuntimeError::UnknownTexture(id))?
+                    .desc
+                    .format
+                    .to_wgpu(),
+            };
+            color_formats.push(fmt);
+        }
+        let depth_format = if self.state.depth_stencil.is_some() {
+            Some(wgpu::TextureFormat::Depth24PlusStencil8)
+        } else {
+            None
+        };
+        self.tracker.set_render_targets(color_formats, depth_format);
+
         Ok(())
     }
 
     pub fn set_render_state_u32(&mut self, state_id: u32, value: u32) {
-        match state_id {
-            // 0: Cull mode (0 none, 1 front, 2 back)
-            0 => {
-                self.state.cull_mode = match value {
-                    1 => CullMode::Front,
-                    2 => CullMode::Back,
-                    _ => CullMode::None,
-                };
-            }
-            // 1: Depth test enable (0/1)
-            1 => self.state.depth_test_enable = value != 0,
-            // 2: Depth write enable (0/1)
-            2 => self.state.depth_write_enable = value != 0,
-            _ => {}
+        if state_id > MAX_REASONABLE_RENDER_STATE_ID {
+            debug!(state_id, value, "ignoring suspiciously large D3D9 render state id");
+            return;
         }
+
+        let idx = state_id as usize;
+        if idx >= self.render_states.len() {
+            self.render_states.resize(idx + 1, 0);
+        }
+        if self.render_states[idx] == value {
+            return;
+        }
+        self.render_states[idx] = value;
+
+        match state_id {
+            d3d9::D3DRS_ZENABLE => self.tracker.depth_stencil.depth_enable = value != 0,
+            d3d9::D3DRS_ZWRITEENABLE => self.tracker.depth_stencil.depth_write_enable = value != 0,
+            d3d9::D3DRS_ZFUNC => match d3d9_compare_func(value) {
+                Some(func) => self.tracker.depth_stencil.depth_func = func,
+                None => debug!(state_id, value, "unknown D3D9 compare func"),
+            },
+            d3d9::D3DRS_FRONTCOUNTERCLOCKWISE => {
+                self.tracker.rasterizer.front_counter_clockwise = value != 0
+            }
+            d3d9::D3DRS_STENCILENABLE => self.tracker.depth_stencil.stencil_enable = value != 0,
+            d3d9::D3DRS_STENCILFUNC => match d3d9_compare_func(value) {
+                Some(func) => self.tracker.depth_stencil.stencil_func = func,
+                None => debug!(state_id, value, "unknown D3D9 compare func"),
+            },
+            d3d9::D3DRS_STENCILFAIL => match d3d9_stencil_op(value) {
+                Some(op) => self.tracker.depth_stencil.stencil_fail = op,
+                None => debug!(state_id, value, "unknown D3D9 stencil op"),
+            },
+            d3d9::D3DRS_STENCILZFAIL => match d3d9_stencil_op(value) {
+                Some(op) => self.tracker.depth_stencil.stencil_zfail = op,
+                None => debug!(state_id, value, "unknown D3D9 stencil op"),
+            },
+            d3d9::D3DRS_STENCILPASS => match d3d9_stencil_op(value) {
+                Some(op) => self.tracker.depth_stencil.stencil_pass = op,
+                None => debug!(state_id, value, "unknown D3D9 stencil op"),
+            },
+            d3d9::D3DRS_STENCILREF => self.tracker.depth_stencil.stencil_ref = (value & 0xFF) as u8,
+            d3d9::D3DRS_STENCILMASK => self.tracker.depth_stencil.stencil_read_mask = (value & 0xFF) as u8,
+            d3d9::D3DRS_STENCILWRITEMASK => {
+                self.tracker.depth_stencil.stencil_write_mask = (value & 0xFF) as u8
+            }
+            d3d9::D3DRS_ALPHABLENDENABLE => self.tracker.blend.alpha_blend_enable = value != 0,
+            d3d9::D3DRS_SRCBLEND => match value {
+                d3d9::D3DBLEND_BOTHSRCALPHA => {
+                    self.tracker.blend.src_blend = BlendFactor::SrcAlpha;
+                    self.tracker.blend.dst_blend = BlendFactor::InvSrcAlpha;
+                }
+                d3d9::D3DBLEND_BOTHINVSRCALPHA => {
+                    self.tracker.blend.src_blend = BlendFactor::InvSrcAlpha;
+                    self.tracker.blend.dst_blend = BlendFactor::SrcAlpha;
+                }
+                _ => match d3d9_blend_factor(value) {
+                    Some(f) => self.tracker.blend.src_blend = f,
+                    None => debug!(state_id, value, "unknown D3D9 blend factor"),
+                },
+            },
+            d3d9::D3DRS_DESTBLEND => match d3d9_blend_factor(value) {
+                Some(f) => self.tracker.blend.dst_blend = f,
+                None => debug!(state_id, value, "unknown D3D9 blend factor"),
+            },
+            d3d9::D3DRS_BLENDOP => match d3d9_blend_op(value) {
+                Some(op) => self.tracker.blend.blend_op = op,
+                None => debug!(state_id, value, "unknown D3D9 blend op"),
+            },
+            d3d9::D3DRS_SEPARATEALPHABLENDENABLE => {
+                self.tracker.blend.separate_alpha_blend_enable = value != 0
+            }
+            d3d9::D3DRS_SRCBLENDALPHA => match d3d9_blend_factor(value) {
+                Some(f) => self.tracker.blend.src_blend_alpha = f,
+                None => debug!(state_id, value, "unknown D3D9 blend factor"),
+            },
+            d3d9::D3DRS_DESTBLENDALPHA => match d3d9_blend_factor(value) {
+                Some(f) => self.tracker.blend.dst_blend_alpha = f,
+                None => debug!(state_id, value, "unknown D3D9 blend factor"),
+            },
+            d3d9::D3DRS_BLENDOPALPHA => match d3d9_blend_op(value) {
+                Some(op) => self.tracker.blend.blend_op_alpha = op,
+                None => debug!(state_id, value, "unknown D3D9 blend op"),
+            },
+            d3d9::D3DRS_BLENDFACTOR => self.tracker.blend.blend_factor = value,
+            d3d9::D3DRS_CULLMODE => match d3d9_cull_mode(value) {
+                Some(mode) => self.tracker.rasterizer.cull_mode = mode,
+                None => debug!(state_id, value, "unknown D3D9 cull mode"),
+            },
+            d3d9::D3DRS_COLORWRITEENABLE => {
+                self.tracker
+                    .set_color_write_mask(0, ColorWriteMask((value & 0xF) as u8));
+            }
+            d3d9::D3DRS_COLORWRITEENABLE1 => {
+                self.tracker
+                    .set_color_write_mask(1, ColorWriteMask((value & 0xF) as u8));
+            }
+            d3d9::D3DRS_COLORWRITEENABLE2 => {
+                self.tracker
+                    .set_color_write_mask(2, ColorWriteMask((value & 0xF) as u8));
+            }
+            d3d9::D3DRS_COLORWRITEENABLE3 => {
+                self.tracker
+                    .set_color_write_mask(3, ColorWriteMask((value & 0xF) as u8));
+            }
+            d3d9::D3DRS_SRGBWRITEENABLE => self.tracker.set_srgb_write_enable(value != 0),
+            d3d9::D3DRS_SCISSORTESTENABLE => self.state.scissor_enable = value != 0,
+            _ => debug!(state_id, value, "unhandled D3D9 render state"),
+        }
+    }
+
+    pub fn set_viewport(&mut self, viewport: Viewport) {
+        self.state.viewport = Some(viewport);
+        self.tracker.set_viewport(viewport);
+    }
+
+    pub fn set_scissor_rect(&mut self, rect: ScissorRect) {
+        self.state.scissor_rect = Some(rect);
+        self.tracker.set_scissor_rect(rect);
+    }
+
+    pub fn set_texture(
+        &mut self,
+        stage: ShaderStage,
+        slot: u32,
+        texture_id: Option<u32>,
+    ) -> Result<(), RuntimeError> {
+        if stage != ShaderStage::Fragment {
+            debug!(?stage, slot, texture_id, "ignoring non-fragment texture bind");
+            return Ok(());
+        }
+
+        let slot_usize = slot as usize;
+        if slot_usize >= MAX_SAMPLERS {
+            debug!(slot, texture_id, "ignoring out-of-range texture slot");
+            return Ok(());
+        }
+
+        if let Some(id) = texture_id {
+            if !self.textures.contains_key(&id) {
+                return Err(RuntimeError::UnknownTexture(id));
+            }
+        }
+
+        if self.bound_textures[slot_usize] == texture_id {
+            return Ok(());
+        }
+
+        self.bound_textures[slot_usize] = texture_id;
+        self.tracker.textures[slot_usize] = texture_id.map(|v| v as u64);
+        self.texture_bind_group_dirty = true;
+        Ok(())
+    }
+
+    pub fn set_sampler_state_u32(
+        &mut self,
+        stage: ShaderStage,
+        slot: u32,
+        state_id: u32,
+        value: u32,
+    ) {
+        if stage != ShaderStage::Fragment {
+            debug!(?stage, slot, state_id, value, "ignoring non-fragment sampler state");
+            return;
+        }
+
+        if state_id > MAX_REASONABLE_SAMPLER_STATE_ID {
+            debug!(slot, state_id, value, "ignoring suspiciously large D3D9 sampler state id");
+            return;
+        }
+
+        let slot_usize = slot as usize;
+        if slot_usize >= MAX_SAMPLERS {
+            debug!(slot, state_id, value, "ignoring out-of-range sampler slot");
+            return;
+        }
+
+        let table = &mut self.sampler_states[slot_usize];
+        let idx = state_id as usize;
+        if idx >= table.len() {
+            table.resize(idx + 1, 0);
+        }
+        if table[idx] == value {
+            return;
+        }
+        table[idx] = value;
+
+        match state_id {
+            d3d9::D3DSAMP_ADDRESSU => self.tracker.samplers[slot_usize].address_u = value,
+            d3d9::D3DSAMP_ADDRESSV => self.tracker.samplers[slot_usize].address_v = value,
+            d3d9::D3DSAMP_MINFILTER => self.tracker.samplers[slot_usize].min_filter = value,
+            d3d9::D3DSAMP_MAGFILTER => self.tracker.samplers[slot_usize].mag_filter = value,
+            d3d9::D3DSAMP_MIPFILTER => self.tracker.samplers[slot_usize].mip_filter = value,
+            _ => debug!(slot, state_id, value, "unhandled D3D9 sampler state"),
+        }
+
+        self.sampler_cache[slot_usize] = create_wgpu_sampler(
+            &self.device,
+            &self.tracker.samplers[slot_usize],
+            &self.default_sampler,
+        );
+        self.texture_bind_group_dirty = true;
     }
 
     pub fn create_buffer(
@@ -721,22 +1119,28 @@ impl D3D9Runtime {
     }
 
     pub fn set_render_target_swapchain(&mut self, swapchain_id: u32) -> Result<(), RuntimeError> {
-        if !self.swapchains.contains_key(&swapchain_id) {
-            return Err(RuntimeError::UnknownSwapChain(swapchain_id));
-        }
-        self.state.color_target = Some(RenderTarget::SwapChain(swapchain_id));
-        self.state.depth_stencil = None;
-        Ok(())
+        self.set_render_targets(Some(RenderTarget::SwapChain(swapchain_id)), None)
     }
 
     pub fn set_shader_key(&mut self, stage: ShaderStage, key: u32) -> Result<(), RuntimeError> {
-        if key != 0 {
-            return Err(RuntimeError::UnsupportedShaderKey(key));
-        }
-        let id = ShaderId(key);
+        // Key 0 is treated as "unbind", matching D3D9 semantics.
+        let shader = if key == 0 { None } else { Some(ShaderKey(key as u64)) };
+
         match stage {
-            ShaderStage::Vertex => self.state.vertex_shader = Some(id),
-            ShaderStage::Fragment => self.state.fragment_shader = Some(id),
+            ShaderStage::Vertex => {
+                // For now we only expose a single built-in vertex shader under key=1.
+                if shader.is_some() && key != 1 {
+                    return Err(RuntimeError::UnsupportedShaderKey(key));
+                }
+                self.tracker.set_vertex_shader(shader);
+            }
+            ShaderStage::Fragment => {
+                // Fragment shaders: 1 = solid color, 2 = textured.
+                if shader.is_some() && key != 1 && key != 2 {
+                    return Err(RuntimeError::UnsupportedShaderKey(key));
+                }
+                self.tracker.set_pixel_shader(shader);
+            }
         }
         Ok(())
     }
@@ -755,8 +1159,19 @@ impl D3D9Runtime {
             });
         }
 
-        self.queue
-            .write_buffer(&self.constants_buffer, 0, bytemuck::cast_slice(vec4_data));
+        // Encode the update into the current command encoder so ordering with draws is preserved.
+        self.ensure_encoder();
+        let staging = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("aero-d3d9-constants-staging"),
+            contents: bytemuck::cast_slice(vec4_data),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
+        let encoder = self
+            .state
+            .encoder
+            .as_mut()
+            .expect("ensure_encoder initializes encoder");
+        encoder.copy_buffer_to_buffer(&staging, 0, &self.constants_buffer, 0, 16);
         Ok(())
     }
 
@@ -825,35 +1240,12 @@ impl D3D9Runtime {
             .state
             .color_target
             .ok_or(RuntimeError::MissingRenderTarget)?;
-        let color_format = match color_target {
-            RenderTarget::SwapChain(id) => {
-                self.swapchains
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownSwapChain(id))?
-                    .desc
-                    .format
-            }
-            RenderTarget::Texture(id) => {
-                let tex = self
-                    .textures
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownTexture(id))?;
-                tex.desc
-                    .format
-                    .as_color()
-                    .ok_or(RuntimeError::TextureNotColorRenderable(tex.desc.format))?
-            }
-        };
 
-        let vs = self
-            .state
-            .vertex_shader
-            .ok_or(RuntimeError::MissingShaders)?;
-        let fs = self
-            .state
-            .fragment_shader
-            .ok_or(RuntimeError::MissingShaders)?;
-        let mut vertex_decl = self
+        if self.tracker.vertex_shader.is_none() || self.tracker.pixel_shader.is_none() {
+            return Err(RuntimeError::MissingShaders);
+        }
+
+        let decl = self
             .state
             .vertex_decl
             .clone()
@@ -862,21 +1254,54 @@ impl D3D9Runtime {
             .state
             .vertex_stream0
             .ok_or(RuntimeError::MissingVertexBuffer)?;
-        vertex_decl.stride = vertex_stream.stride;
 
-        let key = PipelineKey {
-            vs,
-            fs,
-            vertex_decl: vertex_decl.clone(),
-            color_format,
-            cull_mode: self.state.cull_mode,
-            has_depth: self.state.depth_stencil.is_some(),
-            depth_test_enable: self.state.depth_test_enable,
-            depth_write_enable: self.state.depth_write_enable,
+        // Update the tracker with the current vertex layout. In D3D9 the vertex declaration
+        // does not include the stream stride, so we take it from the stream binding.
+        let layout = VertexBufferLayoutKey {
+            array_stride: vertex_stream.stride,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: decl
+                .attributes
+                .iter()
+                .map(|attr| VertexAttributeKey {
+                    format: attr.format.to_wgpu(),
+                    offset: attr.offset as u64,
+                    shader_location: attr.location,
+                })
+                .collect(),
         };
-        self.ensure_pipeline(&key)?;
+        self.tracker.set_vertex_layouts(vec![layout]);
+        self.tracker.set_primitive_type(self.state.primitive_type);
 
+        let (pipeline_key, translated, dynamic) =
+            translate_pipeline_state(&self.tracker).ok_or(RuntimeError::MissingShaders)?;
+
+        let (vs_entry, fs_entry) = builtin_entry_points(&pipeline_key)?;
+
+        self.ensure_builtin_module()?;
+        self.ensure_texture_bind_group();
         self.ensure_encoder();
+
+        let key_for_create = pipeline_key.clone();
+        let translated_for_create = translated.clone();
+        let module = self
+            .builtin_shader_module
+            .as_ref()
+            .expect("ensure_builtin_module initializes module");
+        let device = &self.device;
+        let pipeline_layout = &self.pipeline_layout;
+        let pipeline = self.pipelines.get_or_create(pipeline_key, || {
+            create_render_pipeline(
+                device,
+                pipeline_layout,
+                module,
+                &key_for_create,
+                &translated_for_create,
+                vs_entry,
+                fs_entry,
+            )
+        });
+
         let clear = self.next_pass_clear();
         let color_load = if clear {
             wgpu::LoadOp::Clear(wgpu::Color::BLACK)
@@ -884,59 +1309,86 @@ impl D3D9Runtime {
             wgpu::LoadOp::Load
         };
 
-        let pipeline = self
-            .pipelines
-            .get(&key)
-            .expect("ensure_pipeline inserts pipeline");
-        let color_view = match color_target {
-            RenderTarget::SwapChain(id) => {
-                &self
-                    .swapchains
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownSwapChain(id))?
-                    .view
-            }
-            RenderTarget::Texture(id) => {
-                &self
-                    .textures
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownTexture(id))?
-                    .view_mip0
-            }
-        };
+        let wants_srgb = self.tracker.render_targets.srgb_write_enable;
+        let (color_view, target_width, target_height) =
+            resolve_color_target_view(color_target, wants_srgb, &self.swapchains, &self.textures)?;
+
         let vertex_buffer = &self
             .buffers
             .get(&vertex_stream.buffer_id)
             .ok_or(RuntimeError::UnknownBuffer(vertex_stream.buffer_id))?
             .buffer;
-        let depth_attachment = if let Some(depth_id) = self.state.depth_stencil {
-            let depth_view = &self
-                .textures
-                .get(&depth_id)
-                .ok_or(RuntimeError::UnknownTexture(depth_id))?
-                .view_mip0;
-            Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: if clear {
-                        wgpu::LoadOp::Clear(1.0)
-                    } else {
-                        wgpu::LoadOp::Load
-                    },
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: if clear {
-                        wgpu::LoadOp::Clear(0)
-                    } else {
-                        wgpu::LoadOp::Load
-                    },
-                    store: wgpu::StoreOp::Store,
-                }),
-            })
+
+        let depth_attachment = if translated.depth_stencil.is_some() {
+            if let Some(depth_id) = self.state.depth_stencil {
+                let depth_view = &self
+                    .textures
+                    .get(&depth_id)
+                    .ok_or(RuntimeError::UnknownTexture(depth_id))?
+                    .view_mip0;
+                Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: if clear {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: if clear {
+                            wgpu::LoadOp::Clear(0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+                })
+            } else {
+                None
+            }
         } else {
             None
         };
+
+        // Apply dynamic viewport/scissor state. Ensure we always reset to a sensible default so
+        // state doesn't leak between draws.
+        let viewport = dynamic
+            .viewport
+            .unwrap_or(Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: target_width as f32,
+                height: target_height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            });
+        let viewport = clamp_viewport(viewport, target_width, target_height);
+
+        let scissor = if self.state.scissor_enable {
+            dynamic.scissor
+        } else {
+            None
+        };
+        let scissor = match scissor {
+            Some(rect) => clamp_scissor(rect, target_width, target_height),
+            None => Some(ScissorRect {
+                x: 0,
+                y: 0,
+                width: target_width,
+                height: target_height,
+            }),
+        };
+        if scissor.is_none() {
+            // Empty scissor; skip draw without producing validation errors.
+            return Ok(());
+        }
+
+        let texture_bind_group = self
+            .texture_bind_group
+            .as_ref()
+            .expect("ensure_texture_bind_group initializes bind group");
 
         let encoder = self
             .state
@@ -958,8 +1410,23 @@ impl D3D9Runtime {
             occlusion_query_set: None,
         });
 
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(pipeline.as_ref());
         pass.set_bind_group(0, &self.constants_bind_group, &[]);
+        pass.set_bind_group(1, texture_bind_group, &[]);
+        pass.set_blend_constant(dynamic.blend_constant);
+        pass.set_stencil_reference(dynamic.stencil_reference);
+        pass.set_viewport(
+            viewport.x,
+            viewport.y,
+            viewport.width,
+            viewport.height,
+            viewport.min_depth,
+            viewport.max_depth,
+        );
+        if let Some(rect) = scissor {
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+        }
+
         pass.set_vertex_buffer(0, vertex_buffer.slice(vertex_stream.offset..));
         pass.draw(first_vertex..first_vertex + vertex_count, 0..1);
         Ok(())
@@ -975,35 +1442,12 @@ impl D3D9Runtime {
             .state
             .color_target
             .ok_or(RuntimeError::MissingRenderTarget)?;
-        let color_format = match color_target {
-            RenderTarget::SwapChain(id) => {
-                self.swapchains
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownSwapChain(id))?
-                    .desc
-                    .format
-            }
-            RenderTarget::Texture(id) => {
-                let tex = self
-                    .textures
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownTexture(id))?;
-                tex.desc
-                    .format
-                    .as_color()
-                    .ok_or(RuntimeError::TextureNotColorRenderable(tex.desc.format))?
-            }
-        };
 
-        let vs = self
-            .state
-            .vertex_shader
-            .ok_or(RuntimeError::MissingShaders)?;
-        let fs = self
-            .state
-            .fragment_shader
-            .ok_or(RuntimeError::MissingShaders)?;
-        let mut vertex_decl = self
+        if self.tracker.vertex_shader.is_none() || self.tracker.pixel_shader.is_none() {
+            return Err(RuntimeError::MissingShaders);
+        }
+
+        let decl = self
             .state
             .vertex_decl
             .clone()
@@ -1016,21 +1460,52 @@ impl D3D9Runtime {
             .state
             .index_buffer
             .ok_or(RuntimeError::MissingIndexBuffer)?;
-        vertex_decl.stride = vertex_stream.stride;
 
-        let key = PipelineKey {
-            vs,
-            fs,
-            vertex_decl: vertex_decl.clone(),
-            color_format,
-            cull_mode: self.state.cull_mode,
-            has_depth: self.state.depth_stencil.is_some(),
-            depth_test_enable: self.state.depth_test_enable,
-            depth_write_enable: self.state.depth_write_enable,
+        let layout = VertexBufferLayoutKey {
+            array_stride: vertex_stream.stride,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: decl
+                .attributes
+                .iter()
+                .map(|attr| VertexAttributeKey {
+                    format: attr.format.to_wgpu(),
+                    offset: attr.offset as u64,
+                    shader_location: attr.location,
+                })
+                .collect(),
         };
-        self.ensure_pipeline(&key)?;
+        self.tracker.set_vertex_layouts(vec![layout]);
+        self.tracker.set_primitive_type(self.state.primitive_type);
 
+        let (pipeline_key, translated, dynamic) =
+            translate_pipeline_state(&self.tracker).ok_or(RuntimeError::MissingShaders)?;
+
+        let (vs_entry, fs_entry) = builtin_entry_points(&pipeline_key)?;
+
+        self.ensure_builtin_module()?;
+        self.ensure_texture_bind_group();
         self.ensure_encoder();
+
+        let key_for_create = pipeline_key.clone();
+        let translated_for_create = translated.clone();
+        let module = self
+            .builtin_shader_module
+            .as_ref()
+            .expect("ensure_builtin_module initializes module");
+        let device = &self.device;
+        let pipeline_layout = &self.pipeline_layout;
+        let pipeline = self.pipelines.get_or_create(pipeline_key, || {
+            create_render_pipeline(
+                device,
+                pipeline_layout,
+                module,
+                &key_for_create,
+                &translated_for_create,
+                vs_entry,
+                fs_entry,
+            )
+        });
+
         let clear = self.next_pass_clear();
         let color_load = if clear {
             wgpu::LoadOp::Clear(wgpu::Color::BLACK)
@@ -1038,26 +1513,10 @@ impl D3D9Runtime {
             wgpu::LoadOp::Load
         };
 
-        let pipeline = self
-            .pipelines
-            .get(&key)
-            .expect("ensure_pipeline inserts pipeline");
-        let color_view = match color_target {
-            RenderTarget::SwapChain(id) => {
-                &self
-                    .swapchains
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownSwapChain(id))?
-                    .view
-            }
-            RenderTarget::Texture(id) => {
-                &self
-                    .textures
-                    .get(&id)
-                    .ok_or(RuntimeError::UnknownTexture(id))?
-                    .view_mip0
-            }
-        };
+        let wants_srgb = self.tracker.render_targets.srgb_write_enable;
+        let (color_view, target_width, target_height) =
+            resolve_color_target_view(color_target, wants_srgb, &self.swapchains, &self.textures)?;
+
         let vertex_buffer = &self
             .buffers
             .get(&vertex_stream.buffer_id)
@@ -1068,34 +1527,74 @@ impl D3D9Runtime {
             .get(&index_binding.buffer_id)
             .ok_or(RuntimeError::UnknownBuffer(index_binding.buffer_id))?
             .buffer;
-        let depth_attachment = if let Some(depth_id) = self.state.depth_stencil {
-            let depth_view = &self
-                .textures
-                .get(&depth_id)
-                .ok_or(RuntimeError::UnknownTexture(depth_id))?
-                .view_mip0;
-            Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: if clear {
-                        wgpu::LoadOp::Clear(1.0)
-                    } else {
-                        wgpu::LoadOp::Load
-                    },
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: if clear {
-                        wgpu::LoadOp::Clear(0)
-                    } else {
-                        wgpu::LoadOp::Load
-                    },
-                    store: wgpu::StoreOp::Store,
-                }),
-            })
+
+        let depth_attachment = if translated.depth_stencil.is_some() {
+            if let Some(depth_id) = self.state.depth_stencil {
+                let depth_view = &self
+                    .textures
+                    .get(&depth_id)
+                    .ok_or(RuntimeError::UnknownTexture(depth_id))?
+                    .view_mip0;
+                Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: if clear {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: if clear {
+                            wgpu::LoadOp::Clear(0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+                })
+            } else {
+                None
+            }
         } else {
             None
         };
+
+        let viewport = dynamic
+            .viewport
+            .unwrap_or(Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: target_width as f32,
+                height: target_height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            });
+        let viewport = clamp_viewport(viewport, target_width, target_height);
+
+        let scissor = if self.state.scissor_enable {
+            dynamic.scissor
+        } else {
+            None
+        };
+        let scissor = match scissor {
+            Some(rect) => clamp_scissor(rect, target_width, target_height),
+            None => Some(ScissorRect {
+                x: 0,
+                y: 0,
+                width: target_width,
+                height: target_height,
+            }),
+        };
+        if scissor.is_none() {
+            return Ok(());
+        }
+
+        let texture_bind_group = self
+            .texture_bind_group
+            .as_ref()
+            .expect("ensure_texture_bind_group initializes bind group");
 
         let encoder = self
             .state
@@ -1117,8 +1616,23 @@ impl D3D9Runtime {
             occlusion_query_set: None,
         });
 
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(pipeline.as_ref());
         pass.set_bind_group(0, &self.constants_bind_group, &[]);
+        pass.set_bind_group(1, texture_bind_group, &[]);
+        pass.set_blend_constant(dynamic.blend_constant);
+        pass.set_stencil_reference(dynamic.stencil_reference);
+        pass.set_viewport(
+            viewport.x,
+            viewport.y,
+            viewport.width,
+            viewport.height,
+            viewport.min_depth,
+            viewport.max_depth,
+        );
+        if let Some(rect) = scissor {
+            pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
+        }
+
         pass.set_vertex_buffer(0, vertex_buffer.slice(vertex_stream.offset..));
         pass.set_index_buffer(
             index_buffer.slice(index_binding.offset..),
@@ -1316,9 +1830,14 @@ impl D3D9Runtime {
             let _ = sender.send(result.map_err(|e| e.to_string()));
         });
 
+        #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
-        let result = receiver.receive().await.ok_or(RuntimeError::MapAsyncDropped)?;
-        result.map_err(RuntimeError::MapAsync)?;
+
+        let mapped = receiver
+            .receive()
+            .await
+            .ok_or(RuntimeError::MapAsyncDropped)?;
+        mapped.map_err(RuntimeError::MapAsync)?;
 
         let data = slice.get_mapped_range();
         let mut pixels = vec![0u8; (width * height * bytes_per_pixel) as usize];
@@ -1334,84 +1853,43 @@ impl D3D9Runtime {
         Ok((width, height, pixels))
     }
 
-    fn ensure_pipeline(&mut self, key: &PipelineKey) -> Result<(), RuntimeError> {
-        if self.pipelines.contains_key(key) {
-            return Ok(());
+    fn ensure_texture_bind_group(&mut self) {
+        if !self.texture_bind_group_dirty && self.texture_bind_group.is_some() {
+            return;
         }
 
-        self.ensure_builtin_module()?;
-        let module = self
-            .builtin_shader_module
-            .as_ref()
-            .expect("ensure_builtin_module initializes module");
-        let mut attributes = Vec::with_capacity(key.vertex_decl.attributes.len());
-        for attr in &key.vertex_decl.attributes {
-            attributes.push(wgpu::VertexAttribute {
-                format: attr.format.to_wgpu(),
-                offset: attr.offset as u64,
-                shader_location: attr.location,
+        let mut entries = Vec::with_capacity(MAX_SAMPLERS * 2);
+        for slot in 0..MAX_SAMPLERS {
+            let sampler = if self.bound_textures[slot].is_some() {
+                &self.sampler_cache[slot]
+            } else {
+                &self.default_sampler
+            };
+            entries.push(wgpu::BindGroupEntry {
+                binding: (slot * 2) as u32,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            });
+
+            let view = match self.bound_textures[slot] {
+                Some(id) => self
+                    .textures
+                    .get(&id)
+                    .map(|tex| &tex.view_mip0)
+                    .unwrap_or(&self.default_texture_view),
+                None => &self.default_texture_view,
+            };
+            entries.push(wgpu::BindGroupEntry {
+                binding: (slot * 2 + 1) as u32,
+                resource: wgpu::BindingResource::TextureView(view),
             });
         }
 
-        let pipeline = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("aero-d3d9-pipeline"),
-                layout: Some(&self.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module,
-                    entry_point: "vs_main",
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: key.vertex_decl.stride,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &attributes,
-                    }],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: match key.cull_mode {
-                        CullMode::None => None,
-                        CullMode::Front => Some(wgpu::Face::Front),
-                        CullMode::Back => Some(wgpu::Face::Back),
-                    },
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: if key.has_depth {
-                    Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: key.depth_write_enable,
-                        depth_compare: if key.depth_test_enable {
-                            wgpu::CompareFunction::LessEqual
-                        } else {
-                            wgpu::CompareFunction::Always
-                        },
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    })
-                } else {
-                    None
-                },
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module,
-                    entry_point: "fs_main",
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: key.color_format.to_wgpu(),
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                multiview: None,
-            });
-
-        self.pipelines.insert(key.clone(), pipeline);
-        Ok(())
+        self.texture_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d9-textures-bg"),
+            layout: &self.texture_bind_group_layout,
+            entries: &entries,
+        }));
+        self.texture_bind_group_dirty = false;
     }
 
     fn ensure_builtin_module(&mut self) -> Result<(), RuntimeError> {
@@ -1422,10 +1900,12 @@ impl D3D9Runtime {
         let wgsl = r#"
 struct VsIn {
     @location(0) pos: vec2<f32>,
+    @location(1) uv: vec2<f32>,
 }
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
 }
 
 struct Constants {
@@ -1435,16 +1915,28 @@ struct Constants {
 @group(0) @binding(0)
 var<uniform> constants: Constants;
 
+@group(1) @binding(0)
+var samp0: sampler;
+
+@group(1) @binding(1)
+var tex0: texture_2d<f32>;
+
 @vertex
 fn vs_main(input: VsIn) -> VsOut {
     var out: VsOut;
     out.position = vec4<f32>(input.pos, 0.0, 1.0);
+    out.uv = input.uv;
     return out;
 }
 
 @fragment
-fn fs_main(_input: VsOut) -> @location(0) vec4<f32> {
+fn fs_solid(_input: VsOut) -> @location(0) vec4<f32> {
     return constants.color;
+}
+
+@fragment
+fn fs_textured(input: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(tex0, samp0, input.uv);
 }
 "#;
         self.builtin_shader_module = Some(self.device.create_shader_module(
@@ -1455,6 +1947,416 @@ fn fs_main(_input: VsOut) -> @location(0) vec4<f32> {
         ));
         Ok(())
     }
+}
+
+fn builtin_entry_points(key: &PipelineKey) -> Result<(&'static str, &'static str), RuntimeError> {
+    let vs_entry = match key.vertex_shader.0 {
+        1 => "vs_main",
+        other => {
+            return Err(RuntimeError::UnsupportedShaderKey(
+                other.try_into().unwrap_or(u32::MAX),
+            ))
+        }
+    };
+
+    let fs_entry = match key.pixel_shader.0 {
+        1 => "fs_solid",
+        2 => "fs_textured",
+        other => {
+            return Err(RuntimeError::UnsupportedShaderKey(
+                other.try_into().unwrap_or(u32::MAX),
+            ))
+        }
+    };
+
+    Ok((vs_entry, fs_entry))
+}
+
+fn create_render_pipeline(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    key: &PipelineKey,
+    translated: &crate::state::TranslatedPipelineState,
+    vs_entry: &'static str,
+    fs_entry: &'static str,
+) -> wgpu::RenderPipeline {
+    let mut attribute_storage = Vec::with_capacity(key.vertex_layouts.len());
+    for layout in &key.vertex_layouts {
+        attribute_storage.push(
+            layout
+                .attributes
+                .iter()
+                .map(|attr| wgpu::VertexAttribute {
+                    format: attr.format,
+                    offset: attr.offset,
+                    shader_location: attr.shader_location,
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    let vertex_buffers = key
+        .vertex_layouts
+        .iter()
+        .zip(attribute_storage.iter())
+        .map(|(layout, attrs)| wgpu::VertexBufferLayout {
+            array_stride: layout.array_stride,
+            step_mode: layout.step_mode,
+            attributes: attrs.as_slice(),
+        })
+        .collect::<Vec<_>>();
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("aero-d3d9-pipeline"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: vs_entry,
+            buffers: &vertex_buffers,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: fs_entry,
+            targets: &translated.targets,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: translated.primitive,
+        depth_stencil: translated.depth_stencil.clone(),
+        multisample: translated.multisample,
+        multiview: None,
+    })
+}
+
+fn clamp_viewport(mut viewport: Viewport, target_width: u32, target_height: u32) -> Viewport {
+    let tw = target_width as f32;
+    let th = target_height as f32;
+
+    viewport.min_depth = viewport.min_depth.clamp(0.0, 1.0);
+    viewport.max_depth = viewport
+        .max_depth
+        .clamp(viewport.min_depth, 1.0);
+
+    if viewport.width <= 0.0 || viewport.height <= 0.0 || tw == 0.0 || th == 0.0 {
+        return Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: tw,
+            height: th,
+            min_depth: viewport.min_depth,
+            max_depth: viewport.max_depth,
+        };
+    }
+
+    viewport.x = viewport.x.clamp(0.0, tw);
+    viewport.y = viewport.y.clamp(0.0, th);
+
+    viewport.width = viewport.width.clamp(0.0, tw - viewport.x);
+    viewport.height = viewport.height.clamp(0.0, th - viewport.y);
+
+    if viewport.width <= 0.0 || viewport.height <= 0.0 {
+        Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: tw,
+            height: th,
+            min_depth: viewport.min_depth,
+            max_depth: viewport.max_depth,
+        }
+    } else {
+        viewport
+    }
+}
+
+fn clamp_scissor(rect: ScissorRect, target_width: u32, target_height: u32) -> Option<ScissorRect> {
+    if rect.width == 0 || rect.height == 0 {
+        return None;
+    }
+    if rect.x >= target_width || rect.y >= target_height {
+        return None;
+    }
+    let max_w = target_width - rect.x;
+    let max_h = target_height - rect.y;
+    let width = rect.width.min(max_w);
+    let height = rect.height.min(max_h);
+    if width == 0 || height == 0 {
+        None
+    } else {
+        Some(ScissorRect {
+            x: rect.x,
+            y: rect.y,
+            width,
+            height,
+        })
+    }
+}
+
+fn resolve_color_target_view<'a>(
+    target: RenderTarget,
+    wants_srgb: bool,
+    swapchains: &'a HashMap<u32, SwapChainResource>,
+    textures: &'a HashMap<u32, TextureResource>,
+) -> Result<(&'a wgpu::TextureView, u32, u32), RuntimeError> {
+    match target {
+        RenderTarget::SwapChain(id) => {
+            let swap = swapchains
+                .get(&id)
+                .ok_or(RuntimeError::UnknownSwapChain(id))?;
+            let view = if wants_srgb {
+                swap.view_srgb.as_ref().unwrap_or(&swap.view)
+            } else {
+                &swap.view
+            };
+            Ok((view, swap.desc.width, swap.desc.height))
+        }
+        RenderTarget::Texture(id) => {
+            let tex = textures.get(&id).ok_or(RuntimeError::UnknownTexture(id))?;
+            let view = if wants_srgb {
+                tex.view_mip0_srgb.as_ref().unwrap_or(&tex.view_mip0)
+            } else {
+                &tex.view_mip0
+            };
+            Ok((view, tex.desc.width, tex.desc.height))
+        }
+    }
+}
+
+fn create_wgpu_sampler(
+    device: &wgpu::Device,
+    state: &crate::state::tracker::SamplerState,
+    _fallback: &wgpu::Sampler,
+) -> wgpu::Sampler {
+    let _ = _fallback;
+
+    fn addr(device: &wgpu::Device, value: u32) -> wgpu::AddressMode {
+        match value {
+            d3d9::D3DTADDRESS_WRAP | 0 => wgpu::AddressMode::Repeat,
+            d3d9::D3DTADDRESS_MIRROR => wgpu::AddressMode::MirrorRepeat,
+            d3d9::D3DTADDRESS_CLAMP => wgpu::AddressMode::ClampToEdge,
+            d3d9::D3DTADDRESS_BORDER => {
+                if device
+                    .features()
+                    .contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER)
+                {
+                    wgpu::AddressMode::ClampToBorder
+                } else {
+                    wgpu::AddressMode::ClampToEdge
+                }
+            }
+            d3d9::D3DTADDRESS_MIRRORONCE => wgpu::AddressMode::MirrorRepeat,
+            _ => wgpu::AddressMode::Repeat,
+        }
+    }
+
+    fn filter(value: u32) -> wgpu::FilterMode {
+        match value {
+            d3d9::D3DTEXF_POINT => wgpu::FilterMode::Nearest,
+            d3d9::D3DTEXF_LINEAR | d3d9::D3DTEXF_ANISOTROPIC => wgpu::FilterMode::Linear,
+            d3d9::D3DTEXF_NONE => wgpu::FilterMode::Linear,
+            _ => wgpu::FilterMode::Linear,
+        }
+    }
+
+    let address_mode_u = addr(device, state.address_u);
+    let address_mode_v = addr(device, state.address_v);
+    let address_mode_w = wgpu::AddressMode::ClampToEdge;
+
+    let min_filter = filter(state.min_filter);
+    let mag_filter = filter(state.mag_filter);
+    let mipmap_filter = filter(state.mip_filter);
+    let lod_max_clamp = if state.mip_filter == d3d9::D3DTEXF_NONE || state.mip_filter == 0 {
+        0.0
+    } else {
+        32.0
+    };
+
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("aero-d3d9-sampler"),
+        address_mode_u,
+        address_mode_v,
+        address_mode_w,
+        mag_filter,
+        min_filter,
+        mipmap_filter,
+        lod_min_clamp: 0.0,
+        lod_max_clamp,
+        compare: None,
+        anisotropy_clamp: 1,
+        border_color: None,
+    })
+}
+
+mod d3d9 {
+    // D3DRENDERSTATETYPE (subset).
+    pub const D3DRS_ZENABLE: u32 = 7;
+    pub const D3DRS_ZWRITEENABLE: u32 = 14;
+    pub const D3DRS_ZFUNC: u32 = 23;
+    pub const D3DRS_CULLMODE: u32 = 22;
+    pub const D3DRS_FRONTCOUNTERCLOCKWISE: u32 = 18;
+
+    pub const D3DRS_ALPHABLENDENABLE: u32 = 27;
+    pub const D3DRS_SRCBLEND: u32 = 19;
+    pub const D3DRS_DESTBLEND: u32 = 20;
+    pub const D3DRS_BLENDOP: u32 = 171;
+    pub const D3DRS_SEPARATEALPHABLENDENABLE: u32 = 206;
+    pub const D3DRS_SRCBLENDALPHA: u32 = 207;
+    pub const D3DRS_DESTBLENDALPHA: u32 = 208;
+    pub const D3DRS_BLENDOPALPHA: u32 = 209;
+    pub const D3DRS_BLENDFACTOR: u32 = 193;
+
+    pub const D3DRS_COLORWRITEENABLE: u32 = 168;
+    pub const D3DRS_COLORWRITEENABLE1: u32 = 190;
+    pub const D3DRS_COLORWRITEENABLE2: u32 = 191;
+    pub const D3DRS_COLORWRITEENABLE3: u32 = 192;
+
+    pub const D3DRS_SRGBWRITEENABLE: u32 = 194;
+    pub const D3DRS_SCISSORTESTENABLE: u32 = 174;
+
+    pub const D3DRS_STENCILENABLE: u32 = 52;
+    pub const D3DRS_STENCILFAIL: u32 = 53;
+    pub const D3DRS_STENCILZFAIL: u32 = 54;
+    pub const D3DRS_STENCILPASS: u32 = 55;
+    pub const D3DRS_STENCILFUNC: u32 = 56;
+    pub const D3DRS_STENCILREF: u32 = 57;
+    pub const D3DRS_STENCILMASK: u32 = 58;
+    pub const D3DRS_STENCILWRITEMASK: u32 = 59;
+
+    // D3DSAMPLERSTATETYPE (subset).
+    pub const D3DSAMP_ADDRESSU: u32 = 1;
+    pub const D3DSAMP_ADDRESSV: u32 = 2;
+    pub const D3DSAMP_MAGFILTER: u32 = 5;
+    pub const D3DSAMP_MINFILTER: u32 = 6;
+    pub const D3DSAMP_MIPFILTER: u32 = 7;
+
+    // D3DTEXTUREADDRESS.
+    pub const D3DTADDRESS_WRAP: u32 = 1;
+    pub const D3DTADDRESS_MIRROR: u32 = 2;
+    pub const D3DTADDRESS_CLAMP: u32 = 3;
+    pub const D3DTADDRESS_BORDER: u32 = 4;
+    pub const D3DTADDRESS_MIRRORONCE: u32 = 5;
+
+    // D3DTEXTUREFILTERTYPE (subset).
+    pub const D3DTEXF_NONE: u32 = 0;
+    pub const D3DTEXF_POINT: u32 = 1;
+    pub const D3DTEXF_LINEAR: u32 = 2;
+    pub const D3DTEXF_ANISOTROPIC: u32 = 3;
+
+    // Blend factors.
+    pub const D3DBLEND_ZERO: u32 = 1;
+    pub const D3DBLEND_ONE: u32 = 2;
+    pub const D3DBLEND_SRCCOLOR: u32 = 3;
+    pub const D3DBLEND_INVSRCCOLOR: u32 = 4;
+    pub const D3DBLEND_SRCALPHA: u32 = 5;
+    pub const D3DBLEND_INVSRCALPHA: u32 = 6;
+    pub const D3DBLEND_DESTALPHA: u32 = 7;
+    pub const D3DBLEND_INVDESTALPHA: u32 = 8;
+    pub const D3DBLEND_DESTCOLOR: u32 = 9;
+    pub const D3DBLEND_INVDESTCOLOR: u32 = 10;
+    pub const D3DBLEND_SRCALPHASAT: u32 = 11;
+    pub const D3DBLEND_BOTHSRCALPHA: u32 = 12;
+    pub const D3DBLEND_BOTHINVSRCALPHA: u32 = 13;
+    pub const D3DBLEND_BLENDFACTOR: u32 = 14;
+    pub const D3DBLEND_INVBLENDFACTOR: u32 = 15;
+
+    // Blend ops.
+    pub const D3DBLENDOP_ADD: u32 = 1;
+    pub const D3DBLENDOP_SUBTRACT: u32 = 2;
+    pub const D3DBLENDOP_REVSUBTRACT: u32 = 3;
+    pub const D3DBLENDOP_MIN: u32 = 4;
+    pub const D3DBLENDOP_MAX: u32 = 5;
+
+    // Compare funcs.
+    pub const D3DCMP_NEVER: u32 = 1;
+    pub const D3DCMP_LESS: u32 = 2;
+    pub const D3DCMP_EQUAL: u32 = 3;
+    pub const D3DCMP_LESSEQUAL: u32 = 4;
+    pub const D3DCMP_GREATER: u32 = 5;
+    pub const D3DCMP_NOTEQUAL: u32 = 6;
+    pub const D3DCMP_GREATEREQUAL: u32 = 7;
+    pub const D3DCMP_ALWAYS: u32 = 8;
+
+    // Stencil ops.
+    pub const D3DSTENCILOP_KEEP: u32 = 1;
+    pub const D3DSTENCILOP_ZERO: u32 = 2;
+    pub const D3DSTENCILOP_REPLACE: u32 = 3;
+    pub const D3DSTENCILOP_INCRSAT: u32 = 4;
+    pub const D3DSTENCILOP_DECRSAT: u32 = 5;
+    pub const D3DSTENCILOP_INVERT: u32 = 6;
+    pub const D3DSTENCILOP_INCR: u32 = 7;
+    pub const D3DSTENCILOP_DECR: u32 = 8;
+
+    // Cull modes.
+    pub const D3DCULL_NONE: u32 = 1;
+    pub const D3DCULL_CW: u32 = 2;
+    pub const D3DCULL_CCW: u32 = 3;
+}
+
+fn d3d9_compare_func(value: u32) -> Option<CompareFunc> {
+    Some(match value {
+        d3d9::D3DCMP_NEVER => CompareFunc::Never,
+        d3d9::D3DCMP_LESS => CompareFunc::Less,
+        d3d9::D3DCMP_EQUAL => CompareFunc::Equal,
+        d3d9::D3DCMP_LESSEQUAL => CompareFunc::LessEqual,
+        d3d9::D3DCMP_GREATER => CompareFunc::Greater,
+        d3d9::D3DCMP_NOTEQUAL => CompareFunc::NotEqual,
+        d3d9::D3DCMP_GREATEREQUAL => CompareFunc::GreaterEqual,
+        d3d9::D3DCMP_ALWAYS => CompareFunc::Always,
+        _ => return None,
+    })
+}
+
+fn d3d9_stencil_op(value: u32) -> Option<StencilOp> {
+    Some(match value {
+        d3d9::D3DSTENCILOP_KEEP => StencilOp::Keep,
+        d3d9::D3DSTENCILOP_ZERO => StencilOp::Zero,
+        d3d9::D3DSTENCILOP_REPLACE => StencilOp::Replace,
+        d3d9::D3DSTENCILOP_INCRSAT => StencilOp::IncrSat,
+        d3d9::D3DSTENCILOP_DECRSAT => StencilOp::DecrSat,
+        d3d9::D3DSTENCILOP_INVERT => StencilOp::Invert,
+        d3d9::D3DSTENCILOP_INCR => StencilOp::Incr,
+        d3d9::D3DSTENCILOP_DECR => StencilOp::Decr,
+        _ => return None,
+    })
+}
+
+fn d3d9_blend_factor(value: u32) -> Option<BlendFactor> {
+    Some(match value {
+        d3d9::D3DBLEND_ZERO => BlendFactor::Zero,
+        d3d9::D3DBLEND_ONE => BlendFactor::One,
+        d3d9::D3DBLEND_SRCCOLOR => BlendFactor::SrcColor,
+        d3d9::D3DBLEND_INVSRCCOLOR => BlendFactor::InvSrcColor,
+        d3d9::D3DBLEND_SRCALPHA => BlendFactor::SrcAlpha,
+        d3d9::D3DBLEND_INVSRCALPHA => BlendFactor::InvSrcAlpha,
+        d3d9::D3DBLEND_DESTALPHA => BlendFactor::DestAlpha,
+        d3d9::D3DBLEND_INVDESTALPHA => BlendFactor::InvDestAlpha,
+        d3d9::D3DBLEND_DESTCOLOR => BlendFactor::DestColor,
+        d3d9::D3DBLEND_INVDESTCOLOR => BlendFactor::InvDestColor,
+        d3d9::D3DBLEND_SRCALPHASAT => BlendFactor::SrcAlphaSat,
+        d3d9::D3DBLEND_BLENDFACTOR => BlendFactor::BlendFactor,
+        d3d9::D3DBLEND_INVBLENDFACTOR => BlendFactor::InvBlendFactor,
+        _ => return None,
+    })
+}
+
+fn d3d9_blend_op(value: u32) -> Option<BlendOp> {
+    Some(match value {
+        d3d9::D3DBLENDOP_ADD => BlendOp::Add,
+        d3d9::D3DBLENDOP_SUBTRACT => BlendOp::Subtract,
+        d3d9::D3DBLENDOP_REVSUBTRACT => BlendOp::RevSubtract,
+        d3d9::D3DBLENDOP_MIN => BlendOp::Min,
+        d3d9::D3DBLENDOP_MAX => BlendOp::Max,
+        _ => return None,
+    })
+}
+
+fn d3d9_cull_mode(value: u32) -> Option<CullMode> {
+    Some(match value {
+        d3d9::D3DCULL_NONE => CullMode::None,
+        d3d9::D3DCULL_CW => CullMode::CW,
+        d3d9::D3DCULL_CCW => CullMode::CCW,
+        _ => return None,
+    })
 }
 
 fn align_to(value: u32, alignment: u32) -> u32 {

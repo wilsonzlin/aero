@@ -108,6 +108,7 @@ dependencies = [
  "pollster",
  "pretty_assertions",
  "thiserror 2.0.17",
+ "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

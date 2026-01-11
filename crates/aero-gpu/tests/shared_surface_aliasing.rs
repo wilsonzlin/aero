@@ -76,11 +76,17 @@ fn shared_surface_import_export_aliases_texture_handles() {
             },
             None,
         );
-        stream.set_shader_key(CONTEXT_ID, ShaderStage::Vertex, 0);
-        stream.set_shader_key(CONTEXT_ID, ShaderStage::Fragment, 0);
+        stream.set_shader_key(CONTEXT_ID, ShaderStage::Vertex, 1);
+        stream.set_shader_key(CONTEXT_ID, ShaderStage::Fragment, 1);
         stream.set_constants_f32(CONTEXT_ID, ShaderStage::Fragment, 0, 1, &[1.0, 0.0, 0.0, 1.0]);
 
-        let fullscreen_triangle: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+        // Clockwise fullscreen triangle with UVs for the built-in vertex shader.
+        let fullscreen_triangle: [f32; 12] = [
+            // pos       uv
+            -1.0, -1.0, 0.0, 0.0, //
+            -1.0, 3.0, 0.0, 2.0, //
+            3.0, -1.0, 2.0, 0.0, //
+        ];
         stream.buffer_create(
             CONTEXT_ID,
             VB_ID,
@@ -95,14 +101,21 @@ fn shared_surface_import_export_aliases_texture_handles() {
         );
         stream.set_vertex_declaration(
             CONTEXT_ID,
-            8,
-            &[VertexAttributeWire {
-                location: 0,
-                format: VertexFormat::Float32x2,
-                offset: 0,
-            }],
+            16,
+            &[
+                VertexAttributeWire {
+                    location: 0,
+                    format: VertexFormat::Float32x2,
+                    offset: 0,
+                },
+                VertexAttributeWire {
+                    location: 1,
+                    format: VertexFormat::Float32x2,
+                    offset: 8,
+                },
+            ],
         );
-        stream.set_vertex_stream(CONTEXT_ID, 0, VB_ID, 0, 8);
+        stream.set_vertex_stream(CONTEXT_ID, 0, VB_ID, 0, 16);
         stream.draw(CONTEXT_ID, 3, 0);
 
         // Flush the encoder so a subsequent readback sees the draw results.
@@ -145,4 +158,3 @@ fn shared_surface_import_export_aliases_texture_handles() {
         );
     });
 }
-

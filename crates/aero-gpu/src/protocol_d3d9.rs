@@ -43,6 +43,10 @@ pub enum Opcode {
     SetVertexDeclaration = 0x0044,
     SetVertexStream = 0x0045,
     SetIndexBuffer = 0x0046,
+    SetSamplerStateU32 = 0x0047,
+    SetTexture = 0x0048,
+    SetViewport = 0x0049,
+    SetScissorRect = 0x004A,
 
     Draw = 0x0050,
     DrawIndexed = 0x0051,
@@ -80,6 +84,10 @@ impl Opcode {
             0x0044 => Self::SetVertexDeclaration,
             0x0045 => Self::SetVertexStream,
             0x0046 => Self::SetIndexBuffer,
+            0x0047 => Self::SetSamplerStateU32,
+            0x0048 => Self::SetTexture,
+            0x0049 => Self::SetViewport,
+            0x004A => Self::SetScissorRect,
             0x0050 => Self::Draw,
             0x0051 => Self::DrawIndexed,
             0x0052 => Self::Present,
@@ -452,6 +460,72 @@ impl StreamEncoder {
         payload.extend_from_slice(&offset.to_le_bytes());
         payload.extend_from_slice(&(format as u32).to_le_bytes());
         self.push_command(Opcode::SetIndexBuffer, &payload);
+    }
+
+    pub fn set_sampler_state_u32(
+        &mut self,
+        context_id: u32,
+        stage: ShaderStage,
+        slot: u8,
+        state_id: u32,
+        value: u32,
+    ) {
+        let mut payload = Vec::with_capacity(16);
+        payload.extend_from_slice(&context_id.to_le_bytes());
+        payload.push(stage as u8);
+        payload.push(slot);
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.extend_from_slice(&state_id.to_le_bytes());
+        payload.extend_from_slice(&value.to_le_bytes());
+        self.push_command(Opcode::SetSamplerStateU32, &payload);
+    }
+
+    pub fn set_texture(&mut self, context_id: u32, stage: ShaderStage, slot: u8, texture_id: u32) {
+        let mut payload = Vec::with_capacity(12);
+        payload.extend_from_slice(&context_id.to_le_bytes());
+        payload.push(stage as u8);
+        payload.push(slot);
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.extend_from_slice(&texture_id.to_le_bytes());
+        self.push_command(Opcode::SetTexture, &payload);
+    }
+
+    pub fn set_viewport(
+        &mut self,
+        context_id: u32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        min_depth: f32,
+        max_depth: f32,
+    ) {
+        let mut payload = Vec::with_capacity(28);
+        payload.extend_from_slice(&context_id.to_le_bytes());
+        payload.extend_from_slice(&x.to_le_bytes());
+        payload.extend_from_slice(&y.to_le_bytes());
+        payload.extend_from_slice(&width.to_le_bytes());
+        payload.extend_from_slice(&height.to_le_bytes());
+        payload.extend_from_slice(&min_depth.to_le_bytes());
+        payload.extend_from_slice(&max_depth.to_le_bytes());
+        self.push_command(Opcode::SetViewport, &payload);
+    }
+
+    pub fn set_scissor_rect(
+        &mut self,
+        context_id: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) {
+        let mut payload = Vec::with_capacity(20);
+        payload.extend_from_slice(&context_id.to_le_bytes());
+        payload.extend_from_slice(&x.to_le_bytes());
+        payload.extend_from_slice(&y.to_le_bytes());
+        payload.extend_from_slice(&width.to_le_bytes());
+        payload.extend_from_slice(&height.to_le_bytes());
+        self.push_command(Opcode::SetScissorRect, &payload);
     }
 
     pub fn draw_indexed(

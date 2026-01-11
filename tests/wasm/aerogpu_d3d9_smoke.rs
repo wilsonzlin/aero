@@ -21,7 +21,13 @@ async fn aerogpu_d3d9_triangle_smoke() {
     stream.swapchain_create(1, 1, 64, 64, TextureFormat::Rgba8Unorm);
     stream.set_render_targets_swapchain(1, 1);
 
-    let vertices: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+    // Full-screen triangle with UVs for the built-in vertex shader.
+    let vertices: [f32; 12] = [
+        // pos       uv
+        -1.0, -1.0, 0.0, 0.0, //
+        3.0, -1.0, 2.0, 0.0, //
+        -1.0, 3.0, 0.0, 2.0, //
+    ];
     let mut vb = Vec::with_capacity(vertices.len() * 4);
     for v in vertices {
         vb.extend_from_slice(&v.to_le_bytes());
@@ -40,18 +46,25 @@ async fn aerogpu_d3d9_triangle_smoke() {
 
     stream.set_vertex_declaration(
         1,
-        8,
-        &[VertexAttributeWire {
-            location: 0,
-            format: VertexFormat::Float32x2,
-            offset: 0,
-        }],
+        16,
+        &[
+            VertexAttributeWire {
+                location: 0,
+                format: VertexFormat::Float32x2,
+                offset: 0,
+            },
+            VertexAttributeWire {
+                location: 1,
+                format: VertexFormat::Float32x2,
+                offset: 8,
+            },
+        ],
     );
-    stream.set_vertex_stream(1, 0, 1, 0, 8);
+    stream.set_vertex_stream(1, 0, 1, 0, 16);
     stream.set_index_buffer(1, 2, 0, IndexFormat::U16);
 
-    stream.set_shader_key(1, ShaderStage::Vertex, 0);
-    stream.set_shader_key(1, ShaderStage::Fragment, 0);
+    stream.set_shader_key(1, ShaderStage::Vertex, 1);
+    stream.set_shader_key(1, ShaderStage::Fragment, 1);
     stream.set_constants_f32(1, ShaderStage::Fragment, 0, 1, &[1.0, 0.0, 0.0, 1.0]);
 
     stream.draw_indexed(1, 3, 0, 0);
