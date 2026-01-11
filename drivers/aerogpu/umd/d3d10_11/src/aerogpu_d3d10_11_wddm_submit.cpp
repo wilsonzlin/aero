@@ -906,19 +906,34 @@ void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
       dealloc.hContext = hContext;
     }
     __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
-      dealloc.pDmaBuffer = alloc.pDmaBuffer;
+      __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
+        dealloc.pDmaBuffer = alloc.pDmaBuffer;
+      }
     }
     __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
-      dealloc.pCommandBuffer = alloc.pCommandBuffer;
+      __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
+        dealloc.pCommandBuffer = alloc.pCommandBuffer;
+      }
     }
     __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
-      dealloc.pAllocationList = alloc.pAllocationList;
+      __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
+        dealloc.pAllocationList = alloc.pAllocationList;
+      }
     }
     __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
-      dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      __if_exists(D3DDDICB_ALLOCATE::pPatchLocationList) {
+        dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
     }
     __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
-      dealloc.pDmaBufferPrivateData = alloc.pDmaBufferPrivateData;
+      __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
+        dealloc.pDmaBufferPrivateData = alloc.pDmaBufferPrivateData;
+      }
+    }
+    __if_exists(D3DDDICB_DEALLOCATE::DmaBufferPrivateDataSize) {
+      __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
+        dealloc.DmaBufferPrivateDataSize = alloc.DmaBufferPrivateDataSize;
+      }
     }
 
     (void)CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDevice11(runtime_device_private), MakeRtDevice10(runtime_device_private), &dealloc);
