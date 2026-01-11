@@ -31,16 +31,28 @@ static NTSTATUS VirtioSgBuilderAddRange(VIRTIO_SG_BUILDER *b, UINT64 addr, size_
 			UINT32 space = VIRTIO_SG_MAX_LEN - b->last_len;
 			size_t take = VirtioMinSize(len, (size_t)space);
 
+			/*
+			 * Validate that the segment does not wrap past UINT64_MAX.
+			 *
+			 * Note: A segment that ends exactly at UINT64_MAX is valid, but we
+			 * avoid computing addr+take in that case.
+			 */
+			if (take == 0 || addr > (VIRTIO_U64_MAX - (UINT64)(take - 1))) {
+				return STATUS_INVALID_PARAMETER;
+			}
+
 			b->last_len += (UINT32)take;
 			if (b->out != NULL && b->count != 0 && b->count <= b->out_cap) {
 				b->out[b->count - 1].len = b->last_len;
 			}
 
-			if (addr > (VIRTIO_U64_MAX - (UINT64)take)) {
-				return STATUS_INVALID_PARAMETER;
-			}
-			addr += (UINT64)take;
 			len -= take;
+			if (len != 0) {
+				if (addr > (VIRTIO_U64_MAX - (UINT64)take)) {
+					return STATUS_INVALID_PARAMETER;
+				}
+				addr += (UINT64)take;
+			}
 			continue;
 		}
 
@@ -50,6 +62,16 @@ static NTSTATUS VirtioSgBuilderAddRange(VIRTIO_SG_BUILDER *b, UINT64 addr, size_
 
 			if (b->count == 0xFFFFu) {
 				/* VirtqSplitAddBuffer takes a UINT16 sg_count. */
+				return STATUS_INVALID_PARAMETER;
+			}
+
+			/*
+			 * Validate that the segment does not wrap past UINT64_MAX.
+			 *
+			 * Note: A segment that ends exactly at UINT64_MAX is valid, but we
+			 * avoid computing addr+take in that case.
+			 */
+			if (take == 0 || addr > (VIRTIO_U64_MAX - (UINT64)(take - 1))) {
 				return STATUS_INVALID_PARAMETER;
 			}
 			b->count++;
@@ -64,11 +86,13 @@ static NTSTATUS VirtioSgBuilderAddRange(VIRTIO_SG_BUILDER *b, UINT64 addr, size_
 				b->out[b->count - 1].write = b->write;
 			}
 
-			if (addr > (VIRTIO_U64_MAX - (UINT64)take)) {
-				return STATUS_INVALID_PARAMETER;
-			}
-			addr += (UINT64)take;
 			len -= take;
+			if (len != 0) {
+				if (addr > (VIRTIO_U64_MAX - (UINT64)take)) {
+					return STATUS_INVALID_PARAMETER;
+				}
+				addr += (UINT64)take;
+			}
 		}
 	}
 

@@ -258,6 +258,23 @@ static void TestInvalidPfnOverflow(void)
 	ASSERT_EQ_U16(count, 0);
 }
 
+static void TestAddrCanEndAtU64Max(void)
+{
+	UINT64 pfns[1];
+	VIRTQ_SG sg[1];
+	UINT16 count = 0;
+	NTSTATUS status;
+
+	pfns[0] = ((UINT64)~0ull) >> PAGE_SHIFT;
+
+	status = VirtioSgBuildFromPfns(pfns, 1, PAGE_SIZE - 1u, 1u, TRUE, sg, 1, &count);
+	ASSERT_EQ_STATUS(status, STATUS_SUCCESS);
+	ASSERT_EQ_U16(count, 1);
+	ASSERT_EQ_U64(sg[0].addr, (UINT64)~0ull);
+	ASSERT_EQ_U32(sg[0].len, 1u);
+	ASSERT_TRUE(sg[0].write != FALSE);
+}
+
 static void TestTooManySegments(void)
 {
 	const UINT32 pfn_count = 0x10000u; /* one more than UINT16 max */
@@ -293,6 +310,7 @@ int main(void)
 	TestSizingCallNoOutput();
 	TestInvalidParams();
 	TestInvalidPfnOverflow();
+	TestAddrCanEndAtU64Max();
 	TestTooManySegments();
 
 	printf("virtio_sg_pfn_test: all tests passed\n");
