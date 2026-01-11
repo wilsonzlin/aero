@@ -1672,6 +1672,9 @@ static void test_identity_contract_v1_bad_revision(void) {
         &id);
 
     expect_identity_result("identity_contract_v1_bad_revision.res", res, VIRTIO_PCI_IDENTITY_ERR_REVISION_MISMATCH);
+    expect_u32("identity_contract_v1_bad_revision.vendor", id.vendor_id, VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    expect_u32("identity_contract_v1_bad_revision.device", id.device_id, 0x1052);
+    expect_u32("identity_contract_v1_bad_revision.revision", id.revision_id, 0x02);
 }
 
 static void test_identity_contract_v1_bad_vendor(void) {
@@ -1691,6 +1694,9 @@ static void test_identity_contract_v1_bad_vendor(void) {
         &id);
 
     expect_identity_result("identity_contract_v1_bad_vendor.res", res, VIRTIO_PCI_IDENTITY_ERR_VENDOR_MISMATCH);
+    expect_u32("identity_contract_v1_bad_vendor.vendor", id.vendor_id, 0x1234);
+    expect_u32("identity_contract_v1_bad_vendor.device", id.device_id, 0x1052);
+    expect_u32("identity_contract_v1_bad_vendor.revision", id.revision_id, VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID);
 }
 
 static void test_identity_contract_v1_device_not_modern(void) {
@@ -1710,6 +1716,9 @@ static void test_identity_contract_v1_device_not_modern(void) {
         &id);
 
     expect_identity_result("identity_contract_v1_device_not_modern.res", res, VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_MODERN);
+    expect_u32("identity_contract_v1_device_not_modern.vendor", id.vendor_id, VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    expect_u32("identity_contract_v1_device_not_modern.device", id.device_id, 0x1000);
+    expect_u32("identity_contract_v1_device_not_modern.revision", id.revision_id, VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID);
 }
 
 static void test_identity_contract_v1_device_not_allowed(void) {
@@ -1729,6 +1738,9 @@ static void test_identity_contract_v1_device_not_allowed(void) {
         &id);
 
     expect_identity_result("identity_contract_v1_device_not_allowed.res", res, VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_ALLOWED);
+    expect_u32("identity_contract_v1_device_not_allowed.vendor", id.vendor_id, VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    expect_u32("identity_contract_v1_device_not_allowed.device", id.device_id, 0x1059);
+    expect_u32("identity_contract_v1_device_not_allowed.revision", id.revision_id, VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID);
 }
 
 static void test_identity_parse_reads_subsystem_ids(void) {
@@ -1769,6 +1781,44 @@ static void test_identity_parse_truncated_subsystem_ids_zeroed(void) {
     expect_identity_result("identity_parse_truncated_subsystem_ids_zeroed.res", res, VIRTIO_PCI_IDENTITY_OK);
     expect_u32("identity_parse_truncated_subsystem_ids_zeroed.subsys_vendor", id.subsystem_vendor_id, 0);
     expect_u32("identity_parse_truncated_subsystem_ids_zeroed.subsys_id", id.subsystem_id, 0);
+}
+
+static void test_identity_parse_bad_argument_null_cfg_space(void) {
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(&id, 0, sizeof(id));
+
+    res = virtio_pci_identity_parse(NULL, 256, &id);
+    expect_identity_result("identity_parse_bad_argument_null_cfg_space.res", res, VIRTIO_PCI_IDENTITY_ERR_BAD_ARGUMENT);
+}
+
+static void test_identity_parse_bad_argument_null_out_identity(void) {
+    uint8_t cfg[256];
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_parse(cfg, sizeof(cfg), NULL);
+    expect_identity_result("identity_parse_bad_argument_null_out_identity.res", res, VIRTIO_PCI_IDENTITY_ERR_BAD_ARGUMENT);
+}
+
+static void test_identity_parse_cfg_space_too_small(void) {
+    uint8_t cfg[256];
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(&id, 0, sizeof(id));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_parse(cfg, 0x08, &id);
+    expect_identity_result("identity_parse_cfg_space_too_small.res", res, VIRTIO_PCI_IDENTITY_ERR_CFG_SPACE_TOO_SMALL);
 }
 
 static void test_identity_contract_v1_bad_argument_null_cfg_space(void) {
@@ -1899,6 +1949,9 @@ int main(void) {
     test_identity_contract_v1_device_not_allowed();
     test_identity_parse_reads_subsystem_ids();
     test_identity_parse_truncated_subsystem_ids_zeroed();
+    test_identity_parse_bad_argument_null_cfg_space();
+    test_identity_parse_bad_argument_null_out_identity();
+    test_identity_parse_cfg_space_too_small();
     test_identity_contract_v1_bad_argument_null_cfg_space();
     test_identity_contract_v1_ok_null_out_identity();
     test_identity_contract_v1_allowed_list_empty_ok();
