@@ -2622,6 +2622,49 @@ function renderWebHidPassthroughPanel(): HTMLElement {
     return typeof (device as any).forget === "function";
   };
 
+  const siteSettingsHref = (() => {
+    try {
+      return `chrome://settings/content/siteDetails?site=${encodeURIComponent(location.origin)}`;
+    } catch {
+      return "chrome://settings/content/siteDetails";
+    }
+  })();
+  const siteSettingsLink = el("a", {
+    href: siteSettingsHref,
+    target: "_blank",
+    rel: "noopener",
+    text: "site settings",
+  });
+
+  const forgetDevice = async (device: HIDDevice, options: { detachFirst: boolean }): Promise<void> => {
+    error.textContent = "";
+    const errors: string[] = [];
+
+    if (options.detachFirst) {
+      try {
+        await webHidBroker.detachDevice(device);
+      } catch (err) {
+        errors.push(`Detach failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    try {
+      await (device as HIDDevice & { forget: () => Promise<void> }).forget();
+    } catch (err) {
+      errors.push(`Forget failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    try {
+      await webHidManager.refreshKnownDevices();
+    } catch (err) {
+      errors.push(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    if (errors.length) {
+      error.textContent = errors.join("\n");
+    }
+  };
+
   const formatLastReport = (device: HIDDevice): string => {
     const info = webHidBroker.getLastInputReportInfo(device);
     if (!info) return "lastInput=— size=—";
@@ -2674,22 +2717,16 @@ function renderWebHidPassthroughPanel(): HTMLElement {
                   }
                 },
               }),
-              canForgetDevice(device)
-                ? el("button", {
-                    text: "Forget",
-                    onclick: async () => {
-                      error.textContent = "";
-                      try {
-                        await device.forget();
-                        await webHidManager.refreshKnownDevices();
-                      } catch (err) {
-                        error.textContent = err instanceof Error ? err.message : String(err);
-                      }
-                    },
-                  })
-                : null,
-            ),
-          )
+               canForgetDevice(device)
+                 ? el("button", {
+                     text: "Forget",
+                     onclick: async () => {
+                       await forgetDevice(device, { detachFirst: false });
+                     },
+                   })
+                 : null,
+             ),
+           )
         : [el("li", { text: "No known devices. Use “Attach HID device (WebHID)…” to grant access." })]),
     );
 
@@ -2729,24 +2766,17 @@ function renderWebHidPassthroughPanel(): HTMLElement {
                    }
                  },
                }),
-               canForgetDevice(attachment.device)
-                 ? el("button", {
-                     text: "Forget",
-                     onclick: async () => {
-                       error.textContent = "";
-                       try {
-                         await webHidBroker.detachDevice(attachment.device);
-                         await attachment.device.forget();
-                         await webHidManager.refreshKnownDevices();
-                       } catch (err) {
-                         error.textContent = err instanceof Error ? err.message : String(err);
-                       }
-                     },
-                   })
-                 : null,
-             );
-           })
-         : [el("li", { text: "No devices attached." })]),
+                canForgetDevice(attachment.device)
+                  ? el("button", {
+                      text: "Forget",
+                      onclick: async () => {
+                        await forgetDevice(attachment.device, { detachFirst: true });
+                      },
+                    })
+                  : null,
+              );
+            })
+          : [el("li", { text: "No devices attached." })]),
     );
   };
 
@@ -2758,8 +2788,12 @@ function renderWebHidPassthroughPanel(): HTMLElement {
 
   const hint = el("div", {
     class: "mono",
-    text: "WebHID permissions persist per-origin. Some Chromium builds support revoking permissions via the “Forget” buttons below; otherwise, use your browser's site settings and remove HID device permissions for this site.",
   });
+  hint.append(
+    "WebHID permissions persist per-origin. Some Chromium builds support revoking permissions via the “Forget” buttons below; otherwise, use your browser's ",
+    siteSettingsLink,
+    " and remove HID device permissions for this site.",
+  );
 
   return el(
     "div",
