@@ -89,4 +89,41 @@ describe("ipc/ring_buffer", () => {
     expect(out).toEqual([1, 2, 3]);
     expect(ring.tryPop()).toBeNull();
   });
+
+  it("tryPushWithWriter + consumeNext handle wrap markers", () => {
+    const ring = makeRing(32);
+
+    // Write a record that leaves only 4 bytes at the end so the next record must wrap.
+    expect(
+      ring.tryPushWithWriter(23, (dest) => {
+        dest.fill(7);
+      }),
+    ).toBe(true);
+
+    // Drain the first record so the ring is empty but the producer tail remains near the end.
+    let drained: number[] | null = null;
+    expect(
+      ring.consumeNext((payload) => {
+        drained = Array.from(payload);
+      }),
+    ).toBe(true);
+    expect(drained).toEqual(new Array(23).fill(7));
+
+    // This push forces a wrap marker because only 4 bytes remain at the end,
+    // which is enough for a marker but not enough for the record.
+    expect(
+      ring.tryPushWithWriter(4, (dest) => {
+        dest.set(Uint8Array.of(1, 2, 3, 4));
+      }),
+    ).toBe(true);
+
+    let wrapped: number[] | null = null;
+    expect(
+      ring.consumeNext((payload) => {
+        wrapped = Array.from(payload);
+      }),
+    ).toBe(true);
+    expect(wrapped).toEqual([1, 2, 3, 4]);
+    expect(ring.tryPop()).toBeNull();
+  });
 });
