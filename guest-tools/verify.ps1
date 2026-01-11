@@ -1628,7 +1628,7 @@ try {
             $svc = "" + $d.Service
 
             $relevant = $false
-            if ($pnpid -match '(?i)(VEN_1AF4|VID_1AF4|VEN_1AE0|VID_1AE0|VIRTIO|AERO)') { $relevant = $true }
+            if ($pnpid -match '(?i)(VEN_1AF4|VID_1AF4|VEN_A3A0|VID_A3A0|VEN_1AED|VID_1AED|VIRTIO|AERO)') { $relevant = $true }
             if (-not $relevant -and $pnpid) {
                 foreach ($rx in @($cfgVirtioBlkRegex,$cfgVirtioNetRegex,$cfgVirtioSndRegex,$cfgVirtioInputRegex,$cfgGpuRegex)) {
                     if ($rx -and $pnpid -match $rx) { $relevant = $true; break }
@@ -1740,7 +1740,7 @@ try {
     if (-not $netRegex) { $netRegex = $hwidVendorFallback }
     if (-not $sndRegex) { $sndRegex = $hwidVendorFallback }
     if (-not $inputRegex) { $inputRegex = $hwidVendorFallback }
-    if (-not $gpuRegex) { $gpuRegex = '(?i)(VEN_A3A0|VID_A3A0|VEN_1AE0|VID_1AE0|VEN_1AF4|VID_1AF4)' }
+    if (-not $gpuRegex) { $gpuRegex = '(?i)(VEN_A3A0|VID_A3A0|VEN_1AED|VID_1AED|VEN_1AF4|VID_1AF4)' }
 
     $storageServiceCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
     if ($cfgVirtioBlkService) { $storageServiceCandidates = @($cfgVirtioBlkService) + $storageServiceCandidates }
