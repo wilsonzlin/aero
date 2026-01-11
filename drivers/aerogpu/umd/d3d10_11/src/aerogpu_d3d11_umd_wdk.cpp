@@ -925,6 +925,9 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
 
     auto deallocate = [&](const D3DDDICB_ALLOCATE& alloc, void* dma_priv_ptr, UINT dma_priv_size) {
       D3DDDICB_DEALLOCATE dealloc = {};
+      __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+        dealloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+      }
       __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
         __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
           dealloc.pDmaBuffer = alloc.pDmaBuffer;
@@ -1115,6 +1118,8 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     HRESULT submit_hr = S_OK;
     uint64_t submission_fence = 0;
     if (do_present) {
+      [[maybe_unused]] uint64_t fence_id_tmp = 0;
+      [[maybe_unused]] uint64_t fence_value_tmp = 0;
       D3DDDICB_PRESENT present = {};
       __if_exists(D3DDDICB_PRESENT::hContext) {
         present.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
@@ -1152,17 +1157,40 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
         present.DmaBufferPrivateDataSize = dma_priv_size_submit;
       }
+      __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) {
+        present.pSubmissionFenceId = reinterpret_cast<decltype(present.pSubmissionFenceId)>(&fence_id_tmp);
+      }
+      __if_exists(D3DDDICB_PRESENT::pFenceValue) {
+        present.pFenceValue = reinterpret_cast<decltype(present.pFenceValue)>(&fence_value_tmp);
+      }
 
       submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, hrt_device11, hrt_device10, &present);
       __if_exists(D3DDDICB_PRESENT::NewFenceValue) {
         submission_fence = static_cast<uint64_t>(present.NewFenceValue);
+      }
+      __if_exists(D3DDDICB_PRESENT::FenceValue) {
+        if (!submission_fence) {
+          submission_fence = static_cast<uint64_t>(present.FenceValue);
+        }
+      }
+      __if_exists(D3DDDICB_PRESENT::pFenceValue) {
+        if (!submission_fence && present.pFenceValue) {
+          submission_fence = static_cast<uint64_t>(*present.pFenceValue);
+        }
       }
       __if_exists(D3DDDICB_PRESENT::SubmissionFenceId) {
         if (!submission_fence) {
           submission_fence = static_cast<uint64_t>(present.SubmissionFenceId);
         }
       }
+      __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) {
+        if (!submission_fence && present.pSubmissionFenceId) {
+          submission_fence = static_cast<uint64_t>(*present.pSubmissionFenceId);
+        }
+      }
     } else {
+      [[maybe_unused]] uint64_t fence_id_tmp = 0;
+      [[maybe_unused]] uint64_t fence_value_tmp = 0;
       D3DDDICB_RENDER render = {};
       __if_exists(D3DDDICB_RENDER::hContext) {
         render.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
@@ -1200,14 +1228,35 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
         render.DmaBufferPrivateDataSize = dma_priv_size_submit;
       }
+      __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) {
+        render.pSubmissionFenceId = reinterpret_cast<decltype(render.pSubmissionFenceId)>(&fence_id_tmp);
+      }
+      __if_exists(D3DDDICB_RENDER::pFenceValue) {
+        render.pFenceValue = reinterpret_cast<decltype(render.pFenceValue)>(&fence_value_tmp);
+      }
 
       submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, hrt_device11, hrt_device10, &render);
       __if_exists(D3DDDICB_RENDER::NewFenceValue) {
         submission_fence = static_cast<uint64_t>(render.NewFenceValue);
       }
+      __if_exists(D3DDDICB_RENDER::FenceValue) {
+        if (!submission_fence) {
+          submission_fence = static_cast<uint64_t>(render.FenceValue);
+        }
+      }
+      __if_exists(D3DDDICB_RENDER::pFenceValue) {
+        if (!submission_fence && render.pFenceValue) {
+          submission_fence = static_cast<uint64_t>(*render.pFenceValue);
+        }
+      }
       __if_exists(D3DDDICB_RENDER::SubmissionFenceId) {
         if (!submission_fence) {
           submission_fence = static_cast<uint64_t>(render.SubmissionFenceId);
+        }
+      }
+      __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) {
+        if (!submission_fence && render.pSubmissionFenceId) {
+          submission_fence = static_cast<uint64_t>(*render.pSubmissionFenceId);
         }
       }
     }
