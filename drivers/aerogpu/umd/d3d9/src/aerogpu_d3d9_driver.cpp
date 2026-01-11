@@ -118,7 +118,7 @@ constexpr HRESULT kSPresentOccluded = 0x08760868L;
 // D3D9 API/UMD query constants (numeric values from d3d9types.h).
 constexpr uint32_t kD3DQueryTypeEvent = 8u;
 constexpr uint32_t kD3DIssueEnd = 0x1u;
-constexpr uint32_t kD3DIssueEndAlt = 0x2u;
+constexpr uint32_t kD3DIssueBegin = 0x2u;
 constexpr uint32_t kD3DGetDataFlush = 0x1u;
 
 uint32_t f32_bits(float v) {
@@ -6070,7 +6070,10 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   }
 
   const uint32_t flags = pIssueQuery->flags;
-  const bool end = (flags == 0) || ((flags & kD3DIssueEnd) != 0) || ((flags & kD3DIssueEndAlt) != 0);
+  // Some runtimes appear to pass 0 for END. Be permissive and treat both 0 and
+  // D3DISSUE_END (1) as an END marker. D3DISSUE_BEGIN (2) is ignored for EVENT
+  // queries.
+  const bool end = (flags == 0) || ((flags & kD3DIssueEnd) != 0);
   if (!end) {
     return trace.ret(S_OK);
   }
@@ -6119,9 +6122,6 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   if (!is_event) {
     return trace.ret(D3DERR_NOTAVAILABLE);
   }
-  if (!q->issued.load(std::memory_order_acquire)) {
-    return trace.ret(D3DERR_INVALIDCALL);
-  }
 
   const bool has_data_ptr = (pGetQueryData->pData != nullptr);
   const bool has_data_size = (pGetQueryData->data_size != 0);
@@ -6140,10 +6140,19 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   // If no output buffer provided, just report readiness via HRESULT.
   const bool need_data = has_data_ptr;
 
+  if (!q->issued.load(std::memory_order_acquire)) {
+    // D3D9 clients can call GetData before Issue(END). Treat it as "not ready"
+    // rather than a hard error to keep polling code (DWM) robust.
+    if (need_data && pGetQueryData->data_size >= sizeof(uint32_t)) {
+      *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = FALSE;
+    }
+    return trace.ret(S_FALSE);
+  }
+
   const uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
 
-  FenceWaitResult wait_result = wait_for_fence(dev, fence_value, 0);
-  if (wait_result == FenceWaitResult::NotReady && (pGetQueryData->flags & kD3DGetDataFlush)) {
+  FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
+  if (wait_res == FenceWaitResult::NotReady && (pGetQueryData->flags & kD3DGetDataFlush)) {
     // Non-blocking GetData(FLUSH): attempt a single flush then re-check. Never
     // wait here (DWM can call into GetData while holding global locks). Also
     // avoid blocking on the device mutex: if another thread is inside the UMD
@@ -6152,10 +6161,10 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     if (dev_lock.owns_lock()) {
       (void)flush_locked(dev);
     }
-    wait_result = wait_for_fence(dev, fence_value, 0);
+    wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
   }
 
-  if (wait_result == FenceWaitResult::Complete) {
+  if (wait_res == FenceWaitResult::Complete) {
     if (need_data) {
       // D3DQUERYTYPE_EVENT expects a BOOL-like result.
       if (pGetQueryData->data_size < sizeof(uint32_t)) {
@@ -6175,7 +6184,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     }
     return trace.ret(S_OK);
   }
-  if (wait_result == FenceWaitResult::Failed) {
+  if (wait_res == FenceWaitResult::Failed) {
     return trace.ret(E_FAIL);
   }
   return trace.ret(S_FALSE);
