@@ -73,7 +73,7 @@ Reproduce locally:
 # Terraform (requires `terraform`; CI also runs `tflint`)
 cd infra/aws-s3-cloudfront-range
 terraform fmt -check -recursive
-terraform init -backend=false -input=false
+terraform init -backend=false -input=false -lockfile=readonly
 terraform validate
 
 # Optional: extra linting (requires `tflint`)
