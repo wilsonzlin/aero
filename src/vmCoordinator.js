@@ -56,6 +56,7 @@ export class VmCoordinator extends EventTarget {
 
     await this._awaitAck('started', { timeoutMs: 2000, message: 'Timed out waiting for CPU worker to start.' });
 
+    this.lastHeartbeatAt = Date.now();
     this._setState('running');
   }
 
