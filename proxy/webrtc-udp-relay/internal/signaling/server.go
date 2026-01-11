@@ -525,8 +525,13 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(r) {
+		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+
 	if s.WebRTC == nil {
-		http.Error(w, "webrtc api not configured", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "webrtc api not configured")
 		return
 	}
 
