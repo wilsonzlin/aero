@@ -3,6 +3,7 @@ pub mod keyboard;
 pub mod mouse;
 pub mod composite;
 pub mod usage;
+pub mod webhid;
 
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;

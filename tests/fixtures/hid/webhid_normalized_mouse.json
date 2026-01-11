@@ -1,0 +1,79 @@
+[
+  {
+    "usagePage": 1,
+    "usage": 2,
+    "type": "application",
+    "children": [],
+    "inputReports": [
+      {
+        "reportId": 0,
+        "items": [
+          {
+            "usagePage": 9,
+            "usages": [1, 2, 3],
+            "usageMinimum": 1,
+            "usageMaximum": 3,
+            "reportSize": 1,
+            "reportCount": 3,
+            "unitExponent": 0,
+            "unit": 0,
+            "logicalMinimum": 0,
+            "logicalMaximum": 1,
+            "physicalMinimum": 0,
+            "physicalMaximum": 1,
+            "strings": [],
+            "stringMinimum": 0,
+            "stringMaximum": 0,
+            "designators": [],
+            "designatorMinimum": 0,
+            "designatorMaximum": 0,
+            "isAbsolute": true,
+            "isArray": false,
+            "isBufferedBytes": false,
+            "isConstant": false,
+            "isLinear": true,
+            "isRange": true,
+            "isRelative": false,
+            "isVolatile": false,
+            "hasNull": false,
+            "hasPreferredState": true,
+            "isWrapped": false
+          },
+          {
+            "usagePage": 1,
+            "usages": [48, 49],
+            "usageMinimum": 0,
+            "usageMaximum": 0,
+            "reportSize": 8,
+            "reportCount": 2,
+            "unitExponent": 0,
+            "unit": 0,
+            "logicalMinimum": -127,
+            "logicalMaximum": 127,
+            "physicalMinimum": -127,
+            "physicalMaximum": 127,
+            "strings": [],
+            "stringMinimum": 0,
+            "stringMaximum": 0,
+            "designators": [],
+            "designatorMinimum": 0,
+            "designatorMaximum": 0,
+            "isAbsolute": false,
+            "isArray": false,
+            "isBufferedBytes": false,
+            "isConstant": false,
+            "isLinear": true,
+            "isRange": false,
+            "isRelative": true,
+            "isVolatile": false,
+            "hasNull": false,
+            "hasPreferredState": true,
+            "isWrapped": false
+          }
+        ]
+      }
+    ],
+    "outputReports": [],
+    "featureReports": []
+  }
+]
