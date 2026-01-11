@@ -419,7 +419,7 @@ pub trait DisplayAdapter {
 | WASM Threading          | SharedArrayBuffer + Atomics                  | True parallelism required               |
 | Graphics API            | WebGPU (fallback: WebGL2)                    | Hardware acceleration essential         |
 | Storage Backend         | OPFS primary, IndexedDB fallback             | Large file support                      |
-| Network Transport       | WebSocket (TCP), WebRTC (UDP)                | Browser networking constraints          |
+| Network Transport       | L2 tunnel over WebSocket (default), optional WebRTC DataChannel | Keep the browser as a frame forwarder; proxy runs the user-space stack (ADR 0005) |
 | Audio Processing        | AudioWorklet                                 | Low latency audio                       |
 | Browser memory model    | Split buffers (shared `WebAssembly.Memory` + small SABs) | Avoid >4GiB offsets and single huge SAB allocations |
 
