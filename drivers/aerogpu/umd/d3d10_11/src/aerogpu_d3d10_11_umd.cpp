@@ -138,6 +138,7 @@ void trace_create_resource_desc(const AEROGPU_DDIARG_CREATERESOURCE* pDesc) {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 // Win7 D3D11 runtime requests a specific user-mode DDI interface version. If we
@@ -1505,9 +1506,13 @@ uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
   return dev->last_completed_fence.load(std::memory_order_relaxed);
 }
 
-// Waits for `fence` to be completed. `timeout_ms == 0` means "infinite wait".
+// Waits for `fence` to be completed.
 //
-// On timeout, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
+// `timeout_ms` semantics match D3D11 / DXGI Map expectations:
+// - 0: non-blocking poll
+// - kAeroGpuTimeoutMsInfinite: infinite wait
+//
+// On timeout/poll miss, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
 HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
   if (!dev) {
     return E_INVALIDARG;
@@ -1531,12 +1536,13 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
 
   const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
   const UINT64 fence_values[1] = {fence};
+  const UINT64 timeout = (timeout_ms == kAeroGpuTimeoutMsInfinite) ? ~0ull : static_cast<UINT64>(timeout_ms);
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
   args.ObjectCount = 1;
   args.ObjectHandleArray = handles;
   args.FenceValueArray = fence_values;
-  args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+  args.Timeout = timeout;
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
   if (st == STATUS_TIMEOUT) {
@@ -5537,9 +5543,13 @@ uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
 #endif
 }
 
-// Waits for `fence` to be completed. `timeout_ms == 0` means "infinite wait".
+// Waits for `fence` to be completed.
 //
-// On timeout, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
+// `timeout_ms` semantics match D3D11 / DXGI Map expectations:
+// - 0: non-blocking poll
+// - kAeroGpuTimeoutMsInfinite: infinite wait
+//
+// On timeout/poll miss, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
 HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
   if (!dev) {
     return E_INVALIDARG;
@@ -5564,12 +5574,13 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
 
   const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
   const UINT64 fence_values[1] = {fence};
+  const UINT64 timeout = (timeout_ms == kAeroGpuTimeoutMsInfinite) ? ~0ull : static_cast<UINT64>(timeout_ms);
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
   args.ObjectCount = 1;
   args.ObjectHandleArray = handles;
   args.FenceValueArray = fence_values;
-  args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+  args.Timeout = timeout;
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
   if (st == STATUS_TIMEOUT) {
@@ -5599,12 +5610,12 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   }
 
   if (timeout_ms == 0) {
-    adapter->fence_cv.wait(lock, ready);
-    atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
-    return S_OK;
+    return kDxgiErrorWasStillDrawing;
   }
 
-  if (!adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
+  if (timeout_ms == kAeroGpuTimeoutMsInfinite) {
+    adapter->fence_cv.wait(lock, ready);
+  } else if (!adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
     return kDxgiErrorWasStillDrawing;
   }
 
@@ -6916,7 +6927,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
           return kDxgiErrorWasStillDrawing;
         }
       } else {
-        HRESULT wait_hr = AeroGpuWaitForFence(dev, fence, /*timeout_ms=*/0);
+        HRESULT wait_hr = AeroGpuWaitForFence(dev, fence, /*timeout_ms=*/kAeroGpuTimeoutMsInfinite);
         if (FAILED(wait_hr)) {
           return wait_hr;
         }
