@@ -14,6 +14,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
+import { createRequire } from "node:module";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -104,8 +105,13 @@ function runPerfWrapper(argv) {
     process.exit(1);
   }
 
-  const playwrightCoreInTools = path.join(repoRoot, "tools", "perf", "node_modules", "playwright-core");
-  if (!fs.existsSync(playwrightCoreInTools)) {
+  // `npm ci` for this repo installs workspace dependencies at the repo root and may
+  // not create a nested `tools/perf/node_modules/` directory (npm hoisting).
+  // Resolve Playwright the same way `tools/perf/run.mjs` will.
+  const perfRequire = createRequire(runnerPath);
+  try {
+    perfRequire.resolve("playwright-core/package.json");
+  } catch {
     console.error("[bench/run] Missing playwright-core dependency.");
     console.error("Run: npm ci && npx playwright install chromium");
     process.exit(1);
