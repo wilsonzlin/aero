@@ -161,6 +161,46 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.UsbPassthroughDemo).toBe(FakeUsbPassthroughDemo);
   });
 
+  it("allows threaded init without a crossOriginIsolated flag in Node-like runtimes", async () => {
+    if (!sharedMemorySupported()) return;
+
+    // This test exercises the "non-web" path where `crossOriginIsolated` is not
+    // a defined global. In browsers, the property exists and is not writable, so
+    // we skip when the runtime provides it.
+    const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
+    const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
+    if (hadCrossOriginIsolated) delete (globalThis as any).crossOriginIsolated;
+
+    try {
+      if ("crossOriginIsolated" in globalThis) return;
+
+      const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroWasmJsImporterOverride = {
+        threaded: async () => ({
+          default: async (_input?: unknown) => {},
+          greet: (name: string) => `hello ${name}`,
+          add: (a: number, b: number) => a + b,
+          version: () => 1,
+          sum: (a: number, b: number) => a + b,
+          mem_store_u32: (_offset: number, _value: number) => {},
+          mem_load_u32: (_offset: number) => 0,
+          guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        }),
+      };
+
+      const { variant } = await initWasm({ variant: "threaded", module });
+      expect(variant).toBe("threaded");
+    } finally {
+      if (hadCrossOriginIsolated) {
+        (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+      } else {
+        delete (globalThis as any).crossOriginIsolated;
+      }
+    }
+  });
+
   it("surfaces SharedRingBuffer/open_ring_by_kind for threaded init when present", async () => {
     if (!sharedMemorySupported()) return;
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
@@ -187,7 +227,9 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const open_ring_by_kind = (_buffer: SharedArrayBuffer, _kind: number, _nth: number) =>
       new FakeSharedRingBuffer(_buffer, 0);
 
-    // `initWasm` only selects the threaded build when `crossOriginIsolated` is true.
+    // In browsers, `crossOriginIsolated` is present and must be true for
+    // SharedArrayBuffer/WASM threads. Spoof it here so the test exercises the
+    // same (web-like) path under Node/Vitest.
     const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
     const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
     (globalThis as any).crossOriginIsolated = true;

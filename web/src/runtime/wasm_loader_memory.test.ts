@@ -19,8 +19,9 @@ describe("runtime/wasm_loader (memory injection)", () => {
   it("wires the provided WebAssembly.Memory as linear memory", async () => {
     if (!sharedMemorySupported()) return;
 
-    // `initWasm` only selects the threaded build when `crossOriginIsolated` is
-    // true. In Node/Vitest that flag is absent, so we spoof it for this test.
+    // In browsers, `crossOriginIsolated` must be true for SharedArrayBuffer/WASM
+    // threads. Spoof it here so the test exercises the same (web-like) path
+    // under Node/Vitest.
     const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
     const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
     (globalThis as any).crossOriginIsolated = true;

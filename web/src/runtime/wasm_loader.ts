@@ -447,8 +447,12 @@ function detectThreadSupport(): ThreadSupport {
         return { supported: false, reason: "Not running in a JS environment with globalThis" };
     }
 
-    // `crossOriginIsolated` is required for SharedArrayBuffer on the web.
-    if (!(globalThis as any).crossOriginIsolated) {
+    const hasCrossOriginIsolated = "crossOriginIsolated" in globalThis;
+
+    // `crossOriginIsolated` is required for SharedArrayBuffer on the web. In non-web
+    // contexts (e.g. Node/Vitest), this flag does not exist, but SharedArrayBuffer +
+    // shared WebAssembly.Memory may still be available.
+    if (hasCrossOriginIsolated && !(globalThis as any).crossOriginIsolated) {
         return {
             supported: false,
             reason: "crossOriginIsolated is false (missing COOP/COEP headers); SharedArrayBuffer is unavailable",
@@ -477,7 +481,12 @@ function detectThreadSupport(): ThreadSupport {
         return { supported: false, reason: `Shared WebAssembly.Memory is not supported: ${message}` };
     }
 
-    return { supported: true, reason: "crossOriginIsolated + SharedArrayBuffer + Atomics + shared WebAssembly.Memory" };
+    return {
+        supported: true,
+        reason: hasCrossOriginIsolated
+            ? "crossOriginIsolated + SharedArrayBuffer + Atomics + shared WebAssembly.Memory"
+            : "SharedArrayBuffer + Atomics + shared WebAssembly.Memory",
+    };
 }
 
 type RawWasmModule = any;

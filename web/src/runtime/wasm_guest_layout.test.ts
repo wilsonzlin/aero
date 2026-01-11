@@ -23,8 +23,9 @@ describe("runtime/wasm_guest_layout", () => {
     const variants: Array<"threaded" | "single"> = sharedMemorySupported() ? ["threaded", "single"] : ["single"];
 
     for (const variant of variants) {
-      // `initWasm` only selects the threaded build when `crossOriginIsolated` is
-      // true. In Node/Vitest that flag is absent, so spoof it for this test.
+      // In browsers, `crossOriginIsolated` must be true for SharedArrayBuffer/WASM
+      // threads. Spoof it here so the test exercises the same (web-like) path
+      // under Node/Vitest.
       const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
       const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
       if (variant === "threaded") {
