@@ -193,10 +193,10 @@ export function parseAndValidateProxyUrl(
 
   try {
     const parsed = new URL(v);
-    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:" && parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return {
         proxyUrl: null,
-        issue: "proxyUrl must be a ws:// or wss:// URL.",
+        issue: "proxyUrl must be a ws://, wss://, http://, or https:// URL.",
       };
     }
     return { proxyUrl: v };

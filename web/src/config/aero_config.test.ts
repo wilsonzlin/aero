@@ -57,10 +57,14 @@ describe("AeroConfig", () => {
   expect(resolved.effective.logLevel).toBe("info");
   });
 
-  it("validation: proxyUrl rejects non-ws URLs", () => {
+  it("validation: proxyUrl accepts http(s) and ws(s) URLs", () => {
   const parsed = parseAeroConfigOverrides({ proxyUrl: "https://example.com" });
-  expect(parsed.overrides.proxyUrl).toBeNull();
-  expect(parsed.issues.some((i) => i.key === "proxyUrl")).toBe(true);
+  expect(parsed.overrides.proxyUrl).toBe("https://example.com");
+  expect(parsed.issues.some((i) => i.key === "proxyUrl")).toBe(false);
+
+  const bad = parseAeroConfigOverrides({ proxyUrl: "ftp://example.com" });
+  expect(bad.overrides.proxyUrl).toBeNull();
+  expect(bad.issues.some((i) => i.key === "proxyUrl")).toBe(true);
   });
 
   it("querystring overrides: query takes precedence over stored", () => {
@@ -87,7 +91,8 @@ describe("AeroConfig", () => {
   const parsed = parseAeroConfigQueryOverrides("?mem=not-a-number&workers=1&proxy=https%3A%2F%2Fexample.com");
   expect(parsed.lockedKeys.has("guestMemoryMiB")).toBe(false);
   expect(parsed.lockedKeys.has("enableWorkers")).toBe(true);
-  expect(parsed.lockedKeys.has("proxyUrl")).toBe(false);
+  expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
+  expect(parsed.overrides.proxyUrl).toBe("https://example.com");
   });
 
   it("capability detection: does not throw in non-browser environments", () => {
