@@ -76,24 +76,59 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
+        USHORT expectedSize;
         USHORT notifyOff;
         UINT64 descPa, availPa, usedPa;
         USHORT notifyOffReadback;
 
         size = 0;
+        expectedSize = 0;
         notifyOff = 0;
         descPa = 0;
         availPa = 0;
         usedPa = 0;
+
+        switch (q) {
+        case VIRTIOSND_QUEUE_CONTROL:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_CONTROLQ;
+            break;
+        case VIRTIOSND_QUEUE_EVENT:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_EVENTQ;
+            break;
+        case VIRTIOSND_QUEUE_TX:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_TXQ;
+            break;
+        default:
+            expectedSize = 0;
+            break;
+        }
 
         status = VirtIoSndTransportReadQueueSize(&Dx->Transport, (USHORT)q, &size);
         if (!NT_SUCCESS(status)) {
             return status;
         }
 
+        if (expectedSize != 0 && size != expectedSize) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu size mismatch: device=%u expected=%u\n",
+                q,
+                (ULONG)size,
+                (ULONG)expectedSize);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         status = VirtIoSndTransportReadQueueNotifyOff(&Dx->Transport, (USHORT)q, &notifyOff);
         if (!NT_SUCCESS(status)) {
             return status;
+        }
+
+        if (notifyOff != (USHORT)q) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu notify_off mismatch: device=%u expected=%lu\n",
+                q,
+                (ULONG)notifyOff,
+                q);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
         status = VirtioSndQueueSplitCreate(
@@ -121,6 +156,11 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         if (notifyOffReadback != notifyOff) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu notify_off readback mismatch: init=%u readback=%u\n",
+                q,
+                (ULONG)notifyOff,
+                (ULONG)notifyOffReadback);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 

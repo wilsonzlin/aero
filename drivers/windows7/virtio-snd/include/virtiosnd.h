@@ -12,7 +12,12 @@
 
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
 
-/* The Aero contract requires three mandatory virtqueues (control/event/tx). */
+/*
+ * The Aero contract defines four virtqueues (control/event/tx/rx).
+ *
+ * This driver currently wires up control/event/tx only; rxq (capture) is not
+ * implemented yet.
+ */
 #define VIRTIOSND_QUEUE_CONTROL VIRTIO_SND_QUEUE_CONTROL
 #define VIRTIOSND_QUEUE_EVENT VIRTIO_SND_QUEUE_EVENT
 #define VIRTIOSND_QUEUE_TX VIRTIO_SND_QUEUE_TX
