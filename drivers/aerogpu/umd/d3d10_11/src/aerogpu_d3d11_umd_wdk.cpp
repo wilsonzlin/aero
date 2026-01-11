@@ -1861,6 +1861,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     sample_quality = static_cast<uint32_t>(pDesc->SampleDesc.Quality);
   }
 
+  uint32_t cpu_access = 0;
+  __if_exists(D3D11DDIARG_CREATERESOURCE::CPUAccessFlags) {
+    cpu_access = static_cast<uint32_t>(pDesc->CPUAccessFlags);
+  }
+  __if_exists(D3D11DDIARG_CREATERESOURCE::CpuAccessFlags) {
+    cpu_access = static_cast<uint32_t>(pDesc->CpuAccessFlags);
+  }
+
   uint64_t resource_flags_bits = 0;
   uint32_t resource_flags_size = 0;
   __if_exists(D3D11DDIARG_CREATERESOURCE::ResourceFlags) {
@@ -1882,7 +1890,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       static_cast<unsigned>(static_cast<uint32_t>(pDesc->ResourceDimension)),
       static_cast<unsigned>(static_cast<uint32_t>(pDesc->BindFlags)),
       static_cast<unsigned>(static_cast<uint32_t>(pDesc->Usage)),
-      static_cast<unsigned>(static_cast<uint32_t>(pDesc->CPUAccessFlags)),
+      static_cast<unsigned>(cpu_access),
       static_cast<unsigned>(static_cast<uint32_t>(pDesc->MiscFlags)),
       static_cast<unsigned>(static_cast<uint32_t>(pDesc->Format)),
       static_cast<unsigned>(static_cast<uint32_t>(pDesc->ByteWidth)),
@@ -1914,7 +1922,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
   res->bind_flags = static_cast<uint32_t>(pDesc->BindFlags);
   res->misc_flags = static_cast<uint32_t>(pDesc->MiscFlags);
   res->usage = static_cast<uint32_t>(pDesc->Usage);
-  res->cpu_access_flags = static_cast<uint32_t>(pDesc->CPUAccessFlags);
+  uint32_t cpu_access_flags = 0;
+  __if_exists(D3D11DDIARG_CREATERESOURCE::CPUAccessFlags) {
+    cpu_access_flags = static_cast<uint32_t>(pDesc->CPUAccessFlags);
+  }
+  __if_exists(D3D11DDIARG_CREATERESOURCE::CpuAccessFlags) {
+    cpu_access_flags = static_cast<uint32_t>(pDesc->CpuAccessFlags);
+  }
+  res->cpu_access_flags = cpu_access_flags;
 
   const uint32_t dim = static_cast<uint32_t>(pDesc->ResourceDimension);
 
