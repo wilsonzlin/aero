@@ -103,9 +103,10 @@ The driver’s render loop:
 Because TX completions are not used for timing, virtqueue “used” processing is
 treated as backpressure/resource reclamation only.
 
-Capture note: Aero contract v1’s virtio-snd device is playback-only (rxq unused).
-If/when capture is added in a future contract/device revision, this document
-should be updated with the corresponding RX scheduling model.
+Capture note: this document (and the current driver plan) is **render-only** and
+does not wire up the virtio-snd capture queue (`rxq`) yet. If/when capture is
+implemented, this document should be updated with the corresponding RX
+scheduling model.
 
 ## Buffer strategy (cyclic buffer + periods)
 
