@@ -193,6 +193,11 @@ struct Adapter {
   uint64_t next_fence = 1;
   uint64_t last_submitted_fence = 0;
   uint64_t completed_fence = 0;
+  // Diagnostics: number of non-empty submissions issued by the UMD. These are
+  // tracked under `fence_mutex` so host-side tests can assert submit ordering
+  // (render vs present) without relying solely on fence deltas.
+  uint64_t render_submit_count = 0;
+  uint64_t present_submit_count = 0;
 
   // Optional best-effort KMD query path (Win7 user-mode D3DKMTEscape).
   // NOTE: Querying via D3DKMTEscape is relatively expensive; callers should use

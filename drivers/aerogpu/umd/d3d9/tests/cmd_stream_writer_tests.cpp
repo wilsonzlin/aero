@@ -1945,9 +1945,13 @@ bool TestPresentExSubmitsOnceWhenNoPendingRenderWork() {
   }
 
   uint64_t base_fence = 0;
+  uint64_t base_render_submits = 0;
+  uint64_t base_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     base_fence = adapter->last_submitted_fence;
+    base_render_submits = adapter->render_submit_count;
+    base_present_submits = adapter->present_submit_count;
   }
 
   D3D9DDIARG_PRESENTEX present{};
@@ -1961,11 +1965,21 @@ bool TestPresentExSubmitsOnceWhenNoPendingRenderWork() {
   }
 
   uint64_t final_fence = 0;
+  uint64_t final_render_submits = 0;
+  uint64_t final_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     final_fence = adapter->last_submitted_fence;
+    final_render_submits = adapter->render_submit_count;
+    final_present_submits = adapter->present_submit_count;
   }
   if (!Check(final_fence == base_fence + 1, "PresentEx submits exactly once when no render work is pending")) {
+    return false;
+  }
+  if (!Check(final_render_submits == base_render_submits, "PresentEx (idle) does not issue a render submit")) {
+    return false;
+  }
+  if (!Check(final_present_submits == base_present_submits + 1, "PresentEx (idle) issues exactly one present submit")) {
     return false;
   }
 
@@ -2036,9 +2050,13 @@ bool TestPresentSubmitsOnceWhenNoPendingRenderWork() {
   }
 
   uint64_t base_fence = 0;
+  uint64_t base_render_submits = 0;
+  uint64_t base_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     base_fence = adapter->last_submitted_fence;
+    base_render_submits = adapter->render_submit_count;
+    base_present_submits = adapter->present_submit_count;
   }
 
   D3D9DDIARG_PRESENT present{};
@@ -2053,11 +2071,21 @@ bool TestPresentSubmitsOnceWhenNoPendingRenderWork() {
   }
 
   uint64_t final_fence = 0;
+  uint64_t final_render_submits = 0;
+  uint64_t final_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     final_fence = adapter->last_submitted_fence;
+    final_render_submits = adapter->render_submit_count;
+    final_present_submits = adapter->present_submit_count;
   }
   if (!Check(final_fence == base_fence + 1, "Present submits exactly once when no render work is pending")) {
+    return false;
+  }
+  if (!Check(final_render_submits == base_render_submits, "Present (idle) does not issue a render submit")) {
+    return false;
+  }
+  if (!Check(final_present_submits == base_present_submits + 1, "Present (idle) issues exactly one present submit")) {
     return false;
   }
 
@@ -2131,9 +2159,13 @@ bool TestPresentExSplitsRenderAndPresentSubmissions() {
   }
 
   uint64_t base_fence = 0;
+  uint64_t base_render_submits = 0;
+  uint64_t base_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     base_fence = adapter->last_submitted_fence;
+    base_render_submits = adapter->render_submit_count;
+    base_present_submits = adapter->present_submit_count;
   }
 
   // Emit a render command so PresentEx must flush it via a Render submission
@@ -2167,13 +2199,23 @@ bool TestPresentExSplitsRenderAndPresentSubmissions() {
   }
 
   uint64_t final_fence = 0;
+  uint64_t final_render_submits = 0;
+  uint64_t final_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     final_fence = adapter->last_submitted_fence;
+    final_render_submits = adapter->render_submit_count;
+    final_present_submits = adapter->present_submit_count;
   }
 
   if (!Check(final_fence == base_fence + 2,
              "PresentEx flushes render work then presents (two submissions)")) {
+    return false;
+  }
+  if (!Check(final_render_submits == base_render_submits + 1, "PresentEx flush issues exactly one render submit")) {
+    return false;
+  }
+  if (!Check(final_present_submits == base_present_submits + 1, "PresentEx issues exactly one present submit")) {
     return false;
   }
 
@@ -2247,9 +2289,13 @@ bool TestPresentSplitsRenderAndPresentSubmissions() {
   }
 
   uint64_t base_fence = 0;
+  uint64_t base_render_submits = 0;
+  uint64_t base_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     base_fence = adapter->last_submitted_fence;
+    base_render_submits = adapter->render_submit_count;
+    base_present_submits = adapter->present_submit_count;
   }
 
   // Emit a render command so Present must flush it via a Render submission before
@@ -2284,13 +2330,23 @@ bool TestPresentSplitsRenderAndPresentSubmissions() {
   }
 
   uint64_t final_fence = 0;
+  uint64_t final_render_submits = 0;
+  uint64_t final_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     final_fence = adapter->last_submitted_fence;
+    final_render_submits = adapter->render_submit_count;
+    final_present_submits = adapter->present_submit_count;
   }
 
   if (!Check(final_fence == base_fence + 2,
              "Present flushes render work then presents (two submissions)")) {
+    return false;
+  }
+  if (!Check(final_render_submits == base_render_submits + 1, "Present flush issues exactly one render submit")) {
+    return false;
+  }
+  if (!Check(final_present_submits == base_present_submits + 1, "Present issues exactly one present submit")) {
     return false;
   }
 
@@ -2364,9 +2420,13 @@ bool TestFlushNoopsOnEmptyCommandBuffer() {
   }
 
   uint64_t base_fence = 0;
+  uint64_t base_render_submits = 0;
+  uint64_t base_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     base_fence = adapter->last_submitted_fence;
+    base_render_submits = adapter->render_submit_count;
+    base_present_submits = adapter->present_submit_count;
   }
 
   hr = cleanup.device_funcs.pfnFlush(create_dev.hDevice);
@@ -2375,11 +2435,21 @@ bool TestFlushNoopsOnEmptyCommandBuffer() {
   }
 
   uint64_t after_empty_flush = 0;
+  uint64_t after_empty_render_submits = 0;
+  uint64_t after_empty_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     after_empty_flush = adapter->last_submitted_fence;
+    after_empty_render_submits = adapter->render_submit_count;
+    after_empty_present_submits = adapter->present_submit_count;
   }
   if (!Check(after_empty_flush == base_fence, "Flush(empty) does not submit")) {
+    return false;
+  }
+  if (!Check(after_empty_render_submits == base_render_submits, "Flush(empty) does not issue render submits")) {
+    return false;
+  }
+  if (!Check(after_empty_present_submits == base_present_submits, "Flush(empty) does not issue present submits")) {
     return false;
   }
 
@@ -2407,11 +2477,21 @@ bool TestFlushNoopsOnEmptyCommandBuffer() {
   }
 
   uint64_t after_flush = 0;
+  uint64_t after_render_submits = 0;
+  uint64_t after_present_submits = 0;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     after_flush = adapter->last_submitted_fence;
+    after_render_submits = adapter->render_submit_count;
+    after_present_submits = adapter->present_submit_count;
   }
-  return Check(after_flush == base_fence + 1, "Flush submits once when command buffer is non-empty");
+  if (!Check(after_flush == base_fence + 1, "Flush submits once when command buffer is non-empty")) {
+    return false;
+  }
+  if (!Check(after_render_submits == base_render_submits + 1, "Flush(non-empty) issues exactly one render submit")) {
+    return false;
+  }
+  return Check(after_present_submits == base_present_submits, "Flush(non-empty) does not issue present submits");
 }
 
 bool TestGetDisplayModeExReturnsPrimaryMode() {

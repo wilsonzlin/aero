@@ -2563,6 +2563,7 @@ uint64_t submit(Device* dev, bool is_present) {
 
   bool submitted_to_kmd = false;
   uint64_t submission_fence = 0;
+  bool did_submit = false;
 #if defined(_WIN32)
   // WDDM submission path: hand the runtime-provided DMA/alloc list buffers back
   // to dxgkrnl via the device callbacks captured at CreateDevice time.
@@ -2618,6 +2619,7 @@ uint64_t submit(Device* dev, bool is_present) {
 
       if (SUCCEEDED(submit_hr)) {
         submitted_to_kmd = true;
+        did_submit = true;
         dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
                                        dev->wddm_context.AllocationListSize,
                                        adapter->max_allocation_list_slot_id);
@@ -2703,6 +2705,7 @@ uint64_t submit(Device* dev, bool is_present) {
       fence = stub_fence;
       updated = updated || (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
     }
+    did_submit = true;
   }
   per_submission_fence = fence;
 #endif
@@ -2713,6 +2716,15 @@ uint64_t submit(Device* dev, bool is_present) {
 
   if (updated) {
     adapter->fence_cv.notify_all();
+  }
+
+  if (did_submit) {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    if (is_present) {
+      adapter->present_submit_count++;
+    } else {
+      adapter->render_submit_count++;
+    }
   }
 
   if (submit_log_enabled()) {
