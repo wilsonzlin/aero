@@ -1,5 +1,5 @@
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
-import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
+import { normalizeCollections, type HidCollectionInfo, type NormalizedHidCollectionInfo } from "./webhid_normalize";
 import {
   isHidErrorMessage,
   isHidLogMessage,
@@ -28,6 +28,16 @@ function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boo
   return false;
 }
 
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // TypeScript's `BufferSource` type excludes `SharedArrayBuffer` in some lib.dom
+  // versions, even though Chromium accepts it for WebHID calls. Keep this module
+  // strict-friendly by copying when the buffer is shared.
+  if (bytes.buffer instanceof ArrayBuffer) return bytes as unknown as Uint8Array<ArrayBuffer>;
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
+
 export class WebHidBroker {
   readonly manager: WebHidPassthroughManager;
 
@@ -51,9 +61,9 @@ export class WebHidBroker {
 
     // Ensure we clean up bridged state when the underlying manager closes a device
     // (e.g., after a physical disconnect).
-    this.#prevManagerAttached = new Set(this.manager.getState().attachedDevices);
+    this.#prevManagerAttached = new Set(this.manager.getState().attachedDevices.map((entry) => entry.device));
     this.#managerUnsubscribe = this.manager.subscribe((state) => {
-      const next = new Set(state.attachedDevices);
+      const next = new Set(state.attachedDevices.map((entry) => entry.device));
       for (const device of this.#prevManagerAttached) {
         if (!next.has(device)) {
           void this.#handleManagerDeviceDetached(device);
@@ -182,7 +192,7 @@ export class WebHidBroker {
 
     await this.manager.attachKnownDevice(device);
 
-    const collections = normalizeCollections(device.collections);
+    const collections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
     const hasInterruptOut = computeHasInterruptOut(collections);
 
     const attachMsg: HidAttachMessage = {
@@ -277,9 +287,9 @@ export class WebHidBroker {
 
     try {
       if (msg.reportType === "output") {
-        await device.sendReport(msg.reportId, msg.data);
+        await device.sendReport(msg.reportId, ensureArrayBufferBacked(msg.data));
       } else {
-        await device.sendFeatureReport(msg.reportId, msg.data);
+        await device.sendFeatureReport(msg.reportId, ensureArrayBufferBacked(msg.data));
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
