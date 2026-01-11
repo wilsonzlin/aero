@@ -8,5 +8,11 @@ When Aero starts redistributing real `.inf`/`.sys`/`.cat` artifacts under `drive
 - the upstream license texts copied verbatim
 - any required attribution/notice files from the upstream distribution
 
-Until then, `drivers/virtio/sample/` only contains non-functional placeholders for CI.
+Packaging note:
 
+- `drivers/scripts/make-driver-pack.ps1` copies this file into produced driver packs as
+  a top-level `THIRD_PARTY_NOTICES.md`, and also attempts to copy common upstream
+  virtio-win `LICENSE*`/`NOTICE*`/`README*` files into `licenses/virtio-win/` for
+  redistribution.
+
+Until then, `drivers/virtio/sample/` only contains non-functional placeholders for CI.
