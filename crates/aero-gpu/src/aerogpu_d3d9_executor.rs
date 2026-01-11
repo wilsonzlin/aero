@@ -361,6 +361,10 @@ struct DepthStencilState {
     stencil_enable: bool,
     stencil_read_mask: u8,
     stencil_write_mask: u8,
+    stencil_func: u32,
+    stencil_fail_op: u32,
+    stencil_depth_fail_op: u32,
+    stencil_pass_op: u32,
 }
 
 impl Default for DepthStencilState {
@@ -372,6 +376,10 @@ impl Default for DepthStencilState {
             stencil_enable: false,
             stencil_read_mask: 0xFF,
             stencil_write_mask: 0xFF,
+            stencil_func: 7,          // ALWAYS
+            stencil_fail_op: 0,       // KEEP
+            stencil_depth_fail_op: 0, // KEEP
+            stencil_pass_op: 0,       // KEEP
         }
     }
 }
@@ -2298,6 +2306,7 @@ impl AerogpuD3d9Executor {
                     stencil_enable: state.stencil_enable != 0,
                     stencil_read_mask: state.stencil_read_mask,
                     stencil_write_mask: state.stencil_write_mask,
+                    ..Default::default()
                 };
                 Ok(())
             }
@@ -3632,9 +3641,23 @@ impl AerogpuD3d9Executor {
                         stencil: if depth_has_stencil
                             && self.state.depth_stencil_state.stencil_enable
                         {
+                            let face = wgpu::StencilFaceState {
+                                compare: map_compare_func(
+                                    self.state.depth_stencil_state.stencil_func,
+                                ),
+                                fail_op: map_stencil_op(
+                                    self.state.depth_stencil_state.stencil_fail_op,
+                                ),
+                                depth_fail_op: map_stencil_op(
+                                    self.state.depth_stencil_state.stencil_depth_fail_op,
+                                ),
+                                pass_op: map_stencil_op(
+                                    self.state.depth_stencil_state.stencil_pass_op,
+                                ),
+                            };
                             wgpu::StencilState {
-                                front: wgpu::StencilFaceState::IGNORE,
-                                back: wgpu::StencilFaceState::IGNORE,
+                                front: face,
+                                back: face,
                                 read_mask: self.state.depth_stencil_state.stencil_read_mask as u32,
                                 write_mask: self.state.depth_stencil_state.stencil_write_mask
                                     as u32,
@@ -3713,6 +3736,16 @@ impl AerogpuD3d9Executor {
             if let Some((x, y, w, h)) = self.state.scissor {
                 pass.set_scissor_rect(x, y, w, h);
             }
+        }
+
+        if depth_has_stencil && self.state.depth_stencil_state.stencil_enable {
+            let stencil_ref = self
+                .state
+                .render_states
+                .get(d3d9::D3DRS_STENCILREF as usize)
+                .copied()
+                .unwrap_or(0);
+            pass.set_stencil_reference(stencil_ref & 0xFF);
         }
 
         pass.set_pipeline(pipeline);
@@ -3883,6 +3916,35 @@ impl AerogpuD3d9Executor {
             d3d9::D3DRS_STENCILWRITEMASK => {
                 self.state.depth_stencil_state.stencil_write_mask = (value & 0xFF) as u8
             }
+            d3d9::D3DRS_STENCILFAIL => {
+                let raw = if value == 0 { 1 } else { value };
+                match d3d9_stencil_op_to_aerogpu(raw) {
+                    Some(op) => self.state.depth_stencil_state.stencil_fail_op = op,
+                    None => debug!(state_id, value, "unknown D3D9 stencil op"),
+                }
+            }
+            d3d9::D3DRS_STENCILZFAIL => {
+                let raw = if value == 0 { 1 } else { value };
+                match d3d9_stencil_op_to_aerogpu(raw) {
+                    Some(op) => self.state.depth_stencil_state.stencil_depth_fail_op = op,
+                    None => debug!(state_id, value, "unknown D3D9 stencil op"),
+                }
+            }
+            d3d9::D3DRS_STENCILPASS => {
+                let raw = if value == 0 { 1 } else { value };
+                match d3d9_stencil_op_to_aerogpu(raw) {
+                    Some(op) => self.state.depth_stencil_state.stencil_pass_op = op,
+                    None => debug!(state_id, value, "unknown D3D9 stencil op"),
+                }
+            }
+            d3d9::D3DRS_STENCILFUNC => {
+                let raw = if value == 0 { 8 } else { value };
+                match d3d9_compare_to_aerogpu(raw) {
+                    Some(func) => self.state.depth_stencil_state.stencil_func = func,
+                    None => debug!(state_id, value, "unknown D3D9 compare func"),
+                }
+            }
+            d3d9::D3DRS_STENCILREF => {}
             d3d9::D3DRS_ALPHABLENDENABLE => self.state.blend_state.enable = value != 0,
             d3d9::D3DRS_SRCBLEND => match value {
                 d3d9::D3DBLEND_BOTHSRCALPHA => {
@@ -4593,6 +4655,20 @@ fn map_compare_func(func: u32) -> wgpu::CompareFunction {
     }
 }
 
+fn map_stencil_op(op: u32) -> wgpu::StencilOperation {
+    match op {
+        0 => wgpu::StencilOperation::Keep,
+        1 => wgpu::StencilOperation::Zero,
+        2 => wgpu::StencilOperation::Replace,
+        3 => wgpu::StencilOperation::IncrementClamp,
+        4 => wgpu::StencilOperation::DecrementClamp,
+        5 => wgpu::StencilOperation::Invert,
+        6 => wgpu::StencilOperation::IncrementWrap,
+        7 => wgpu::StencilOperation::DecrementWrap,
+        _ => wgpu::StencilOperation::Keep,
+    }
+}
+
 fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     // Match `aero-d3d9` shader generation: all bindings are in group(0), with
     // binding(0)=constants and (texture,sampler) pairs laid out as:
@@ -4704,6 +4780,13 @@ fn d3d9_compare_to_aerogpu(value: u32) -> Option<u32> {
     }
 }
 
+fn d3d9_stencil_op_to_aerogpu(value: u32) -> Option<u32> {
+    match value {
+        1..=8 => Some(value - 1),
+        _ => None,
+    }
+}
+
 fn d3d9_blend_to_aerogpu(value: u32) -> Option<u32> {
     Some(match value {
         d3d9::D3DBLEND_ZERO => 0,
@@ -4747,6 +4830,11 @@ mod d3d9 {
     pub const D3DRS_SCISSORTESTENABLE: u32 = 174;
 
     pub const D3DRS_STENCILENABLE: u32 = 52;
+    pub const D3DRS_STENCILFAIL: u32 = 53;
+    pub const D3DRS_STENCILZFAIL: u32 = 54;
+    pub const D3DRS_STENCILPASS: u32 = 55;
+    pub const D3DRS_STENCILFUNC: u32 = 56;
+    pub const D3DRS_STENCILREF: u32 = 57;
     pub const D3DRS_STENCILMASK: u32 = 58;
     pub const D3DRS_STENCILWRITEMASK: u32 = 59;
 
