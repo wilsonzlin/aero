@@ -134,10 +134,12 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
     let stream_bytes = load_fixture("cmd_triangle_sm4.bin");
     let parsed = parse_cmd_stream(&stream_bytes).expect("cmd_triangle_sm4 should parse");
 
-    let header_magic = parsed.header.magic;
-    let header_size_bytes = parsed.header.size_bytes;
-    assert_eq!(header_magic, AEROGPU_CMD_STREAM_MAGIC);
-    assert_eq!(header_size_bytes as usize, stream_bytes.len());
+    // `AeroGpuCmdStreamHeader` is `repr(C, packed)` (ABI mirror), so copy out fields before
+    // asserting to avoid taking references to packed fields.
+    let magic = parsed.header.magic;
+    let size_bytes = parsed.header.size_bytes;
+    assert_eq!(magic, AEROGPU_CMD_STREAM_MAGIC);
+    assert_eq!(size_bytes as usize, stream_bytes.len());
 
     // This fixture is intentionally tiny and stable; assert a fixed command count.
     assert_eq!(parsed.cmds.len(), 18);
