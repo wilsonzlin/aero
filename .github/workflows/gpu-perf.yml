@@ -120,6 +120,7 @@ jobs:
           name: gpu-perf-smoke-${{ github.run_id }}
           path: head/gpu-perf-results
           if-no-files-found: error
+          retention-days: 14
 
   gpu-perf-comment:
     name: PR comment (gpu perf smoke)
