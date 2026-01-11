@@ -8,7 +8,7 @@ use crate::tier1_ir::{BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator,
 use crate::t2_ir::{
     BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, ValueId,
 };
-use crate::{discover_block, translate_block, BlockLimits};
+use crate::tier1::{discover_block, translate_block, BlockLimits};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CfgBuildConfig {

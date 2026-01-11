@@ -3,7 +3,8 @@
 mod tier1_common;
 
 use aero_cpu_core::state::CpuState;
-use aero_jit::{discover_block, translate_block, BlockLimits, Tier1Bus};
+use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
+use aero_jit::Tier1Bus;
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
 use tier1_common::{
@@ -301,7 +302,7 @@ fn assert_block_ir(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBu
 
     let mut cpu_ir = cpu;
     let mut bus_ir = bus;
-    let _ = aero_jit::tier1_ir::interp::execute_block(&ir, &mut cpu_ir, &mut bus_ir);
+    let _ = aero_jit::tier1::ir::interp::execute_block(&ir, &mut cpu_ir, &mut bus_ir);
 
     assert_eq!(
         CpuSnapshot::from_cpu(&cpu_ir),

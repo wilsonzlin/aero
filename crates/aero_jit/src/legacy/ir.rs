@@ -1,4 +1,4 @@
-use crate::Reg;
+use super::cpu::Reg;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Temp(pub u32);

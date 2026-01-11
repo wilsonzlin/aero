@@ -7,15 +7,15 @@ mod tier1_common;
 use tier1_common::SimpleBus;
 
 use aero_jit::abi;
-use aero_jit::opt::{optimize_trace, OptConfig};
 use aero_jit::profile::{ProfileData, TraceConfig};
-use aero_jit::t2_exec::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
-use aero_jit::t2_ir::{
+use aero_jit::tier2::exec::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
+use aero_jit::tier2::ir::{
     BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, TraceIr, TraceKind,
     ValueId,
 };
-use aero_jit::trace::TraceBuilder;
-use aero_jit::wasm::tier2::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
+use aero_jit::tier2::opt::{optimize_trace, OptConfig};
+use aero_jit::tier2::trace::TraceBuilder;
+use aero_jit::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
 use aero_jit::wasm::{
     IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
     IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,

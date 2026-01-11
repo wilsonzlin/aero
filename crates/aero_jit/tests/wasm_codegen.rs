@@ -1,12 +1,14 @@
-use aero_jit::interp::interpret_block;
-use aero_jit::ir::{BinOp, CmpOp, IrBlock, IrOp, MemSize, Operand, Place, Temp};
-use aero_jit::wasm::{
-    WasmCodegen, EXPORT_BLOCK_FN, IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY,
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MMU_TRANSLATE, IMPORT_MODULE, IMPORT_PAGE_FAULT,
+#![cfg(feature = "legacy-baseline")]
+
+use aero_jit::legacy::interp::interpret_block;
+use aero_jit::legacy::ir::{BinOp, CmpOp, IrBlock, IrOp, MemSize, Operand, Place, Temp};
+use aero_jit::legacy::wasm::{WasmCodegen, EXPORT_BLOCK_FN};
+use aero_jit::legacy::{CpuState, Reg};
+use aero_jit::wasm::abi::{
+    IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
+    IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
+    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE, IMPORT_PAGE_FAULT,
 };
-use aero_jit::{CpuState, Reg};
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
@@ -324,8 +326,8 @@ fn define_mmu_translate(
                     caller.data_mut().mmu_translate_calls += 1;
 
                     let vaddr_u = vaddr as u64;
-                    let vpn = vaddr_u >> aero_jit::PAGE_SHIFT;
-                    let idx = (vpn & aero_jit::JIT_TLB_INDEX_MASK) as u64;
+                    let vpn = vaddr_u >> aero_jit::legacy::PAGE_SHIFT;
+                    let idx = (vpn & aero_jit::legacy::JIT_TLB_INDEX_MASK) as u64;
 
                     let salt = read_u64_from_memory(
                         &mut caller,
@@ -338,16 +340,16 @@ fn define_mmu_translate(
                     let tag = tag | 1;
 
                     let is_ram = vaddr_u < caller.data().ram_size;
-                    let phys_base = vaddr_u & aero_jit::PAGE_BASE_MASK;
-                    let flags = aero_jit::TLB_FLAG_READ
-                        | aero_jit::TLB_FLAG_WRITE
-                        | aero_jit::TLB_FLAG_EXEC
-                        | if is_ram { aero_jit::TLB_FLAG_IS_RAM } else { 0 };
+                    let phys_base = vaddr_u & aero_jit::legacy::PAGE_BASE_MASK;
+                    let flags = aero_jit::legacy::TLB_FLAG_READ
+                        | aero_jit::legacy::TLB_FLAG_WRITE
+                        | aero_jit::legacy::TLB_FLAG_EXEC
+                        | if is_ram { aero_jit::legacy::TLB_FLAG_IS_RAM } else { 0 };
                     let data = phys_base | flags;
 
                     let entry_addr = (cpu_ptr as u64)
                         + (CpuState::TLB_OFFSET as u64)
-                        + idx * (aero_jit::JIT_TLB_ENTRY_SIZE as u64);
+                        + idx * (aero_jit::legacy::JIT_TLB_ENTRY_SIZE as u64);
 
                     write_u64_to_memory(&mut caller, &mem, entry_addr as usize, tag);
                     write_u64_to_memory(&mut caller, &mem, (entry_addr + 8) as usize, data);
@@ -556,7 +558,7 @@ fn wasm_codegen_load_store_helpers_match_interpreter() {
 fn wasm_codegen_tlb_collision_forces_retranslate() {
     // The baseline Tier-1 TLB is direct-mapped. Two virtual pages that share the same index must
     // evict each other, forcing a re-translate when revisiting the older page.
-    let collide_addr = (aero_jit::JIT_TLB_ENTRIES as u64) << aero_jit::PAGE_SHIFT;
+    let collide_addr = (aero_jit::legacy::JIT_TLB_ENTRIES as u64) << aero_jit::legacy::PAGE_SHIFT;
 
     let block = IrBlock::new(vec![
         IrOp::Load {

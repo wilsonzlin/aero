@@ -4,9 +4,9 @@ use aero_types::{Flag, Width};
 use tier1_common::SimpleBus;
 
 use aero_jit::profile::{ProfileData, TraceConfig};
-use aero_jit::t2_ir::{FlagMask, Instr, Terminator, TraceKind};
 use aero_jit::tier2::{build_function_from_x86, CfgBuildConfig};
-use aero_jit::trace::TraceBuilder;
+use aero_jit::tier2::ir::{FlagMask, Function, Instr, Terminator, TraceKind};
+use aero_jit::tier2::trace::TraceBuilder;
 
 // Tiny x86 program:
 //
@@ -52,13 +52,13 @@ const JNP_CODE: &[u8] = &[
     0xcc, // int3
 ];
 
-fn build_test_func() -> aero_jit::t2_ir::Function {
+fn build_test_func() -> Function {
     let mut bus = SimpleBus::new(64);
     bus.load(0, CODE);
     build_function_from_x86(&bus, 0, CfgBuildConfig::default())
 }
 
-fn build_func(code: &[u8]) -> aero_jit::t2_ir::Function {
+fn build_func(code: &[u8]) -> Function {
     let mut bus = SimpleBus::new(64);
     bus.load(0, code);
     build_function_from_x86(&bus, 0, CfgBuildConfig::default())

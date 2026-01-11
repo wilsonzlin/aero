@@ -48,6 +48,8 @@ impl Tier2WasmCodegen {
     /// - import `env.memory`
     /// - import memory helpers described by the `IMPORT_MEM_*` constants
     /// - import `env.code_page_version(page: i64) -> i64`
+    ///
+    /// The trace spills cached registers + `CpuState.rflags` on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
         let value_count = max_value_id(trace).max(1);
         let i64_locals = 2 + plan.local_count + value_count; // next_rip + rflags + cached regs + values
@@ -183,7 +185,7 @@ impl Tier2WasmCodegen {
         let mut f = Function::new(vec![(i64_locals, ValType::I64)]);
 
         // Load cached regs into locals.
-        for reg in all_gprs() {
+        for reg in all_regs() {
             let idx = reg.as_u8() as usize;
             if let Some(local) = plan.local_for_reg[idx] {
                 f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
@@ -197,7 +199,7 @@ impl Tier2WasmCodegen {
         f.instruction(&Instruction::I64Load(memarg(CPU_RIP_OFF, 3)));
         f.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
-        // Load RFLAGS.
+        // Load initial RFLAGS value.
         f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
         f.instruction(&Instruction::I64Load(memarg(CPU_RFLAGS_OFF, 3)));
         f.instruction(&Instruction::LocalSet(layout.rflags_local()));
@@ -232,7 +234,7 @@ impl Tier2WasmCodegen {
         emitter.f.instruction(&Instruction::End); // end exit block
 
         // Spill cached regs (only those that are written by the trace).
-        for reg in all_gprs() {
+        for reg in all_regs() {
             let idx = reg.as_u8() as usize;
             if !written_cached_regs[idx] {
                 continue;
@@ -856,7 +858,7 @@ fn compute_written_cached_regs(trace: &TraceIr, plan: &RegAllocPlan) -> [bool; R
     written
 }
 
-fn all_gprs() -> [Gpr; REG_COUNT] {
+fn all_regs() -> [Gpr; REG_COUNT] {
     [
         Gpr::Rax,
         Gpr::Rcx,
@@ -875,4 +877,8 @@ fn all_gprs() -> [Gpr; REG_COUNT] {
         Gpr::R14,
         Gpr::R15,
     ]
+}
+
+fn gpr_offset(reg: Gpr) -> u32 {
+    crate::abi::CPU_GPR_OFF[reg.as_u8() as usize]
 }

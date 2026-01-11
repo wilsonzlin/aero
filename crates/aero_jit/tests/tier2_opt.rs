@@ -6,17 +6,17 @@ mod tier1_common;
 use aero_types::{Flag, Gpr, Width};
 use tier1_common::SimpleBus;
 
-use aero_jit::opt::{optimize_trace, passes, OptConfig};
 use aero_jit::profile::{ProfileData, TraceConfig};
-use aero_jit::t2_exec::{
+use aero_jit::tier2::exec::{
     run_function, run_function_from_block, run_trace, run_trace_with_cached_regs, RunExit,
     RuntimeEnv, T2State,
 };
-use aero_jit::t2_ir::{
+use aero_jit::tier2::ir::{
     BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, TraceIr, TraceKind,
     ValueId, REG_COUNT,
 };
-use aero_jit::trace::TraceBuilder;
+use aero_jit::tier2::opt::{optimize_trace, passes, OptConfig};
+use aero_jit::tier2::trace::TraceBuilder;
 
 const ALL_REGS: [Gpr; REG_COUNT] = [
     Gpr::Rax,

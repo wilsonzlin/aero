@@ -54,7 +54,7 @@ pub const TLB_FLAG_WRITE: u64 = 1 << 1;
 pub const TLB_FLAG_EXEC: u64 = 1 << 2;
 pub const TLB_FLAG_IS_RAM: u64 = 1 << 3;
 
-/// `CpuState` layout that is shared with generated Tier-1 WASM blocks.
+/// `CpuState` layout that is shared with generated legacy baseline WASM blocks.
 ///
 /// The state is stored in linear memory at `cpu_ptr` (WASM i32 byte offset).
 /// All integer fields are little-endian.

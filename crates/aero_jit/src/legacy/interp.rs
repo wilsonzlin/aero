@@ -1,5 +1,5 @@
-use crate::cpu::CpuState;
-use crate::ir::{BinOp, CmpOp, IrBlock, IrOp, MemSize, Operand, Place, Temp};
+use super::cpu::CpuState;
+use super::ir::{BinOp, CmpOp, IrBlock, IrOp, MemSize, Operand, Place, Temp};
 
 pub const JIT_EXIT_SENTINEL: u64 = u64::MAX;
 

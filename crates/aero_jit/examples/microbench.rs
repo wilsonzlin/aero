@@ -3,9 +3,9 @@ use std::time::Instant;
 use aero_jit::Tier1Bus;
 use aero_types::Gpr;
 
-use aero_jit::opt::{optimize_trace, OptConfig};
-use aero_jit::t2_exec::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
-use aero_jit::t2_ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId};
+use aero_jit::tier2::exec::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
+use aero_jit::tier2::ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId};
+use aero_jit::tier2::opt::{optimize_trace, OptConfig};
 
 #[derive(Clone, Debug)]
 struct SimpleBus {
@@ -112,6 +112,6 @@ fn main() {
     eprintln!(
         "final rax baseline={} optimized={}",
         base.cpu.gpr[Gpr::Rax.as_u8() as usize],
-        opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize]
+        opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize],
     );
 }

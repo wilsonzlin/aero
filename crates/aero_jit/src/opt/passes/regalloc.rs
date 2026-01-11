@@ -1,5 +1,6 @@
-use crate::t2_ir::{Instr, TraceIr, REG_COUNT};
 use aero_types::Gpr;
+
+use crate::t2_ir::{Instr, TraceIr, REG_COUNT};
 
 /// A simple guest-register allocation plan.
 #[derive(Clone, Debug, PartialEq, Eq)]

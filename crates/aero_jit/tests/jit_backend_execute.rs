@@ -3,9 +3,10 @@
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit::backend::WasmtimeBackend;
-use aero_jit::tier1_ir::{GuestReg, IrBuilder, IrTerminator};
-use aero_jit::wasm::tier1::Tier1WasmCodegen;
-use aero_jit::{discover_block, translate_block, BlockLimits, Tier1Bus};
+use aero_jit::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
+use aero_jit::tier1::wasm::Tier1WasmCodegen;
+use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
+use aero_jit::Tier1Bus;
 use aero_types::{Gpr, Width};
 
 #[derive(Default)]

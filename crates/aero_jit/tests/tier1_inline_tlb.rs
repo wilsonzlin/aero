@@ -7,7 +7,7 @@ use aero_jit::abi::{
     CPU_AND_JIT_CTX_BYTE_SIZE, CPU_STATE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET,
     JIT_CTX_TLB_SALT_OFFSET,
 };
-use aero_jit::tier1_ir::{GuestReg, IrBuilder, IrTerminator};
+use aero_jit::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
 use aero_jit::wasm::{
     EXPORT_BLOCK_FN, IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16,
@@ -372,13 +372,14 @@ fn define_mmio_exit(store: &mut Store<HostState>, linker: &mut Linker<HostState>
         .unwrap();
 }
 
-fn run_wasm(block: &aero_jit::tier1_ir::IrBlock, cpu: CpuState, ram: Vec<u8>, ram_size: u64) -> (u64, CpuState, Vec<u8>, HostState) {
-    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
-        block,
-        Tier1WasmOptions {
-            inline_tlb: true,
-        },
-    );
+fn run_wasm(
+    block: &aero_jit::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+) -> (u64, CpuState, Vec<u8>, HostState) {
+    let wasm = Tier1WasmCodegen::new()
+        .compile_block_with_options(block, Tier1WasmOptions { inline_tlb: true });
     validate_wasm(&wasm);
 
     let ram_base = CPU_AND_JIT_CTX_BYTE_SIZE as u64;

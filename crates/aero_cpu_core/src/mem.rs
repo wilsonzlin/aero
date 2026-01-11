@@ -151,8 +151,11 @@ pub trait CpuBus {
     /// implementation chose not to handle the request and made no observable changes (callers
     /// should fall back to scalar operations).
     ///
-    /// The default implementation performs a byte-at-a-time copy and is correct
-    /// but potentially slow.
+    /// The Tier-0 interpreter uses this as a bulk primitive for REP MOVS* fast
+    /// paths, but it must remain correct even for overlapping ranges.
+    ///
+    /// Default implementation: byte-wise copy using scalar `read_u8`/`write_u8`,
+    /// choosing a direction that preserves memmove overlap semantics.
     fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
         if len == 0 || dst == src {
             return Ok(true);
@@ -180,7 +183,7 @@ pub trait CpuBus {
         Ok(true)
     }
 
-    /// Whether this bus can perform fast contiguous repeated sets/fills in RAM.
+    /// Whether this bus can perform fast, contiguous repeated sets/fills in RAM.
     ///
     /// This is a hint only: callers may still invoke [`CpuBus::bulk_set`] when
     /// this returns `false` and will get correct results (via the default scalar
@@ -190,13 +193,15 @@ pub trait CpuBus {
         false
     }
 
-    /// Fill `repeat` elements at `dst`, writing `pattern` each time.
+    /// Write `repeat` copies of `pattern` starting at `dst`.
+    ///
+    /// For example, STOSD would call this with `pattern.len() == 4` and
+    /// `repeat == ECX`.
     ///
     /// Returns `true` when the bus performed the fill. Returning `false` indicates the
     /// implementation chose not to handle the request and made no observable changes.
     ///
-    /// The default implementation performs a byte-at-a-time fill and is correct
-    /// but potentially slow.
+    /// Default implementation: scalar byte writes via `write_u8` and always returns `true`.
     fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
         if repeat == 0 || pattern.is_empty() {
             return Ok(true);
@@ -206,14 +211,11 @@ pub trait CpuBus {
             .checked_mul(repeat)
             .ok_or(Exception::MemoryFault)?;
         // Bounds-check destination range without panicking on overflow.
-        let total_u64 = total as u64;
-        dst.checked_add(total_u64).ok_or(Exception::MemoryFault)?;
-
+        dst.checked_add(total as u64).ok_or(Exception::MemoryFault)?;
         for i in 0..total {
-            let b = pattern[i % pattern.len()];
-            self.write_u8(dst + i as u64, b)?;
+            let byte = pattern[i % pattern.len()];
+            self.write_u8(dst + i as u64, byte)?;
         }
-
         Ok(true)
     }
 
@@ -244,7 +246,6 @@ impl FlatTestBus {
         }
         Ok(start..end)
     }
-
     pub fn load(&mut self, addr: u64, data: &[u8]) {
         let range = self
             .range(addr, data.len())
@@ -338,7 +339,7 @@ impl CpuBus for FlatTestBus {
         if src_range.start == dst_range.start {
             return Ok(true);
         }
-        self.mem.copy_within(src_range.clone(), dst_range.start);
+        self.mem.copy_within(src_range, dst_range.start);
         Ok(true)
     }
 

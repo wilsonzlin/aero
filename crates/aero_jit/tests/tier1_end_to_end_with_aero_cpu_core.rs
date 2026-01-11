@@ -4,10 +4,10 @@ use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, St
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit::backend::{compile_and_install_with_options, CompileQueue, Tier1Cpu, WasmBackend};
-use aero_jit::tier1_ir::interp::execute_block;
-use aero_jit::wasm::tier1::Tier1WasmOptions;
 use aero_jit::Tier1Bus;
-use aero_jit::{discover_block, translate_block, BlockLimits};
+use aero_jit::tier1::ir::interp::execute_block;
+use aero_jit::tier1::wasm::Tier1WasmOptions;
+use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
 use aero_types::Gpr;
 
 #[derive(Default)]

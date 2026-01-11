@@ -5,14 +5,14 @@ mod tier1_common;
 use aero_cpu_core::state::CpuState;
 use aero_jit::abi;
 use aero_jit::Tier1Bus;
-use aero_jit::tier1_ir::interp::execute_block;
-use aero_jit::wasm::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
+use aero_jit::tier1::ir::interp::execute_block;
+use aero_jit::tier1::wasm::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
+use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
 use aero_jit::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
     IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
 };
-use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::{Gpr, Width};
 use tier1_common::{write_cpu_to_wasm_bytes, write_gpr, CpuSnapshot, SimpleBus};
 
@@ -60,8 +60,7 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
             Func::wrap(
                 &mut store,
                 |_caller: Caller<'_, ()>, _kind: i32, _rip: i64| -> i64 {
-                    // Sentinel mirrors `u64::MAX`.
-                    -1i64
+                    JIT_EXIT_SENTINEL_I64
                 },
             ),
         )
@@ -216,7 +215,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
 }
 
 fn run_wasm(
-    ir: &aero_jit::tier1_ir::IrBlock,
+    ir: &aero_jit::tier1::ir::IrBlock,
     cpu: &CpuState,
     bus: &SimpleBus,
 ) -> (u64, CpuSnapshot, Vec<u8>) {

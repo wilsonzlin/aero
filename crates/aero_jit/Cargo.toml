@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+# Legacy baseline IR + inline-TLB WASM backend (kept for comparison/testing).
+legacy-baseline = []
+
 [dependencies]
 wasm-encoder = "0.244.0"
 thiserror = "2.0.17"

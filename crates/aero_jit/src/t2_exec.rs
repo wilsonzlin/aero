@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use aero_types::Flag;
+use aero_types::{Flag, Gpr};
 
 use crate::t2_ir::{
     eval_binop, FlagMask, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
@@ -347,12 +347,7 @@ impl RegCache {
         }
     }
 
-    fn read_reg(
-        &mut self,
-        reg: aero_types::Gpr,
-        cpu: &aero_cpu_core::state::CpuState,
-        stats: &mut ExecStats,
-    ) -> u64 {
+    fn read_reg(&mut self, reg: Gpr, cpu: &aero_cpu_core::state::CpuState, stats: &mut ExecStats) -> u64 {
         let idx = reg.as_u8() as usize;
         if !self.cached[idx] {
             stats.reg_loads += 1;
@@ -368,7 +363,7 @@ impl RegCache {
 
     fn write_reg(
         &mut self,
-        reg: aero_types::Gpr,
+        reg: Gpr,
         value: u64,
         cpu: &mut aero_cpu_core::state::CpuState,
         stats: &mut ExecStats,
@@ -385,7 +380,7 @@ impl RegCache {
     }
 
     fn spill(&mut self, cpu: &mut aero_cpu_core::state::CpuState, stats: &mut ExecStats) {
-        for reg in all_gprs() {
+        for reg in all_regs() {
             let idx = reg.as_u8() as usize;
             if self.cached[idx] && self.dirty[idx] {
                 stats.reg_stores += 1;
@@ -396,24 +391,24 @@ impl RegCache {
     }
 }
 
-fn all_gprs() -> [aero_types::Gpr; REG_COUNT] {
+fn all_regs() -> [Gpr; REG_COUNT] {
     [
-        aero_types::Gpr::Rax,
-        aero_types::Gpr::Rcx,
-        aero_types::Gpr::Rdx,
-        aero_types::Gpr::Rbx,
-        aero_types::Gpr::Rsp,
-        aero_types::Gpr::Rbp,
-        aero_types::Gpr::Rsi,
-        aero_types::Gpr::Rdi,
-        aero_types::Gpr::R8,
-        aero_types::Gpr::R9,
-        aero_types::Gpr::R10,
-        aero_types::Gpr::R11,
-        aero_types::Gpr::R12,
-        aero_types::Gpr::R13,
-        aero_types::Gpr::R14,
-        aero_types::Gpr::R15,
+        Gpr::Rax,
+        Gpr::Rcx,
+        Gpr::Rdx,
+        Gpr::Rbx,
+        Gpr::Rsp,
+        Gpr::Rbp,
+        Gpr::Rsi,
+        Gpr::Rdi,
+        Gpr::R8,
+        Gpr::R9,
+        Gpr::R10,
+        Gpr::R11,
+        Gpr::R12,
+        Gpr::R13,
+        Gpr::R14,
+        Gpr::R15,
     ]
 }
 

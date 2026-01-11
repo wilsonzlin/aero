@@ -7,8 +7,8 @@ use aero_x86::tier1::{decode_one, InstKind};
 use thiserror::Error;
 
 use crate::tier1_ir::{IrInst, IrTerminator};
-use crate::wasm::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
-use crate::{translate_block, BasicBlock, BlockEndKind, BlockLimits};
+use crate::tier1::wasm::{Tier1WasmCodegen, Tier1WasmOptions};
+use crate::tier1::{translate_block, BasicBlock, BlockEndKind, BlockLimits};
 
 /// Source of guest code bytes for the Tier-1 compiler.
 pub trait CodeProvider {
@@ -174,7 +174,7 @@ where
 
         let ir = translate_block(&block);
         if let Some(helper) = ir.insts.iter().find_map(|inst| match inst {
-            IrInst::CallHelper { helper, .. } => Some(*helper),
+            IrInst::CallHelper { helper, .. } => Some(helper),
             _ => None,
         }) {
             return Err(Tier1CompileError::UnsupportedHelper {

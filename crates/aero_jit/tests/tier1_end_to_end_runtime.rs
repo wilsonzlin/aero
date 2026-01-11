@@ -7,10 +7,10 @@ use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, St
 use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, JitConfig, JitRuntime};
 use aero_cpu_core::state::CpuState;
 use aero_jit::backend::{Tier1Cpu, WasmtimeBackend};
-use aero_jit::tier1_ir::interp as tier1_interp;
-use aero_jit::{
-    discover_block, BlockLimits, Tier1Bus, Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry,
-};
+use aero_jit::tier1::ir::interp as tier1_interp;
+use aero_jit::tier1::pipeline::{Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
+use aero_jit::tier1::{discover_block, translate_block, BlockLimits};
+use aero_jit::Tier1Bus;
 use aero_types::Gpr;
 
 #[derive(Clone)]
@@ -85,7 +85,7 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
     fn exec_block(&mut self, cpu: &mut TestCpu) -> u64 {
         let entry = cpu.rip();
         let block = discover_block(&self.bus, entry, BlockLimits::default());
-        let ir = aero_jit::translate_block(&block);
+        let ir = translate_block(&block);
         let _ = tier1_interp::execute_block(&ir, &mut cpu.state, &mut self.bus);
         cpu.state.rip
     }
