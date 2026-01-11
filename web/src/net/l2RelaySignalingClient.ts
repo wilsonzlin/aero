@@ -22,11 +22,11 @@ export type ConnectL2RelaySignalingOptions = ConnectRelaySignalingOptions & {
 // Ordering is optional; default helpers use `ordered=false` to reduce
 // head-of-line blocking.
 function createL2DataChannel(pc: RTCPeerConnection, opts?: RTCDataChannelInit): RTCDataChannel {
-  if (!opts) return createL2TunnelDataChannel(pc);
-  if (opts.maxRetransmits !== undefined || opts.maxPacketLifeTime !== undefined) {
+  if (opts?.maxRetransmits !== undefined || opts?.maxPacketLifeTime !== undefined) {
     throw new Error("L2 relay DataChannel must be reliable (do not set maxRetransmits/maxPacketLifeTime)");
   }
-  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, opts);
+  const init: RTCDataChannelInit = { ordered: false, ...(opts ?? {}) };
+  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, init);
   assertL2TunnelDataChannelSemantics(channel);
   return channel;
 }
