@@ -190,18 +190,39 @@ if missing_cmake:
         f"{cmake_path}: missing aerogpu_add_win7_test entries for manifest test(s): {', '.join(missing_cmake)}"
     )
 
+# Warn on extra CMake targets that look like tests but are not listed in the
+# manifest. Allow known helper binaries.
+cmake_allowed_extras = {
+    "aerogpu_timeout_runner",
+    "aerogpu_test_runner",
+    # Built only to support d3d9ex_shared_surface_wow64 (not a suite entry).
+    "d3d9ex_shared_surface_wow64_consumer_x64",
+}
+extra_cmake = sorted((cmake_targets - cmake_allowed_extras) - set(manifest_tests))
+if extra_cmake:
+    raise SystemExit(
+        f"{cmake_path}: aerogpu_add_win7_test target(s) not present in tests_manifest.txt: {', '.join(extra_cmake)}"
+    )
+
 # Ensure the built-in fallback list stays in sync with the manifest. This is used
 # when tests_manifest.txt is not bundled with a binary-only distribution.
 runner_text = runner_path.read_text(encoding="utf-8", errors="replace")
 m = re.search(r"const\s+char\*\s+const\s+kFallbackTests\[\]\s*=\s*\{(.*?)\};", runner_text, re.S)
 if not m:
     raise SystemExit(f"{runner_path}: could not find kFallbackTests[] fallback list")
-fallback_tests = set(re.findall(r'"([a-z0-9_]+)"', m.group(1)))
-missing_fallback = [t for t in manifest_tests if t not in fallback_tests]
-if missing_fallback:
-    raise SystemExit(
-        f"{runner_path}: missing kFallbackTests[] entries for manifest test(s): {', '.join(missing_fallback)}"
-    )
+fallback_tests_list = re.findall(r'"([a-z0-9_]+)"', m.group(1))
+fallback_tests_set = set(fallback_tests_list)
+if len(fallback_tests_set) != len(fallback_tests_list):
+    raise SystemExit(f"{runner_path}: kFallbackTests[] contains duplicate entries")
+missing_fallback = [t for t in manifest_tests if t not in fallback_tests_set]
+extra_fallback = [t for t in fallback_tests_list if t not in set(manifest_tests)]
+if missing_fallback or extra_fallback:
+    msg = []
+    if missing_fallback:
+        msg.append(f"missing: {', '.join(missing_fallback)}")
+    if extra_fallback:
+        msg.append(f"extra: {', '.join(extra_fallback)}")
+    raise SystemExit(f"{runner_path}: kFallbackTests[] does not match tests_manifest.txt ({'; '.join(msg)})")
 
 print("Win7 test suite manifest/doc/cmake check: OK")
 PY
