@@ -98,6 +98,10 @@ def check_docs() -> list[str]:
             re.compile(r"(?i)\bBy default\b[^.;]{0,200}`?-Profile\s+minimal`?"),
         ),
         (
+            "claims -Profile minimal is used by default",
+            re.compile(r"(?i)`?-Profile\s+minimal`?[^.;]{0,200}\bby default\b"),
+        ),
+        (
             "claims `--profile minimal` is default",
             re.compile(r"(?i)`?--profile\s+minimal`?\s*\(default\)"),
         ),
@@ -112,6 +116,10 @@ def check_docs() -> list[str]:
         (
             "claims by-default uses --profile minimal",
             re.compile(r"(?i)\bBy default\b[^.;]{0,200}`?--profile\s+minimal`?"),
+        ),
+        (
+            "claims --profile minimal is used by default",
+            re.compile(r"(?i)`?--profile\s+minimal`?[^.;]{0,200}\bby default\b"),
         ),
     ]
 
