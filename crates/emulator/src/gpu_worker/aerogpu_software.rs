@@ -2604,12 +2604,7 @@ impl AeroGpuSoftwareExecutor {
                     _ => {}
                 }
             }
-            cmd::AerogpuCmdOpcode::SetSamplerState
-            | cmd::AerogpuCmdOpcode::SetRenderState
-            | cmd::AerogpuCmdOpcode::CreateSampler
-            | cmd::AerogpuCmdOpcode::DestroySampler
-            | cmd::AerogpuCmdOpcode::SetSamplers
-            | cmd::AerogpuCmdOpcode::SetConstantBuffers => {
+            cmd::AerogpuCmdOpcode::SetSamplerState | cmd::AerogpuCmdOpcode::SetRenderState => {
                 // Parsed but currently ignored by the software backend.
             }
             cmd::AerogpuCmdOpcode::SetRenderTargets => {
