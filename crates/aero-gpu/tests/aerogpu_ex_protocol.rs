@@ -581,6 +581,61 @@ fn destroy_last_handle_invalidates_token_and_rejects_future_imports() {
 }
 
 #[test]
+fn release_shared_surface_invalidates_token_and_rejects_future_imports() {
+    // RELEASE_SHARED_SURFACE is emitted by the Win7 KMD when the final per-process allocation
+    // wrapper for a shared surface is released. The host should remove the (share_token -> resource)
+    // mapping so future IMPORT_SHARED_SURFACE attempts fail, while existing alias handles can
+    // continue to refer to the underlying resource handle.
+    const TOKEN: u64 = 0xAABB_CCDD_EEFF_4568;
+
+    let submit1 = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let submit2 = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::ReleaseSharedSurface as u32, |out| {
+            push_u64(out, TOKEN);
+            push_u64(out, 0);
+        });
+    });
+
+    let submit3 = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x30);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&submit1, 1)
+        .expect("submission 1 should succeed");
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), Some(0x10));
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    processor
+        .process_submission(&submit2, 2)
+        .expect("submission 2 should succeed");
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), None);
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    let err = processor.process_submission(&submit3, 3).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::UnknownShareToken(t) if t == TOKEN));
+}
+
+#[test]
 fn exporting_same_token_for_different_resources_across_submissions_is_an_error() {
     const TOKEN: u64 = 0xDEAD_BEEF_0000_0001;
 
