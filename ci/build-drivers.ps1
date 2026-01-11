@@ -9,14 +9,12 @@ Discovers CI-buildable driver projects under `drivers/` and builds each driver f
 platforms/configuration using MSBuild (command-line only).
 
 Discovery conventions (encoded here for CI determinism):
-  - Drivers must live at depth <= 2 under `drivers/` (example: `drivers/win7/virtio-net`).
-    - Exception: `drivers/windows7/virtio/<name>` is allowed (depth 3) to keep the virtio
-      driver family grouped under a shared `virtio/` folder while still producing per-driver
-      build/package output paths.
+  - Drivers may live at any depth under `drivers/` (example: `drivers/windows7/virtio/net`).
   - Each driver directory provides either:
       - a solution file `<dir>/<dirName>.sln`, OR
       - exactly one project file `<dir>/*.vcxproj`.
   - Only CI-buildable drivers are selected:
+      - Require `ci-package.json` at the driver root (explicit opt-in to CI packaging).
       - Require at least one `.inf` somewhere under the driver directory tree (excluding
         common build-output directories: `obj/`, `out/`, `build/`, `target/`).
       - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile)
@@ -24,8 +22,8 @@ Discovery conventions (encoded here for CI determinism):
         - For mixed solutions (MSBuild projects + wrapper projects), the script builds only the
           non-wrapper `*.vcxproj` projects to avoid invoking legacy `build.exe`.
       - When a driver exists in both a legacy and a canonical location, CI builds only the
-        canonical target by default to avoid packaging duplicate INFs/HWIDs. To build the legacy
-        target, pass it explicitly via `-Drivers`.
+        canonical target by default to avoid packaging duplicate INFs/HWIDs. To build a legacy
+        target (when it is also CI-packaged), pass it explicitly via `-Drivers`.
   - Build outputs are staged under:
       - `out/drivers/<driver-relative-path>/<arch>/...`
 
@@ -385,21 +383,6 @@ function Try-GetDriverBuildTargetFromDirectory {
     $displayName = $displayName.Replace($altSep, '/')
   }
 
-  # Keep discovery deterministic: CI only considers driver roots at depth <= 2
-  # under drivers/ (drivers/<name>/... or drivers/<group>/<name>/...).
-  #
-  # Exception: allow depth == 3 for `drivers/windows7/virtio/<name>` so that Win7 virtio
-  # drivers can live under a shared `drivers/windows7/virtio/` subtree (blk/net/common/etc).
-  $pathParts = ($displayName -split '/')
-  if ($pathParts.Count -gt 3) {
-    return $null
-  }
-  if ($pathParts.Count -eq 3) {
-    if (-not ($pathParts[0] -ieq 'windows7' -and $pathParts[1] -ieq 'virtio')) {
-      return $null
-    }
-  }
-
   $name = $Directory.Name
   $sln = Join-Path $Directory.FullName ("{0}.sln" -f $name)
   $buildPath = $null
@@ -422,6 +405,13 @@ function Try-GetDriverBuildTargetFromDirectory {
 
   # Require an INF in the same directory tree so downstream catalog/sign/package steps can run.
   if (-not (Test-HasInfInTree -DirectoryPath $Directory.FullName)) {
+    return $null
+  }
+
+  # Explicit CI gate: only drivers with a packaging manifest are built in CI.
+  $manifestPath = Join-Path $dirResolved 'ci-package.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    Write-Host ("Skipping {0}: missing ci-package.json (treating as dev/test driver; not CI-packaged)." -f $displayName)
     return $null
   }
 
@@ -456,6 +446,7 @@ function Discover-DriverBuildTargets {
   #
   # Additionally, we filter to CI-buildable *driver roots*:
   #   - require at least one INF in the directory tree (for catalog/sign/package)
+  #   - require ci-package.json at the driver root (explicit opt-in to CI packaging)
   #
   # MakeFileProj/Makefile wrapper projects are discovered but skipped later unless
   # -IncludeMakefileProjects is passed (CI default is to skip them).
@@ -501,7 +492,7 @@ function Discover-DriverBuildTargets {
     }
 
     if ($matches.Count -eq 0) {
-      throw "Requested driver '$requested' not found under: $DriversRoot"
+      throw "Requested driver '$requested' not found under: $DriversRoot (note: CI build targets must contain ci-package.json at the driver root)."
     }
     if ($matches.Count -gt 1) {
       $ids = ($matches | Select-Object -ExpandProperty Name | Sort-Object -Unique) -join ', '
@@ -708,7 +699,7 @@ Write-Host "Using MSBuild: $msbuild"
 $targets = Discover-DriverBuildTargets -DriversRoot $driversRoot -AllowList $Drivers
 
 if (-not $targets -or $targets.Count -eq 0) {
-  $msg = "no driver projects found"
+  $msg = "no CI-packaged driver projects found (driver roots must contain ci-package.json)"
   if (-not (Test-Path -LiteralPath $driversRoot -PathType Container)) {
     $msg = "$msg (drivers/ directory does not exist)"
   }

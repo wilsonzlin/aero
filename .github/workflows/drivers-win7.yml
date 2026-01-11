@@ -163,25 +163,6 @@ jobs:
             exit 0
           }
 
-          function Test-IsMakefileVcxproj {
-            param([Parameter(Mandatory = $true)][string]$Path)
-            $content = $null
-            try {
-              $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
-            } catch {
-              # If we cannot inspect the project, treat it as buildable so CI does not silently skip.
-              return $false
-            }
-            if ([string]::IsNullOrWhiteSpace($content)) {
-              # Malformed/empty project; treat as buildable so CI surfaces the error.
-              return $false
-            }
-            return (
-              $content -match '<Keyword>\s*MakeFileProj\s*</Keyword>' -or
-              $content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>'
-            )
-          }
-
           function Test-HasInfInTree {
             param([Parameter(Mandatory = $true)][string]$RootDir)
 
@@ -220,6 +201,25 @@ jobs:
             }
 
             return $false
+          }
+
+          function Test-IsMakefileVcxproj {
+            param([Parameter(Mandatory = $true)][string]$Path)
+            $content = $null
+            try {
+              $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+            } catch {
+              # If we cannot inspect the project, treat it as buildable so CI does not silently skip.
+              return $false
+            }
+            if ([string]::IsNullOrWhiteSpace($content)) {
+              # Malformed/empty project; treat as buildable so CI surfaces the error.
+              return $false
+            }
+            return (
+              $content -match '<Keyword>\s*MakeFileProj\s*</Keyword>' -or
+              $content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>'
+            )
           }
 
           function Test-SlnHasBuildableProjects {
@@ -285,6 +285,11 @@ jobs:
               [Parameter(Mandatory = $true)][string]$DriversRootResolved
             )
 
+            $manifestPath = Join-Path $Directory.FullName 'ci-package.json'
+            if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+              return $null
+            }
+
             $name = $Directory.Name
             $sln = Join-Path $Directory.FullName ("{0}.sln" -f $name)
             if (Test-Path -LiteralPath $sln -PathType Leaf) {
@@ -302,6 +307,10 @@ jobs:
                 $kind = 'ambiguous'
                 $buildPath = $Directory.FullName
               }
+            }
+
+            if (-not (Test-HasInfInTree -RootDir $Directory.FullName)) {
+              return $null
             }
 
             $sep = [IO.Path]::DirectorySeparatorChar
@@ -323,59 +332,35 @@ jobs:
               Name = $displayName
               Kind = $kind
               BuildPath = $buildPath
-              Directory = $dirResolved
+              ManifestPath = (Resolve-Path -LiteralPath $manifestPath).Path
             }
           }
 
-          # Only run CI when we have *CI-buildable* driver targets as discovered by ci/build-drivers.ps1:
-          #   - drivers/<name>/<name>.sln OR drivers/<name>/*.vcxproj
-          #   - drivers/<group>/<name>/<name>.sln OR drivers/<group>/<name>/*.vcxproj
-          #   - drivers/windows7/virtio/<name>/<name>.sln OR drivers/windows7/virtio/<name>/*.vcxproj
+          # Only run CI when we have *CI-packaged* driver targets as discovered by ci/build-drivers.ps1:
+          #   - contains ci-package.json at the driver root (explicit opt-in)
+          #   - contains <dirName>.sln OR exactly one *.vcxproj at the driver root
+          #   - contains at least one .inf somewhere under the driver directory tree (excluding obj/out/build/target)
           #
           # We intentionally ignore classic WDK 7.1 NMake wrapper projects that invoke build.exe
           # (Keyword=MakeFileProj / ConfigurationType=Makefile), because this workflow provisions
           # a modern Windows Kits toolchain and does not guarantee a WDK 7.1 build environment.
-          #
-          # We do *not* require .inf files to be colocated with projects; packaging INFs may live
-          # elsewhere under a driver root (e.g. drivers/aerogpu/packaging/win7/*.inf).
 
           $driversRootResolved = (Resolve-Path -LiteralPath $driversDir).Path
-          $level1 = @(Get-ChildItem -LiteralPath $driversDir -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
 
+          $manifestFiles = @(Get-ChildItem -LiteralPath $driversDir -Recurse -File -Filter 'ci-package.json' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
           $targets = New-Object System.Collections.Generic.List[object]
-          foreach ($dir1 in $level1) {
-            $t1 = Try-GetDriverBuildTarget -Directory $dir1 -DriversRootResolved $driversRootResolved
-            if ($null -ne $t1) {
-              [void]$targets.Add($t1)
-              continue
-            }
 
-            $level2 = @(Get-ChildItem -LiteralPath $dir1.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
-            foreach ($dir2 in $level2) {
-              $t2 = Try-GetDriverBuildTarget -Directory $dir2 -DriversRootResolved $driversRootResolved
-              if ($null -ne $t2) {
-                [void]$targets.Add($t2)
-                continue
-              }
-
-              # Allow a single extra nesting level for clean-room virtio drivers under:
-              #   drivers/windows7/virtio/<name>
-              if ($dir1.Name -ieq 'windows7' -and $dir2.Name -ieq 'virtio') {
-                $level3 = @(Get-ChildItem -LiteralPath $dir2.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
-                foreach ($dir3 in $level3) {
-                  $t3 = Try-GetDriverBuildTarget -Directory $dir3 -DriversRootResolved $driversRootResolved
-                  if ($null -ne $t3) {
-                    [void]$targets.Add($t3)
-                  }
-                }
-              }
+          foreach ($mf in $manifestFiles) {
+            if (-not $mf.Directory) { continue }
+            $t = Try-GetDriverBuildTarget -Directory $mf.Directory -DriversRootResolved $driversRootResolved
+            if ($null -ne $t) {
+              [void]$targets.Add($t)
             }
           }
 
           $buildable = New-Object System.Collections.Generic.List[object]
           foreach ($t in $targets) {
             if ($t.Kind -eq 'vcxproj') {
-              if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
               if (-not (Test-IsMakefileVcxproj -Path $t.BuildPath)) {
                 [void]$buildable.Add($t)
               }
@@ -383,7 +368,6 @@ jobs:
             }
 
             if ($t.Kind -eq 'sln') {
-              if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
               if (Test-SlnHasBuildableProjects -SlnPath $t.BuildPath) {
                 [void]$buildable.Add($t)
               }
@@ -391,20 +375,20 @@ jobs:
             }
 
             # "ambiguous" target (multiple vcxproj, no matching <dir>.sln):
-            # require an INF (to match build-drivers.ps1), but still run CI to surface the ambiguity.
-            if (-not (Test-HasInfInTree -RootDir $t.Directory)) { continue }
+            # still run CI to surface the ambiguity.
             [void]$buildable.Add($t)
           }
 
           if ($buildable.Count -eq 0) {
-            Write-Host "No CI-buildable Win7 driver targets were found (expected MSBuild-based solution/project with an .inf under drivers/<name>/, drivers/<group>/<name>/, or drivers/windows7/virtio/<name>/; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
+            Write-Host "No CI-packaged Win7 driver targets were found (expected drivers/**/ci-package.json + build target + INF; ignoring WDK 7.1 NMake/build.exe wrappers). Skipping."
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
 
-          Write-Host "Found $($buildable.Count) CI-buildable driver target(s); running Win7 driver build:"
-          foreach ($t in $buildable) {
+          Write-Host "Found $($buildable.Count) CI-packaged Win7 driver target(s); running Win7 driver build:"
+          foreach ($t in ($buildable | Sort-Object -Property Name)) {
             Write-Host ("- {0} ({1}): {2}" -f $t.Name, $t.Kind, $t.BuildPath)
+            Write-Host ("    manifest: {0}" -f $t.ManifestPath)
           }
           "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 

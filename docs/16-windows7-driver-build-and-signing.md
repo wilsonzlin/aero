@@ -110,6 +110,26 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 ### 2) Build driver binaries (`.sys`)
 
+#### CI driver selection (explicit opt-in via `ci-package.json`)
+
+`ci/build-drivers.ps1` only builds drivers that are explicitly marked as **CI-packaged** by placing a `ci-package.json` manifest at the *driver root* (for example `drivers/windows7/virtio/net/ci-package.json`).
+
+This avoids accidentally shipping dev/test drivers (and conflicting INFs / hardware ID matches) in CI-produced driver bundles and Guest Tools.
+
+The CI discovery rule is:
+
+- Driver root contains a build target: `<dirName>.sln` **or** exactly one `*.vcxproj`
+- Driver root contains at least one `*.inf` somewhere under its tree (excluding `obj/`, `out/`, `build/`, `target/`)
+- Driver root contains `ci-package.json`
+
+To add a new driver to CI packaging:
+
+1. Copy `drivers/_template/ci-package.json` into your driver root as `ci-package.json`
+2. Update the `$schema` relative path as needed
+3. Optionally set `infFiles` to an explicit allowlist (recommended if the driver directory contains multiple INFs)
+
+> Note: `drivers/windows/virtio-input/` is intentionally **not** CI-packaged yet (no `ci-package.json`) until it is validated end-to-end; it binds to the real virtio-input PCI HWID (`PCI\\VEN_1AF4&DEV_1052`), so shipping it prematurely can cause confusing driver selection/install behaviour.
+
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json
 ```

@@ -32,6 +32,14 @@ pwsh -File ci/package-guest-tools.ps1
 
 Builds driver projects under `drivers/` for the requested platforms/configuration using `msbuild.exe`.
 
+### CI packaging gate (`ci-package.json`)
+
+For CI determinism (and to avoid accidentally shipping dev/test drivers), `ci/build-drivers.ps1` only
+builds drivers that are explicitly opted into CI packaging by placing `ci-package.json` at the driver
+root.
+
+See: `drivers/_template/ci-package.json` and `ci/driver-package.schema.json`.
+
 ### Legacy WDK BUILD / NMake wrapper projects
 
 Some legacy driver projects are Visual Studio "Makefile" projects (`<Keyword>MakeFileProj</Keyword>` /
