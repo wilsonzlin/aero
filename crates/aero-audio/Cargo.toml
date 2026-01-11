@@ -12,4 +12,5 @@ aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
 io-snapshot = ["dep:aero-io-snapshot"]
 
 [dev-dependencies]
+aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
