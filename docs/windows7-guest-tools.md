@@ -281,11 +281,13 @@ Configures driver services and boot-critical settings (especially important for 
 
 If `setup.cmd` fails (or you prefer to install components manually), you can typically do the same work yourself.
 
-> The exact file names and folder layout inside `aero-guest-tools.iso` may vary by version. The commands below use common paths used by Aero Guest Tools (for example `X:\certs\` and `X:\drivers\`), but always prefer the layout on your media.
+> The exact file names and folder layout inside `aero-guest-tools.iso` may vary by version. The commands below use common paths used by Aero Guest Tools (for example `X:\drivers\` and (when present) `X:\certs\`), but always prefer the layout on your media.
 
-### 1) Import the Aero signing certificate (Local Machine)
+### 1) Import the driver signing certificate (Local Machine, if present/required)
 
-Look on the Guest Tools media for certificate file(s) (commonly under `X:\certs\` as `.cer`, `.crt`, or `.p7b`).
+If the Guest Tools media includes certificate file(s) (commonly under `X:\certs\` as `.cer`, `.crt`, or `.p7b`), import them.
+
+If your Guest Tools media has `manifest.json` `signing_policy=none`, it may ship **no** certificate files and this step is typically unnecessary (WHQL/production-signed drivers).
 
 From an elevated Command Prompt:
 

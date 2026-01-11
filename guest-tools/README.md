@@ -9,7 +9,7 @@ It provides:
 - `verify.cmd` / `verify.ps1`: offline diagnostics/verification
 - `THIRD_PARTY_NOTICES.md`: third-party attribution/redistribution notices for packaged components
 - `licenses\`: third-party license/notice files (when present in the packaged media)
-- `certs\`: public certificate(s) needed to validate Aero driver signatures
+- `certs\`: optional public certificate(s) needed to validate driver signatures (for test-signed/custom-signed drivers; may be empty for WHQL/production-signed media)
 - `drivers\`: driver packages (`.inf/.cat/.sys`) for x86 + amd64
 - `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding
 
