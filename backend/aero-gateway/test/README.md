@@ -1,6 +1,8 @@
-# aero-gateway property tests
+# aero-gateway tests
 
-This folder contains **property-based (“fuzz-style”) tests** for security-critical parsing and policy logic.
+This folder contains the Aero gateway's unit/integration tests, including some
+**property-based (“fuzz-style”) tests** for security-critical parsing and policy
+logic.
 
 ## Running
 
@@ -24,6 +26,9 @@ npm -w backend/aero-gateway run test:property
   - random valid frame streams round-trip `encode → parse` across arbitrary chunking
   - random byte sequences must not throw
 - DoH GET `dns=` base64url decoding and message size limits.
+- Cross-language protocol/auth conformance vectors:
+  - `origin.vectors.test.ts` (Origin normalization / allowlists)
+  - `sessionToken.vectors.test.ts` + `udpRelayJwt.vectors.test.ts` (auth token vectors)
 
 The property tests are configured to run quickly in CI (limited runs and per-test timeouts).
 For deeper fuzzing locally, increase runs:
