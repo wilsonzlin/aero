@@ -1,5 +1,8 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
+#[cfg(target_arch = "wasm32")]
+const JS_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991; // 2^53 - 1
+
 /// Minimal interface needed to turn an OPFS `FileSystemSyncAccessHandle` into a `std::io`
 /// `Read`/`Write`/`Seek` stream.
 ///
@@ -365,6 +368,16 @@ where
 
         let base: i128 = match pos {
             SeekFrom::Start(offset) => {
+                #[cfg(target_arch = "wasm32")]
+                if offset > JS_MAX_SAFE_INTEGER {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "seek position {offset} exceeds JS MAX_SAFE_INTEGER ({JS_MAX_SAFE_INTEGER}); OPFS sync access handles use f64 offsets"
+                        ),
+                    ));
+                }
+
                 self.pos = offset;
                 return Ok(offset);
             }
@@ -398,6 +411,17 @@ where
         let next: u64 = next
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "seek position overflow"))?;
+
+        #[cfg(target_arch = "wasm32")]
+        if next > JS_MAX_SAFE_INTEGER {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "seek position {next} exceeds JS MAX_SAFE_INTEGER ({JS_MAX_SAFE_INTEGER}); OPFS sync access handles use f64 offsets"
+                ),
+            ));
+        }
+
         self.pos = next;
         Ok(next)
     }
