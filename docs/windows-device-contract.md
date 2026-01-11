@@ -69,6 +69,8 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 >
 > Source of truth for AeroGPU PCI IDs: `drivers/aerogpu/protocol/aerogpu_pci.h` and `guest-tools/config/devices.cmd`.
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
+>
+> Legacy IDs: some bring-up builds may use `VEN_1AED` (and older `VEN_1AE0`) for the AeroGPU device. These are **not** the canonical contract IDs; the stable binding target is `PCI\VEN_A3A0&DEV_0001`.
 
 ## Device table (normative)
 
@@ -81,14 +83,14 @@ All numeric values are shown as hexadecimal.
 | virtio-snd | `1AF4:1059` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
 | virtio-input (keyboard) | `1AF4:1052` | `1AF4:0010` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
 | virtio-input (mouse) | `1AF4:1052` | `1AF4:0011` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
-| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `AeroGPU` | `aerogpu.inf` |
+| Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `aerogpu` | `aerogpu.inf` |
 
 Notes:
 
 - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
 - `aerogpu.inf` also matches the legacy AeroGPU HWID `1AED:0001`.
-- `aerogpu_dx11.inf` is an optional alternative INF if shipping D3D10/11 user-mode components.
- 
+- `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
+
 Compatibility note (non-canonical virtio PCI Device IDs):
  
 Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1018`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.

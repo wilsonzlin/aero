@@ -25,7 +25,7 @@ fn assert_file_contains(path: &Path, needle: &str) {
 
 fn parse_u16_literal(lit: &str, path: &Path, define: &str) -> u16 {
     let lit = lit.trim();
-    let lit = lit.trim_end_matches(|c: char| matches!(c, 'u' | 'U' | 'l' | 'L'));
+    let lit = lit.trim_end_matches(&['u', 'U', 'l', 'L'][..]);
     if let Some(hex) = lit.strip_prefix("0x").or_else(|| lit.strip_prefix("0X")) {
         u16::from_str_radix(hex, 16).unwrap_or_else(|err| {
             panic!(
@@ -170,4 +170,3 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         contract_path.display()
     );
 }
-

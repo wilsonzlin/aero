@@ -79,7 +79,7 @@ impl AerogpuAllocTableHeader {
         }
 
         let required = match (self.entry_count as u64).checked_mul(self.entry_stride_bytes as u64) {
-            Some(bytes) => (Self::SIZE_BYTES as u64).checked_add(bytes).unwrap_or(u64::MAX),
+            Some(bytes) => (Self::SIZE_BYTES as u64).saturating_add(bytes),
             None => u64::MAX,
         };
         if required > self.size_bytes as u64 {
@@ -236,7 +236,7 @@ impl AerogpuRingHeader {
         }
 
         let required = match (self.entry_count as u64).checked_mul(self.entry_stride_bytes as u64) {
-            Some(bytes) => (Self::SIZE_BYTES as u64).checked_add(bytes).unwrap_or(u64::MAX),
+            Some(bytes) => (Self::SIZE_BYTES as u64).saturating_add(bytes),
             None => u64::MAX,
         };
 

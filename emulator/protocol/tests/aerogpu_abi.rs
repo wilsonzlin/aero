@@ -265,8 +265,8 @@ fn rust_layout_matches_c_headers() {
 
     assert_eq!(abi.konst("AEROGPU_MMIO_MAGIC"), AEROGPU_MMIO_MAGIC as u64);
     assert_eq!(abi.konst("AEROGPU_MMIO_REG_DOORBELL"), AEROGPU_MMIO_REG_DOORBELL as u64);
-    assert_eq!(abi.konst("AEROGPU_FEATURE_FENCE_PAGE"), AEROGPU_FEATURE_FENCE_PAGE as u64);
-    assert_eq!(abi.konst("AEROGPU_FEATURE_VBLANK"), AEROGPU_FEATURE_VBLANK as u64);
+    assert_eq!(abi.konst("AEROGPU_FEATURE_FENCE_PAGE"), AEROGPU_FEATURE_FENCE_PAGE);
+    assert_eq!(abi.konst("AEROGPU_FEATURE_VBLANK"), AEROGPU_FEATURE_VBLANK);
     assert_eq!(abi.konst("AEROGPU_RING_CONTROL_ENABLE"), AEROGPU_RING_CONTROL_ENABLE as u64);
     assert_eq!(abi.konst("AEROGPU_IRQ_FENCE"), AEROGPU_IRQ_FENCE as u64);
     assert_eq!(
@@ -427,11 +427,11 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE"),
-        AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE as u64
+        AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE
     );
     assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_FEATURE_VBLANK"),
-        AEROGPU_UMDPRIV_FEATURE_VBLANK as u64
+        AEROGPU_UMDPRIV_FEATURE_VBLANK
     );
     assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_FLAG_IS_LEGACY"),
