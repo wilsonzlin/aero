@@ -62,6 +62,20 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
+On Linux/macOS you can run the same wrapper under PowerShell 7 (`pwsh`). When `Mount-DiskImage`
+is unavailable, it automatically falls back to the cross-platform extractor:
+
+```bash
+pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
+  -VirtioWinIso virtio-win.iso \
+  -Profile full \
+  -OutDir ./dist/guest-tools \
+  -Version 0.0.0 \
+  -BuildId local
+```
+
+Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
+
 Profiles:
 
 - `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json`
