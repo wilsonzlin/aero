@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -184,7 +186,7 @@ fn d3d9_create_texture2d_rejects_zero_dimensions() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -217,7 +219,7 @@ fn d3d9_create_texture2d_rejects_zero_mip_levels() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -249,7 +251,7 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -292,7 +294,7 @@ fn d3d9_create_buffer_rejects_unaligned_size() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -320,7 +322,7 @@ fn d3d9_upload_resource_rejects_unaligned_buffer_range() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -349,7 +351,7 @@ fn d3d9_copy_buffer_rejects_unaligned_range() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping resource validation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),

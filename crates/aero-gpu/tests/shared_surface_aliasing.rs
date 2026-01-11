@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::command_processor_d3d9::{CommandProcessor, ProcessorConfig, ProcessorEvent};
 use aero_gpu::protocol_d3d9::{
     BufferUsage, RenderTarget, RenderTargetKind, ShaderStage, StreamEncoder, TextureFormat,
@@ -135,7 +137,7 @@ fn shared_surface_import_export_aliases_texture_handles() {
             });
 
             if adapter_missing {
-                eprintln!("skipping shared_surface_aliasing test: wgpu adapter not found");
+                common::skip_or_panic(module_path!(), "wgpu adapter not found");
                 return;
             }
 

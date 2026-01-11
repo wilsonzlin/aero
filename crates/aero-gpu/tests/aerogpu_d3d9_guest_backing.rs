@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, VecGuestMemory};
 use aero_protocol::aerogpu::{
@@ -134,7 +136,7 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping guest backing test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -416,7 +418,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping copy/dirty range test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -721,7 +723,7 @@ fn d3d9_copy_buffer_writeback_flag_is_rejected() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping copy flag test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),

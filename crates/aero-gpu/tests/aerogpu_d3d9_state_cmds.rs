@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -244,7 +246,7 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping D3D9 state cmd test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -519,7 +521,7 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping D3D9 scissor cmd test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -716,7 +718,7 @@ fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping D3D9 sampler cmd test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),

@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::command_processor_d3d9::{CommandProcessor, ProcessorConfig};
 use aero_gpu::protocol_d3d9::{
     BufferUsage, ShaderStage, StreamEncoder, TextureFormat, TextureUsage, VertexAttributeWire,
@@ -50,7 +52,7 @@ fn run_and_readback(stream: StreamEncoder) -> Option<(u32, u32, Vec<u8>)> {
     if !report.is_ok() {
         let msg = format!("{:?}", report.events);
         if msg.contains("wgpu adapter not found") {
-            eprintln!("skipping D3D9 state tests: {msg}");
+            common::skip_or_panic(module_path!(), &msg);
             return None;
         }
         panic!("unexpected processor events: {:?}", report.events);

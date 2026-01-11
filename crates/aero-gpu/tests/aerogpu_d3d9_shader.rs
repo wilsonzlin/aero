@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d9::dxbc;
 use aero_d3d9::shader::ShaderStage;
 use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, ShaderPayloadFormat};
@@ -119,7 +121,7 @@ fn assemble_ps_tex_mad() -> Vec<u8> {
 #[test]
 fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     let Some((device, queue)) = create_test_device() else {
-        // Skip on hosts without wgpu adapters.
+        common::skip_or_panic(module_path!(), "no wgpu adapter available");
         return;
     };
 
@@ -403,6 +405,7 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
 #[test]
 fn dxbc_prefixed_payload_is_detected_and_translated() {
     let Some((device, _queue)) = create_test_device() else {
+        common::skip_or_panic(module_path!(), "no wgpu adapter available");
         return;
     };
 

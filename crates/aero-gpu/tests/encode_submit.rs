@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::cmd::{
     BindGroupId, BufferId, Color, CommandOptimizer, Encoder, GpuCmd, IndexFormat, LoadOp,
     Operations, PipelineId, RenderPassColorAttachmentDesc, RenderPassDesc, StoreOp, TextureViewId,
@@ -105,11 +107,11 @@ fn encode_and_submit_command_list_without_validation_errors() {
             .await;
 
         let Some(adapter) = adapter else {
-            eprintln!("skipping encode_submit test: no wgpu adapter available");
+            common::skip_or_panic(module_path!(), "no wgpu adapter available");
             return;
         };
 
-        let (device, queue) = adapter
+        let (device, queue) = match adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
@@ -119,7 +121,13 @@ fn encode_and_submit_command_list_without_validation_errors() {
                 None,
             )
             .await
-            .expect("request_device");
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("request_device failed: {err}"));
+                return;
+            }
+        };
 
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let texture = device.create_texture(&wgpu::TextureDescriptor {

@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
@@ -136,7 +138,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         let (device, queue) = match create_device_queue().await {
             Some(v) => v,
             None => {
-                eprintln!("skipping guest backing test: no wgpu adapter available");
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
                 return;
             }
         };
@@ -345,7 +347,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         let (device, queue) = match create_device_queue().await {
             Some(v) => v,
             None => {
-                eprintln!("skipping guest backing indexed test: no wgpu adapter available");
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
                 return;
             }
         };
@@ -595,7 +597,7 @@ fn upload_resource_updates_host_owned_resources() {
         let (device, queue) = match create_device_queue().await {
             Some(v) => v,
             None => {
-                eprintln!("skipping upload_resource test: no wgpu adapter available");
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
                 return;
             }
         };
@@ -757,7 +759,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
         let (device, queue) = match create_device_queue().await {
             Some(v) => v,
             None => {
-                eprintln!("skipping row_pitch test: no wgpu adapter available");
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
                 return;
             }
         };
@@ -962,7 +964,7 @@ fn draw_to_bgra_render_target_is_supported() {
         let (device, queue) = match create_device_queue().await {
             Some(v) => v,
             None => {
-                eprintln!("skipping bgra rt test: no wgpu adapter available");
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
                 return;
             }
         };
