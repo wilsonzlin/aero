@@ -125,6 +125,15 @@ for d in "${guest_tools_aerogpu_legacy_dirs[@]}"; do
   fi
 done
 
+# Guest Tools should not mention the deprecated legacy AeroGPU bring-up PCI identity (vendor 1AED)
+# in the default verify script. The legacy device model is intentionally out of scope for default
+# Guest Tools and requires both:
+# - the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`, and
+# - enabling the legacy emulator device model feature (`emulator/aerogpu-legacy`).
+if git grep -n "1AED" -- guest-tools/verify.ps1 >/dev/null; then
+  die "guest-tools/verify.ps1 references the deprecated legacy AeroGPU vendor ID (1AED); default Guest Tools are A3A0-only"
+fi
+
 # AeroGPU shared-surface contract: `share_token` is persisted via WDDM allocation
 # private driver data (dxgkrnl preserves the blob across OpenResource).
 #
