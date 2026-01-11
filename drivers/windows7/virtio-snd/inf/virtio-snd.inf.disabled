@@ -4,8 +4,12 @@
 ; driver INF (`aero-virtio-snd.inf`).
 ;
 ; This INF is kept for compatibility with workflows/tools that still reference
-; the legacy filename. It intentionally matches only the Aero virtio contract v1
-; HWID (`PCI\VEN_1AF4&DEV_1059&REV_01`).
+; the legacy filename (`virtio-snd.inf`) instead of `aero-virtio-snd.inf`. It
+; intentionally matches only the Aero virtio contract v1 HWID:
+; `PCI\VEN_1AF4&DEV_1059&REV_01`.
+;
+; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to
+; avoid shipping multiple INFs that match the same hardware IDs.
 
 [Version]
 Signature   = "$WINDOWS NT$"

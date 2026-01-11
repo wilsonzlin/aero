@@ -73,7 +73,7 @@ For QEMU bring-up (which is typically transitional by default), use the opt-in l
 
 The repository also contains an optional **legacy filename alias** INF (`inf/virtio-snd.inf.disabled`).
 If you rename it back to `virtio-snd.inf` (and regenerate/sign `virtio-snd.cat`), it installs the same
-driver/service as `aero-virtio-snd.inf` and matches the same contract-v1 HWID, but provides the legacy
+driver/service as `aero-virtio-snd.inf` and matches the same contract-v1 HWIDs, but provides the legacy
 filename for compatibility with older tooling/workflows.
 
 ## QEMU mapping
@@ -138,5 +138,7 @@ Audio: PCI device 1af4:1059
 ## Windows 7 caveats
 
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
+  `REV_...`). The Aero contract-v1 INF is strict and requires `DEV_1059&REV_01`.
+* For transitional QEMU devices (`DEV_1018`, typically `REV_00`), use the legacy INF/package.
   `REV_...`). The Aero contract-v1 INF is strict and requires `DEV_1059&REV_01`.
 * For transitional QEMU devices (`DEV_1018`, typically `REV_00`), use the legacy INF/package.
