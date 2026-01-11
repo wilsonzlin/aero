@@ -4605,46 +4605,62 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         io->reserved0 = 0;
         RtlZeroMemory(io->entries, sizeof(io->entries));
 
+        /*
+         * Avoid writing to the caller-provided output buffer while holding the
+         * spin lock. While dxgkrnl typically marshals escape buffers into a
+         * kernel mapping, keep the critical section minimal and copy out under
+         * the lock, then format the response after releasing.
+         */
+        AEROGPU_CREATEALLOCATION_TRACE_ENTRY local[AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS];
+        RtlZeroMemory(local, sizeof(local));
+
+        ULONG writeIndex = 0;
+        ULONG outCount = 0;
+
         KIRQL oldIrql;
         KeAcquireSpinLock(&adapter->CreateAllocationTraceLock, &oldIrql);
 
-        const ULONG writeIndex = adapter->CreateAllocationTrace.WriteIndex;
+        writeIndex = adapter->CreateAllocationTrace.WriteIndex;
         ULONG available = writeIndex;
         if (available > AEROGPU_CREATEALLOCATION_TRACE_SIZE) {
             available = AEROGPU_CREATEALLOCATION_TRACE_SIZE;
         }
 
-        ULONG outCount = available;
+        outCount = available;
         if (outCount > io->entry_capacity) {
             outCount = io->entry_capacity;
         }
-
-        io->write_index = writeIndex;
-        io->entry_count = outCount;
 
         if (outCount != 0) {
             const ULONG startSeq = writeIndex - outCount;
             for (ULONG i = 0; i < outCount; ++i) {
                 const ULONG seq = startSeq + i;
                 const ULONG slot = seq % AEROGPU_CREATEALLOCATION_TRACE_SIZE;
-                const AEROGPU_CREATEALLOCATION_TRACE_ENTRY* e = &adapter->CreateAllocationTrace.Entries[slot];
-                aerogpu_dbgctl_createallocation_desc* out = &io->entries[i];
-                out->seq = (uint32_t)e->Seq;
-                out->call_seq = (uint32_t)e->CallSeq;
-                out->alloc_index = (uint32_t)e->AllocIndex;
-                out->num_allocations = (uint32_t)e->NumAllocations;
-                out->create_flags = (uint32_t)e->CreateFlags;
-                out->alloc_id = (uint32_t)e->AllocationId;
-                out->priv_flags = (uint32_t)e->PrivFlags;
-                out->pitch_bytes = (uint32_t)e->PitchBytes;
-                out->share_token = (uint64_t)e->ShareToken;
-                out->size_bytes = (uint64_t)e->SizeBytes;
-                out->flags_in = (uint32_t)e->FlagsIn;
-                out->flags_out = (uint32_t)e->FlagsOut;
+                local[i] = adapter->CreateAllocationTrace.Entries[slot];
             }
         }
 
         KeReleaseSpinLock(&adapter->CreateAllocationTraceLock, oldIrql);
+
+        io->write_index = writeIndex;
+        io->entry_count = outCount;
+
+        for (ULONG i = 0; i < outCount; ++i) {
+            const AEROGPU_CREATEALLOCATION_TRACE_ENTRY* e = &local[i];
+            aerogpu_dbgctl_createallocation_desc* out = &io->entries[i];
+            out->seq = (uint32_t)e->Seq;
+            out->call_seq = (uint32_t)e->CallSeq;
+            out->alloc_index = (uint32_t)e->AllocIndex;
+            out->num_allocations = (uint32_t)e->NumAllocations;
+            out->create_flags = (uint32_t)e->CreateFlags;
+            out->alloc_id = (uint32_t)e->AllocationId;
+            out->priv_flags = (uint32_t)e->PrivFlags;
+            out->pitch_bytes = (uint32_t)e->PitchBytes;
+            out->share_token = (uint64_t)e->ShareToken;
+            out->size_bytes = (uint64_t)e->SizeBytes;
+            out->flags_in = (uint32_t)e->FlagsIn;
+            out->flags_out = (uint32_t)e->FlagsOut;
+        }
         return STATUS_SUCCESS;
     }
 
