@@ -2370,18 +2370,6 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
     return E_INVALIDARG;
   }
 
-  const uint8_t* upload_src = reinterpret_cast<const uint8_t*>(data);
-  std::vector<uint8_t> padded;
-  if (aligned_size_bytes != size_bytes) {
-    try {
-      padded.resize(aligned_size_bytes, 0);
-    } catch (...) {
-      return E_OUTOFMEMORY;
-    }
-    std::memcpy(padded.data(), data, size_bytes);
-    upload_src = padded.data();
-  }
-
   // Keep a CPU copy for debug/validation and for fixed-function emulation that
   // reads from buffers.
   if (res->storage.size() < aligned_size_bytes) {
@@ -2393,9 +2381,12 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
   }
   // Use memmove because some call sites may upload from memory already backed by
   // `res->storage` (overlapping ranges).
-  std::memmove(res->storage.data(), upload_src, aligned_size_bytes);
+  std::memmove(res->storage.data(), data, size_bytes);
+  if (aligned_size_bytes > size_bytes) {
+    std::memset(res->storage.data() + size_bytes, 0, aligned_size_bytes - size_bytes);
+  }
 
-  const uint8_t* src = upload_src;
+  const uint8_t* src = res->storage.data();
   uint32_t remaining = aligned_size_bytes;
   uint32_t cur_offset = 0;
 
