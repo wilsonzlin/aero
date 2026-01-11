@@ -128,6 +128,8 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 let uhciDevice: UhciPciDevice | null = null;
+type UhciControllerBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
+let uhciControllerBridge: UhciControllerBridge | null = null;
 
 type WebUsbUhciBridge = InstanceType<NonNullable<WasmApi["WebUsbUhciBridge"]>>;
 let webUsbUhciBridge: WebUsbUhciBridge | null = null;
@@ -187,6 +189,7 @@ function maybeInitUhciDevice(): void {
       try {
         const bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
         const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
+        uhciControllerBridge = bridge;
         uhciDevice = dev;
         mgr.registerPciDevice(dev);
         mgr.addTickable(dev);
@@ -444,10 +447,11 @@ class WasmHidGuestBridge implements HidGuestBridge {
   }
 
   detach(msg: HidDetachMessage): void {
+    this.uhciTopology.detachDevice(msg.deviceId);
     const existing = this.#bridges.get(msg.deviceId);
     if (!existing) return;
+
     this.#bridges.delete(msg.deviceId);
-    this.uhciTopology.detachDevice(msg.deviceId);
     try {
       existing.free();
     } catch {
@@ -564,6 +568,7 @@ const hidHostSink: HidHostSink = {
 
 const hidGuestInMemory = new InMemoryHidGuestBridge(hidHostSink);
 let hidGuest: HidGuestBridge = hidGuestInMemory;
+let wasmHidGuest: HidGuestBridge | null = null;
 
 // -----------------------------------------------------------------------------
 // WebHID passthrough (main thread ↔ I/O worker) debug plumbing
@@ -719,6 +724,46 @@ function handleHidPassthroughInputReport(msg: HidPassthroughInputReportMessage):
 }
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+
+function maybeInitWasmHidGuestBridge(): void {
+  if (wasmHidGuest) return;
+  const api = wasmApi;
+  if (!api) return;
+
+  // Ensure guest-visible USB controllers are registered before wiring up WebHID devices. If we
+  // initialize the bridge before the UHCI controller exists, devices would never be visible to the
+  // guest OS (PCI hotplug isn't modeled yet).
+  maybeInitUhciDevice();
+  if (api.UhciControllerBridge && !uhciControllerBridge) return;
+
+  try {
+    wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
+    return;
+  }
+
+  // Replay any HID messages that arrived before WASM finished initializing so the
+  // guest bridge sees a consistent device + input report stream.
+  for (const attach of hidGuestInMemory.devices.values()) {
+    wasmHidGuest.attach(attach);
+    const reports = hidGuestInMemory.inputReports.get(attach.deviceId) ?? [];
+    for (const report of reports) {
+      wasmHidGuest.inputReport(report);
+    }
+  }
+
+  // After WASM is ready we no longer need to buffer every input report in JS.
+  // Keeping the in-memory bridge in the hot path is useful for debugging in dev
+  // mode, but it adds avoidable per-report allocations/copies in production.
+  if (import.meta.env.DEV) {
+    hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
+  } else {
+    hidGuest = wasmHidGuest;
+    hidGuestInMemory.devices.clear();
+    hidGuestInMemory.inputReports.clear();
+  }
+}
 
 let started = false;
 let shuttingDown = false;
@@ -922,31 +967,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
 
-        try {
-          const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);
-          // Replay any HID messages that arrived before WASM finished initializing so the
-          // guest bridge sees a consistent device + input report stream.
-          for (const attach of hidGuestInMemory.devices.values()) {
-            wasmHidGuest.attach(attach);
-            const reports = hidGuestInMemory.inputReports.get(attach.deviceId) ?? [];
-            for (const report of reports) {
-              wasmHidGuest.inputReport(report);
-            }
-          }
-
-          // After WASM is ready we no longer need to buffer every input report in JS.
-          // Keeping the in-memory bridge in the hot path is useful for debugging in dev
-          // mode, but it adds avoidable per-report allocations/copies in production.
-          if (import.meta.env.DEV) {
-            hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
-          } else {
-            hidGuest = wasmHidGuest;
-            hidGuestInMemory.devices.clear();
-            hidGuestInMemory.inputReports.clear();
-          }
-        } catch (err) {
-          console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
-        }
+        maybeInitWasmHidGuestBridge();
 
         // If we are using the new `UhciControllerBridge` (canonical guest-visible UHCI),
         // keep the WebUSB broker plumbing alive by falling back to `UsbPassthroughBridge`
@@ -1117,6 +1138,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
       const uart = new Uart16550(UART_COM1, serialSink);
       mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
+
+      // If WASM has already finished initializing, install the WebHID passthrough bridge now that
+      // we have a device manager (UHCI needs IRQ wiring + PCI registration).
+      maybeInitWasmHidGuestBridge();
 
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {

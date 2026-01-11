@@ -77,8 +77,8 @@ describe("hid/hid_proxy_protocol", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Demo",
-      guestPath: [0, 1],
       guestPort: 0,
+      guestPath: [0, 3],
       collections: sampleCollections(),
       hasInterruptOut: false,
     };
@@ -178,6 +178,7 @@ describe("hid/hid_proxy_protocol", () => {
       deviceId: 7,
       vendorId: 1,
       productId: 2,
+      guestPath: [1],
       collections: sampleCollections(),
       hasInterruptOut: true,
     };
