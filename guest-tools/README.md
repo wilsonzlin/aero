@@ -32,6 +32,7 @@ Designed for the standard flow:
    - `drivers\x86\` (on Win7 x86)
    - `drivers\amd64\` (on Win7 x64)
 5. Adds boot-critical registry plumbing for switching the boot disk from AHCI → virtio-blk:
+   - Validates that the configured storage service name (`AERO_VIRTIO_BLK_SERVICE`) exists in at least one staged driver INF as an `AddService` name (fails fast if not).
    - `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_xxxx&DEV_yyyy...`
    - `HKLM\SYSTEM\CurrentControlSet\Services\<storage-service>\Start=0` etc.
 
@@ -53,6 +54,10 @@ setup.cmd
 
 Optional flags:
 
+- `setup.cmd /force` (or `setup.cmd /quiet`)  
+  Fully non-interactive/unattended mode:
+  - implies `/noreboot` (never prompts reboot/shutdown)
+  - on x64, implies `/testsigning` unless `/notestsigning` is also provided
 - `setup.cmd /stageonly`  
   Only adds driver packages to the Driver Store (does not attempt immediate installs).
 - `setup.cmd /testsigning`  
@@ -73,6 +78,13 @@ uninstall.cmd
 ```
 
 This is best-effort and may fail to remove in-use drivers (especially if the VM is currently using virtio-blk as the boot disk).
+
+Optional flags:
+
+- `uninstall.cmd /force`  
+  Skips the interactive "Continue with uninstall?" prompt (for automation). In `/force` mode, the script also skips the interactive prompts for disabling `testsigning` / `nointegritychecks` (leaves boot configuration unchanged).
+- `uninstall.cmd /noreboot`  
+  Do not prompt for shutdown/reboot at the end.
 
 Output:
 

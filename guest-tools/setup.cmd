@@ -4,6 +4,12 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem Aero Guest Tools installer for Windows 7 SP1 (x86/x64).
 rem Offline + built-in tooling only: certutil, pnputil, reg, bcdedit, shutdown.
 
+rem Standard exit codes (stable for automation/scripted use).
+set "EC_ADMIN_REQUIRED=10"
+set "EC_DRIVER_DIR_MISSING=11"
+set "EC_CERTS_MISSING=12"
+set "EC_STORAGE_SERVICE_MISMATCH=13"
+
 set "SCRIPT_DIR=%~dp0"
 
 rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
@@ -23,6 +29,7 @@ set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 
+set "ARG_FORCE=0"
 set "ARG_STAGE_ONLY=0"
 set "ARG_FORCE_TESTSIGN=0"
 set "ARG_SKIP_TESTSIGN=0"
@@ -30,12 +37,16 @@ set "ARG_FORCE_NOINTEGRITY=0"
 set "ARG_NO_REBOOT=0"
 
 set "REBOOT_REQUIRED=0"
+set "CHANGED_TESTSIGNING=0"
+set "CHANGED_NOINTEGRITY=0"
 
 if /i "%~1"=="/?" goto :usage
 if /i "%~1"=="-h" goto :usage
 if /i "%~1"=="--help" goto :usage
 
 for %%A in (%*) do (
+  if /i "%%~A"=="/force" set "ARG_FORCE=1"
+  if /i "%%~A"=="/quiet" set "ARG_FORCE=1"
   if /i "%%~A"=="/stageonly" set "ARG_STAGE_ONLY=1"
   if /i "%%~A"=="/stage-only" set "ARG_STAGE_ONLY=1"
   if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"
@@ -48,20 +59,28 @@ for %%A in (%*) do (
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
 
+rem /force implies fully non-interactive behavior.
+if "%ARG_FORCE%"=="1" (
+  set "ARG_NO_REBOOT=1"
+)
+
 call :init_logging || goto :fail
 call :log "Aero Guest Tools setup starting..."
 call :log "Script dir: %SCRIPT_DIR%"
 call :log "System tools: %SYS32%"
 call :log "Logs: %LOG%"
+call :log_manifest
 
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
+call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
 call :check_kb3033929
 
 call :install_certs || goto :fail
 call :maybe_enable_testsigning || goto :fail
 call :stage_all_drivers || goto :fail
+call :validate_storage_service_infs || goto :fail
 call :preseed_storage_boot || goto :fail
 
 call :log ""
@@ -76,6 +95,7 @@ call :log "  - switch storage back to AHCI and boot"
 call :log "  - review %LOG%"
 call :log "  - ensure Win7 x64 test signing is enabled if using test-signed drivers"
 
+call :log_summary
 call :maybe_reboot
 popd >nul 2>&1
 exit /b 0
@@ -84,6 +104,8 @@ exit /b 0
 echo Usage: setup.cmd [options]
 echo.
 echo Options:
+echo   /force, /quiet        Non-interactive: implies /noreboot and enables /testsigning on x64
+echo                        (unless /notestsigning is provided)
 echo   /stageonly           Only stage drivers into the Driver Store (no install attempts)
 echo   /testsigning         Enable test signing on x64 without prompting
 echo   /notestsigning       Skip enabling test signing (x64)
@@ -118,13 +140,85 @@ echo(%*
 >>"%LOG%" echo(%*
 exit /b 0
 
+:log_manifest
+setlocal EnableDelayedExpansion
+
+rem Optional: record which Guest Tools build produced the media (if provided).
+set "MEDIA_ROOT="
+for %%I in ("%SCRIPT_DIR%..") do set "MEDIA_ROOT=%%~fI"
+set "MANIFEST=!MEDIA_ROOT!\manifest.json"
+if not exist "!MANIFEST!" set "MANIFEST=%SCRIPT_DIR%manifest.json"
+if not exist "!MANIFEST!" (
+  endlocal & exit /b 0
+)
+
+set "GT_VERSION="
+set "GT_BUILD_ID="
+for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
+  set "KEY=%%A"
+  set "VAL=%%B"
+  set "KEY=!KEY: =!"
+  set "KEY=!KEY:"=!"
+  set "KEY=!KEY:{=!"
+  set "KEY=!KEY:}=!"
+  set "KEY=!KEY:,=!"
+
+  if /i "!KEY!"=="version" (
+    set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "GT_VERSION=!VAL!"
+  )
+  if /i "!KEY!"=="build_id" (
+    set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "GT_BUILD_ID=!VAL!"
+  )
+)
+
+if defined GT_VERSION (
+  if defined GT_BUILD_ID (
+    call :log "Guest Tools manifest: version=!GT_VERSION!, build_id=!GT_BUILD_ID!"
+  ) else (
+    call :log "Guest Tools manifest: version=!GT_VERSION!"
+  )
+) else if defined GT_BUILD_ID (
+  call :log "Guest Tools manifest: build_id=!GT_BUILD_ID!"
+) else (
+  call :log "Guest Tools manifest found, but could not parse version/build_id: !MANIFEST!"
+)
+
+endlocal & exit /b 0
+
+:log_summary
+call :log ""
+call :log "==================== Summary ===================="
+call :log "OS architecture: %OS_ARCH%"
+call :log "Storage service: %AERO_VIRTIO_BLK_SERVICE%"
+call :log "Seeded HWIDs:     %AERO_VIRTIO_BLK_HWIDS%"
+if "%CHANGED_TESTSIGNING%"=="1" (
+  call :log "testsigning:      enabled by this run"
+) else (
+  call :log "testsigning:      unchanged"
+)
+if "%CHANGED_NOINTEGRITY%"=="1" (
+  call :log "nointegritychecks: enabled by this run"
+) else (
+  call :log "nointegritychecks: unchanged"
+)
+call :log "================================================="
+exit /b 0
+
 :require_admin
 call :log "Checking for Administrator privileges..."
 "%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
 if errorlevel 1 (
   call :log "ERROR: Administrator privileges are required."
   call :log "Right-click setup.cmd and choose 'Run as administrator'."
-  exit /b 1
+  exit /b %EC_ADMIN_REQUIRED%
 )
 exit /b 0
 
@@ -136,7 +230,23 @@ call :log "Detected OS architecture: %OS_ARCH%"
 set "DRIVER_DIR=%SCRIPT_DIR%drivers\%OS_ARCH%"
 if not exist "%DRIVER_DIR%" (
   call :log "ERROR: Driver directory not found: %DRIVER_DIR%"
-  exit /b 1
+  exit /b %EC_DRIVER_DIR_MISSING%
+)
+exit /b 0
+
+:apply_force_defaults
+if not "%ARG_FORCE%"=="1" exit /b 0
+
+rem /force implies /testsigning on x64 unless the operator explicitly disables it.
+if /i "%OS_ARCH%"=="amd64" (
+  if "%ARG_SKIP_TESTSIGN%"=="1" (
+    call :log "Force mode: /notestsigning specified; leaving test signing unchanged."
+  ) else if "%ARG_FORCE_NOINTEGRITY%"=="1" (
+    call :log "Force mode: /nointegritychecks specified; leaving test signing unchanged."
+  ) else (
+    set "ARG_FORCE_TESTSIGN=1"
+    call :log "Force mode: will enable Test Signing on x64 (implied)."
+  )
 )
 exit /b 0
 
@@ -213,7 +323,7 @@ for %%F in ("%CERT_DIR%\*.p7b") do (
 
 if "%FOUND_CERT%"=="0" (
   call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b)."
-  exit /b 1
+  exit /b %EC_CERTS_MISSING%
 )
 
 exit /b 0
@@ -320,6 +430,7 @@ if "%ARG_FORCE_NOINTEGRITY%"=="1" (
   )
 
   > "%STATE_NOINTEGRITY%" echo nointegritychecks enabled by Aero Guest Tools on %DATE% %TIME%
+  set "CHANGED_NOINTEGRITY=1"
   set "REBOOT_REQUIRED=1"
   call :log "nointegritychecks enabled. A reboot is required before it takes effect."
   exit /b 0
@@ -377,6 +488,7 @@ if errorlevel 1 (
 )
 
 > "%STATE_TESTSIGN%" echo TestSigning enabled by Aero Guest Tools on %DATE% %TIME%
+set "CHANGED_TESTSIGNING=1"
 set "REBOOT_REQUIRED=1"
 call :log "Test Signing enabled. A reboot is required before it takes effect."
 exit /b 0
@@ -463,6 +575,80 @@ if not exist "%PKG_LIST%" (
 findstr /i /x "%PUB%" "%PKG_LIST%" >nul 2>&1
 if errorlevel 1 >>"%PKG_LIST%" echo %PUB%
 exit /b 0
+
+:validate_storage_service_infs
+call :log ""
+call :log "Validating virtio-blk storage service name against driver INF packages..."
+
+set "TARGET_SVC=%AERO_VIRTIO_BLK_SERVICE%"
+set "SCAN_LIST=%TEMP%\aerogt_infscan_%RANDOM%.txt"
+del /q "%SCAN_LIST%" >nul 2>&1
+
+set "INF_COUNT=0"
+set "FOUND_MATCH=0"
+set "MATCH_INF="
+
+for /r "%DRIVER_DIR%" %%F in (*.inf) do (
+  set /a INF_COUNT+=1
+  >>"%SCAN_LIST%" echo %%~fF
+  call :inf_contains_addservice "%%~fF" "%TARGET_SVC%"
+  if not errorlevel 1 (
+    set "FOUND_MATCH=1"
+    if not defined MATCH_INF set "MATCH_INF=%%~fF"
+  )
+)
+
+if "%INF_COUNT%"=="0" (
+  call :log "ERROR: No .inf files found under %DRIVER_DIR% for validation."
+  del /q "%SCAN_LIST%" >nul 2>&1
+  exit /b 1
+)
+
+if "%FOUND_MATCH%"=="1" (
+  call :log "OK: Found AddService=%TARGET_SVC% in: %MATCH_INF%"
+  del /q "%SCAN_LIST%" >nul 2>&1
+  exit /b 0
+)
+
+call :log "ERROR: Configured AERO_VIRTIO_BLK_SERVICE=%TARGET_SVC% does not match any staged INF AddService name."
+call :log "Expected to find an INF line (case-insensitive) like:"
+call :log "  AddService = %TARGET_SVC%, ..."
+call :log "  AddService = ^"%TARGET_SVC%^", ..."
+call :log "Scanned INF files:"
+for /f "usebackq delims=" %%I in ("%SCAN_LIST%") do call :log "  - %%I"
+del /q "%SCAN_LIST%" >nul 2>&1
+exit /b %EC_STORAGE_SERVICE_MISMATCH%
+
+:inf_contains_addservice
+setlocal EnableDelayedExpansion
+set "INF_FILE=%~1"
+set "TARGET=%~2"
+
+for /f "delims=" %%L in ('"%SYS32%\findstr.exe" /i /c:"AddService" "%INF_FILE%" 2^>nul') do (
+  set "LINE=%%L"
+  set "LEFT="
+  set "RIGHT="
+  for /f "tokens=1,* delims==" %%A in ("!LINE!") do (
+    set "LEFT=%%A"
+    set "RIGHT=%%B"
+  )
+  if not defined RIGHT (
+    rem Not an AddService assignment (e.g. a section name); ignore.
+  ) else (
+    set "LEFT=!LEFT: =!"
+    if /i "!LEFT!"=="AddService" (
+      set "REST=!RIGHT!"
+      for /f "tokens=* delims= " %%R in ("!REST!") do set "REST=%%R"
+      set "REST=!REST:"=!"
+      for /f "tokens=1 delims=, " %%S in ("!REST!") do set "SVC=%%S"
+      if /i "!SVC!"=="!TARGET!" (
+        endlocal & exit /b 0
+      )
+    )
+  )
+)
+
+endlocal & exit /b 1
 
 :preseed_storage_boot
 call :log ""

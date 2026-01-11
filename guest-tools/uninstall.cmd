@@ -4,6 +4,9 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem Aero Guest Tools uninstaller (best-effort).
 rem WARNING: Uninstalling in-use storage drivers can make the VM unbootable.
 
+rem Standard exit codes (stable for automation/scripted use).
+set "EC_ADMIN_REQUIRED=10"
+
 set "SCRIPT_DIR=%~dp0"
 
 rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
@@ -23,11 +26,13 @@ set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 
+set "ARG_FORCE=0"
 set "ARG_NO_REBOOT=0"
 if /i "%~1"=="/?" goto :usage
 if /i "%~1"=="-h" goto :usage
 if /i "%~1"=="--help" goto :usage
 for %%A in (%*) do (
+  if /i "%%~A"=="/force" set "ARG_FORCE=1"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
 )
@@ -46,11 +51,15 @@ call :log "  If this VM is currently booting from virtio-blk using the Aero stor
 call :log "  removing that driver package or re-enabling signature enforcement can make the VM unbootable."
 call :log ""
 
-choice /c YN /n /m "Continue with uninstall? [Y/N] "
-if errorlevel 2 (
-  call :log "Uninstall cancelled."
-  popd >nul 2>&1
-  exit /b 0
+if "%ARG_FORCE%"=="1" (
+  call :log "Force mode: skipping confirmation prompt."
+) else (
+  choice /c YN /n /m "Continue with uninstall? [Y/N] "
+  if errorlevel 2 (
+    call :log "Uninstall cancelled."
+    popd >nul 2>&1
+    exit /b 0
+  )
 )
 
 call :remove_driver_packages || goto :fail
@@ -68,6 +77,7 @@ exit /b 0
 echo Usage: uninstall.cmd [options]
 echo.
 echo Options:
+echo   /force              Skip the "Continue with uninstall?" prompt (for automation)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo.
 echo Logs are written to C:\AeroGuestTools\uninstall.log
@@ -99,7 +109,7 @@ call :log "Checking for Administrator privileges..."
 if errorlevel 1 (
   call :log "ERROR: Administrator privileges are required."
   call :log "Right-click uninstall.cmd and choose 'Run as administrator'."
-  exit /b 1
+  exit /b %EC_ADMIN_REQUIRED%
 )
 exit /b 0
 
@@ -154,6 +164,12 @@ exit /b 0
 rem Only prompt if we previously enabled it.
 if not exist "%STATE_TESTSIGN%" exit /b 0
 
+if "%ARG_FORCE%"=="1" (
+  call :log ""
+  call :log "Force mode: leaving Test Signing unchanged."
+  exit /b 0
+)
+
 call :log ""
 call :log "Test Signing may have been enabled by Aero Guest Tools."
 choice /c YN /n /m "Disable Test Signing now? (bcdedit /set testsigning off) [Y/N] "
@@ -172,6 +188,12 @@ exit /b 0
 :maybe_disable_nointegritychecks
 rem Only prompt if we previously enabled it.
 if not exist "%STATE_NOINTEGRITY%" exit /b 0
+
+if "%ARG_FORCE%"=="1" (
+  call :log ""
+  call :log "Force mode: leaving nointegritychecks unchanged."
+  exit /b 0
+)
 
 call :log ""
 call :log "nointegritychecks may have been enabled by Aero Guest Tools."
