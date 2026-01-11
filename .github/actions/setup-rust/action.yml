@@ -21,7 +21,7 @@ inputs:
   locked:
     description: Cargo.lock policy (auto, always, never).
     required: false
-    default: auto
+    default: always
 
 outputs:
   cargo_locked_flag:

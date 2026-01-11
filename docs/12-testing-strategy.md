@@ -1157,7 +1157,7 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-          locked: auto
+          locked: always
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2
