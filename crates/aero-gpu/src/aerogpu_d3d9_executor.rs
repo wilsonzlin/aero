@@ -112,6 +112,7 @@ impl ContextState {
             sampler_state_ps: std::array::from_fn(|_| D3d9SamplerState::default()),
             state: State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
+                blend_constant: [1.0; 4],
                 ..Default::default()
             },
         }
@@ -305,6 +306,7 @@ struct State {
     topology: wgpu::PrimitiveTopology,
 
     blend_state: BlendState,
+    blend_constant: [f32; 4],
     depth_stencil_state: DepthStencilState,
     rasterizer_state: RasterizerState,
 
@@ -695,6 +697,7 @@ impl AerogpuD3d9Executor {
             current_context_id: 0,
             state: State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
+                blend_constant: [1.0; 4],
                 ..Default::default()
             },
             encoder: None,
@@ -722,6 +725,7 @@ impl AerogpuD3d9Executor {
         self.samplers_ps = create_default_samplers(&self.device);
         self.state = State {
             topology: wgpu::PrimitiveTopology::TriangleList,
+            blend_constant: [1.0; 4],
             ..Default::default()
         };
         self.encoder = None;
@@ -2501,6 +2505,8 @@ impl AerogpuD3d9Executor {
                     blend_op_alpha: state.blend_op_alpha,
                     color_write_mask: state.color_write_mask,
                 };
+                self.state.blend_constant =
+                    state.blend_constant_rgba_f32.map(|v| f32::from_bits(v));
                 Ok(())
             }
             AeroGpuCmd::SetDepthStencilState { state } => {
@@ -4062,6 +4068,20 @@ impl AerogpuD3d9Executor {
             pass.set_stencil_reference(stencil_ref & 0xFF);
         }
 
+        let uses_blend_constant = matches!(self.state.blend_state.src_factor, 6 | 7)
+            || matches!(self.state.blend_state.dst_factor, 6 | 7)
+            || matches!(self.state.blend_state.src_factor_alpha, 6 | 7)
+            || matches!(self.state.blend_state.dst_factor_alpha, 6 | 7);
+        if self.state.blend_state.enable && uses_blend_constant {
+            let [r, g, b, a] = self.state.blend_constant;
+            pass.set_blend_constant(wgpu::Color {
+                r: r as f64,
+                g: g as f64,
+                b: b as f64,
+                a: a as f64,
+            });
+        }
+
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
 
@@ -4288,6 +4308,13 @@ impl AerogpuD3d9Executor {
             | d3d9::D3DRS_BLENDOPALPHA => self.update_separate_alpha_blend_from_render_state(),
             d3d9::D3DRS_COLORWRITEENABLE => {
                 self.state.blend_state.color_write_mask = (value & 0xF) as u8
+            }
+            d3d9::D3DRS_BLENDFACTOR => {
+                let a = ((value >> 24) & 0xFF) as f32 / 255.0;
+                let r = ((value >> 16) & 0xFF) as f32 / 255.0;
+                let g = ((value >> 8) & 0xFF) as f32 / 255.0;
+                let b = (value & 0xFF) as f32 / 255.0;
+                self.state.blend_constant = [r, g, b, a];
             }
             d3d9::D3DRS_SRGBWRITEENABLE => {
                 // sRGB write is handled by selecting an sRGB render-target view at draw time.
@@ -4940,6 +4967,8 @@ fn map_blend_factor(factor: u32) -> wgpu::BlendFactor {
         3 => wgpu::BlendFactor::OneMinusSrcAlpha,
         4 => wgpu::BlendFactor::DstAlpha,
         5 => wgpu::BlendFactor::OneMinusDstAlpha,
+        6 => wgpu::BlendFactor::Constant,
+        7 => wgpu::BlendFactor::OneMinusConstant,
         _ => wgpu::BlendFactor::One,
     }
 }
@@ -5060,6 +5089,14 @@ fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu:
     let address_mode_u = addr(device, state.address_u);
     let address_mode_v = addr(device, state.address_v);
     let address_mode_w = wgpu::AddressMode::ClampToEdge;
+    let border_color = if matches!(address_mode_u, wgpu::AddressMode::ClampToBorder)
+        || matches!(address_mode_v, wgpu::AddressMode::ClampToBorder)
+        || matches!(address_mode_w, wgpu::AddressMode::ClampToBorder)
+    {
+        Some(wgpu::SamplerBorderColor::TransparentBlack)
+    } else {
+        None
+    };
 
     let min_filter = filter(state.min_filter);
     let mag_filter = filter(state.mag_filter);
@@ -5082,7 +5119,7 @@ fn create_wgpu_sampler(device: &wgpu::Device, state: &D3d9SamplerState) -> wgpu:
         lod_max_clamp,
         compare: None,
         anisotropy_clamp: 1,
-        border_color: None,
+        border_color,
     })
 }
 
@@ -5109,6 +5146,8 @@ fn d3d9_blend_to_aerogpu(value: u32) -> Option<u32> {
         d3d9::D3DBLEND_INVSRCALPHA => 3,
         d3d9::D3DBLEND_DESTALPHA => 4,
         d3d9::D3DBLEND_INVDESTALPHA => 5,
+        d3d9::D3DBLEND_BLENDFACTOR => 6,
+        d3d9::D3DBLEND_INVBLENDFACTOR => 7,
         _ => return None,
     })
 }
@@ -5140,6 +5179,7 @@ mod d3d9 {
     pub const D3DRS_BLENDOPALPHA: u32 = 209;
 
     pub const D3DRS_COLORWRITEENABLE: u32 = 168;
+    pub const D3DRS_BLENDFACTOR: u32 = 193;
     pub const D3DRS_SRGBWRITEENABLE: u32 = 194;
     pub const D3DRS_SCISSORTESTENABLE: u32 = 174;
 
@@ -5182,6 +5222,8 @@ mod d3d9 {
     pub const D3DBLEND_INVDESTALPHA: u32 = 8;
     pub const D3DBLEND_BOTHSRCALPHA: u32 = 12;
     pub const D3DBLEND_BOTHINVSRCALPHA: u32 = 13;
+    pub const D3DBLEND_BLENDFACTOR: u32 = 14;
+    pub const D3DBLEND_INVBLENDFACTOR: u32 = 15;
 
     // Cull modes.
     pub const D3DCULL_NONE: u32 = 1;
