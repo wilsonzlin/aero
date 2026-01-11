@@ -36,11 +36,37 @@ static int CheckFormat(aerogpu_test::TestReporter* reporter,
 static int RunCapsSmoke(int argc, char** argv) {
   const char* kTestName = "d3d11_caps_smoke";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--json[=PATH]]", kTestName);
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        kTestName);
     return 0;
   }
 
   aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
+  uint32_t require_vid = 0;
+  uint32_t require_did = 0;
+  bool has_require_vid = false;
+  bool has_require_did = false;
+  std::string require_vid_str;
+  std::string require_did_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
+    }
+    has_require_vid = true;
+  }
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
+    }
+    has_require_did = true;
+  }
 
   // Request higher feature levels first; the smoke test validates that the
   // driver advertises only FL10_0 today.
@@ -71,18 +97,76 @@ static int RunCapsSmoke(int argc, char** argv) {
   if (SUCCEEDED(hr) && dxgi_device) {
     ComPtr<IDXGIAdapter> adapter;
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
-    if (SUCCEEDED(hr_adapter) && adapter) {
+    if (FAILED(hr_adapter)) {
+      if (has_require_vid || has_require_did) {
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)", hr_adapter);
+      }
+    } else if (adapter) {
       DXGI_ADAPTER_DESC ad;
       ZeroMemory(&ad, sizeof(ad));
       HRESULT hr_desc = adapter->GetDesc(&ad);
-      if (SUCCEEDED(hr_desc)) {
+      if (FAILED(hr_desc)) {
+        if (has_require_vid || has_require_did) {
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+        }
+      } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
                                    kTestName,
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
         reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
+
+        if (!allow_microsoft && ad.VendorId == 0x1414) {
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
+        }
+        if (has_require_vid && ad.VendorId != require_vid) {
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
+        }
+        if (has_require_did && ad.DeviceId != require_did) {
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
+        }
+        if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
+            !(ad.VendorId == 0x1414 && allow_microsoft) &&
+            !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
+        }
       }
+    }
+  } else if (has_require_vid || has_require_did) {
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
+
+    // Verify that the expected D3D11 UMD entrypoint is present.
+    if (!GetModuleHandleW(L"d3d11.dll")) {
+      return reporter.Fail("d3d11.dll is not loaded");
+    }
+    HMODULE umd = GetModuleHandleW(aerogpu_test::ExpectedAeroGpuD3D10UmdModuleBaseName());
+    if (!umd) {
+      return reporter.Fail("failed to locate loaded AeroGPU D3D10/11 UMD module");
+    }
+    FARPROC open_adapter_11 = GetProcAddress(umd, "OpenAdapter11");
+    if (!open_adapter_11) {
+      // On x86, stdcall decoration may be present depending on how the DLL was linked.
+      open_adapter_11 = GetProcAddress(umd, "_OpenAdapter11@4");
+    }
+    if (!open_adapter_11) {
+      return reporter.Fail("expected AeroGPU D3D10/11 UMD to export OpenAdapter11 (D3D11 entrypoint)");
     }
   }
 
