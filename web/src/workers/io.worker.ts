@@ -72,6 +72,7 @@ import {
   type HidPassthroughMessage,
 } from "../platform/hid_passthrough_protocol";
 import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
+import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -358,8 +359,16 @@ class CompositeHidGuestBridge implements HidGuestBridge {
   }
 }
 
+const legacyHidAdapter = new IoWorkerLegacyHidPassthroughAdapter();
+
 const hidHostSink: HidHostSink = {
   sendReport: (payload) => {
+    const legacyMsg = legacyHidAdapter.sendReport(payload);
+    if (legacyMsg) {
+      ctx.postMessage(legacyMsg, [legacyMsg.data]);
+      return;
+    }
+
     const outRing = hidOutputRing;
     if (outRing) {
       const ty = payload.reportType === "feature" ? HidRingReportType.Feature : HidRingReportType.Output;
@@ -383,11 +392,12 @@ const hidHostSink: HidHostSink = {
 
 const hidGuestInMemory = new InMemoryHidGuestBridge(hidHostSink);
 let hidGuest: HidGuestBridge = hidGuestInMemory;
-const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
 
 // -----------------------------------------------------------------------------
 // WebHID passthrough (main thread ↔ I/O worker) debug plumbing
 // -----------------------------------------------------------------------------
+
+const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
 
 type HidPassthroughInputReportDebugEntry = {
   reportId: number;
@@ -990,7 +1000,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<HidProxyMessage>
-      | Partial<HidPassthroughMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
       | Partial<UsbUhciHarnessStartMessage>
@@ -1109,16 +1118,28 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isHidPassthroughAttachMessage(data)) {
       handleHidPassthroughAttach(data);
+      if (started) Atomics.add(status, StatusIndex.IoHidAttachCounter, 1);
+      hidGuest.attach(legacyHidAdapter.attach(data));
       return;
     }
 
     if (isHidPassthroughDetachMessage(data)) {
       handleHidPassthroughDetach(data);
+      const detach = legacyHidAdapter.detach(data);
+      if (detach) {
+        if (started) Atomics.add(status, StatusIndex.IoHidDetachCounter, 1);
+        hidGuest.detach(detach);
+      }
       return;
     }
 
     if (isHidPassthroughInputReportMessage(data)) {
       handleHidPassthroughInputReport(data);
+      const input = legacyHidAdapter.inputReport(data);
+      if (input) {
+        if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
+        hidGuest.inputReport(input);
+      }
       return;
     }
 
