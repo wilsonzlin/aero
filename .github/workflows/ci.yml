@@ -328,6 +328,7 @@ jobs:
           python3 scripts/ci/check-win7-virtqueue-split-headers.py
           python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
           python3 scripts/ci/check-virtqueue-split-driver-builds.py
+          python3 scripts/ci/check-win7-virtio-header-collisions.py
       - name: Build + run virtio-pci cap parser tests
         run: |
           set -euo pipefail
