@@ -16,6 +16,8 @@ pub enum DxbcError {
     BufferTooSmall,
     #[error("missing DXBC magic")]
     BadMagic,
+    #[error("DXBC container missing shader bytecode chunk (expected SHDR or SHEX)")]
+    MissingShaderChunk,
     #[error("chunk offset out of bounds")]
     ChunkOutOfBounds,
     #[error("chunk size out of bounds")]
@@ -158,14 +160,13 @@ impl<'a> Container<'a> {
 pub fn extract_shader_bytecode(bytes: &[u8]) -> Result<&[u8], DxbcError> {
     if bytes.len() >= 4 && &bytes[0..4] == b"DXBC" {
         let container = Container::parse(bytes)?;
-        if let Some(shdr) = container
+        let Some(shader_chunk) = container
             .get(FourCC::SHDR)
             .or_else(|| container.get(FourCC::SHEX))
-        {
-            Ok(shdr.data)
-        } else {
-            Ok(bytes)
-        }
+        else {
+            return Err(DxbcError::MissingShaderChunk);
+        };
+        Ok(shader_chunk.data)
     } else {
         Ok(bytes)
     }

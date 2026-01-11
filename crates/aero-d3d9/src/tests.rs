@@ -215,6 +215,18 @@ fn dxbc_container_roundtrip_extracts_shdr() {
 }
 
 #[test]
+fn dxbc_container_missing_shdr_is_an_error() {
+    // DXBC containers should always provide the shader bytecode in SHDR/SHEX. If the container is
+    // missing those chunks, the caller likely passed the wrong blob (or the guest sent corrupted
+    // data).
+    let dummy_rdef = [0u8; 4];
+    let container = dxbc::build_container(&[(dxbc::FourCC::RDEF, &dummy_rdef)]);
+
+    let err = dxbc::extract_shader_bytecode(&container).unwrap_err();
+    assert!(matches!(err, dxbc::DxbcError::MissingShaderChunk), "{err:?}");
+}
+
+#[test]
 fn translates_simple_vs_to_wgsl() {
     let vs_bytes = to_bytes(&assemble_vs_passthrough());
     let dxbc = dxbc::build_container(&[(dxbc::FourCC::SHDR, &vs_bytes)]);
