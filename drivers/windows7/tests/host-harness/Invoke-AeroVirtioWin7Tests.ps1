@@ -39,7 +39,8 @@ param(
   [string]$HttpPath = "/aero-virtio-selftest",
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
-  # Default is off to avoid changing existing virtio-blk/virtio-net-only images.
+  # Note: the guest selftest includes a virtio-snd WASAPI smoke test by default; if you do not attach a virtio-snd
+  # device, either enable this flag or provision the guest to run the selftest with --disable-snd.
   [Parameter(Mandatory = $false)]
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
