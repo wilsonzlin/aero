@@ -15,6 +15,10 @@ export type Config = Readonly<{
   CROSS_ORIGIN_ISOLATION: boolean;
   TRUST_PROXY: boolean;
 
+  SESSION_SECRET: string;
+  SESSION_TTL_SECONDS: number;
+  SESSION_COOKIE_SAMESITE: 'Lax' | 'Strict' | 'None';
+
   RATE_LIMIT_REQUESTS_PER_MINUTE: number;
 
   TLS_ENABLED: boolean;
@@ -30,9 +34,12 @@ export type Config = Readonly<{
   TCP_MUX_MAX_STREAM_BUFFER_BYTES: number;
   TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: number;
 
-  // Placeholders for upcoming features (not implemented in this skeleton).
+  // Session-scoped TCP proxy limits.
   TCP_PROXY_MAX_CONNECTIONS: number;
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: number;
+  TCP_PROXY_MAX_MESSAGE_BYTES: number;
+  TCP_PROXY_CONNECT_TIMEOUT_MS: number;
+  TCP_PROXY_IDLE_TIMEOUT_MS: number;
 
   // DNS-over-HTTPS (RFC8484)
   DNS_UPSTREAMS: string[];
@@ -107,6 +114,10 @@ const envSchema = z.object({
   CROSS_ORIGIN_ISOLATION: z.string().optional().default('0'),
   TRUST_PROXY: z.enum(['0', '1']).optional().default('0'),
 
+  SESSION_SECRET: z.string().optional().default(''),
+  SESSION_TTL_SECONDS: z.coerce.number().int().min(1).default(60 * 60 * 24),
+  SESSION_COOKIE_SAMESITE: z.enum(['Lax', 'Strict', 'None']).optional().default('Lax'),
+
   RATE_LIMIT_REQUESTS_PER_MINUTE: z.coerce.number().int().min(0).default(0),
 
   TLS_ENABLED: z.enum(['0', '1']).optional().default('0'),
@@ -120,9 +131,11 @@ const envSchema = z.object({
   TCP_MUX_MAX_STREAM_BUFFER_BYTES: z.coerce.number().int().min(0).default(1024 * 1024),
   TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: z.coerce.number().int().min(0).default(16 * 1024 * 1024),
 
-  // Placeholders (unused today).
-  TCP_PROXY_MAX_CONNECTIONS: z.coerce.number().int().min(0).default(0),
+  TCP_PROXY_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(64),
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: z.coerce.number().int().min(0).default(0),
+  TCP_PROXY_MAX_MESSAGE_BYTES: z.coerce.number().int().min(1).default(1024 * 1024),
+  TCP_PROXY_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(1).default(10_000),
+  TCP_PROXY_IDLE_TIMEOUT_MS: z.coerce.number().int().min(1).default(300_000),
 
   DNS_UPSTREAMS: z.string().optional().default('1.1.1.1:53,8.8.8.8:53'),
   DNS_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1).default(2000),
@@ -152,6 +165,7 @@ export function loadConfig(env: Env = process.env): Config {
   const trustProxy = raw.TRUST_PROXY === '1';
   const tlsCertPath = raw.TLS_CERT_PATH.trim();
   const tlsKeyPath = raw.TLS_KEY_PATH.trim();
+  const sessionSecret = (env.AERO_GATEWAY_SESSION_SECRET ?? raw.SESSION_SECRET).trim();
 
   if (tlsEnabled) {
     if (!tlsCertPath) {
@@ -197,6 +211,10 @@ export function loadConfig(env: Env = process.env): Config {
     CROSS_ORIGIN_ISOLATION: raw.CROSS_ORIGIN_ISOLATION === '1',
     TRUST_PROXY: trustProxy,
 
+    SESSION_SECRET: sessionSecret,
+    SESSION_TTL_SECONDS: raw.SESSION_TTL_SECONDS,
+    SESSION_COOKIE_SAMESITE: raw.SESSION_COOKIE_SAMESITE,
+
     RATE_LIMIT_REQUESTS_PER_MINUTE: raw.RATE_LIMIT_REQUESTS_PER_MINUTE,
 
     TLS_ENABLED: tlsEnabled,
@@ -212,6 +230,9 @@ export function loadConfig(env: Env = process.env): Config {
 
     TCP_PROXY_MAX_CONNECTIONS: raw.TCP_PROXY_MAX_CONNECTIONS,
     TCP_PROXY_MAX_CONNECTIONS_PER_IP: raw.TCP_PROXY_MAX_CONNECTIONS_PER_IP,
+    TCP_PROXY_MAX_MESSAGE_BYTES: raw.TCP_PROXY_MAX_MESSAGE_BYTES,
+    TCP_PROXY_CONNECT_TIMEOUT_MS: raw.TCP_PROXY_CONNECT_TIMEOUT_MS,
+    TCP_PROXY_IDLE_TIMEOUT_MS: raw.TCP_PROXY_IDLE_TIMEOUT_MS,
 
     DNS_UPSTREAMS: splitCommaList(raw.DNS_UPSTREAMS),
     DNS_UPSTREAM_TIMEOUT_MS: raw.DNS_UPSTREAM_TIMEOUT_MS,

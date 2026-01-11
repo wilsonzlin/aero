@@ -15,10 +15,14 @@ test('loadConfig applies defaults and derives ALLOWED_ORIGINS from PUBLIC_BASE_U
   assert.equal(config.TLS_ENABLED, false);
   assert.equal(config.TRUST_PROXY, false);
   assert.equal(config.TCP_ALLOW_PRIVATE_IPS, false);
+  assert.equal(config.SESSION_SECRET, '');
+  assert.equal(config.SESSION_TTL_SECONDS, 60 * 60 * 24);
+  assert.equal(config.SESSION_COOKIE_SAMESITE, 'Lax');
   assert.deepEqual(config.TCP_ALLOWED_HOSTS, []);
   assert.deepEqual(config.TCP_ALLOWED_PORTS, []);
   assert.deepEqual(config.TCP_BLOCKED_CLIENT_IPS, []);
   assert.equal(config.TCP_MUX_MAX_STREAMS, 1024);
+  assert.equal(config.TCP_PROXY_MAX_CONNECTIONS, 64);
 });
 
 test('loadConfig validates port range', () => {

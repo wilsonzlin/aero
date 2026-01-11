@@ -400,6 +400,10 @@ The response body is compatible with Cloudflare’s `application/dns-json` schem
 
 Supported `type` values: `A`, `AAAA`, `CNAME` (or their numeric equivalents).
 
+### Authentication
+
+`/dns-json` requests must include the `aero_session` cookie.
+
 `/dns-query` remains the canonical DoH interface and the only endpoint described by the OpenAPI spec.
 
 ---

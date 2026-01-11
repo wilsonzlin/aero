@@ -21,6 +21,7 @@ import {
 import { validateTcpTargetPolicy, validateWsUpgradePolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
 import { evaluateTcpHostPolicy, parseTcpHostnameEgressPolicyFromEnv } from "../security/egressPolicy.js";
 import { isPublicIpAddress } from "../security/ipPolicy.js";
+import type { SessionConnectionTracker } from "../session.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -39,6 +40,11 @@ export type TcpMuxUpgradeOptions = TcpProxyUpgradePolicy &
     maxStreams?: number;
     maxStreamBufferedBytes?: number;
     maxFramePayloadBytes?: number;
+    maxMessageBytes?: number;
+    connectTimeoutMs?: number;
+    idleTimeoutMs?: number;
+    sessionId?: string;
+    sessionConnections?: SessionConnectionTracker;
     createConnection?: typeof net.createConnection;
     metrics?: TcpProxyEgressMetricSink;
   }>;
@@ -140,16 +146,20 @@ type StreamState = {
   pendingWrites: Buffer[];
   pendingWriteBytes: number;
   writePaused: boolean;
+  connectTimer?: ReturnType<typeof setTimeout>;
+  releaseSessionSlot?: () => void;
 };
 
 class WebSocketTcpMuxBridge {
   private readonly wsSocket: Duplex;
   private readonly opts: TcpMuxUpgradeOptions;
+  private readonly maxMessageBytes: number;
 
   private wsBuffer: Buffer = Buffer.alloc(0);
 
   private fragmentedOpcode: number | null = null;
   private fragmentedChunks: Buffer[] = [];
+  private fragmentedBytes = 0;
 
   private readonly muxParser = new TcpMuxFrameParser();
   private readonly streams = new Map<number, StreamState>();
@@ -160,6 +170,7 @@ class WebSocketTcpMuxBridge {
   constructor(wsSocket: Duplex, opts: TcpMuxUpgradeOptions) {
     this.wsSocket = wsSocket;
     this.opts = opts;
+    this.maxMessageBytes = opts.maxMessageBytes ?? 1024 * 1024;
   }
 
   start(head: Buffer): void {
@@ -198,7 +209,7 @@ class WebSocketTcpMuxBridge {
 
   private drainWebSocketFrames(): void {
     while (!this.closed) {
-      const parsed = tryReadFrame(this.wsBuffer);
+      const parsed = tryReadFrame(this.wsBuffer, this.maxMessageBytes);
       if (!parsed) return;
       this.wsBuffer = parsed.remaining;
       this.handleWsFrame(parsed.frame);
@@ -214,11 +225,17 @@ class WebSocketTcpMuxBridge {
           return;
         }
         this.fragmentedChunks.push(frame.payload);
+        this.fragmentedBytes += frame.payload.length;
+        if (this.fragmentedBytes > this.maxMessageBytes) {
+          this.closeWithMessageTooLarge();
+          return;
+        }
         if (frame.fin) {
           const payload = Buffer.concat(this.fragmentedChunks);
           const opcode = this.fragmentedOpcode;
           this.fragmentedOpcode = null;
           this.fragmentedChunks = [];
+          this.fragmentedBytes = 0;
           this.forwardMessage(opcode, payload);
         }
         return;
@@ -236,6 +253,11 @@ class WebSocketTcpMuxBridge {
         }
         this.fragmentedOpcode = frame.opcode;
         this.fragmentedChunks = [frame.payload];
+        this.fragmentedBytes = frame.payload.length;
+        if (this.fragmentedBytes > this.maxMessageBytes) {
+          this.closeWithMessageTooLarge();
+          return;
+        }
         return;
       }
       case 0x8: {
@@ -410,6 +432,20 @@ class WebSocketTcpMuxBridge {
       };
     }
 
+    let releaseSessionSlot: (() => void) | undefined;
+    if (this.opts.sessionId && this.opts.sessionConnections) {
+      if (!this.opts.sessionConnections.tryAcquire(this.opts.sessionId)) {
+        this.sendStreamError(frame.streamId, TcpMuxErrorCode.STREAM_LIMIT_EXCEEDED, "session max connections exceeded");
+        return;
+      }
+      let released = false;
+      releaseSessionSlot = () => {
+        if (released) return;
+        released = true;
+        this.opts.sessionConnections!.release(this.opts.sessionId!);
+      };
+    }
+
     const createConnection = this.opts.createConnection ?? net.createConnection;
     const socket = createConnection({
       host: dialHost,
@@ -428,13 +464,32 @@ class WebSocketTcpMuxBridge {
       pendingWrites: [],
       pendingWriteBytes: 0,
       writePaused: false,
+      releaseSessionSlot,
     };
     this.streams.set(frame.streamId, stream);
     if (this.pausedForWsBackpressure) {
       socket.pause();
     }
 
+    const connectTimeoutMs = this.opts.connectTimeoutMs ?? 10_000;
+    const idleTimeoutMs = this.opts.idleTimeoutMs ?? 300_000;
+
+    socket.setTimeout(idleTimeoutMs);
+    socket.on("timeout", () => {
+      this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "TCP idle timeout");
+      this.destroyStream(stream.id);
+    });
+
+    const connectTimer = setTimeout(() => {
+      this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "TCP connect timeout");
+      this.destroyStream(stream.id);
+    }, connectTimeoutMs);
+    connectTimer.unref?.();
+    stream.connectTimer = connectTimer;
+
     socket.on("connect", () => {
+      if (stream.connectTimer) clearTimeout(stream.connectTimer);
+      stream.connectTimer = undefined;
       stream.connected = true;
       this.flushStreamWrites(stream);
     });
@@ -455,6 +510,8 @@ class WebSocketTcpMuxBridge {
     });
 
     socket.on("error", (err) => {
+      if (stream.connectTimer) clearTimeout(stream.connectTimer);
+      stream.connectTimer = undefined;
       if (err instanceof TcpMuxIpPolicyDeniedError) {
         this.opts.metrics?.blockedByIpPolicyTotal?.inc();
         this.sendStreamError(stream.id, TcpMuxErrorCode.POLICY_DENIED, err.message);
@@ -465,7 +522,12 @@ class WebSocketTcpMuxBridge {
     });
 
     socket.on("close", () => {
+      if (stream.connectTimer) clearTimeout(stream.connectTimer);
+      stream.connectTimer = undefined;
+      const existing = this.streams.get(stream.id);
+      if (!existing) return;
       this.streams.delete(stream.id);
+      existing.releaseSessionSlot?.();
     });
   }
 
@@ -544,6 +606,8 @@ class WebSocketTcpMuxBridge {
     const stream = this.streams.get(streamId);
     if (!stream) return;
     this.streams.delete(streamId);
+    if (stream.connectTimer) clearTimeout(stream.connectTimer);
+    stream.releaseSessionSlot?.();
     stream.socket.removeAllListeners();
     stream.socket.destroy();
   }
@@ -568,6 +632,12 @@ class WebSocketTcpMuxBridge {
   private closeWithProtocolError(): void {
     // 1002 = protocol error.
     this.sendWsFrame(0x8, Buffer.from([0x03, 0xea]));
+    this.close();
+  }
+
+  private closeWithMessageTooLarge(): void {
+    // 1009 = message too big.
+    this.sendWsFrame(0x8, Buffer.from([0x03, 0xf1]));
     this.close();
   }
 
@@ -597,7 +667,7 @@ type ParsedFrame = {
 
 type TryReadFrameResult = { frame: ParsedFrame; remaining: Buffer };
 
-function tryReadFrame(buffer: Buffer): TryReadFrameResult | null {
+function tryReadFrame(buffer: Buffer, maxPayloadBytes: number): TryReadFrameResult | null {
   if (buffer.length < 2) return null;
 
   const first = buffer[0];
@@ -625,6 +695,11 @@ function tryReadFrame(buffer: Buffer): TryReadFrameResult | null {
       return { frame: { fin: true, opcode: 0x8, payload: Buffer.alloc(0) }, remaining: Buffer.alloc(0) };
     }
     length = combined;
+  }
+
+  if (length > maxPayloadBytes) {
+    // Close immediately without buffering untrusted payloads.
+    return { frame: { fin: true, opcode: 0x8, payload: Buffer.from([0x03, 0xf1]) }, remaining: Buffer.alloc(0) };
   }
 
   let maskKey: Buffer | null = null;

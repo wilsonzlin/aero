@@ -23,6 +23,10 @@ const baseConfig = {
   TLS_CERT_PATH: '',
   TLS_KEY_PATH: '',
 
+  SESSION_SECRET: 'test-secret',
+  SESSION_TTL_SECONDS: 60 * 60 * 24,
+  SESSION_COOKIE_SAMESITE: 'Lax',
+
   RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
 
   TCP_ALLOWED_HOSTS: [],
@@ -32,8 +36,11 @@ const baseConfig = {
   TCP_MUX_MAX_STREAM_BUFFER_BYTES: 1024 * 1024,
   TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: 16 * 1024 * 1024,
 
-  TCP_PROXY_MAX_CONNECTIONS: 0,
+  TCP_PROXY_MAX_CONNECTIONS: 64,
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
+  TCP_PROXY_MAX_MESSAGE_BYTES: 1024 * 1024,
+  TCP_PROXY_CONNECT_TIMEOUT_MS: 10_000,
+  TCP_PROXY_IDLE_TIMEOUT_MS: 300_000,
 
   DNS_UPSTREAMS: ['127.0.0.1:53'],
   DNS_UPSTREAM_TIMEOUT_MS: 500,
@@ -53,6 +60,18 @@ async function listen(app: import('fastify').FastifyInstance): Promise<number> {
   const address = app.server.address();
   if (!address || typeof address === 'string') throw new Error('Expected TCP address');
   return address.port;
+}
+
+async function createSessionCookie(port: number): Promise<string> {
+  const res = await fetch(`http://127.0.0.1:${port}/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
+  const setCookie = res.headers.get('set-cookie');
+  if (!setCookie) throw new Error('Missing Set-Cookie header');
+  return setCookie.split(';')[0] ?? setCookie;
 }
 
 test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', async () => {
@@ -81,12 +100,13 @@ test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', 
   });
   await app.ready();
   const port = await listen(app);
+  const cookie = await createSessionCookie(port);
 
   try {
     const q1 = encodeDnsQuery({ id: 100, name: 'example.com', type: 1 });
     const r1 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message' },
+      headers: { 'Content-Type': 'application/dns-message', cookie },
       body: bufferToArrayBuffer(q1),
     });
     assert.equal(r1.status, 200);
@@ -104,7 +124,7 @@ test('DoH POST resolves via UDP upstream and hits cache on subsequent queries', 
     const q2 = encodeDnsQuery({ id: 101, name: 'example.com', type: 1 });
     const r2 = await fetch(`http://127.0.0.1:${port}/dns-query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/dns-message' },
+      headers: { 'Content-Type': 'application/dns-message', cookie },
       body: bufferToArrayBuffer(q2),
     });
     assert.equal(r2.status, 200);

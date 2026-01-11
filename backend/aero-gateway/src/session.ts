@@ -1,0 +1,179 @@
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+
+import type { Config } from './config.js';
+import { getCookieValue } from './cookies.js';
+
+export const SESSION_COOKIE_NAME = 'aero_session';
+
+type LoggerLike = {
+  warn: (obj: unknown, msg?: string) => void;
+};
+
+type SessionTokenPayload = {
+  v: 1;
+  sid: string;
+  exp: number;
+};
+
+export type VerifiedSession = {
+  id: string;
+  expiresAtMs: number;
+};
+
+export type SessionManager = Readonly<{
+  ttlSeconds: number;
+  cookieSameSite: Config['SESSION_COOKIE_SAMESITE'];
+  issueSession: (existing: VerifiedSession | null) => { token: string; session: VerifiedSession };
+  verifySessionToken: (token: string) => VerifiedSession | null;
+  verifySessionCookie: (cookieHeader: string | string[] | undefined) => VerifiedSession | null;
+}>;
+
+function encodeBase64Url(buf: Buffer): string {
+  return buf.toString('base64').replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
+}
+
+function decodeBase64Url(raw: string): Buffer {
+  if (!/^[A-Za-z0-9_-]+$/.test(raw)) throw new Error('Invalid base64url');
+  let base64 = raw.replaceAll('-', '+').replaceAll('_', '/');
+  const mod = base64.length % 4;
+  if (mod === 2) base64 += '==';
+  else if (mod === 3) base64 += '=';
+  else if (mod !== 0) throw new Error('Invalid base64url length');
+  return Buffer.from(base64, 'base64');
+}
+
+function sign(payloadBase64Url: string, secret: Buffer): Buffer {
+  return createHmac('sha256', secret).update(payloadBase64Url).digest();
+}
+
+function constantTimeEqual(a: Buffer, b: Buffer): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function mintSessionToken(payload: SessionTokenPayload, secret: Buffer): string {
+  const payloadJson = JSON.stringify(payload);
+  const payloadB64 = encodeBase64Url(Buffer.from(payloadJson, 'utf8'));
+  const sig = sign(payloadB64, secret);
+  const sigB64 = encodeBase64Url(sig);
+  return `${payloadB64}.${sigB64}`;
+}
+
+export function verifySessionToken(token: string, secret: Buffer, nowMs = Date.now()): VerifiedSession | null {
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, sigB64] = parts;
+
+  let providedSig: Buffer;
+  try {
+    providedSig = decodeBase64Url(sigB64);
+  } catch {
+    return null;
+  }
+
+  const expectedSig = sign(payloadB64, secret);
+  if (!constantTimeEqual(providedSig, expectedSig)) return null;
+
+  let payloadRaw: Buffer;
+  try {
+    payloadRaw = decodeBase64Url(payloadB64);
+  } catch {
+    return null;
+  }
+
+  let payload: SessionTokenPayload;
+  try {
+    payload = JSON.parse(payloadRaw.toString('utf8')) as SessionTokenPayload;
+  } catch {
+    return null;
+  }
+
+  if (!payload || payload.v !== 1) return null;
+  if (typeof payload.sid !== 'string' || payload.sid.length === 0) return null;
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) return null;
+
+  const expiresAtMs = payload.exp * 1000;
+  if (expiresAtMs <= nowMs) return null;
+
+  return { id: payload.sid, expiresAtMs };
+}
+
+export function createSessionManager(config: Config, logger: LoggerLike): SessionManager {
+  const secretRaw = config.SESSION_SECRET.trim();
+  const secret =
+    secretRaw.length > 0
+      ? Buffer.from(secretRaw, 'utf8')
+      : (() => {
+          const generated = randomBytes(32);
+          logger.warn(
+            {
+              env: ['AERO_GATEWAY_SESSION_SECRET', 'SESSION_SECRET'],
+            },
+            'Session secret not configured; generated a temporary secret (sessions will not survive restarts)',
+          );
+          return generated;
+        })();
+
+  const ttlSeconds = config.SESSION_TTL_SECONDS;
+
+  return {
+    ttlSeconds,
+    cookieSameSite: config.SESSION_COOKIE_SAMESITE,
+    issueSession: (existing) => {
+      const nowMs = Date.now();
+      const expiresAtMs = nowMs + ttlSeconds * 1000;
+      const id = existing?.id ?? randomUUID();
+
+      const payload: SessionTokenPayload = {
+        v: 1,
+        sid: id,
+        exp: Math.floor(expiresAtMs / 1000),
+      };
+      const token = mintSessionToken(payload, secret);
+      return { token, session: { id, expiresAtMs } };
+    },
+    verifySessionToken: (token) => verifySessionToken(token, secret),
+    verifySessionCookie: (cookieHeader) => {
+      const value = getCookieValue(cookieHeader, SESSION_COOKIE_NAME);
+      if (!value) return null;
+      return verifySessionToken(value, secret);
+    },
+  };
+}
+
+export class SessionConnectionTracker {
+  private readonly maxConnections: number;
+  private readonly active = new Map<string, number>();
+
+  constructor(maxConnections: number) {
+    if (!Number.isInteger(maxConnections) || maxConnections < 1) {
+      throw new Error(`Invalid maxConnections: ${maxConnections}`);
+    }
+    this.maxConnections = maxConnections;
+  }
+
+  getMaxConnections(): number {
+    return this.maxConnections;
+  }
+
+  getActiveConnections(sessionId: string): number {
+    return this.active.get(sessionId) ?? 0;
+  }
+
+  tryAcquire(sessionId: string, count = 1): boolean {
+    if (!Number.isInteger(count) || count < 1) return false;
+    const current = this.getActiveConnections(sessionId);
+    if (current + count > this.maxConnections) return false;
+    this.active.set(sessionId, current + count);
+    return true;
+  }
+
+  release(sessionId: string, count = 1): void {
+    if (!Number.isInteger(count) || count < 1) return;
+    const current = this.getActiveConnections(sessionId);
+    const next = Math.max(0, current - count);
+    if (next === 0) this.active.delete(sessionId);
+    else this.active.set(sessionId, next);
+  }
+}
+

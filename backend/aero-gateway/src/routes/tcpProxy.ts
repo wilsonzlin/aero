@@ -13,6 +13,7 @@ import {
   type TcpHostPolicyDecision,
 } from "../security/egressPolicy.js";
 import { isPublicIpAddress } from "../security/ipPolicy.js";
+import type { SessionConnectionTracker } from "../session.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -45,6 +46,11 @@ export function handleTcpProxyUpgrade(
     allowPrivateIps?: boolean;
     createConnection?: typeof net.createConnection;
     metrics?: TcpProxyEgressMetricSink;
+    sessionId?: string;
+    sessionConnections?: SessionConnectionTracker;
+    maxMessageBytes?: number;
+    connectTimeoutMs?: number;
+    idleTimeoutMs?: number;
   } = {},
 ): void {
   const upgradeDecision = validateWsUpgradePolicy(req, opts);
@@ -95,6 +101,22 @@ export function handleTcpProxyUpgrade(
       return;
     }
 
+    if (opts.sessionId && opts.sessionConnections) {
+      if (!opts.sessionConnections.tryAcquire(opts.sessionId)) {
+        respondHttp(socket, 429, "Too many concurrent connections");
+        return;
+      }
+
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        opts.sessionConnections!.release(opts.sessionId!);
+      };
+      socket.once("close", release);
+      socket.once("error", release);
+    }
+
     const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
     socket.write(
       [
@@ -110,11 +132,23 @@ export function handleTcpProxyUpgrade(
       socket.setNoDelay(true);
     }
 
+    const connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
+    const idleTimeoutMs = opts.idleTimeoutMs ?? 300_000;
     const createConnection = opts.createConnection ?? net.createConnection;
     const tcpSocket = createConnection({ host: resolved.ip, port: resolved.port });
     tcpSocket.setNoDelay(true);
+    tcpSocket.setTimeout(idleTimeoutMs);
+    tcpSocket.on("timeout", () => tcpSocket.destroy(new Error("TCP idle timeout")));
 
-    const bridge = new WebSocketTcpBridge(socket, tcpSocket);
+    const connectTimer = setTimeout(() => {
+      tcpSocket.destroy(new Error("TCP connect timeout"));
+    }, connectTimeoutMs);
+    connectTimer.unref?.();
+    tcpSocket.once("connect", () => clearTimeout(connectTimer));
+    tcpSocket.once("error", () => clearTimeout(connectTimer));
+    tcpSocket.once("close", () => clearTimeout(connectTimer));
+
+    const bridge = new WebSocketTcpBridge(socket, tcpSocket, opts.maxMessageBytes ?? 1024 * 1024);
     bridge.start(head);
   })();
 }
@@ -137,10 +171,14 @@ function httpStatusText(status: number): string {
   switch (status) {
     case 400:
       return "Bad Request";
+    case 401:
+      return "Unauthorized";
     case 403:
       return "Forbidden";
     case 404:
       return "Not Found";
+    case 429:
+      return "Too Many Requests";
     case 502:
       return "Bad Gateway";
     default:
@@ -167,17 +205,20 @@ type ParsedFrame = {
 class WebSocketTcpBridge {
   private readonly wsSocket: Duplex;
   private readonly tcpSocket: net.Socket;
+  private readonly maxMessageBytes: number;
 
   private wsBuffer: Buffer = Buffer.alloc(0);
 
   private fragmentedOpcode: number | null = null;
   private fragmentedChunks: Buffer[] = [];
+  private fragmentedBytes = 0;
 
   private closed = false;
 
-  constructor(wsSocket: Duplex, tcpSocket: net.Socket) {
+  constructor(wsSocket: Duplex, tcpSocket: net.Socket, maxMessageBytes: number) {
     this.wsSocket = wsSocket;
     this.tcpSocket = tcpSocket;
+    this.maxMessageBytes = maxMessageBytes;
   }
 
   start(head: Buffer): void {
@@ -205,7 +246,7 @@ class WebSocketTcpBridge {
 
   private drainWebSocketFrames(): void {
     while (!this.closed) {
-      const parsed = tryReadFrame(this.wsBuffer);
+      const parsed = tryReadFrame(this.wsBuffer, this.maxMessageBytes);
       if (!parsed) return;
       this.wsBuffer = parsed.remaining;
       this.handleFrame(parsed.frame);
@@ -221,11 +262,17 @@ class WebSocketTcpBridge {
           return;
         }
         this.fragmentedChunks.push(frame.payload);
+        this.fragmentedBytes += frame.payload.length;
+        if (this.fragmentedBytes > this.maxMessageBytes) {
+          this.closeWithMessageTooLarge();
+          return;
+        }
         if (frame.fin) {
           const payload = Buffer.concat(this.fragmentedChunks);
           const opcode = this.fragmentedOpcode;
           this.fragmentedOpcode = null;
           this.fragmentedChunks = [];
+          this.fragmentedBytes = 0;
           this.forwardPayload(opcode, payload);
         }
         return;
@@ -243,6 +290,11 @@ class WebSocketTcpBridge {
         }
         this.fragmentedOpcode = frame.opcode;
         this.fragmentedChunks = [frame.payload];
+        this.fragmentedBytes = frame.payload.length;
+        if (this.fragmentedBytes > this.maxMessageBytes) {
+          this.closeWithMessageTooLarge();
+          return;
+        }
         return;
       }
       case 0x8: {
@@ -293,6 +345,12 @@ class WebSocketTcpBridge {
     this.close();
   }
 
+  private closeWithMessageTooLarge(): void {
+    // 1009 = message too big.
+    this.sendFrame(0x8, Buffer.from([0x03, 0xf1]));
+    this.close();
+  }
+
   private close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -304,7 +362,7 @@ class WebSocketTcpBridge {
 
 type TryReadFrameResult = { frame: ParsedFrame; remaining: Buffer };
 
-function tryReadFrame(buffer: Buffer): TryReadFrameResult | null {
+function tryReadFrame(buffer: Buffer, maxPayloadBytes: number): TryReadFrameResult | null {
   if (buffer.length < 2) return null;
 
   const first = buffer[0];
@@ -332,6 +390,11 @@ function tryReadFrame(buffer: Buffer): TryReadFrameResult | null {
       return { frame: { fin: true, opcode: 0x8, payload: Buffer.alloc(0) }, remaining: Buffer.alloc(0) };
     }
     length = combined;
+  }
+
+  if (length > maxPayloadBytes) {
+    // Close immediately without buffering untrusted payloads.
+    return { frame: { fin: true, opcode: 0x8, payload: Buffer.from([0x03, 0xf1]) }, remaining: Buffer.alloc(0) };
   }
 
   let maskKey: Buffer | null = null;
@@ -402,7 +465,7 @@ export async function resolveTcpProxyTarget(
   //
   // For local development + E2E testing we allow opting out so the proxy can
   // reach loopback test servers (e.g. Playwright).
-  const allowPrivateIps = opts.allowPrivateIps ?? false;
+  const allowPrivateIps = opts.allowPrivateIps ?? env.TCP_ALLOW_PRIVATE_IPS === "1";
 
   const hostPolicy = parseTcpHostnameEgressPolicyFromEnv(env);
   const decision = evaluateTcpHostPolicy(rawHost, hostPolicy);

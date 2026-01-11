@@ -69,8 +69,9 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /readyz` readiness
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
-- `GET /session` sets a demo cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
-- `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`)
+- `POST /session` issues the `aero_session` cookie used by `/dns-query` and the `/tcp` WebSocket upgrade
+- `GET /session` (dev-only helper; not part of the backend contract) sets a session cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
+- `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`; requires `aero_session` cookie)
 - `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md` and `deploy/README.md`)
 - `GET ws(s)://<host>/tcp-mux` Multiplexed TCP proxy upgrade endpoint (WebSocket; subprotocol `aero-tcp-mux-v1`)
 
@@ -85,11 +86,23 @@ Successful responses are `Content-Type: application/dns-message`.
 
 ### Quick test with curl (GET)
 
+First, bootstrap a session cookie:
+
+```bash
+COOKIE=$(curl -sS -D - -o /dev/null -X POST 'http://127.0.0.1:8080/session' \
+  | awk -F': ' 'tolower($1)=="set-cookie"{print $2}' \
+  | head -n1 \
+  | cut -d';' -f1 \
+  | tr -d '\r')
+echo "$COOKIE"
+```
+
 The following `dns` query is a standard `A` query for `example.com` with ID `0x0000`:
 
 ```bash
 curl -sS \
   'http://127.0.0.1:8080/dns-query?dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE' \
+  -H "Cookie: $COOKIE" \
   -H 'Accept: application/dns-message' \
   --output response.bin
 
@@ -113,6 +126,12 @@ Security:
 
 - `RATE_LIMIT_REQUESTS_PER_MINUTE` (default: `0` = disabled; applies to all routes)
 
+Sessions (cookies):
+
+- `AERO_GATEWAY_SESSION_SECRET` / `SESSION_SECRET` (recommended; if unset the gateway generates a temporary secret and sessions won't survive restarts)
+- `SESSION_TTL_SECONDS` (default: `86400`)
+- `SESSION_COOKIE_SAMESITE` (default: `Lax`; set to `None` for cross-site deployments, which also requires HTTPS + `Secure`)
+
 TCP proxy (`/tcp`, `/tcp-mux`):
 
 - `TCP_ALLOWED_HOSTS` (comma-separated patterns; default: allow all)
@@ -127,6 +146,10 @@ TCP proxy (`/tcp`, `/tcp-mux`):
   - **Security note:** this disables the default DNS-rebinding/SSRF mitigation (public-IP-only filtering) and should only be enabled in trusted/local-dev environments.
 - `TCP_ALLOWED_PORTS` (comma-separated; default: allow all)
 - `TCP_BLOCKED_CLIENT_IPS` (comma-separated; default: none)
+- `TCP_PROXY_MAX_CONNECTIONS` (default: `64`; max concurrent TCP connections per session; `/tcp-mux` streams count as connections)
+- `TCP_PROXY_MAX_MESSAGE_BYTES` (default: `1048576`)
+- `TCP_PROXY_CONNECT_TIMEOUT_MS` (default: `10000`)
+- `TCP_PROXY_IDLE_TIMEOUT_MS` (default: `300000`)
 - `TCP_MUX_MAX_STREAMS` (default: `1024`)
 - `TCP_MUX_MAX_STREAM_BUFFER_BYTES` (default: `1048576`)
 - `TCP_MUX_MAX_FRAME_PAYLOAD_BYTES` (default: `16777216`)
@@ -163,9 +186,8 @@ request is “secure” (e.g. when deciding whether to add the `Secure` attribut
 Only enable `TRUST_PROXY=1` when the gateway is **only reachable via a trusted reverse proxy**,
 otherwise clients can spoof `X-Forwarded-Proto`.
 
-Placeholders (not implemented yet):
+Not implemented yet:
 
-- `TCP_PROXY_MAX_CONNECTIONS`
 - `TCP_PROXY_MAX_CONNECTIONS_PER_IP`
 
 ## Local dev: generate a self-signed cert

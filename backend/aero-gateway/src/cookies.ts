@@ -55,3 +55,23 @@ export function appendSetCookieHeader(res: ServerResponse, cookie: string): void
   res.setHeader('Set-Cookie', cookies);
 }
 
+export function getCookieValue(cookieHeader: string | string[] | undefined, name: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  const raw = Array.isArray(cookieHeader) ? cookieHeader.join(';') : cookieHeader;
+  const parts = raw.split(';');
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx <= 0) continue;
+    const key = trimmed.slice(0, idx).trim();
+    if (key !== name) continue;
+    const value = trimmed.slice(idx + 1).trim();
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+  return undefined;
+}

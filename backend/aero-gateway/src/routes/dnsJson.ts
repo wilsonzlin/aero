@@ -6,15 +6,22 @@ import type { DnsResolver } from '../dns/resolver.js';
 import type { TokenBucketRateLimiter } from '../dns/rateLimit.js';
 import { dnsResponseToJson } from '../dns/dnsJson.js';
 import { parseDnsRecordType } from '../dns/recordTypes.js';
+import type { SessionManager } from '../session.js';
 
 type DnsJsonQuery = { name?: string; type?: string };
 
 export function setupDnsJsonRoutes(
   app: FastifyInstance,
   config: Config,
-  opts: { resolver: DnsResolver; rateLimiter: TokenBucketRateLimiter },
+  opts: { resolver: DnsResolver; rateLimiter: TokenBucketRateLimiter; sessions: SessionManager },
 ): void {
   app.get('/dns-json', async (request, reply) => {
+    const session = opts.sessions.verifySessionCookie(request.headers.cookie);
+    if (!session) {
+      reply.header('cache-control', 'no-store');
+      return reply.code(401).send({ error: 'unauthorized', message: 'Missing or invalid session' });
+    }
+
     const ip = request.ip ?? 'unknown';
     if (!opts.rateLimiter.allow(ip)) {
       return reply.code(429).send({ error: 'too_many_requests', message: 'Rate limit exceeded' });
@@ -69,4 +76,3 @@ export function setupDnsJsonRoutes(
     }
   });
 }
-

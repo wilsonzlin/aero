@@ -9,11 +9,11 @@ const baseConfig = {
   ALLOWED_ORIGINS: ['http://localhost'],
   PUBLIC_BASE_URL: 'http://localhost',
   SHUTDOWN_GRACE_MS: 100,
-  CROSS_ORIGIN_ISOLATION: true,
+  CROSS_ORIGIN_ISOLATION: false,
   TRUST_PROXY: false,
   SESSION_SECRET: 'test-secret',
   SESSION_TTL_SECONDS: 60 * 60 * 24,
-  SESSION_COOKIE_SAMESITE: 'Lax',
+  SESSION_COOKIE_SAMESITE: 'Lax' as const,
   RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
   TLS_ENABLED: false,
   TLS_CERT_PATH: '',
@@ -36,23 +36,31 @@ const baseConfig = {
   DNS_CACHE_NEGATIVE_TTL_SECONDS: 0,
   DNS_MAX_QUERY_BYTES: 4096,
   DNS_MAX_RESPONSE_BYTES: 4096,
-  DNS_ALLOW_ANY: false,
-  DNS_ALLOW_PRIVATE_PTR: false,
+  DNS_ALLOW_ANY: true,
+  DNS_ALLOW_PRIVATE_PTR: true,
   DNS_QPS_PER_IP: 0,
   DNS_BURST_PER_IP: 0,
 };
 
-test('CROSS_ORIGIN_ISOLATION injects COOP/COEP headers', async () => {
+test('/dns-query requires a valid aero_session cookie', async () => {
   const { app } = buildServer(baseConfig);
   await app.ready();
 
-  const res = await app.inject({ method: 'GET', url: '/healthz' });
-  assert.equal(res.statusCode, 200);
+  const dns = 'AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE'; // example.com A, RFC8484 base64url
 
-  assert.equal(res.headers['cross-origin-opener-policy'], 'same-origin');
-  assert.equal(res.headers['cross-origin-embedder-policy'], 'require-corp');
-  assert.equal(res.headers['cross-origin-resource-policy'], 'same-origin');
-  assert.equal(res.headers['origin-agent-cluster'], '?1');
+  const unauth = await app.inject({ method: 'GET', url: `/dns-query?dns=${dns}` });
+  assert.equal(unauth.statusCode, 401);
+
+  const sessionRes = await app.inject({ method: 'POST', url: '/session' });
+  assert.equal(sessionRes.statusCode, 201);
+  const setCookie = sessionRes.headers['set-cookie'];
+  assert.ok(setCookie, 'expected Set-Cookie header');
+  const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie).split(';')[0]!;
+
+  const auth = await app.inject({ method: 'GET', url: `/dns-query?dns=${dns}`, headers: { cookie } });
+  assert.equal(auth.statusCode, 200);
+  assert.ok((auth.headers['content-type'] ?? '').startsWith('application/dns-message'));
 
   await app.close();
 });
+

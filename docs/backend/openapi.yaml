@@ -217,7 +217,9 @@ components:
                 maxConnections:
                   type: integer
                   minimum: 1
-                  description: Maximum concurrent `/tcp` connections for this session.
+                  description: |
+                    Maximum concurrent TCP proxy connections for this session.
+                    `/tcp-mux` streams count as connections.
                 maxMessageBytes:
                   type: integer
                   minimum: 1

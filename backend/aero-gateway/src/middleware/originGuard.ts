@@ -34,6 +34,7 @@ export async function originGuard(
   }
 
   reply.header('access-control-allow-origin', normalizeOriginHeader(origin) ?? origin);
+  reply.header('access-control-allow-credentials', 'true');
   reply.header('access-control-expose-headers', 'x-request-id');
   reply.header('vary', 'Origin');
 

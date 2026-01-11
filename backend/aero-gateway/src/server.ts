@@ -7,6 +7,7 @@ import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Config } from './config.js';
 import { appendSetCookieHeader, isRequestSecure, serializeCookie } from './cookies.js';
+import { SESSION_COOKIE_NAME, SessionConnectionTracker, createSessionManager } from './session.js';
 import { setupCrossOriginIsolation } from './middleware/crossOriginIsolation.js';
 import { originGuard } from './middleware/originGuard.js';
 import { setupRequestIdHeader } from './middleware/requestId.js';
@@ -64,10 +65,14 @@ function httpStatusText(status: number): string {
   switch (status) {
     case 400:
       return 'Bad Request';
+    case 401:
+      return 'Unauthorized';
     case 403:
       return 'Forbidden';
     case 404:
       return 'Not Found';
+    case 429:
+      return 'Too Many Requests';
     case 503:
       return 'Service Unavailable';
     default:
@@ -99,15 +104,18 @@ export function buildServer(config: Config): ServerBundle {
     },
   });
 
+  const sessions = createSessionManager(config, app.log);
+  const sessionConnections = new SessionConnectionTracker(config.TCP_PROXY_MAX_CONNECTIONS);
+
   setupRequestIdHeader(app);
   setupSecurityHeaders(app);
   if (config.CROSS_ORIGIN_ISOLATION) setupCrossOriginIsolation(app);
 
-  setupRateLimit(app, { requestsPerMinute: config.RATE_LIMIT_REQUESTS_PER_MINUTE });
-
-  app.addHook('preHandler', async (request, reply) => {
+  app.addHook('onRequest', async (request, reply) => {
     await originGuard(request, reply, { allowedOrigins: config.ALLOWED_ORIGINS });
   });
+
+  setupRateLimit(app, { requestsPerMinute: config.RATE_LIMIT_REQUESTS_PER_MINUTE });
 
   const metrics = setupMetrics(app);
 
@@ -120,16 +128,61 @@ export function buildServer(config: Config): ServerBundle {
 
   app.get('/version', async () => getVersionInfo());
 
+  app.post('/session', async (request, reply) => {
+    if (request.body !== undefined && (typeof request.body !== 'object' || request.body === null || Array.isArray(request.body))) {
+      return reply.code(400).send({ error: 'bad_request', message: 'Request body must be a JSON object' });
+    }
+
+    const existing = sessions.verifySessionCookie(request.headers.cookie);
+    const { token, session } = sessions.issueSession(existing);
+
+    const secure = isRequestSecure(request.raw, { trustProxy: config.TRUST_PROXY });
+    if (config.SESSION_COOKIE_SAMESITE === 'None' && !secure) {
+      request.log.warn(
+        { sameSite: config.SESSION_COOKIE_SAMESITE },
+        'SESSION_COOKIE_SAMESITE=None set on a non-secure request; browsers may reject the cookie',
+      );
+    }
+
+    appendSetCookieHeader(
+      reply.raw,
+      serializeCookie(SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        sameSite: config.SESSION_COOKIE_SAMESITE,
+        secure,
+        maxAgeSeconds: config.SESSION_TTL_SECONDS,
+      }),
+    );
+
+    reply.header('cache-control', 'no-store');
+    reply.code(201);
+    return {
+      session: { expiresAt: new Date(session.expiresAtMs).toISOString() },
+      endpoints: { tcp: '/tcp', dnsQuery: '/dns-query' },
+      limits: {
+        tcp: {
+          maxConnections: config.TCP_PROXY_MAX_CONNECTIONS,
+          maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
+          connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
+          idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
+        },
+        dns: { maxQueryBytes: config.DNS_MAX_QUERY_BYTES },
+      },
+    };
+  });
+
   // Helper endpoint to validate Secure cookie behaviour in local dev (TLS vs proxy TLS termination).
   app.get('/session', async (request, reply) => {
+    const existing = sessions.verifySessionCookie(request.headers.cookie);
+    const { token } = sessions.issueSession(existing);
     const secure = isRequestSecure(request.raw, { trustProxy: config.TRUST_PROXY });
     appendSetCookieHeader(
       reply.raw,
-      serializeCookie('aero_session', randomUUID(), {
+      serializeCookie(SESSION_COOKIE_NAME, token, {
         httpOnly: true,
-        sameSite: 'Lax',
+        sameSite: config.SESSION_COOKIE_SAMESITE,
         secure,
-        maxAgeSeconds: 60 * 60 * 24,
+        maxAgeSeconds: config.SESSION_TTL_SECONDS,
       }),
     );
     return { ok: true };
@@ -155,18 +208,33 @@ export function buildServer(config: Config): ServerBundle {
     }
 
     if (url.pathname === '/tcp') {
+      const session = sessions.verifySessionCookie(req.headers.cookie);
+      if (!session) {
+        respondUpgradeHttp(socket, 401, 'Unauthorized');
+        return;
+      }
       handleTcpProxyUpgrade(req, socket, head, {
         allowedOrigins: config.ALLOWED_ORIGINS,
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
         allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
         allowedTargetPorts: config.TCP_ALLOWED_PORTS,
         allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
+        sessionId: session.id,
+        sessionConnections,
+        maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
+        connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
+        idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
         metrics: metrics.tcpProxy,
       });
       return;
     }
 
     if (url.pathname === '/tcp-mux') {
+      const session = sessions.verifySessionCookie(req.headers.cookie);
+      if (!session) {
+        respondUpgradeHttp(socket, 401, 'Unauthorized');
+        return;
+      }
       handleTcpMuxUpgrade(req, socket, head, {
         allowedOrigins: config.ALLOWED_ORIGINS,
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
@@ -176,6 +244,11 @@ export function buildServer(config: Config): ServerBundle {
         maxStreams: config.TCP_MUX_MAX_STREAMS,
         maxStreamBufferedBytes: config.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
         maxFramePayloadBytes: config.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
+        sessionId: session.id,
+        sessionConnections,
+        maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
+        connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
+        idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
         metrics: metrics.tcpProxy,
       });
       return;
@@ -183,7 +256,7 @@ export function buildServer(config: Config): ServerBundle {
 
     respondUpgradeHttp(socket, 404, 'Not Found');
   });
-  setupDohRoutes(app, config, metrics.dns);
+  setupDohRoutes(app, config, metrics.dns, sessions);
 
   if (process.env.AERO_GATEWAY_E2E === '1') {
     app.get('/e2e', async (_request, reply) => {
@@ -277,6 +350,7 @@ function e2ePageHtml(): string {
       (async () => {
         const results = {
           crossOriginIsolated: window.crossOriginIsolated,
+          session: { ok: false, error: null },
           sharedArrayBuffer: { ok: false, error: null },
           websocket: { ok: false, echo: null, error: null },
           dnsQuery: { ok: false, meta: null, error: null },
@@ -288,6 +362,19 @@ function e2ePageHtml(): string {
           results.sharedArrayBuffer.ok = buf.byteLength === 16;
         } catch (err) {
           results.sharedArrayBuffer.error = String(err && err.message ? err.message : err);
+        }
+
+        try {
+          const res = await withTimeout(fetch('/session', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({}),
+          }), 5000, 'session fetch');
+          results.session.ok = res.ok;
+          if (!res.ok) results.session.error = 'HTTP ' + res.status;
+        } catch (err) {
+          results.session.error = String(err && err.message ? err.message : err);
         }
 
         try {

@@ -16,6 +16,7 @@ import {
   TcpMuxMsgType,
   TCP_MUX_SUBPROTOCOL,
 } from "../src/protocol/tcpMux.js";
+import { SessionConnectionTracker } from "../src/session.js";
 
 async function listen(server: http.Server | net.Server, host?: string): Promise<number> {
   server.listen(0, host);
@@ -322,7 +323,9 @@ describe("tcpMux route", () => {
 
     try {
       const streamId = 1;
-      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
+      ws.send(
+        encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })),
+      );
 
       const deadline = Date.now() + 2_000;
       while (Date.now() < deadline) {
@@ -334,6 +337,83 @@ describe("tcpMux route", () => {
       assert.ok(err, "expected ERROR for loopback stream");
       assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
       assert.equal(ws.readyState, WebSocket.OPEN);
+    } finally {
+      await closeWebSocket(ws);
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
+  it("enforces per-session maxConnections across multiplexed streams", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const sessionConnections = new SessionConnectionTracker(1);
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowedTargetHosts: ["8.8.8.8"],
+        allowedTargetPorts: [echoPort],
+        maxStreams: 16,
+        sessionId: "test-session",
+        sessionConnections,
+        createConnection: (() =>
+          net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+    const parser = new TcpMuxFrameParser();
+    const errors: Array<{ streamId: number; code: number; message: string }> = [];
+    const received = new Map<number, Buffer[]>();
+
+    ws.addEventListener("message", (event) => {
+      if (!(event.data instanceof ArrayBuffer)) return;
+      const chunk = Buffer.from(event.data);
+      for (const frame of parser.push(chunk)) {
+        if (frame.msgType === TcpMuxMsgType.ERROR) {
+          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+          errors.push({ streamId: frame.streamId, code, message });
+        } else if (frame.msgType === TcpMuxMsgType.DATA) {
+          const list = received.get(frame.streamId) ?? [];
+          list.push(frame.payload);
+          received.set(frame.streamId, list);
+        }
+      }
+    });
+
+    try {
+      const s1 = 1;
+      const s2 = 2;
+      ws.send(
+        Buffer.concat([
+          encodeTcpMuxFrame(TcpMuxMsgType.OPEN, s1, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: echoPort })),
+          encodeTcpMuxFrame(TcpMuxMsgType.OPEN, s2, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: echoPort })),
+        ]),
+      );
+
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, s1, Buffer.from("ok\n", "utf8")));
+
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        const err = errors.find((e) => e.streamId === s2);
+        const okData = Buffer.concat(received.get(s1) ?? []).toString("utf8");
+        if (err && okData.includes("ok\n")) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      const err = errors.find((e) => e.streamId === s2);
+      assert.ok(err, "expected ERROR for second stream");
+      assert.equal(err.code, TcpMuxErrorCode.STREAM_LIMIT_EXCEEDED);
+
+      const okData = Buffer.concat(received.get(s1) ?? []).toString("utf8");
+      assert.ok(okData.includes("ok\n"));
+
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, s1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.RST)));
     } finally {
       await closeWebSocket(ws);
       await closeServer(proxyServer);

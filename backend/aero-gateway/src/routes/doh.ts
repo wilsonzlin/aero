@@ -5,6 +5,7 @@ import type { DnsMetrics } from '../metrics.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsErrorResponse } from '../dns/codec.js';
 import { DnsResolver, qtypeToString, rcodeToString } from '../dns/resolver.js';
 import { TokenBucketRateLimiter } from '../dns/rateLimit.js';
+import type { SessionManager } from '../session.js';
 import { setupDnsJsonRoutes } from './dnsJson.js';
 
 export function decodeBase64UrlToBuffer(base64url: string): Buffer {
@@ -19,10 +20,10 @@ export function decodeBase64UrlToBuffer(base64url: string): Buffer {
 
 type DohQuery = { dns?: string };
 
-export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: DnsMetrics): void {
+export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: DnsMetrics, sessions: SessionManager): void {
   const resolver = new DnsResolver(config, metrics);
   const rateLimiter = new TokenBucketRateLimiter(config.DNS_QPS_PER_IP, config.DNS_BURST_PER_IP);
-  setupDnsJsonRoutes(app, config, { resolver, rateLimiter });
+  setupDnsJsonRoutes(app, config, { resolver, rateLimiter, sessions });
 
   function sendDnsMessage(reply: import('fastify').FastifyReply, statusCode: number, message: Buffer) {
     reply.code(statusCode);
@@ -49,6 +50,12 @@ export function setupDohRoutes(app: FastifyInstance, config: Config, metrics: Dn
     method: ['GET', 'POST'],
     url: '/dns-query',
     handler: async (request, reply) => {
+      const session = sessions.verifySessionCookie(request.headers.cookie);
+      if (!session) {
+        reply.header('cache-control', 'no-store');
+        return reply.code(401).send({ error: 'unauthorized', message: 'Missing or invalid session' });
+      }
+
       const ip = request.ip ?? 'unknown';
       if (!rateLimiter.allow(ip)) {
         return sendDnsError(reply, 429, { id: 0, rcode: 2 });
