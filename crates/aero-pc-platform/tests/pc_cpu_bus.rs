@@ -129,7 +129,7 @@ fn cpu_core_bus_routes_i8042_output_port_to_toggle_a20() {
     let code_base = 0x200u64;
     bus.platform.memory.write_physical(code_base, &code);
 
-    let mut cpu = CpuState::new(CpuMode::Real);
+    let mut cpu = CpuCore::new(CpuMode::Real);
     cpu.set_stack_ptr(0x1000);
     cpu.segments.cs.selector = 0;
     cpu.segments.cs.base = 0;
