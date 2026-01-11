@@ -516,8 +516,10 @@ async function benchDoh({ gatewayPort, durationSeconds, connections }) {
     return { n, min, max, mean, stdev, cv };
   };
 
+  const totalRequests = getFiniteNumber(result.requests?.total) ?? getFiniteNumber(result.requests?.count);
   const qpsStats = summariseAutocannonStats(result.requests, { fallbackN: durationSeconds });
-  const latencyStats = summariseAutocannonStats(result.latency, { fallbackN: durationSeconds });
+  // For latency, use the total request count as the most meaningful sample count.
+  const latencyStats = summariseAutocannonStats(result.latency, { fallbackN: totalRequests ?? durationSeconds });
   return {
     qps: result.requests.average,
     qpsStats,
