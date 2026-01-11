@@ -244,8 +244,9 @@ To confirm the **real** AeroGPU UMD loaded for a given process bitness:
      - D3D9: `aerogpu_d3d9.dll` (x86) or `aerogpu_d3d9_x64.dll` (x64)
      - D3D10/11: `aerogpu_d3d10.dll` (x86) or `aerogpu_d3d10_x64.dll` (x64)
    - **DebugView**: capture `OutputDebugString` output from the UMDs.
-     - D3D9 logs `aerogpu-d3d9: OpenAdapter2 ...`
-     - D3D10/11 logs `aerogpu-d3d10_11: OpenAdapter.. ...`
+     - D3D9 logs `aerogpu-d3d9: module_path=...` and `aerogpu-d3d9: OpenAdapter...`
+     - D3D10/11 logs `aerogpu-d3d10_11: module_path=...` and `aerogpu-d3d10_11: OpenAdapter.. ...`
+       - Optional: set `AEROGPU_D3D10_11_LOG=1` before launching the app to enable verbose `AEROGPU_D3D11DDI:` call traces.
 3. (Optional) After each run, confirm fences advance:
    - `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --query-fence`
 
