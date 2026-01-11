@@ -576,10 +576,9 @@ typedef struct _D3D9DDIARG_CREATERESOURCE {
   // process opens the resource.
   //
   // NOTE: The protocol `share_token` used by `EXPORT_SHARED_SURFACE` /
-  // `IMPORT_SHARED_SURFACE` should come from the KMD-generated per-allocation
-  // ShareToken (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`). Older
-  // bring-up paths may also persist a user-mode generated token in
-  // `aerogpu_wddm_alloc_priv.share_token` for compatibility.
+  // `IMPORT_SHARED_SURFACE` is persisted in `aerogpu_wddm_alloc_priv.share_token`
+  // (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). Do not derive it from
+  // the numeric D3D shared `HANDLE` value (process-local).
   //
   // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //

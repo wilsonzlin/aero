@@ -99,20 +99,19 @@ typedef struct aerogpu_wddm_alloc_priv {
   aerogpu_wddm_u32 flags; /* aerogpu_wddm_alloc_private_flags */
 
   /*
-   * Legacy token for cross-process shared-surface interop.
+   * Stable cross-process token used by `EXPORT_SHARED_SURFACE` /
+   * `IMPORT_SHARED_SURFACE`.
    *
-   * Historical note: early AeroGPU bring-up UMDs generated a stable cross-process
-   * `share_token` in user mode and stored it here so dxgkrnl could preserve it
-   * across `OpenResource`/`DxgkDdiOpenAllocation`.
+   * For shared allocations, the guest UMD generates a collision-resistant
+   * non-zero token and stores it here. dxgkrnl preserves the allocation private
+   * driver data bytes and returns them verbatim when another process opens the
+   * shared resource, allowing the opening UMD instance to recover the same
+   * token.
    *
-   * Canonical AeroGPU contract: the protocol `share_token` used by
-   * `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE` should come from the
-   * KMD-generated per-allocation ShareToken returned to the UMD via
-   * `struct aerogpu_alloc_privdata` (`aerogpu_alloc_privdata.h`), not from a
-   * user-mode generated value and not from the numeric D3D shared `HANDLE`.
+   * Must be 0 for non-shared allocations.
    *
-   * This field is retained for compatibility with older stacks and may be 0
-   * when the KMD provides `aerogpu_alloc_privdata`.
+   * Do NOT derive this from the numeric value of the D3D shared `HANDLE`: handle
+   * values are process-local and not stable cross-process.
    */
   aerogpu_wddm_u64 share_token;
 

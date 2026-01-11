@@ -94,7 +94,7 @@ typedef struct _AEROGPU_SUBMISSION {
 typedef struct _AEROGPU_ALLOCATION {
     LIST_ENTRY ListEntry;
     ULONG AllocationId; /* aerogpu_wddm_alloc_priv.alloc_id */
-    ULONGLONG ShareToken; /* protocol share_token (prefer KMD ShareToken; legacy may use aerogpu_wddm_alloc_priv.share_token) */
+    ULONGLONG ShareToken; /* protocol share_token (aerogpu_wddm_alloc_priv.share_token; 0 for non-shared allocations) */
     SIZE_T SizeBytes;
     ULONG Flags;
     PHYSICAL_ADDRESS LastKnownPa; /* updated from allocation lists */

@@ -31,8 +31,7 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
-- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract (UMD→KMD input blob) for stable per-allocation metadata across CreateAllocation/OpenAllocation.
-- `aerogpu_alloc_privdata.h` – allocation private-driver-data payload (KMD→UMD output) for per-allocation ShareToken (shared surface export/import).
+- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract (UMD→KMD input blob) for stable per-allocation metadata (`alloc_id`/`share_token`) across CreateAllocation/OpenAllocation.
 - `aerogpu_win7_abi.h` – driver-private WOW64-stable user↔kernel ABI blobs (no pointers; fixed layout across x86/x64).
 - `aerogpu_escape.h` – driver-private `DxgkDdiEscape` packet header + base ops (UMD/tool ↔ KMD control channel).
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`; ring dumps report canonical submit fields like `cmd_gpa`/`cmd_size_bytes`/`signal_fence`.)
@@ -195,8 +194,9 @@ This enables compact command streams that use small IDs instead of repeating GPA
 - For D3D9Ex shared surfaces, `share_token` (as used by
   `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
   processes and must not be derived from process-local handle values.
-  Recommended source: the AeroGPU KMD allocation `ShareToken` returned to the
-  UMD via allocation private driver data (`aerogpu_alloc_privdata.h`).
+  The D3D9 UMD generates a collision-resistant token and persists it in the
+  preserved WDDM allocation private driver data blob
+  (`aerogpu_wddm_alloc_priv.share_token`; see `aerogpu_wddm_alloc.h`).
 - The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
   the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 

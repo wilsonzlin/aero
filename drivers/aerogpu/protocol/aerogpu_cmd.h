@@ -836,9 +836,10 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * - Associates an existing `resource_handle` with a driver-chosen `share_token`.
  * - `share_token` is an opaque non-zero 64-bit value that must be stable across
  *   guest processes.
- * - Recommended source of `share_token`: the AeroGPU KMD's per-allocation
- *   `ShareToken` returned to the UMD via allocation private driver data
- *   (`struct aerogpu_alloc_privdata` in `aerogpu_alloc_privdata.h`).
+ * - On Win7/WDDM 1.1, the guest UMD persists `share_token` in the preserved WDDM
+ *   allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`
+ *   in `aerogpu_wddm_alloc.h`), which dxgkrnl returns verbatim when another
+ *   process opens the shared resource.
  * - Do NOT use the numeric value of the D3D shared `HANDLE` as `share_token`:
  *   handle values are process-local and not stable cross-process.
  * - The host stores a mapping of (share_token -> resource).
@@ -860,8 +861,9 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_export_shared_surface) == 24);
  * IMPORT_SHARED_SURFACE:
  * - Creates an alias handle `out_resource_handle` which refers to the same
  *   underlying resource previously exported under `share_token`.
- * - `share_token` should match the KMD allocation `ShareToken` used during
- *   export, not the user-mode shared `HANDLE` value.
+ * - `share_token` must match the value used during export (and recovered from
+ *   the preserved allocation private driver data), not the user-mode shared
+ *   `HANDLE` value.
  * - If the `share_token` is unknown, the host should treat the command as a
  *   validation error (implementation-defined error reporting).
  */
