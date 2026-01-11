@@ -68,6 +68,12 @@ node scripts/check-node-version.mjs
 # or: npm run check:node
 ```
 
+If you need to run tooling with a different Node version (unsupported), you can bypass the hard error:
+
+```bash
+AERO_ALLOW_UNSUPPORTED_NODE=1 node scripts/check-node-version.mjs
+```
+
 #### Optional configuration
 
 The `justfile` is intentionally configurable so it can survive repo refactors:

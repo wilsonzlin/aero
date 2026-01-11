@@ -24,6 +24,13 @@ function formatVersion(v) {
   return `${v.major}.${v.minor}.${v.patch}`;
 }
 
+function envFlag(name) {
+  const raw = process.env[name];
+  if (!raw) return false;
+  const v = raw.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const nvmrcPath = path.join(repoRoot, ".nvmrc");
@@ -59,21 +66,26 @@ const supportedRange = `>=${formatVersion(expected)} <${upperBoundMajor}.0.0`;
 const versionCmp = compareVersions(current, expected);
 const majorMismatch = current.major !== expected.major;
 const tooOld = majorMismatch || versionCmp < 0;
+const allowUnsupported = envFlag("AERO_ALLOW_UNSUPPORTED_NODE");
 
 if (tooOld) {
-  console.error("error: Unsupported Node.js version for this repo.");
-  console.error(`- Detected: v${current.raw}`);
-  console.error(`- Supported: ${supportedRange}`);
-  console.error("");
-  console.error("Fix:");
-  console.error(`- Install/use Node v${expected.raw} (the version CI uses).`);
-  console.error("  If you use nvm:");
-  console.error("    nvm install");
-  console.error("    nvm use");
-  process.exit(1);
-}
+  const log = allowUnsupported ? console.warn : console.error;
+  log(`${allowUnsupported ? "warning" : "error"}: Unsupported Node.js version for this repo.`);
+  log(`- Detected: v${current.raw}`);
+  log(`- Supported: ${supportedRange}`);
 
-if (current.raw !== expected.raw) {
+  if (allowUnsupported) {
+    log(`- Override: AERO_ALLOW_UNSUPPORTED_NODE=1 (skipping Node version enforcement)`);
+  } else {
+    log("");
+    log("Fix:");
+    log(`- Install/use Node v${expected.raw} (the version CI uses).`);
+    log("  If you use nvm:");
+    log("    nvm install");
+    log("    nvm use");
+    process.exit(1);
+  }
+} else if (current.raw !== expected.raw) {
   console.warn("note: Node.js version differs from CI baseline.");
   console.warn(`- Detected: v${current.raw}`);
   console.warn(`- CI uses:  v${expected.raw} (from .nvmrc)`);

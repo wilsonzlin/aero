@@ -18,6 +18,12 @@ node scripts/check-node-version.mjs
 # or: npm run check:node
 ```
 
+If you need to run tooling in an environment where you can't change the Node version (unsupported), you can bypass the hard error:
+
+```bash
+AERO_ALLOW_UNSUPPORTED_NODE=1 node scripts/check-node-version.mjs
+```
+
 ## Test fixtures (boot sectors + tiny disk images)
 
 Boot/system tests use **tiny deterministic fixtures** under `tests/fixtures/boot/` (e.g. a 512-byte boot sector that writes a known pattern to VGA/serial).
