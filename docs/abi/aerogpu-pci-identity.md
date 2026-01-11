@@ -68,6 +68,5 @@ driver packages, or documentation:
 * A retired experimental prototype ABI existed for deterministic host-side tests and gpu-trace plumbing.
   The implementation has been removed; see `docs/legacy/experimental-gpu-command-abi.md` for a brief note.
 
-Older prototypes in this repository used a different PCI vendor ID (`VEN_1AE0`,
-e.g. `PCI\VEN_1AE0&DEV_0001`). These identifiers are **stale** and must not be
-used for current device models, driver packages, or documentation.
+Older prototypes in this repository used a different PCI vendor ID (1AE0). These identifiers are
+**stale** and must not be used for current device models, driver packages, or documentation.
