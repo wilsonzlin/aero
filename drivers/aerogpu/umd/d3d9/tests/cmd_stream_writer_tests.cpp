@@ -696,7 +696,30 @@ bool TestInvalidPayloadArgs() {
   if (!Check(cmd == nullptr, "append_with_payload rejects oversized payload")) {
     return false;
   }
-  return Check(w.error() == CmdStreamError::kSizeTooLarge, "oversized payload sets kSizeTooLarge");
+  if (!Check(w.error() == CmdStreamError::kSizeTooLarge, "oversized payload sets kSizeTooLarge")) {
+    return false;
+  }
+
+  // Cover the edge case where `payload_size` would not overflow the
+  // `payload_size + sizeof(HeaderT)` check, but would overflow padding/alignment
+  // when rounding up to 4 bytes.
+  w.reset();
+  const size_t near_max = std::numeric_limits<size_t>::max() - sizeof(aerogpu_cmd_create_shader_dxbc);
+  cmd = w.append_with_payload<aerogpu_cmd_create_shader_dxbc>(AEROGPU_CMD_CREATE_SHADER_DXBC, buf, near_max);
+  if (!Check(cmd == nullptr, "append_with_payload rejects near-max payload")) {
+    return false;
+  }
+  if (!Check(w.error() == CmdStreamError::kSizeTooLarge, "near-max payload sets kSizeTooLarge")) {
+    return false;
+  }
+
+  VectorCmdStreamWriter vec;
+  vec.reset();
+  cmd = vec.append_with_payload<aerogpu_cmd_create_shader_dxbc>(AEROGPU_CMD_CREATE_SHADER_DXBC, buf, near_max);
+  if (!Check(cmd == nullptr, "VectorCmdStreamWriter rejects near-max payload")) {
+    return false;
+  }
+  return Check(vec.error() == CmdStreamError::kSizeTooLarge, "VectorCmdStreamWriter near-max payload sets kSizeTooLarge");
 }
 
 bool TestDestroyBoundShaderUnbinds() {

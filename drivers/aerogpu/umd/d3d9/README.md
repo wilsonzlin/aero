@@ -35,6 +35,8 @@ It supports both:
 
 Packets are always padded to 4-byte alignment and encode `aerogpu_cmd_hdr::size_bytes` accordingly, so unknown opcodes can be skipped safely.
 
+All append helpers return `nullptr` (and set `CmdStreamError`) on failure. When using the span/DMA-backed mode, callers are expected to split/flush submissions and retry if the WDDM DMA buffer fills.
+
 ### Shared surfaces (D3D9Ex / DWM)
 
 Cross-process shared resources are expressed explicitly in the command stream:

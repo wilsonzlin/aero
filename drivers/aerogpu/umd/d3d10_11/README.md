@@ -69,6 +69,8 @@ Command serialization uses the shared UMD implementation:
 
 This provides both a `std::vector`-backed stream (portable bring-up/tests) and a span/DMA-backed stream (`{uint8_t* buf, size_t capacity}`) suitable for writing directly into a WDDM runtime-provided command buffer.
 
+All append helpers return `nullptr` (and set `CmdStreamError`) on failure (for example: bounded DMA buffer full, or invalid payload arguments). Callers targeting a WDDM DMA buffer are expected to split/flush submissions and retry when out of space.
+
 ### Shared surface note
 
 DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` carried in preserved WDDM allocation private driver data (`aerogpu_wddm_alloc_priv`; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
