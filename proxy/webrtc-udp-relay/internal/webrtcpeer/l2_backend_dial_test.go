@@ -270,6 +270,25 @@ func TestDialL2Backend_StrictSubprotocolNegotiation(t *testing.T) {
 	}
 }
 
+func TestDialL2Backend_SubprotocolAuthRejectsInvalidCredential(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := dialL2Backend(ctx, l2BackendDialConfig{
+		BackendWSURL:    "ws://127.0.0.1:1/l2",
+		ClientOrigin:    "https://example.com",
+		Credential:      "not a token",
+		ForwardOrigin:   true,
+		AuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "Sec-WebSocket-Protocol") {
+		t.Fatalf("err=%v, want token validity error", err)
+	}
+}
+
 func TestDialL2Backend_FailsOnMissingOrigin(t *testing.T) {
 	const (
 		origin     = "https://example.com"

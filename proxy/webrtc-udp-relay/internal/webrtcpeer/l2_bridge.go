@@ -126,7 +126,11 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 	}
 
 	if cfg.BackendToken != "" {
-		dialer.Subprotocols = append(dialer.Subprotocols, l2TokenSubprotocolPrefix+cfg.BackendToken)
+		tokenProto := l2TokenSubprotocolPrefix + cfg.BackendToken
+		if !isWebSocketSubprotocolToken(tokenProto) {
+			return nil, fmt.Errorf("l2 backend token is not valid for Sec-WebSocket-Protocol; use query-string auth instead")
+		}
+		dialer.Subprotocols = append(dialer.Subprotocols, tokenProto)
 	}
 
 	dialURL := cfg.BackendWSURL
@@ -149,7 +153,11 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 		// configured; prefer the explicit backend token over the per-session
 		// credential in that case.
 		if cfg.Credential != "" && cfg.BackendToken == "" {
-			dialer.Subprotocols = append(dialer.Subprotocols, l2TokenSubprotocolPrefix+cfg.Credential)
+			tokenProto := l2TokenSubprotocolPrefix + cfg.Credential
+			if !isWebSocketSubprotocolToken(tokenProto) {
+				return nil, fmt.Errorf("l2 auth forwarding mode %q requires a credential that is valid for Sec-WebSocket-Protocol; use %q instead", cfg.AuthForwardMode, config.L2BackendAuthForwardModeQuery)
+			}
+			dialer.Subprotocols = append(dialer.Subprotocols, tokenProto)
 		}
 	}
 
@@ -180,6 +188,33 @@ func dialL2Backend(ctx context.Context, cfg l2BackendDialConfig) (*websocket.Con
 		conn.SetReadLimit(int64(cfg.MaxMessageBytes))
 	}
 	return conn, nil
+}
+
+// isWebSocketSubprotocolToken reports whether raw is a valid WebSocket
+// subprotocol token per RFC 6455, which uses the HTTP token grammar (RFC 7230
+// tchar).
+func isWebSocketSubprotocolToken(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			continue
+		case c >= 'A' && c <= 'Z':
+			continue
+		case c >= '0' && c <= '9':
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (b *l2Bridge) wsWriteLoop(ws *websocket.Conn) error {
