@@ -81,10 +81,17 @@ NTSTATUS status = VirtqSplitInit(vq, qsz,
 If your payload is MDL-backed, use `virtio_sg_pfn.h` to build a `VIRTQ_SG[]` first:
 
 ```c
+ULONG max_sg = VirtioSgMaxElemsForMdl(Mdl, ByteOffset, ByteLength);
 VIRTQ_SG sg[32];
 UINT16 sg_count = 0;
 
-NTSTATUS status = VirtioSgBuildFromMdl(Mdl, ByteOffset, ByteLength,
+NTSTATUS status;
+if (max_sg > RTL_NUMBER_OF(sg)) {
+  // Either allocate a larger array from nonpaged pool, prefer INDIRECT_DESC, or fail.
+  return STATUS_BUFFER_TOO_SMALL;
+}
+
+status = VirtioSgBuildFromMdl(Mdl, ByteOffset, ByteLength,
                                       /*device_write=*/TRUE,
                                       sg, (UINT16)RTL_NUMBER_OF(sg),
                                       &sg_count);
