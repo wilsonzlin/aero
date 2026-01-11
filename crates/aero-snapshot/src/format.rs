@@ -12,6 +12,8 @@ impl SectionId {
     pub const DEVICES: SectionId = SectionId(4);
     pub const DISKS: SectionId = SectionId(5);
     pub const RAM: SectionId = SectionId(6);
+    /// Multi-vCPU CPU state. Newer snapshots may use this instead of `CPU`.
+    pub const CPUS: SectionId = SectionId(7);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

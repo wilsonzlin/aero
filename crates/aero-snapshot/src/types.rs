@@ -154,6 +154,53 @@ impl CpuState {
     }
 }
 
+/// Snapshot representation of one virtual CPU.
+///
+/// `CpuState` intentionally only captures architectural register state. Any
+/// higher-level runtime bookkeeping (e.g. run state, pending interrupts, local
+/// APIC queue) should be stored in `internal_state` by the machine snapshot
+/// adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VcpuSnapshot {
+    /// vCPU identifier used to map snapshot entries back to a runtime CPU.
+    ///
+    /// For x86 this is typically the local APIC ID.
+    pub apic_id: u32,
+    pub cpu: CpuState,
+    /// Machine-defined per-vCPU state that isn't covered by `CpuState`.
+    pub internal_state: Vec<u8>,
+}
+
+impl VcpuSnapshot {
+    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u32_le(self.apic_id)?;
+        self.cpu.encode(w)?;
+        let internal_len: u64 = self
+            .internal_state
+            .len()
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("vCPU internal state too large"))?;
+        w.write_u64_le(internal_len)?;
+        w.write_bytes(&self.internal_state)?;
+        Ok(())
+    }
+
+    pub fn decode<R: Read>(r: &mut R, max_internal_len: u64) -> Result<Self> {
+        let apic_id = r.read_u32_le()?;
+        let cpu = CpuState::decode(r)?;
+        let internal_len = r.read_u64_le()?;
+        if internal_len > max_internal_len {
+            return Err(SnapshotError::Corrupt("vCPU internal state too large"));
+        }
+        let internal_state = r.read_exact_vec(internal_len as usize)?;
+        Ok(Self {
+            apic_id,
+            cpu,
+            internal_state,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MmuState {
     pub cr0: u64,

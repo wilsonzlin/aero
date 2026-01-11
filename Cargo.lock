@@ -1612,6 +1612,7 @@ dependencies = [
  "aero-io-snapshot",
  "aero-net-e1000",
  "aero-platform",
+ "aero-snapshot",
  "aero-protocol",
  "aero-storage",
  "anyhow",

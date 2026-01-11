@@ -130,6 +130,22 @@ impl LocalApic {
         self.pending.pop_front()
     }
 
+    pub fn icr_high(&self) -> u32 {
+        self.icr_high
+    }
+
+    pub fn set_icr_high(&mut self, value: u32) {
+        self.icr_high = value;
+    }
+
+    pub fn pending_interrupts(&self) -> Vec<u8> {
+        self.pending.iter().copied().collect()
+    }
+
+    pub fn set_pending_interrupts(&mut self, pending: Vec<u8>) {
+        self.pending = pending.into();
+    }
+
     /// Read a 32-bit APIC register.
     pub fn read(&self, offset: u64) -> u32 {
         match offset {

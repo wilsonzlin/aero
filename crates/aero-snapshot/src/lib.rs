@@ -17,7 +17,7 @@ pub use crate::inspect::{
 };
 pub use crate::ram::{Compression, RamMode, RamWriteOptions};
 pub use crate::types::{
-    CpuState, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, SnapshotMeta,
+    CpuState, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, SnapshotMeta, VcpuSnapshot,
 };
 
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -57,6 +57,13 @@ impl Default for RestoreOptions {
 pub trait SnapshotSource {
     fn snapshot_meta(&mut self) -> SnapshotMeta;
     fn cpu_state(&self) -> CpuState;
+    fn cpu_states(&self) -> Vec<VcpuSnapshot> {
+        vec![VcpuSnapshot {
+            apic_id: 0,
+            cpu: self.cpu_state(),
+            internal_state: Vec::new(),
+        }]
+    }
     fn mmu_state(&self) -> MmuState;
     fn device_states(&self) -> Vec<DeviceState>;
     fn disk_overlays(&self) -> DiskOverlayRefs;
@@ -84,6 +91,19 @@ pub trait SnapshotSource {
 pub trait SnapshotTarget {
     fn restore_meta(&mut self, _meta: SnapshotMeta) {}
     fn restore_cpu_state(&mut self, state: CpuState);
+    fn restore_cpu_states(&mut self, states: Vec<VcpuSnapshot>) -> Result<()> {
+        if states.len() != 1 {
+            return Err(SnapshotError::Corrupt(
+                "snapshot contains multiple CPUs but target only supports one",
+            ));
+        }
+        let cpu = states
+            .into_iter()
+            .next()
+            .ok_or(SnapshotError::Corrupt("missing CPU entry"))?;
+        self.restore_cpu_state(cpu.cpu);
+        Ok(())
+    }
     fn restore_mmu_state(&mut self, state: MmuState);
     fn restore_device_states(&mut self, states: Vec<DeviceState>);
     fn restore_disk_overlays(&mut self, overlays: DiskOverlayRefs);
@@ -118,7 +138,30 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         meta.encode(w)
     })?;
 
-    write_section(w, SectionId::CPU, 1, 0, |w| source.cpu_state().encode(w))?;
+    let cpus = source.cpu_states();
+    if cpus.len() == 1 && cpus[0].apic_id == 0 && cpus[0].internal_state.is_empty() {
+        write_section(w, SectionId::CPU, 1, 0, |w| cpus[0].cpu.encode(w))?;
+    } else {
+        write_section(w, SectionId::CPUS, 1, 0, |w| {
+            let count: u32 = cpus
+                .len()
+                .try_into()
+                .map_err(|_| SnapshotError::Corrupt("too many CPUs"))?;
+            w.write_u32_le(count)?;
+
+            for cpu in &cpus {
+                let mut entry = Vec::new();
+                cpu.encode(&mut entry)?;
+                let entry_len: u64 = entry
+                    .len()
+                    .try_into()
+                    .map_err(|_| SnapshotError::Corrupt("CPU entry too large"))?;
+                w.write_u64_le(entry_len)?;
+                w.write_bytes(&entry)?;
+            }
+            Ok(())
+        })?;
+    }
 
     write_section(w, SectionId::MMU, 1, 0, |w| source.mmu_state().encode(w))?;
 
@@ -211,7 +254,27 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
             id if id == SectionId::CPU => {
                 if header.version == 1 {
                     let cpu = CpuState::decode(&mut section_reader)?;
-                    target.restore_cpu_state(cpu);
+                    target.restore_cpu_states(vec![VcpuSnapshot {
+                        apic_id: 0,
+                        cpu,
+                        internal_state: Vec::new(),
+                    }])?;
+                    seen_cpu = true;
+                }
+            }
+            id if id == SectionId::CPUS => {
+                if header.version == 1 {
+                    let count = section_reader.read_u32_le()? as usize;
+                    let mut cpus = Vec::with_capacity(count.min(64));
+                    for _ in 0..count {
+                        let entry_len = section_reader.read_u64_le()?;
+                        let mut entry_reader = (&mut section_reader).take(entry_len);
+                        let cpu = VcpuSnapshot::decode(&mut entry_reader, 64 * 1024 * 1024)?;
+                        // Skip any forward-compatible additions to the vCPU entry.
+                        std::io::copy(&mut entry_reader, &mut std::io::sink())?;
+                        cpus.push(cpu);
+                    }
+                    target.restore_cpu_states(cpus)?;
                     seen_cpu = true;
                 }
             }
@@ -267,7 +330,7 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
     }
 
     if !seen_cpu {
-        return Err(SnapshotError::Corrupt("missing CPU section"));
+        return Err(SnapshotError::Corrupt("missing CPU/CPUS section"));
     }
     if !seen_ram {
         return Err(SnapshotError::Corrupt("missing RAM section"));

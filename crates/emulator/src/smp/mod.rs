@@ -4,6 +4,7 @@ pub mod cpu;
 pub mod lapic;
 pub mod machine;
 pub mod scheduler;
+pub mod snapshot;
 
 pub use cpu::{CpuState, VcpuRunState, RESET_VECTOR};
 pub use lapic::{
