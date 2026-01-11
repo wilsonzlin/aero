@@ -649,6 +649,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         //
         // This enables shared-memory integration where JS + WASM + other workers
         // all observe the same guest RAM.
+        //
         // Probe within guest RAM (not the runtime-reserved low region of the wasm
         // linear memory) so we don't risk clobbering the Rust/WASM runtime.
         const memProbeGuestOffset = 0x100;
