@@ -62,8 +62,10 @@ Responsibilities:
   - queue-level spinlock(s) for DISPATCH_LEVEL safety.
 - Support the contract-required features:
   - `VIRTIO_F_RING_INDIRECT_DESC` (indirect descriptors).
-- Treat optional ring features (notably `VIRTIO_F_RING_EVENT_IDX`) as negotiated
-  capabilities rather than hard requirements.
+- Contract v1 does **not** negotiate `VIRTIO_F_RING_EVENT_IDX`; the queue layer must
+  function correctly without EVENT_IDX. If a future contract version adds
+  event-index support, treat it as optional/negotiated rather than a hard
+  requirement.
 
 ### 3) virtio-snd protocol engine
 
@@ -122,8 +124,8 @@ Behavior:
   - queue a DPC to do the real processing.
 - DPC drains used rings for any queues with pending work and completes requests.
 - Playback pacing should be stable under load:
-  - Use virtqueue interrupt suppression (and optionally EVENT_IDX when negotiated)
-    to avoid interrupt storms.
+  - Use virtqueue interrupt suppression to avoid interrupt storms (contract v1 does
+    not use EVENT_IDX).
   - Use a periodic timer to ensure the transmit pipeline stays filled and to
     re-check for progress if interrupts are lost or suppressed.
 
