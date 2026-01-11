@@ -193,7 +193,7 @@ LoadLibrary(<your_umd>.dll)
   GetProcAddress("OpenAdapter11")
     OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData)
       -> driver fills: D3D11DDI_ADAPTERFUNCS (adapter function table)
-      -> driver stores: D3D11DDI_ADAPTERCALLBACKS (runtime callbacks)
+      -> driver stores: runtime callback tables (adapter/device callbacks; used for `SetErrorCb`, allocation callbacks, etc)
 
     runtime calls adapter->pfnGetCaps(...)  [multiple queries]
     runtime calls adapter->pfnCalcPrivateDeviceSize(...)
