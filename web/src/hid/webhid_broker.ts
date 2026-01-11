@@ -10,6 +10,7 @@ import {
   type HidProxyMessage,
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
+import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 
 export type WebHidBrokerState = {
   workerAttached: boolean;
@@ -212,7 +213,8 @@ export class WebHidBroker {
 
     await this.manager.attachKnownDevice(device);
 
-    const guestPortHint = this.manager.getState().attachedDevices.find((entry) => entry.device === device)?.guestPath[0];
+    const guestPathHint: GuestUsbPath | undefined = this.manager.getState().attachedDevices.find((entry) => entry.device === device)?.guestPath;
+    const guestPortHint = guestPathHint?.[0];
 
     // The WebHID `@types/w3c-web-hid` definitions mark many collection fields as optional,
     // but real Chromium devices always populate them. `normalizeCollections` expects a
@@ -227,6 +229,7 @@ export class WebHidBroker {
       vendorId: device.vendorId,
       productId: device.productId,
       ...(device.productName ? { productName: device.productName } : {}),
+      ...(guestPathHint ? { guestPath: guestPathHint } : {}),
       ...(guestPortHint === 0 || guestPortHint === 1 ? { guestPort: guestPortHint } : {}),
       collections,
       hasInterruptOut,

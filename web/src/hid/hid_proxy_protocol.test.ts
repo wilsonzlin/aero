@@ -73,6 +73,7 @@ describe("hid/hid_proxy_protocol", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Demo",
+      guestPath: [0, 1],
       guestPort: 0,
       collections: sampleCollections(),
       hasInterruptOut: false,
@@ -82,6 +83,7 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidProxyMessage(msg)).toBe(true);
 
     expect(isHidAttachMessage({ type: "hid.attach", deviceId: 1 })).toBe(false);
+    expect(isHidAttachMessage({ ...msg, guestPath: [] })).toBe(false);
   });
 
   it("validates hid.inputReport and hid.sendReport", () => {

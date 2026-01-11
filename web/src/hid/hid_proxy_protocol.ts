@@ -1,5 +1,5 @@
 import type { NormalizedHidCollectionInfo } from "./webhid_normalize";
-import type { GuestUsbPort } from "../platform/hid_passthrough_protocol";
+import { isGuestUsbPath, type GuestUsbPath, type GuestUsbPort } from "../platform/hid_passthrough_protocol";
 
 export type HidReportType = "output" | "feature";
 
@@ -10,10 +10,19 @@ export type HidAttachMessage = {
   productId: number;
   productName?: string;
   /**
+   * Optional hint for the guest-side USB attachment path.
+   *
+   * This is forward-compatible with the "external hub behind root port 0" topology
+   * used by `WebHidPassthroughManager` (paths like `0.3`).
+   */
+  guestPath?: GuestUsbPath;
+  /**
    * Optional hint for which guest UHCI root port this device should be attached to.
    *
    * This is currently only used for forward-compatible guest USB wiring; the
    * passthrough bridge itself is keyed by `deviceId`.
+   *
+   * When `guestPath` is set, this should match `guestPath[0]`.
    */
   guestPort?: GuestUsbPort;
   collections: NormalizedHidCollectionInfo[];
@@ -84,6 +93,10 @@ function isOptionalGuestUsbPort(value: unknown): value is GuestUsbPort | undefin
   return value === undefined || value === 0 || value === 1;
 }
 
+function isOptionalGuestUsbPath(value: unknown): value is GuestUsbPath | undefined {
+  return value === undefined || isGuestUsbPath(value);
+}
+
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
@@ -152,6 +165,7 @@ export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
     isFiniteNumber(value.vendorId) &&
     isFiniteNumber(value.productId) &&
     isOptionalString(value.productName) &&
+    isOptionalGuestUsbPath(value.guestPath) &&
     isOptionalGuestUsbPort(value.guestPort) &&
     Array.isArray(value.collections) &&
     value.collections.every(isNormalizedHidCollectionInfo) &&
