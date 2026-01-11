@@ -1586,7 +1586,8 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
         0xc0, // End Collection
     ];
 
-    let report_len = u16::try_from(report_descriptor.len()).expect("report descriptor length fits u16");
+    let report_len =
+        u16::try_from(report_descriptor.len()).expect("report descriptor length fits u16");
     let passthrough = UsbHidPassthroughHandle::new(
         0x1234,
         0x5678,
