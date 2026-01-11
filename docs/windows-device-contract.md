@@ -62,6 +62,7 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 
 > Note: these are virtual-only IDs used inside the guest; they are not required to be PCI-SIG allocated.
 >
+> Source of truth for AeroGPU PCI IDs: `drivers/aerogpu/protocol/aerogpu_pci.h` and `guest-tools/config/devices.cmd`.
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 
 ## Device table (normative)
@@ -78,6 +79,7 @@ All numeric values are shown as hexadecimal.
 
 Notes:
 
+- Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
 - `aerogpu.inf` also matches the legacy AeroGPU HWID `1AED:0001`.
 - `aerogpu_dx11.inf` is an optional alternative INF if shipping D3D10/11 user-mode components.
 
