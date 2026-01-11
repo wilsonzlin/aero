@@ -10930,6 +10930,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
       have_submit_cb = have_submit_cb || (dev->wddm_callbacks.pfnPresentCb != nullptr);
     }
+    if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+      have_submit_cb = have_submit_cb || (dev->wddm_callbacks.pfnSubmitCommandCb != nullptr);
+    }
 
     bool have_acquire_cb = false;
     if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value && has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
