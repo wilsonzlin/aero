@@ -829,12 +829,12 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
     STUB_FIELD(pfnSetResourceMinLOD);
   }
 
-  STUB_FIELD(pfnBegin);
-  STUB_FIELD(pfnEnd);
+  NOOP_FIELD(pfnBegin);
+  NOOP_FIELD(pfnEnd);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnQueryGetData) {
     STUB_FIELD(pfnQueryGetData);
   }
-  STUB_FIELD(pfnSetPredication);
+  NOOP_FIELD(pfnSetPredication);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnExecuteCommandList) {
     STUB_FIELD(pfnExecuteCommandList);
   }
