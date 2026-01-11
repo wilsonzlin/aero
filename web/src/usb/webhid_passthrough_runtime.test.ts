@@ -68,6 +68,49 @@ class FakeHidDevice {
 }
 
 describe("WebHidPassthroughRuntime", () => {
+  it("subscribes to WebHidPassthroughManager attachedDevices (attachments list)", async () => {
+    const device = new FakeHidDevice();
+
+    const push = vi.fn();
+    const bridge: WebHidPassthroughBridgeLike = {
+      push_input_report: push,
+      drain_next_output_report: vi.fn(() => null),
+      configured: vi.fn(() => true),
+      free: vi.fn(),
+    };
+
+    // Minimal manager stub: the real manager exposes attachments, not raw devices.
+    const state = {
+      supported: true,
+      knownDevices: [],
+      attachedDevices: [{ device: device as unknown as HIDDevice, deviceId: "dev-1", guestPort: 0 }],
+    };
+    const manager = {
+      getState: () => state,
+      subscribe: (listener: (s: typeof state) => void) => {
+        listener(state);
+        return () => {};
+      },
+    };
+
+    // eslint-disable-next-line no-new
+    new WebHidPassthroughRuntime({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      manager: manager as any,
+      createBridge: () => bridge,
+      pollIntervalMs: 0,
+    });
+
+    // Allow the async attach path (`subscribe` -> `syncAttachedDevices` -> `attachDevice`) to run.
+    // Use a macrotask turn so all microtasks (device.open() + attach continuation) are drained.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(device.opened).toBe(true);
+
+    device.dispatchInputReport(4, new Uint8Array([9, 8, 7]));
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith(4, expect.any(Uint8Array));
+  });
+
   it("forwards inputreport events to push_input_report", async () => {
     const device = new FakeHidDevice();
 
@@ -153,4 +196,3 @@ describe("WebHidPassthroughRuntime", () => {
     expect(push).toHaveBeenCalledTimes(1);
   });
 });
-

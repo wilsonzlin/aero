@@ -40,6 +40,9 @@ export interface WebHidPassthroughRuntimeOptions {
   /**
    * Optional device manager; when present, the runtime will subscribe to it and
    * automatically attach/detach devices based on `state.attachedDevices`.
+   *
+   * Note: `WebHidPassthroughManager` exposes attachments (including `deviceId`/guest port),
+   * but this runtime currently keys sessions by the underlying `HIDDevice` object.
    */
   manager?: Pick<WebHidPassthroughManager, "subscribe" | "getState">;
   /**
@@ -116,7 +119,7 @@ export class WebHidPassthroughRuntime {
 
     if (options.manager) {
       this.#unsubscribe = options.manager.subscribe((state: WebHidPassthroughState) => {
-        void this.syncAttachedDevices(state.attachedDevices);
+        void this.syncAttachedDevices(state.attachedDevices.map((a) => a.device));
       });
     }
   }
