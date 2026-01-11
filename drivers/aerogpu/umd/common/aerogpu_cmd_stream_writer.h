@@ -242,7 +242,13 @@ class VectorCmdStreamWriter {
   void reset() {
     error_ = CmdStreamError::kOk;
     buf_.clear();
-    buf_.resize(sizeof(aerogpu_cmd_stream_header), 0);
+    try {
+      buf_.resize(sizeof(aerogpu_cmd_stream_header), 0);
+    } catch (...) {
+      buf_.clear();
+      error_ = CmdStreamError::kInsufficientSpace;
+      return;
+    }
 
     auto* stream = reinterpret_cast<aerogpu_cmd_stream_header*>(buf_.data());
     stream->magic = AEROGPU_CMD_STREAM_MAGIC;
@@ -384,7 +390,12 @@ class VectorCmdStreamWriter {
       error_ = CmdStreamError::kSizeTooLarge;
       return nullptr;
     }
-    buf_.resize(offset + aligned_size, 0);
+    try {
+      buf_.resize(offset + aligned_size, 0);
+    } catch (...) {
+      error_ = CmdStreamError::kInsufficientSpace;
+      return nullptr;
+    }
 
     auto* hdr = reinterpret_cast<aerogpu_cmd_hdr*>(buf_.data() + offset);
     hdr->opcode = opcode;
