@@ -35,7 +35,6 @@ const TD_CTRL_ACTLEN_MASK: u32 = 0x7FF;
 // Error bits (mirrors `aero_usb::uhci` constants).
 const TD_CTRL_BITSTUFF: u32 = 1 << 17;
 const TD_CTRL_CRCERR: u32 = 1 << 18;
-const TD_CTRL_NAK: u32 = 1 << 19;
 const TD_CTRL_BABBLE: u32 = 1 << 20;
 const TD_CTRL_DBUFERR: u32 = 1 << 21;
 const TD_CTRL_STALLED: u32 = 1 << 22;
@@ -176,7 +175,6 @@ enum HarnessPhase {
 }
 
 struct ControlChain {
-    first_td: u32,
     last_td: u32,
     td_addrs: Vec<u32>,
     data_tds: Vec<(u32, u32)>, // (td_addr, buf_addr)
@@ -518,7 +516,7 @@ impl UsbDevice for WebUsbProxyDevice {
             return UsbHandshake::Stall;
         }
 
-        let Some(setup) = inner.ctl_setup else {
+        let Some(_setup) = inner.ctl_setup else {
             return UsbHandshake::Timeout;
         };
 
@@ -681,7 +679,6 @@ fn build_control_in_chain(
     install_frame_list(mem, fl_base, qh_addr);
 
     ControlChain {
-        first_td: setup_td,
         last_td: status_td,
         td_addrs,
         data_tds,
@@ -733,7 +730,6 @@ fn build_control_out_no_data_chain(
     let td_addrs = vec![setup_td, status_td];
 
     ControlChain {
-        first_td: setup_td,
         last_td: status_td,
         td_addrs,
         data_tds: Vec::new(),
@@ -777,7 +773,7 @@ impl WebUsbUhciPassthroughHarness {
 
         let mut mem = VecMemory::new(0x40000);
         let mut irq = DummyIrq::default();
-        let mut alloc = Alloc::new(0x3000);
+        let alloc = Alloc::new(0x3000);
 
         let fl_base = 0x1000;
         let qh_addr = 0x2000;
