@@ -278,6 +278,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-jit"
+version = "0.1.0"
+dependencies = [
+ "aero-jit-x86",
+]
+
+[[package]]
 name = "aero-jit-x86"
 version = "0.1.0"
 dependencies = [
@@ -617,13 +624,6 @@ dependencies = [
  "proptest",
  "yaxpeax-arch",
  "yaxpeax-x86",
-]
-
-[[package]]
-name = "aero-jit"
-version = "0.1.0"
-dependencies = [
- "aero-jit-x86",
 ]
 
 [[package]]

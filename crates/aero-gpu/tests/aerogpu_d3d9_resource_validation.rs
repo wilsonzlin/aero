@@ -183,16 +183,16 @@ fn d3d9_create_shader_dxbc_rejects_handle_already_used_by_resource() {
 
     let mut writer = AerogpuCmdWriter::new();
     writer.create_texture2d(
-        1,                                  // texture_handle
-        0,                                  // usage_flags
+        1,                                   // texture_handle
+        0,                                   // usage_flags
         AerogpuFormat::R8G8B8A8Unorm as u32, // format
-        1,                                  // width
-        1,                                  // height
-        1,                                  // mip_levels
-        1,                                  // array_layers
-        0,                                  // row_pitch_bytes
-        0,                                  // backing_alloc_id
-        0,                                  // backing_offset_bytes
+        1,                                   // width
+        1,                                   // height
+        1,                                   // mip_levels
+        1,                                   // array_layers
+        0,                                   // row_pitch_bytes
+        0,                                   // backing_alloc_id
+        0,                                   // backing_offset_bytes
     );
     writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &[]);
     let stream = writer.finish();
@@ -243,16 +243,16 @@ fn d3d9_create_resource_rejects_handle_already_used_by_input_layout() {
     let mut writer = AerogpuCmdWriter::new();
     writer.create_input_layout(2, &vertex_decl);
     writer.create_texture2d(
-        2,                                  // texture_handle
-        0,                                  // usage_flags
+        2,                                   // texture_handle
+        0,                                   // usage_flags
         AerogpuFormat::R8G8B8A8Unorm as u32, // format
-        1,                                  // width
-        1,                                  // height
-        1,                                  // mip_levels
-        1,                                  // array_layers
-        0,                                  // row_pitch_bytes
-        0,                                  // backing_alloc_id
-        0,                                  // backing_offset_bytes
+        1,                                   // width
+        1,                                   // height
+        1,                                   // mip_levels
+        1,                                   // array_layers
+        0,                                   // row_pitch_bytes
+        0,                                   // backing_alloc_id
+        0,                                   // backing_offset_bytes
     );
     let stream = writer.finish();
 

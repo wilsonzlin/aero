@@ -1649,7 +1649,9 @@ impl AerogpuD3d9Executor {
                     ));
                 }
                 if self.handle_in_use(input_layout_handle) {
-                    return Err(AerogpuD3d9Error::InputLayoutHandleInUse(input_layout_handle));
+                    return Err(AerogpuD3d9Error::InputLayoutHandleInUse(
+                        input_layout_handle,
+                    ));
                 }
                 let decl = VertexDeclaration::from_d3d_bytes(blob_bytes)
                     .map_err(|e| AerogpuD3d9Error::VertexDeclaration(e.to_string()))?;
