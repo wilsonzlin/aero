@@ -210,6 +210,8 @@ dedicated WebUSB APIs instead of emitting a raw `controlTransferOut`:
 - `SET_CONFIGURATION` → `USBDevice.selectConfiguration(...)`
   - Note: WebUSB can reject `selectConfiguration` while interfaces are claimed; the executor
     releases claimed interfaces first.
+  - The executor handles this before the general “claim interfaces” path so that a guest-driven
+    configuration switch cannot be blocked by unrelated interface-claim failures.
 - `SET_INTERFACE` → `USBDevice.selectAlternateInterface(...)` (claiming the interface if needed)
 - `CLEAR_FEATURE(ENDPOINT_HALT)` → `USBDevice.clearHalt(...)`
 
