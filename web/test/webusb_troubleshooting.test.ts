@@ -137,3 +137,13 @@ test("explainWebUsbError: AbortError indicates cancellation / retry requestDevic
   assert.ok(res.title.toLowerCase().includes("abort") || res.title.toLowerCase().includes("cancel"));
   assert.ok(res.hints.some((hint) => hint.includes("requestDevice()")));
 });
+
+test("explainWebUsbError: NotSupportedError mentions isochronous limitations", () => {
+  const res = explainWebUsbError({
+    name: "NotSupportedError",
+    message: "Isochronous transfers are not supported.",
+  });
+
+  assert.ok(res.title.toLowerCase().includes("not supported") || res.title.toLowerCase().includes("isochronous"));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("isochronous")));
+});

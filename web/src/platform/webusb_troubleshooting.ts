@@ -158,6 +158,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   const mentionsFilters = includesAny(msgLower, ["filter", "filters"]);
   const mentionsPermissionsPolicy = includesAny(msgLower, ["permissions policy", "permission policy", "feature policy"]);
   const mentionsAbort = includesAny(msgLower, ["abort", "aborted", "aborterror", "cancelled", "canceled"]);
+  const mentionsIsochronous = includesAny(msgLower, ["isochronous"]);
   const mentionsClaimInterface = includesAny(msgLower, ["claiminterface", "claim interface", "unable to claim"]);
   const mentionsOpen = includesAny(msgLower, ["failed to open", "unable to open", "open()"]);
   const mentionsDisconnected = includesAny(msgLower, ["disconnected", "not found", "no device selected"]);
@@ -193,6 +194,14 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
       title = "WebUSB operation was aborted";
       details = "The operation was canceled (for example, the chooser was closed) or interrupted.";
       break;
+    case "NotSupportedError":
+      title = "WebUSB operation is not supported";
+      details = "The browser does not support this operation for the selected device/interface.";
+      break;
+    case "InvalidAccessError":
+      title = "WebUSB request was rejected";
+      details = "The requested device/interface/endpoint could not be accessed in the current context.";
+      break;
     case "NotAllowedError":
       title = "WebUSB permission was denied";
       details = "The browser blocked the request (often due to user gesture or permission policy requirements).";
@@ -222,6 +231,8 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
         title = "USB device not found (or disconnected)";
       } else if (mentionsAbort) {
         title = "WebUSB operation was aborted";
+      } else if (mentionsIsochronous) {
+        title = "WebUSB operation is not supported for isochronous endpoints";
       }
       break;
   }
@@ -259,6 +270,12 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
       "If `device.configuration` is null, call `await device.selectConfiguration(1)` (or the appropriate configuration) before `claimInterface()`.",
     );
     addHint("Close/release the device when done (`releaseInterface`, `close`) and avoid double-claiming interfaces.");
+  }
+
+  if (name === "NotSupportedError" || mentionsIsochronous) {
+    addHint(
+      "WebUSB typically supports control/bulk/interrupt transfers only; isochronous endpoints (common for USB audio/video) are not generally supported.",
+    );
   }
 
   if (name === "NotFoundError" || name === "AbortError" || mentionsDisconnected) {
