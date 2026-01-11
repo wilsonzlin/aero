@@ -2,7 +2,7 @@
 
 // D3D10/11 shares the exact same command stream serialization as D3D9; reuse the
 // writer implementation so future WDDM DMA-buffer plumbing can be shared.
-#include "../../d3d9/src/aerogpu_cmd_stream_writer.h"
+#include "../../common/aerogpu_cmd_stream_writer.h"
 
 namespace aerogpu {
 
