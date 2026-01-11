@@ -186,9 +186,12 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
-  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
   const bool show_window =
       aerogpu_test::HasArg(argc, argv, "--show-window") || aerogpu_test::HasArg(argc, argv, "--show");
+  if (show_window) {
+    hidden = false;
+  }
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -238,7 +241,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                               L"AeroGPU D3D9Ex Event Query",
                                               kWidth,
                                               kHeight,
-                                              show_window && !hidden);
+                                              !hidden);
   if (!hwnd) {
     return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
   }
