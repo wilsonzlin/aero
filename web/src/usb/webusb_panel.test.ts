@@ -119,6 +119,35 @@ function findAll(root: FakeElement, predicate: (el: FakeElement) => boolean): Fa
 }
 
 describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
+  it("includes a site settings link in the revocation hint", () => {
+    stubIsSecureContext(true);
+    stubNavigator({ usb: {} } as any);
+    stubDocument(new FakeDocument());
+
+    const report: PlatformFeatureReport = {
+      crossOriginIsolated: false,
+      sharedArrayBuffer: false,
+      wasmSimd: false,
+      wasmThreads: false,
+      jit_dynamic_wasm: false,
+      webgpu: false,
+      webusb: true,
+      webhid: false,
+      webgl2: false,
+      opfs: false,
+      opfsSyncAccessHandle: false,
+      audioWorklet: false,
+      offscreenCanvas: false,
+    };
+
+    const panel = renderWebUsbPanel(report) as unknown as FakeElement;
+    const links = findAll(panel, (el) => el.tagName === "A" && el.textContent === "site settings");
+    expect(links).toHaveLength(1);
+    const href = (links[0] as unknown as { href?: unknown }).href;
+    expect(typeof href).toBe("string");
+    expect(String(href)).toContain("chrome://settings/content/siteDetails");
+  });
+
   it("shows per-device Forget only when USBDevice.forget() exists", async () => {
     const forgettable = {
       vendorId: 0x1234,

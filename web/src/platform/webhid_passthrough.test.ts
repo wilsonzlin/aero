@@ -187,6 +187,34 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
     expect(forgetButtons).toHaveLength(1);
   });
 
+  it("always includes a site settings link for permission revocation guidance", async () => {
+    const device = {
+      productName: "Normal",
+      vendorId: 0x0003,
+      productId: 0x0004,
+      opened: false,
+      open: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    } as unknown as HIDDevice;
+
+    const hid = new FakeHid({
+      getDevices: vi.fn(async () => [device]),
+      requestDevice: vi.fn(async () => []),
+    });
+    stubNavigator({ hid } as any);
+    stubDocument(new FakeDocument());
+
+    const host = (document as any).createElement("div") as FakeElement;
+    const manager = new WebHidPassthroughManager();
+    mountWebHidPassthroughPanel(host as any, manager);
+
+    await manager.refreshKnownDevices();
+
+    const siteLinks = findAll(host, (el) => el.tagName === "A" && el.textContent === "site settings");
+    expect(siteLinks).toHaveLength(1);
+    expect(siteLinks[0].attributes.href).toContain("chrome://settings/content/siteDetails");
+  });
+
   it("attaches known devices without calling requestDevice()", async () => {
     let opened = false;
     const device = {

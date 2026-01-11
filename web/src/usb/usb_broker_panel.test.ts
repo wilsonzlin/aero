@@ -91,6 +91,25 @@ function findAll(root: FakeElement, predicate: (el: FakeElement) => boolean): Fa
 }
 
 describe("usb broker panel UI", () => {
+  it("includes a site settings link in the hint", () => {
+    const broker = {
+      attachKnownDevice: vi.fn(async () => ({ vendorId: 0, productId: 0 })),
+      detachSelectedDevice: vi.fn(async () => {}),
+      getKnownDevices: vi.fn(async () => []),
+      requestDevice: vi.fn(async () => ({ vendorId: 0, productId: 0 })),
+      attachWorkerPort: vi.fn(() => {}),
+      subscribeToDeviceChanges: vi.fn(() => () => {}),
+    } as any;
+
+    stubNavigator({ usb: {} } as any);
+    stubDocument(new FakeDocument());
+
+    const panel = renderWebUsbBrokerPanel(broker);
+    const links = findAll(panel as any, (el) => el.tagName === "A" && el.textContent === "site settings");
+    expect(links).toHaveLength(1);
+    expect(links[0].attributes.href).toContain("chrome://settings/content/siteDetails");
+  });
+
   it("calls attachKnownDevice when clicking Attach for a known device", async () => {
     const device = { vendorId: 0x1234, productId: 0x5678, productName: "Demo" } as unknown as USBDevice;
 
