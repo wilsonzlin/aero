@@ -30,13 +30,12 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
 - **virtio-snd** (optional; playback runs automatically when a supported virtio-snd device is detected)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
-      - `PCI\VEN_1AF4&DEV_1059` (modern; strict INF matches `PCI\VEN_1AF4&DEV_1059&REV_01`)
-        - If the VM/device does not report `REV_01`, the Aero contract driver will not bind and the selftest will report binding diagnostics (for example `driver_not_bound` / `wrong_service`) and log that `REV_01` is missing.
-        - For QEMU-based testing with the strict contract-v1 package, you typically need `disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device so Windows enumerates `PCI\VEN_1AF4&DEV_1059&REV_01`.
-      - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as a transitional PCI ID
-        (`PCI\VEN_1AF4&DEV_1018`, often `REV_00`).
-        - The Aero contract INF is strict and will not bind; install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
-        - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
+    - `PCI\VEN_1AF4&DEV_1059` (modern; strict INF matches `PCI\VEN_1AF4&DEV_1059&REV_01`)
+      - If the VM/device does not report `REV_01`, the Aero contract driver will not bind and the selftest will report binding diagnostics (for example `driver_not_bound` / `wrong_service`) and log that `REV_01` is missing.
+      - For QEMU-based testing with the strict contract-v1 package, you typically need `disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device so Windows enumerates `PCI\VEN_1AF4&DEV_1059&REV_01`.
+    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional PCI ID `PCI\VEN_1AF4&DEV_1018` (often `REV_00`).
+      - The Aero contract INF is strict and will not bind; install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+      - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
   - Validate that the PCI device is bound to the expected in-tree driver service and emit
     actionable diagnostics (PNP instance ID, ConfigManagerErrorCode / Device Manager “Code X”, driver INF name
     when queryable).
