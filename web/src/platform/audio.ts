@@ -479,6 +479,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   const latencyHint = options.latencyHint ?? "interactive";
   const channelCount = options.channelCount ?? 2;
   const context = new AudioContextCtor({ sampleRate, latencyHint });
+  const actualSampleRate = context.sampleRate;
 
   // Call resume() immediately (before any await) to satisfy autoplay policies.
   const resumePromise = context.resume();
@@ -491,7 +492,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     options.ringBufferFrames ??
     (options.ringBuffer
       ? inferRingBufferFrames(options.ringBuffer, channelCount)
-      : getDefaultRingBufferFrames(context.sampleRate));
+      : getDefaultRingBufferFrames(actualSampleRate));
 
   let ringBuffer: AudioRingBufferLayout;
   try {
@@ -502,7 +503,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     await context.close();
     return createDisabledAudioOutput({
       message: err instanceof Error ? err.message : "Failed to allocate SharedArrayBuffer for audio.",
-      sampleRate,
+      sampleRate: actualSampleRate,
     });
   }
 
@@ -511,7 +512,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     return createDisabledAudioOutput({
       message: "AudioWorklet is unavailable in this browser (AudioContext.audioWorklet missing).",
       ringBuffer,
-      sampleRate,
+      sampleRate: actualSampleRate,
     });
   }
 
@@ -525,7 +526,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
           ? `Failed to load AudioWorklet module: ${err.message}`
           : "Failed to load AudioWorklet module.",
       ringBuffer,
-      sampleRate,
+      sampleRate: actualSampleRate,
     });
   }
 
@@ -547,7 +548,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
           ? `Failed to create AudioWorkletNode: ${err.message}`
           : "Failed to create AudioWorkletNode.",
       ringBuffer,
-      sampleRate,
+      sampleRate: actualSampleRate,
     });
   }
 
