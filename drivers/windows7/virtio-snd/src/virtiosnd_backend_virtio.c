@@ -845,8 +845,8 @@ VirtioSndBackend_Create(PDEVICE_OBJECT DeviceObject,
 
     negotiated = 0;
     status = VirtioPciNegotiateFeatures(&backend->Virtio,
-                                        0,
-                                        VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_F_RING_EVENT_IDX,
+                                        VIRTIO_F_RING_INDIRECT_DESC,
+                                        VIRTIO_F_RING_EVENT_IDX,
                                         &negotiated);
     if (!NT_SUCCESS(status)) {
         VirtioSndBackend_Destroy(backend);

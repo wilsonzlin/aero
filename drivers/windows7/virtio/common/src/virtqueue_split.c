@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 
-#include "virtqueue_split.h"
+#include "../include/virtqueue_split.h"
 
 static void virtio_memset(void *dst, int c, size_t n)
 {
