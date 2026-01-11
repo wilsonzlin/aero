@@ -337,6 +337,10 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
     context->Unmap(cb.get(), 0);
     return aerogpu_test::Fail(kTestName, "Map(constant buffer, WRITE_DISCARD) returned NULL pData");
   }
+  if (!cb_map.pData) {
+    context->Unmap(cb.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(constant buffer, WRITE_DISCARD) returned NULL pData");
+  }
 
   ConstantBufferData* cb_data = (ConstantBufferData*)cb_map.pData;
   cb_data->color[0] = 0.0f;
@@ -375,6 +379,10 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
                                       "Map(constant buffer, WRITE_DISCARD #2)",
                                       hr,
                                       device.get());
+  }
+  if (!cb_map.pData) {
+    context->Unmap(cb.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(constant buffer, WRITE_DISCARD #2) returned NULL pData");
   }
   if (!cb_map.pData) {
     context->Unmap(cb.get(), 0);
@@ -426,6 +434,10 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
                               "Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
                               (long)map.RowPitch,
                               kWidth * 4);
+  }
+  if (!map.pData) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, 5);
