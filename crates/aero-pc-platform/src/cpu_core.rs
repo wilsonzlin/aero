@@ -389,7 +389,13 @@ impl CpuBus for PcCpuBus {
     }
 
     fn supports_bulk_copy(&self) -> bool {
-        true
+        // Bulk string fast paths assume contiguous linear addresses map to contiguous physical
+        // addresses. When the chipset A20 gate is disabled, physical bit 20 is forced low and the
+        // address space aliases in 1MiB windows, which can invalidate those assumptions.
+        //
+        // Expose bulk ops only once A20 is enabled so Tier-0 won't attempt the fast path during
+        // early real-mode boot sequences.
+        self.platform.chipset.a20().enabled()
     }
 
     fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
@@ -443,7 +449,7 @@ impl CpuBus for PcCpuBus {
     }
 
     fn supports_bulk_set(&self) -> bool {
-        true
+        self.platform.chipset.a20().enabled()
     }
 
     fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {

@@ -236,6 +236,7 @@ fn pc_cpu_bus_atomic_rmw_faults_on_user_read_only_pages() {
 fn pc_cpu_bus_bulk_copy_memmove_overlap_semantics() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);
+    bus.platform.chipset.a20().set_enabled(true);
 
     let mut state = CpuState::new(CpuMode::Protected);
     state.control.cr0 = CR0_PE;
@@ -259,6 +260,7 @@ fn pc_cpu_bus_bulk_copy_memmove_overlap_semantics() {
 fn pc_cpu_bus_bulk_set_repeats_pattern() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);
+    bus.platform.chipset.a20().set_enabled(true);
 
     let mut state = CpuState::new(CpuMode::Protected);
     state.control.cr0 = CR0_PE;
@@ -284,6 +286,7 @@ fn pc_cpu_bus_bulk_set_repeats_pattern() {
 fn pc_cpu_bus_bulk_set_preserves_pattern_alignment_across_chunks() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);
+    bus.platform.chipset.a20().set_enabled(true);
 
     let mut state = CpuState::new(CpuMode::Protected);
     state.control.cr0 = CR0_PE;
