@@ -567,7 +567,7 @@ VOID VirtIoSndUninitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return;
     }
-    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0) {
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 && Dx->Rx.Queue == NULL && Dx->Rx.Requests == NULL) {
         return;
     }
 
