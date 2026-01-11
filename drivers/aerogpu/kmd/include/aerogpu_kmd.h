@@ -98,6 +98,23 @@ typedef struct _AEROGPU_ALLOCATION {
     SIZE_T SizeBytes;
     ULONG Flags;
     PHYSICAL_ADDRESS LastKnownPa; /* updated from allocation lists */
+
+    /*
+     * CPU mapping state for DxgkDdiLock / DxgkDdiUnlock.
+     *
+     * Win7 D3D10/11 staging readback relies on D3DKMTLock/Unlock (invoked via
+     * the runtime's LockCb/UnlockCb) returning a valid CPU VA. We implement a
+     * minimal map/unmap path by temporarily mapping the allocation's backing
+     * pages into the calling process.
+     */
+    FAST_MUTEX CpuMapMutex;
+    LONG CpuMapRefCount;
+    PVOID CpuMapUserVa;   /* base VA returned by MmMapLockedPagesSpecifyCache */
+    PVOID CpuMapKernelVa; /* VA returned by MmMapIoSpace */
+    PMDL CpuMapMdl;
+    SIZE_T CpuMapSize;       /* bytes mapped (page-aligned) */
+    SIZE_T CpuMapPageOffset; /* byte offset into first page */
+    BOOLEAN CpuMapWritePending;
 } AEROGPU_ALLOCATION;
 
 typedef struct _AEROGPU_DEVICE {

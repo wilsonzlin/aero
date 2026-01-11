@@ -796,6 +796,33 @@ static VOID AeroGpuRetireSubmissionsUpToFence(_Inout_ AEROGPU_ADAPTER* Adapter, 
     }
 }
 
+static VOID AeroGpuAllocationUnmapCpu(_Inout_ AEROGPU_ALLOCATION* Alloc)
+{
+    if (!Alloc) {
+        return;
+    }
+
+    if (Alloc->CpuMapUserVa && Alloc->CpuMapMdl) {
+        MmUnmapLockedPages(Alloc->CpuMapUserVa, Alloc->CpuMapMdl);
+    }
+
+    if (Alloc->CpuMapMdl) {
+        IoFreeMdl(Alloc->CpuMapMdl);
+    }
+
+    if (Alloc->CpuMapKernelVa && Alloc->CpuMapSize) {
+        MmUnmapIoSpace(Alloc->CpuMapKernelVa, Alloc->CpuMapSize);
+    }
+
+    Alloc->CpuMapRefCount = 0;
+    Alloc->CpuMapUserVa = NULL;
+    Alloc->CpuMapKernelVa = NULL;
+    Alloc->CpuMapMdl = NULL;
+    Alloc->CpuMapSize = 0;
+    Alloc->CpuMapPageOffset = 0;
+    Alloc->CpuMapWritePending = FALSE;
+}
+
 static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
 {
     KIRQL oldIrql;
@@ -844,6 +871,12 @@ static VOID AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
+    if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+        ExAcquireFastMutex(&alloc->CpuMapMutex);
+        AeroGpuAllocationUnmapCpu(alloc);
+        ExReleaseFastMutex(&alloc->CpuMapMutex);
+    }
+
     ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
 }
 
@@ -864,7 +897,124 @@ static VOID AeroGpuFreeAllAllocations(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+            ExAcquireFastMutex(&alloc->CpuMapMutex);
+            AeroGpuAllocationUnmapCpu(alloc);
+            ExReleaseFastMutex(&alloc->CpuMapMutex);
+        }
+
         ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+    }
+}
+
+static __forceinline BOOLEAN AeroGpuAllocTableContainsAllocId(_In_ const AEROGPU_SUBMISSION* Sub, _In_ ULONG AllocId)
+{
+    if (!Sub || !Sub->AllocTableVa || Sub->AllocTableSizeBytes < sizeof(struct aerogpu_alloc_table_header)) {
+        return FALSE;
+    }
+
+    const struct aerogpu_alloc_table_header* hdr = (const struct aerogpu_alloc_table_header*)Sub->AllocTableVa;
+    if (hdr->magic != AEROGPU_ALLOC_TABLE_MAGIC || hdr->entry_stride_bytes != sizeof(struct aerogpu_alloc_entry)) {
+        return FALSE;
+    }
+
+    if (hdr->size_bytes > Sub->AllocTableSizeBytes) {
+        return FALSE;
+    }
+
+    const SIZE_T maxEntries = (Sub->AllocTableSizeBytes - sizeof(*hdr)) / sizeof(struct aerogpu_alloc_entry);
+    UINT count = hdr->entry_count;
+    if ((SIZE_T)count > maxEntries) {
+        count = (UINT)maxEntries;
+    }
+
+    const struct aerogpu_alloc_entry* entries = (const struct aerogpu_alloc_entry*)(hdr + 1);
+    const uint32_t id = (uint32_t)AllocId;
+    for (UINT i = 0; i < count; ++i) {
+        if (entries[i].alloc_id == id) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static BOOLEAN AeroGpuGetAllocationBusyFence(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                             _In_ const AEROGPU_ALLOCATION* Alloc,
+                                             _Out_ ULONGLONG* BusyFenceOut)
+{
+    if (BusyFenceOut) {
+        *BusyFenceOut = 0;
+    }
+
+    if (!Adapter || !Alloc || !BusyFenceOut) {
+        return FALSE;
+    }
+
+    const ULONGLONG completedFence = AeroGpuReadCompletedFence(Adapter);
+    ULONGLONG maxFence = 0;
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
+
+    for (PLIST_ENTRY entry = Adapter->PendingSubmissions.Flink; entry != &Adapter->PendingSubmissions;
+         entry = entry->Flink) {
+        const AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+        if (sub->Fence <= completedFence) {
+            continue;
+        }
+
+        if (!AeroGpuAllocTableContainsAllocId(sub, Alloc->AllocationId)) {
+            continue;
+        }
+
+        if (sub->Fence > maxFence) {
+            maxFence = sub->Fence;
+        }
+    }
+
+    KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+
+    *BusyFenceOut = maxFence;
+    return (maxFence != 0);
+}
+
+static NTSTATUS AeroGpuWaitForAllocationIdle(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                             _In_ const AEROGPU_ALLOCATION* Alloc,
+                                             _In_ BOOLEAN DoNotWait)
+{
+    if (!Adapter || !Alloc) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    for (;;) {
+        ULONGLONG busyFence = 0;
+        if (!AeroGpuGetAllocationBusyFence(Adapter, Alloc, &busyFence)) {
+            return STATUS_SUCCESS;
+        }
+
+        if (DoNotWait) {
+            /*
+             * Win7 D3D10/11 runtimes translate this into DXGI_ERROR_WAS_STILL_DRAWING
+             * for Map(D3D11_MAP_FLAG_DO_NOT_WAIT).
+             */
+            return STATUS_GRAPHICS_GPU_BUSY;
+        }
+
+        /*
+         * Poll for the fence to complete. This is intentionally simple
+         * (system-memory-only MVP, no paging) and keeps us from returning a CPU
+         * VA while the emulator may still be writing the allocation.
+         */
+        while (AeroGpuReadCompletedFence(Adapter) < busyFence) {
+            LARGE_INTEGER interval;
+            interval.QuadPart = -10000; /* 1ms */
+            KeDelayExecutionThread(KernelMode, FALSE, &interval);
+        }
     }
 }
 
@@ -1981,6 +2131,14 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         alloc->SizeBytes = info->Size;
         alloc->Flags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED : 0);
         alloc->LastKnownPa.QuadPart = 0;
+        ExInitializeFastMutex(&alloc->CpuMapMutex);
+        alloc->CpuMapRefCount = 0;
+        alloc->CpuMapUserVa = NULL;
+        alloc->CpuMapKernelVa = NULL;
+        alloc->CpuMapMdl = NULL;
+        alloc->CpuMapSize = 0;
+        alloc->CpuMapPageOffset = 0;
+        alloc->CpuMapWritePending = FALSE;
 
         info->hAllocation = (HANDLE)alloc;
         info->SegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
@@ -2146,6 +2304,14 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         alloc->SizeBytes = (SIZE_T)priv->size_bytes;
         alloc->Flags = ((ULONG)priv->flags) | AEROGPU_KMD_ALLOC_FLAG_OPENED;
         alloc->LastKnownPa.QuadPart = 0;
+        ExInitializeFastMutex(&alloc->CpuMapMutex);
+        alloc->CpuMapRefCount = 0;
+        alloc->CpuMapUserVa = NULL;
+        alloc->CpuMapKernelVa = NULL;
+        alloc->CpuMapMdl = NULL;
+        alloc->CpuMapSize = 0;
+        alloc->CpuMapPageOffset = 0;
+        alloc->CpuMapWritePending = FALSE;
 
         info->hAllocation = (HANDLE)alloc;
         info->SegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
@@ -2194,8 +2360,167 @@ static NTSTATUS APIENTRY AeroGpuDdiCloseAllocation(_In_ const HANDLE hAdapter,
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS APIENTRY AeroGpuDdiLock(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_LOCK* pLock)
+{
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pLock) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)pLock->hAllocation;
+    if (!alloc) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (pLock->SegmentId != AEROGPU_SEGMENT_ID_SYSTEM) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    SIZE_T offset = (SIZE_T)pLock->Offset;
+    SIZE_T size = (SIZE_T)pLock->Size;
+    if (offset > alloc->SizeBytes) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (size == 0) {
+        size = alloc->SizeBytes - offset;
+    }
+    if (size > (alloc->SizeBytes - offset)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const BOOLEAN doNotWait = pLock->Flags.DoNotWait ? TRUE : FALSE;
+    NTSTATUS waitSt = AeroGpuWaitForAllocationIdle(adapter, alloc, doNotWait);
+    if (!NT_SUCCESS(waitSt)) {
+        return waitSt;
+    }
+
+    ExAcquireFastMutex(&alloc->CpuMapMutex);
+
+    NTSTATUS st = STATUS_SUCCESS;
+    if (alloc->CpuMapRefCount <= 0) {
+        const ULONGLONG physBase = pLock->PhysicalAddress.QuadPart;
+        alloc->LastKnownPa.QuadPart = physBase;
+
+        const SIZE_T pageOffset = (SIZE_T)(physBase & (PAGE_SIZE - 1));
+
+        PHYSICAL_ADDRESS physAligned;
+        physAligned.QuadPart = physBase & ~(ULONGLONG)(PAGE_SIZE - 1);
+
+        SIZE_T mapSize = alloc->SizeBytes + pageOffset;
+        mapSize = (mapSize + (PAGE_SIZE - 1)) & ~(SIZE_T)(PAGE_SIZE - 1);
+
+        if (mapSize == 0 || mapSize > MAXULONG) {
+            st = STATUS_INVALID_BUFFER_SIZE;
+            goto Exit;
+        }
+
+        PVOID kva = MmMapIoSpace(physAligned, mapSize, MmCached);
+        if (!kva) {
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto Exit;
+        }
+
+        PMDL mdl = IoAllocateMdl(kva, (ULONG)mapSize, FALSE, FALSE, NULL);
+        if (!mdl) {
+            MmUnmapIoSpace(kva, mapSize);
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto Exit;
+        }
+
+        MmBuildMdlForNonPagedPool(mdl);
+
+        PVOID uva = MmMapLockedPagesSpecifyCache(mdl, UserMode, MmCached, NULL, FALSE, NormalPagePriority);
+        if (!uva) {
+            IoFreeMdl(mdl);
+            MmUnmapIoSpace(kva, mapSize);
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto Exit;
+        }
+
+        alloc->CpuMapUserVa = uva;
+        alloc->CpuMapKernelVa = kva;
+        alloc->CpuMapMdl = mdl;
+        alloc->CpuMapSize = mapSize;
+        alloc->CpuMapPageOffset = pageOffset;
+        alloc->CpuMapRefCount = 1;
+        alloc->CpuMapWritePending = FALSE;
+    } else {
+        alloc->CpuMapRefCount++;
+    }
+
+    if (!alloc->CpuMapUserVa) {
+        st = STATUS_INVALID_DEVICE_STATE;
+        goto Exit;
+    }
+
+    const BOOLEAN cpuWillRead = pLock->Flags.WriteOnly ? FALSE : TRUE;
+    const BOOLEAN cpuWillWrite = pLock->Flags.ReadOnly ? FALSE : TRUE;
+
+    if (cpuWillRead && alloc->CpuMapMdl) {
+        /* Invalidate for device -> CPU reads (staging readback). */
+        KeFlushIoBuffers(alloc->CpuMapMdl, /*ReadOperation*/ TRUE, /*DmaOperation*/ TRUE);
+    }
+
+    if (cpuWillWrite) {
+        alloc->CpuMapWritePending = TRUE;
+    }
+
+    pLock->pData = (PUCHAR)alloc->CpuMapUserVa + alloc->CpuMapPageOffset + offset;
+
+Exit:
+    if (!NT_SUCCESS(st)) {
+        if (alloc->CpuMapRefCount <= 0) {
+            AeroGpuAllocationUnmapCpu(alloc);
+        }
+    }
+
+    ExReleaseFastMutex(&alloc->CpuMapMutex);
+    return st;
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiUnlock(_In_ const HANDLE hAdapter, _In_ const DXGKARG_UNLOCK* pUnlock)
+{
+    UNREFERENCED_PARAMETER(hAdapter);
+    if (!pUnlock) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)pUnlock->hAllocation;
+    if (!alloc) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&alloc->CpuMapMutex);
+
+    if (alloc->CpuMapRefCount <= 0) {
+        ExReleaseFastMutex(&alloc->CpuMapMutex);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    alloc->CpuMapRefCount--;
+
+    if (alloc->CpuMapRefCount == 0) {
+        if (alloc->CpuMapWritePending && alloc->CpuMapMdl) {
+            /* Flush for CPU -> device reads. */
+            KeFlushIoBuffers(alloc->CpuMapMdl, /*ReadOperation*/ FALSE, /*DmaOperation*/ TRUE);
+        }
+        AeroGpuAllocationUnmapCpu(alloc);
+    }
+
+    ExReleaseFastMutex(&alloc->CpuMapMutex);
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiCreateDevice(_In_ const HANDLE hAdapter,
-                                               _Inout_ DXGKARG_CREATEDEVICE* pCreate)
+                                                _Inout_ DXGKARG_CREATEDEVICE* pCreate)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!adapter || !pCreate) {
@@ -3821,6 +4146,8 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
     init.DxgkDdiGetStandardAllocationDriverData = AeroGpuDdiGetStandardAllocationDriverData;
     init.DxgkDdiOpenAllocation = AeroGpuDdiOpenAllocation;
     init.DxgkDdiCloseAllocation = AeroGpuDdiCloseAllocation;
+    init.DxgkDdiLock = AeroGpuDdiLock;
+    init.DxgkDdiUnlock = AeroGpuDdiUnlock;
 
     init.DxgkDdiCreateDevice = AeroGpuDdiCreateDevice;
     init.DxgkDdiDestroyDevice = AeroGpuDdiDestroyDevice;
