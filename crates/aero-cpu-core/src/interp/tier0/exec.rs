@@ -631,13 +631,20 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
             }
             ExecOutcome::Assist(reason) => {
                 if reason == AssistReason::Interrupt {
-                    let assist_outcome = interrupts::exec_interrupt_assist_decoded(
+                    let assist_outcome = match interrupts::exec_interrupt_assist_decoded(
                         cpu,
                         bus,
                         &decoded,
                         addr_size_override,
-                    )
-                    .unwrap_or_else(|e| panic!("interrupt delivery failed: {e:?}"));
+                    ) {
+                        Ok(outcome) => outcome,
+                        Err(exit) => {
+                            return BatchResult {
+                                executed,
+                                exit: BatchExit::CpuExit(exit),
+                            };
+                        }
+                    };
 
                     match assist_outcome {
                         interrupts::InterruptAssistOutcome::Retired {
