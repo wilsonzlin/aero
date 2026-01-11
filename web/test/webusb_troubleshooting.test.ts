@@ -59,6 +59,16 @@ test("explainWebUsbError: TypeError filter validation suggests adding vendorId/p
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("vendorid")));
 });
 
+test("explainWebUsbError: prefers DOMException name from Error.cause when present", () => {
+  const err = new Error("Failed to open USB device", {
+    cause: { name: "NetworkError", message: "Unable to claim interface." },
+  });
+
+  const res = withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", () => explainWebUsbError(err));
+  assert.ok(res.title.toLowerCase().includes("communication") || res.title.toLowerCase().includes("claim"));
+  assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
+});
+
 test("explainWebUsbError: Windows driver hints omit Linux udev guidance", () => {
   const res = withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", () =>
     explainWebUsbError("NetworkError: Unable to claim interface."),

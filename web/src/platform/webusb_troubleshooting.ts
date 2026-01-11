@@ -7,6 +7,7 @@ export type WebUsbErrorExplanation = {
 type ErrorLike = {
   name?: unknown;
   message?: unknown;
+  cause?: unknown;
 };
 
 type HostOs = "windows" | "linux" | "mac" | "unknown";
@@ -33,6 +34,41 @@ function normalizeError(err: unknown): { name?: string; message?: string } {
   }
 
   return {};
+}
+
+function normalizeErrorChain(err: unknown, maxDepth = 5): Array<{ name?: string; message?: string }> {
+  const chain: Array<{ name?: string; message?: string }> = [];
+  const seen = new Set<unknown>();
+
+  let cur: unknown = err;
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (typeof cur === "string") {
+      chain.push({ message: cur });
+      break;
+    }
+
+    if (typeof cur === "object" && cur !== null) {
+      if (seen.has(cur)) break;
+      seen.add(cur);
+
+      const { name, message, cause } = cur as ErrorLike;
+      chain.push({
+        name: typeof name === "string" ? name : undefined,
+        message: typeof message === "string" ? message : undefined,
+      });
+
+      if (cause === undefined) break;
+      cur = cause;
+      continue;
+    }
+
+    if (cur !== undefined) {
+      chain.push({ message: safeToString(cur) });
+    }
+    break;
+  }
+
+  return chain;
 }
 
 function includesAny(haystack: string, needles: string[]): boolean {
@@ -66,8 +102,14 @@ function detectHostOs(): HostOs {
  * - user-facing (actionable hints, including OS-specific driver/permission notes).
  */
 export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
-  const { name, message } = normalizeError(err);
-  const msg = message ?? "";
+  const chain = normalizeErrorChain(err);
+  const primary =
+    chain.find((entry) => entry.name && entry.name !== "Error") ?? chain.find((entry) => entry.name) ?? chain[0] ?? {};
+  const name = primary.name;
+  const msg = chain
+    .map((entry) => entry.message)
+    .filter((m): m is string => typeof m === "string" && m.length > 0)
+    .join(" | ");
   const msgLower = msg.toLowerCase();
   const hostOs = detectHostOs();
 
@@ -222,9 +264,15 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
 }
 
 export function formatWebUsbError(err: unknown): string {
-  const { name, message } = normalizeError(err);
-  if (name && message) return `${name}: ${message}`;
-  if (name) return name;
-  if (message) return message;
-  return safeToString(err);
+  const chain = normalizeErrorChain(err);
+  const formatted = chain
+    .map(({ name, message }) => {
+      if (name && message) return `${name}: ${message}`;
+      if (name) return name;
+      if (message) return message;
+      return null;
+    })
+    .filter((part): part is string => !!part);
+  if (formatted.length === 0) return safeToString(err);
+  return formatted.join(" <- ");
 }
