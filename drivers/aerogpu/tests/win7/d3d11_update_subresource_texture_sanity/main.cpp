@@ -38,12 +38,13 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_update_subresource_texture_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
         "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
@@ -226,6 +227,19 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
                               "unexpected RowPitch: got %lu expected >= %d",
                               (unsigned long)map.RowPitch,
                               kTightRowPitch);
+  }
+
+  if (dump) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    std::string err;
+    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_update_subresource_texture_sanity.bmp"),
+                                      kWidth,
+                                      kHeight,
+                                      map.pData,
+                                      (int)map.RowPitch,
+                                      &err)) {
+      aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+    }
   }
 
   for (int y = 0; y < kHeight; ++y) {
