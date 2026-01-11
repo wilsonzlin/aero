@@ -773,9 +773,9 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
   void runLoop();
 }
 
-function runLoop(): void {
+async function runLoop(): Promise<void> {
   try {
-    runLoopInner();
+    await runLoopInner();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     pushEventBlocking({ kind: "panic", message });
@@ -785,7 +785,7 @@ function runLoop(): void {
   }
 }
 
-function runLoopInner(): void {
+async function runLoopInner(): Promise<void> {
   let running = false;
   const heartbeatIntervalMs = 250;
   const frameIntervalMs = 1000 / 60;
@@ -1004,14 +1004,17 @@ function runLoopInner(): void {
 
     // Sleep until either new commands arrive or the next heartbeat tick.
     if (!running) {
-      commandRing.waitForData(1000);
+      // IMPORTANT: Use the async wait path so the worker stays responsive to
+      // structured `postMessage` attachments (e.g. audio ring + mic ring buffer)
+      // while idle. A blocking Atomics.wait loop would starve the message queue.
+      await commandRing.waitForDataAsync(1000);
       continue;
     }
 
     const now = performance.now();
     const nextAudioMs = workletBridge ? nextAudioFillDeadlineMs : Number.POSITIVE_INFINITY;
     const until = Math.min(nextHeartbeatMs, nextFrameMs, nextModeSwitchMs, nextAudioMs) - now;
-    commandRing.waitForData(Math.max(0, Math.min(heartbeatIntervalMs, until)));
+    await commandRing.waitForDataAsync(Math.max(0, Math.min(heartbeatIntervalMs, until)));
   }
 
   setReadyFlag(status, role, false);
