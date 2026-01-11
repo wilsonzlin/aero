@@ -1818,8 +1818,12 @@ uint64_t submit_locked(AeroGpuImmediateContext* ctx, bool want_present, HRESULT*
 void flush_locked(AeroGpuImmediateContext* ctx) {
   if (ctx) {
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
-    cmd->reserved0 = 0;
-    cmd->reserved1 = 0;
+    if (!cmd) {
+      SetError(ctx->device, E_OUTOFMEMORY);
+    } else {
+      cmd->reserved0 = 0;
+      cmd->reserved1 = 0;
+    }
   }
   HRESULT hr = S_OK;
   submit_locked(ctx, false, &hr);
@@ -2589,9 +2593,12 @@ void AEROGPU_APIENTRY IaSetInputLayout11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   if (hLayout.pDrvPrivate) {
     handle = FromHandle<D3D11DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout)->handle;
   }
-  ctx->current_input_layout = handle;
-
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
+  ctx->current_input_layout = handle;
   cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
 }
@@ -2627,6 +2634,10 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   auto* cmd = ctx->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
       AEROGPU_CMD_SET_VERTEX_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->start_slot = StartSlot;
   cmd->buffer_count = NumBuffers;
 }
@@ -2646,6 +2657,10 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx,
   std::lock_guard<std::mutex> lock(ctx->mutex);
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->buffer = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(hBuffer)->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
   cmd->offset_bytes = offset;
@@ -2662,13 +2677,17 @@ void AEROGPU_APIENTRY IaSetTopology11(D3D11DDI_HDEVICECONTEXT hCtx, D3D10_DDI_PR
   }
 
   std::lock_guard<std::mutex> lock(ctx->mutex);
-  if (ctx->current_topology == static_cast<uint32_t>(topology)) {
+  const uint32_t new_topology = static_cast<uint32_t>(topology);
+  if (ctx->current_topology == new_topology) {
     return;
   }
-  ctx->current_topology = static_cast<uint32_t>(topology);
-
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
-  cmd->topology = ctx->current_topology;
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
+  ctx->current_topology = new_topology;
+  cmd->topology = new_topology;
   cmd->reserved0 = 0;
 }
 
@@ -2684,10 +2703,15 @@ void AEROGPU_APIENTRY VsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
   std::lock_guard<std::mutex> lock(ctx->mutex);
-  ctx->current_vs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HVERTEXSHADER, AeroGpuShader>(hShader)->handle : 0;
+  const aerogpu_handle_t vs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HVERTEXSHADER, AeroGpuShader>(hShader)->handle : 0;
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
-  cmd->vs = ctx->current_vs;
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
+  ctx->current_vs = vs;
+  cmd->vs = vs;
   cmd->ps = ctx->current_ps;
   cmd->cs = 0;
   cmd->reserved0 = 0;
@@ -2705,13 +2729,18 @@ void AEROGPU_APIENTRY PsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
   std::lock_guard<std::mutex> lock(ctx->mutex);
-  ctx->current_ps = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HPIXELSHADER, AeroGpuShader>(hShader)->handle : 0;
+  const aerogpu_handle_t ps = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HPIXELSHADER, AeroGpuShader>(hShader)->handle : 0;
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vs = ctx->current_vs;
-  cmd->ps = ctx->current_ps;
+  cmd->ps = ps;
   cmd->cs = 0;
   cmd->reserved0 = 0;
+  ctx->current_ps = ps;
 }
 
 void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -3008,6 +3037,10 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
       tex = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i])->texture;
     }
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    if (!cmd) {
+      SetError(ctx->device, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
     cmd->slot = StartSlot + i;
     cmd->texture = tex;
@@ -3033,6 +3066,10 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
       tex = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i])->texture;
     }
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    if (!cmd) {
+      SetError(ctx->device, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
     cmd->slot = StartSlot + i;
     cmd->texture = tex;
@@ -3109,6 +3146,10 @@ void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewp
 
   const auto& vp = pViewports[0];
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->x_f32 = f32_bits(vp.TopLeftX);
   cmd->y_f32 = f32_bits(vp.TopLeftY);
   cmd->width_f32 = f32_bits(vp.Width);
@@ -3129,6 +3170,10 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
 
   const D3D10_DDI_RECT& r = pRects[0];
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->x = r.left;
   cmd->y = r.top;
   cmd->width = r.right - r.left;
@@ -3161,27 +3206,39 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   std::lock_guard<std::mutex> lock(ctx->mutex);
 
-  ctx->current_rtv_count = (NumViews > AEROGPU_MAX_RENDER_TARGETS) ? AEROGPU_MAX_RENDER_TARGETS : NumViews;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    ctx->current_rtvs[i] = 0;
-    ctx->current_rtv_resources[i] = nullptr;
-  }
-  for (uint32_t i = 0; i < ctx->current_rtv_count; i++) {
+  const uint32_t new_rtv_count = (NumViews > AEROGPU_MAX_RENDER_TARGETS) ? AEROGPU_MAX_RENDER_TARGETS : NumViews;
+  aerogpu_handle_t new_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+  AeroGpuResource* new_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
+  for (uint32_t i = 0; i < new_rtv_count; i++) {
     if (phRtvs && phRtvs[i].pDrvPrivate) {
       auto* view = FromHandle<D3D11DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(phRtvs[i]);
       AeroGpuResource* res = view ? view->resource : nullptr;
-      ctx->current_rtv_resources[i] = res;
-      ctx->current_rtvs[i] = res ? res->handle : 0;
+      new_rtv_resources[i] = res;
+      new_rtvs[i] = res ? res->handle : 0;
     }
   }
-  ctx->current_dsv_resource = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->resource : nullptr;
-  ctx->current_dsv = ctx->current_dsv_resource ? ctx->current_dsv_resource->handle : 0;
+  AeroGpuResource* new_dsv_resource =
+      hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->resource : nullptr;
+  const aerogpu_handle_t new_dsv = new_dsv_resource ? new_dsv_resource->handle : 0;
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  cmd->color_count = ctx->current_rtv_count;
-  cmd->depth_stencil = ctx->current_dsv;
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
+
+  ctx->current_rtv_count = new_rtv_count;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = ctx->current_rtvs[i];
+    ctx->current_rtvs[i] = new_rtvs[i];
+    ctx->current_rtv_resources[i] = new_rtv_resources[i];
+  }
+  ctx->current_dsv_resource = new_dsv_resource;
+  ctx->current_dsv = new_dsv;
+
+  cmd->color_count = new_rtv_count;
+  cmd->depth_stencil = new_dsv;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+    cmd->colors[i] = new_rtvs[i];
   }
 }
 
@@ -3198,6 +3255,10 @@ void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
   std::lock_guard<std::mutex> lock(ctx->mutex);
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
   cmd->color_rgba_f32[1] = f32_bits(rgba[1]);
@@ -3230,6 +3291,10 @@ void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = aer_flags;
   cmd->color_rgba_f32[0] = 0;
   cmd->color_rgba_f32[1] = 0;
@@ -3250,6 +3315,10 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
   std::lock_guard<std::mutex> lock(ctx->mutex);
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vertex_count = VertexCount;
   cmd->instance_count = 1;
   cmd->first_vertex = StartVertexLocation;
@@ -3267,6 +3336,10 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
   std::lock_guard<std::mutex> lock(ctx->mutex);
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    return;
+  }
   cmd->index_count = IndexCount;
   cmd->instance_count = 1;
   cmd->first_index = StartIndexLocation;
@@ -3400,10 +3473,14 @@ void unmap_resource_locked(AeroGpuImmediateContext* ctx, AeroGpuResource* res, u
       const auto size = static_cast<size_t>(res->mapped_size_bytes);
       auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
           AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = res->mapped_offset_bytes;
-      upload->size_bytes = res->mapped_size_bytes;
+      if (!upload) {
+        SetError(ctx->device, E_OUTOFMEMORY);
+      } else {
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = res->mapped_offset_bytes;
+        upload->size_bytes = res->mapped_size_bytes;
+      }
     }
   }
 
@@ -3575,6 +3652,9 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
 
     auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+    if (!upload) {
+      return E_OUTOFMEMORY;
+    }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
     upload->offset_bytes = 0;
@@ -3611,6 +3691,9 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
 
     auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, pSysMem, static_cast<size_t>(size));
+    if (!upload) {
+      return E_OUTOFMEMORY;
+    }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
     upload->offset_bytes = offset;
@@ -3661,6 +3744,9 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
     const size_t upload_size = static_cast<size_t>(box->bottom - box->top) * dst_pitch;
     auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_offset, upload_size);
+    if (!upload) {
+      return E_OUTOFMEMORY;
+    }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
     upload->offset_bytes = upload_offset;
@@ -3681,6 +3767,9 @@ HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, Aer
 
   if (dst->kind == ResourceKind::Buffer) {
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -3705,6 +3794,9 @@ HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, Aer
     }
 
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = 0;
@@ -4483,6 +4575,12 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
 
   std::lock_guard<std::mutex> lock(ctx->mutex);
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!cmd) {
+    SetError(ctx->device, E_OUTOFMEMORY);
+    HRESULT submit_hr = S_OK;
+    submit_locked(ctx, true, &submit_hr);
+    return FAILED(submit_hr) ? submit_hr : E_OUTOFMEMORY;
+  }
   cmd->scanout_id = 0;
   bool vsync = (pPresent->SyncInterval != 0);
   if (vsync && ctx->device && ctx->device->adapter && ctx->device->adapter->umd_private_valid) {
@@ -5661,58 +5759,86 @@ inline HRESULT DeallocateResourceIfNeeded(AeroGpuDevice*, D3D10DDI_HDEVICE, Aero
 }
 #endif
 
-void set_texture_locked(AeroGpuDevice* dev, uint32_t shader_stage, uint32_t slot, aerogpu_handle_t texture) {
+inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) {
+  if (dev) {
+    dev->last_error = hr;
+  }
+  SetErrorIfPossible(dev, hDevice, hr);
+}
+
+bool set_texture_locked(AeroGpuDevice* dev,
+                        D3D10DDI_HDEVICE hDevice,
+                        uint32_t shader_stage,
+                        uint32_t slot,
+                        aerogpu_handle_t texture) {
   if (!dev) {
-    return;
+    return false;
   }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
   if (!cmd) {
-    dev->last_error = E_OUTOFMEMORY;
-    return;
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return false;
   }
   cmd->shader_stage = shader_stage;
   cmd->slot = slot;
   cmd->texture = texture;
   cmd->reserved0 = 0;
+  return true;
 }
 
-void unbind_resource_from_srvs_locked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
+bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, aerogpu_handle_t resource) {
   if (!dev || !resource) {
-    return;
+    return true;
   }
 
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
     if (dev->vs_srvs[slot] == resource) {
+      if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_VERTEX, slot, 0)) {
+        return false;
+      }
       dev->vs_srvs[slot] = 0;
-      set_texture_locked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
     }
     if (dev->ps_srvs[slot] == resource) {
+      if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, slot, 0)) {
+        return false;
+      }
       dev->ps_srvs[slot] = 0;
-      set_texture_locked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
     }
   }
+  return true;
 }
 
 bool emit_set_render_targets_locked(AeroGpuDevice* dev);
 
-void set_render_targets_locked(AeroGpuDevice* dev, AeroGpuResource* rtv_res, AeroGpuResource* dsv_res) {
+bool set_render_targets_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpuResource* rtv_res, AeroGpuResource* dsv_res) {
   if (!dev) {
-    return;
+    return false;
   }
 
   const aerogpu_handle_t rtv_handle = rtv_res ? rtv_res->handle : 0;
   const aerogpu_handle_t dsv_handle = dsv_res ? dsv_res->handle : 0;
+  if (!unbind_resource_from_srvs_locked(dev, hDevice, rtv_handle)) {
+    return false;
+  }
+  if (dsv_handle != rtv_handle && !unbind_resource_from_srvs_locked(dev, hDevice, dsv_handle)) {
+    return false;
+  }
 
-  unbind_resource_from_srvs_locked(dev, rtv_handle);
-  unbind_resource_from_srvs_locked(dev, dsv_handle);
+  AeroGpuResource* prev_rtv = dev->current_rtv;
+  AeroGpuResource* prev_dsv = dev->current_dsv;
 
   dev->current_rtv = rtv_res;
   dev->current_dsv = dsv_res;
+  if (!emit_set_render_targets_locked(dev)) {
+    dev->current_rtv = prev_rtv;
+    dev->current_dsv = prev_dsv;
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return false;
+  }
+
   track_resource_alloc_for_submit_locked(dev, rtv_res);
   track_resource_alloc_for_submit_locked(dev, dsv_res);
-  if (!emit_set_render_targets_locked(dev)) {
-    dev->last_error = E_OUTOFMEMORY;
-  }
+  return true;
 }
 
 uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
@@ -5963,14 +6089,24 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
 #endif
 }
 
-HRESULT flush_locked(AeroGpuDevice* dev) {
+HRESULT flush_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice) {
+  HRESULT hr = S_OK;
   if (dev) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
-    cmd->reserved0 = 0;
-    cmd->reserved1 = 0;
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      hr = E_OUTOFMEMORY;
+    } else {
+      cmd->reserved0 = 0;
+      cmd->reserved1 = 0;
+    }
   }
-  HRESULT hr = S_OK;
-  submit_locked(dev, &hr);
+
+  HRESULT submit_hr = S_OK;
+  submit_locked(dev, &submit_hr);
+  if (FAILED(submit_hr)) {
+    return submit_hr;
+  }
   return hr;
 }
 
@@ -6119,6 +6255,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     AddLiveResourceLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    if (!cmd) {
+      RemoveLiveResourceLocked(dev, res);
+      res->handle = kInvalidHandle;
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
     cmd->size_bytes = res->size_bytes;
@@ -6129,10 +6271,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!res->storage.empty()) {
       auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
           AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = 0;
-      upload->size_bytes = res->size_bytes;
+      if (!upload) {
+        dev->last_error = E_OUTOFMEMORY;
+      } else {
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = 0;
+        upload->size_bytes = res->size_bytes;
+      }
     }
     return S_OK;
   }
@@ -6207,6 +6353,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     AddLiveResourceLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!cmd) {
+      RemoveLiveResourceLocked(dev, res);
+      res->handle = kInvalidHandle;
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
     cmd->format = aer_fmt;
@@ -6222,10 +6374,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!res->storage.empty()) {
       auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
           AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = 0;
-      upload->size_bytes = res->storage.size();
+      if (!upload) {
+        dev->last_error = E_OUTOFMEMORY;
+      } else {
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = 0;
+        upload->size_bytes = res->storage.size();
+      }
     }
     return S_OK;
   }
@@ -6360,6 +6516,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     AddLiveResourceLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    if (!cmd) {
+      RemoveLiveResourceLocked(dev, res);
+      res->handle = kInvalidHandle;
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
     cmd->size_bytes = res->size_bytes;
@@ -6384,18 +6546,26 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         }
 
         auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-        dirty->resource_handle = res->handle;
-        dirty->reserved0 = 0;
-        dirty->offset_bytes = 0;
-        dirty->size_bytes = res->size_bytes;
-        track_resource_alloc_for_submit_locked(dev, res);
+        if (!dirty) {
+          dev->last_error = E_OUTOFMEMORY;
+        } else {
+          dirty->resource_handle = res->handle;
+          dirty->reserved0 = 0;
+          dirty->offset_bytes = 0;
+          dirty->size_bytes = res->size_bytes;
+          track_resource_alloc_for_submit_locked(dev, res);
+        }
       } else {
         auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
             AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-        upload->resource_handle = res->handle;
-        upload->reserved0 = 0;
-        upload->offset_bytes = 0;
-        upload->size_bytes = res->size_bytes;
+        if (!upload) {
+          dev->last_error = E_OUTOFMEMORY;
+        } else {
+          upload->resource_handle = res->handle;
+          upload->reserved0 = 0;
+          upload->offset_bytes = 0;
+          upload->size_bytes = res->size_bytes;
+        }
       }
     }
     AEROGPU_D3D10_RET_HR(S_OK);
@@ -6566,6 +6736,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     AddLiveResourceLocked(dev, res);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!cmd) {
+      RemoveLiveResourceLocked(dev, res);
+      res->handle = kInvalidHandle;
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
     cmd->format = aer_fmt;
@@ -6596,18 +6772,26 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         }
 
         auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-        dirty->resource_handle = res->handle;
-        dirty->reserved0 = 0;
-        dirty->offset_bytes = 0;
-        dirty->size_bytes = dirty_size;
-        track_resource_alloc_for_submit_locked(dev, res);
+        if (!dirty) {
+          dev->last_error = E_OUTOFMEMORY;
+        } else {
+          dirty->resource_handle = res->handle;
+          dirty->reserved0 = 0;
+          dirty->offset_bytes = 0;
+          dirty->size_bytes = dirty_size;
+          track_resource_alloc_for_submit_locked(dev, res);
+        }
       } else {
         auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
             AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-        upload->resource_handle = res->handle;
-        upload->reserved0 = 0;
-        upload->offset_bytes = 0;
-        upload->size_bytes = res->storage.size();
+        if (!upload) {
+          dev->last_error = E_OUTOFMEMORY;
+        } else {
+          upload->resource_handle = res->handle;
+          upload->reserved0 = 0;
+          upload->offset_bytes = 0;
+          upload->size_bytes = res->storage.size();
+        }
       }
     }
     AEROGPU_D3D10_RET_HR(S_OK);
@@ -6646,8 +6830,12 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     // normalize alias lifetimes, but proper cross-process refcounting may be
     // needed later.
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    } else {
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+    }
   }
   RemoveLiveResourceLocked(dev, res);
   res->handle = kInvalidHandle;
@@ -7115,7 +7303,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   return S_OK;
 }
 
-void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t subresource) {
+void unmap_resource_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpuResource* res, uint32_t subresource) {
   if (!dev || !res) {
     return;
   }
@@ -7169,11 +7357,15 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   if (res->mapped_write && res->handle != kInvalidHandle) {
     if (is_guest_backed) {
       auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = res->mapped_offset_bytes;
-      dirty->size_bytes = res->mapped_size_bytes;
-      track_resource_alloc_for_submit_locked(dev, res);
+      if (!dirty) {
+        ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      } else {
+        dirty->resource_handle = res->handle;
+        dirty->reserved0 = 0;
+        dirty->offset_bytes = res->mapped_offset_bytes;
+        dirty->size_bytes = res->mapped_size_bytes;
+        track_resource_alloc_for_submit_locked(dev, res);
+      }
     } else {
       // Host-owned resource: inline the bytes into the command stream.
       if (res->mapped_offset_bytes + res->mapped_size_bytes <= static_cast<uint64_t>(res->storage.size())) {
@@ -7181,10 +7373,14 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
         const auto size = static_cast<size_t>(res->mapped_size_bytes);
         auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
             AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
-        upload->resource_handle = res->handle;
-        upload->reserved0 = 0;
-        upload->offset_bytes = res->mapped_offset_bytes;
-        upload->size_bytes = res->mapped_size_bytes;
+        if (!upload) {
+          ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+        } else {
+          upload->resource_handle = res->handle;
+          upload->reserved0 = 0;
+          upload->offset_bytes = res->mapped_offset_bytes;
+          upload->size_bytes = res->mapped_size_bytes;
+        }
       }
     }
   }
@@ -7304,7 +7500,7 @@ void AEROGPU_APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  unmap_resource_locked(dev, res, subresource);
+  unmap_resource_locked(dev, hDevice, res, subresource);
 }
 
 HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
@@ -7362,7 +7558,7 @@ void AEROGPU_APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  unmap_resource_locked(dev, res, /*subresource=*/0);
+  unmap_resource_locked(dev, hDevice, res, /*subresource=*/0);
 }
 
 HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice,
@@ -7400,7 +7596,7 @@ void AEROGPU_APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  unmap_resource_locked(dev, res, /*subresource=*/0);
+  unmap_resource_locked(dev, hDevice, res, /*subresource=*/0);
 }
 HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                              D3D10DDI_HRESOURCE hResource,
@@ -7491,7 +7687,7 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResour
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  unmap_resource_locked(dev, res, subresource);
+  unmap_resource_locked(dev, hDevice, res, subresource);
 }
 
 void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
@@ -7622,6 +7818,10 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
 
     auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!dirty) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
     dirty->resource_handle = res->handle;
     dirty->reserved0 = 0;
     dirty->offset_bytes = 0;
@@ -7644,6 +7844,10 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
 
       auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
           AEROGPU_CMD_UPLOAD_RESOURCE, pSysMem, static_cast<size_t>(res->size_bytes));
+      if (!upload) {
+        ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+        return;
+      }
       upload->resource_handle = res->handle;
       upload->reserved0 = 0;
       upload->offset_bytes = 0;
@@ -7680,6 +7884,10 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
 
       auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
           AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), static_cast<size_t>(total));
+      if (!upload) {
+        ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+        return;
+      }
       upload->resource_handle = res->handle;
       upload->reserved0 = 0;
       upload->offset_bytes = 0;
@@ -7711,6 +7919,10 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
 
     auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, pSysMem, static_cast<size_t>(size));
+    if (!upload) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
     upload->offset_bytes = offset;
@@ -7759,6 +7971,10 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     const size_t upload_size = static_cast<size_t>(pDstBox->bottom - pDstBox->top) * dst_pitch;
     auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_offset, upload_size);
+    if (!upload) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
     upload->resource_handle = res->handle;
     upload->reserved0 = 0;
     upload->offset_bytes = upload_offset;
@@ -7792,6 +8008,10 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
   // immediately so a subsequent staging Map(READ) sees the bytes.
   if (dst->kind == ResourceKind::Buffer) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -7813,6 +8033,10 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = 0;
@@ -7891,6 +8115,9 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
 
   if (dst->kind == ResourceKind::Buffer) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -7912,6 +8139,9 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = 0;
@@ -7982,11 +8212,22 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
   sh->handle = allocate_global_handle(dev->adapter);
   sh->stage = stage;
-  sh->dxbc.resize(pDesc->CodeSize);
+  try {
+    sh->dxbc.resize(pDesc->CodeSize);
+  } catch (...) {
+    sh->handle = kInvalidHandle;
+    sh->~AeroGpuShader();
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
   std::memcpy(sh->dxbc.data(), pDesc->pCode, pDesc->CodeSize);
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, sh->dxbc.data(), sh->dxbc.size());
+  if (!cmd) {
+    sh->handle = kInvalidHandle;
+    sh->~AeroGpuShader();
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
   cmd->shader_handle = sh->handle;
   cmd->stage = stage;
   cmd->dxbc_size_bytes = static_cast<uint32_t>(sh->dxbc.size());
@@ -8029,8 +8270,12 @@ void AEROGPU_APIENTRY DestroyShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER h
 
   if (sh->handle != kInvalidHandle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_shader>(AEROGPU_CMD_DESTROY_SHADER);
-    cmd->shader_handle = sh->handle;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    } else {
+      cmd->shader_handle = sh->handle;
+      cmd->reserved0 = 0;
+    }
   }
   sh->~AeroGpuShader();
 }
@@ -8062,7 +8307,13 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
 
   const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
                            static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);
-  layout->blob.resize(blob_size);
+  try {
+    layout->blob.resize(blob_size);
+  } catch (...) {
+    layout->handle = kInvalidHandle;
+    layout->~AeroGpuInputLayout();
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
 
   auto* hdr = reinterpret_cast<aerogpu_input_layout_blob_header*>(layout->blob.data());
   hdr->magic = AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
@@ -8084,6 +8335,11 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
+  if (!cmd) {
+    layout->handle = kInvalidHandle;
+    layout->~AeroGpuInputLayout();
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
   cmd->input_layout_handle = layout->handle;
   cmd->blob_size_bytes = static_cast<uint32_t>(layout->blob.size());
   cmd->reserved0 = 0;
@@ -8107,8 +8363,12 @@ void AEROGPU_APIENTRY DestroyInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELE
 
   if (layout->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_input_layout>(AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
-    cmd->input_layout_handle = layout->handle;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    } else {
+      cmd->input_layout_handle = layout->handle;
+      cmd->reserved0 = 0;
+    }
   }
   layout->~AeroGpuInputLayout();
 }
@@ -8242,6 +8502,11 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
   s->address_w = d3d11_address_mode_to_aerogpu(pDesc->AddressW);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
+  if (!cmd) {
+    s->handle = 0;
+    s->~AeroGpuSampler();
+    return E_OUTOFMEMORY;
+  }
   cmd->sampler_handle = s->handle;
   cmd->filter = s->filter;
   cmd->address_u = s->address_u;
@@ -8265,8 +8530,12 @@ void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER
 
   if (s->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_sampler>(AEROGPU_CMD_DESTROY_SAMPLER);
-    cmd->sampler_handle = s->handle;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    } else {
+      cmd->sampler_handle = s->handle;
+      cmd->reserved0 = 0;
+    }
   }
   s->~AeroGpuSampler();
 }
@@ -8383,7 +8652,9 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
     dsv_res = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->resource;
   }
 
-  set_render_targets_locked(dev, rtv_res, dsv_res);
+  if (!set_render_targets_locked(dev, hDevice, rtv_res, dsv_res)) {
+    return;
+  }
 }
 
 void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW, const float rgba[4]) {
@@ -8405,6 +8676,10 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
   cmd->color_rgba_f32[1] = f32_bits(rgba[1]);
@@ -8444,6 +8719,10 @@ void AEROGPU_APIENTRY ClearDSV(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = flags;
   cmd->color_rgba_f32[0] = 0;
   cmd->color_rgba_f32[1] = 0;
@@ -8472,11 +8751,15 @@ void AEROGPU_APIENTRY SetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENT
   if (hLayout.pDrvPrivate) {
     handle = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout)->handle;
   }
-  dev->current_input_layout = handle;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
+  dev->current_input_layout = handle;
 }
 
 void AEROGPU_APIENTRY SetVertexBuffer(D3D10DDI_HDEVICE hDevice,
@@ -8512,14 +8795,17 @@ void AEROGPU_APIENTRY SetVertexBuffer(D3D10DDI_HDEVICE hDevice,
   binding.offset_bytes = offset;
   binding.reserved0 = 0;
 
-  dev->current_vb_alloc = vb_alloc;
-  track_alloc_for_submit_locked(dev, vb_alloc);
-
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
                                                                            &binding,
                                                                            sizeof(binding));
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->start_slot = 0;
   cmd->buffer_count = 1;
+  dev->current_vb_alloc = vb_alloc;
+  track_alloc_for_submit_locked(dev, vb_alloc);
 }
 
 void AEROGPU_APIENTRY SetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hBuffer, uint32_t format, uint32_t offset) {
@@ -8546,14 +8832,18 @@ void AEROGPU_APIENTRY SetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURC
     ib_handle = res ? res->handle : 0;
     ib_alloc = res ? res->alloc_handle : 0;
   }
-  dev->current_ib_alloc = ib_alloc;
-  track_alloc_for_submit_locked(dev, ib_alloc);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->buffer = ib_handle;
   cmd->format = dxgi_index_format_to_aerogpu(format);
   cmd->offset_bytes = offset;
   cmd->reserved0 = 0;
+  dev->current_ib_alloc = ib_alloc;
+  track_alloc_for_submit_locked(dev, ib_alloc);
 }
 
 void AEROGPU_APIENTRY SetViewport(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDI_VIEWPORT* pVp) {
@@ -8575,6 +8865,10 @@ void AEROGPU_APIENTRY SetViewport(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDI_VI
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->x_f32 = f32_bits(pVp->TopLeftX);
   cmd->y_f32 = f32_bits(pVp->TopLeftY);
   cmd->width_f32 = f32_bits(pVp->Width);
@@ -8601,14 +8895,18 @@ void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hV
 
   aerogpu_handle_t vs = hVs.pDrvPrivate ? FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hVs)->handle : 0;
   aerogpu_handle_t ps = hPs.pDrvPrivate ? FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hPs)->handle : 0;
-  dev->current_vs = vs;
-  dev->current_ps = ps;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vs = vs;
   cmd->ps = ps;
   cmd->cs = 0;
   cmd->reserved0 = 0;
+  dev->current_vs = vs;
+  dev->current_ps = ps;
 }
 
 void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE) {
@@ -8645,11 +8943,15 @@ void AEROGPU_APIENTRY SetPrimitiveTopology(D3D10DDI_HDEVICE hDevice, uint32_t to
   if (dev->current_topology == topology) {
     return;
   }
-  dev->current_topology = topology;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->topology = topology;
   cmd->reserved0 = 0;
+  dev->current_topology = topology;
 }
 
 void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
@@ -8694,16 +8996,22 @@ void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    dev->vs_constant_buffers[start_slot + i] = b;
     bindings[i] = b;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
       AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
   cmd->start_slot = start_slot;
   cmd->buffer_count = count;
   cmd->reserved0 = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    dev->vs_constant_buffers[start_slot + i] = bindings[i];
+  }
 }
 
 void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
@@ -8748,16 +9056,22 @@ void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    dev->ps_constant_buffers[start_slot + i] = b;
     bindings[i] = b;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
       AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
   cmd->start_slot = start_slot;
   cmd->buffer_count = count;
   cmd->reserved0 = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    dev->ps_constant_buffers[start_slot + i] = bindings[i];
+  }
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
@@ -8801,7 +9115,9 @@ void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     }
   }
   if (new_rtv != dev->current_rtv || new_dsv != dev->current_dsv) {
-    set_render_targets_locked(dev, new_rtv, new_dsv);
+    if (!set_render_targets_locked(dev, hDevice, new_rtv, new_dsv)) {
+      return;
+    }
   }
 
   for (uint32_t i = 0; i < count; i++) {
@@ -8814,8 +9130,10 @@ void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     if (dev->vs_srvs[slot] == tex) {
       continue;
     }
+    if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_VERTEX, slot, tex)) {
+      return;
+    }
     dev->vs_srvs[slot] = tex;
-    set_texture_locked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, tex);
   }
 }
 
@@ -8860,7 +9178,9 @@ void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     }
   }
   if (new_rtv != dev->current_rtv || new_dsv != dev->current_dsv) {
-    set_render_targets_locked(dev, new_rtv, new_dsv);
+    if (!set_render_targets_locked(dev, hDevice, new_rtv, new_dsv)) {
+      return;
+    }
   }
 
   for (uint32_t i = 0; i < count; i++) {
@@ -8873,8 +9193,10 @@ void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     if (dev->ps_srvs[slot] == tex) {
       continue;
     }
+    if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, slot, tex)) {
+      return;
+    }
     dev->ps_srvs[slot] = tex;
-    set_texture_locked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, tex);
   }
 }
 
@@ -8910,16 +9232,22 @@ void AEROGPU_APIENTRY VsSetSamplers(D3D10DDI_HDEVICE hDevice,
       auto* s = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(pSamplers[i]);
       h = s ? s->handle : 0;
     }
-    dev->vs_samplers[start_slot + i] = h;
     handles[i] = h;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
       AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
   cmd->start_slot = start_slot;
   cmd->sampler_count = count;
   cmd->reserved0 = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    dev->vs_samplers[start_slot + i] = handles[i];
+  }
 }
 
 void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
@@ -8954,16 +9282,22 @@ void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
       auto* s = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(pSamplers[i]);
       h = s ? s->handle : 0;
     }
-    dev->ps_samplers[start_slot + i] = h;
     handles[i] = h;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
       AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
   cmd->start_slot = start_slot;
   cmd->sampler_count = count;
   cmd->reserved0 = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    dev->ps_samplers[start_slot + i] = handles[i];
+  }
 }
 
 void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint32_t start_vertex) {
@@ -8980,6 +9314,10 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vertex_count = vertex_count;
   cmd->instance_count = 1;
   cmd->first_vertex = start_vertex;
@@ -9004,6 +9342,10 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->index_count = index_count;
   cmd->instance_count = 1;
   cmd->first_index = start_index;
@@ -9053,7 +9395,7 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_
     dev->last_error = E_INVALIDARG;
     return;
   }
-  unmap_resource_locked(dev, res, static_cast<uint32_t>(pUnmap->Subresource));
+  unmap_resource_locked(dev, hDevice, res, static_cast<uint32_t>(pUnmap->Subresource));
 }
 
 HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_PRESENT* pPresent) {
@@ -9088,6 +9430,12 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!cmd) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    HRESULT submit_hr = S_OK;
+    submit_locked(dev, &submit_hr);
+    AEROGPU_D3D10_RET_HR(FAILED(submit_hr) ? submit_hr : E_OUTOFMEMORY);
+  }
   cmd->scanout_id = 0;
   cmd->flags = (pPresent->SyncInterval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
@@ -9111,7 +9459,7 @@ HRESULT AEROGPU_APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const HRESULT hr = flush_locked(dev);
+  const HRESULT hr = flush_locked(dev, hDevice);
   AEROGPU_D3D10_RET_HR(hr);
 }
 
@@ -9278,7 +9626,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
         put_identity(resources[i], take_identity(resources[i - 1]));
       }
       put_identity(resources[0], std::move(undo_saved));
-      dev->last_error = E_OUTOFMEMORY;
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
       return;
     }
   }
