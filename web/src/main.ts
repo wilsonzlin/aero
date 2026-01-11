@@ -23,7 +23,7 @@ import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
-import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
+import { initWasm, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import type { WorkerRole } from "./runtime/shared_layout";
 import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
@@ -349,32 +349,24 @@ function renderGraphicsPanel(report: PlatformFeatureReport): HTMLElement {
   );
 }
 
-async function writeSnapshotToOpfs(path: string, bytes: Uint8Array): Promise<void> {
-  const handle = await openFileHandle(path, { create: true });
-  const writable = await handle.createWritable({ keepExistingData: false });
-  await writable.write(bytes);
-  await writable.close();
-}
-
-async function readSnapshotFromOpfs(path: string): Promise<Uint8Array | null> {
+async function getOpfsFileIfExists(path: string): Promise<File | null> {
   try {
     const handle = await openFileHandle(path, { create: false });
-    const file = await handle.getFile();
-    return new Uint8Array(await file.arrayBuffer());
+    return await handle.getFile();
   } catch (err) {
     if (err instanceof DOMException && err.name === "NotFoundError") return null;
     throw err;
   }
 }
 
-function downloadBytes(bytes: Uint8Array, filename: string): void {
-  const blob = new Blob([bytes], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
+function downloadFile(file: File, filename: string): void {
+  const url = URL.createObjectURL(file);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // Allow the browser to start the download before revoking the URL.
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function renderSnapshotPanel(): HTMLElement {
@@ -393,32 +385,94 @@ function renderSnapshotPanel(): HTMLElement {
   const SNAPSHOT_PATH = "state/demo-vm-autosave.snap";
 
   let autosaveTimer: number | null = null;
-  let vm: InstanceType<WasmApi["DemoVm"]> | null = null;
+  let worker: Worker | null = null;
+  let workerReady = false;
+  let autosaveInFlight = false;
 
   let steps = 0;
+  let serialBytes: number | null = 0;
+
+  // Expose current snapshot panel state for Playwright smoke tests.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const testState = ((globalThis as any).__aeroDemoVmSnapshot = {
+    ready: false,
+    streaming: false,
+    error: null as string | null,
+  });
 
   function setError(msg: string): void {
     error.textContent = msg;
+    testState.error = msg;
     console.error(msg);
   }
 
-  async function saveSnapshot(): Promise<Uint8Array> {
-    if (!vm) throw new Error("Demo VM not initialized");
-    const bytes = vm.snapshot_full();
-    await writeSnapshotToOpfs(SNAPSHOT_PATH, bytes);
-    status.textContent = `Saved snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
-    return bytes;
+  type SnapshotWorkerRequest =
+    | { id: number; type: "init"; ramBytes: number }
+    | { id: number; type: "runSteps"; steps: number }
+    | { id: number; type: "snapshotFullToOpfs"; path: string }
+    | { id: number; type: "restoreFromOpfs"; path: string }
+    | { id: number; type: "getSerialOutputLen" }
+    | { id: number; type: "shutdown" };
+
+  type SnapshotWorkerMessage =
+    | { type: "rpcResult"; id: number; ok: true; result: unknown }
+    | { type: "rpcResult"; id: number; ok: false; error: string }
+    | { type: "status"; steps: number; serialBytes: number | null }
+    | { type: "error"; message: string };
+
+  let nextRpcId = 1;
+  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
+
+  function rejectPending(err: Error): void {
+    for (const entry of pending.values()) {
+      entry.reject(err);
+    }
+    pending.clear();
   }
 
-  async function loadSnapshot(bytesOverride?: Uint8Array): Promise<void> {
-    if (!vm) throw new Error("Demo VM not initialized");
-    const bytes = bytesOverride ?? (await readSnapshotFromOpfs(SNAPSHOT_PATH));
-    if (!bytes) {
+  function setButtonsEnabled(enabled: boolean): void {
+    saveButton.disabled = !enabled;
+    loadButton.disabled = !enabled;
+    exportButton.disabled = !enabled;
+    deleteButton.disabled = !enabled;
+    autosaveInput.disabled = !enabled;
+    importInput.disabled = !enabled;
+  }
+
+  async function rpc<T>(msg: Omit<SnapshotWorkerRequest, "id">): Promise<T> {
+    const activeWorker = worker;
+    if (!activeWorker) throw new Error("Snapshot worker is not available.");
+    const id = nextRpcId++;
+    const req: SnapshotWorkerRequest = { id, ...(msg as SnapshotWorkerRequest) };
+    return await new Promise<T>((resolve, reject) => {
+      pending.set(id, { resolve: (v) => resolve(v as T), reject });
+      try {
+        activeWorker.postMessage(req);
+      } catch (err) {
+        pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  async function saveSnapshot(): Promise<void> {
+    if (!workerReady) throw new Error("Demo VM worker not ready");
+    await rpc<void>({ type: "snapshotFullToOpfs", path: SNAPSHOT_PATH });
+    const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
+    status.textContent = file
+      ? `Saved snapshot (${formatBytes(file.size)})`
+      : "Saved snapshot (size unknown)";
+  }
+
+  async function loadSnapshot(): Promise<void> {
+    if (!workerReady) throw new Error("Demo VM worker not ready");
+    const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
+    if (!file) {
       status.textContent = "No snapshot found in OPFS.";
       return;
     }
-    vm.restore_snapshot(bytes);
-    status.textContent = `Loaded snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+    await rpc<void>({ type: "restoreFromOpfs", path: SNAPSHOT_PATH });
+    status.textContent = `Loaded snapshot (${formatBytes(file.size)})`;
   }
 
   function setAutosave(seconds: number): void {
@@ -431,7 +485,13 @@ function renderSnapshotPanel(): HTMLElement {
       return;
     }
     autosaveTimer = window.setInterval(() => {
-      saveSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      if (autosaveInFlight) return;
+      autosaveInFlight = true;
+      saveSnapshot()
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+        .finally(() => {
+          autosaveInFlight = false;
+        });
     }, seconds * 1000);
     status.textContent = `Auto-save every ${seconds}s.`;
   }
@@ -453,14 +513,14 @@ function renderSnapshotPanel(): HTMLElement {
 
   exportButton.onclick = () => {
     error.textContent = "";
-    readSnapshotFromOpfs(SNAPSHOT_PATH)
-      .then((bytes) => {
-        if (!bytes) {
+    getOpfsFileIfExists(SNAPSHOT_PATH)
+      .then((file) => {
+        if (!file) {
           status.textContent = "No snapshot found to export.";
           return;
         }
-        downloadBytes(bytes, "aero-demo-vm.snap");
-        status.textContent = `Exported snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+        downloadFile(file, "aero-demo-vm.snap");
+        status.textContent = `Exported snapshot (${formatBytes(file.size)})`;
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   };
@@ -479,46 +539,128 @@ function renderSnapshotPanel(): HTMLElement {
       error.textContent = "";
       const file = importInput.files?.[0];
       if (!file) return;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      await loadSnapshot(bytes);
-      await writeSnapshotToOpfs(SNAPSHOT_PATH, bytes);
-      status.textContent = `Imported snapshot (${bytes.byteLength.toLocaleString()} bytes)`;
+      status.textContent = `Importing snapshot (${formatBytes(file.size)})…`;
+      await importFileToOpfs(file, SNAPSHOT_PATH, (progress) => {
+        status.textContent = `Importing snapshot: ${formatBytes(progress.writtenBytes)} / ${formatBytes(progress.totalBytes)}`;
+      });
+      await loadSnapshot();
+      status.textContent = `Imported snapshot (${formatBytes(file.size)})`;
+      importInput.value = "";
     })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   });
 
-  wasmInitPromise
-    .then(async ({ api, variant }) => {
-      vm = new api.DemoVm(256 * 1024);
-      status.textContent = `Demo VM ready (WASM ${variant}). Running…`;
+  const platform = detectPlatformFeatures();
+  const opfsOk = platform.opfs && platform.opfsSyncAccessHandle;
+  if (!opfsOk) {
+    status.textContent = "Snapshots unavailable (OPFS sync access handles missing).";
+    setButtonsEnabled(false);
+    setError(
+      platform.opfs
+        ? "OPFS sync access handles are unavailable (createSyncAccessHandle missing)."
+        : "OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).",
+    );
+    testState.ready = false;
+    testState.streaming = false;
+  } else {
+    setButtonsEnabled(false);
+    status.textContent = "Initializing demo VM worker…";
 
-      saveButton.disabled = false;
-      loadButton.disabled = false;
-      exportButton.disabled = false;
-      deleteButton.disabled = false;
-
-      // Best-effort crash recovery: try to restore the last autosave snapshot.
-      try {
-        await loadSnapshot();
-      } catch (err) {
-        // If restore fails, keep running from a clean state.
-        setError(err instanceof Error ? err.message : String(err));
-      }
-
-      // Drive the demo VM forward so the snapshot has something interesting to capture.
-      window.setInterval(() => {
-        if (!vm) return;
-        vm.run_steps(5_000);
-        steps += 5_000;
-        const outBytes = vm.serial_output();
-        output.textContent = `steps=${steps.toLocaleString()} serial_bytes=${outBytes.byteLength.toLocaleString()}`;
-      }, 250);
-    })
-    .catch((err) => {
+    try {
+      worker = new Worker(new URL("./workers/demo_vm_snapshot.worker.ts", import.meta.url), { type: "module" });
+    } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      status.textContent = "Demo VM unavailable (WASM init failed)";
+      status.textContent = "Demo VM unavailable (worker creation failed)";
       setError(message);
-      console.error(err);
-    });
+      worker = null;
+      testState.ready = false;
+      testState.streaming = false;
+    }
+
+    if (worker) {
+      worker.addEventListener("message", (event: MessageEvent<SnapshotWorkerMessage>) => {
+        const msg = event.data;
+
+        if (msg.type === "rpcResult") {
+          const pendingReq = pending.get(msg.id);
+          if (!pendingReq) return;
+          pending.delete(msg.id);
+          if (msg.ok) pendingReq.resolve(msg.result);
+          else pendingReq.reject(new Error(msg.error));
+          return;
+        }
+
+        if (msg.type === "status") {
+          steps = msg.steps;
+          serialBytes = msg.serialBytes;
+          output.textContent =
+            `steps=${steps.toLocaleString()} ` +
+            `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
+          return;
+        }
+
+        if (msg.type === "error") {
+          setError(msg.message);
+        }
+      });
+
+      worker.addEventListener("error", (event: ErrorEvent) => {
+        status.textContent = "Demo VM unavailable (worker crashed)";
+        setError(event.message);
+        setButtonsEnabled(false);
+        workerReady = false;
+        rejectPending(new Error(event.message));
+        worker = null;
+        testState.ready = false;
+        testState.streaming = false;
+      });
+
+      void (async () => {
+        try {
+          const init = await rpc<{ wasmVariant: string; streamingSnapshots: boolean; streamingRestore: boolean }>({
+            type: "init",
+            ramBytes: 256 * 1024,
+          });
+
+          if (!init.streamingSnapshots || !init.streamingRestore) {
+            status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}) but snapshot streaming is unavailable.`;
+            setButtonsEnabled(false);
+            setError(
+              "This WASM build is missing DemoVm.snapshot_full_to_opfs / DemoVm.restore_snapshot_from_opfs " +
+                "(Task 99 not merged / wasm not rebuilt).",
+            );
+            testState.ready = true;
+            testState.streaming = false;
+            return;
+          }
+
+          workerReady = true;
+          status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}). Running…`;
+          setButtonsEnabled(true);
+          testState.ready = true;
+          testState.streaming = true;
+
+          // Best-effort crash recovery: try to restore the last autosave snapshot.
+          try {
+            const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
+            if (file) {
+              await rpc<void>({ type: "restoreFromOpfs", path: SNAPSHOT_PATH });
+              status.textContent = `Restored snapshot (${formatBytes(file.size)})`;
+            }
+          } catch (err) {
+            // If restore fails, keep running from a clean state.
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          status.textContent = "Demo VM unavailable (worker init failed)";
+          setButtonsEnabled(false);
+          setError(message);
+          testState.ready = false;
+          testState.streaming = false;
+        }
+      })();
+    }
+  }
 
   return el(
     "div",
