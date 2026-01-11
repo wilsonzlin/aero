@@ -90,3 +90,27 @@ fn wait_pending_exception_with_ne0_sets_irq13_pending() {
     assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
     assert!(state.irq13_pending());
 }
+
+#[test]
+fn clts_clears_ts_and_allows_x87_execution() {
+    // clts; fld1
+    let code = [0x0F, 0x06, 0xD9, 0xE8];
+    let (mut state, mut bus) = init(&code);
+    state.control.cr0 |= CR0_TS;
+
+    assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
+    assert_eq!(state.control.cr0 & CR0_TS, 0);
+
+    assert_eq!(step(&mut state, &mut bus), Ok(StepExit::Continue));
+}
+
+#[test]
+fn clts_requires_cpl0() {
+    let code = [0x0F, 0x06];
+    let (mut state, mut bus) = init(&code);
+    state.control.cr0 |= CR0_TS;
+    state.segments.cs.selector = 0x1B; // RPL3
+
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::gp0()));
+    assert_ne!(state.control.cr0 & CR0_TS, 0);
+}

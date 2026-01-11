@@ -116,6 +116,14 @@ fn exec_decoded<B: CpuBus>(
     }
 
     match mnem {
+        Mnemonic::Clts => {
+            // CLTS is privileged (CPL0). In real mode `cpl()` is always 0.
+            if state.cpl() != 0 {
+                return Err(Exception::gp0());
+            }
+            state.control.cr0 &= !CR0_TS;
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Wait => {
             exec_wait(state)?;
             Ok(ExecOutcome::Continue)
