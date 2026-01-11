@@ -171,11 +171,8 @@ fn parse_signature_chunk_with_entry_size(
             DxbcError::invalid_chunk(format!("signature entry {entry_index} start overflows"))
         })?;
 
-        let semantic_name_offset = read_u32_le(
-            bytes,
-            entry_start,
-            &format!("entry {entry_index} semantic_name_offset"),
-        )?;
+        let semantic_name_offset =
+            read_u32_le_entry(bytes, entry_start, entry_index, "semantic_name_offset")?;
         let semantic_name_offset_usize = semantic_name_offset as usize;
         if semantic_name_offset_usize < SIGNATURE_HEADER_LEN {
             return Err(DxbcError::invalid_chunk(format!(
@@ -185,29 +182,15 @@ fn parse_signature_chunk_with_entry_size(
         if (param_offset_usize..table_end).contains(&semantic_name_offset_usize) {
             return Err(DxbcError::invalid_chunk(format!(
                 "entry {entry_index} semantic_name_offset {semantic_name_offset} points into signature table ({param_offset_usize}..{table_end})"
-            )));
+                )));
         }
 
-        let semantic_index = read_u32_le(
-            bytes,
-            entry_start + 4,
-            &format!("entry {entry_index} semantic_index"),
-        )?;
-        let system_value_type = read_u32_le(
-            bytes,
-            entry_start + 8,
-            &format!("entry {entry_index} system_value_type"),
-        )?;
-        let component_type = read_u32_le(
-            bytes,
-            entry_start + 12,
-            &format!("entry {entry_index} component_type"),
-        )?;
-        let register = read_u32_le(
-            bytes,
-            entry_start + 16,
-            &format!("entry {entry_index} register"),
-        )?;
+        let semantic_index = read_u32_le_entry(bytes, entry_start + 4, entry_index, "semantic_index")?;
+        let system_value_type =
+            read_u32_le_entry(bytes, entry_start + 8, entry_index, "system_value_type")?;
+        let component_type =
+            read_u32_le_entry(bytes, entry_start + 12, entry_index, "component_type")?;
+        let register = read_u32_le_entry(bytes, entry_start + 16, entry_index, "register")?;
 
         let (mask, read_write_mask, stream) = match entry_size {
             SIGNATURE_ENTRY_LEN_V0 => {
@@ -216,11 +199,8 @@ fn parse_signature_chunk_with_entry_size(
                 // - read_write_mask
                 // - stream
                 // - min_precision (ignored)
-                let packed = read_u32_le(
-                    bytes,
-                    entry_start + 20,
-                    &format!("entry {entry_index} mask/rw_mask/stream"),
-                )?;
+                let packed =
+                    read_u32_le_entry(bytes, entry_start + 20, entry_index, "mask/rw_mask/stream")?;
                 (
                     (packed & 0xFF) as u8,
                     ((packed >> 8) & 0xFF) as u8,
@@ -241,8 +221,7 @@ fn parse_signature_chunk_with_entry_size(
                         entry_start + 21
                     ))
                 })?;
-                let stream =
-                    read_u32_le(bytes, entry_start + 24, &format!("entry {entry_index} stream"))?;
+                let stream = read_u32_le_entry(bytes, entry_start + 24, entry_index, "stream")?;
                 (mask, read_write_mask, stream)
             }
             other => {
@@ -252,12 +231,8 @@ fn parse_signature_chunk_with_entry_size(
             }
         };
 
-        let semantic_name = read_cstring(
-            bytes,
-            semantic_name_offset_usize,
-            &format!("entry {entry_index} semantic_name"),
-        )?
-        .to_owned();
+        let semantic_name = read_cstring_entry(bytes, semantic_name_offset_usize, entry_index)?
+            .to_owned();
 
         entries.push(SignatureEntry {
             semantic_name,
@@ -272,6 +247,33 @@ fn parse_signature_chunk_with_entry_size(
     }
 
     Ok(SignatureChunk { entries })
+}
+
+fn read_u32_le_entry(
+    bytes: &[u8],
+    offset: usize,
+    entry_index: usize,
+    field: &'static str,
+) -> Result<u32, DxbcError> {
+    read_u32_le(bytes, offset, field).map_err(|e| {
+        DxbcError::invalid_chunk(format!(
+            "entry {entry_index} {field}: {}",
+            e.context()
+        ))
+    })
+}
+
+fn read_cstring_entry<'a>(
+    bytes: &'a [u8],
+    offset: usize,
+    entry_index: usize,
+) -> Result<&'a str, DxbcError> {
+    read_cstring(bytes, offset, "semantic_name").map_err(|e| {
+        DxbcError::invalid_chunk(format!(
+            "entry {entry_index} semantic_name: {}",
+            e.context()
+        ))
+    })
 }
 
 fn detect_v1_layout(bytes: &[u8], param_offset: usize) -> bool {
