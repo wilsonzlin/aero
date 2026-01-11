@@ -109,6 +109,11 @@ export class TcpMuxFrameParser {
       frames.push({ msgType, streamId, payload });
 
       this.buffer = this.buffer.subarray(totalBytes);
+      if (this.buffer.byteLength === 0) {
+        // Avoid keeping the original (potentially large) backing ArrayBuffer alive
+        // via a zero-length view during idle periods.
+        this.buffer = new Uint8Array(0);
+      }
     }
 
     // If we're buffering more than a header + max payload, the stream is
@@ -283,6 +288,7 @@ export class WebSocketTcpMuxProxyClient {
   private readonly usedStreamIds = new Set<number>();
 
   private queued: QueuedFrame[] = [];
+  private queuedHead = 0;
   private queuedBytes = 0;
   private flushScheduled = false;
 
@@ -464,14 +470,15 @@ export class WebSocketTcpMuxProxyClient {
 
   private flush(): void {
     if (this.ws.readyState !== WebSocket.OPEN) return;
-    while (this.queued.length > 0) {
+    while (this.queuedHead < this.queued.length) {
       if (this.ws.bufferedAmount > this.maxBufferedAmount) {
         // Let the browser drain the socket; we'll try again shortly.
         this.scheduleFlush(this.bufferedAmountPollMs);
         return;
       }
 
-      const entry = this.queued.shift()!;
+      const entry = this.queued[this.queuedHead]!;
+      this.queuedHead += 1;
       this.queuedBytes -= entry.frame.byteLength;
       try {
         this.ws.send(entry.frame);
@@ -484,6 +491,17 @@ export class WebSocketTcpMuxProxyClient {
           // ignore
         }
         return;
+      }
+    }
+
+    if (this.queuedHead > 0) {
+      // Reclaim memory once we've drained (or largely drained) the queue.
+      if (this.queuedHead >= this.queued.length) {
+        this.queued = [];
+        this.queuedHead = 0;
+      } else if (this.queuedHead > 1024) {
+        this.queued = this.queued.slice(this.queuedHead);
+        this.queuedHead = 0;
       }
     }
   }
@@ -523,6 +541,7 @@ export class WebSocketTcpMuxProxyClient {
     this.streams.clear();
 
     this.queued = [];
+    this.queuedHead = 0;
     this.queuedBytes = 0;
   }
 
@@ -628,6 +647,15 @@ export class WebSocketTcpMuxProxyClient {
   }
 
   private purgeQueuedFrames(streamId: number, opts: { keepCloseFrames: boolean }): void {
+    if (this.queuedHead > 0) {
+      // Drop already-sent frames (they were only retained to avoid O(n) shift()).
+      if (this.queuedHead >= this.queued.length) {
+        this.queued = [];
+      } else {
+        this.queued = this.queued.slice(this.queuedHead);
+      }
+      this.queuedHead = 0;
+    }
     if (this.queued.length === 0) return;
     const keepCloseFrames = opts.keepCloseFrames;
     const remaining: QueuedFrame[] = [];
@@ -640,6 +668,7 @@ export class WebSocketTcpMuxProxyClient {
       remainingBytes += entry.frame.byteLength;
     }
     this.queued = remaining;
+    this.queuedHead = 0;
     this.queuedBytes = remainingBytes;
   }
 }
