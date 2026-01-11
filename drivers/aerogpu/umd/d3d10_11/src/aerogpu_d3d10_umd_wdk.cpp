@@ -2688,13 +2688,16 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
 
   const aerogpu_handle_t saved_handle = resources[0]->handle;
   auto saved_wddm = std::move(resources[0]->wddm);
+  auto saved_storage = std::move(resources[0]->storage);
 
   for (UINT i = 0; i + 1 < numResources; ++i) {
     resources[i]->handle = resources[i + 1]->handle;
     resources[i]->wddm = std::move(resources[i + 1]->wddm);
+    resources[i]->storage = std::move(resources[i + 1]->storage);
   }
   resources[numResources - 1]->handle = saved_handle;
   resources[numResources - 1]->wddm = std::move(saved_wddm);
+  resources[numResources - 1]->storage = std::move(saved_storage);
 
   if (dev->current_rtv_res) {
     for (AeroGpuResource* r : resources) {

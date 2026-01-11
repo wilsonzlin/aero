@@ -3372,12 +3372,33 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
 
   const aerogpu_handle_t saved_handle = resources[0]->handle;
   auto saved_wddm = std::move(resources[0]->wddm);
+  auto saved_storage = std::move(resources[0]->storage);
+  const bool saved_mapped = resources[0]->mapped;
+  const bool saved_mapped_write = resources[0]->mapped_write;
+  const uint32_t saved_mapped_subresource = resources[0]->mapped_subresource;
+  const uint32_t saved_mapped_map_type = resources[0]->mapped_map_type;
+  const uint64_t saved_mapped_offset_bytes = resources[0]->mapped_offset_bytes;
+  const uint64_t saved_mapped_size_bytes = resources[0]->mapped_size_bytes;
   for (UINT i = 0; i + 1 < numResources; ++i) {
     resources[i]->handle = resources[i + 1]->handle;
     resources[i]->wddm = std::move(resources[i + 1]->wddm);
+    resources[i]->storage = std::move(resources[i + 1]->storage);
+    resources[i]->mapped = resources[i + 1]->mapped;
+    resources[i]->mapped_write = resources[i + 1]->mapped_write;
+    resources[i]->mapped_subresource = resources[i + 1]->mapped_subresource;
+    resources[i]->mapped_map_type = resources[i + 1]->mapped_map_type;
+    resources[i]->mapped_offset_bytes = resources[i + 1]->mapped_offset_bytes;
+    resources[i]->mapped_size_bytes = resources[i + 1]->mapped_size_bytes;
   }
   resources[numResources - 1]->handle = saved_handle;
   resources[numResources - 1]->wddm = std::move(saved_wddm);
+  resources[numResources - 1]->storage = std::move(saved_storage);
+  resources[numResources - 1]->mapped = saved_mapped;
+  resources[numResources - 1]->mapped_write = saved_mapped_write;
+  resources[numResources - 1]->mapped_subresource = saved_mapped_subresource;
+  resources[numResources - 1]->mapped_map_type = saved_mapped_map_type;
+  resources[numResources - 1]->mapped_offset_bytes = saved_mapped_offset_bytes;
+  resources[numResources - 1]->mapped_size_bytes = saved_mapped_size_bytes;
 
   bool needs_rebind = false;
   for (AeroGpuResource* r : resources) {
@@ -6553,14 +6574,35 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
   // underlying allocation identity flips.
   const aerogpu_handle_t saved_handle = resources[0]->handle;
   auto saved_wddm = std::move(resources[0]->wddm);
+  auto saved_storage = std::move(resources[0]->storage);
+  const bool saved_mapped = resources[0]->mapped;
+  const bool saved_mapped_write = resources[0]->mapped_write;
+  const uint32_t saved_mapped_subresource = resources[0]->mapped_subresource;
+  const uint32_t saved_mapped_map_type = resources[0]->mapped_map_type;
+  const uint64_t saved_mapped_offset_bytes = resources[0]->mapped_offset_bytes;
+  const uint64_t saved_mapped_size_bytes = resources[0]->mapped_size_bytes;
 
   for (uint32_t i = 0; i + 1 < numResources; ++i) {
     resources[i]->handle = resources[i + 1]->handle;
     resources[i]->wddm = std::move(resources[i + 1]->wddm);
+    resources[i]->storage = std::move(resources[i + 1]->storage);
+    resources[i]->mapped = resources[i + 1]->mapped;
+    resources[i]->mapped_write = resources[i + 1]->mapped_write;
+    resources[i]->mapped_subresource = resources[i + 1]->mapped_subresource;
+    resources[i]->mapped_map_type = resources[i + 1]->mapped_map_type;
+    resources[i]->mapped_offset_bytes = resources[i + 1]->mapped_offset_bytes;
+    resources[i]->mapped_size_bytes = resources[i + 1]->mapped_size_bytes;
   }
 
   resources[numResources - 1]->handle = saved_handle;
   resources[numResources - 1]->wddm = std::move(saved_wddm);
+  resources[numResources - 1]->storage = std::move(saved_storage);
+  resources[numResources - 1]->mapped = saved_mapped;
+  resources[numResources - 1]->mapped_write = saved_mapped_write;
+  resources[numResources - 1]->mapped_subresource = saved_mapped_subresource;
+  resources[numResources - 1]->mapped_map_type = saved_mapped_map_type;
+  resources[numResources - 1]->mapped_offset_bytes = saved_mapped_offset_bytes;
+  resources[numResources - 1]->mapped_size_bytes = saved_mapped_size_bytes;
 
   // If the current render targets refer to a rotated resource, re-emit the bind
   // command so the next frame targets the new backbuffer identity.

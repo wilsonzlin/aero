@@ -3619,12 +3619,30 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
 
   const aerogpu_handle_t saved_handle = resources[0]->handle;
   auto saved_wddm = std::move(resources[0]->wddm);
+  auto saved_storage = std::move(resources[0]->storage);
+  const bool saved_mapped = resources[0]->mapped;
+  const bool saved_mapped_write = resources[0]->mapped_write;
+  const uint32_t saved_mapped_subresource = resources[0]->mapped_subresource;
+  const uint64_t saved_mapped_offset = resources[0]->mapped_offset;
+  const uint64_t saved_mapped_size = resources[0]->mapped_size;
   for (UINT i = 0; i + 1 < numResources; ++i) {
     resources[i]->handle = resources[i + 1]->handle;
     resources[i]->wddm = std::move(resources[i + 1]->wddm);
+    resources[i]->storage = std::move(resources[i + 1]->storage);
+    resources[i]->mapped = resources[i + 1]->mapped;
+    resources[i]->mapped_write = resources[i + 1]->mapped_write;
+    resources[i]->mapped_subresource = resources[i + 1]->mapped_subresource;
+    resources[i]->mapped_offset = resources[i + 1]->mapped_offset;
+    resources[i]->mapped_size = resources[i + 1]->mapped_size;
   }
   resources[numResources - 1]->handle = saved_handle;
   resources[numResources - 1]->wddm = std::move(saved_wddm);
+  resources[numResources - 1]->storage = std::move(saved_storage);
+  resources[numResources - 1]->mapped = saved_mapped;
+  resources[numResources - 1]->mapped_write = saved_mapped_write;
+  resources[numResources - 1]->mapped_subresource = saved_mapped_subresource;
+  resources[numResources - 1]->mapped_offset = saved_mapped_offset;
+  resources[numResources - 1]->mapped_size = saved_mapped_size;
 
   if (dev->current_rtv_res) {
     for (AeroGpuResource* r : resources) {
