@@ -88,6 +88,10 @@ The runtime owns handle allocation and typically also allocates **driver-private
 
 Many DDI entrypoints are `void` and cannot return `HRESULT`. When failing such a call, the driver must report the error via the runtime callback (commonly `pfnSetErrorCb(...)`) and then return.
 
+For the Win7/WDDM 1.1 **exact** callback/table names involved (`D3D*DDIARG_CREATEDEVICE::pCallbacks->pfnSetErrorCb`, and the related submission + fence wait callbacks in `d3dumddi.h`), see:
+
+* `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
+
 For DDI functions that *do* return `HRESULT`, return:
 
 * `S_OK` on success
@@ -356,14 +360,15 @@ Clears and draws
 * `pfnDraw`, `pfnDrawIndexed`
 
 Resource updates
-* `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP`
-  * must cover both:
-    * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
-    * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
-* `pfnUpdateSubresourceUP` (user-memory upload path for `UpdateSubresource`)
-  * struct: `D3D11DDIARG_UPDATESUBRESOURCEUP`
-* `pfnCopyResource` / `pfnCopySubresourceRegion`
-* `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
+ * `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP`
+   * must cover both:
+     * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
+     * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
+       * Win7 fence wait reference (exact CB struct + field names): `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
+ * `pfnUpdateSubresourceUP` (user-memory upload path for `UpdateSubresource`)
+   * struct: `D3D11DDIARG_UPDATESUBRESOURCEUP`
+ * `pfnCopyResource` / `pfnCopySubresourceRegion`
+ * `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
 
 ---
 
