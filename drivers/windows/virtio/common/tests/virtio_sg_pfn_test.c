@@ -243,6 +243,21 @@ static void TestInvalidParams(void)
 	}
 }
 
+static void TestInvalidPfnOverflow(void)
+{
+	UINT64 pfns[1];
+	VIRTQ_SG sg[1];
+	UINT16 count = 0;
+	NTSTATUS status;
+
+	/* PFN too large to shift without overflowing a 64-bit address. */
+	pfns[0] = (((UINT64)~0ull) >> PAGE_SHIFT) + 1u;
+
+	status = VirtioSgBuildFromPfns(pfns, 1, 0, 1u, TRUE, sg, 1, &count);
+	ASSERT_EQ_STATUS(status, STATUS_INVALID_PARAMETER);
+	ASSERT_EQ_U16(count, 0);
+}
+
 static void TestTooManySegments(void)
 {
 	const UINT32 pfn_count = 0x10000u; /* one more than UINT16 max */
@@ -277,6 +292,7 @@ int main(void)
 	TestLenClampedToU32();
 	TestSizingCallNoOutput();
 	TestInvalidParams();
+	TestInvalidPfnOverflow();
 	TestTooManySegments();
 
 	printf("virtio_sg_pfn_test: all tests passed\n");
