@@ -91,13 +91,16 @@ impl Tier2WasmCodegen {
         plan: &RegAllocPlan,
         options: Tier2WasmOptions,
     ) -> Vec<u8> {
+        let has_code_version_guards = trace
+            .iter_instrs()
+            .any(|inst| matches!(inst, Instr::GuardCodeVersion { .. }));
+        let needs_code_page_version_import =
+            options.code_version_guard_import && has_code_version_guards;
+        let needs_code_version_table =
+            options.inline_tlb || (!options.code_version_guard_import && has_code_version_guards);
+
         let value_count = max_value_id(trace).max(1);
-        let code_version_locals: u32 =
-            if options.inline_tlb || !options.code_version_guard_import {
-                2
-            } else {
-                0
-            };
+        let code_version_locals: u32 = if needs_code_version_table { 2 } else { 0 };
         let tlb_locals: u32 = if options.inline_tlb { 5 } else { 0 };
         let i64_locals = 2 + code_version_locals + tlb_locals + plan.local_count + value_count; // next_rip + rflags + code version table + tlb locals + cached regs + values
 
@@ -180,9 +183,7 @@ impl Tier2WasmCodegen {
             mem_write_u16: next(&mut next_func),
             mem_write_u32: next(&mut next_func),
             mem_write_u64: next(&mut next_func),
-            code_page_version: options
-                .code_version_guard_import
-                .then(|| next(&mut next_func)),
+            code_page_version: needs_code_page_version_import.then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
@@ -227,7 +228,7 @@ impl Tier2WasmCodegen {
             IMPORT_MEM_WRITE_U64,
             EntityType::Function(ty_mem_write_u64),
         );
-        if options.code_version_guard_import {
+        if needs_code_page_version_import {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_CODE_PAGE_VERSION,
@@ -252,7 +253,7 @@ impl Tier2WasmCodegen {
         exports.export(EXPORT_TRACE_FN, ExportKind::Func, imported.count);
         module.section(&exports);
 
-        let layout = Layout::new(plan, value_count, i64_locals, options);
+        let layout = Layout::new(plan, value_count, i64_locals, needs_code_version_table, options);
         let written_cached_regs = compute_written_cached_regs(trace, plan);
 
         let mut f = Function::new(vec![(i64_locals, ValType::I64)]);
@@ -439,6 +440,7 @@ impl Layout {
         plan: &RegAllocPlan,
         value_count: u32,
         i64_locals: u32,
+        needs_code_version_table: bool,
         options: Tier2WasmOptions,
     ) -> Self {
         // Locals are laid out after the two i32 parameters: `(cpu_ptr, jit_ctx_ptr)`.
@@ -446,8 +448,7 @@ impl Layout {
         let rflags_base = next_rip_base + 1;
         let mut next = rflags_base + 1;
 
-        let (code_version_table_ptr, code_version_table_len) =
-            if options.inline_tlb || !options.code_version_guard_import {
+        let (code_version_table_ptr, code_version_table_len) = if needs_code_version_table {
                 let ptr = next;
                 next += 1;
                 let len = next;
