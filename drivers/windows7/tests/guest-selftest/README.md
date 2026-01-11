@@ -16,6 +16,10 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Wait for link + DHCP IPv4 address (non-APIPA).
   - DNS resolution (`getaddrinfo`)
   - HTTP GET to a configurable URL (WinHTTP)
+- **virtio-snd**
+  - Detect a virtio-snd audio device (`PCI\\VEN_1AF4&DEV_1059`) via SetupAPI (`GUID_DEVCLASS_MEDIA`).
+  - If present, run a WaveOut playback smoke test (48kHz, 16-bit, stereo PCM).
+  - If absent, report `SKIP` by default (use `--require-snd` to make this a hard failure).
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -28,6 +32,7 @@ The host harness parses these markers from COM1 serial:
 AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 

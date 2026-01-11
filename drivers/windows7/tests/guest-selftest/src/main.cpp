@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <mmsystem.h>
 #include <setupapi.h>
 
 #include <devguid.h>
@@ -15,6 +16,7 @@
 #include <ws2tcpip.h>
 
 #include <algorithm>
+#include <cmath>
 #include <climits>
 #include <cstdarg>
 #include <cstdint>
@@ -39,6 +41,8 @@ struct Options {
   // This must be a directory on a virtio-backed volume (e.g. "D:\\aero-test\\").
   // If empty, the selftest will attempt to auto-detect a mounted virtio volume.
   std::wstring blk_root;
+  // If set, the virtio-snd test will FAIL (instead of SKIP) when no virtio-snd device is present.
+  bool require_snd = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -1008,6 +1012,282 @@ static bool VirtioNetTest(Logger& log, const Options& opt) {
   return true;
 }
 
+enum class TestVerdict {
+  kPass,
+  kFail,
+  kSkip,
+};
+
+static const char* VerdictString(TestVerdict v) {
+  switch (v) {
+    case TestVerdict::kPass:
+      return "PASS";
+    case TestVerdict::kFail:
+      return "FAIL";
+    case TestVerdict::kSkip:
+      return "SKIP";
+  }
+  return "FAIL";
+}
+
+static std::string WaveOutErrorText(MMRESULT mm) {
+  wchar_t buf[256]{};
+  if (waveOutGetErrorTextW(mm, buf, static_cast<UINT>(sizeof(buf) / sizeof(buf[0]))) ==
+      MMSYSERR_NOERROR) {
+    return WideToUtf8(std::wstring(buf));
+  }
+  char fallback[64];
+  snprintf(fallback, sizeof(fallback), "MMRESULT=%u", static_cast<unsigned>(mm));
+  return fallback;
+}
+
+static bool IsVirtioSndHardwareId(const std::vector<std::wstring>& hwids) {
+  for (const auto& id : hwids) {
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
+    if (ContainsInsensitive(id, L"VEN_1AF4&DEV_1059")) return true;
+  }
+  return false;
+}
+
+struct VirtioSndDevice {
+  std::wstring instance_id;   // e.g. "PCI\\VEN_1AF4&DEV_1059&..."
+  std::wstring friendly_name; // optional
+};
+
+static std::vector<VirtioSndDevice> DetectVirtioSndDevices(Logger& log) {
+  std::vector<VirtioSndDevice> out;
+
+  HDEVINFO devinfo = SetupDiGetClassDevsW(&GUID_DEVCLASS_MEDIA, nullptr, nullptr, DIGCF_PRESENT);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-snd: SetupDiGetClassDevs(GUID_DEVCLASS_MEDIA) failed: %lu", GetLastError());
+    return out;
+  }
+
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+    if (!SetupDiEnumDeviceInfo(devinfo, idx, &dev)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+    if (!IsVirtioSndHardwareId(hwids)) continue;
+
+    VirtioSndDevice snd{};
+
+    wchar_t instance_buf[512]{};
+    if (SetupDiGetDeviceInstanceIdW(devinfo, &dev, instance_buf,
+                                    static_cast<DWORD>(sizeof(instance_buf) / sizeof(instance_buf[0])),
+                                    nullptr)) {
+      snd.instance_id = instance_buf;
+    }
+
+    if (auto friendly = GetDevicePropertyString(devinfo, &dev, SPDRP_FRIENDLYNAME)) {
+      snd.friendly_name = *friendly;
+    } else if (auto desc = GetDevicePropertyString(devinfo, &dev, SPDRP_DEVICEDESC)) {
+      snd.friendly_name = *desc;
+    }
+
+    log.Logf("virtio-snd: detected device instance_id=%s name=%s", WideToUtf8(snd.instance_id).c_str(),
+             WideToUtf8(snd.friendly_name).c_str());
+    out.push_back(std::move(snd));
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+  return out;
+}
+
+static std::optional<UINT> FindWaveOutDeviceIdByNameHints(Logger& log,
+                                                          const std::vector<std::wstring>& hints,
+                                                          std::wstring* pname_out) {
+  const UINT count = waveOutGetNumDevs();
+  if (count == 0) return std::nullopt;
+
+  for (UINT i = 0; i < count; i++) {
+    WAVEOUTCAPSW caps{};
+    const MMRESULT mm = waveOutGetDevCapsW(i, &caps, sizeof(caps));
+    if (mm != MMSYSERR_NOERROR) {
+      log.Logf("virtio-snd: waveOutGetDevCaps id=%u failed: %s", i, WaveOutErrorText(mm).c_str());
+      continue;
+    }
+
+    const std::wstring pname = caps.szPname;
+    for (const auto& hint : hints) {
+      if (hint.empty()) continue;
+      if (ContainsInsensitive(pname, hint)) {
+        if (pname_out) *pname_out = pname;
+        return i;
+      }
+    }
+  }
+
+  // No match - log the available devices to help diagnose name-matching issues.
+  for (UINT i = 0; i < count; i++) {
+    WAVEOUTCAPSW caps{};
+    const MMRESULT mm = waveOutGetDevCapsW(i, &caps, sizeof(caps));
+    if (mm != MMSYSERR_NOERROR) continue;
+    log.Logf("virtio-snd: available waveOut device id=%u name=%s", i, WideToUtf8(caps.szPname).c_str());
+  }
+
+  return std::nullopt;
+}
+
+static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wstring& device_name_hint,
+                                     MMRESULT* open_rc_out) {
+  if (open_rc_out) *open_rc_out = MMSYSERR_NOERROR;
+
+  HANDLE done_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  if (!done_event) {
+    log.Logf("virtio-snd: CreateEvent failed: %lu", GetLastError());
+    return false;
+  }
+
+  WAVEFORMATEX fmt{};
+  fmt.wFormatTag = WAVE_FORMAT_PCM;
+  fmt.nChannels = 2;
+  fmt.nSamplesPerSec = 48000;
+  fmt.wBitsPerSample = 16;
+  fmt.nBlockAlign = static_cast<WORD>((fmt.nChannels * fmt.wBitsPerSample) / 8);
+  fmt.nAvgBytesPerSec = fmt.nBlockAlign * fmt.nSamplesPerSec;
+
+  HWAVEOUT hwo = nullptr;
+  log.Logf("virtio-snd: waveOutOpen device_id=%u hint=%s", device_id,
+           WideToUtf8(device_name_hint).c_str());
+  const MMRESULT open_rc = waveOutOpen(&hwo, device_id, &fmt,
+                                      reinterpret_cast<DWORD_PTR>(done_event), 0, CALLBACK_EVENT);
+  if (open_rc_out) *open_rc_out = open_rc;
+  if (open_rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutOpen failed: %s", WaveOutErrorText(open_rc).c_str());
+    CloseHandle(done_event);
+    return false;
+  }
+
+  UINT actual_id = device_id;
+  if (waveOutGetID(hwo, &actual_id) == MMSYSERR_NOERROR) {
+    WAVEOUTCAPSW caps{};
+    if (waveOutGetDevCapsW(actual_id, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+      log.Logf("virtio-snd: opened waveOut device id=%u name=%s", actual_id,
+               WideToUtf8(caps.szPname).c_str());
+    } else {
+      log.Logf("virtio-snd: opened waveOut device id=%u", actual_id);
+    }
+  }
+
+  const uint32_t duration_ms = 500;
+  const uint32_t frames = (fmt.nSamplesPerSec * duration_ms) / 1000;
+  std::vector<int16_t> samples(frames * fmt.nChannels);
+
+  const double pi = 3.14159265358979323846;
+  const double freq_hz = 440.0;
+  const double amp = 8000.0;
+
+  for (uint32_t i = 0; i < frames; i++) {
+    const double t = static_cast<double>(i) / static_cast<double>(fmt.nSamplesPerSec);
+    const int16_t s = static_cast<int16_t>(std::sin(2.0 * pi * freq_hz * t) * amp);
+    samples[i * 2 + 0] = s;
+    samples[i * 2 + 1] = s;
+  }
+
+  WAVEHDR hdr{};
+  hdr.lpData = reinterpret_cast<LPSTR>(samples.data());
+  hdr.dwBufferLength = static_cast<DWORD>(samples.size() * sizeof(int16_t));
+
+  MMRESULT mm = waveOutPrepareHeader(hwo, &hdr, sizeof(hdr));
+  if (mm != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutPrepareHeader failed: %s", WaveOutErrorText(mm).c_str());
+    waveOutClose(hwo);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  mm = waveOutWrite(hwo, &hdr, sizeof(hdr));
+  if (mm != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutWrite failed: %s", WaveOutErrorText(mm).c_str());
+    waveOutReset(hwo);
+    (void)waveOutUnprepareHeader(hwo, &hdr, sizeof(hdr));
+    waveOutClose(hwo);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  const DWORD timeout_ms = 10000;
+  const DWORD deadline = GetTickCount() + timeout_ms;
+  PerfTimer t;
+
+  while ((hdr.dwFlags & WHDR_DONE) == 0 && static_cast<int32_t>(GetTickCount() - deadline) < 0) {
+    WaitForSingleObject(done_event, 200);
+  }
+
+  bool ok = (hdr.dwFlags & WHDR_DONE) != 0;
+  if (!ok) {
+    log.Logf("virtio-snd: playback timeout after %lu ms flags=0x%08lx", timeout_ms, hdr.dwFlags);
+    waveOutReset(hwo);
+  } else {
+    log.Logf("virtio-snd: playback done sec=%.3f", t.SecondsSinceStart());
+  }
+
+  for (int attempt = 0; attempt < 10; attempt++) {
+    mm = waveOutUnprepareHeader(hwo, &hdr, sizeof(hdr));
+    if (mm == MMSYSERR_NOERROR) break;
+    if (mm != WAVERR_STILLPLAYING) break;
+    Sleep(50);
+  }
+  if (mm != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutUnprepareHeader failed: %s", WaveOutErrorText(mm).c_str());
+    ok = false;
+  }
+
+  mm = waveOutClose(hwo);
+  if (mm != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutClose failed: %s", WaveOutErrorText(mm).c_str());
+    ok = false;
+  }
+
+  CloseHandle(done_event);
+  return ok;
+}
+
+static TestVerdict VirtioSndTest(Logger& log, const Options& opt) {
+  log.LogLine("virtio-snd: starting WaveOut smoke test");
+
+  const auto devs = DetectVirtioSndDevices(log);
+  if (devs.empty()) {
+    log.LogLine("virtio-snd: no PCI\\VEN_1AF4&DEV_1059 device detected");
+    return opt.require_snd ? TestVerdict::kFail : TestVerdict::kSkip;
+  }
+
+  std::vector<std::wstring> hints;
+  for (const auto& d : devs) {
+    if (!d.friendly_name.empty()) hints.push_back(d.friendly_name);
+  }
+  hints.push_back(L"virtio");
+
+  std::wstring chosen_name;
+  std::optional<UINT> chosen_id = FindWaveOutDeviceIdByNameHints(log, hints, &chosen_name);
+  UINT open_id = chosen_id.has_value() ? *chosen_id : WAVE_MAPPER;
+  if (!chosen_id.has_value()) {
+    chosen_name = L"WAVE_MAPPER";
+    log.LogLine("virtio-snd: no matching waveOut device name found; using WAVE_MAPPER");
+  }
+
+  // At boot, the audio stack can be slow to come up (especially when running as SYSTEM).
+  // Retry transient waveOutOpen failures for a short, bounded time to avoid false negatives.
+  const DWORD open_timeout_ms = 15000;
+  const DWORD deadline = GetTickCount() + open_timeout_ms;
+  while (static_cast<int32_t>(GetTickCount() - deadline) < 0) {
+    MMRESULT open_rc = MMSYSERR_NOERROR;
+    if (WaveOutPlaybackSmokeTest(log, open_id, chosen_name, &open_rc)) {
+      return TestVerdict::kPass;
+    }
+
+    if (open_rc != MMSYSERR_NODRIVER && open_rc != MMSYSERR_BADDEVICEID) break;
+    Sleep(1000);
+  }
+
+  return TestVerdict::kFail;
+}
+
 static void PrintUsage() {
   printf(
       "aero-virtio-selftest.exe [options]\n"
@@ -1017,6 +1297,7 @@ static void PrintUsage() {
       "  --http-url <url>          HTTP URL for TCP connectivity test\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
+      "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -1077,6 +1358,8 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
       }
       opt.log_file = v;
+    } else if (arg == L"--require-snd") {
+      opt.require_snd = true;
     } else if (arg == L"--net-timeout-sec") {
       const wchar_t* v = next();
       const auto parsed = ParseU32(v);
@@ -1134,6 +1417,10 @@ int wmain(int argc, wchar_t** argv) {
     all_ok = all_ok && net_ok;
     WSACleanup();
   }
+
+  const TestVerdict snd_v = VirtioSndTest(log, opt);
+  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", VerdictString(snd_v));
+  if (snd_v == TestVerdict::kFail) all_ok = false;
 
   log.Logf("AERO_VIRTIO_SELFTEST|RESULT|%s", all_ok ? "PASS" : "FAIL");
   return all_ok ? 0 : 1;
