@@ -1,411 +1,128 @@
-name: Win7 virtio harness (self-hosted)
+name: Win7 virtio host harness (self-hosted)
 
 on:
   workflow_dispatch:
     inputs:
       disk_image_path:
-        description: "Path on the self-hosted runner to a prepared Win7 disk image (qcow2 recommended)"
-        required: true
+        description: Path on the self-hosted runner to a prepared Win7 qcow2/vhdx disk image (required)
+        required: false
+        default: ""
+        type: string
+      qemu_system:
+        description: qemu-system-* binary to use on the runner
+        required: false
+        default: qemu-system-x86_64
         type: string
       timeout_seconds:
-        description: "Harness timeout in seconds (PASS/FAIL marker must appear before this deadline)"
+        description: Harness timeout in seconds
         required: false
-        default: "600"
-        type: string
+        default: 600
+        type: number
       snapshot:
-        description: "Run QEMU in snapshot mode (discard disk writes on exit)"
+        description: Run QEMU in snapshot mode (discard disk writes)
         required: false
         default: true
         type: boolean
-      serial_log_path:
-        description: "Path (relative to the workspace or absolute) for the captured guest COM1 serial log"
-        required: false
-        default: "out/win7-virtio-harness/win7-virtio-serial.log"
-        type: string
-      with_virtio_snd:
-        description: "Attach a virtio-snd device (requires QEMU virtio-snd support and guest driver)"
-        required: false
-        default: true
-        type: boolean
-      virtio_snd_audio_backend:
-        description: "Audio backend for virtio-snd (requires with_virtio_snd=true)"
-        required: false
-        default: none
-        type: choice
-        options:
-          - none
-          - wav
-      virtio_snd_wav_path:
-        description: "When virtio_snd_audio_backend=wav, write audio capture to this path"
-        required: false
-        default: "out/win7-virtio-harness/virtio-snd.wav"
-        type: string
-      verify_virtio_snd_wav:
-        description: "Verify that the virtio-snd wav capture contains non-silent PCM audio (requires virtio_snd_audio_backend=wav)"
+      follow_serial:
+        description: Stream guest COM1 output to the workflow log while waiting
         required: false
         default: false
         type: boolean
 
-permissions:
-  contents: read
-  actions: read
-
-# This workflow boots a real Windows 7 VM image under QEMU on a shared self-hosted runner.
-# Avoid overlapping runs to prevent resource contention (and conflicts on fixed host ports like 18080).
 concurrency:
+  # QEMU uses fixed ports and shared images; overlapping runs will conflict.
   group: win7-virtio-harness
   cancel-in-progress: false
 
 jobs:
   win7-virtio-harness:
-    # Opt-in only: requires a self-hosted runner with QEMU installed and a prepared Win7 disk image.
-    runs-on: self-hosted
+    runs-on: [self-hosted, aero-win7-harness]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare output directory (Linux)
-        if: runner.os == 'Linux'
+      - name: Run Win7 virtio host harness (QEMU)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p out/win7-virtio-harness
-          : > out/win7-virtio-harness/harness-output.txt
 
-      - name: Prepare output directory (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path 'out/win7-virtio-harness' | Out-Null
-          New-Item -ItemType File -Force -Path 'out/win7-virtio-harness\harness-output.txt' | Out-Null
+          log_dir="out/win7-virtio-harness-logs"
+          mkdir -p "${log_dir}"
 
-      - name: Validate prerequisites (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          DISK_IMAGE_PATH: ${{ inputs.disk_image_path }}
-        run: |
-          set -euo pipefail
-          if [[ ! -f "$DISK_IMAGE_PATH" ]]; then
-            echo "ERROR: disk image not found: $DISK_IMAGE_PATH" >&2
-            exit 1
-          fi
-          command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found in PATH" >&2; exit 1; }
-          command -v python3 >/dev/null || { echo "ERROR: python3 not found in PATH" >&2; exit 1; }
+          serial_log="${log_dir}/win7-virtio-serial.log"
+          harness_log="${log_dir}/harness.log"
 
-      - name: Record tool versions (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
+          : >"${serial_log}"
+          : >"${harness_log}"
+
           {
-            echo "qemu-system-x86_64:"
-            qemu-system-x86_64 --version || true
-            echo ""
-            echo "python3:"
-            python3 --version || true
-          } > out/win7-virtio-harness/tool-versions.txt
+            echo "Runner: ${RUNNER_NAME} (${RUNNER_OS})"
+            echo "Inputs:"
+            echo "  disk_image_path: '${{ inputs.disk_image_path }}'"
+            echo "  qemu_system: '${{ inputs.qemu_system }}'"
+            echo "  timeout_seconds: '${{ inputs.timeout_seconds }}'"
+            echo "  snapshot: '${{ inputs.snapshot }}'"
+            echo "  follow_serial: '${{ inputs.follow_serial }}'"
+            echo
 
-      - name: Validate prerequisites (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        env:
-          DISK_IMAGE_PATH: ${{ inputs.disk_image_path }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (!(Test-Path -LiteralPath $env:DISK_IMAGE_PATH)) {
-            throw "disk image not found: $($env:DISK_IMAGE_PATH)"
-          }
-          if (!(Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue)) {
-            throw "qemu-system-x86_64 not found in PATH"
-          }
-
-      - name: Record tool versions (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $outPath = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness\tool-versions.txt'
-          $qemu = (Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue)
-          $qemuVer = if ($qemu) { (& $qemu.Source --version 2>&1 | Out-String) } else { "qemu-system-x86_64 not found`n" }
-          @(
-            "qemu-system-x86_64:",
-            $qemuVer.TrimEnd(),
-            "",
-            "powershell:",
-            $PSVersionTable.PSVersion.ToString()
-          ) | Out-File -FilePath $outPath -Encoding utf8
-
-      - name: Find prebuilt selftest artifact (win7-virtio-selftest)
-        id: selftest_run
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const workflowName = "Win7 virtio selftest (guest tool)";
-            const fallbackWorkflowFile = "win7-virtio-selftest.yml";
-            const sha = context.sha;
-            let runId = "";
-            try {
-              let workflowId = fallbackWorkflowFile;
-              try {
-                const workflows = await github.rest.actions.listRepoWorkflows({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  per_page: 100,
-                });
-                const byName = workflows.data.workflows.find((w) => w.name === workflowName);
-                if (byName) {
-                  workflowId = byName.id;
-                  core.info(`Using workflow id for '${workflowName}': ${workflowId}`);
-                } else {
-                  core.info(
-                    `Workflow '${workflowName}' not found in repo; falling back to file name: ${fallbackWorkflowFile}`,
-                  );
-                }
-              } catch (e) {
-                core.info(
-                  `Unable to list repo workflows; falling back to file name ${fallbackWorkflowFile}: ${e.message}`,
-                );
-              }
-
-              const res = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: workflowId,
-                per_page: 20,
-              });
-              const match = res.data.workflow_runs.find(
-                (r) => r.head_sha === sha && r.conclusion === "success",
-              );
-              if (match) {
-                runId = String(match.id);
-                core.info(`Found ${workflowName} successful run for ${sha}: ${runId}`);
-              } else {
-                core.info(`No ${workflowName} successful run found for ${sha}; will attempt local build.`);
-              }
-            } catch (e) {
-              core.info(`Unable to query ${workflowName} runs (workflow may not exist yet): ${e.message}`);
-            }
-            core.setOutput("run_id", runId);
-
-      - name: Download prebuilt aero-virtio-selftest.exe (if available)
-        id: selftest_download
-        if: steps.selftest_run.outputs.run_id != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ steps.selftest_run.outputs.run_id }}
-          # win7-virtio-selftest.yml publishes:
-          # - win7-virtio-selftest-x86
-          # - win7-virtio-selftest-x64
-          pattern: win7-virtio-selftest-*
-          merge-multiple: true
-          path: out/win7-virtio-harness/selftest
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build aero-virtio-selftest.exe (Windows fallback)
-        if: runner.os == 'Windows' && steps.selftest_download.outcome != 'success'
-        continue-on-error: true
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $buildDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness\build-selftest'
-          cmake -S 'drivers/windows7/tests/guest-selftest' -B $buildDir -G 'Visual Studio 17 2022' -A x64
-          cmake --build $buildDir --config Release
-          $exe = Join-Path $buildDir 'Release\aero-virtio-selftest.exe'
-          if (Test-Path -LiteralPath $exe) {
-            Copy-Item -LiteralPath $exe -Destination 'out\win7-virtio-harness\aero-virtio-selftest.exe' -Force
-          } else {
-            throw "Expected selftest binary not found: $exe"
-          }
-
-      - name: Build aero-virtio-selftest.exe (Linux fallback, mingw-w64)
-        if: runner.os == 'Linux' && steps.selftest_download.outcome != 'success'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          build_dir="out/win7-virtio-harness/build-selftest"
-          mkdir -p "$build_dir"
-          if ! command -v x86_64-w64-mingw32-g++ >/dev/null; then
-            echo "mingw-w64 not installed (x86_64-w64-mingw32-g++ missing); skipping local selftest build." >&2
-            exit 0
-          fi
-          cmake -S drivers/windows7/tests/guest-selftest -B "$build_dir" \
-            -DCMAKE_SYSTEM_NAME=Windows \
-            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
-          cmake --build "$build_dir"
-          exe="$(find "$build_dir" -name 'aero-virtio-selftest.exe' -print -quit || true)"
-          if [[ -n "$exe" ]]; then
-            cp "$exe" out/win7-virtio-harness/aero-virtio-selftest.exe
-          else
-            echo "Selftest build completed but aero-virtio-selftest.exe was not found under $build_dir" >&2
-          fi
-
-      - name: Run Win7 virtio selftests (Linux, Python harness)
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          DISK_IMAGE_PATH: ${{ inputs.disk_image_path }}
-          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
-          SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
-          SNAPSHOT: ${{ inputs.snapshot }}
-          WITH_VIRTIO_SND: ${{ inputs.with_virtio_snd }}
-          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
-          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
-          VERIFY_VIRTIO_SND_WAV: ${{ inputs.verify_virtio_snd_wav }}
-        run: |
-          set -euo pipefail
-          extra=()
-          if [[ "$SNAPSHOT" == "true" ]]; then
-            extra+=(--snapshot)
-          fi
-
-          if [[ "$VERIFY_VIRTIO_SND_WAV" == "true" && "$VIRTIO_SND_AUDIO_BACKEND" != "wav" ]]; then
-            echo "ERROR: verify_virtio_snd_wav requires virtio_snd_audio_backend=wav" >&2
-            exit 1
-          fi
-
-          if [[ "$WITH_VIRTIO_SND" == "true" ]]; then
-            extra+=(--with-virtio-snd --virtio-snd-audio-backend "$VIRTIO_SND_AUDIO_BACKEND")
-            if [[ "$VIRTIO_SND_AUDIO_BACKEND" == "wav" ]]; then
-              extra+=(--virtio-snd-wav-path "$VIRTIO_SND_WAV_PATH")
-              if [[ "$VERIFY_VIRTIO_SND_WAV" == "true" ]]; then
-                extra+=(--virtio-snd-verify-wav)
-              fi
+            if [[ -z "${{ inputs.disk_image_path }}" ]]; then
+              echo "ERROR: workflow input 'disk_image_path' is empty."
+              echo "Provide a path on the self-hosted runner to a prepared Windows 7 image (qcow2/vhdx)."
+              exit 1
             fi
-          elif [[ "$VIRTIO_SND_AUDIO_BACKEND" != "none" || "$VERIFY_VIRTIO_SND_WAV" == "true" ]]; then
-            echo "ERROR: virtio_snd_* inputs require with_virtio_snd=true" >&2
-            exit 1
-          fi
-          python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
-            --qemu-system qemu-system-x86_64 \
-            --disk-image "$DISK_IMAGE_PATH" \
-            --serial-log "$SERIAL_LOG_PATH" \
-            --timeout-seconds "$TIMEOUT_SECONDS" \
-            --follow-serial \
-            "${extra[@]}" \
-            2>&1 | tee out/win7-virtio-harness/harness-output.txt
 
-      - name: Run Win7 virtio selftests (Windows, PowerShell harness)
-        if: runner.os == 'Windows'
-        shell: powershell
-        env:
-          DISK_IMAGE_PATH: ${{ inputs.disk_image_path }}
-          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
-          SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
-          SNAPSHOT: ${{ inputs.snapshot }}
-          WITH_VIRTIO_SND: ${{ inputs.with_virtio_snd }}
-          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
-          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
-          VERIFY_VIRTIO_SND_WAV: ${{ inputs.verify_virtio_snd_wav }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $outDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness'
-          $harnessLog = Join-Path $outDir 'harness-output.txt'
-          # Ensure the artifact directory is non-empty even if the harness fails before printing.
-          New-Item -ItemType File -Force -Path $harnessLog | Out-Null
-          $args = @(
-            '-QemuSystem', 'qemu-system-x86_64',
-            '-DiskImagePath', $env:DISK_IMAGE_PATH,
-            '-SerialLogPath', $env:SERIAL_LOG_PATH,
-            '-TimeoutSeconds', $env:TIMEOUT_SECONDS,
-            '-FollowSerial'
-          )
-          if ($env:SNAPSHOT -eq 'true') {
-            $args += '-Snapshot'
-          }
-
-          $virtioSndBackend = $env:VIRTIO_SND_AUDIO_BACKEND
-          $verifyWav = $env:VERIFY_VIRTIO_SND_WAV -eq 'true'
-          $virtioSndWavPath = $env:VIRTIO_SND_WAV_PATH
-          if ($virtioSndWavPath) {
-            $virtioSndWavPath = $virtioSndWavPath.Replace('/', '\')
-          }
-
-          if ($verifyWav -and $virtioSndBackend -ne 'wav') {
-            throw "verify_virtio_snd_wav requires virtio_snd_audio_backend=wav"
-          }
-
-          if ($env:WITH_VIRTIO_SND -eq 'true') {
-            $args += '-WithVirtioSnd'
-            $args += '-VirtioSndAudioBackend', $virtioSndBackend
-            if ($virtioSndBackend -eq 'wav') {
-              $args += '-VirtioSndWavPath', $virtioSndWavPath
-              if ($verifyWav) {
-                $args += '-VerifyVirtioSndWav'
-              }
-            }
-          } elseif ($verifyWav -or $virtioSndBackend -ne 'none') {
-            throw "virtio_snd_* inputs require with_virtio_snd=true"
-          }
-          & powershell -NoProfile -ExecutionPolicy Bypass -File 'drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1' @args 2>&1 | Tee-Object -FilePath $harnessLog
-          $code = $LASTEXITCODE
-          exit $code
-
-      - name: Collect logs for artifacts (Linux)
-        if: always() && runner.os == 'Linux'
-        shell: bash
-        env:
-          SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
-          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
-          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
-        run: |
-          set -euo pipefail
-          mkdir -p out/win7-virtio-harness
-          if [[ -f "$SERIAL_LOG_PATH" ]]; then
-            dest="out/win7-virtio-harness/$(basename "$SERIAL_LOG_PATH")"
-            src_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$SERIAL_LOG_PATH")"
-            dest_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$dest")"
-            if [[ "$src_abs" != "$dest_abs" ]]; then
-              cp "$SERIAL_LOG_PATH" "$dest"
+            if [[ ! -e "${{ inputs.disk_image_path }}" ]]; then
+              echo "ERROR: disk image path does not exist on the runner: ${{ inputs.disk_image_path }}"
+              exit 1
             fi
-          fi
-          if [[ "$VIRTIO_SND_AUDIO_BACKEND" == "wav" && -f "$VIRTIO_SND_WAV_PATH" ]]; then
-            dest="out/win7-virtio-harness/$(basename "$VIRTIO_SND_WAV_PATH")"
-            src_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$VIRTIO_SND_WAV_PATH")"
-            dest_abs="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$dest")"
-            if [[ "$src_abs" != "$dest_abs" ]]; then
-              cp "$VIRTIO_SND_WAV_PATH" "$dest"
+
+            if ! command -v "${{ inputs.qemu_system }}" >/dev/null 2>&1; then
+              echo "ERROR: qemu system binary not found/executable: ${{ inputs.qemu_system }}"
+              exit 1
             fi
-          fi
 
-      - name: Collect logs for artifacts (Windows)
-        if: always() && runner.os == 'Windows'
-        shell: powershell
-        env:
-          SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
-          VIRTIO_SND_AUDIO_BACKEND: ${{ inputs.virtio_snd_audio_backend }}
-          VIRTIO_SND_WAV_PATH: ${{ inputs.virtio_snd_wav_path }}
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $outDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness'
-          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-          if (Test-Path -LiteralPath $env:SERIAL_LOG_PATH) {
-            $src = (Resolve-Path -LiteralPath $env:SERIAL_LOG_PATH).Path
-            $dest = Join-Path $outDir (Split-Path -Leaf $src)
-            if ($src -ne $dest) {
-              Copy-Item -LiteralPath $src -Destination $dest -Force
-            }
-          }
-          if ($env:VIRTIO_SND_AUDIO_BACKEND -eq 'wav') {
-            $wav = $env:VIRTIO_SND_WAV_PATH
-            if ($wav) { $wav = $wav.Replace('/', '\') }
-            if ($wav -and (Test-Path -LiteralPath $wav)) {
-              $src = (Resolve-Path -LiteralPath $wav).Path
-              $dest = Join-Path $outDir (Split-Path -Leaf $src)
-              if ($src -ne $dest) {
-                Copy-Item -LiteralPath $src -Destination $dest -Force
-              }
-            }
-          }
+            echo "python3: $(python3 --version 2>&1 || true)"
+            echo "qemu: $("${{ inputs.qemu_system }}" --version 2>&1 | head -n 1 || true)"
+            echo
 
-      - name: Upload harness artifacts (serial + output)
+            args=(
+              python3 -u drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py
+              --qemu-system "${{ inputs.qemu_system }}"
+              --disk-image "${{ inputs.disk_image_path }}"
+              --serial-log "${serial_log}"
+              --timeout-seconds "${{ inputs.timeout_seconds }}"
+            )
+            if [[ "${{ inputs.snapshot }}" == "true" ]]; then
+              args+=(--snapshot)
+            fi
+            if [[ "${{ inputs.follow_serial }}" == "true" ]]; then
+              args+=(--follow-serial)
+            fi
+
+            echo "Executing harness:"
+            printf '  %q' "${args[@]}"
+            echo
+            echo
+
+            set +e
+            "${args[@]}"
+            harness_exit=$?
+            set -e
+
+            # If QEMU fails very early, the harness may not create a serial log. Always upload *something*
+            # so the artifact has a stable shape for consumers.
+            if [[ ! -f "${serial_log}" ]]; then
+              echo "(serial log was not produced)" >"${serial_log}"
+            fi
+
+            exit "${harness_exit}"
+          } 2>&1 | tee "${harness_log}"
+
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: win7-virtio-harness
-          path: out/win7-virtio-harness/
+          name: win7-virtio-harness-logs
           if-no-files-found: error
+          path: out/win7-virtio-harness-logs/

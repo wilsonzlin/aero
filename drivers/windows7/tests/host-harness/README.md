@@ -174,30 +174,34 @@ Notes:
 - The harness prints a single-line marker suitable for log scraping:
   `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
 
-## Running in CI (self-hosted)
+## Running in GitHub Actions (self-hosted)
 
-This repo includes an **opt-in** GitHub Actions workflow that runs the host harness on a **self-hosted** runner:
+This repo includes an **opt-in** workflow for running the host harness end-to-end under QEMU on a **self-hosted** runner:
 
 - Workflow: [`.github/workflows/win7-virtio-harness.yml`](../../../../.github/workflows/win7-virtio-harness.yml)
 - Trigger: `workflow_dispatch` only (no automatic PR runs)
+- Runner label: `aero-win7-harness`
+- Logs artifact: `win7-virtio-harness-logs` (serial + harness output)
 
-Because Windows images cannot be redistributed, the workflow expects a **pre-provisioned Win7 disk image** to already
-exist on the self-hosted runner.
+### Runner setup
 
-Required workflow inputs:
+On the self-hosted runner you need:
 
-- `disk_image_path` (required): path on the self-hosted runner to your prepared Win7 image (qcow2 recommended)
-- `timeout_seconds`: harness timeout (default `600`)
-- `snapshot`: run QEMU with `snapshot=on` so the base image is not modified (recommended)
-- `serial_log_path`: where to write COM1 output (default is under `out/win7-virtio-harness/` in the workspace)
-- `with_virtio_snd`: attach a virtio-snd device (default `true`)
-- `virtio_snd_audio_backend`: virtio-snd backend (`none` or `wav`; default `none`; requires `with_virtio_snd=true`)
-- `virtio_snd_wav_path`: when `virtio_snd_audio_backend=wav`, output path for the captured wav file
-  (default `out/win7-virtio-harness/virtio-snd.wav`)
-- `verify_virtio_snd_wav`: host-side wav verification (default `false`; requires `virtio_snd_audio_backend=wav`)
+- QEMU available on `PATH` (or pass the absolute path via the workflow input `qemu_system`)
+- Python 3 (`python3`)
+- a prepared Win7 disk image available at a stable path on the runner (pass via the workflow input `disk_image_path`)
 
-On completion, the workflow uploads the serial log and harness output (and the captured wav file, when enabled) as the
-`win7-virtio-harness` artifact.
+> Note: The harness uses a fixed localhost HTTP port (default `18080`). The workflow enforces
+> `concurrency.group: win7-virtio-harness` to prevent concurrent runs from fighting over ports/images.
+
+### Invoking the workflow
+
+1. Place your prepared Windows 7 image somewhere on the runner (example: `/var/lib/aero/win7/win7-aero-tests.qcow2`).
+2. In GitHub, go to **Actions** → **Win7 virtio host harness (self-hosted)** → **Run workflow**.
+3. Set `disk_image_path` to the runner-local path above.
+
+The default workflow settings run QEMU in snapshot mode (disk writes are discarded). Disable `snapshot`
+only if you explicitly want the base image to be mutated.
 
 ## How the harness works
 
