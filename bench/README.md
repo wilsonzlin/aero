@@ -61,6 +61,17 @@ node bench/history.js append \
   --repository "wilsonzlin/aero"
 ```
 
+For storage I/O, prefer appending the raw `storage_bench.json` output instead; it contains per-run samples so the history can compute `n` + CoV (the dashboard uses the per-run mean as the primary `value`):
+
+```bash
+node bench/history.js append \
+  --history bench/history.json \
+  --input storage-perf-results/head/storage_bench.json \
+  --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --commit "$(git rev-parse HEAD)" \
+  --repository "wilsonzlin/aero"
+```
+
 Generate a lightweight markdown report:
 
 ```bash

@@ -203,7 +203,7 @@ jobs:
 
           node bench/history.js append \
             --history bench/history.json \
-            --input perf-results/storage_io/report.json \
+            --input perf-results/storage_io/storage_bench.json \
             --timestamp "$ts" \
             --commit "$GITHUB_SHA" \
             --repository "$GITHUB_REPOSITORY"

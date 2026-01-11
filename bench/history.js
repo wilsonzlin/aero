@@ -69,6 +69,9 @@ export function normaliseBenchResult(result) {
   if (isAeroGatewayBenchReport(result)) {
     return normaliseAeroGatewayBenchResult(result);
   }
+  if (isStorageBenchReport(result)) {
+    return normaliseStorageBenchResult(result);
+  }
   if (result.schemaVersion === 1) {
     return normaliseLegacyBenchResult(result);
   }
@@ -79,7 +82,7 @@ export function normaliseBenchResult(result) {
     return normalisePerfToolResult(result);
   }
   throw new Error(
-    "Unsupported benchmark result format (expected aero-gpu-bench report, aero-gateway bench results.json, schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
+    "Unsupported benchmark result format (expected aero-gpu-bench report, aero-gateway bench results.json, storage_bench.json, schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
   );
 }
 
@@ -380,6 +383,86 @@ function normaliseAeroGatewayBenchResult(result) {
     scenarios,
     environment: Object.keys(environment).length ? environment : undefined,
   };
+}
+
+function isStorageBenchReport(result) {
+  return (
+    result &&
+    typeof result === "object" &&
+    typeof result.backend === "string" &&
+    typeof result.api_mode === "string" &&
+    result.sequential_write &&
+    typeof result.sequential_write === "object" &&
+    result.sequential_read &&
+    typeof result.sequential_read === "object" &&
+    result.random_read_4k &&
+    typeof result.random_read_4k === "object"
+  );
+}
+
+function normaliseStorageBenchResult(result) {
+  /** @type {Record<string, any>} */
+  const metrics = {};
+
+  /**
+   * @param {Record<string, any>} metrics
+   * @param {string} name
+   * @param {unknown} summary
+   * @param {string} runKey
+   * @param {{unit: string, better: "higher" | "lower"}} opts
+   */
+  function addMetricFromRuns(metrics, name, summary, runKey, opts) {
+    if (summary === null || typeof summary !== "object") return;
+    const runs = Array.isArray(summary.runs) ? summary.runs : [];
+    if (runs.length === 0) return;
+    const samples = [];
+    for (const run of runs) {
+      if (run === null || typeof run !== "object") continue;
+      const v = run[runKey];
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      samples.push(v);
+    }
+    if (samples.length === 0) return;
+
+    const stats = computeStats(samples);
+    metrics[name] = {
+      value: stats.mean,
+      unit: opts.unit,
+      better: opts.better,
+      samples: {
+        n: stats.n,
+        min: stats.min,
+        max: stats.max,
+        stdev: stats.stdev,
+        cv: stats.cv,
+      },
+    };
+  }
+
+  addMetricFromRuns(metrics, "sequential_write_mb_per_s", result.sequential_write, "mb_per_s", {
+    unit: "MB/s",
+    better: "higher",
+  });
+  addMetricFromRuns(metrics, "sequential_read_mb_per_s", result.sequential_read, "mb_per_s", {
+    unit: "MB/s",
+    better: "higher",
+  });
+  addMetricFromRuns(metrics, "random_read_4k_p95_ms", result.random_read_4k, "p95_ms", {
+    unit: "ms",
+    better: "lower",
+  });
+  addMetricFromRuns(metrics, "random_write_4k_p95_ms", result.random_write_4k, "p95_ms", {
+    unit: "ms",
+    better: "lower",
+  });
+
+  const scenarios = Object.keys(metrics).length ? { storage: { metrics } } : {};
+
+  const environment = {};
+  if (typeof result.backend === "string") environment.storageBackend = result.backend;
+  if (typeof result.api_mode === "string") environment.storageApiMode = result.api_mode;
+
+  return { scenarios, environment: Object.keys(environment).length ? environment : undefined };
 }
 
 function normaliseLegacyBenchResult(result) {

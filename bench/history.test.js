@@ -87,6 +87,62 @@ test("normaliseBenchResult infers throughput metrics as higher-is-better", () =>
   assert.equal(scenarios.storage_io.metrics.storage_seq_write_mb_per_s.better, "higher");
 });
 
+test("normaliseBenchResult supports storage_bench.json format", () => {
+  const { scenarios, environment } = normaliseBenchResult({
+    version: 1,
+    run_id: "run-123",
+    backend: "opfs",
+    api_mode: "sync_access_handle",
+    config: {},
+    sequential_write: {
+      runs: [
+        { bytes: 1024, duration_ms: 10, mb_per_s: 100 },
+        { bytes: 1024, duration_ms: 10, mb_per_s: 120 },
+      ],
+      mean_mb_per_s: 110,
+      stdev_mb_per_s: 14,
+    },
+    sequential_read: {
+      runs: [
+        { bytes: 1024, duration_ms: 10, mb_per_s: 200 },
+        { bytes: 1024, duration_ms: 10, mb_per_s: 180 },
+      ],
+      mean_mb_per_s: 190,
+      stdev_mb_per_s: 14,
+    },
+    random_read_4k: {
+      runs: [
+        { ops: 10, block_bytes: 4096, min_ms: 1, max_ms: 2, mean_ms: 1.5, stdev_ms: 0.1, p50_ms: 1.4, p95_ms: 5 },
+        { ops: 10, block_bytes: 4096, min_ms: 1, max_ms: 2, mean_ms: 1.5, stdev_ms: 0.1, p50_ms: 1.4, p95_ms: 7 },
+      ],
+      mean_p50_ms: 1.4,
+      mean_p95_ms: 6,
+      stdev_p50_ms: 0,
+      stdev_p95_ms: 1,
+    },
+    random_write_4k: null,
+  });
+
+  assert.equal(environment.storageBackend, "opfs");
+  assert.equal(environment.storageApiMode, "sync_access_handle");
+
+  const metrics = scenarios.storage.metrics;
+  assert.equal(metrics.sequential_write_mb_per_s.value, 110); // mean of [100,120]
+  assert.equal(metrics.sequential_write_mb_per_s.unit, "MB/s");
+  assert.equal(metrics.sequential_write_mb_per_s.better, "higher");
+  assert.equal(metrics.sequential_write_mb_per_s.samples.n, 2);
+  assert.equal(metrics.sequential_write_mb_per_s.samples.min, 100);
+  assert.equal(metrics.sequential_write_mb_per_s.samples.max, 120);
+
+  assert.equal(metrics.random_read_4k_p95_ms.value, 6); // mean of [5,7]
+  assert.equal(metrics.random_read_4k_p95_ms.unit, "ms");
+  assert.equal(metrics.random_read_4k_p95_ms.better, "lower");
+  assert.equal(metrics.random_read_4k_p95_ms.samples.n, 2);
+  assert.ok(metrics.random_read_4k_p95_ms.samples.cv > 0);
+
+  assert.ok(!Object.prototype.hasOwnProperty.call(metrics, "random_write_4k_p95_ms"));
+});
+
 test("normaliseBenchResult supports aero-gpu-bench report format", () => {
   const { scenarios, environment } = normaliseBenchResult({
     schemaVersion: 1,
@@ -282,6 +338,7 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   const perfPath = path.join(tmpDir, "perf.json");
   const gpuPath = path.join(tmpDir, "gpu.json");
   const gatewayPath = path.join(tmpDir, "gateway.json");
+  const storagePath = path.join(tmpDir, "storage.json");
 
   fs.writeFileSync(
     perfPath,
@@ -334,6 +391,29 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
       2,
     ),
   );
+  fs.writeFileSync(
+    storagePath,
+    JSON.stringify(
+      {
+        version: 1,
+        run_id: "run-123",
+        backend: "opfs",
+        api_mode: "sync_access_handle",
+        sequential_write: { runs: [{ bytes: 1, duration_ms: 1, mb_per_s: 10 }], mean_mb_per_s: 10, stdev_mb_per_s: 0 },
+        sequential_read: { runs: [{ bytes: 1, duration_ms: 1, mb_per_s: 20 }], mean_mb_per_s: 20, stdev_mb_per_s: 0 },
+        random_read_4k: {
+          runs: [{ ops: 1, block_bytes: 4096, min_ms: 1, max_ms: 1, mean_ms: 1, stdev_ms: 0, p50_ms: 1, p95_ms: 2 }],
+          mean_p50_ms: 1,
+          mean_p95_ms: 2,
+          stdev_p50_ms: 0,
+          stdev_p95_ms: 0,
+        },
+        random_write_4k: null,
+      },
+      null,
+      2,
+    ),
+  );
 
   const timestamp = "2025-01-01T00:00:00Z";
   const commit = "0123456789abcdef0123456789abcdef01234567";
@@ -342,6 +422,7 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   appendHistoryEntry({ historyPath, inputPath: perfPath, timestamp, commitSha: commit, repository });
   appendHistoryEntry({ historyPath, inputPath: gpuPath, timestamp, commitSha: commit, repository });
   appendHistoryEntry({ historyPath, inputPath: gatewayPath, timestamp, commitSha: commit, repository });
+  appendHistoryEntry({ historyPath, inputPath: storagePath, timestamp, commitSha: commit, repository });
 
   const history = JSON.parse(fs.readFileSync(historyPath, "utf8"));
   const entryId = `${timestamp}-${commit}`;
@@ -350,9 +431,12 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   assert.ok(entry.scenarios.browser);
   assert.ok(entry.scenarios["gpu/vga_text_scroll"]);
   assert.ok(entry.scenarios.gateway);
+  assert.ok(entry.scenarios.storage);
   assert.equal(entry.environment.node, "v20.0.0");
   assert.equal(entry.environment.userAgent, "UA");
   assert.equal(entry.environment.gatewayMode, "smoke");
+  assert.equal(entry.environment.storageBackend, "opfs");
+  assert.equal(entry.environment.storageApiMode, "sync_access_handle");
 });
 
 test("appendHistoryEntry rejects duplicate metric keys during merge", () => {

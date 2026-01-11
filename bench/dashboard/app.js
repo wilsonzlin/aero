@@ -156,6 +156,11 @@ function renderDashboard(history) {
   if (env.arch) envParts.push(env.arch);
   if (env.cpuModel) envParts.push(env.cpuCount ? `${env.cpuModel} (${env.cpuCount} cores)` : env.cpuModel);
   if (Number.isFinite(env.iterations)) envParts.push(`${env.iterations} iterations`);
+  if (env.storageBackend) {
+    envParts.push(
+      env.storageApiMode ? `Storage ${env.storageBackend} (${env.storageApiMode})` : `Storage ${env.storageBackend}`,
+    );
+  }
 
   const envHtml = envParts.length ? `<div><strong>Env:</strong> ${envParts.join(" • ")}</div>` : "";
 

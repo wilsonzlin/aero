@@ -70,7 +70,9 @@
             "userAgent": { "type": "string" },
             "webgpu": { "type": "boolean" },
             "webgl2": { "type": "boolean" },
-            "gatewayMode": { "type": "string" }
+            "gatewayMode": { "type": "string" },
+            "storageBackend": { "type": "string" },
+            "storageApiMode": { "type": "string" }
           }
         },
         "scenarios": {
