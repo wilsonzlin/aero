@@ -2298,13 +2298,24 @@ async fn fps_quota_closes_connection() {
         }
     }
 
-    let close = tokio::time::timeout(Duration::from_secs(2), async {
+    let (err_msg, close) = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut err_msg: Option<(u16, String)> = None;
         loop {
             match ws.next().await {
-                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(Message::Binary(buf))) => {
+                    let Ok(decoded) = aero_l2_protocol::decode_message(buf.as_ref()) else {
+                        continue;
+                    };
+                    if decoded.msg_type == aero_l2_protocol::L2_TUNNEL_TYPE_ERROR {
+                        if let Some(parsed) = protocol::decode_error_payload(decoded.payload) {
+                            err_msg = Some(parsed);
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(frame))) => return (err_msg, frame),
                 Some(Ok(_)) => continue,
                 Some(Err(err)) => panic!("ws recv error: {err}"),
-                None => return None,
+                None => return (err_msg, None),
             }
         }
     })
@@ -2316,6 +2327,9 @@ async fn fps_quota_closes_connection() {
         frame.code,
         tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy
     );
+    let (code, msg) = err_msg.expect("expected ERROR control message before close");
+    assert_eq!(code, protocol::ERROR_CODE_QUOTA_FPS);
+    assert_eq!(msg, "frame rate quota exceeded");
 
     proxy.shutdown().await;
 }
