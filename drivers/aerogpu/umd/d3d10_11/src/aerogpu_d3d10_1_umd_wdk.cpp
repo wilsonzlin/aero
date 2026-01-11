@@ -984,7 +984,8 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 
   uint64_t fence = 0;
   const HRESULT hr =
-      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
+      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, /*allocation_handles=*/nullptr,
+                                           /*allocation_handle_count=*/0, &fence);
   dev->cmd.reset();
   if (FAILED(hr)) {
     if (out_hr) {

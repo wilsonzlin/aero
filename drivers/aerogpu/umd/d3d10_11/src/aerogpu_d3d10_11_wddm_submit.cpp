@@ -916,7 +916,7 @@ void WddmSubmit::Shutdown() {
 
 namespace {
 
-void fill_allocate_request(D3DDDICB_ALLOCATE* alloc, UINT request_bytes, D3DKMT_HANDLE hContext) {
+void fill_allocate_request(D3DDDICB_ALLOCATE* alloc, UINT request_bytes, UINT allocation_list_entries, D3DKMT_HANDLE hContext) {
   if (!alloc) {
     return;
   }
@@ -932,7 +932,7 @@ void fill_allocate_request(D3DDDICB_ALLOCATE* alloc, UINT request_bytes, D3DKMT_
     alloc->CommandBufferSize = request_bytes;
   }
   __if_exists(D3DDDICB_ALLOCATE::AllocationListSize) {
-    alloc->AllocationListSize = 0;
+    alloc->AllocationListSize = allocation_list_entries;
   }
   __if_exists(D3DDDICB_ALLOCATE::PatchLocationListSize) {
     alloc->PatchLocationListSize = 0;
@@ -1063,10 +1063,11 @@ void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
 }
 
 HRESULT acquire_submit_buffers_allocate(const D3DDDI_DEVICECALLBACKS* callbacks,
-                                       void* runtime_device_private,
-                                       D3DKMT_HANDLE hContext,
-                                       UINT request_bytes,
-                                       SubmissionBuffers* out) {
+                                        void* runtime_device_private,
+                                        D3DKMT_HANDLE hContext,
+                                        UINT request_bytes,
+                                        UINT allocation_list_entries,
+                                        SubmissionBuffers* out) {
   if (!callbacks || !runtime_device_private || !out) {
     return E_INVALIDARG;
   }
@@ -1079,7 +1080,7 @@ HRESULT acquire_submit_buffers_allocate(const D3DDDI_DEVICECALLBACKS* callbacks,
       return E_NOTIMPL;
     }
 
-    fill_allocate_request(&out->alloc, request_bytes, hContext);
+    fill_allocate_request(&out->alloc, request_bytes, allocation_list_entries, hContext);
     const HRESULT hr = CallCbMaybeHandle(callbacks->pfnAllocateCb,
                                          MakeRtDevice11(runtime_device_private),
                                          MakeRtDevice10(runtime_device_private),
@@ -1192,6 +1193,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
                      D3DKMT_HANDLE hContext,
                      SubmissionBuffers* buf,
                      UINT chunk_size,
+                     UINT allocation_list_size,
                      bool do_present,
                      uint64_t* out_fence) {
   if (out_fence) {
@@ -1237,7 +1239,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
         present.pAllocationList = buf->allocation_list;
       }
       __if_exists(D3DDDICB_PRESENT::AllocationListSize) {
-        present.AllocationListSize = 0;
+        present.AllocationListSize = allocation_list_size;
       }
       __if_exists(D3DDDICB_PRESENT::pPatchLocationList) {
         present.pPatchLocationList = buf->patch_location_list;
@@ -1304,7 +1306,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
         render.pAllocationList = buf->allocation_list;
       }
       __if_exists(D3DDDICB_RENDER::AllocationListSize) {
-        render.AllocationListSize = 0;
+        render.AllocationListSize = allocation_list_size;
       }
       __if_exists(D3DDDICB_RENDER::pPatchLocationList) {
         render.pPatchLocationList = buf->patch_location_list;
@@ -1348,9 +1350,11 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
 } // namespace
 
 HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
-                                       size_t stream_size,
-                                       bool want_present,
-                                       uint64_t* out_fence) {
+                                        size_t stream_size,
+                                        bool want_present,
+                                        const uint32_t* allocation_handles,
+                                        uint32_t allocation_handle_count,
+                                        uint64_t* out_fence) {
   if (out_fence) {
     *out_fence = 0;
   }
@@ -1365,6 +1369,9 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
   }
   if (stream_size == sizeof(aerogpu_cmd_stream_header)) {
     return S_OK;
+  }
+  if (allocation_handle_count != 0 && !allocation_handles) {
+    return E_INVALIDARG;
   }
 
   // Ensure we have at least a render callback for submission.
@@ -1389,12 +1396,13 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
       return E_OUTOFMEMORY;
     }
     const UINT request_bytes = static_cast<UINT>(request_sz);
+    const UINT allocation_list_entries = static_cast<UINT>(allocation_handle_count);
 
     SubmissionBuffers buf{};
     HRESULT hr = E_NOTIMPL;
 
     // Prefer Allocate/Deallocate when present.
-    hr = acquire_submit_buffers_allocate(callbacks_, runtime_device_private_, hContext_, request_bytes, &buf);
+    hr = acquire_submit_buffers_allocate(callbacks_, runtime_device_private_, hContext_, request_bytes, allocation_list_entries, &buf);
     if (hr == E_NOTIMPL) {
       hr = acquire_submit_buffers_get_command_buffer(callbacks_, runtime_device_private_, hContext_, &buf);
     }
@@ -1462,6 +1470,34 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
       buf.dma_private_data_bytes = expected_dma_priv_bytes;
     }
 
+    UINT used_allocation_list_entries = 0;
+    if (allocation_handle_count != 0) {
+      if (!buf.allocation_list || buf.allocation_list_entries < allocation_list_entries) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: %s missing allocation list ptr=%p entries=%u (need >=%u)",
+                             buf.needs_deallocate ? "AllocateCb" : "GetCommandBufferCb",
+                             buf.allocation_list,
+                             static_cast<unsigned>(buf.allocation_list_entries),
+                             static_cast<unsigned>(allocation_list_entries));
+        release();
+        return E_OUTOFMEMORY;
+      }
+
+      used_allocation_list_entries = allocation_list_entries;
+      const size_t bytes = static_cast<size_t>(used_allocation_list_entries) * sizeof(*buf.allocation_list);
+      if (bytes) {
+        std::memset(buf.allocation_list, 0, bytes);
+      }
+      for (UINT i = 0; i < used_allocation_list_entries; ++i) {
+        if (allocation_handles[i] == 0) {
+          release();
+          return E_INVALIDARG;
+        }
+        __if_exists(D3DDDI_ALLOCATIONLIST::hAllocation) {
+          buf.allocation_list[i].hAllocation = static_cast<D3DKMT_HANDLE>(allocation_handles[i]);
+        }
+      }
+    }
+
     const UINT dma_cap = buf.command_buffer_bytes;
     if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
       release();
@@ -1520,7 +1556,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
 
     uint64_t fence = 0;
     const HRESULT submit_hr =
-        submit_chunk(callbacks_, runtime_device_private_, hContext_, &buf, static_cast<UINT>(chunk_size), do_present, &fence);
+        submit_chunk(callbacks_, runtime_device_private_, hContext_, &buf, static_cast<UINT>(chunk_size), used_allocation_list_entries, do_present, &fence);
     if (SUCCEEDED(submit_hr) && buf.dma_private_data && buf.dma_private_data_bytes) {
       // Only persist the updated pointer/size when the runtime owns this memory:
       // - GetCommandBuffer path (no Deallocate call), or

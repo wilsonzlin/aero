@@ -892,6 +892,7 @@ struct AeroGpuDevice {
 
   std::mutex mutex;
   aerogpu::CmdWriter cmd;
+  std::vector<uint32_t> wddm_submit_allocation_handles;
 
   // Cached state.
   aerogpu_handle_t current_rtv = 0;
@@ -1350,8 +1351,11 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   const size_t submit_bytes = dev->cmd.size();
 
   uint64_t fence = 0;
+  const uint32_t* alloc_handles =
+      dev->wddm_submit_allocation_handles.empty() ? nullptr : dev->wddm_submit_allocation_handles.data();
+  const uint32_t alloc_count = static_cast<uint32_t>(dev->wddm_submit_allocation_handles.size());
   const HRESULT hr =
-      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
+      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, alloc_handles, alloc_count, &fence);
   dev->cmd.reset();
   if (FAILED(hr)) {
     if (out_hr) {
@@ -1821,6 +1825,12 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return init_hr;
     }
 
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle) ==
+            dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
+
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
     AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u size=%llu",
                          static_cast<unsigned>(res->handle),
@@ -1959,6 +1969,12 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return init_hr;
     }
 
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle) ==
+            dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
+
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
     AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u size=%ux%u row_pitch=%u",
                          static_cast<unsigned>(res->handle),
@@ -2003,6 +2019,11 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (res->wddm_allocation_handle != 0) {
+    dev->wddm_submit_allocation_handles.erase(
+        std::remove(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle),
+        dev->wddm_submit_allocation_handles.end());
+  }
 
   if (res->mapped) {
     if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {

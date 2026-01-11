@@ -2763,6 +2763,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       maybe_copy_initial(pDesc->pInitialData);
     }
 
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle) ==
+            dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
+
     return S_OK;
   }
 
@@ -2854,6 +2860,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       maybe_copy_initial(pDesc->pInitialData);
     }
 
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(), dev->wddm_submit_allocation_handles.end(), res->wddm_allocation_handle) ==
+            dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
+
     return S_OK;
   }
 
@@ -2876,6 +2888,13 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (res->mapped) {
     (void)UnmapLocked(dev, res);
+  }
+  if (res->wddm_allocation_handle != 0) {
+    dev->wddm_submit_allocation_handles.erase(
+        std::remove(dev->wddm_submit_allocation_handles.begin(),
+                    dev->wddm_submit_allocation_handles.end(),
+                    res->wddm_allocation_handle),
+        dev->wddm_submit_allocation_handles.end());
   }
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
   if (callbacks && callbacks->pfnDeallocateCb && dev->runtime_device &&

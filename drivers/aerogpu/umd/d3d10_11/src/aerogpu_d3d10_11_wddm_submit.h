@@ -57,11 +57,18 @@ class WddmSubmit {
   // DMA buffer. When `want_present` is true, the last chunk is routed through
   // the Present callback when available so the KMD hits DxgkDdiPresent.
   //
+  // `allocation_handles` provides the WDDM allocations that should be included
+  // in the runtime's allocation list for this submission. The AeroGPU Win7 KMD
+  // uses that list to build a sideband allocation table so the host can resolve
+  // `backing_alloc_id` values in the AeroGPU command stream.
+  //
   // On success, returns S_OK and writes the per-submission fence value to
   // `out_fence` (0 when no submission occurs).
   HRESULT SubmitAeroCmdStream(const uint8_t* stream_bytes,
                               size_t stream_size,
                               bool want_present,
+                              const uint32_t* allocation_handles,
+                              uint32_t allocation_handle_count,
                               uint64_t* out_fence);
 
   // Waits for a fence value on the monitored-fence sync object returned by
@@ -118,12 +125,12 @@ class WddmSubmit {
   uint32_t hContext() const {
     return 0;
   }
-  uint32_t hSyncObject() const {
-    return 0;
-  }
-  HRESULT SubmitAeroCmdStream(const uint8_t*, size_t, bool, uint64_t*) {
-    return E_NOTIMPL;
-  }
+   uint32_t hSyncObject() const {
+     return 0;
+   }
+   HRESULT SubmitAeroCmdStream(const uint8_t*, size_t, bool, const uint32_t*, uint32_t, uint64_t*) {
+     return E_NOTIMPL;
+   }
   HRESULT WaitForFenceWithTimeout(uint64_t, uint32_t) {
     return E_NOTIMPL;
   }
