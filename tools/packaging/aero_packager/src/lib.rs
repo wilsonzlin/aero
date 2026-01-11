@@ -769,15 +769,28 @@ fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
                     if token.is_empty() {
                         continue;
                     }
-                    let token = normalize_inf_path_token(token);
-                    if token.is_empty() {
+                    if let Some(file) = token.strip_prefix('@') {
+                        let file = normalize_inf_path_token(file);
+                        if file.is_empty() || file.contains('%') {
+                            continue;
+                        }
+                        referenced.insert(file);
                         continue;
                     }
-                    let token = token.trim_start_matches('@').to_string();
-                    if token.contains('.') || token.contains('/') {
-                        referenced.insert(token);
+
+                    let token = normalize_inf_path_token(token);
+                    if token.is_empty() || token.contains('%') {
+                        continue;
+                    }
+
+                    // Most values are file-list section names (which commonly contain `.NT...`
+                    // suffixes). Treat it as a section if it exists; otherwise, fall back to
+                    // treating it as a direct file reference.
+                    let section_key = token.to_ascii_lowercase();
+                    if sections.contains_key(&section_key) {
+                        copyfile_sections.insert(section_key);
                     } else {
-                        copyfile_sections.insert(token.to_ascii_lowercase());
+                        referenced.insert(token);
                     }
                 }
             } else if key.trim().eq_ignore_ascii_case("copyinf") {
@@ -865,7 +878,9 @@ fn parse_inf_sections(text: &str) -> HashMap<String, Vec<String>> {
             if section_name.is_empty() {
                 current = None;
             } else {
-                current = Some(section_name.to_ascii_lowercase());
+                let name = section_name.to_ascii_lowercase();
+                sections.entry(name.clone()).or_default();
+                current = Some(name);
             }
             continue;
         }

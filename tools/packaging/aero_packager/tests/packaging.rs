@@ -1054,6 +1054,58 @@ fn wdfcoinstaller_mentioned_only_in_comment_does_not_require_payload() -> anyhow
 }
 
 #[test]
+fn copyfiles_section_names_with_dots_are_treated_as_sections() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+
+    // Real-world INFs often use CopyFiles section names with `.NT*` suffixes. Ensure we don't
+    // misinterpret those as file references.
+    for arch in ["x86", "amd64"] {
+        let inf_path = drivers_tmp.path().join(format!("{arch}/testdrv/test.inf"));
+        let original = fs::read_to_string(&inf_path)?;
+        let mut out = Vec::new();
+        for line in original.lines() {
+            if line.trim()
+                .eq_ignore_ascii_case("CopyFiles=DriverCopyFiles,CoInstaller_CopyFiles")
+            {
+                out.push("CopyFiles=DriverCopyFiles.NT,CoInstaller_CopyFiles".to_string());
+                continue;
+            }
+            if line.trim().eq_ignore_ascii_case("[DriverCopyFiles]") {
+                out.push("[DriverCopyFiles.NT]".to_string());
+                continue;
+            }
+            out.push(line.to_string());
+        }
+        fs::write(inf_path, out.join("\n") + "\n")?;
+    }
+
+    let out_dir = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out_dir.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+
+    // Should succeed; the `.NT` section name must not be treated as a missing file.
+    aero_packager::package_guest_tools(&config)?;
+
+    Ok(())
+}
+
+#[test]
 fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
