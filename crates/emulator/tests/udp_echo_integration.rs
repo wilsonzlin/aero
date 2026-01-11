@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 

@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use emulator::io::storage::disk::ByteStorage;
 use emulator::io::storage::formats::detect_format;
 use emulator::io::storage::{DiskBackend, DiskError, DiskFormat, VirtualDrive, WriteCachePolicy};
