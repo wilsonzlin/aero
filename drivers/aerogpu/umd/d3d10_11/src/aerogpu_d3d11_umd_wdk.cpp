@@ -2820,13 +2820,63 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilStateSize11(D3D11DDI_HDEVICE, con
 }
 
 HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
-                                                   const D3D11DDIARG_CREATEDEPTHSTENCILSTATE*,
+                                                   const D3D11DDIARG_CREATEDEPTHSTENCILSTATE* pDesc,
                                                    D3D11DDI_HDEPTHSTENCILSTATE hState,
                                                    D3D11DDI_HRTDEPTHSTENCILSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) DepthStencilState();
+  auto* state = new (hState.pDrvPrivate) DepthStencilState();
+  // Defaults matching the D3D11 default depth state.
+  state->depth_enable = 1u;
+  state->depth_write_mask = static_cast<uint32_t>(D3D11_DEPTH_WRITE_MASK_ALL);
+  state->depth_func = static_cast<uint32_t>(D3D11_COMPARISON_LESS);
+  state->stencil_enable = 0u;
+
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  bool filled = false;
+  __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::DepthEnable) {
+    state->depth_enable = pDesc->DepthEnable ? 1u : 0u;
+    state->depth_write_mask = static_cast<uint32_t>(pDesc->DepthWriteMask);
+    state->depth_func = static_cast<uint32_t>(pDesc->DepthFunc);
+    state->stencil_enable = pDesc->StencilEnable ? 1u : 0u;
+    filled = true;
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::DepthStencilDesc) {
+      const auto& desc = pDesc->DepthStencilDesc;
+      state->depth_enable = desc.DepthEnable ? 1u : 0u;
+      state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
+      state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
+      state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::Desc) {
+      const auto& desc = pDesc->Desc;
+      state->depth_enable = desc.DepthEnable ? 1u : 0u;
+      state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
+      state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
+      state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILSTATE::pDepthStencilDesc) {
+      if (pDesc->pDepthStencilDesc) {
+        const auto& desc = *pDesc->pDepthStencilDesc;
+        state->depth_enable = desc.DepthEnable ? 1u : 0u;
+        state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
+        state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
+        state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+        filled = true;
+      }
+    }
+  }
   return S_OK;
 }
 
@@ -3331,7 +3381,18 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
 
 void AEROGPU_APIENTRY SetRasterizerState11(D3D11DDI_HDEVICECONTEXT, D3D11DDI_HRASTERIZERSTATE) {}
 void AEROGPU_APIENTRY SetBlendState11(D3D11DDI_HDEVICECONTEXT, D3D11DDI_HBLENDSTATE, const FLOAT[4], UINT) {}
-void AEROGPU_APIENTRY SetDepthStencilState11(D3D11DDI_HDEVICECONTEXT, D3D11DDI_HDEPTHSTENCILSTATE, UINT) {}
+void AEROGPU_APIENTRY SetDepthStencilState11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             D3D11DDI_HDEPTHSTENCILSTATE hState,
+                                             UINT stencil_ref) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_dss =
+      hState.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILSTATE, DepthStencilState>(hState) : nullptr;
+  dev->current_stencil_ref = stencil_ref;
+}
 
 void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   auto* dev = DeviceFromContext(hCtx);
@@ -3343,6 +3404,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_rtv = 0;
   dev->current_rtv_resource = nullptr;
   dev->current_dsv = 0;
+  dev->current_dsv_resource = nullptr;
   dev->current_vs_srvs.fill(nullptr);
   dev->current_ps_srvs.fill(nullptr);
   dev->current_vs = 0;
@@ -3360,6 +3422,8 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_ps_cb0 = nullptr;
   dev->current_vs_srv0 = nullptr;
   dev->current_ps_srv0 = nullptr;
+  dev->current_dss = nullptr;
+  dev->current_stencil_ref = 0;
   dev->viewport_x = 0.0f;
   dev->viewport_y = 0.0f;
   dev->viewport_width = 0.0f;
@@ -3396,9 +3460,11 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
   if (hDsv.pDrvPrivate) {
     auto* dsv = FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv);
-    dev->current_dsv = (dsv && dsv->resource) ? dsv->resource->handle : (dsv ? dsv->texture : 0);
+    dev->current_dsv_resource = dsv ? dsv->resource : nullptr;
+    dev->current_dsv = dev->current_dsv_resource ? dev->current_dsv_resource->handle : (dsv ? dsv->texture : 0);
   } else {
     dev->current_dsv = 0;
+    dev->current_dsv_resource = nullptr;
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
@@ -3514,6 +3580,62 @@ static void SoftwareClearTexture2D(Resource* rt, const FLOAT rgba[4]) {
   }
 }
 
+static float Clamp01(float v) {
+  if (std::isnan(v)) {
+    return 0.0f;
+  }
+  return std::clamp(v, 0.0f, 1.0f);
+}
+
+static void SoftwareClearDepthTexture2D(Resource* ds, float depth) {
+  if (!ds || ds->kind != ResourceKind::Texture2D || ds->width == 0 || ds->height == 0 || ds->row_pitch_bytes == 0) {
+    return;
+  }
+  if (!(ds->dxgi_format == kDxgiFormatD24UnormS8Uint || ds->dxgi_format == kDxgiFormatD32Float)) {
+    return;
+  }
+  if (ds->row_pitch_bytes < ds->width * sizeof(uint32_t)) {
+    return;
+  }
+  if (ds->storage.size() < static_cast<size_t>(ds->row_pitch_bytes) * ds->height) {
+    return;
+  }
+
+  const uint32_t bits = f32_bits(Clamp01(depth));
+  for (uint32_t y = 0; y < ds->height; y++) {
+    uint8_t* row = ds->storage.data() + static_cast<size_t>(y) * ds->row_pitch_bytes;
+    for (uint32_t x = 0; x < ds->width; x++) {
+      std::memcpy(row + static_cast<size_t>(x) * sizeof(uint32_t), &bits, sizeof(bits));
+    }
+  }
+}
+
+static bool DepthCompare(uint32_t func, float src, float dst) {
+  if (std::isnan(src) || std::isnan(dst)) {
+    return false;
+  }
+  switch (func) {
+    case D3D11_COMPARISON_NEVER:
+      return false;
+    case D3D11_COMPARISON_LESS:
+      return src < dst;
+    case D3D11_COMPARISON_EQUAL:
+      return src == dst;
+    case D3D11_COMPARISON_LESS_EQUAL:
+      return src <= dst;
+    case D3D11_COMPARISON_GREATER:
+      return src > dst;
+    case D3D11_COMPARISON_NOT_EQUAL:
+      return src != dst;
+    case D3D11_COMPARISON_GREATER_EQUAL:
+      return src >= dst;
+    case D3D11_COMPARISON_ALWAYS:
+      return true;
+    default:
+      return src < dst;
+  }
+}
+
 static float EdgeFn(float ax, float ay, float bx, float by, float px, float py) {
   return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
 }
@@ -3521,6 +3643,7 @@ static float EdgeFn(float ax, float ay, float bx, float by, float px, float py) 
 struct SoftwareVtx {
   float x = 0.0f;
   float y = 0.0f;
+  float z = 0.0f;
   float a[4] = {};
 };
 
@@ -3657,6 +3780,33 @@ static void SoftwareRasterTriangle(Device* dev,
 
   const float inv_area = 1.0f / area;
 
+  Resource* ds = dev->current_dsv_resource;
+  const DepthStencilState* dss = dev->current_dss;
+
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write = 1u;
+  uint32_t depth_func = static_cast<uint32_t>(D3D11_COMPARISON_LESS);
+  if (dss) {
+    depth_enable = dss->depth_enable;
+    depth_write = dss->depth_write_mask;
+    depth_func = dss->depth_func;
+  }
+
+  bool do_depth = depth_enable != 0;
+  if (!do_depth || !ds || ds->kind != ResourceKind::Texture2D || ds->width != rt->width || ds->height != rt->height ||
+      ds->row_pitch_bytes == 0 ||
+      !(ds->dxgi_format == kDxgiFormatD24UnormS8Uint || ds->dxgi_format == kDxgiFormatD32Float) ||
+      ds->row_pitch_bytes < ds->width * sizeof(uint32_t) ||
+      ds->storage.size() < static_cast<size_t>(ds->row_pitch_bytes) * static_cast<size_t>(ds->height)) {
+    do_depth = false;
+  }
+
+  const float vp_min_z = dev->viewport_min_depth;
+  const float vp_max_z = dev->viewport_max_depth;
+  const float z0 = vp_min_z + Clamp01(v0.z) * (vp_max_z - vp_min_z);
+  const float z1 = vp_min_z + Clamp01(v1.z) * (vp_max_z - vp_min_z);
+  const float z2 = vp_min_z + Clamp01(v2.z) * (vp_max_z - vp_min_z);
+
   for (int y = min_y; y <= max_y; y++) {
     uint8_t* row = rt->storage.data() + static_cast<size_t>(y) * rt->row_pitch_bytes;
     for (int x = min_x; x <= max_x; x++) {
@@ -3680,6 +3830,22 @@ static void SoftwareRasterTriangle(Device* dev,
       const float b0 = w0 * inv_area;
       const float b1 = w1 * inv_area;
       const float b2 = w2 * inv_area;
+
+      const float depth = b0 * z0 + b1 * z1 + b2 * z2;
+      if (do_depth) {
+        const size_t ds_off = static_cast<size_t>(y) * ds->row_pitch_bytes + static_cast<size_t>(x) * sizeof(uint32_t);
+        if (ds_off + sizeof(uint32_t) > ds->storage.size()) {
+          continue;
+        }
+        float dst_depth = 0.0f;
+        std::memcpy(&dst_depth, ds->storage.data() + ds_off, sizeof(float));
+        if (!DepthCompare(depth_func, depth, dst_depth)) {
+          continue;
+        }
+        if (depth_write != 0) {
+          std::memcpy(ds->storage.data() + ds_off, &depth, sizeof(float));
+        }
+      }
 
       float out_rgba[4] = {};
       if (has_color) {
@@ -3756,6 +3922,7 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
   }
 
   const bool has_color = (stride >= 24);
+  const bool has_z = has_color && stride >= 28;
   const bool has_uv = (!has_color && stride >= 16);
   float constant_rgba[4] = {};
   Resource* tex = nullptr;
@@ -3775,15 +3942,21 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
       return false;
     }
     const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
-    const size_t needed = has_color ? 24 : (has_uv ? 16 : 8);
+    const size_t needed = has_color ? (has_z ? 28 : 24) : (has_uv ? 16 : 8);
     if (byte_off + needed > vb->storage.size()) {
       return false;
     }
     const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
     std::memcpy(&out->x, p + 0, sizeof(float));
     std::memcpy(&out->y, p + 4, sizeof(float));
+    out->z = 0.0f;
     if (has_color) {
-      std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
+      if (has_z) {
+        std::memcpy(&out->z, p + 8, sizeof(float));
+        std::memcpy(&out->a[0], p + 12, sizeof(float) * 4);
+      } else {
+        std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
+      }
     } else if (has_uv) {
       std::memcpy(&out->a[0], p + 8, sizeof(float) * 2);
       out->a[2] = 0.0f;
@@ -3837,6 +4010,7 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
   }
 
   const bool has_color = (stride >= 24);
+  const bool has_z = has_color && stride >= 28;
   const bool has_uv = (!has_color && stride >= 16);
   float constant_rgba[4] = {};
   Resource* tex = nullptr;
@@ -3895,15 +4069,21 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
       return false;
     }
     const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
-    const size_t needed = has_color ? 24 : (has_uv ? 16 : 8);
+    const size_t needed = has_color ? (has_z ? 28 : 24) : (has_uv ? 16 : 8);
     if (byte_off + needed > vb->storage.size()) {
       return false;
     }
     const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
     std::memcpy(&out->x, p + 0, sizeof(float));
     std::memcpy(&out->y, p + 4, sizeof(float));
+    out->z = 0.0f;
     if (has_color) {
-      std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
+      if (has_z) {
+        std::memcpy(&out->z, p + 8, sizeof(float));
+        std::memcpy(&out->a[0], p + 12, sizeof(float) * 4);
+      } else {
+        std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
+      }
     } else if (has_uv) {
       std::memcpy(&out->a[0], p + 8, sizeof(float) * 2);
       out->a[2] = 0.0f;
@@ -3966,13 +4146,29 @@ void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
   cmd->stencil = 0;
 }
 
-void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HDEPTHSTENCILVIEW, UINT flags, FLOAT depth, UINT8 stencil) {
+void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                              D3D11DDI_HDEPTHSTENCILVIEW hDsv,
+                                              UINT flags,
+                                              FLOAT depth,
+                                              UINT8 stencil) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  Resource* ds = nullptr;
+  if (hDsv.pDrvPrivate) {
+    auto* view = FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv);
+    ds = view ? view->resource : nullptr;
+  }
+  if (!ds) {
+    ds = dev->current_dsv_resource;
+  }
+  if (flags & 0x1u) {
+    SoftwareClearDepthTexture2D(ds, depth);
+  }
+
   uint32_t aer_flags = 0;
   if (flags & 0x1u) {
     aer_flags |= AEROGPU_CLEAR_DEPTH;

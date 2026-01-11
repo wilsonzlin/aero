@@ -429,7 +429,11 @@ struct RasterizerState {
   uint32_t dummy = 0;
 };
 struct DepthStencilState {
-  uint32_t dummy = 0;
+  // Stored as raw numeric values so this header remains WDK-free.
+  uint32_t depth_enable = 0;
+  uint32_t depth_write_mask = 0;
+  uint32_t depth_func = 0;
+  uint32_t stencil_enable = 0;
 };
 
 struct Device {
@@ -471,6 +475,7 @@ struct Device {
   aerogpu_handle_t current_rtv = 0;
   Resource* current_rtv_resource = nullptr;
   aerogpu_handle_t current_dsv = 0;
+  Resource* current_dsv_resource = nullptr;
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srvs{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srvs{};
   aerogpu_handle_t current_vs = 0;
@@ -492,6 +497,8 @@ struct Device {
   Resource* current_ps_cb0 = nullptr;
   Resource* current_vs_srv0 = nullptr;
   Resource* current_ps_srv0 = nullptr;
+  DepthStencilState* current_dss = nullptr;
+  uint32_t current_stencil_ref = 0;
 
   float viewport_x = 0.0f;
   float viewport_y = 0.0f;
