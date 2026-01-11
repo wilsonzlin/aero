@@ -1738,8 +1738,11 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         return STATUS_NOT_SUPPORTED;
     }
 
-    for (UINT i = 0; i < pCreate->NumAllocations; ++i) {
+    NTSTATUS status = STATUS_SUCCESS;
+    UINT i = 0;
+    for (i = 0; i < pCreate->NumAllocations; ++i) {
         DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
+        info->hAllocation = NULL;
 
         ULONG allocId = 0;
         ULONGLONG shareToken = 0;
@@ -1759,25 +1762,30 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             if (priv->magic == AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC) {
                 if (priv->version != AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION || priv->alloc_id == 0 ||
                     priv->alloc_id > AEROGPU_WDDM_ALLOC_ID_UMD_MAX) {
-                    return STATUS_INVALID_PARAMETER;
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
                 }
 
                 const BOOLEAN privShared = (priv->flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) ? TRUE : FALSE;
                 if (privShared != isShared) {
-                    return STATUS_INVALID_PARAMETER;
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
                 }
                 if (privShared && priv->share_token == 0) {
-                    return STATUS_INVALID_PARAMETER;
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
                 }
                 if (!privShared && priv->share_token != 0) {
-                    return STATUS_INVALID_PARAMETER;
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
                 }
                 /*
                  * UMDs may not know the exact allocation size after runtime/KMD
                  * alignment. Accept any non-zero value <= the actual WDDM size.
                  */
                 if (priv->size_bytes == 0 || priv->size_bytes > (aerogpu_wddm_u64)info->Size) {
-                    return STATUS_INVALID_PARAMETER;
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
                 }
 
                 allocId = (ULONG)priv->alloc_id;
@@ -1788,22 +1796,16 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         if (allocId == 0) {
             if (isShared) {
                 /* Shared allocations must carry AeroGPU private data so the UMD can recover stable IDs on OpenResource. */
-                return STATUS_INVALID_PARAMETER;
+                status = STATUS_INVALID_PARAMETER;
+                goto Rollback;
             }
 
             allocId = (ULONG)InterlockedIncrement(&adapter->NextKmdAllocId);
             if (allocId < AEROGPU_WDDM_ALLOC_ID_KMD_MIN) {
                 AEROGPU_LOG("CreateAllocation: allocation id overflow (wrapped into UMD range), failing with 0x%08lx",
                             STATUS_INTEGER_OVERFLOW);
-                /* Roll back allocations already created in this call. */
-                for (UINT j = 0; j < i; ++j) {
-                    HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
-                    if (hAllocation) {
-                        AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
-                        pCreate->pAllocationInfo[j].hAllocation = NULL;
-                    }
-                }
-                return STATUS_INTEGER_OVERFLOW;
+                status = STATUS_INTEGER_OVERFLOW;
+                goto Rollback;
             }
             shareToken = 0;
         }
@@ -1811,15 +1813,8 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         AEROGPU_ALLOCATION* alloc =
             (AEROGPU_ALLOCATION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*alloc), AEROGPU_POOL_TAG);
         if (!alloc) {
-            /* Roll back allocations already created in this call. */
-            for (UINT j = 0; j < i; ++j) {
-                HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
-                if (hAllocation) {
-                    AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
-                    pCreate->pAllocationInfo[j].hAllocation = NULL;
-                }
-            }
-            return STATUS_INSUFFICIENT_RESOURCES;
+            status = STATUS_INSUFFICIENT_RESOURCES;
+            goto Rollback;
         }
 
         alloc->AllocationId = allocId;
@@ -1849,6 +1844,20 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
     }
 
     return STATUS_SUCCESS;
+
+Rollback:
+    /*
+     * If CreateAllocation fails after creating one or more allocation handles,
+     * WDDM expects the driver to clean up those partial results.
+     */
+    for (UINT j = 0; j < i; ++j) {
+        HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
+        if (hAllocation) {
+            AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
+            pCreate->pAllocationInfo[j].hAllocation = NULL;
+        }
+    }
+    return status;
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiDestroyAllocation(_In_ const HANDLE hAdapter,
