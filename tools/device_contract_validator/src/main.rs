@@ -249,7 +249,11 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             if revs.is_empty() {
                 bail!("{name}: hardware_id_patterns must include at least one REV_01 entry (AERO-W7-VIRTIO v1)");
             }
-            let bad: Vec<_> = revs.iter().filter(|r| r.as_str() != "01").cloned().collect();
+            let bad: Vec<_> = revs
+                .iter()
+                .filter(|r| r.as_str() != "01")
+                .cloned()
+                .collect();
             if !bad.is_empty() {
                 bail!(
                     "{name}: hardware_id_patterns contains unsupported PCI revision IDs for virtio devices (expected only REV_01): {:?}",
