@@ -17,6 +17,7 @@ SOURCES= \
     pci_interface.c \
     virtio_pci_modern_wdm.c \
     virtio_snd_proto.c \
+    virtiosnd_control.c \
     virtiosnd_queue_split.c \
     virtiosnd_tx.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
