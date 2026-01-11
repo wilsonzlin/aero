@@ -178,7 +178,7 @@ impl LinearResampler {
             for c in 0..self.channels {
                 let a = self.prev_frame[c];
                 // frame1 == frame0, so interpolation is constant.
-                out.push(a + (a - a) * frac);
+                out.push(a);
             }
             self.pos += self.step;
         }

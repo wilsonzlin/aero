@@ -422,9 +422,12 @@ impl SharedFramebuffer {
 
     /// # Safety
     /// The caller must ensure no other thread/worker is concurrently reading
-    /// from the returned slice (i.e. only write to the back buffer).
-    pub unsafe fn framebuffer_mut(&self, index: usize) -> &mut [u8] {
-        slice::from_raw_parts_mut(self.framebuffer_ptr(index), self.layout.buffer_byte_len())
+    /// from the returned buffer (i.e. only write to the back buffer).
+    pub unsafe fn framebuffer_mut(&self, index: usize) -> *mut [u8] {
+        core::ptr::slice_from_raw_parts_mut(
+            self.framebuffer_ptr(index),
+            self.layout.buffer_byte_len(),
+        )
     }
 
     pub fn dirty_words_ptr(&self, index: usize) -> Option<*mut u32> {
@@ -442,11 +445,11 @@ impl SharedFramebuffer {
 
     /// # Safety
     /// The caller must ensure no other thread/worker is concurrently reading
-    /// from the returned slice (i.e. only write dirty state for the back buffer).
-    pub unsafe fn dirty_words_mut(&self, index: usize) -> Option<&mut [u32]> {
+    /// from the returned buffer (i.e. only write dirty state for the back buffer).
+    pub unsafe fn dirty_words_mut(&self, index: usize) -> Option<*mut [u32]> {
         let ptr = self.dirty_words_ptr(index)?;
         let len = self.layout.dirty_words_per_buffer as usize;
-        Some(slice::from_raw_parts_mut(ptr, len))
+        Some(core::ptr::slice_from_raw_parts_mut(ptr, len))
     }
 }
 
@@ -477,8 +480,8 @@ impl SharedFramebufferWriter {
         let back = active ^ 1;
 
         // Safety: producer only writes to the back buffer.
-        let back_buffer = unsafe { self.shared.framebuffer_mut(back) };
-        let mut dirty_words = unsafe { self.shared.dirty_words_mut(back) };
+        let back_buffer = unsafe { &mut *self.shared.framebuffer_mut(back) };
+        let mut dirty_words = unsafe { self.shared.dirty_words_mut(back).map(|ptr| &mut *ptr) };
 
         if let Some(words) = dirty_words.as_deref_mut() {
             words.fill(0);

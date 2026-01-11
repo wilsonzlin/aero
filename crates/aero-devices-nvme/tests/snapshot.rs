@@ -201,7 +201,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_prp1(&mut cmd, io_cq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
-    mem.write_physical(asq + 0 * 64, &cmd);
+    mem.write_physical(asq, &cmd);
     ctrl.mmio_write(0x1000, 4, 1, &mut mem); // SQ0 tail = 1
 
     // Create IO SQ (qid=1, size=16, CQID=1).
@@ -227,7 +227,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     set_cdw10(&mut cmd, 0);
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
-    mem.write_physical(io_sq + 0 * 64, &cmd);
+    mem.write_physical(io_sq, &cmd);
     ctrl.mmio_write(0x1008, 4, 1, &mut mem); // SQ1 tail = 1
 
     assert!(ctrl.intx_level);
@@ -294,7 +294,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     set_prp1(&mut cmd, io_cq);
     set_cdw10(&mut cmd, (1u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
-    mem.write_physical(asq + 0 * 64, &cmd);
+    mem.write_physical(asq, &cmd);
     ctrl.mmio_write(0x1000, 4, 1, &mut mem);
 
     // Create IO SQ (qid=1, size=2, CQID=1).
@@ -316,7 +316,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let mut cmd = build_command(0x00);
     set_cid(&mut cmd, 0x10);
     set_nsid(&mut cmd, 1);
-    mem.write_physical(io_sq + 0 * 64, &cmd);
+    mem.write_physical(io_sq, &cmd);
     ctrl.mmio_write(sq_tail_db, 4, 1, &mut mem);
     assert!(ctrl.intx_level);
 
@@ -354,10 +354,10 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let mut cmd = build_command(0x00);
     set_cid(&mut cmd, 0x12);
     set_nsid(&mut cmd, 1);
-    mem2.write_physical(io_sq + 0 * 64, &cmd);
+    mem2.write_physical(io_sq, &cmd);
     restored.mmio_write(sq_tail_db, 4, 1, &mut mem2);
 
-    let cqe = read_cqe(&mut mem2, io_cq + 0 * 16);
+    let cqe = read_cqe(&mut mem2, io_cq);
     assert_eq!(cqe.cid, 0x12);
     assert_eq!(cqe.status & 0x1, 0);
     assert_eq!(cqe.status & !0x1, 0);

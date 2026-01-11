@@ -14,8 +14,8 @@ fn legacy32_minimal_4k_mapping_translation_and_ad_bits() {
 
     // PDE[1] -> PT
     bus.write_u32(cr3 + 1 * 4, (pt_base as u32) | 0x003); // P|RW
-                                                          // PTE[0] -> phys
-    bus.write_u32(pt_base + 0 * 4, (phys_page as u32) | 0x003); // P|RW
+                                                           // PTE[0] -> phys
+    bus.write_u32(pt_base, (phys_page as u32) | 0x003); // P|RW
 
     let mut mmu = new_mmu_legacy32(cr3);
     let paddr = mmu
@@ -24,7 +24,7 @@ fn legacy32_minimal_4k_mapping_translation_and_ad_bits() {
     assert_eq!(paddr, phys_page + (vaddr & 0xFFF));
 
     let pde = bus.read_u32(cr3 + 1 * 4);
-    let pte = bus.read_u32(pt_base + 0 * 4);
+    let pte = bus.read_u32(pt_base);
     assert_ne!(pde & (1 << 5), 0, "PDE.A should be set");
     assert_ne!(pte & (1 << 5), 0, "PTE.A should be set");
     assert_ne!(pte & (1 << 6), 0, "PTE.D should be set on write");
@@ -73,7 +73,7 @@ fn legacy32_protection_fault_on_user_write_to_read_only() {
 
     // User-accessible mapping, read-only (RW=0).
     bus.write_u32(cr3 + 1 * 4, (pt_base as u32) | 0x005); // P|US
-    bus.write_u32(pt_base + 0 * 4, (phys_page as u32) | 0x005); // P|US
+    bus.write_u32(pt_base, (phys_page as u32) | 0x005); // P|US
 
     let mut mmu = new_mmu_legacy32(cr3);
     mmu.cpl = 3;

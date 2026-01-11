@@ -32,8 +32,8 @@ fn setup_long4_4k(
     write_u64(mem, pd_base, pt_base | PTE_P | PTE_RW | PTE_US);
 
     // PTE[0] and PTE[1]
-    write_u64(mem, pt_base + 0 * 8, pte0);
-    write_u64(mem, pt_base + 1 * 8, pte1);
+    write_u64(mem, pt_base, pte0);
+    write_u64(mem, pt_base + 8, pte1);
 }
 
 fn long_state(pml4_base: u64, cpl: u8) -> CpuState {

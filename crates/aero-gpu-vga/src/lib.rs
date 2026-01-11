@@ -632,8 +632,8 @@ impl VgaDevice {
         for row in 0..rows {
             for col in 0..cols {
                 let cell_index = row * cols + col;
-                let ch = self.vram[0 * VGA_PLANE_SIZE + cell_index];
-                let attr = self.vram[1 * VGA_PLANE_SIZE + cell_index];
+                let ch = self.vram[cell_index];
+                let attr = self.vram[VGA_PLANE_SIZE + cell_index];
 
                 let fg = attr & 0x0F;
                 let bg = if blink_enabled {
@@ -1195,10 +1195,10 @@ mod tests {
 
         dev.mem_write_u8(0xA0000, 0xAA);
 
-        assert_eq!(dev.vram[0 * VGA_PLANE_SIZE + 0], 0xFF);
-        assert_eq!(dev.vram[1 * VGA_PLANE_SIZE + 0], 0x00);
-        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE + 0], 0xFF);
-        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE + 0], 0x00);
+        assert_eq!(dev.vram[0], 0xFF);
+        assert_eq!(dev.vram[VGA_PLANE_SIZE], 0x00);
+        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE], 0xFF);
+        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE], 0x00);
     }
 
     #[test]

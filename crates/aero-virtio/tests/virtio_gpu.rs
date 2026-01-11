@@ -150,7 +150,7 @@ fn submit_control(
     write_u16_le(mem, avail + 2, *avail_idx).unwrap();
 
     dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
+        caps.notify,
         &0u16.to_le_bytes(),
         mem,
     );

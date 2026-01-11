@@ -278,7 +278,7 @@ impl<S: AudioSink> VirtioSndDevice<S> {
             return resp;
         }
 
-        if start_id <= PLAYBACK_STREAM_ID && PLAYBACK_STREAM_ID < start_id.saturating_add(count) {
+        if start_id == PLAYBACK_STREAM_ID {
             resp.extend_from_slice(&virtio_snd_pcm_info());
         }
 

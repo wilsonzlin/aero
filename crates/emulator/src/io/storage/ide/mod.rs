@@ -728,7 +728,7 @@ impl IdeController {
                     0x14 => {
                         if self.bar1_probe {
                             // 4-byte I/O BAR.
-                            (!(0x04u32 - 1) & 0xffff_fffc) | 0x01
+                            !(0x04u32 - 1) | 0x01
                         } else {
                             self.bar1
                         }
@@ -744,7 +744,7 @@ impl IdeController {
                     0x1C => {
                         if self.bar3_probe {
                             // 4-byte I/O BAR.
-                            (!(0x04u32 - 1) & 0xffff_fffc) | 0x01
+                            !(0x04u32 - 1) | 0x01
                         } else {
                             self.bar3
                         }

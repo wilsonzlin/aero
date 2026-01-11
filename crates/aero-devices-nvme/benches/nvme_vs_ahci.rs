@@ -192,7 +192,7 @@ fn bench_device_read_4k(c: &mut Criterion) {
         set_cmd_u64(&mut cmd, 24, IO_CQ);
         set_cmd_u32(&mut cmd, 40, (63u32 << 16) | 1); // qsize=64, qid=1
         set_cmd_u32(&mut cmd, 44, 0x3); // PC + IEN
-        write_nvme_cmd(&mut mem, ASQ + 0 * 64, &cmd);
+        write_nvme_cmd(&mut mem, ASQ, &cmd);
         ctrl.mmio_write(0x1000, 4, 1, &mut mem);
 
         // Create IO SQ (qid=1, cqid=1).

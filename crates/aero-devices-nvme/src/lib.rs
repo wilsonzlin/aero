@@ -1528,7 +1528,7 @@ mod tests {
         set_prp1(&mut cmd, io_cq);
         set_cdw10(&mut cmd, (15u32 << 16) | 1);
         set_cdw11(&mut cmd, 0x3);
-        mem.write_physical(asq + 0 * 64, &cmd);
+        mem.write_physical(asq, &cmd);
         ctrl.mmio_write(0x1000, 4, 1, &mut mem);
 
         // Create IO SQ (qid=1, size=16, CQID=1).
@@ -1551,7 +1551,7 @@ mod tests {
         set_cdw10(&mut cmd, 0); // slba low
         set_cdw11(&mut cmd, 0); // slba high
         set_cdw12(&mut cmd, 0); // nlb = 0
-        mem.write_physical(io_sq + 0 * 64, &cmd);
+        mem.write_physical(io_sq, &cmd);
         ctrl.mmio_write(0x1008, 4, 1, &mut mem); // SQ1 tail = 1
 
         let cqe = read_cqe(&mut mem, io_cq);
@@ -1610,7 +1610,7 @@ mod tests {
         set_prp1(&mut cmd, io_cq);
         set_cdw10(&mut cmd, (1u32 << 16) | 1);
         set_cdw11(&mut cmd, 0x3); // PC+IEN
-        mem.write_physical(asq + 0 * 64, &cmd);
+        mem.write_physical(asq, &cmd);
         ctrl.mmio_write(0x1000, 4, 1, &mut mem);
 
         // Create IO SQ (qid=1, size=2, cqid=1).
@@ -1632,11 +1632,11 @@ mod tests {
         let mut cmd = build_command(0x00);
         set_cid(&mut cmd, 0x10);
         set_nsid(&mut cmd, 1);
-        mem.write_physical(io_sq + 0 * 64, &cmd);
+        mem.write_physical(io_sq, &cmd);
         ctrl.mmio_write(sq_tail_db, 4, 1, &mut mem);
         assert!(ctrl.intx_level);
 
-        let cqe = read_cqe(&mut mem, io_cq + 0 * 16);
+        let cqe = read_cqe(&mut mem, io_cq);
         assert_eq!(cqe.cid, 0x10);
         assert_eq!(cqe.status & 0x1, 1);
         assert_eq!(cqe.status & !0x1, 0);
@@ -1664,10 +1664,10 @@ mod tests {
         let mut cmd = build_command(0x00);
         set_cid(&mut cmd, 0x12);
         set_nsid(&mut cmd, 1);
-        mem.write_physical(io_sq + 0 * 64, &cmd);
+        mem.write_physical(io_sq, &cmd);
         ctrl.mmio_write(sq_tail_db, 4, 1, &mut mem);
 
-        let cqe = read_cqe(&mut mem, io_cq + 0 * 16);
+        let cqe = read_cqe(&mut mem, io_cq);
         assert_eq!(cqe.cid, 0x12);
         assert_eq!(cqe.status & 0x1, 0);
         assert_eq!(cqe.status & !0x1, 0);

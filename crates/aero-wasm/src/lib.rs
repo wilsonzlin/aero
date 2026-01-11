@@ -1,5 +1,5 @@
 #![cfg_attr(
-    all(feature = "wasm-threaded", target_arch = "wasm32"),
+    all(target_arch = "wasm32", feature = "wasm-threaded"),
     feature(thread_local)
 )]
 
@@ -87,13 +87,13 @@ use aero_usb::{
 // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
 // by the linker when there is at least one TLS variable. We keep a tiny TLS
 // slot behind a cargo feature enabled only for the threaded build.
-#[cfg(all(feature = "wasm-threaded", target_arch = "wasm32"))]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
 #[thread_local]
 static TLS_DUMMY: u8 = 0;
 
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
-    #[cfg(all(feature = "wasm-threaded", target_arch = "wasm32"))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     {
         // Ensure the TLS dummy is not optimized away.
         let _ = &TLS_DUMMY as *const u8;

@@ -281,7 +281,7 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
 
     dev.bar0_write(
-        caps.notify + 0 * u64::from(caps.notify_mult),
+        caps.notify,
         &0u16.to_le_bytes(),
         &mut mem,
     );

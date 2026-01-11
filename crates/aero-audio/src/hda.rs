@@ -1141,11 +1141,11 @@ impl HdaController {
             return 0;
         }
 
-        if offset >= REG_GCAP && end <= REG_VMAJ + 1 {
+        if end <= REG_VMAJ + 1 {
             let value = (self.gcap as u32)
                 | ((self.vmin as u32) << (((REG_VMIN - REG_GCAP) * 8) as u32))
                 | ((self.vmaj as u32) << (((REG_VMAJ - REG_GCAP) * 8) as u32));
-            return mmio_read_sub_u32(value, offset - REG_GCAP, size);
+            return mmio_read_sub_u32(value, offset, size);
         }
         if offset >= REG_GCTL && end <= REG_GCTL + 4 {
             return mmio_read_sub_u32(self.gctl, offset - REG_GCTL, size);
@@ -2243,12 +2243,12 @@ mod tests {
 
         // Queue one verb: root GET_PARAMETER vendor id.
         let verb = verb_12(0xF00, 0x00);
-        mem.write_u32(corb_base + 0 * 4, cmd(0, 0, verb));
+        mem.write_u32(corb_base, cmd(0, 0, verb));
         hda.mmio_write(REG_CORBWP, 2, 0x0000);
 
         hda.process(&mut mem, 0);
 
-        let resp = mem.read_u32(rirb_base + 0 * 8);
+        let resp = mem.read_u32(rirb_base);
         assert_eq!(resp, 0x1af4_1620);
         assert!(hda.take_irq());
         assert_ne!(hda.mmio_read(REG_INTSTS, 4) as u32 & INTSTS_CIS, 0);

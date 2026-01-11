@@ -92,8 +92,8 @@ fn setup_long4_4k(
     mem.write_u64(pd_base, pt_base | PTE_P | PTE_RW | PTE_US);
 
     // PTE[0] and PTE[1]
-    mem.write_u64(pt_base + 0 * 8, pte0);
-    mem.write_u64(pt_base + 1 * 8, pte1);
+    mem.write_u64(pt_base, pte0);
+    mem.write_u64(pt_base + 8, pte1);
 }
 
 fn long_state(pml4_base: u64, efer_extra: u64, cpl: u8) -> CpuState {

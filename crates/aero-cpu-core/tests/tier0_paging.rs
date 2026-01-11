@@ -102,8 +102,8 @@ fn legacy32_paging_page_fault_sets_error_code_and_cr2() {
     const PTE_US: u32 = 1 << 2;
     let flags = PTE_P | PTE_RW | PTE_US;
 
-    phys.write_u32_raw(pd_base + 0 * 4, (pt_base as u32) | flags);
-    phys.write_u32_raw(pt_base + 0 * 4, (code_page as u32) | flags);
+    phys.write_u32_raw(pd_base, (pt_base as u32) | flags);
+    phys.write_u32_raw(pt_base, (code_page as u32) | flags);
 
     // mov eax, dword ptr [0x00001000]
     let code = [0xA1, 0x00, 0x10, 0x00, 0x00];

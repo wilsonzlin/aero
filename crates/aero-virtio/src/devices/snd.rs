@@ -283,7 +283,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         }
 
         let end = start_id.saturating_add(count);
-        if start_id <= PLAYBACK_STREAM_ID && PLAYBACK_STREAM_ID < end {
+        if start_id == PLAYBACK_STREAM_ID && PLAYBACK_STREAM_ID < end {
             resp.extend_from_slice(&virtio_snd_pcm_info(
                 PLAYBACK_STREAM_ID,
                 VIRTIO_SND_D_OUTPUT,

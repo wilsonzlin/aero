@@ -16,13 +16,13 @@ fn long_mode_minimal_4k_mapping_translation_and_ad_bits() {
     let vaddr = 0x0000_0000_0040_0123u64;
 
     // PML4E[0] -> PDPT
-    bus.write_u64(cr3 + 0 * 8, pdpt_base | 0x003);
+    bus.write_u64(cr3, pdpt_base | 0x003);
     // PDPTE[0] -> PD
-    bus.write_u64(pdpt_base + 0 * 8, pd_base | 0x003);
+    bus.write_u64(pdpt_base, pd_base | 0x003);
     // PDE[2] -> PT
     bus.write_u64(pd_base + 2 * 8, pt_base | 0x003);
     // PTE[0] -> phys
-    bus.write_u64(pt_base + 0 * 8, phys_page | 0x003);
+    bus.write_u64(pt_base, phys_page | 0x003);
 
     let mut mmu = new_mmu_long(cr3, true);
     let paddr = mmu
@@ -49,7 +49,7 @@ fn long_mode_large_pages_2mb_and_1gb() {
     let pd_base = 0x3000;
 
     // Shared PML4E[0]
-    bus.write_u64(cr3 + 0 * 8, pdpt_base | 0x003);
+    bus.write_u64(cr3, pdpt_base | 0x003);
 
     // 1GB page via PDPTE[1]
     let phys_1g = 0x4000_0000u64; // 1GB aligned
@@ -59,8 +59,8 @@ fn long_mode_large_pages_2mb_and_1gb() {
     // 2MB page via PDE[0] under PDPTE[0]
     let phys_2m = 0x0080_0000u64; // 2MB aligned
     let vaddr_2m = 0x0000_0000_0000_5678u64;
-    bus.write_u64(pdpt_base + 0 * 8, pd_base | 0x003);
-    bus.write_u64(pd_base + 0 * 8, phys_2m | 0x083);
+    bus.write_u64(pdpt_base, pd_base | 0x003);
+    bus.write_u64(pd_base, phys_2m | 0x083);
 
     let mut mmu = new_mmu_long(cr3, true);
     let paddr_1g = mmu

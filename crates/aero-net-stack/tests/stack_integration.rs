@@ -10,6 +10,37 @@ fn dhcp_dns_tcp_flow() {
     // --- DHCP handshake ---
     dhcp_handshake(&mut stack, guest_mac);
 
+    // --- ARP for gateway ---
+    let arp_req = ArpPacketBuilder {
+        opcode: ARP_OP_REQUEST,
+        sender_mac: guest_mac,
+        sender_ip: stack.config().guest_ip,
+        target_mac: MacAddr([0u8; 6]),
+        target_ip: stack.config().gateway_ip,
+    }
+    .build_vec()
+    .expect("build ARP request");
+    let frame = EthernetFrameBuilder {
+        dest_mac: MacAddr::BROADCAST,
+        src_mac: guest_mac,
+        ethertype: EtherType::ARP,
+        payload: &arp_req,
+    }
+    .build_vec()
+    .expect("build Ethernet frame");
+    let actions = stack.process_outbound_ethernet(&frame, 1);
+    let arp_resp_frame = extract_single_frame(&actions);
+    let eth = EthernetFrame::parse(&arp_resp_frame).unwrap();
+    assert_eq!(eth.ethertype(), EtherType::ARP);
+    assert_eq!(eth.src_mac(), stack.config().our_mac);
+    assert_eq!(eth.dest_mac(), guest_mac);
+    let arp = ArpPacket::parse(eth.payload()).unwrap();
+    assert_eq!(arp.opcode(), ARP_OP_REPLY);
+    assert_eq!(arp.sender_mac().unwrap(), stack.config().our_mac);
+    assert_eq!(arp.sender_ip().unwrap(), stack.config().gateway_ip);
+    assert_eq!(arp.target_mac().unwrap(), guest_mac);
+    assert_eq!(arp.target_ip().unwrap(), stack.config().guest_ip);
+
     // Networking is default-deny until enabled.
     let syn_denied = wrap_tcp_ipv4_eth(
         guest_mac,

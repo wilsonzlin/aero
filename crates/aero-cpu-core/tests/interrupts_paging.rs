@@ -380,7 +380,7 @@ fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -
 
     // Top-level PDE permits user access; leaf PTE controls U/S.
     phys.write_u32(
-        pd_base + 0 * 4,
+        pd_base,
         (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
     );
 
