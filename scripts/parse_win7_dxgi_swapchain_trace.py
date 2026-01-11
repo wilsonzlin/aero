@@ -50,6 +50,8 @@ class CreateResourceDesc:
     alloc_info: str = ""
     primary_desc: str = ""
     created_kind: str = ""
+    created_width: int = 0
+    created_height: int = 0
     created_row_pitch: int = 0
     created_size: int = 0
     raw_line: str = ""
@@ -97,12 +99,14 @@ def _align_up(v: int, align: int) -> int:
 
 def _expected_alloc_size(d: CreateResourceDesc) -> Optional[int]:
     if d.created_kind == "tex2d":
-        if d.created_row_pitch and d.height:
-            return d.created_row_pitch * d.height
+        height = d.height or d.created_height
+        width = d.width or d.created_width
+        if d.created_row_pitch and height:
+            return d.created_row_pitch * height
         bpp = _bytes_per_pixel_dxgi(d.fmt)
-        if bpp and d.width and d.height:
-            row_pitch = _align_up(d.width * bpp, 256)
-            return row_pitch * d.height
+        if bpp and width and height:
+            row_pitch = _align_up(width * bpp, 256)
+            return row_pitch * height
         return None
     if d.created_kind == "buffer":
         if d.created_size:
@@ -377,6 +381,8 @@ def main(argv: List[str]) -> int:
             handle = int(m.group(1), 10)
             desc = pending or CreateResourceDesc()
             desc.created_kind = "tex2d"
+            desc.created_width = int(m.group(2), 10)
+            desc.created_height = int(m.group(3), 10)
             desc.created_row_pitch = int(m.group(4), 10)
             resources[handle] = desc
             pending = None
