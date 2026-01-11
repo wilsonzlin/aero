@@ -10765,9 +10765,11 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
     return trace.ret(S_OK);
   }
 
-  // D3D9Ex EVENT queries are polled by DWM using GetData(DONOTFLUSH). Issue(END)
-  // must therefore not force a submission: the query should remain "not ready"
-  // until an explicit flush/submission boundary occurs (Flush/Present/etc).
+  // D3D9Ex EVENT queries are polled by DWM using GetData(DONOTFLUSH). To keep
+  // those polls non-blocking, we submit any recorded work here (so the query
+  // latches a real per-submit fence value), but we intentionally do *not* make
+  // the query visible to GetData(DONOTFLUSH) until a later explicit
+  // flush/submission boundary (Flush/Present/GetData(FLUSH)).
   //
   const bool had_pending_cmds = !dev->cmd.empty();
   dev->pending_event_queries.erase(std::remove(dev->pending_event_queries.begin(),
@@ -10784,17 +10786,7 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
     return trace.ret(S_OK);
   }
 
-  uint64_t issue_fence = 0;
-  if (dev->wddm_context.hContext == 0) {
-    // Portable bring-up path: submit immediately so the query can latch a fence
-    // value, but keep it "unsubmitted" until a later flush boundary arms it.
-    issue_fence = submit(dev);
-  } else {
-    // Real WDDM path: do not flush the command buffer as a side effect of
-    // IssueQuery(END). Keep the query pending until the next explicit
-    // submission boundary (Flush/Present/etc) stamps it with a fence value.
-    issue_fence = 0;
-  }
+  const uint64_t issue_fence = submit(dev);
 
   q->fence_value.store(issue_fence, std::memory_order_release);
   q->submitted.store(false, std::memory_order_relaxed);
