@@ -99,6 +99,9 @@ export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStat
               events.removeEventListener(name, listener);
               reject(new Error(`Timed out waiting for aero event ${JSON.stringify(name)}`));
             }, timeoutMs);
+      if (timeoutId !== undefined) {
+        (timeoutId as unknown as { unref?: () => void }).unref?.();
+      }
     });
   }
 

@@ -116,6 +116,7 @@ async function runWebUsbProbeWorker(msg: unknown, timeoutMs = 10_000): Promise<u
       worker.terminate();
       reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
     }, timeoutMs);
+    (timeout as unknown as { unref?: () => void }).unref?.();
 
     const cleanup = () => {
       window.clearTimeout(timeout);

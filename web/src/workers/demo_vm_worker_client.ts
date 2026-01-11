@@ -163,6 +163,7 @@ export class DemoVmWorkerClient {
           this.#pending.delete(id);
           reject(new Error(`Timed out waiting for demo VM worker RPC (${req.type}) (${timeoutMs}ms).`));
         }, timeoutMs);
+        (timeout as unknown as { unref?: () => void }).unref?.();
       }
       try {
         activeWorker.postMessage(req);

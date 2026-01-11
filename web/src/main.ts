@@ -546,7 +546,8 @@ function downloadFile(file: Blob, filename: string): void {
   a.download = filename;
   a.click();
   // Safari can cancel the download if the object URL is revoked synchronously.
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const timer = window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  (timer as unknown as { unref?: () => void }).unref?.();
 }
 
 function renderMachinePanel(): HTMLElement {
@@ -2333,6 +2334,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for HDA demo worker init (${timeoutMs}ms).`));
         }, timeoutMs);
+        (timer as unknown as { unref?: () => void }).unref?.();
 
         const cleanup = () => {
           window.clearTimeout(timer);

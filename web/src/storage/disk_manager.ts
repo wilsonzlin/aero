@@ -437,7 +437,8 @@ export class DiskManager {
         a.download = fileName;
         a.rel = "noopener";
         a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        const timer = setTimeout(() => URL.revokeObjectURL(url), 1000);
+        (timer as unknown as { unref?: () => void }).unref?.();
       }
     } catch (err) {
       try {

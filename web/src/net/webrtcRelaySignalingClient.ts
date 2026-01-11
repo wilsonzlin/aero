@@ -61,6 +61,7 @@ const isAbortError = (err: unknown): boolean => err instanceof Error && err.name
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } finally {
@@ -156,6 +157,7 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
       pc.removeEventListener("icegatheringstatechange", onChange);
       resolve();
     }, DEFAULT_ICE_GATHER_TIMEOUT_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
 
     pc.addEventListener("icegatheringstatechange", onChange);
   });
@@ -209,6 +211,7 @@ function waitForDataChannelOpen(dc: RTCDataChannel): Promise<void> {
       cleanup();
       reject(new Error("data channel open timed out"));
     }, DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
   });
 }
 
@@ -332,6 +335,7 @@ async function openWebSocket(url: string, protocol?: string): Promise<WebSocket>
       }
       settle(new Error("websocket connect timed out"));
     }, DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
 
     const onOpen = () => {
       clearTimeout(timer);
@@ -475,6 +479,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     answerTimer = setTimeout(() => {
       settleAnswer(new Error("signaling answer timed out"));
     }, DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS);
+    (answerTimer as unknown as { unref?: () => void }).unref?.();
 
     const onMessage = async (evt: MessageEvent) => {
       if (currentAttempt !== attemptId) return;
@@ -635,6 +640,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     answerTimer = setTimeout(() => {
       settleAnswer(new Error("signaling answer timed out"));
     }, DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS);
+    (answerTimer as unknown as { unref?: () => void }).unref?.();
 
     const onMessage = async (evt: MessageEvent) => {
       if (currentAttempt !== attemptId) return;
