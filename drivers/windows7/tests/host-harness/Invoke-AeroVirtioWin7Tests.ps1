@@ -796,8 +796,7 @@ try {
             Remove-Item -LiteralPath $VirtioSndWavPath -Force
           }
 
-          # Quote the path so Start-Process (PowerShell 5.1) doesn't split it on spaces.
-          $audiodev = 'wav,id=snd0,path="' + $VirtioSndWavPath + '"'
+          $audiodev = "wav,id=snd0,path=$(Quote-AeroWin7QemuKeyvalValue $VirtioSndWavPath)"
         }
         default {
           throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
@@ -862,8 +861,7 @@ try {
             Remove-Item -LiteralPath $VirtioSndWavPath -Force
           }
 
-          # Quote the path so Start-Process (PowerShell 5.1) doesn't split it on spaces.
-          $audiodev = 'wav,id=snd0,path="' + $VirtioSndWavPath + '"'
+          $audiodev = "wav,id=snd0,path=$(Quote-AeroWin7QemuKeyvalValue $VirtioSndWavPath)"
         }
         default {
           throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
