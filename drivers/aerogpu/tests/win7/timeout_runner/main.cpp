@@ -260,7 +260,7 @@ int main(int argc, char** argv) {
                            &cmdline_buf[0],
                            NULL,
                            NULL,
-                           TRUE,
+                           FALSE,
                            0,
                            NULL,
                            NULL,
