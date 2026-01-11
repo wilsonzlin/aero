@@ -78,6 +78,81 @@ async function readJson(file: string): Promise<any> {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
 
+function mdInlineCode(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  const raw =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : JSON.stringify(value);
+  return `\`${raw.replaceAll("`", "\\`").replaceAll("|", "\\|")}\``;
+}
+
+function injectContextIntoMarkdown(params: { markdown: string; baseline: any; candidate: any }): string {
+  const mdRaw = params.markdown;
+  if (mdRaw.includes("\n## Context\n") || mdRaw.startsWith("## Context\n")) return mdRaw;
+
+  const baselineMeta = params.baseline?.meta ?? params.baseline?.summary?.meta ?? null;
+  const candidateMeta = params.candidate?.meta ?? params.candidate?.summary?.meta ?? null;
+  const baselineEnv = params.baseline?.environment ?? null;
+  const candidateEnv = params.candidate?.environment ?? null;
+
+  const rows: Array<[string, unknown, unknown]> = [
+    ["schemaVersion", params.baseline?.schemaVersion, params.candidate?.schemaVersion],
+    ["meta.iterations", baselineMeta?.iterations, candidateMeta?.iterations],
+    ["meta.nodeVersion", baselineMeta?.nodeVersion, candidateMeta?.nodeVersion],
+    ["environment.webgpu", baselineEnv?.webgpu, candidateEnv?.webgpu],
+    ["environment.webgl2", baselineEnv?.webgl2, candidateEnv?.webgl2],
+    ["environment.userAgent", baselineEnv?.userAgent, candidateEnv?.userAgent],
+  ];
+
+  const baseScenarios = params.baseline?.summary?.scenarios ?? params.baseline?.scenarios ?? {};
+  const candScenarios = params.candidate?.summary?.scenarios ?? params.candidate?.scenarios ?? {};
+  const scenarioIds = new Set([...Object.keys(baseScenarios), ...Object.keys(candScenarios)]);
+
+  const contextLines: string[] = [];
+  contextLines.push("## Context");
+  contextLines.push("");
+  contextLines.push("| Field | Baseline | Candidate |");
+  contextLines.push("| --- | --- | --- |");
+  for (const [field, b, c] of rows) {
+    contextLines.push(`| ${field} | ${mdInlineCode(b)} | ${mdInlineCode(c)} |`);
+  }
+  contextLines.push("");
+
+  if (scenarioIds.size > 0) {
+    contextLines.push("### Scenario status");
+    contextLines.push("");
+    contextLines.push("| Scenario | Baseline | Candidate |");
+    contextLines.push("| --- | --- | --- |");
+
+    for (const id of Array.from(scenarioIds).sort()) {
+      const b = baseScenarios?.[id];
+      const c = candScenarios?.[id];
+      const label = (c?.name ?? b?.name ?? id).replaceAll("|", "\\|");
+
+      const bStatus = b?.status ?? "missing";
+      const cStatus = c?.status ?? "missing";
+      const bApi = b?.api ?? null;
+      const cApi = c?.api ?? null;
+
+      const bCell = `${bStatus}${bApi ? ` (${bApi})` : ""}`;
+      const cCell = `${cStatus}${cApi ? ` (${cApi})` : ""}`;
+      contextLines.push(`| ${label} | ${mdInlineCode(bCell)} | ${mdInlineCode(cCell)} |`);
+    }
+
+    contextLines.push("");
+  }
+
+  const mdLines = mdRaw.split(/\r?\n/u);
+  const summaryIdx = mdLines.findIndex((line) => line.trim() === "## Summary");
+  if (summaryIdx === -1) return mdRaw;
+
+  mdLines.splice(summaryIdx, 0, ...contextLines);
+  return `${mdLines.join("\n")}\n`;
+}
+
 function unitForMetric(metric: string): string {
   if (metric.endsWith("MsMean") || metric.endsWith("MsP95") || metric.endsWith("MsP50")) return "ms";
   if (metric === "textureUploadMBpsAvg") return "MB/s";
@@ -359,7 +434,11 @@ async function main() {
     overrideExtremeCv,
   });
 
-  const markdown = renderCompareMarkdown(result, { title: "GPU perf comparison" });
+  const markdown = injectContextIntoMarkdown({
+    markdown: renderCompareMarkdown(result, { title: "GPU perf comparison" }),
+    baseline,
+    candidate,
+  });
   await Promise.all([
     fs.writeFile(path.join(outDir, "compare.md"), markdown),
     fs.writeFile(path.join(outDir, "summary.json"), JSON.stringify(result, null, 2)),
