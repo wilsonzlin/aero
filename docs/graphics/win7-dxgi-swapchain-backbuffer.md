@@ -133,6 +133,19 @@ python scripts/parse_win7_dxgi_swapchain_trace.py --createalloc=createalloc.txt 
 python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
 ```
 
+If the CreateAllocation ring buffer contains a lot of unrelated noise (e.g. DWM allocations), you can take a baseline dump before
+running the probe and then filter to only the newly-written entries:
+
+```cmd
+aerogpu_dbgctl --dump-createalloc > createalloc_before.txt
+bin\dxgi_swapchain_probe.exe ...
+aerogpu_dbgctl --dump-createalloc > createalloc_after.txt
+```
+
+```bash
+python scripts/parse_win7_dxgi_swapchain_trace.py --createalloc-before=createalloc_before.txt --createalloc-after=createalloc_after.txt aerogpu_d3d10_11_umd.log
+```
+
 To decode `flags_in`/`flags_out` and `create_flags` into named bitfields, build and run the Win7 WDK ABI probe
 (`drivers/aerogpu/kmd/tools/wdk_abi_probe`) and pass its output to the parser:
 

@@ -431,6 +431,16 @@ def main(argv: List[str]) -> int:
         help="Optional path to `aerogpu_dbgctl --dump-createalloc` output for correlating backbuffers to CreateAllocation flags.",
     )
     ap.add_argument(
+        "--createalloc-before",
+        dest="createalloc_before_path",
+        help="Optional path to a baseline `--dump-createalloc` capture (used with --createalloc-after to filter to new entries).",
+    )
+    ap.add_argument(
+        "--createalloc-after",
+        dest="createalloc_after_path",
+        help="Optional path to a post-run `--dump-createalloc` capture (used with --createalloc-before to filter to new entries).",
+    )
+    ap.add_argument(
         "--wdk-abi",
         dest="wdk_abi_path",
         help="Optional path to `kmd_wdk_abi_probe.exe` output for decoding CreateAllocation flags into named bits.",
@@ -451,7 +461,17 @@ def main(argv: List[str]) -> int:
         lines = list(iter_trace_lines(sys.stdin))
 
     createalloc: Optional[CreateAllocationTrace] = None
-    if args.createalloc_path:
+    createalloc_filtered_since: Optional[int] = None
+    if args.createalloc_after_path:
+        with open(args.createalloc_after_path, "r", encoding="utf-8", errors="replace") as f:
+            createalloc = parse_createalloc_dump(f)
+        if args.createalloc_before_path and createalloc is not None:
+            with open(args.createalloc_before_path, "r", encoding="utf-8", errors="replace") as f:
+                before = parse_createalloc_dump(f)
+            if before is not None:
+                createalloc_filtered_since = before.write_index
+                createalloc.entries = [e for e in createalloc.entries if e.seq >= before.write_index]
+    elif args.createalloc_path:
         with open(args.createalloc_path, "r", encoding="utf-8", errors="replace") as f:
             createalloc = parse_createalloc_dump(f)
 
@@ -557,6 +577,8 @@ def main(argv: List[str]) -> int:
         "resources_by_handle": {str(k): asdict(v) for (k, v) in resources.items()},
         "present_events": [{"api": api, "sync": sync, "src_handle": src} for (api, sync, src) in presents],
     }
+    if createalloc_filtered_since is not None:
+        output["createalloc_filtered_since_write_index"] = createalloc_filtered_since
     if wdk_masks is not None:
         output["wdk_abi_flag_masks"] = {
             "allocationinfo": wdk_masks.allocationinfo,
