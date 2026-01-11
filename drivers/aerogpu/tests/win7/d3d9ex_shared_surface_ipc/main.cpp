@@ -1,15 +1,47 @@
 #include "..\\common\\aerogpu_test_common.h"
 
 #include <d3d9.h>
-#include <winternl.h>
 
 using aerogpu_test::ComPtr;
 
-typedef NTSTATUS(WINAPI* NtQueryInformationProcessFn)(HANDLE ProcessHandle,
-                                                      PROCESSINFOCLASS ProcessInformationClass,
-                                                      PVOID ProcessInformation,
-                                                      ULONG ProcessInformationLength,
-                                                      PULONG ReturnLength);
+// Minimal NT structures needed to patch a suspended child process command line in-place.
+// Keep this self-contained (avoid winternl.h) so the test builds cleanly with the VS2010 + Win7 SDK
+// toolchain.
+typedef struct _AEROGPU_UNICODE_STRING {
+  USHORT Length;
+  USHORT MaximumLength;
+  PWSTR Buffer;
+} AEROGPU_UNICODE_STRING;
+
+typedef struct _AEROGPU_RTL_USER_PROCESS_PARAMETERS {
+  BYTE Reserved1[16];
+  PVOID Reserved2[10];
+  AEROGPU_UNICODE_STRING ImagePathName;
+  AEROGPU_UNICODE_STRING CommandLine;
+} AEROGPU_RTL_USER_PROCESS_PARAMETERS;
+
+typedef struct _AEROGPU_PEB {
+  BYTE Reserved1[2];
+  BYTE BeingDebugged;
+  BYTE Reserved2[1];
+  PVOID Reserved3[2];
+  PVOID Ldr;
+  AEROGPU_RTL_USER_PROCESS_PARAMETERS* ProcessParameters;
+} AEROGPU_PEB;
+
+typedef struct _AEROGPU_PROCESS_BASIC_INFORMATION {
+  PVOID Reserved1;
+  AEROGPU_PEB* PebBaseAddress;
+  PVOID Reserved2[2];
+  ULONG_PTR UniqueProcessId;
+  PVOID Reserved3;
+} AEROGPU_PROCESS_BASIC_INFORMATION;
+
+typedef LONG(WINAPI* NtQueryInformationProcessFn)(HANDLE /*ProcessHandle*/,
+                                                  DWORD /*ProcessInformationClass*/,
+                                                  PVOID /*ProcessInformation*/,
+                                                  DWORD /*ProcessInformationLength*/,
+                                                  DWORD* /*ReturnLength*/);
 
 static bool FormatHandleHex16(HANDLE h, wchar_t out_digits[17]) {
   if (!out_digits) {
@@ -35,8 +67,11 @@ static bool PatchRemoteCommandLineSharedHandle(HANDLE child_process,
 
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   if (!ntdll) {
+    ntdll = LoadLibraryW(L"ntdll.dll");
+  }
+  if (!ntdll) {
     if (err) {
-      *err = "GetModuleHandleW(ntdll.dll) failed";
+      *err = "LoadLibraryW(ntdll.dll) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     }
     return false;
   }
@@ -49,36 +84,35 @@ static bool PatchRemoteCommandLineSharedHandle(HANDLE child_process,
     return false;
   }
 
-  PROCESS_BASIC_INFORMATION pbi;
+  AEROGPU_PROCESS_BASIC_INFORMATION pbi;
   ZeroMemory(&pbi, sizeof(pbi));
-  ULONG ret_len = 0;
-  NTSTATUS status = NtQueryInformationProcess(child_process,
-                                              ProcessBasicInformation,
-                                              &pbi,
-                                              sizeof(pbi),
-                                              &ret_len);
-  if (status != 0) {
+  DWORD ret_len = 0;
+  LONG status = NtQueryInformationProcess(child_process,
+                                          0 /*ProcessBasicInformation*/,
+                                          &pbi,
+                                          sizeof(pbi),
+                                          &ret_len);
+  if (status != 0 || !pbi.PebBaseAddress) {
     if (err) {
       char buf[64];
-      _snprintf(buf, sizeof(buf), "NtQueryInformationProcess failed: 0x%08lX",
-                (unsigned long)status);
+      _snprintf(buf, sizeof(buf), "NtQueryInformationProcess failed: 0x%08lX", (unsigned long)status);
       *err = buf;
     }
     return false;
   }
 
-  PEB peb;
+  AEROGPU_PEB peb;
   ZeroMemory(&peb, sizeof(peb));
   SIZE_T bytes = 0;
   if (!ReadProcessMemory(child_process, pbi.PebBaseAddress, &peb, sizeof(peb), &bytes) ||
-      bytes != sizeof(peb)) {
+      bytes != sizeof(peb) || !peb.ProcessParameters) {
     if (err) {
       *err = "ReadProcessMemory(PEB) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     }
     return false;
   }
 
-  RTL_USER_PROCESS_PARAMETERS params;
+  AEROGPU_RTL_USER_PROCESS_PARAMETERS params;
   ZeroMemory(&params, sizeof(params));
   bytes = 0;
   if (!ReadProcessMemory(child_process,
@@ -86,7 +120,7 @@ static bool PatchRemoteCommandLineSharedHandle(HANDLE child_process,
                          &params,
                          sizeof(params),
                          &bytes) ||
-      bytes != sizeof(params)) {
+      bytes != sizeof(params) || !params.CommandLine.Buffer || params.CommandLine.Length == 0) {
     if (err) {
       *err = "ReadProcessMemory(ProcessParameters) failed: " +
              aerogpu_test::Win32ErrorToString(GetLastError());
@@ -94,28 +128,25 @@ static bool PatchRemoteCommandLineSharedHandle(HANDLE child_process,
     return false;
   }
 
-  UNICODE_STRING cmd = params.CommandLine;
-  if (!cmd.Buffer || cmd.Length == 0) {
-    if (err) {
-      *err = "Child command line buffer missing";
-    }
-    return false;
-  }
-  if (cmd.Length % sizeof(wchar_t) != 0) {
+  if (params.CommandLine.Length % sizeof(wchar_t) != 0) {
     if (err) {
       *err = "Child command line length is not wchar_t aligned";
     }
     return false;
   }
 
-  const size_t cmd_chars = (size_t)(cmd.Length / sizeof(wchar_t));
+  const size_t cmd_chars = (size_t)(params.CommandLine.Length / sizeof(wchar_t));
   std::vector<wchar_t> cmd_buf(cmd_chars + 1, 0);
   bytes = 0;
-  if (!ReadProcessMemory(child_process, cmd.Buffer, &cmd_buf[0], cmd.Length, &bytes) ||
-      bytes != cmd.Length) {
+  if (!ReadProcessMemory(child_process,
+                         params.CommandLine.Buffer,
+                         &cmd_buf[0],
+                         params.CommandLine.Length,
+                         &bytes) ||
+      bytes != params.CommandLine.Length) {
     if (err) {
-      *err =
-          "ReadProcessMemory(CommandLine) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+      *err = "ReadProcessMemory(CommandLine) failed: " +
+             aerogpu_test::Win32ErrorToString(GetLastError());
     }
     return false;
   }
@@ -149,8 +180,7 @@ static bool PatchRemoteCommandLineSharedHandle(HANDLE child_process,
 
   // Patch only the digits in-place. This avoids changing UNICODE_STRING length fields.
   SIZE_T written = 0;
-  LPVOID remote_dst =
-      (LPVOID)((uintptr_t)cmd.Buffer + digits_pos * sizeof(wchar_t));  // NOLINT
+  LPVOID remote_dst = (LPVOID)(params.CommandLine.Buffer + digits_pos);  // NOLINT
   if (!WriteProcessMemory(child_process,
                           remote_dst,
                           digits,
@@ -386,7 +416,7 @@ static int RunProducer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_ipc";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "Usage: %s.exe [--show] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
         "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
@@ -395,7 +425,7 @@ static int RunProducer(int argc, char** argv) {
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
-  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  const bool show = aerogpu_test::HasArg(argc, argv, "--show");
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -422,7 +452,7 @@ static int RunProducer(int argc, char** argv) {
                                               L"AeroGPU D3D9Ex Shared Surface IPC (Producer)",
                                               64,
                                               64,
-                                              !hidden);
+                                              show);
   if (!hwnd) {
     return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
   }
@@ -486,9 +516,12 @@ static int RunProducer(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "BeginScene", hr);
   }
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, clear_color, 1.0f, 0);
-  dev->EndScene();
+  HRESULT hr_end = dev->EndScene();
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "Clear(shared)", hr);
+  }
+  if (FAILED(hr_end)) {
+    return aerogpu_test::FailHresult(kTestName, "EndScene", hr_end);
   }
 
   // Ensure the clear has completed before the consumer opens/reads the surface.
@@ -562,6 +595,26 @@ static int RunProducer(int argc, char** argv) {
                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
+  HANDLE job = CreateJobObjectW(NULL, NULL);
+  if (job) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+    ZeroMemory(&info, sizeof(info));
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info))) {
+      aerogpu_test::PrintfStdout("INFO: %s: SetInformationJobObject(KILL_ON_JOB_CLOSE) failed: %s",
+                                 kTestName,
+                                 aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      CloseHandle(job);
+      job = NULL;
+    } else if (!AssignProcessToJobObject(job, pi.hProcess)) {
+      aerogpu_test::PrintfStdout("INFO: %s: AssignProcessToJobObject failed: %s",
+                                 kTestName,
+                                 aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      CloseHandle(job);
+      job = NULL;
+    }
+  }
+
   // Duplicate the shared handle into the consumer process. The numeric value must differ across
   // processes; otherwise a buggy driver could accidentally use the raw handle value as a stable key.
   HANDLE shared_in_child = NULL;
@@ -577,6 +630,9 @@ static int RunProducer(int argc, char** argv) {
     TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (job) {
+      CloseHandle(job);
+    }
     return aerogpu_test::Fail(kTestName,
                               "DuplicateHandle failed: %s",
                               aerogpu_test::Win32ErrorToString(werr).c_str());
@@ -600,6 +656,9 @@ static int RunProducer(int argc, char** argv) {
     TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (job) {
+      CloseHandle(job);
+    }
     return aerogpu_test::Fail(kTestName,
                               "refusing to run: shared handle value is numerically identical across processes");
   }
@@ -609,6 +668,9 @@ static int RunProducer(int argc, char** argv) {
     TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (job) {
+      CloseHandle(job);
+    }
     return aerogpu_test::Fail(kTestName, "failed to patch consumer command line: %s", patch_err.c_str());
   }
 
@@ -620,6 +682,9 @@ static int RunProducer(int argc, char** argv) {
     WaitForSingleObject(pi.hProcess, 2000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (job) {
+      CloseHandle(job);
+    }
     return aerogpu_test::Fail(kTestName, "consumer timed out");
   }
 
@@ -630,6 +695,9 @@ static int RunProducer(int argc, char** argv) {
 
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
+  if (job) {
+    CloseHandle(job);
+  }
   CloseHandle(shared);
 
   if (exit_code != 0) {
