@@ -325,8 +325,10 @@ Mapping:
 - **Bulk OUT TD** → `UsbHostAction::BulkOut { ep, data }` → `USBDevice.transferOut(ep & 0x0f, ...)`
 - **Bulk IN TD** → `UsbHostAction::BulkIn { ep, len }` → `USBDevice.transferIn(ep & 0x0f, ...)`
 
-(`ep` here is the USB endpoint *address* as seen by UHCI: bit 7 is direction and bits 0–3 are the
-endpoint number. WebUSB takes the endpoint number separately.)
+(`ep` is passed through from the UHCI stack. For IN transfers it is typically an endpoint address
+with the direction bit set (`0x80 | ep_num`), while for OUT transfers it is typically just the
+endpoint number. In either case, the host side should use `ep & 0x0f` as the WebUSB
+`endpointNumber`, and use the action kind to determine direction.)
 
 Pending behavior:
 
