@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use aero_gpu::guest_memory::GuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
@@ -83,10 +84,6 @@ impl DirtyRange {
             .checked_add(self.size_bytes)
             .ok_or_else(|| anyhow!("byte range overflows u64"))
     }
-}
-
-pub trait GuestMemory {
-    fn read(&self, guest_phys_addr: u64, dst: &mut [u8]) -> Result<()>;
 }
 
 pub struct AerogpuResourceManager {

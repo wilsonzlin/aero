@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use aero_gpu::guest_memory::{GuestMemory, GuestMemoryError};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
 use aero_gpu::GpuCapabilities;
-use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,

@@ -20,7 +20,7 @@ mod context;
 mod dirty_rect;
 mod error;
 mod error_event;
-mod guest_memory;
+pub mod guest_memory;
 mod present;
 mod shared_surface;
 #[cfg(feature = "diff-engine")]
