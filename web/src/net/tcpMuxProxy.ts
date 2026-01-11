@@ -31,6 +31,18 @@ export const TcpMuxCloseFlags = {
 // Close flags are a bitmask (FIN | RST), so keep the type permissive.
 export type TcpMuxCloseFlags = number;
 
+// Matches `backend/aero-gateway/src/protocol/tcpMux.ts`.
+export const TcpMuxErrorCode = {
+  POLICY_DENIED: 1,
+  DIAL_FAILED: 2,
+  PROTOCOL_ERROR: 3,
+  UNKNOWN_STREAM: 4,
+  STREAM_LIMIT_EXCEEDED: 5,
+  STREAM_BUFFER_OVERFLOW: 6,
+} as const;
+
+export type TcpMuxErrorCode = (typeof TcpMuxErrorCode)[keyof typeof TcpMuxErrorCode];
+
 export type TcpMuxFrame = Readonly<{
   msgType: TcpMuxMsgType;
   streamId: number;
