@@ -270,15 +270,40 @@ export class WebUsbBackend {
       this.claimedConfigurationValue = configuration.configurationValue;
     }
 
+    // Chromium blocks "protected" interface classes (HID, Mass Storage, etc.).
+    // Some composite devices still appear in the chooser because they have at
+    // least one non-protected interface, but attempting to claim the protected
+    // interfaces will fail.
+    //
+    // For the passthrough backend, we try to claim as many interfaces as we can,
+    // but do not fail the whole device if some interfaces cannot be claimed.
+    // Instead, we only throw if *none* of the interfaces can be claimed.
+    let claimedAny = false;
+    let firstClaimErr: unknown = null;
     for (const iface of configuration.interfaces) {
       const ifaceNum = iface.interfaceNumber;
-      if (this.claimedInterfaces.has(ifaceNum)) continue;
+      if (this.claimedInterfaces.has(ifaceNum)) {
+        claimedAny = true;
+        continue;
+      }
+      if (iface.claimed) {
+        this.claimedInterfaces.add(ifaceNum);
+        claimedAny = true;
+        continue;
+      }
       try {
         await this.device.claimInterface(ifaceNum);
       } catch (err) {
-        throw new Error(`Failed to claim USB interface ${ifaceNum}: ${formatThrownError(err)}`);
+        firstClaimErr ??= err;
+        console.warn(`Failed to claim USB interface ${ifaceNum}: ${formatThrownError(err)}`);
+        continue;
       }
       this.claimedInterfaces.add(ifaceNum);
+      claimedAny = true;
+    }
+
+    if (!claimedAny && firstClaimErr) {
+      throw new Error(`Failed to claim any USB interface: ${formatThrownError(firstClaimErr)}`);
     }
   }
 
