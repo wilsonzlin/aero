@@ -13,7 +13,7 @@ namespace fixedfunc {
 
 // vs_2_0:
 //   mov oPos, v0
-//   mov oD0, v1
+//   mov oD0, v1.zyxw  ; D3DCOLOR is stored as BGRA in memory
 //   end
 static constexpr uint32_t kVsPassthroughPosColor[] = {
     0xFFFE0200u, // vs_2_0
@@ -22,7 +22,7 @@ static constexpr uint32_t kVsPassthroughPosColor[] = {
     0x10E40000u, // v0.xyzw
     0x02000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
-    0x10E40001u, // v1.xyzw
+    0x10C60001u, // v1.zyxw
     0x0000FFFFu, // end
 };
 
@@ -39,4 +39,3 @@ static constexpr uint32_t kPsPassthroughColor[] = {
 
 } // namespace fixedfunc
 } // namespace aerogpu
-
