@@ -1,7 +1,9 @@
 import { startFrameScheduler } from "./src/main/frameScheduler";
+import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
-import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
+
+const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 declare global {
   interface Window {
@@ -109,26 +111,31 @@ async function main() {
     });
 
     gpuWorker.addEventListener("message", (event: MessageEvent) => {
-      const msg = event.data as any;
-      if (!msg || typeof msg !== "object") return;
-      if (msg.type === "ready") {
+      const msg = event.data as unknown;
+      if (!isGpuWorkerMessageBase(msg) || typeof (msg as { type?: unknown }).type !== "string") return;
+      const typed = msg as { type: string; requestId?: number; width?: number; height?: number; rgba8?: ArrayBuffer; message?: string };
+      if (typed.type === "ready") {
         presenterReadyResolved = true;
         presenterReadyResolve?.();
         presenterReadyResolve = null;
         presenterReadyReject = null;
         return;
       }
-      if (msg.type === "screenshot") {
-        const pending = pendingScreenshots.get(msg.requestId);
+      if (typed.type === "screenshot") {
+        const pending = pendingScreenshots.get(typed.requestId ?? -1);
         if (!pending) return;
-        pendingScreenshots.delete(msg.requestId);
-        pending.resolve({ width: msg.width, height: msg.height, pixels: msg.rgba8 });
+        pendingScreenshots.delete(typed.requestId ?? -1);
+        pending.resolve({
+          width: Number(typed.width) | 0,
+          height: Number(typed.height) | 0,
+          pixels: typed.rgba8 ?? new ArrayBuffer(0),
+        });
         return;
       }
-      if (msg.type === "error") {
-        log(`gpu-worker error: ${msg.message ?? "unknown"}`);
+      if (typed.type === "error") {
+        log(`gpu-worker error: ${typed.message ?? "unknown"}`);
         if (!presenterReadyResolved && presenterReadyReject) {
-          presenterReadyReject(new Error(String(msg.message ?? "gpu-worker init error")));
+          presenterReadyReject(new Error(String(typed.message ?? "gpu-worker init error")));
           presenterReadyResolve = null;
           presenterReadyReject = null;
         }
@@ -167,13 +174,7 @@ async function main() {
 
     const requestScreenshot = (includeCursor: boolean): Promise<{ width: number; height: number; pixels: ArrayBuffer }> => {
       const requestId = nextRequestId++;
-      gpuWorker.postMessage({
-        protocol: GPU_PROTOCOL_NAME,
-        protocolVersion: GPU_PROTOCOL_VERSION,
-        type: "screenshot",
-        requestId,
-        includeCursor,
-      });
+      gpuWorker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId, includeCursor });
       return new Promise((resolve, reject) => {
         pendingScreenshots.set(requestId, { resolve, reject });
         setTimeout(() => {
