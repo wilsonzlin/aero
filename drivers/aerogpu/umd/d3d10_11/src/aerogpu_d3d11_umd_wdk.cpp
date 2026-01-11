@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -182,6 +183,29 @@ static void InitUmdPrivate(Adapter* adapter) {
 
   adapter->umd_private = blob;
   adapter->umd_private_valid = true;
+}
+
+// Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
+// correct UMD bitness was loaded (System32 vs SysWOW64).
+static void LogModulePathOnce() {
+  static bool logged = false;
+  if (logged) {
+    return;
+  }
+  logged = true;
+
+  HMODULE module = NULL;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(&LogModulePathOnce),
+                         &module)) {
+    char path[MAX_PATH] = {};
+    if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
+      char buf[MAX_PATH + 64] = {};
+      snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: module_path=%s\n", path);
+      OutputDebugStringA(buf);
+    }
+  }
 }
 
 struct AeroGpuDeviceContext {
@@ -2952,6 +2976,11 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
   if (!pOpenData || !pOpenData->pAdapterFuncs) {
     return E_INVALIDARG;
   }
+
+  if (aerogpu_d3d10_11_log_enabled()) {
+    LogModulePathOnce();
+  }
+  AEROGPU_D3D10_11_LOG_CALL();
 
   // Win7 D3D11 uses `D3D10DDIARG_OPENADAPTER` for negotiation:
   // - `Interface` selects D3D11 DDI
