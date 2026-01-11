@@ -92,6 +92,9 @@ fn snapshot_inspect_prints_meta_and_ram_summary() {
         .success()
         .stdout(predicate::str::contains("META:"))
         .stdout(predicate::str::contains("snapshot_id: 1"))
+        .stdout(predicate::str::contains("label: xtask-test"))
+        .stdout(predicate::str::contains("Sections:"))
+        .stdout(predicate::str::contains("offset="))
         .stdout(predicate::str::contains("RAM:"))
         .stdout(predicate::str::contains("mode: full"))
         .stdout(predicate::str::contains("compression: lz4"));

@@ -97,15 +97,14 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
                 "  parent_snapshot_id: {}",
                 meta.parent_snapshot_id
                     .map(|v| v.to_string())
-                    .unwrap_or_else(|| "None".to_string())
+                    .unwrap_or_else(|| "none".to_string())
             );
             println!("  created_unix_ms: {}", meta.created_unix_ms);
             println!(
                 "  label: {}",
                 meta.label
                     .as_deref()
-                    .map(|s| format!("{s:?}"))
-                    .unwrap_or_else(|| "None".to_string())
+                    .unwrap_or("none")
             );
         }
         None => println!("  <missing>"),
@@ -114,8 +113,8 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
     println!("Sections:");
     for section in &index.sections {
         println!(
-            "  - {} v{} flags={} len={} @0x{:x}",
-            section.id, section.version, section.flags, section.len, section.offset
+            "  - {} v{} flags={} offset=0x{:x} len={}",
+            section.id, section.version, section.flags, section.offset, section.len
         );
     }
 
