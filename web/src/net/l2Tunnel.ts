@@ -330,7 +330,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
   protected onTransportMessage(data: Uint8Array): void {
     if (this.closed || this.closing) return;
-    this.lastInboundAtMs = nowMs();
+    const receivedAt = nowMs();
     let msg;
     try {
       msg = decodeL2Message(data, { maxFramePayload: this.opts.maxFrameSize });
@@ -339,6 +339,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       this.emitSessionErrorThrottled(err);
       return;
     }
+    this.lastInboundAtMs = receivedAt;
 
     if (msg.type === L2_TUNNEL_TYPE_FRAME) {
       this.sink({ type: "frame", frame: msg.payload });
@@ -494,9 +495,10 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       return;
     }
 
+    const sentAt = nowMs();
     if (this.opts.keepaliveMaxMs > 0 && this.lastInboundAtMs > 0) {
       const idleTimeoutMs = this.opts.keepaliveMaxMs * 2;
-      if (idleTimeoutMs > 0 && nowMs() - this.lastInboundAtMs > idleTimeoutMs) {
+      if (idleTimeoutMs > 0 && sentAt - this.lastInboundAtMs > idleTimeoutMs) {
         this.emitSessionErrorThrottled(new Error(`closing L2 tunnel: keepalive timeout (${idleTimeoutMs}ms)`));
         this.close();
         return;
@@ -505,7 +507,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
     const nonce = this.nextPingNonce;
     this.nextPingNonce = (this.nextPingNonce + 1) >>> 0;
-    this.pendingPings.set(nonce, nowMs());
+    this.pendingPings.set(nonce, sentAt);
     // Bound map growth if the peer never responds.
     if (this.pendingPings.size > 16) {
       const first = this.pendingPings.keys().next().value as number;
