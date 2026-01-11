@@ -386,6 +386,11 @@ const syncPerfFrame = () => {
   if (frameId === 0) return;
 
   if (perfCurrentFrameId === 0) {
+    // First non-zero frame ID after enabling perf. If we already accumulated some
+    // work while `frameId` was still 0, attribute that work to this first frame.
+    if (perfGpuMs > 0 || perfUploadBytes > 0) {
+      flushPerfFrameSample(frameId);
+    }
     perfCurrentFrameId = frameId;
     return;
   }
@@ -1869,7 +1874,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
 
 const handleTick = async () => {
   syncPerfFrame();
-  const perfActive = !!perfWriter && perfCurrentFrameId !== 0;
+  const perfEnabled = !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
   refreshFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
   await maybeSendReady();
@@ -1896,9 +1901,9 @@ const handleTick = async () => {
   presenting = true;
   try {
     presentsAttempted += 1;
-    const presentStartMs = perfActive ? performance.now() : 0;
+    const presentStartMs = perfEnabled ? performance.now() : 0;
     const didPresent = await presentOnce();
-    if (perfActive) perfGpuMs += performance.now() - presentStartMs;
+    if (perfEnabled) perfGpuMs += performance.now() - presentStartMs;
     if (didPresent) {
       presentsSucceeded += 1;
       framesPresented += 1;
@@ -1915,7 +1920,7 @@ const handleTick = async () => {
             : 0;
         telemetry.recordTextureUploadBytes(textureUploadBytes);
         perf.counter("textureUploadBytes", textureUploadBytes);
-        if (perfActive) perfUploadBytes += textureUploadBytes;
+        if (perfEnabled) perfUploadBytes += textureUploadBytes;
         telemetry.endFrame(now);
       }
       lastFrameStartMs = now;
