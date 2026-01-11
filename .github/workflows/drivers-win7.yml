@@ -496,9 +496,18 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # ci/package-guest-tools.ps1 writes `aero-guest-tools.manifest.json`; provide
-          # a `manifest.json` alias for downstream tooling that expects the raw packager name.
-          Copy-Item -LiteralPath 'out/guest-tools/aero-guest-tools.manifest.json' -Destination 'out/guest-tools/manifest.json' -Force
+          # The Guest Tools wrapper script previously emitted `aero-guest-tools.manifest.json`,
+          # but now emits `manifest.json` directly. Keep both filenames available for
+          # downstream tooling by copying whichever one exists to the other path.
+          $manifest = 'out/guest-tools/manifest.json'
+          $manifestAlias = 'out/guest-tools/aero-guest-tools.manifest.json'
+          if (Test-Path -LiteralPath $manifest) {
+            Copy-Item -LiteralPath $manifest -Destination $manifestAlias -Force
+          } elseif (Test-Path -LiteralPath $manifestAlias) {
+            Copy-Item -LiteralPath $manifestAlias -Destination $manifest -Force
+          } else {
+            throw "Missing expected Guest Tools manifest (expected either $manifest or $manifestAlias)."
+          }
           foreach ($path in @(
             'out/guest-tools/aero-guest-tools.iso',
             'out/guest-tools/aero-guest-tools.zip',
