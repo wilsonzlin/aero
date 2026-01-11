@@ -286,25 +286,41 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   /** @type {Error | null} */
   let spawnError = null;
 
+  const env = {
+    ...process.env,
+    // Build disk-gateway into the repo-level target dir so CI's rust-cache
+    // (which caches `${repo}/target`) can reuse compilation artifacts.
+    //
+    // This also avoids rebuilding disk-gateway from scratch when the harness
+    // is run repeatedly during local development.
+    CARGO_TARGET_DIR:
+      process.env.CARGO_TARGET_DIR ?? path.join(getRepoRoot(), 'target', 'disk-gateway-e2e'),
+    DISK_GATEWAY_BIND: bind,
+    DISK_GATEWAY_PUBLIC_DIR: publicDir,
+    DISK_GATEWAY_PRIVATE_DIR: privateDir,
+    DISK_GATEWAY_TOKEN_SECRET: 'disk-gateway-browser-e2e-secret',
+    DISK_GATEWAY_CORS_ALLOWED_ORIGINS: appOrigin,
+    DISK_GATEWAY_CORP: 'cross-origin',
+    RUST_LOG: process.env.RUST_LOG ?? 'info',
+  };
+
+  // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
+  // That can make this harness flaky when the wrapper isn't available. Disable it by default
+  // unless explicitly opted into via env vars.
+  if (!('RUSTC_WRAPPER' in env) && !('CARGO_BUILD_RUSTC_WRAPPER' in env)) {
+    env.RUSTC_WRAPPER = '';
+  }
+
+  // Allow running these e2e helpers with a per-checkout Cargo home without having to
+  // source `scripts/agent-env.sh` first.
+  if (process.env.AERO_ISOLATE_CARGO_HOME && !('CARGO_HOME' in env)) {
+    env.CARGO_HOME = path.join(getRepoRoot(), '.cargo-home');
+    await fs.mkdir(env.CARGO_HOME, { recursive: true });
+  }
+
   const child = spawn('cargo', ['run', '--locked', '--bin', 'disk-gateway'], {
     cwd: diskGatewaySourceDir,
-    env: {
-      ...process.env,
-      // Build disk-gateway into the repo-level target dir so CI's rust-cache
-      // (which caches `${repo}/target`) can reuse compilation artifacts.
-      //
-      // This also avoids rebuilding disk-gateway from scratch when the harness
-      // is run repeatedly during local development.
-      CARGO_TARGET_DIR:
-        process.env.CARGO_TARGET_DIR ?? path.join(getRepoRoot(), 'target', 'disk-gateway-e2e'),
-      DISK_GATEWAY_BIND: bind,
-      DISK_GATEWAY_PUBLIC_DIR: publicDir,
-      DISK_GATEWAY_PRIVATE_DIR: privateDir,
-      DISK_GATEWAY_TOKEN_SECRET: 'disk-gateway-browser-e2e-secret',
-      DISK_GATEWAY_CORS_ALLOWED_ORIGINS: appOrigin,
-      DISK_GATEWAY_CORP: 'cross-origin',
-      RUST_LOG: process.env.RUST_LOG ?? 'info',
-    },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

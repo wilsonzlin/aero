@@ -231,26 +231,29 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
     let stdout = "";
     let stderr = "";
 
+    const childEnv = {
+      ...process.env,
+      ...env,
+    };
+
+    if (command === "cargo") {
+      // Prevent progress bars from spamming logs on CI timeouts.
+      childEnv.CARGO_TERM_COLOR = "never";
+      childEnv.CARGO_TERM_PROGRESS_WHEN = "never";
+
+      // This helper is used from Node unit tests that spawn `cargo build`.
+      // Some developer/CI environments enable a global rustc wrapper (e.g. `sccache`) via user
+      // Cargo config, which can make these tests flaky when the wrapper daemon is unavailable.
+      // Disable the wrapper by default unless explicitly opted into via env vars.
+      if (!("RUSTC_WRAPPER" in childEnv) && !("CARGO_BUILD_RUSTC_WRAPPER" in childEnv)) {
+        // (Setting an empty string disables the wrapper.)
+        childEnv.RUSTC_WRAPPER = "";
+      }
+    }
+
     const child = spawn(command, args, {
       cwd,
-      env: {
-        ...process.env,
-        ...(command === "cargo"
-          ? {
-              // Prevent progress bars from spamming logs on CI timeouts.
-              CARGO_TERM_COLOR: "never",
-              CARGO_TERM_PROGRESS_WHEN: "never",
-              // This helper is used from Node unit tests that spawn `cargo build`.
-              // Some developer/CI environments enable a global rustc wrapper (e.g. `sccache`)
-              // via user Cargo config, which can make these tests flaky when the wrapper
-              // daemon is unavailable. Override it here to keep test builds hermetic.
-              //
-              // (Setting an empty string disables the wrapper.)
-              RUSTC_WRAPPER: "",
-            }
-          : null),
-        ...env,
-      },
+      env: childEnv,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });

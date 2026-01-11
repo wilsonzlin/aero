@@ -156,26 +156,35 @@ async function startL2Proxy(opts: {
   token: string;
   udpEchoPort: number;
 }): Promise<ServerProcess> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    RUST_LOG: process.env.RUST_LOG ?? 'error',
+    AERO_L2_PROXY_LISTEN_ADDR: `127.0.0.1:${opts.port}`,
+    AERO_L2_ALLOWED_ORIGINS: opts.allowedOrigin,
+    // Token auth: browser clients pass `?token=...` since WebSocket headers are restricted.
+    AERO_L2_TOKEN: opts.token,
+    // Ensure this test doesn't inherit local developer quotas/keepalive settings.
+    AERO_L2_OPEN: '0',
+    AERO_L2_MAX_CONNECTIONS: '0',
+    AERO_L2_MAX_BYTES_PER_CONNECTION: '0',
+    AERO_L2_MAX_FRAMES_PER_SECOND: '0',
+    AERO_L2_PING_INTERVAL_MS: '0',
+    // Deterministic forward maps so the test never depends on external DNS or network.
+    AERO_L2_ALLOWED_UDP_PORTS: String(opts.udpEchoPort),
+    AERO_L2_UDP_FORWARD: `203.0.113.11:${opts.udpEchoPort}=127.0.0.1:${opts.udpEchoPort}`,
+  };
+
+  // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
+  // That can make local/agent runs flaky when the wrapper isn't available. Disable it by
+  // default unless explicitly opted into via env vars.
+  if (env.RUSTC_WRAPPER === undefined && env.CARGO_BUILD_RUSTC_WRAPPER === undefined) {
+    env.RUSTC_WRAPPER = '';
+  }
+
   const proc = spawn('cargo', ['run', '--locked', '--quiet', '-p', 'aero-l2-proxy'], {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      RUST_LOG: process.env.RUST_LOG ?? 'error',
-      AERO_L2_PROXY_LISTEN_ADDR: `127.0.0.1:${opts.port}`,
-      AERO_L2_ALLOWED_ORIGINS: opts.allowedOrigin,
-      // Token auth: browser clients pass `?token=...` since WebSocket headers are restricted.
-      AERO_L2_TOKEN: opts.token,
-      // Ensure this test doesn't inherit local developer quotas/keepalive settings.
-      AERO_L2_OPEN: '0',
-      AERO_L2_MAX_CONNECTIONS: '0',
-      AERO_L2_MAX_BYTES_PER_CONNECTION: '0',
-      AERO_L2_MAX_FRAMES_PER_SECOND: '0',
-      AERO_L2_PING_INTERVAL_MS: '0',
-      // Deterministic forward maps so the test never depends on external DNS or network.
-      AERO_L2_ALLOWED_UDP_PORTS: String(opts.udpEchoPort),
-      AERO_L2_UDP_FORWARD: `203.0.113.11:${opts.udpEchoPort}=127.0.0.1:${opts.udpEchoPort}`,
-    },
+    env,
   });
   proc.stdout.resume();
   proc.stderr.resume();
