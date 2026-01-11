@@ -1,0 +1,49 @@
+name: virtio-win-packaging-smoke
+
+on:
+  pull_request:
+    paths:
+      - "drivers/scripts/**"
+      - "tools/packaging/**"
+      - "guest-tools/**"
+      - "tools/packaging/specs/**"
+      - ".github/workflows/virtio-win-packaging-smoke.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "drivers/scripts/**"
+      - "tools/packaging/**"
+      - "guest-tools/**"
+      - "tools/packaging/specs/**"
+      - ".github/workflows/virtio-win-packaging-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run virtio-win packaging smoke test
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
+
+      - name: Upload logs and outputs (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtio-win-packaging-smoke
+          if-no-files-found: warn
+          path: |
+            out/virtio-win-packaging-smoke/**
+            drivers/out/**
+
