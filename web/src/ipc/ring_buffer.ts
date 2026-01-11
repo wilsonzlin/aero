@@ -316,6 +316,18 @@ export class RingBuffer {
     }
   }
 
+  // Wait until the consumer advances the head pointer (i.e. some data was
+  // consumed / space may have been freed).
+  //
+  // This is useful for producer-side scheduling loops that want to flush pending
+  // work (e.g. `L2TunnelForwarder` pushing into NET_RX after it was previously
+  // full) without polling.
+  async waitForConsumeAsync(timeoutMs?: number): Promise<AtomicsWaitResult> {
+    const head = Atomics.load(this.ctrl, ringCtrl.HEAD);
+    const status = await waitForStateChangeAsync(this.ctrl, ringCtrl.HEAD, head, timeoutMs);
+    return status === "timed-out" ? "timed-out" : "ok";
+  }
+
   // Blocking helpers (workers / Node only).
 
   popBlocking(timeoutMs?: number): Uint8Array {

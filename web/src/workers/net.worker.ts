@@ -254,7 +254,8 @@ function maybeEmitPerfSample(): void {
 async function runLoop(): Promise<void> {
   const forwarder = l2Forwarder;
   const txRing = netTxRing;
-  if (!forwarder || !txRing) {
+  const rxRing = netRxRing;
+  if (!forwarder || !txRing || !rxRing) {
     throw new Error("net.worker was not initialized correctly (missing forwarder or rings).");
   }
 
@@ -301,7 +302,11 @@ async function runLoop(): Promise<void> {
     }
     const timeoutMs = pendingRx ? NET_PENDING_RX_POLL_MS : NET_IDLE_WAIT_MS;
     if (hasWaitAsync) {
-      await txRing.waitForDataAsync(timeoutMs);
+      if (pendingRx) {
+        await Promise.race([txRing.waitForDataAsync(timeoutMs), rxRing.waitForConsumeAsync(timeoutMs)]);
+      } else {
+        await txRing.waitForDataAsync(timeoutMs);
+      }
     } else {
       // In worker contexts without `Atomics.waitAsync`, `RingBuffer.waitForDataAsync()`
       // falls back to a tight polling loop. Use a short blocking `Atomics.wait()` slice

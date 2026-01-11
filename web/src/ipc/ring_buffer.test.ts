@@ -126,4 +126,21 @@ describe("ipc/ring_buffer", () => {
     expect(wrapped).toEqual([1, 2, 3, 4]);
     expect(ring.tryPop()).toBeNull();
   });
+
+  it("waitForConsumeAsync resolves when data is consumed", async () => {
+    const ring = makeRing(64);
+    expect(ring.tryPush(Uint8Array.of(1, 2, 3))).toBe(true);
+
+    const waitTask = ring.waitForConsumeAsync(1000);
+    // Ensure the awaiter gets a chance to arm before consuming.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(ring.tryPop()).not.toBeNull();
+
+    await expect(waitTask).resolves.toBe("ok");
+  });
+
+  it("waitForConsumeAsync times out when nothing is consumed", async () => {
+    const ring = makeRing(64);
+    await expect(ring.waitForConsumeAsync(10)).resolves.toBe("timed-out");
+  });
 });
