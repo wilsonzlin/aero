@@ -363,16 +363,21 @@ Run the scenario runner (writes `report.json`, `storage_bench.json`, and `perf_e
 npm run bench:storage -- --out-dir storage-perf-results/head
 ```
 
-Compare two `storage_bench.json` outputs and write a Markdown diff:
+Compare two `storage_bench.json` outputs and write a Markdown diff (plus JSON summary):
 
 ```bash
-node --experimental-strip-types bench/compare.ts \
+node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --candidate storage-perf-results/head/storage_bench.json \
-  --out-dir storage-perf-results \
-  --thresholds-file bench/perf_thresholds.json \
-  --profile pr-smoke
+  --current storage-perf-results/head/storage_bench.json \
+  --outDir storage-perf-results \
+  --thresholdPct 15 \
+  --json
 ```
+
+Outputs:
+ - `storage-perf-results/compare.md`
+ - `storage-perf-results/summary.json` (machine-readable)
+ - `storage-perf-results/compare.json` (legacy copy; written when `--json` is passed)
 
 ### Interpreting summary output and variance warnings
 
