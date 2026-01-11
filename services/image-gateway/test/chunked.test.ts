@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { buildApp } from "../src/app";
-import type { Config } from "../src/config";
+import { CACHE_CONTROL_PRIVATE_NO_STORE, type Config } from "../src/config";
 import { MemoryImageStore } from "../src/store";
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
@@ -20,14 +20,18 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     cloudfrontPrivateKeyPem: undefined,
     cloudfrontAuthMode: "cookie",
     cloudfrontCookieDomain: undefined,
+    cloudfrontCookieSameSite: "None",
+    cloudfrontCookiePartitioned: false,
     cloudfrontSignedTtlSeconds: 60,
 
     imageBasePath: "/images",
     partSizeBytes: 64 * 1024 * 1024,
+    imageCacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
 
     authMode: "dev",
     port: 0,
     corsAllowOrigin: "http://localhost:5173",
+    crossOriginResourcePolicy: "same-site",
 
     ...overrides,
   };
@@ -79,7 +83,9 @@ describe("chunked delivery", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe(manifestJson);
     expect(res.headers["content-type"]).toBe("application/json");
-    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
   });
 
@@ -129,7 +135,9 @@ describe("chunked delivery", () => {
     expect(res.body).toBe(chunk);
     expect(res.headers["content-type"]).toBe("application/octet-stream");
     expect(res.headers["content-encoding"]).toBe("identity");
-    expect(res.headers["cache-control"]).toBe("no-store, no-transform");
+    expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
   });
 
   it("accepts padded chunk filenames (00000000.bin) in the gateway route", async () => {
@@ -227,7 +235,9 @@ describe("chunked delivery", () => {
     expect(manifestRes.headers["content-type"]).toBe("application/json");
     expect(manifestRes.headers["content-length"]).toBe("10");
     expect(manifestRes.headers["etag"]).toBe('"etag-manifest"');
-    expect(manifestRes.headers["cache-control"]).toBe("no-store");
+    expect(manifestRes.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
+    expect(manifestRes.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(manifestRes.headers["x-content-type-options"]).toBe("nosniff");
 
     const chunkRes = await app.inject({
       method: "HEAD",
@@ -239,7 +249,9 @@ describe("chunked delivery", () => {
     expect(chunkRes.headers["content-length"]).toBe("123");
     expect(chunkRes.headers["etag"]).toBe('"etag-chunk"');
     expect(chunkRes.headers["content-encoding"]).toBe("identity");
-    expect(chunkRes.headers["cache-control"]).toBe("no-store, no-transform");
+    expect(chunkRes.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
+    expect(chunkRes.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(chunkRes.headers["x-content-type-options"]).toBe("nosniff");
   });
 
   it("returns a chunked manifest URL from /stream-url (CloudFront cookie mode)", async () => {

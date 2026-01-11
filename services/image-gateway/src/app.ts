@@ -239,13 +239,28 @@ function getChunkObjectKey(record: ImageRecord, chunkIndex: number): string | un
   return `${prefix}chunks/${name}.bin`;
 }
 
-function buildChunkedCacheControl(config: Config, kind: "manifest" | "chunk"): string {
-  const base =
-    config.authMode === "none"
-      ? "public, max-age=31536000, immutable"
-      : "no-store";
-  if (kind === "chunk") return `${base}, no-transform`;
-  return base;
+function buildChunkedCacheControl(config: Config): string {
+  // Mirror the main disk image cache policy for chunked artifacts, but always enforce `no-transform`
+  // (chunks are binary disk bytes; intermediaries must not apply transforms/compression).
+  return ensureNoTransformCacheControl(config.imageCacheControl);
+}
+
+function buildChunkedProxyHeaders(params: {
+  contentType: string;
+  cacheControl: string;
+  crossOriginResourcePolicy: Config["crossOriginResourcePolicy"];
+  contentEncoding?: string;
+}): Record<string, string> {
+  const headers: Record<string, string> = {
+    "cache-control": params.cacheControl,
+    "content-type": params.contentType,
+    "x-content-type-options": "nosniff",
+    "cross-origin-resource-policy": params.crossOriginResourcePolicy,
+  };
+  if (params.contentEncoding) {
+    headers["content-encoding"] = params.contentEncoding;
+  }
+  return headers;
 }
 
 function applyCorsHeaders(reply: FastifyReply, config: Config): void {
@@ -725,10 +740,11 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
     }
 
-    const headers: Record<string, string> = {
-      "cache-control": buildChunkedCacheControl(deps.config, "manifest"),
-    };
-    headers["content-type"] = s3Res.ContentType ?? "application/json";
+    const headers = buildChunkedProxyHeaders({
+      contentType: s3Res.ContentType ?? "application/json",
+      cacheControl: buildChunkedCacheControl(deps.config),
+      crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+    });
     if (typeof s3Res.ContentLength === "number") {
       headers["content-length"] = String(s3Res.ContentLength);
     }
@@ -792,10 +808,11 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw err;
     }
 
-    const headers: Record<string, string> = {
-      "cache-control": buildChunkedCacheControl(deps.config, "manifest"),
-    };
-    headers["content-type"] = head.ContentType ?? "application/json";
+    const headers = buildChunkedProxyHeaders({
+      contentType: head.ContentType ?? "application/json",
+      cacheControl: buildChunkedCacheControl(deps.config),
+      crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+    });
     if (typeof head.ContentLength === "number") headers["content-length"] = String(head.ContentLength);
     if (head.ETag) headers["etag"] = head.ETag;
     if (head.LastModified) headers["last-modified"] = head.LastModified.toUTCString();
@@ -866,11 +883,13 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
     }
 
-    const headers: Record<string, string> = {
-      "cache-control": buildChunkedCacheControl(deps.config, "chunk"),
-      "content-encoding": "identity",
-    };
-    headers["content-type"] = s3Res.ContentType ?? "application/octet-stream";
+    assertIdentityContentEncoding(s3Res.ContentEncoding);
+    const headers = buildChunkedProxyHeaders({
+      contentType: s3Res.ContentType ?? "application/octet-stream",
+      cacheControl: buildChunkedCacheControl(deps.config),
+      crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      contentEncoding: "identity",
+    });
     if (typeof s3Res.ContentLength === "number") {
       headers["content-length"] = String(s3Res.ContentLength);
     }
@@ -935,11 +954,13 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw err;
     }
 
-    const headers: Record<string, string> = {
-      "cache-control": buildChunkedCacheControl(deps.config, "chunk"),
-      "content-encoding": "identity",
-    };
-    headers["content-type"] = head.ContentType ?? "application/octet-stream";
+    assertIdentityContentEncoding(head.ContentEncoding);
+    const headers = buildChunkedProxyHeaders({
+      contentType: head.ContentType ?? "application/octet-stream",
+      cacheControl: buildChunkedCacheControl(deps.config),
+      crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      contentEncoding: "identity",
+    });
     if (typeof head.ContentLength === "number") {
       headers["content-length"] = String(head.ContentLength);
     }
