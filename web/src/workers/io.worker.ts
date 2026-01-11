@@ -877,11 +877,19 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
         }
 
-        if (!api.WebUsbUhciBridge && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
+        // If we are using the new `UhciControllerBridge` (canonical guest-visible UHCI),
+        // keep the WebUSB broker plumbing alive by falling back to `UsbPassthroughBridge`
+        // even though the `WebUsbUhciBridge` export exists.
+        if (api.UhciControllerBridge && !webUsbUhciBridge && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
           try {
             const bridge = new api.UsbPassthroughBridge();
             // Poll USB passthrough as part of the main IO tick to avoid a separate timer.
-            usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 0, initiallyBlocked: true });
+            usbPassthroughRuntime = new WebUsbPassthroughRuntime({
+              bridge,
+              port: ctx,
+              pollIntervalMs: 0,
+              initiallyBlocked: !usbAvailable,
+            });
             usbPassthroughRuntime.start();
             if (import.meta.env.DEV) {
               usbPassthroughDebugTimer = setInterval(() => {
