@@ -41,7 +41,7 @@ export const PROTECTED_USB_INTERFACE_CLASSES: ReadonlySet<number> = new Set([
 ]);
 
 export function isProtectedInterfaceClass(classCode: number): boolean {
-  return PROTECTED_USB_INTERFACE_CLASSES.has(classCode);
+  return PROTECTED_USB_INTERFACE_CLASSES.has(classCode & 0xff);
 }
 
 const USB_CLASS_CODE_NAMES = new Map<number, string>([
@@ -70,9 +70,9 @@ const USB_CLASS_CODE_NAMES = new Map<number, string>([
 ]);
 
 export function describeUsbClassCode(classCode: number): string {
-  const known = USB_CLASS_CODE_NAMES.get(classCode);
-  if (known) return known;
   const normalized = classCode & 0xff;
+  const known = USB_CLASS_CODE_NAMES.get(normalized);
+  if (known) return known;
   return `0x${normalized.toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
