@@ -1295,24 +1295,32 @@ static __forceinline BOOLEAN AeroGpuAllocTableContainsAllocId(_In_ const AEROGPU
     }
 
     const struct aerogpu_alloc_table_header* hdr = (const struct aerogpu_alloc_table_header*)Sub->AllocTableVa;
-    if (hdr->magic != AEROGPU_ALLOC_TABLE_MAGIC || hdr->entry_stride_bytes != sizeof(struct aerogpu_alloc_entry)) {
+    /*
+     * Forward-compat: newer ABI minor versions may extend `aerogpu_alloc_entry` by increasing the
+     * stride and appending fields. Only the entry prefix is required for alloc_id lookup.
+     */
+    if (hdr->magic != AEROGPU_ALLOC_TABLE_MAGIC || hdr->entry_stride_bytes < sizeof(struct aerogpu_alloc_entry)) {
         return FALSE;
     }
 
-    if (hdr->size_bytes > Sub->AllocTableSizeBytes) {
+    const SIZE_T sizeBytes = hdr->size_bytes;
+    if (sizeBytes > Sub->AllocTableSizeBytes || sizeBytes < sizeof(*hdr)) {
         return FALSE;
     }
 
-    const SIZE_T maxEntries = (Sub->AllocTableSizeBytes - sizeof(*hdr)) / sizeof(struct aerogpu_alloc_entry);
+    const SIZE_T entryStrideBytes = hdr->entry_stride_bytes;
+    const SIZE_T maxEntries = (sizeBytes - sizeof(*hdr)) / entryStrideBytes;
     UINT count = hdr->entry_count;
     if ((SIZE_T)count > maxEntries) {
         count = (UINT)maxEntries;
     }
 
-    const struct aerogpu_alloc_entry* entries = (const struct aerogpu_alloc_entry*)(hdr + 1);
+    const UINT8* entries = (const UINT8*)(hdr + 1);
     const uint32_t id = (uint32_t)AllocId;
     for (UINT i = 0; i < count; ++i) {
-        if (entries[i].alloc_id == id) {
+        const struct aerogpu_alloc_entry* entry =
+            (const struct aerogpu_alloc_entry*)(entries + (SIZE_T)i * entryStrideBytes);
+        if (entry->alloc_id == id) {
             return TRUE;
         }
     }
