@@ -4,7 +4,7 @@
 >
 > This file previously documented a **surface-centric** AeroGPU command protocol
 > (`CREATE_SURFACE` / `UPDATE_SURFACE` / `PRESENT`) used during early bring-up by
-> the legacy prototype device model in `crates/aero-emulator/src/devices/aerogpu/`.
+> a legacy toy prototype device model (since removed from the codebase).
 > That prototype is now removed; this is **not** the Windows 7
 > WDDM AeroGPU ABI.
 >
