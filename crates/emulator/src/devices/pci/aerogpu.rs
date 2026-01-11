@@ -9,7 +9,9 @@ use crate::devices::aerogpu_regs::{
     AEROGPU_PCI_VENDOR_ID, FEATURE_VBLANK,
 };
 use crate::devices::aerogpu_ring::{
-    AeroGpuRingHeader, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES, RING_TAIL_OFFSET,
+    AeroGpuRingHeader, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
+    FENCE_PAGE_ABI_VERSION_OFFSET, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
+    RING_TAIL_OFFSET,
 };
 use crate::devices::aerogpu_scanout::AeroGpuFormat;
 use crate::gpu_worker::aerogpu_backend::AeroGpuCommandBackend;
@@ -190,9 +192,18 @@ impl AeroGpuPciDevice {
         self.executor.reset();
         self.regs.completed_fence = 0;
         if self.regs.fence_gpa != 0 {
-            mem.write_u32(self.regs.fence_gpa + 0, AEROGPU_FENCE_PAGE_MAGIC);
-            mem.write_u32(self.regs.fence_gpa + 4, self.regs.abi_version);
-            mem.write_u64(self.regs.fence_gpa + 8, self.regs.completed_fence);
+            mem.write_u32(
+                self.regs.fence_gpa + FENCE_PAGE_MAGIC_OFFSET,
+                AEROGPU_FENCE_PAGE_MAGIC,
+            );
+            mem.write_u32(
+                self.regs.fence_gpa + FENCE_PAGE_ABI_VERSION_OFFSET,
+                self.regs.abi_version,
+            );
+            mem.write_u64(
+                self.regs.fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+                self.regs.completed_fence,
+            );
             let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
         }
         self.regs.irq_status = 0;

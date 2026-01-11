@@ -1101,7 +1101,10 @@ impl InFlightSubmission {
 mod tests {
     use super::*;
 
-    use crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC;
+    use crate::devices::aerogpu_ring::{
+        AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
+        RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    };
     use memory::Bus;
 
     fn write_ring_header(
@@ -1123,8 +1126,8 @@ mod tests {
         mem.write_u32(gpa + 12, entry_count);
         mem.write_u32(gpa + 16, stride);
         mem.write_u32(gpa + 20, 0);
-        mem.write_u32(gpa + 24, head);
-        mem.write_u32(gpa + 28, tail);
+        mem.write_u32(gpa + RING_HEAD_OFFSET, head);
+        mem.write_u32(gpa + RING_TAIL_OFFSET, tail);
     }
 
     fn write_submit_desc(mem: &mut dyn MemoryBus, gpa: u64, fence: u64, flags: u32) {
@@ -1184,21 +1187,30 @@ mod tests {
         exec.complete_fence(&mut regs, &mut mem, 2);
         assert_eq!(regs.completed_fence, 0);
         assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
-        assert_eq!(mem.read_u32(fence_gpa + 0), 0);
+        assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
 
         // Completing fence 1 should allow advancement up to 2 (since fence 2 is already complete).
         exec.complete_fence(&mut regs, &mut mem, 1);
         assert_eq!(regs.completed_fence, 2);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
-        assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
-        assert_eq!(mem.read_u64(fence_gpa + 8), 2);
+        assert_eq!(
+            mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+            AEROGPU_FENCE_PAGE_MAGIC
+        );
+        assert_eq!(
+            mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+            2
+        );
 
         // Ack the IRQ bit and ensure completing fence 3 raises again.
         regs.irq_status = 0;
         exec.complete_fence(&mut regs, &mut mem, 3);
         assert_eq!(regs.completed_fence, 3);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
-        assert_eq!(mem.read_u64(fence_gpa + 8), 3);
+        assert_eq!(
+            mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+            3
+        );
 
         // Duplicate completion should not retrigger IRQ or advance.
         regs.irq_status = 0;
