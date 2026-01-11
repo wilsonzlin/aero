@@ -1,6 +1,6 @@
 # Legacy (Obsolete): Experimental Virtual GPU Device + Command ABI
 
-> Status: **obsolete/experimental; not used by the Win7 AeroGPU driver**.
+> Status: **obsolete/removed** (kept only for historical reference).
 >
 > The canonical AeroGPU (PCI/MMIO + ring + command stream) protocol is defined by the
 > C headers in `drivers/aerogpu/protocol/` (and mirrored in `emulator/protocol/aerogpu/*`).
@@ -9,7 +9,8 @@ This document defines the **emulator-side** virtual GPU device model and the **g
 
 The goal is a transport that a Windows WDDM paravirtual driver can talk to, and that the emulator can consume to drive the DirectX→WebGPU translation layer.
 
-> Source of truth for this legacy experimental implementation: `crates/aero-gpu-device/src/abi.rs`.
+> Note: the implementation of this experimental ABI has been removed from the repository.
+> This document describes the historical wire format only; see git history if you need the old code.
 
 ---
 
@@ -25,7 +26,7 @@ The GPU is exposed to the guest as a PCI device with a single MMIO BAR.
 - Subclass: `0x02` (3D controller)
 - BAR0: MMIO registers, 4 KiB
 
-These values are defined in `aero_gpu_device::abi::pci`.
+These values were used by the removed prototype implementation.
 
 ### Interrupts
 
@@ -212,13 +213,8 @@ To keep the ABI explicit and make backends validate intent:
 
 ## 9. Host-side validation harness
 
-The crate contains a deterministic software backend and a “synthetic guest” producer to validate:
+The removed implementation included a deterministic software backend and a “synthetic guest” producer to validate:
 
 - Ring mechanics (wrap markers, head/tail updates)
 - Command parsing and bounds checks
 - Completion generation and interrupt signaling
-
-See:
-
-- `aero_gpu_device::guest::SyntheticGuest`
-- `crates/aero-gpu-device/tests/golden_triangle.rs`
