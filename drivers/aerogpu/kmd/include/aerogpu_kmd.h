@@ -177,6 +177,7 @@ typedef struct _AEROGPU_ADAPTER {
 
     /* VBlank / scanline estimation state (see DxgkDdiGetScanLine). */
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankSeq;
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankTimeNs;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastVblankInterruptTime100ns;
     ULONG VblankPeriodNs;
 

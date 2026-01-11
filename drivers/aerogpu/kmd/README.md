@@ -59,10 +59,21 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
 4. **Vblank timing + IRQs (when `AEROGPU_FEATURE_VBLANK` is set)**
    - Enable vblank IRQs via `AEROGPU_MMIO_REG_IRQ_ENABLE` (bit `AEROGPU_IRQ_SCANOUT_VBLANK`).
    - Poll status via `AEROGPU_MMIO_REG_IRQ_STATUS` and ack IRQs via `AEROGPU_MMIO_REG_IRQ_ACK`.
-   - Consume timing information from:
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+    - Consume timing information from:
+      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
+      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
+      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+
+## Scanline / raster status (`DxgkDdiGetScanLine`)
+
+The KMD implements `DxgkDdiGetScanLine` for **versioned ABI** devices that advertise
+`AEROGPU_FEATURE_VBLANK`.
+
+This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` callers):
+
+- It derives a frame cadence from the device vblank counter/timestamps and the nominal vblank period.
+- It maps elapsed time within the frame onto a synthetic `[0, height + vblank_lines)` scanline range, where `vblank_lines`
+  is clamped to a small constant range (currently 20–40 lines).
 
 ## Stable `alloc_id` / `share_token` (WDDM allocation private data)
 
