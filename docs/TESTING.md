@@ -47,7 +47,8 @@ cargo xtask test-all
 ```
 
 Note: in this repo, `cargo xtask` runs Cargo with `--locked` (matching CI). If you hit a lockfile error, update
-the lockfile (e.g. `cargo generate-lockfile`) and include the `Cargo.lock` diff in your PR.
+the lockfile (e.g. `cargo generate-lockfile`, or `cargo generate-lockfile --manifest-path path/to/tool/Cargo.toml`
+for standalone tools) and include the `Cargo.lock` diff in your PR.
 
 `./scripts/test-all.sh` is kept as a thin wrapper around `cargo xtask test-all`
 for a transition period, but `cargo xtask` is the canonical implementation (and
