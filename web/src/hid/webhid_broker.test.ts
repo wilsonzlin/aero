@@ -101,6 +101,9 @@ describe("hid/WebHidBroker", () => {
     const broker = new WebHidBroker({ manager });
     const port = new FakePort();
     broker.attachWorkerPort(port as unknown as MessagePort);
+    // When not crossOriginIsolated, the broker must not enable any SAB fast paths.
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")).toBe(false);
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")).toBe(false);
 
     const device = new FakeHidDevice();
     await broker.attachDevice(device as unknown as HIDDevice);
