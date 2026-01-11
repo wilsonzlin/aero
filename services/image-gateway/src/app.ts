@@ -1051,6 +1051,12 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       s3: s3Res,
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
     });
+    if (s3Res.CacheControl) {
+      proxy.headers["cache-control"] = s3Res.CacheControl;
+    }
+    if (s3Res.ContentEncoding) {
+      proxy.headers["content-encoding"] = s3Res.ContentEncoding;
+    }
 
     reply
       .status(proxy.statusCode)
@@ -1097,6 +1103,12 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       },
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
     });
+    if (head.CacheControl) {
+      proxy.headers["cache-control"] = head.CacheControl;
+    }
+    if (head.ContentEncoding) {
+      proxy.headers["content-encoding"] = head.ContentEncoding;
+    }
 
     reply.status(proxy.statusCode).headers(proxy.headers).send();
   });
