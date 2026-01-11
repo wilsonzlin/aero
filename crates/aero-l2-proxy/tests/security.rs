@@ -1066,6 +1066,18 @@ async fn host_allowlist_rejects_mismatch() {
         .expect_err("expected host allowlist to reject mismatched Host");
     assert_http_status(err, StatusCode::FORBIDDEN);
 
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let rejected = parse_metric(&body, "l2_upgrade_reject_host_not_allowed_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected host-not-allowed reject counter >= 1, got {rejected}"
+    );
+
     proxy.shutdown().await;
 }
 
@@ -1144,6 +1156,45 @@ async fn trust_proxy_host_allows_forwarded_host_to_satisfy_allowlist() {
 
         proxy.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn host_allowlist_rejects_invalid_host_and_increments_metric() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::set("AERO_L2_ALLOWED_HOSTS", "allowed.test");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("host", HeaderValue::from_static("allowed.test:abc"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected invalid host header to be rejected");
+    assert_http_status(err, StatusCode::FORBIDDEN);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let rejected = parse_metric(&body, "l2_upgrade_reject_host_invalid_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected host-invalid reject counter >= 1, got {rejected}"
+    );
+
+    proxy.shutdown().await;
 }
 
 #[tokio::test]
