@@ -635,3 +635,4 @@ For a much more complete, Win7 x64-focused servicing procedure (certificate inje
 
 - [ ] Device appears and installs.
 - [ ] Audio output works (system sounds).
+- [ ] A recording endpoint exists (Control Panel → Sound → Recording) and capture works (may be silent if no host input source is available).
