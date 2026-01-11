@@ -120,7 +120,7 @@ async fn net_e2e() {
     };
     assert_eq!(dns_name, "echo.local");
 
-    let resolved_ip = resolve_via_doh(doh.addr, &dns_name)
+    let resolved_ip = resolve_via_doh(doh.addr, &session_cookie, &dns_name)
         .await
         .expect("doh resolved echo.local");
     assert_eq!(resolved_ip, Ipv4Addr::new(127, 0, 0, 1));
@@ -463,6 +463,26 @@ async fn handle_doh_connection(
         return Ok(());
     }
 
+    // Mirror the canonical gateway contract: DoH requires the session cookie.
+    let cookie_ok = headers
+        .get("cookie")
+        .map(|v| v.as_str())
+        .unwrap_or("")
+        .split(';')
+        .any(|part| {
+            let part = part.trim();
+            let Some((k, v)) = part.split_once('=') else {
+                return false;
+            };
+            k.trim() == "aero_session" && v.trim() == TEST_AERO_SESSION
+        });
+    if !cookie_ok {
+        stream
+            .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
+            .await?;
+        return Ok(());
+    }
+
     let content_type = headers
         .get("content-type")
         .map(|v| v.as_str())
@@ -507,7 +527,7 @@ async fn handle_doh_connection(
     Ok(())
 }
 
-async fn resolve_via_doh(addr: SocketAddr, name: &str) -> Option<Ipv4Addr> {
+async fn resolve_via_doh(addr: SocketAddr, session_cookie: &str, name: &str) -> Option<Ipv4Addr> {
     let txid = 0xBEEF;
     let query = build_dns_query(txid, name, DnsType::A as u16);
 
@@ -516,6 +536,7 @@ async fn resolve_via_doh(addr: SocketAddr, name: &str) -> Option<Ipv4Addr> {
     let mut req = Vec::new();
     req.extend_from_slice(b"POST /dns-query HTTP/1.1\r\n");
     req.extend_from_slice(b"Host: localhost\r\n");
+    req.extend_from_slice(format!("Cookie: aero_session={session_cookie}\r\n").as_bytes());
     req.extend_from_slice(b"Content-Type: application/dns-message\r\n");
     req.extend_from_slice(b"Accept: application/dns-message\r\n");
     req.extend_from_slice(format!("Content-Length: {}\r\n", query.len()).as_bytes());
@@ -524,7 +545,10 @@ async fn resolve_via_doh(addr: SocketAddr, name: &str) -> Option<Ipv4Addr> {
     req.extend_from_slice(&query);
 
     stream.write_all(&req).await.ok()?;
-    let (_status, _path, _headers, body) = read_http_response(&mut stream).await.ok()?;
+    let (_proto, status, _headers, body) = read_http_response(&mut stream).await.ok()?;
+    if status != "200" {
+        return None;
+    }
 
     if body.len() < 12 {
         return None;
