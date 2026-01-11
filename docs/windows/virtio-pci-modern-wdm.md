@@ -204,13 +204,24 @@ pass the BAR0 bus address and translate inside your `MapMmio` callback.
 ### `drivers/windows/virtio/pci-modern/` (portable modern transport)
 
 `drivers/windows/virtio/pci-modern/` provides the canonical WDF-free virtio-pci modern transport used by Aero’s
-Windows 7 drivers (StorPort/NDIS/WDM). It:
+Windows 7 **WDM** virtio drivers (for example `virtio-snd`). It:
 
 - parses the PCI vendor capability list (contract §1.3),
 - validates `RevisionID == 0x01`, and
 - supports **STRICT** (enforce fixed offsets) vs **COMPAT** (accept relocated caps / 32-bit BAR0) policy.
 
-StorPort/NDIS drivers provide the required OS callbacks for PCI config access and BAR0 mapping.
+Drivers integrate it by implementing the `VIRTIO_PCI_MODERN_OS_INTERFACE` callbacks (PCI config reads, BAR mapping,
+stall, and selector-serialization lock).
+
+### `drivers/windows7/virtio/common/` (miniport-friendly Win7 helpers)
+
+Windows 7 **miniport** drivers (`virtio-blk` / `virtio-net`) use the miniport-friendly modern transport shim in:
+
+- `drivers/windows7/virtio/common/include/virtio_pci_modern_miniport.h`
+- `drivers/windows7/virtio/common/src/virtio_pci_modern_miniport.c`
+
+This shim is shaped for NDIS/StorPort: callers provide a mapped BAR0 pointer and a cached 256-byte PCI config snapshot,
+so drivers do not need to implement `VIRTIO_PCI_MODERN_OS_INTERFACE`.
 
 ### `drivers/win7/virtio/virtio-core/` (KMDF-centric modern transport)
 
@@ -218,5 +229,7 @@ StorPort/NDIS drivers provide the required OS callbacks for PCI config access an
 
 It can be built without WDF (`VIRTIO_CORE_USE_WDF=0`) but uses a different device
 abstraction (`VIRTIO_PCI_MODERN_DEVICE`) and provides its own init/mapping
-helpers. For WDF-free drivers in this repo, prefer the canonical transport in
-`drivers/windows/virtio/pci-modern/`.
+helpers. For WDF-free drivers in this repo:
+
+- WDM drivers typically use `drivers/windows/virtio/pci-modern/`.
+- Miniport drivers typically use `drivers/windows7/virtio/common/`.
