@@ -254,6 +254,11 @@ In AeroGPU we currently accept only `D3D11DDI_INTERFACE_VERSION`:
 
 You return `D3D11DDI_ADAPTERFUNCS` from `OpenAdapter11`. On Win7, treat every field as **must be non-null**.
 
+If your chosen `D3D11DDI_INTERFACE_VERSION` adds adapter-func fields beyond the ones listed here, apply the same rule:
+
+* keep the pointer **non-null**, and
+* return a clean failure (`E_NOTIMPL` / `E_INVALIDARG`) rather than leaving it NULL.
+
 | Field | Status | Must succeed? | Notes / failure guidance |
 |---|---|---:|---|
 | `pfnGetCaps` | REQUIRED | **Yes** for the “minimum caps set” in §3 | Return conservative answers; unknown `Type` must not crash. |
@@ -338,6 +343,11 @@ Populate **every** field in `D3D11DDI_DEVICEFUNCS` with a non-null function poin
 * `CalcPrivate*Size` returns a non-zero size (often `sizeof(YourDummyObject)`).
 * `Create*` returns `E_NOTIMPL` / `E_INVALIDARG` if unsupported.
 * `Destroy*` is a safe no-op if the object was never successfully created.
+
+If a field exists in your `d3d11umddi.h` but is not explicitly mentioned in this doc, treat it as:
+
+* **OPTIONAL** for FL10_0 bring-up, and
+* still **non-null** (stubbed).
 
 ### 4.2 Function pointer checklist (grouped)
 
@@ -456,6 +466,11 @@ This is the “immediate context” function table filled in `pfnCreateDevice`. 
 
 Just like device funcs: populate **every field** with a non-null pointer and fail cleanly where unsupported. The runtime often calls many state setters during initialization (binding `NULL` to reset state); missing entrypoints here commonly crash on first device creation.
 
+If a field exists in your `d3d11umddi.h` but is not explicitly mentioned in this doc, treat it as:
+
+* **OPTIONAL** for FL10_0 bring-up, and
+* still **non-null** (stubbed, usually via `SetErrorCb(E_NOTIMPL)` for `void` context DDIs).
+
 ### 5.2 Core pipeline binding (IA / VS / PS / GS)
 
 | Field | Status | Notes / stub guidance |
@@ -475,6 +490,19 @@ Resource/CB/sampler binding for FL10_0 pipeline:
 | `pfnVsSetConstantBuffers` / `pfnPsSetConstantBuffers` / `pfnGsSetConstantBuffers` | REQUIRED-BUT-STUBBABLE | Runtime may call with NULL to clear; handle that without error. |
 | `pfnVsSetShaderResources` / `pfnPsSetShaderResources` / `pfnGsSetShaderResources` | REQUIRED-BUT-STUBBABLE | Required once texture sampling exists; handle NULL to unbind. |
 | `pfnVsSetSamplers` / `pfnPsSetSamplers` / `pfnGsSetSamplers` | REQUIRED-BUT-STUBBABLE | Same. |
+
+#### 5.2.1 HS/DS/CS stages (optional for FL10_0 bring-up)
+
+Even if you don’t support tessellation/compute yet, the context table will usually still contain entrypoints for:
+
+* `pfnHsSet*` (hull shader stage)
+* `pfnDsSet*` (domain shader stage)
+* `pfnCsSet*` (compute shader stage)
+
+Recommended stub behavior:
+
+* If called with “unbind” semantics (NULL shader, NULL resources), treat it as a no-op success (don’t spam `SetErrorCb` during `ClearState`).
+* If called with a non-NULL shader/resource that implies real execution, report `E_NOTIMPL` via `SetErrorCb`.
 
 ### 5.3 Rasterizer / output merger binding
 
