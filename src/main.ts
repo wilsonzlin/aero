@@ -1156,8 +1156,11 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
 
-      // Prefill the entire ring with silence so the worker has time to attach and
-      // start producing audio without incurring startup underruns.
+      // Prefill the ring with silence so the worker has time to attach and start producing audio
+      // without incurring startup underruns.
+      //
+      // `createAudioOutput()` already writes a small startup padding; top up to capacity without
+      // dropping frames so `overrunCount` stays at 0 (useful for CI smoke tests).
       const level = output.getBufferLevelFrames();
       const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
       if (prefillFrames > 0) {
