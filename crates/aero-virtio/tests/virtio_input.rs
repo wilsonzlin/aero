@@ -373,6 +373,26 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let payload = bar_read(&mut dev, caps.device + 8, size);
     assert!(payload.starts_with(b"Aero Virtio Mouse"));
 
+    // Mouse ID_DEVIDS uses product 0x0002.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.device + 0,
+        VIRTIO_INPUT_CFG_ID_DEVIDS,
+    );
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    assert_eq!(bar_read_u8(&mut dev, caps.device + 2), 8);
+    let payload = bar_read(&mut dev, caps.device + 8, 8);
+    assert_eq!(
+        payload,
+        [
+            0x06, 0x00, // bustype
+            0xf4, 0x1a, // vendor
+            0x02, 0x00, // product
+            0x01, 0x00 // version
+        ]
+    );
+
     bar_write_u8(
         &mut dev,
         &mut mem,
@@ -412,6 +432,11 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let rel_bits = bar_read(&mut dev, caps.device + 8, size);
     assert_ne!(rel_bits[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
+
+    // All selectors not explicitly required by the Win7 contract must return size=0.
+    bar_write_u8(&mut dev, &mut mem, caps.device + 0, 0xff);
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    assert_eq!(bar_read_u8(&mut dev, caps.device + 2), 0);
 }
 
 #[test]
