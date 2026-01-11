@@ -27,16 +27,23 @@ The Windows INF must match the correct PCI vendor/device IDs so that Windows 7 w
 
 Vendor ID: **`VEN_1AF4`**
 
-The shipped INF (`inf/aero-virtio-snd.inf`) intentionally matches only the
-**AERO-W7-VIRTIO v1** modern virtio-snd PCI function:
+The shipped INF (`aero-virtio-snd.inf`; in-repo source: `inf/aero-virtio-snd.inf`) intentionally
+matches only the **AERO-W7-VIRTIO v1** modern virtio-snd PCI function:
 
-- **Required (as-shipped):** `PCI\VEN_1AF4&DEV_1059&REV_01`
+- **Required (as shipped):** `PCI\VEN_1AF4&DEV_1059&REV_01`
 - **Optional (commented out in the INF):** `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
 It does **not** match:
 
 - Transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`)
 - Any non-revision-gated “short forms” (for example `PCI\VEN_1AF4&DEV_1059`)
+
+## Related virtio-snd PCI device IDs (reference)
+
+| Variant | PCI Device ID | Windows HWID prefix | Notes |
+| --- | --- | --- | --- |
+| Modern / non-transitional (**contract v1**) | **`DEV_1059`** | `PCI\VEN_1AF4&DEV_1059` | `0x1059 = 0x1040 + 0x19` (virtio device id 25 / `VIRTIO_ID_SOUND`). |
+| Transitional (legacy+modern) | **`DEV_1018`** | `PCI\VEN_1AF4&DEV_1018` | Transitional virtio-pci IDs use `0x1000 + (virtio_device_id - 1)` → `0x1018 = 0x1000 + (0x19 - 1)`. |
 
 ## Aero contract v1 expectations (subsystem + revision)
 
@@ -51,23 +58,13 @@ So, a fully-qualified expected HWID looks like:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
-The shipped Aero INF (`inf/aero-virtio-snd.inf`) is intentionally **strict** for
-`AERO-W7-VIRTIO` v1 and matches only:
-
-* `PCI\VEN_1AF4&DEV_1059&REV_01`
-
-Optional (commented out) tighter match:
-
-* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
-
-Note: `docs/windows-device-contract.json` currently lists non-revision-gated
-patterns (`PCI\VEN_1AF4&DEV_1059` and `...&SUBSYS_00191AF4`) for tooling
-convenience. The virtio-snd INF is intentionally stricter and requires `REV_01`.
+Note: `docs/windows-device-contract.json` currently lists non-revision-gated patterns
+(`PCI\VEN_1AF4&DEV_1059` and `...&SUBSYS_00191AF4`) for tooling convenience. The virtio-snd INF is
+intentionally stricter and requires `REV_01`.
 
 The repository also contains an optional **legacy filename alias** INF
-(`inf/virtio-snd.inf`, checked in as `inf/virtio-snd.inf.disabled` by default).
-That alias exists for compatibility with workflows/tools that still expect
-`virtio-snd.inf`; when enabled, it intentionally matches additional HWIDs:
+(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and regenerate/sign
+`virtio-snd.cat`), it can be used for development bring-up against less strict HWIDs such as:
 
 * `PCI\VEN_1AF4&DEV_1059` (no `REV_01` gate)
 * Transitional virtio-snd: `PCI\VEN_1AF4&DEV_1018`
@@ -107,6 +104,7 @@ If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
   (You can confirm supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.)
 * If your QEMU build does **not** support overriding the PCI Revision ID, the stock Aero INF will
   not bind. Use a contract-v1-capable device model/hypervisor (or patch QEMU) for testing.
+  (Development-only alternative: enable the legacy alias INF described above.)
 
 ### Verify the emitted PCI ID (no guest required)
 

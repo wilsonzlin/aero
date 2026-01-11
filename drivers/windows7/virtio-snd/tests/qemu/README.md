@@ -35,6 +35,9 @@ References:
 - The virtio-snd driver package directory for the target architecture (must contain `aero-virtio-snd.inf` + `virtiosnd.sys`):
   - Repo layout (staging): `drivers/windows7/virtio-snd/inf/`
   - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
+- Important: `aero-virtio-snd.inf` is revision-gated and binds only to the Aero contract v1 HWID
+  (`PCI\VEN_1AF4&DEV_1059&REV_01`). If QEMU enumerates the transitional ID (`DEV_1018`) or uses
+  `REV_00`, Windows will not bind this package until you adjust QEMU device options (see below).
 - Test signing enabled in the guest (or a properly production-signed driver package).
 
 Optional (but recommended for headless hosts):
@@ -75,7 +78,7 @@ qemu-system-i386 \
   -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x86.wav \
-  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=aerosnd0
+  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
 ```
 
 ### Windows 7 SP1 x64
@@ -88,7 +91,7 @@ qemu-system-x86_64 \
   -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x64.wav \
-  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=aerosnd0
+  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
 ```
 
 ### Audio backend alternatives
@@ -126,6 +129,11 @@ device name from above if needed):
 qemu-system-x86_64 -device virtio-sound-pci,help
 ```
 
+Development note: the repo also contains an optional legacy filename alias INF
+(`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf`, it matches less strict
+HWIDs such as `DEV_1059` without `REV_01` and the transitional `DEV_1018`. This legacy INF is
+**not** staged into the CI driver bundle.
+
 ## Verifying HWID in Device Manager
 
 Before installing the driver (or when troubleshooting binding), confirm the device HWID that Windows sees:
@@ -137,23 +145,20 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 
 Expected values include at least one of:
 
-- `PCI\VEN_1AF4&DEV_1059&REV_01`
+- `PCI\VEN_1AF4&DEV_1059&REV_01` (Aero contract v1; required for `aero-virtio-snd.inf`)
 - `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)
 
-More specific forms may also appear (with `SUBSYS_...`). The “Hardware Ids” list
-will usually include less-specific variants (without `REV_..`), but the stock Aero
-INF requires the `...&REV_01` entry to be present.
-
-If you see `DEV_1018` (transitional) or `REV_00`, your QEMU configuration does not
-match the stock INF.
+More specific forms may also appear (with `SUBSYS_...`). The strict INF requires the revision-gated
+form `...&REV_01` to be present (it does not match `DEV_1059` without `REV_01`).
 
 If you see `PCI\VEN_1AF4&DEV_1018` (transitional) or `REV_00`, update the QEMU command line to include
-`disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device (or upgrade QEMU if those properties are missing).
+`disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device (or upgrade QEMU if those
+properties are missing).
 
 The automated Win7 host harness probes QEMU for supported virtio-snd device properties (via
 `-device virtio-sound-pci,help`) and enables contract-v1 identification when supported (for example
 `disable-legacy=on` and `x-pci-revision=0x01`). This is the same configuration required for the
-stock `aero-virtio-snd.inf` to bind under QEMU.
+stock `aero-virtio-snd.inf` to bind under QEMU. This manual test plan uses the same approach.
 
 - `drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1`
 - `drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py`
@@ -200,13 +205,13 @@ Reboot if prompted.
 2. Right click → **Properties**:
    - **General** should show “This device is working properly.”
    - **Details** tab → **Hardware Ids** should include at least one of:
-     - `PCI\VEN_1AF4&DEV_1059&REV_01`
-     - `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
-     and may also include less-specific `...&DEV_1059` variants.
+     - `PCI\VEN_1AF4&DEV_1059&REV_01` (required for `aero-virtio-snd.inf`)
+     - `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)
+     and may also include more-specific `SUBSYS_...` forms and less-specific `...&DEV_1059` variants.
    - **Driver** tab → **Driver Details** should include at least:
-     - `virtiosnd.sys`
-     - `portcls.sys`
-     - `ks.sys`
+      - `virtiosnd.sys`
+      - `portcls.sys`
+      - `ks.sys`
 
 ### 4) Verify a render endpoint exists
 
@@ -256,13 +261,16 @@ The selftest logs to:
    ```
 2. Run it (elevated CMD recommended):
    ```bat
-   C:\AeroTests\aero-virtio-selftest.exe --test-snd
+   C:\AeroTests\aero-virtio-selftest.exe
    ```
+   Notes:
+   - The selftest runs the virtio-snd playback check by default (skip with `--disable-snd`).
+   - Use `--require-snd` (or alias `--test-snd`) to make a missing virtio-snd device a failure instead of SKIP.
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed)
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected and `--require-snd`/`--test-snd` was set)
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing` (virtio-snd PCI function not detected)
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected; only when `--require-snd` / `--test-snd` is set)
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing` (virtio-snd PCI function not detected; default behavior)
      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing` (driver bound but Topology KS interface missing)
      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
 
@@ -304,9 +312,10 @@ Then review:
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
 - Confirm the HWID matches `aero-virtio-snd.inf` (requires `PCI\VEN_1AF4&DEV_1059&REV_01`).
-- If you see `DEV_1018` (transitional) or `REV_00`, ensure your QEMU device uses the modern ID space
-  and reports contract v1 revision:
-  - `-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,...`
+- If Windows shows `DEV_1018`, you likely forgot `disable-legacy=on` in QEMU (transitional virtio-pci).
+- If Windows shows `REV_00`, you likely forgot `x-pci-revision=0x01` in QEMU (revision gate mismatch).
+  Example:
+  - `-device virtio-sound-pci,audiodev=...,disable-legacy=on,x-pci-revision=0x01`
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
@@ -316,7 +325,7 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 - Confirm the driver is installing a complete PortCls/WaveRT stack:
   - A WaveRT render miniport alone is not sufficient; Windows typically also expects the correct KS filter categories and (often) a topology miniport.
 - Re-check the INF:
-  - The Aero INF matches `DEV_1059&REV_01` for contract v1 (an optional `SUBSYS_...&REV_01` match is present but commented out). If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
+  - `aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01` for Aero contract v1 (an optional `...&SUBSYS_00191AF4&REV_01` match is present but commented out). If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
   - The INF must register the correct audio/KS interfaces for render (e.g. `KSCATEGORY_AUDIO`, `KSCATEGORY_RENDER`).
 
 If you are iterating on INF/miniport registration, remove the device from Device Manager (and delete the driver package if requested) before reinstalling so updated INF state is applied.
