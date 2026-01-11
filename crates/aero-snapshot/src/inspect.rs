@@ -3,13 +3,10 @@ use std::io::{Read, Seek, SeekFrom};
 use crate::error::{Result, SnapshotError};
 use crate::format::{SectionId, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1};
 use crate::io::ReadLeExt;
-use crate::ram::{Compression, RamMode};
+use crate::ram::{Compression, RamMode, MAX_CHUNK_SIZE, MAX_PAGE_SIZE};
 use crate::types::SnapshotMeta;
 
 const SECTION_HEADER_LEN: u64 = 4 + 2 + 2 + 8;
-
-const MAX_PAGE_SIZE: u32 = 2 * 1024 * 1024;
-const MAX_CHUNK_SIZE: u32 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotSectionInfo {

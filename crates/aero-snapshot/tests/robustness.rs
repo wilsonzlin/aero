@@ -1,10 +1,10 @@
 use std::io::{Cursor, ErrorKind};
 
 use aero_snapshot::{
-    restore_snapshot, save_snapshot, Compression, CpuState, DeviceState, DiskOverlayRefs, MmuState,
-    RamMode, RamWriteOptions, Result, SaveOptions, SectionId, SnapshotError, SnapshotMeta,
-    SnapshotSource, SnapshotTarget, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC,
-    SNAPSHOT_VERSION_V1,
+    inspect_snapshot, restore_snapshot, save_snapshot, Compression, CpuState, DeviceState,
+    DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, Result, SaveOptions, SectionId,
+    SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget, SNAPSHOT_ENDIANNESS_LITTLE,
+    SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 
 #[derive(Default)]
@@ -93,6 +93,21 @@ fn push_section(dst: &mut Vec<u8>, id: SectionId, version: u16, flags: u16, payl
     dst.extend_from_slice(&flags.to_le_bytes());
     dst.extend_from_slice(&(payload.len() as u64).to_le_bytes());
     dst.extend_from_slice(payload);
+}
+
+fn minimal_snapshot_with_ram_payload(ram_payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    bytes.extend_from_slice(&SNAPSHOT_VERSION_V1.to_le_bytes());
+    bytes.push(SNAPSHOT_ENDIANNESS_LITTLE);
+    bytes.push(0);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut cpu_payload = Vec::new();
+    CpuState::default().encode(&mut cpu_payload).unwrap();
+    push_section(&mut bytes, SectionId::CPU, 1, 0, &cpu_payload);
+    push_section(&mut bytes, SectionId::RAM, 1, 0, ram_payload);
+    bytes
 }
 
 #[test]
@@ -227,4 +242,50 @@ fn restore_snapshot_rejects_dirty_ram_count_exceeding_max_pages() {
         err,
         SnapshotError::Corrupt("too many dirty pages")
     ));
+}
+
+#[test]
+fn inspect_and_restore_reject_invalid_ram_page_size() {
+    // `ram::MAX_PAGE_SIZE` is 2 MiB; keep the test payload minimal by setting total_len=0.
+    let invalid_page_size = 2 * 1024 * 1024 + 1;
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&(invalid_page_size as u32).to_le_bytes());
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes());
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
+
+    let bytes = minimal_snapshot_with_ram_payload(&ram_payload);
+
+    let err = inspect_snapshot(&mut Cursor::new(bytes.as_slice())).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("invalid page size")));
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("invalid page size")));
+}
+
+#[test]
+fn inspect_and_restore_reject_invalid_ram_chunk_size() {
+    // `ram::MAX_CHUNK_SIZE` is 64 MiB; keep the test payload minimal by setting total_len=0.
+    let invalid_chunk_size = 64 * 1024 * 1024 + 1;
+
+    let mut ram_payload = Vec::new();
+    ram_payload.extend_from_slice(&0u64.to_le_bytes()); // total_len
+    ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // page_size
+    ram_payload.push(RamMode::Full as u8);
+    ram_payload.push(Compression::None as u8);
+    ram_payload.extend_from_slice(&0u16.to_le_bytes());
+    ram_payload.extend_from_slice(&(invalid_chunk_size as u32).to_le_bytes());
+
+    let bytes = minimal_snapshot_with_ram_payload(&ram_payload);
+
+    let err = inspect_snapshot(&mut Cursor::new(bytes.as_slice())).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("invalid chunk size")));
+
+    let mut target = DummyTarget::new(0);
+    let err = restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("invalid chunk size")));
 }
