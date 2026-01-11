@@ -187,7 +187,25 @@ function maybeInitUhciDevice(): void {
     const Bridge = api.UhciControllerBridge;
     if (Bridge) {
       try {
-        const bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
+        // `UhciControllerBridge` has multiple wasm-bindgen constructor signatures depending on
+        // which WASM build is deployed:
+        // - legacy: `new (guestBase)`
+        // - current: `new (guestBase, guestSize)` (guestSize=0 means "use remainder of linear memory")
+        //
+        // wasm-bindgen glue sometimes enforces constructor arity, so pick based on `length` and
+        // fall back to the other variant if instantiation fails.
+        const base = guestBase >>> 0;
+        const size = guestSize >>> 0;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const Ctor = Bridge as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let bridge: any;
+        try {
+          bridge = Ctor.length >= 2 ? new Ctor(base, size) : new Ctor(base);
+        } catch (err) {
+          // Retry with the opposite arity to support older/newer wasm-bindgen outputs.
+          bridge = Ctor.length >= 2 ? new Ctor(base) : new Ctor(base, size);
+        }
         const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
         uhciControllerBridge = bridge;
         uhciDevice = dev;

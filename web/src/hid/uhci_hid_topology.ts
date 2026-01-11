@@ -3,6 +3,12 @@ import { DEFAULT_EXTERNAL_HUB_PORT_COUNT } from "../platform/webhid_passthrough"
 
 export type UhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
 
+function clampHubPortCount(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  const int = Math.floor(value);
+  return Math.max(1, Math.min(255, int));
+}
+
 /**
  * Subset of the WASM `UhciControllerBridge` API required to manage guest USB topology.
  *
@@ -55,7 +61,7 @@ export class UhciHidTopologyManager {
 
   setHubConfig(path: GuestUsbPath, portCount?: number): void {
     const rootPort = path[0] ?? 0;
-    const count = portCount ?? this.#defaultHubPortCount;
+    const count = clampHubPortCount(portCount ?? this.#defaultHubPortCount);
     this.#hubPortCountByRoot.set(rootPort, count);
     this.#maybeAttachHub(rootPort);
   }
@@ -86,7 +92,7 @@ export class UhciHidTopologyManager {
 
     const configured = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
     const minPortCount = opts.minPortCount ?? 0;
-    const portCount = Math.max(configured, minPortCount);
+    const portCount = clampHubPortCount(Math.max(configured, minPortCount));
     try {
       uhci.attach_hub(rootPort >>> 0, portCount >>> 0);
       this.#hubAttachedRoots.add(rootPort);
