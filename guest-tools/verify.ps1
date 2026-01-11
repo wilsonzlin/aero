@@ -1991,8 +1991,9 @@ try {
     if ($cfgVirtioNetService) { $networkServiceCandidates = @($cfgVirtioNetService) + $networkServiceCandidates }
     $graphicsServiceCandidates = @("viogpu","aerogpu","aero-gpu")
     if ($cfgGpuService) { $graphicsServiceCandidates = @($cfgGpuService) + $graphicsServiceCandidates }
-    $audioServiceCandidates = @("viosnd","aerosnd")
+    $audioServiceCandidates = @("aeroviosnd","viosnd","aerosnd","virtiosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
+    $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
     $inputServiceCandidates = @("virtioinput","vioinput","aeroinput")
     if ($cfgVirtioInputService) { $inputServiceCandidates = @($cfgVirtioInputService) + $inputServiceCandidates }
 
@@ -2088,10 +2089,6 @@ try {
     } catch {
         Add-Check "aerogpu_umd_files" "AeroGPU D3D9 UMD DLL placement" "WARN" ("Failed: " + $_.Exception.Message) $null @()
     }
-
-    $audioServiceCandidates = @("aeroviosnd","viosnd","aerosnd","virtiosnd")
-    if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
-    $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
 
     Add-DeviceBindingCheck `
         "device_binding_audio" `
