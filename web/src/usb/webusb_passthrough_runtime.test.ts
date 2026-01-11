@@ -1,0 +1,140 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "./webusb_passthrough_runtime";
+import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+
+type Listener = (ev: MessageEvent<unknown>) => void;
+
+class FakePort {
+  readonly posted: unknown[] = [];
+  private readonly listeners = new Set<Listener>();
+
+  addEventListener(type: string, listener: Listener): void {
+    if (type !== "message") return;
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(type: string, listener: Listener): void {
+    if (type !== "message") return;
+    this.listeners.delete(listener);
+  }
+
+  start(): void {
+    // No-op; browsers require MessagePort.start() when using addEventListener.
+  }
+
+  postMessage(msg: unknown): void {
+    this.posted.push(msg);
+  }
+
+  emit(msg: unknown): void {
+    const ev = { data: msg } as MessageEvent<unknown>;
+    for (const listener of this.listeners) {
+      listener(ev);
+    }
+  }
+}
+
+describe("usb/WebUsbPassthroughRuntime", () => {
+  it("drains actions and forwards them to the broker port as usb.action messages", async () => {
+    const port = new FakePort();
+
+    const actions: UsbHostAction[] = [
+      {
+        kind: "controlIn",
+        id: 1,
+        setup: { bmRequestType: 0x80, bRequest: 6, wValue: 0x0100, wIndex: 0, wLength: 18 },
+      },
+      { kind: "bulkOut", id: 2, ep: 1, data: Uint8Array.of(1, 2, 3) },
+    ];
+
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions),
+      push_completion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 0x1234, productId: 0x5678 } });
+
+    const p = runtime.pollOnce();
+
+    expect(port.posted).toEqual([
+      { type: "usb.action", action: actions[0] },
+      { type: "usb.action", action: actions[1] },
+    ]);
+
+    port.emit({ type: "usb.completion", completion: { kind: "okIn", id: 1, data: Uint8Array.of(9) } satisfies UsbHostCompletion });
+    port.emit({ type: "usb.completion", completion: { kind: "okOut", id: 2, bytesWritten: 3 } satisfies UsbHostCompletion });
+
+    await p;
+  });
+
+  it("pushes usb.completion replies back into the WASM bridge (matching out of order by id)", async () => {
+    const port = new FakePort();
+
+    const actions: UsbHostAction[] = [
+      { kind: "bulkIn", id: 1, ep: 1, length: 8 },
+      { kind: "bulkOut", id: 2, ep: 2, data: Uint8Array.of(7, 7) },
+    ];
+
+    const push_completion = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions),
+      push_completion,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+
+    const c2: UsbHostCompletion = { kind: "okOut", id: 2, bytesWritten: 2 };
+    const c1: UsbHostCompletion = { kind: "okIn", id: 1, data: Uint8Array.of(1, 2) };
+
+    // Emit out-of-order to ensure the runtime matches by id.
+    port.emit({ type: "usb.completion", completion: c2 });
+    port.emit({ type: "usb.completion", completion: c1 });
+
+    await p;
+
+    expect(push_completion).toHaveBeenCalledTimes(2);
+    expect(push_completion.mock.calls[0]?.[0]).toBe(c2);
+    expect(push_completion.mock.calls[1]?.[0]).toBe(c1);
+
+    expect(runtime.getMetrics()).toMatchObject({ actionsForwarded: 2, completionsApplied: 2, pendingCompletions: 0 });
+  });
+
+  it("stops pumping and resets the bridge on usb.selected ok:false", async () => {
+    const port = new FakePort();
+
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, ep: 1, length: 8 };
+    const drain_actions = vi.fn(() => [action]);
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions,
+      push_completion: vi.fn(),
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+    expect(port.posted).toEqual([{ type: "usb.action", action }]);
+
+    // No completion is delivered; selecting ok:false should cancel the in-flight action and reset the bridge.
+    port.emit({ type: "usb.selected", ok: false, error: "device revoked" });
+
+    await p;
+    expect(reset).toHaveBeenCalledTimes(1);
+
+    await runtime.pollOnce();
+    expect(drain_actions).toHaveBeenCalledTimes(1);
+  });
+});
+

@@ -34,6 +34,7 @@ import { RemoteStreamingDisk, type RemoteDiskCacheStatus, type RemoteDiskTelemet
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
+import { WebUsbPassthroughRuntime } from "../usb/webusb_passthrough_runtime";
 import {
   isHidAttachMessage,
   isHidDetachMessage,
@@ -82,6 +83,8 @@ let mmioWriteCount = 0;
 
 type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
 let usbHid: UsbHidBridge | null = null;
+let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
+let usbPassthroughDebugTimer: number | undefined;
 
 type HidHostSink = {
   sendReport: (msg: Omit<HidSendReportMessage, "type">) => void;
@@ -640,6 +643,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               memory: init.guestMemory,
             });
             usbHid = new api.UsbHidBridge();
+
+            if (import.meta.env.DEV && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
+              try {
+                const bridge = new api.UsbPassthroughBridge();
+                usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 8 });
+                usbPassthroughRuntime.start();
+                usbPassthroughDebugTimer = setInterval(() => {
+                  console.debug("[io.worker] UsbPassthroughBridge pending_summary()", usbPassthroughRuntime?.pendingSummary());
+                }, 1000) as unknown as number;
+              } catch (err) {
+                console.warn("[io.worker] Failed to initialize WebUSB passthrough runtime", err);
+              }
+            }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(`[io.worker] wasm:init failed: ${message}`);
@@ -1136,12 +1152,18 @@ function shutdown(): void {
     clearInterval(pollTimer);
     pollTimer = undefined;
   }
+  if (usbPassthroughDebugTimer !== undefined) {
+    clearInterval(usbPassthroughDebugTimer);
+    usbPassthroughDebugTimer = undefined;
+  }
 
   activeAccessHandle?.close();
   activeDiskCapacityBytes = null;
   void closeActiveRemoteDisk();
   usbHid?.free();
   usbHid = null;
+  usbPassthroughRuntime?.destroy();
+  usbPassthroughRuntime = null;
   deviceManager = null;
   i8042 = null;
   pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
