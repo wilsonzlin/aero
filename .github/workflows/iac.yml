@@ -54,6 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      TERRAFORM_VERSION: "1.7.5"
+      TFLINT_VERSION: "v0.53.0"
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
       TF_IN_AUTOMATION: "1"
     steps:
@@ -62,7 +64,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.7.5
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
       - name: Prepare Terraform plugin cache
@@ -73,20 +75,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.terraform.d/plugin-cache
-          key: ${{ runner.os }}-terraform-${{ hashFiles('infra/**/.terraform.lock.hcl') }}
+          key: ${{ runner.os }}-terraform-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('infra/**/.terraform.lock.hcl') }}
           restore-keys: |
             ${{ runner.os }}-terraform-
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
-          tflint_version: v0.53.0
+          tflint_version: ${{ env.TFLINT_VERSION }}
 
       - name: Cache TFLint plugins
         uses: actions/cache@v4
         with:
           path: ~/.tflint.d/plugins
-          key: ${{ runner.os }}-tflint-${{ hashFiles('infra/**/.tflint.hcl') }}
+          key: ${{ runner.os }}-tflint-${{ env.TFLINT_VERSION }}-${{ hashFiles('infra/**/.tflint.hcl') }}
           restore-keys: |
             ${{ runner.os }}-tflint-
 
