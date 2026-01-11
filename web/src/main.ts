@@ -7,6 +7,11 @@ import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
 import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling } from "./platform/audio";
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
+import {
+  CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  HEADER_BYTES as MIC_HEADER_BYTES,
+  HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+} from "./audio/mic_ring.js";
 import { startSyntheticMic } from "./audio/synthetic_mic";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
@@ -1861,9 +1866,9 @@ function renderAudioPanel(): HTMLElement {
         backend = "main";
         workerError = err instanceof Error ? err.message : String(err);
 
-        const header = new Uint32Array(mic.ringBuffer, 0, 4);
-        const capacity = header[3] >>> 0;
-        const data = new Float32Array(mic.ringBuffer, 16, capacity);
+        const header = new Uint32Array(mic.ringBuffer, 0, MIC_HEADER_U32_LEN);
+        const capacity = header[MIC_CAPACITY_SAMPLES_INDEX] >>> 0;
+        const data = new Float32Array(mic.ringBuffer, MIC_HEADER_BYTES, capacity);
         const micRb: MicRingBuffer = { sab: mic.ringBuffer, header, data, capacity };
 
         let tmpMono = new Float32Array(256);
