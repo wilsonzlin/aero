@@ -78,7 +78,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
-    hid::passthrough::UsbHidPassthrough,
+    hid::passthrough::{SharedUsbHidPassthroughDevice, UsbHidPassthrough},
     hid::webhid,
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     usb::{UsbDevice, UsbHandshake},
@@ -553,51 +553,6 @@ impl UsbHidPassthroughBridge {
 #[wasm_bindgen]
 pub struct WebHidPassthroughBridge {
     device: std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>,
-}
-
-// Internal adapter: allow attaching a `UsbHidPassthroughBridge` / `WebHidPassthroughBridge` to the
-// UHCI bus while still letting JS keep a handle to push input reports + drain output reports.
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone)]
-pub(crate) struct SharedUsbHidPassthroughDevice(std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>);
-
-#[cfg(target_arch = "wasm32")]
-impl UsbDevice for SharedUsbHidPassthroughDevice {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
-    }
-
-    fn speed(&self) -> aero_usb::usb::UsbSpeed {
-        self.0.borrow().speed()
-    }
-
-    fn tick_1ms(&mut self) {
-        self.0.borrow_mut().tick_1ms();
-    }
-
-    fn reset(&mut self) {
-        self.0.borrow_mut().reset();
-    }
-
-    fn address(&self) -> u8 {
-        self.0.borrow().address()
-    }
-
-    fn handle_setup(&mut self, setup: aero_usb::usb::SetupPacket) {
-        self.0.borrow_mut().handle_setup(setup);
-    }
-
-    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
-        self.0.borrow_mut().handle_out(ep, data)
-    }
-
-    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
-        self.0.borrow_mut().handle_in(ep, buf)
-    }
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -55,6 +55,9 @@ const HUB_PORT_CHANGE_ENABLE: u16 = 1 << 1;
 const HUB_PORT_CHANGE_SUSPEND: u16 = 1 << 2;
 const HUB_PORT_CHANGE_RESET: u16 = 1 << 4;
 
+// Defensive cap used when decoding nested USB device snapshots.
+const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
 const HUB_INTERRUPT_IN_EP_ADDR: u8 = 0x81;
 const HUB_INTERRUPT_IN_EP_NUM: u8 = 1;
 
@@ -972,6 +975,7 @@ impl IoSnapshot for UsbHubDevice {
         const TAG_NUM_PORTS: u16 = 7;
         const TAG_PORTS: u16 = 8;
         const TAG_EP0: u16 = 9;
+        const TAG_DOWNSTREAM: u16 = 10;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1004,6 +1008,20 @@ impl IoSnapshot for UsbHubDevice {
             port_records.push(rec);
         }
         w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
+
+        // Snapshot downstream devices (including nested hubs) separately from the port-status
+        // records. This keeps the port-status encoding stable and allows older snapshots (missing
+        // `TAG_DOWNSTREAM`) to restore hub-local state without needing a full topology snapshot.
+        let mut downstream = Encoder::new().u32(self.ports.len() as u32);
+        for port in &self.ports {
+            if let Some(dev) = &port.device {
+                let snap = crate::snapshot::save_device_state(dev.as_ref());
+                downstream = downstream.u32(snap.len() as u32).bytes(&snap);
+            } else {
+                downstream = downstream.u32(0);
+            }
+        }
+        w.field_bytes(TAG_DOWNSTREAM, downstream.finish());
 
         let stage = match self.ep0.stage {
             Ep0Stage::Idle => 0u8,
@@ -1042,6 +1060,7 @@ impl IoSnapshot for UsbHubDevice {
         const TAG_NUM_PORTS: u16 = 7;
         const TAG_PORTS: u16 = 8;
         const TAG_EP0: u16 = 9;
+        const TAG_DOWNSTREAM: u16 = 10;
 
         const MAX_PORTS: usize = u8::MAX as usize;
         const MAX_PORT_RECORD_BYTES: usize = 64;
@@ -1198,6 +1217,30 @@ impl IoSnapshot for UsbHubDevice {
             self.ep0.out_expected = out_expected;
             self.ep0.out_data = out_data;
             self.ep0.stalled = stalled;
+        }
+
+        if let Some(buf) = r.bytes(TAG_DOWNSTREAM) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("hub downstream count"));
+            }
+            for port in &mut self.ports {
+                let len = d.u32()? as usize;
+                if len == 0 {
+                    continue;
+                }
+                if len > MAX_USB_SNAPSHOT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "hub downstream snapshot too large",
+                    ));
+                }
+                let snap = d.bytes(len)?;
+                if let Some(dev) = port.device.as_mut() {
+                    crate::snapshot::load_device_state(dev.as_mut(), snap)?;
+                }
+            }
+            d.finish()?;
         }
 
         Ok(())

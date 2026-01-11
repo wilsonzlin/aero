@@ -201,6 +201,7 @@ pub struct UhciController {
     bus: UsbBus,
 }
 
+
 impl UhciController {
     pub fn new(io_base: u16, irq_line: u8) -> Self {
         let mut ctrl = Self {
@@ -669,6 +670,9 @@ impl UhciController {
     }
 }
 
+// Defensive cap used when decoding nested USB device snapshots.
+const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
 impl IoSnapshot for UhciController {
     const DEVICE_ID: [u8; 4] = *b"UHCI";
     const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -685,6 +689,7 @@ impl IoSnapshot for UhciController {
         const TAG_SOFMOD: u16 = 9;
         const TAG_PORTS: u16 = 10;
         const TAG_BUS: u16 = 11;
+        const TAG_DEVICES: u16 = 12;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u16(TAG_IO_BASE, self.io_base);
@@ -750,6 +755,27 @@ impl IoSnapshot for UhciController {
 
         if bus_snapshotable {
             w.field_bytes(TAG_BUS, self.bus.save_state());
+        } else {
+            // Root-port device state (including nested hubs) is stored separately from the
+            // controller register/port snapshot so older snapshots (missing `TAG_DEVICES`) can
+            // still restore controller registers alone. This is used by wasm glue that wires USB
+            // passthrough devices via shared `Rc` handles (which cannot be reconstructed from
+            // snapshots).
+            let mut devices = Encoder::new().u32(self.ports.len() as u32);
+            for idx in 0..self.ports.len() {
+                let snap = self
+                    .bus
+                    .port(idx)
+                    .and_then(|p| p.device.as_ref())
+                    .map(|d| crate::snapshot::save_device_state(d.as_ref()))
+                    .unwrap_or_default();
+                if snap.is_empty() {
+                    devices = devices.u32(0);
+                } else {
+                    devices = devices.u32(snap.len() as u32).bytes(&snap);
+                }
+            }
+            w.field_bytes(TAG_DEVICES, devices.finish());
         }
 
         w.finish()
@@ -767,6 +793,7 @@ impl IoSnapshot for UhciController {
         const TAG_SOFMOD: u16 = 9;
         const TAG_PORTS: u16 = 10;
         const TAG_BUS: u16 = 11;
+        const TAG_DEVICES: u16 = 12;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -784,8 +811,6 @@ impl IoSnapshot for UhciController {
         let has_bus = r.bytes(TAG_BUS).is_some();
         if let Some(buf) = r.bytes(TAG_BUS) {
             self.bus.load_state(buf)?;
-        } else {
-            self.bus = UsbBus::new(self.ports.len());
         }
 
         if self.bus.num_ports() != self.ports.len() {
@@ -857,6 +882,35 @@ impl IoSnapshot for UhciController {
                 } else {
                     self.ports[idx].reg &= !PORTSC_PED;
                 }
+            }
+        }
+
+        if !has_bus {
+            if let Some(buf) = r.bytes(TAG_DEVICES) {
+                let mut d = Decoder::new(buf);
+                let count = d.u32()? as usize;
+                if count != self.ports.len() {
+                    return Err(SnapshotError::InvalidFieldEncoding("uhci device count"));
+                }
+                for idx in 0..count {
+                    let len = d.u32()? as usize;
+                    if len == 0 {
+                        continue;
+                    }
+                    if len > MAX_USB_SNAPSHOT_BYTES {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "uhci device snapshot too large",
+                        ));
+                    }
+                    let snap = d.bytes(len)?;
+                    let Some(port) = self.bus.port_mut(idx) else {
+                        return Err(SnapshotError::InvalidFieldEncoding("uhci bus port"));
+                    };
+                    if let Some(dev) = port.device.as_mut() {
+                        crate::snapshot::load_device_state(dev.as_mut(), snap)?;
+                    }
+                }
+                d.finish()?;
             }
         }
 

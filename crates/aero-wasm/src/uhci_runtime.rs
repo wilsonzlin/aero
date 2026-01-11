@@ -21,6 +21,7 @@ const PORT_COUNT: usize = 2;
 const EXTERNAL_HUB_ROOT_PORT: usize = 0;
 const DEFAULT_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 const WEBUSB_ROOT_PORT: usize = 1;
+const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 const UHCI_RUNTIME_DEVICE_ID: [u8; 4] = *b"UHRT";
 const UHCI_RUNTIME_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -657,6 +658,14 @@ impl UhciRuntime {
     /// This drops any in-flight host actions/completions for passthrough devices (WebUSB/WebHID)
     /// as per their `aero-io-snapshot` semantics.
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_USB_SNAPSHOT_BYTES {
+            return Err(js_error(&format!(
+                "USB snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_USB_SNAPSHOT_BYTES
+            )));
+        }
+
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_LEVEL: u16 = 2;
         const TAG_EXTERNAL_HUB_PORT_COUNT: u16 = 3;
@@ -993,6 +1002,18 @@ impl UhciRuntime {
         self.irq.level = irq_level;
 
         Ok(())
+    }
+
+    /// Snapshot the full UHCI runtime USB state as deterministic bytes.
+    ///
+    /// The returned bytes represent only the USB stack state (controller + devices), not guest RAM.
+    pub fn snapshot_state(&self) -> Uint8Array {
+        Uint8Array::from(self.save_state().as_slice())
+    }
+
+    /// Restore UHCI runtime USB state from deterministic snapshot bytes.
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.load_state(bytes)
     }
 }
 

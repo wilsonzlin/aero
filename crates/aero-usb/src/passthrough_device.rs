@@ -17,7 +17,9 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use std::cell::RefCell;
 use std::mem;
+use std::rc::Rc;
 
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
 
@@ -109,6 +111,53 @@ impl UsbWebUsbPassthroughDevice {
             w_index: setup.index,
             w_length: setup.length,
         }
+    }
+}
+
+/// Adapter for sharing a [`UsbWebUsbPassthroughDevice`] between host glue (e.g. WASM bindings)
+/// and an emulated USB bus.
+///
+/// This mirrors the `Rc<RefCell<_>>` pattern used by the WebHID passthrough device wrapper so the
+/// host can keep a handle for draining actions / pushing completions while the UHCI bus owns a
+/// `Box<dyn UsbDevice>`.
+#[derive(Clone)]
+pub struct SharedUsbWebUsbPassthroughDevice(pub Rc<RefCell<UsbWebUsbPassthroughDevice>>);
+
+impl UsbDevice for SharedUsbWebUsbPassthroughDevice {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
+    }
+
+    fn speed(&self) -> UsbSpeed {
+        self.0.borrow().speed()
+    }
+
+    fn tick_1ms(&mut self) {
+        self.0.borrow_mut().tick_1ms();
+    }
+
+    fn reset(&mut self) {
+        self.0.borrow_mut().reset();
+    }
+
+    fn address(&self) -> u8 {
+        self.0.borrow().address()
+    }
+
+    fn handle_setup(&mut self, setup: UsbSetupPacket) {
+        self.0.borrow_mut().handle_setup(setup);
+    }
+
+    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
+        self.0.borrow_mut().handle_out(ep, data)
+    }
+
+    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        self.0.borrow_mut().handle_in(ep, buf)
     }
 }
 
@@ -516,7 +565,8 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        *self = Self::default();
+        // Start from a clean slate (also clears the underlying host-action queues).
+        self.reset();
 
         self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
         self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
@@ -606,6 +656,19 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
     }
 }
 
+impl IoSnapshot for SharedUsbWebUsbPassthroughDevice {
+    const DEVICE_ID: [u8; 4] = <UsbWebUsbPassthroughDevice as IoSnapshot>::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion =
+        <UsbWebUsbPassthroughDevice as IoSnapshot>::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.0.borrow().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.0.borrow_mut().load_state(bytes)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

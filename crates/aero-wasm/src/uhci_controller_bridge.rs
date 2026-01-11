@@ -10,6 +10,7 @@
 //! controller to read/write descriptors directly.
 #![cfg(target_arch = "wasm32")]
 
+use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
@@ -22,6 +23,7 @@ use aero_usb::usb::UsbDevice;
 
 const UHCI_IO_BASE: u16 = 0;
 const UHCI_IRQ_LINE: u8 = 0x0b;
+const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 const UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"UHCB";
 const UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -780,6 +782,13 @@ impl UhciControllerBridge {
 
     /// Restore UHCI controller state from a snapshot blob produced by [`save_state`].
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_USB_SNAPSHOT_BYTES {
+            return Err(js_error(format!(
+                "USB snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_USB_SNAPSHOT_BYTES
+            )));
+        }
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
         const TAG_WEBUSB_DEVICE: u16 = 3;
@@ -823,5 +832,17 @@ impl UhciControllerBridge {
         }
 
         Ok(())
+    }
+
+    /// Snapshot the full UHCI + USB device tree state as deterministic bytes.
+    ///
+    /// The returned bytes represent only the USB stack state (controller + devices), not guest RAM.
+    pub fn snapshot_state(&self) -> Uint8Array {
+        Uint8Array::from(self.save_state().as_slice())
+    }
+
+    /// Restore UHCI + USB device state from deterministic snapshot bytes.
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.load_state(bytes)
     }
 }

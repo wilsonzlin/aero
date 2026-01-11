@@ -1,3 +1,4 @@
+use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
@@ -30,6 +31,11 @@ const ROOT_PORT_EXTERNAL_HUB: usize = 0;
 const ROOT_PORT_WEBUSB: usize = 1;
 // Must match `web/src/platform/webhid_passthrough.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
 const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
+const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
+fn js_error(message: impl core::fmt::Display) -> JsValue {
+    js_sys::Error::new(&message.to_string()).into()
+}
 
 #[derive(Debug, Default)]
 struct WasmIrqCapture {
@@ -384,6 +390,13 @@ impl WebUsbUhciBridge {
     /// in-flight maps so the guest's UHCI TD retries will re-emit host actions instead of waiting
     /// forever for completions that will never arrive.
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if bytes.len() > MAX_USB_SNAPSHOT_BYTES {
+            return Err(js_error(format!(
+                "USB snapshot too large ({} bytes, max {})",
+                bytes.len(),
+                MAX_USB_SNAPSHOT_BYTES
+            )));
+        }
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
         const TAG_EXTERNAL_HUB: u16 = 3;
@@ -433,6 +446,18 @@ impl WebUsbUhciBridge {
         }
 
         Ok(())
+    }
+
+    /// Snapshot the full UHCI + USB device tree state as deterministic bytes.
+    ///
+    /// The returned bytes represent only the USB stack state (controller + devices), not guest RAM.
+    pub fn snapshot_state(&self) -> Uint8Array {
+        Uint8Array::from(self.save_state().as_slice())
+    }
+
+    /// Restore UHCI + USB device state from deterministic snapshot bytes.
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.load_state(bytes)
     }
 }
 

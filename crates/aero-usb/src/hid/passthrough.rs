@@ -1,5 +1,7 @@
 use core::any::Any;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
@@ -1458,4 +1460,61 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
         i = i.saturating_add(size);
     }
     false
+}
+
+
+/// Shared `Rc<RefCell<_>>` wrapper for attaching [`UsbHidPassthrough`] devices to a [`UsbBus`]
+/// while keeping a separate host-side handle.
+#[derive(Clone)]
+pub struct SharedUsbHidPassthroughDevice(pub Rc<RefCell<UsbHidPassthrough>>);
+
+impl UsbDevice for SharedUsbHidPassthroughDevice {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn speed(&self) -> UsbSpeed {
+        self.0.borrow().speed()
+    }
+
+    fn tick_1ms(&mut self) {
+        self.0.borrow_mut().tick_1ms();
+    }
+
+    fn reset(&mut self) {
+        self.0.borrow_mut().reset();
+    }
+
+    fn address(&self) -> u8 {
+        self.0.borrow().address()
+    }
+
+    fn handle_setup(&mut self, setup: SetupPacket) {
+        self.0.borrow_mut().handle_setup(setup);
+    }
+
+    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
+        self.0.borrow_mut().handle_out(ep, data)
+    }
+
+    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        self.0.borrow_mut().handle_in(ep, buf)
+    }
+}
+
+impl IoSnapshot for SharedUsbHidPassthroughDevice {
+    const DEVICE_ID: [u8; 4] = <UsbHidPassthrough as IoSnapshot>::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = <UsbHidPassthrough as IoSnapshot>::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.0.borrow().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.0.borrow_mut().load_state(bytes)
+    }
 }

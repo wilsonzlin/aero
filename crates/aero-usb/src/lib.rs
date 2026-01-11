@@ -34,5 +34,7 @@ pub mod hub;
 pub mod uhci;
 pub mod web;
 
+pub(crate) mod snapshot;
+
 pub use memory::GuestMemory;
 pub use passthrough_device::UsbWebUsbPassthroughDevice;
