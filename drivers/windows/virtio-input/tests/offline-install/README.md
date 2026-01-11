@@ -4,6 +4,12 @@ This document describes how to **stage** (preinstall) the `virtio-input` driver 
 Windows 7 image so that Plug‑and‑Play can bind it **on first boot** (useful for automated
 test images where you want input working immediately).
 
+> Note: The in-tree Aero Win7 virtio-input INF is **revision-gated** to the
+> `AERO-W7-VIRTIO` v1 contract and matches only `PCI\VEN_1AF4&DEV_1052&REV_01` (plus
+> the more specific `...&SUBSYS_...&REV_01` variants). Ensure your virtio-input PCI
+> device reports `REV_01` (for example in QEMU: `-device virtio-*-pci,...,x-pci-revision=0x01`)
+> or Windows will not bind the staged driver.
+
 The commands below assume you already have a **built driver package directory** containing:
 
 - `virtio-input.inf`
@@ -136,7 +142,7 @@ dism /Cleanup-Wim
 - If you serviced `install.wim` in place under your extracted install media folder, you’re done.
 - If you serviced a copied `install.wim`, copy it back into `...\\sources\\install.wim` before creating bootable media.
 
-On first boot of the installed OS, Windows will enumerate the virtio-input hardware and should automatically select the best matching driver from the DriverStore.
+On first boot of the installed OS, Windows will enumerate the virtio-input hardware and should automatically select the best matching driver from the DriverStore (as long as the device reports `REV_01` so it matches the INF).
 
 ---
 
@@ -218,4 +224,3 @@ dism /Unmount-Wim /MountDir:%MOUNT% /Commit
 ```
 
 This is optional for “first boot driver availability”, but helpful if your setup is fully automated and depends on virtio-input during installation.
-
