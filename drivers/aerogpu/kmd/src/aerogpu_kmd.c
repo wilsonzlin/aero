@@ -1553,20 +1553,27 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             const ULONGLONG maybeFeatures = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                                             ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
             const ULONGLONG knownFeatures =
-                AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT | AEROGPU_FEATURE_VBLANK |
-                AEROGPU_FEATURE_TRANSFER;
+                AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT | AEROGPU_FEATURE_VBLANK;
             const ULONGLONG unknownFeatures = maybeFeatures & ~knownFeatures;
-            if (unknownFeatures != 0) {
-                AEROGPU_LOG("StartDevice: legacy FEATURES has unknown bits 0x%I64x; ignoring",
-                            (unsigned long long)unknownFeatures);
-            } else {
+            if (unknownFeatures == 0) {
                 features = maybeFeatures;
+            } else {
+                static LONG g_LegacyFeaturesImplausibleLogged = 0;
+                if (InterlockedExchange(&g_LegacyFeaturesImplausibleLogged, 1) == 0) {
+                    AEROGPU_LOG("StartDevice: legacy FEATURES has unknown bits 0x%I64x; ignoring (raw=0x%I64x)",
+                                (unsigned long long)unknownFeatures,
+                                (unsigned long long)maybeFeatures);
+                }
+                features = 0;
             }
         }
         if ((features & AEROGPU_FEATURE_VBLANK) != 0 &&
             adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
-            AEROGPU_LOG("StartDevice: legacy BAR0 too small (%lu bytes) for vblank regs; disabling vblank feature",
-                        adapter->Bar0Length);
+            static LONG g_LegacyVblankRegsTooSmallLogged = 0;
+            if (InterlockedExchange(&g_LegacyVblankRegsTooSmallLogged, 1) == 0) {
+                AEROGPU_LOG("StartDevice: legacy BAR0 too small (%lu bytes) for vblank regs; disabling vblank feature",
+                            adapter->Bar0Length);
+            }
             features &= ~(ULONGLONG)AEROGPU_FEATURE_VBLANK;
         }
         if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
@@ -1776,12 +1783,19 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+            /*
+             * Legacy devices that expose the versioned IRQ_ENABLE block (mirroring
+             * `aerogpu_pci.h`) may have vblank IRQs enabled. Disable + ack them before
+             * unregistering the ISR to avoid leaving an INTx line asserted.
+             */
             if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
-                KIRQL oldIrql;
-                KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                adapter->IrqEnableMask = 0;
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
-                KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                {
+                    KIRQL oldIrql;
+                    KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                    adapter->IrqEnableMask = 0;
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+                    KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                }
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
             }
         }
@@ -3649,7 +3663,9 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
          * block (if present), even though fence interrupts are still delivered via
          * the legacy INT_STATUS/ACK registers.
          */
-        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+        const BOOLEAN haveIrqRegs =
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG));
+        if (haveIrqRegs) {
             const ULONG irqStatus = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
             const ULONG enableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
             const ULONG pending = irqStatus & enableMask;
@@ -3683,7 +3699,18 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 }
 
                 if ((pending & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 && adapter->SupportsVblank) {
-                    if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
+                    const BOOLEAN haveVblankRegs =
+                        adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
+                    if (!haveVblankRegs) {
+#if DBG
+                        static LONG g_LegacyVblankRegsMissingWarned = 0;
+                        if (InterlockedExchange(&g_LegacyVblankRegsMissingWarned, 1) == 0) {
+                            DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                                       DPFLTR_ERROR_LEVEL,
+                                       "aerogpu-kmd: legacy device signaled vblank IRQ but BAR0 lacks vblank timing regs; ignoring\n");
+                        }
+#endif
+                    } else {
                         const ULONGLONG now100ns = KeQueryInterruptTime();
                         const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
                                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
@@ -3698,36 +3725,36 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                         AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
                         AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
                         AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
-                    }
 
-                    queueDpc = TRUE;
+                        queueDpc = TRUE;
 
-                    if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
-                        KeMemoryBarrier();
-                        const DXGK_INTERRUPT_TYPE vblankType = adapter->VblankInterruptType;
+                        if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
+                            KeMemoryBarrier();
+                            const DXGK_INTERRUPT_TYPE vblankType = adapter->VblankInterruptType;
 
-                        DXGKARGCB_NOTIFY_INTERRUPT notify;
-                        RtlZeroMemory(&notify, sizeof(notify));
-                        notify.InterruptType = vblankType;
+                            DXGKARGCB_NOTIFY_INTERRUPT notify;
+                            RtlZeroMemory(&notify, sizeof(notify));
+                            notify.InterruptType = vblankType;
 
-                        /*
-                         * ABI-critical: for DXGK_INTERRUPT_TYPE_CRTC_VSYNC, dxgkrnl expects
-                         * DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId to identify the
-                         * VidPn source that vblanked.
-                         */
-                        if (notify.InterruptType != DXGK_INTERRUPT_TYPE_CRTC_VSYNC) {
+                            /*
+                             * ABI-critical: for DXGK_INTERRUPT_TYPE_CRTC_VSYNC, dxgkrnl expects
+                             * DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId to identify the
+                             * VidPn source that vblanked.
+                             */
+                            if (notify.InterruptType != DXGK_INTERRUPT_TYPE_CRTC_VSYNC) {
 #if DBG
-                            static volatile LONG g_UnexpectedLegacyVblankNotifyTypeLogs = 0;
-                            const LONG n = InterlockedIncrement(&g_UnexpectedLegacyVblankNotifyTypeLogs);
-                            if ((n <= 8) || ((n & 1023) == 0)) {
-                                AEROGPU_LOG(
-                                    "InterruptRoutine: legacy vblank uses unexpected InterruptType=%lu; expected DXGK_INTERRUPT_TYPE_CRTC_VSYNC",
-                                    (ULONG)notify.InterruptType);
-                            }
+                                static volatile LONG g_UnexpectedLegacyVblankNotifyTypeLogs = 0;
+                                const LONG n = InterlockedIncrement(&g_UnexpectedLegacyVblankNotifyTypeLogs);
+                                if ((n <= 8) || ((n & 1023) == 0)) {
+                                    AEROGPU_LOG(
+                                        "InterruptRoutine: legacy vblank uses unexpected InterruptType=%lu; expected DXGK_INTERRUPT_TYPE_CRTC_VSYNC",
+                                        (ULONG)notify.InterruptType);
+                                }
 #endif
-                        } else {
-                            notify.CrtcVsync.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
-                            adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                            } else {
+                                notify.CrtcVsync.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+                                adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                            }
                         }
                     }
                 }

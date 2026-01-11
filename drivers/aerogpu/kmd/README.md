@@ -84,11 +84,17 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
      `DXGK_INTERRUPT_TYPE_CRTC_VSYNC`. The miniport ISR must notify vblank via
      `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
 
+Legacy (`ARGP`) note: some legacy device models mirror the above FEATURES/IRQ/vblank timing registers to allow
+incremental migration. When a legacy device advertises `AEROGPU_FEATURE_VBLANK`, the KMD will enable vblank
+delivery via the versioned `IRQ_*` block; **legacy fence/DMA completion interrupts remain on legacy
+`INT_STATUS`/`INT_ACK`.**
+
 ## Scanline / raster status (`DxgkDdiGetScanLine`)
 
 The KMD implements `DxgkDdiGetScanLine` when the device advertises `AEROGPU_FEATURE_VBLANK` and
-exposes the `SCANOUT0_VBLANK_*` timing registers (this includes both the primary versioned ABI
-device and the legacy device model when it exposes the newer vblank registers).
+exposes the `SCANOUT0_VBLANK_*` timing registers. This includes both the primary versioned
+(`AGPU`) device and the legacy (`ARGP`) device model when it mirrors the newer vblank registers
+and reports `AEROGPU_FEATURE_VBLANK` via `FEATURES_LO/HI`.
 
 This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` callers):
 
