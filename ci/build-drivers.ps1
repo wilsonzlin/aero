@@ -420,36 +420,11 @@ function Try-GetDriverBuildTargetFromDirectory {
   $kind = $null
 
   if (Test-Path -LiteralPath $sln -PathType Leaf) {
-    # Ignore solutions that only contain legacy Makefile wrapper projects.
-    $projectRelPaths = @()
-    foreach ($line in (Get-Content -LiteralPath $sln -ErrorAction SilentlyContinue)) {
-      if ($line -match '^Project\(\"{[^}]+}\"\)\s*=\s*\"[^\"]+\",\s*\"([^\"]+\.vcxproj)\"') {
-        $projectRelPaths += $Matches[1]
-      }
-    }
-
-    $hasBuildableProject = $false
-    foreach ($rel in $projectRelPaths) {
-      $projPath = Join-Path $Directory.FullName $rel
-      if (-not (Test-Path -LiteralPath $projPath -PathType Leaf)) { continue }
-      if (-not (Test-IsMakefileVcxproj -VcxprojPath $projPath)) {
-        $hasBuildableProject = $true
-        break
-      }
-    }
-
-    if (-not $hasBuildableProject) {
-      return $null
-    }
-
     $buildPath = $sln
     $kind = 'sln'
   } else {
     $vcxprojs = @(Get-ChildItem -LiteralPath $Directory.FullName -File -Filter '*.vcxproj')
     if ($vcxprojs.Count -eq 1) {
-      if (Test-IsMakefileVcxproj -VcxprojPath $vcxprojs[0].FullName) {
-        return $null
-      }
       $buildPath = $vcxprojs[0].FullName
       $kind = 'vcxproj'
     } elseif ($vcxprojs.Count -eq 0) {
@@ -457,16 +432,6 @@ function Try-GetDriverBuildTargetFromDirectory {
     } else {
       throw "Directory '$($Directory.FullName)' has multiple '*.vcxproj' files but no '$name.sln'."
     }
-  }
-
-  # Skip classic WDK NMake wrapper projects/solutions (MakeFileProj / ConfigurationType=Makefile).
-  if ($kind -eq 'vcxproj' -and (Test-IsMakefileVcxproj -VcxprojPath $buildPath)) {
-    Write-Host ("Skipping driver project because '{0}' is a MakeFileProj/Makefile (legacy WDK build wrapper; not CI-buildable)." -f $buildPath)
-    return $null
-  }
-  if ($kind -eq 'sln' -and (Test-IsMakefileSolution -SolutionPath $buildPath)) {
-    Write-Host ("Skipping driver solution because '{0}' references MakeFileProj/Makefile project(s) (legacy WDK build wrapper; not CI-buildable)." -f $buildPath)
-    return $null
   }
 
   # Require an INF in the same directory tree so downstream catalog/sign/package steps can run.
@@ -519,9 +484,11 @@ function Discover-DriverBuildTargets {
   #   - <dirName>.sln, OR
   #   - exactly one *.vcxproj
   #
-  # Additionally, we filter to "CI-buildable" driver projects:
-  #   - ignore WDK NMake wrapper projects (MakeFileProj / ConfigurationType=Makefile)
+  # Additionally, we filter to CI-buildable *driver roots*:
   #   - require at least one INF in the directory tree (for catalog/sign/package)
+  #
+  # MakeFileProj/Makefile wrapper projects are discovered but skipped later unless
+  # -IncludeMakefileProjects is passed (CI default is to skip them).
   $buildFiles = @()
   $buildFiles += @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue)
   $buildFiles += @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.sln' -ErrorAction SilentlyContinue)
