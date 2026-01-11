@@ -599,7 +599,7 @@ Then configure the gateway to allow the frontend origin:
 
 ## Compose smoke check
 
-To validate the compose stack end-to-end (build + security headers + `/healthz` + `/tcp` + `/l2` WebSocket upgrades + `/udp` WebSocket datagram roundtrip + wasm MIME/caching), run:
+To validate the compose stack end-to-end (build + security headers + `/healthz` + `/webrtc/ice` + `/dns-query` + `/tcp` + `/l2` WebSocket upgrades + `/udp` WebSocket datagram roundtrip + wasm MIME/caching), run:
 
 ```bash
 bash deploy/scripts/smoke.sh
