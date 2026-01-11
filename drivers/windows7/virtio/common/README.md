@@ -79,6 +79,12 @@ Queue programming (modern):
   - `queue_avail`: 2-byte aligned
   - `queue_used`: 4-byte aligned
 
+Even though Aero contract v1 fixes the BAR0 offsets, drivers should still validate
+that the device exposes the required virtio vendor-specific PCI capabilities
+(cap ID `0x09`) and that they describe the expected BAR/offset/length. Miniports
+typically do this by parsing a 256-byte PCI config snapshot with
+`virtio_pci_cap_parser` (see `drivers/win7/virtio/virtio-core/portable/`).
+
 The legacy/transitional I/O-port transport is **not** required by contract v1 and
 is retained only for compatibility/testing with transitional/QEMU devices.
 
@@ -92,8 +98,10 @@ There are two modern transport helpers in-tree:
   `drivers/windows7/virtio-modern/common/include/aero_virtio_pci_modern.h` +
   `drivers/windows7/virtio-modern/common/src/aero_virtio_pci_modern.c`
   - Designed for StorPort miniports, NDIS miniports, and WDM drivers.
-  - Assumes the Aero contract v1 fixed BAR0 MMIO layout (does not require parsing PCI caps).
-    Drivers may still validate the virtio vendor-specific capability list (recommended).
+  - Uses the Aero contract v1 fixed BAR0 MMIO layout for register access.
+    This helper does **not** parse PCI capabilities; drivers are expected to
+    validate the virtio vendor-specific capability list separately (required by
+    the contract).
   - Programs queues via `queue_desc/queue_avail/queue_used` and `queue_enable`.
 
 - `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
@@ -151,20 +159,27 @@ At a high level, drivers using Aero contract v1 devices should:
 
 1. **Validate identity** (recommended):
    - `AeroVirtioPciValidateContractV1Pdo(...)`
-2. **Map BAR0 MMIO** using your driver framework:
+2. **Validate virtio PCI capabilities** (required by the contract):
+   - Ensure the required `COMMON/NOTIFY/ISR/DEVICE` vendor caps exist and match
+     the expected BAR0 layout (see table above).
+   - Miniports typically use `virtio_pci_cap_parser` (portable C parser) against
+     a 256-byte PCI config snapshot.
+   - WDM drivers can also rely on `VirtioPciModernWdmInit(...)`, which parses the
+     cap list and rejects malformed/non-conforming devices.
+3. **Map BAR0 MMIO** using your driver framework:
    - NDIS: `NdisMMapIoSpace`
    - StorPort: `StorPortGetDeviceBase`
    - WDM: `MmMapIoSpace`
-3. **Initialize the contract-v1 transport**:
+4. **Initialize the contract-v1 transport**:
    - `AeroVirtioPciModernInitFromBar0(...)`
-4. **Negotiate features** (64-bit; requires `VIRTIO_F_VERSION_1`):
+5. **Negotiate features** (64-bit; requires `VIRTIO_F_VERSION_1`):
    - `AeroVirtioNegotiateFeatures(...)`
-5. **Program queues** using common configuration (`queue_desc/queue_avail/queue_used` +
+6. **Program queues** using common configuration (`queue_desc/queue_avail/queue_used` +
    `queue_enable`) and notify using the notify region:
    - `AeroVirtioQueryQueue(...)`
    - `AeroVirtioSetupQueue(...)`
    - `AeroVirtioNotifyQueue(...)`
-6. **Handle INTx**:
+7. **Handle INTx**:
    - Read the ISR status byte in the ISR to ACK/deassert (read-to-ack), then do
      queue work in a DPC.
    - Minimal primitive: `AeroVirtioReadIsr(...)`.
