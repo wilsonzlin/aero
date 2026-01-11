@@ -18,7 +18,7 @@ The repo provides PowerShell entrypoints that CI and local builds can share:
 - `ci/validate-toolchain.ps1` → smoke-test that `Inf2Cat /os:7_X86,7_X64` works (catches runner/toolchain regressions early)
 - `ci/build-drivers.ps1` → build binaries into `out/drivers/`
 - `ci/make-catalogs.ps1` → stage packages + run `Inf2Cat` into `out/packages/`
-- `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.dll`/`.cat` under `out/packages/`
+- `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.cat` under `out/packages/`
 - `ci/package-drivers.ps1` → create `.zip` bundles and an optional `.iso` for “Load driver” installs
 
 These scripts are orchestrated in CI by:
@@ -166,14 +166,13 @@ Dual signing (SHA-1 first, then append SHA-256):
 
 Outputs:
 
-- Signed `*.sys`, `*.dll`, and `*.cat` under `out/packages/**` (configurable via `-InputRoot`)
+- Signed `*.sys` and `*.cat` under `out/packages/**` (configurable via `-InputRoot`)
 - Public cert (artifact-safe): `out/certs/aero-test.cer`
 - Signing PFX (private key): `out/aero-test.pfx` (kept under `out/`, not `out/certs/`)
 
 The script also verifies signatures:
 
 - `.sys`: `signtool verify /kp /v`
-- `.dll`: `signtool verify /v`
 - `.cat`: `signtool verify /v`
 
 And imports the public cert into the current user **Trusted Root** and **Trusted Publishers** stores (and will also try LocalMachine stores when allowed) so verification works.

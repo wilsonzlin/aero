@@ -68,7 +68,7 @@ The script will copy the requested `WdfCoInstaller*.dll` into `out/packages/<dri
 
 `ci/make-catalogs.ps1` runs `Inf2Cat` in each staged package directory to generate `.cat` files. If a coinstaller DLL is present and referenced by the driver’s INF, Inf2Cat will hash it into the generated catalog.
 
-Signing is handled by `ci/sign-drivers.ps1` (which uses `signtool` to sign `.sys`/`.dll`/`.cat` — including user-mode components like display driver UMDs and KMDF coinstallers):
+Signing is handled by `ci/sign-drivers.ps1` (which uses `signtool` to sign `.sys` drivers and `.cat` catalogs):
 
 ```powershell
 .\ci\sign-drivers.ps1

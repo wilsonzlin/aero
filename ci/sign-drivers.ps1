@@ -635,15 +635,14 @@ try {
 
   $files = @(Get-ChildItem -LiteralPath $inputRootAbs -Recurse -File | Where-Object {
       $ext = $_.Extension.ToLowerInvariant()
-      $ext -eq ".sys" -or $ext -eq ".dll" -or $ext -eq ".cat"
+      $ext -eq ".sys" -or $ext -eq ".cat"
     })
 
   if (-not $files -or $files.Count -eq 0) {
-    throw "No .sys, .dll, or .cat files found under '$inputRootAbs'."
+    throw "No .sys or .cat files found under '$inputRootAbs'."
   }
 
   $sysFiles = @($files | Where-Object { $_.Extension.ToLowerInvariant() -eq ".sys" })
-  $dllFiles = @($files | Where-Object { $_.Extension.ToLowerInvariant() -eq ".dll" })
   $catFiles = @($files | Where-Object { $_.Extension.ToLowerInvariant() -eq ".cat" })
 
   $primaryDigest = $Digest.ToLowerInvariant()
@@ -694,15 +693,6 @@ try {
       return
     }
 
-    if ($ExtensionLower -eq ".dll") {
-      Invoke-SignTool -SignToolPath $signtoolPath -ContextFile $Path -Arguments @(
-        "verify",
-        "/v",
-        $Path
-      )
-      return
-    }
-
     if ($ExtensionLower -eq ".cat") {
       Invoke-SignTool -SignToolPath $signtoolPath -ContextFile $Path -Arguments @(
         "verify",
@@ -722,13 +712,6 @@ try {
     Verify-File -Path $file.FullName -ExtensionLower ".sys"
   }
 
-  foreach ($file in $dllFiles) {
-    Write-Host "Signing: $($file.FullName)"
-    Sign-File -Path $file.FullName
-    Write-Host "Verifying (authenticode): $($file.FullName)"
-    Verify-File -Path $file.FullName -ExtensionLower ".dll"
-  }
-
   foreach ($file in $catFiles) {
     Write-Host "Signing: $($file.FullName)"
     Sign-File -Path $file.FullName
@@ -740,7 +723,7 @@ try {
     throw "Expected '$cerPath' to exist after signing."
   }
 
-  Write-Host "All driver binaries (.sys/.dll) and catalogs were signed and verified successfully."
+  Write-Host "All driver binaries (.sys) and catalogs were signed and verified successfully."
   $exitCode = 0
 } catch {
   $exitCode = 1

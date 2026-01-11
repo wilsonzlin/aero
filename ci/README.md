@@ -102,13 +102,12 @@ Test-signs staged driver packages under `out/packages/` (or `-InputRoot`) using 
 CI signs:
 
 - `*.sys` (kernel-mode drivers)
-- `*.dll` (user-mode components like display driver UMDs and KMDF coinstallers)
 - `*.cat` (catalogs)
 
 And verifies:
 
 - `.sys`: `signtool verify /kp /v`
-- `.dll` + `.cat`: `signtool verify /v`
+- `.cat`: `signtool verify /v`
 
 ## `ci/package-drivers.ps1`
 
