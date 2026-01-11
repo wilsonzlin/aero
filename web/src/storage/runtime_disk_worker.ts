@@ -6,7 +6,7 @@ import type { AsyncSectorDisk } from "./disk";
 import { IdbCowDisk } from "./idb_cow";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
-import { hasOpfsSyncAccessHandle, pickDefaultBackend, type DiskBackend, type DiskImageMetadata } from "./metadata";
+import { pickDefaultBackend, type DiskBackend, type DiskImageMetadata } from "./metadata";
 import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
 import { opfsDeleteDisk } from "./import_export";
@@ -425,16 +425,6 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
 
 async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise<DiskEntry> {
   const cacheBackend: DiskBackend = options?.cacheBackend ?? pickDefaultBackend();
-  if (cacheBackend === "opfs" && hasOpfsSyncAccessHandle()) {
-    const disk = await RemoteRangeDisk.open(url, {
-      chunkSize: options?.blockSize,
-      readAheadChunks: options?.prefetchSequentialBlocks,
-    });
-    return { disk, readOnly: true, io: emptyIoTelemetry(), backendSnapshot: null };
-  }
-
-  // Fallback: the legacy `RemoteStreamingDisk` supports IndexedDB caching and works
-  // without OPFS SyncAccessHandle support.
   const disk = await RemoteStreamingDisk.open(url, { ...options, cacheBackend });
   return { disk, readOnly: true, io: emptyIoTelemetry(), backendSnapshot: null };
 }

@@ -35,6 +35,14 @@ export async function load(url, context, nextLoad) {
   // so synthesize a minimal module that default-exports the resolved file URL.
   const u = new URL(url);
   if (u.protocol === "file:" && u.searchParams.has("url")) {
+    // Some "worker module" sources provide their own `default export` (and other
+    // named exports) so they can be imported directly in Node-based unit tests.
+    // Don't short-circuit those module loads; only synthesize `?url` for non-module
+    // assets.
+    const path = u.pathname.toLowerCase();
+    if (path.endsWith(".js") || path.endsWith(".ts") || path.endsWith(".mjs") || path.endsWith(".cjs")) {
+      return nextLoad(url, context);
+    }
     const base = new URL(url);
     base.search = "";
     base.hash = "";
