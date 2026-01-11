@@ -24,7 +24,7 @@ use aero_opfs::OpfsSyncFile;
 use aero_platform::audio::mic_bridge::MicBridge;
 
 #[cfg(target_arch = "wasm32")]
-use js_sys::{SharedArrayBuffer, Uint8Array};
+use js_sys::{Object, Reflect, SharedArrayBuffer, Uint8Array};
 
 #[cfg(target_arch = "wasm32")]
 use aero_audio::hda::HdaController;
@@ -44,7 +44,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
-    passthrough::{PendingSummary as UsbPassthroughPendingSummary, UsbHostCompletion, UsbPassthroughDevice},
+    hid::passthrough::UsbHidPassthrough,
+    hid::webhid,
+    passthrough::{
+        PendingSummary as UsbPassthroughPendingSummary, UsbHostCompletion, UsbPassthroughDevice,
+    },
     usb::{UsbDevice, UsbHandshake},
 };
 
@@ -362,6 +366,104 @@ impl UsbHidBridge {
             _ => JsValue::NULL,
         }
     }
+}
+
+// -------------------------------------------------------------------------------------------------
+// WebHID passthrough (physical HID devices -> guest-visible USB HID model)
+// -------------------------------------------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct WebHidPassthroughBridge {
+    device: UsbHidPassthrough,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl WebHidPassthroughBridge {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        vendor_id: u16,
+        product_id: u16,
+        manufacturer: Option<String>,
+        product: Option<String>,
+        serial: Option<String>,
+        collections: JsValue,
+    ) -> Result<Self, JsValue> {
+        let collections: Vec<webhid::HidCollectionInfo> = serde_wasm_bindgen::from_value(collections)
+            .map_err(|e| JsValue::from_str(&format!("invalid WebHID collections metadata: {e}")))?;
+
+        let report_descriptor = webhid::synthesize_report_descriptor(&collections)
+            .map_err(|e| JsValue::from_str(&format!("failed to synthesize HID report descriptor: {e}")))?;
+
+        let has_interrupt_out = collections_have_output_reports(&collections);
+
+        let device = UsbHidPassthrough::new(
+            vendor_id,
+            product_id,
+            manufacturer.unwrap_or_else(|| "WebHID".to_string()),
+            product.unwrap_or_else(|| "WebHID HID Device".to_string()),
+            serial,
+            report_descriptor,
+            has_interrupt_out,
+            None,
+            None,
+            None,
+        );
+
+        Ok(Self { device })
+    }
+
+    pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| JsValue::from_str("reportId is out of range (expected 0..=255)"))?;
+        self.device.push_input_report(report_id, data);
+        Ok(())
+    }
+
+    /// Drain the next pending guest -> device HID report request.
+    ///
+    /// Returns `null` when no report is pending.
+    pub fn drain_next_output_report(&mut self) -> JsValue {
+        let Some(report) = self.device.pop_output_report() else {
+            return JsValue::NULL;
+        };
+
+        let report_type = match report.report_type {
+            2 => "output",
+            3 => "feature",
+            _ => "output",
+        };
+
+        let obj = Object::new();
+        // These Reflect::set calls should be infallible for a fresh object with string keys.
+        let _ = Reflect::set(&obj, &JsValue::from_str("reportType"), &JsValue::from_str(report_type));
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("reportId"),
+            &JsValue::from_f64(f64::from(report.report_id)),
+        );
+        let data = Uint8Array::from(report.data.as_slice());
+        let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
+        obj.into()
+    }
+
+    /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
+    pub fn configured(&self) -> bool {
+        self.device.configured()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) -> bool {
+    fn walk(col: &webhid::HidCollectionInfo) -> bool {
+        if !col.output_reports.is_empty() {
+            return true;
+        }
+        col.children.iter().any(walk)
+    }
+
+    collections.iter().any(walk)
 }
 
 #[cfg(target_arch = "wasm32")]

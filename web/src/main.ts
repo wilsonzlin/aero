@@ -46,6 +46,7 @@ import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { UsbBroker } from "./usb/usb_broker";
 import { explainWebUsbError, formatWebUsbError } from "./platform/webusb_troubleshooting";
+import { WebHidPassthroughRuntime } from "./usb/webhid_passthrough_runtime";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -2622,6 +2623,36 @@ function renderWebHidPassthroughPanel(): HTMLElement {
     },
   });
   mountWebHidPassthroughPanel(host, manager);
+
+  // Best-effort WASM bridge wiring for the dev panel. This is intentionally
+  // non-fatal: WebHID may be unavailable and WASM initialization can fail.
+  void wasmInitPromise
+    .then(({ api }) => {
+      try {
+        // eslint-disable-next-line no-new
+        new WebHidPassthroughRuntime({
+          manager,
+          pollIntervalMs: 16,
+          createBridge: ({ device, normalizedCollections }) =>
+            // manufacturer/product/serial are not exposed consistently by WebHID; use
+            // best-effort strings and keep them optional on the Rust side.
+            // eslint-disable-next-line new-cap
+            new api.WebHidPassthroughBridge(
+              device.vendorId,
+              device.productId,
+              undefined,
+              device.productName || undefined,
+              undefined,
+              normalizedCollections,
+            ),
+        });
+      } catch (err) {
+        console.warn("WebHID passthrough runtime init failed", err);
+      }
+    })
+    .catch((err) => {
+      console.warn("WASM init failed; WebHID passthrough disabled", err);
+    });
   return el("div", { class: "panel" }, host);
 }
 

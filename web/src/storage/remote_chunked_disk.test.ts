@@ -428,7 +428,7 @@ describe("RemoteChunkedDisk", () => {
     const cacheKey = await RemoteCacheManager.deriveCacheKey({
       imageId: common.cacheImageId,
       version: common.cacheVersion,
-      deliveryType: "chunked",
+      deliveryType: `chunked:${chunkSize}`,
     });
     const cacheRoot = `${OPFS_AERO_DIR}/${OPFS_DISKS_DIR}/${OPFS_REMOTE_CACHE_DIR}`;
     await store.remove(`${cacheRoot}/${cacheKey}/chunks/0.bin`);

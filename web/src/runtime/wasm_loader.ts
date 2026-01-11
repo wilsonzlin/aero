@@ -49,6 +49,19 @@ export interface WasmApi {
         drain_next_gamepad_report(): Uint8Array | null;
         free(): void;
     };
+    WebHidPassthroughBridge: new (
+        vendorId: number,
+        productId: number,
+        manufacturer: string | undefined,
+        product: string | undefined,
+        serial: string | undefined,
+        collections: unknown,
+    ) => {
+        push_input_report(reportId: number, data: Uint8Array): void;
+        drain_next_output_report(): { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null;
+        configured(): boolean;
+        free(): void;
+    };
 
     /**
      * WebUSB passthrough bridge (Rust `UsbPassthroughDevice` host action queue).

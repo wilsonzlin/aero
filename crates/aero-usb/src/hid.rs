@@ -1,3 +1,7 @@
+pub mod passthrough;
+pub mod report_descriptor;
+pub mod webhid;
+
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
