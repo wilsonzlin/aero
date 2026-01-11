@@ -24,6 +24,19 @@ cd "$(git rev-parse --show-toplevel)"
 need_file "docs/repo-layout.md"
 need_file "docs/adr/0001-repo-layout.md"
 
+# npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
+# (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)
+mapfile -t npm_lockfiles < <(git ls-files | grep -E '(^|/)package-lock\.json$' || true)
+unexpected_lockfiles=()
+for lf in "${npm_lockfiles[@]}"; do
+  if [[ "$lf" != "package-lock.json" ]]; then
+    unexpected_lockfiles+=("$lf")
+  fi
+done
+if (( ${#unexpected_lockfiles[@]} > 0 )); then
+  die "unexpected package-lock.json checked in outside the repo root (npm workspaces use a single root lockfile): ${unexpected_lockfiles[*]}"
+fi
+
 # Canonical frontend (ADR 0001).
 need_file "web/package.json"
 need_file "web/index.html"
