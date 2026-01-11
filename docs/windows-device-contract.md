@@ -1,6 +1,6 @@
 # Windows 7 Paravirtual PCI Device / Driver Contract (Aero)
 
-This document is the **single source of truth** for the device-model ↔ Windows-driver contract for Aero’s Windows 7 paravirtual devices:
+This document is a consolidated reference for Aero’s Windows 7 paravirtual PCI devices:
 
 - virtio-blk (boot/storage)
 - virtio-net
@@ -8,22 +8,31 @@ This document is the **single source of truth** for the device-model ↔ Windows
 - virtio-input
 - Aero GPU (WDDM)
 
+For **virtio** devices, the definitive, binding interoperability contract is:
+
+- [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) (**Contract ID:** `AERO-W7-VIRTIO`)
+
+`windows-device-contract.{md,json}` MUST remain consistent with `AERO-W7-VIRTIO`. If they ever disagree, **`AERO-W7-VIRTIO` wins**.
+
 It exists to prevent “it boots on my machine” failures caused by silent PCI ID drift between:
 
 - the emulator’s PCI device models,
 - the Windows drivers/INFs that bind to them, and
 - the Guest Tools installer logic (notably `CriticalDeviceDatabase` seeding for boot-critical storage).
 
-The machine-readable companion manifest is: **[`windows-device-contract.json`](./windows-device-contract.json)**.
+The machine-readable companion manifest (for automation like Guest Tools) is:
+**[`windows-device-contract.json`](./windows-device-contract.json)**.
 
 ## Contract rules (normative)
 
 1. **PCI IDs are API.** If a value in the tables below changes, it is a breaking change.
-2. Any breaking change requires **updating both**:
+2. For virtio devices, any PCI ID / transport change MUST be made in `AERO-W7-VIRTIO` first, then reflected here.
+3. Any breaking change requires updating:
+   - `docs/windows7-virtio-driver-contract.md` (virtio devices)
    - `docs/windows-device-contract.md`
    - `docs/windows-device-contract.json`
-3. The Guest Tools installer must **consume** `windows-device-contract.json` (planned at minimum; implemented ideally) rather than hardcoding IDs in scripts.
-4. Emulator device models must emit the IDs exactly as specified here (including subsystem IDs and class codes), or Windows driver binding may fail.
+4. The Guest Tools installer must consume `windows-device-contract.json` (planned at minimum; implemented ideally) rather than hardcoding IDs in scripts.
+5. Emulator device models must emit the IDs exactly as specified by the relevant contract, or Windows driver binding may fail.
 
 ## PCI ID allocations
 
@@ -33,27 +42,21 @@ Virtio devices use the virtio PCI vendor ID:
 
 - `VIRTIO_PCI_VENDOR_ID = 0x1AF4`
 
-Device IDs follow the virtio 1.0+ “modern” virtio-pci ID range:
+Device IDs follow the virtio 1.0+ “modern” virtio-pci Device ID space:
 
 ```
-pci_device_id = 0x1040 + virtio_device_type
+pci_device_id = 0x1040 + virtio_device_id
 ```
+
+`AERO-W7-VIRTIO` v1 uses the modern ID space and a modern-only transport; transitional IDs
+(`0x1000 + (virtio_device_id - 1)`) are out of scope for the contract.
 
 The emulator emits the modern IDs by default.
 
-For compatibility with older stacks/driver packages, Aero drivers/INFs MAY also match the
-“transitional” virtio-pci Device ID space:
-
-```
-pci_device_id_transitional = 0x1000 + (virtio_device_type - 1)
-```
-
-This does **not** force use of the legacy virtio PCI transport in the guest driver; it only affects PCI identification. See [Virtio transport contract](#virtio-transport-contract) for BAR/MMIO/I-O details.
-
-Subsystem IDs are used to provide a stable secondary identifier:
+Subsystem IDs are Aero-specific and are used as stable secondary identifiers:
 
 - `subsystem_vendor_id = 0x1AF4`
-- `subsystem_device_id = virtio_device_type` (e.g. 0x0002 for virtio-blk)
+- `subsystem_device_id` is defined by `AERO-W7-VIRTIO` (e.g. 0x0002 for virtio-blk, 0x0019 for virtio-snd).
 
 ### Aero GPU (WDDM)
 
@@ -76,7 +79,8 @@ All numeric values are shown as hexadecimal.
 | virtio-blk | `1AF4:1042` | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aerovioblk` | `aero-virtio-blk.inf` |
 | virtio-net | `1AF4:1041` | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovionet` | `aero-virtio-net.inf` |
 | virtio-snd | `1AF4:1059` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
-| virtio-input | `1AF4:1052` | `1AF4:0012` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
+| virtio-input (keyboard) | `1AF4:1052` | `1AF4:0010` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
+| virtio-input (mouse) | `1AF4:1052` | `1AF4:0011` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
 | Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `AeroGPU` | `aerogpu.inf` |
 
 Notes:
@@ -86,13 +90,8 @@ Notes:
 - `aerogpu_dx11.inf` is an optional alternative INF if shipping D3D10/11 user-mode components.
  
 Compatibility note (non-canonical virtio PCI Device IDs):
-
-- virtio-net: `1AF4:1000` (transitional)
-- virtio-blk: `1AF4:1001` (transitional)
-- virtio-input: `1AF4:1011` (transitional)
-- virtio-snd: `1AF4:1018` (transitional)
-
-The emulator’s canonical profile uses the **modern** IDs in the table above, but Guest Tools and Windows driver INFs may match both modern + transitional IDs to support transitional virtio-pci devices.
+ 
+Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1018`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
 
 ## Windows hardware IDs and driver binding
 
@@ -125,9 +124,6 @@ Example (illustrative) INF model entries:
 [AeroModels.NTamd64]
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4
-; Optional compatibility (transitional IDs):
-%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1001
-%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1001&SUBSYS_00021AF4
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
@@ -148,32 +144,20 @@ This section is intentionally “high level”: it specifies what the Windows dr
 
 ### PCI config space
 
-For virtio devices listed in this contract:
+For virtio devices listed in this contract (see `AERO-W7-VIRTIO` for the definitive virtio transport + feature contract):
 
 - `vendor_id = 0x1AF4`
 - `device_id` matches the table above
 - `subsystem_vendor_id = 0x1AF4`
-- `subsystem_device_id = virtio_device_type`
+- `subsystem_device_id` matches `AERO-W7-VIRTIO`
 - `revision_id = 0x01` (Aero virtio contract v1; used for optional `REV_01` INF matching)
 - `class_code` matches the table above
 
 ### BARs / MMIO vs I/O ports
 
-Virtio devices must present a **virtio-pci modern** programming interface to the guest driver.
+Virtio devices MUST implement the **virtio-pci modern** programming interface as specified by `AERO-W7-VIRTIO`.
 
-Implementation options (emulator-side):
-
-1. **Transitional virtio-pci** (recommended for interoperability):
-   - Provide the legacy I/O-port BAR (for legacy drivers) **and**
-   - Provide the virtio 1.x PCI capability-based MMIO regions (for modern drivers).
-2. **Modern-only virtio-pci**:
-   - No legacy I/O-port BAR.
-   - Only the virtio PCI capabilities and their MMIO regions.
-
-Whichever option is chosen, Aero’s Windows drivers must:
-
-- Use the **PCI capability-based MMIO regions** (common config / notify / ISR / device config).
-- Not require legacy I/O-port operation for correctness.
+In particular, `AERO-W7-VIRTIO` v1 is **modern-only** (no legacy/transitional I/O port BAR).
 
 ### Interrupts
 
@@ -195,10 +179,12 @@ Virtqueue format:
 - Split virtqueues are required.
 - Packed virtqueues must be treated as unsupported unless/until this contract is revised to require `VIRTIO_F_RING_PACKED` (bit 34).
 
-Additional features may be used for performance (device- and ring-level), but must be treated as optional unless this contract is updated to require them. In particular, drivers should negotiate these opportunistically:
+Additional features may be used for performance, but must be treated as optional unless the relevant contract is updated to require them.
 
-- `VIRTIO_RING_F_INDIRECT_DESC` (bit 28)
-- `VIRTIO_RING_F_EVENT_IDX` (bit 29)
+For `AERO-W7-VIRTIO` v1 specifically:
+
+- `VIRTIO_F_RING_INDIRECT_DESC` (bit 28) is required and MUST be offered.
+- `VIRTIO_F_RING_EVENT_IDX` (bit 29) is not offered.
 
 ### Aero GPU
 

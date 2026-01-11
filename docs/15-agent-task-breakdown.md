@@ -458,8 +458,8 @@ These tasks cover the **Windows-side packaging** needed for paravirtual devices 
 
 **Source of truth (must stay in sync with emulator + drivers):**
 
-- [`windows-device-contract.md`](./windows-device-contract.md)
-- [`windows-device-contract.json`](./windows-device-contract.json)
+- [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO`, definitive for virtio devices)
+- [`windows-device-contract.md`](./windows-device-contract.md) / [`windows-device-contract.json`](./windows-device-contract.json) (binding summary + manifest; must match `AERO-W7-VIRTIO` for virtio)
 
 | ID     | Task                                                                 | Priority | Dependencies | Complexity |
 | ------ | -------------------------------------------------------------------- | -------- | ------------ | ---------- |

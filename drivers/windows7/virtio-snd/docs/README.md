@@ -409,3 +409,5 @@ Notes:
 
 - The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
 - This WDM driver currently uses **INTx only**. The INF does **not** include the registry settings required to request MSI/MSI-X from Windows.
+
+If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.

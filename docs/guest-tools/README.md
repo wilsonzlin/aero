@@ -6,14 +6,19 @@ Guest Tools is the Windows-side bundle that makes Aero usable and fast:
 - Installer logic (PnP driver install + boot-critical storage seeding)
 - Optional userland utilities (time sync, clipboard, etc.)
 
-## Source of truth: Windows device contract
+## Source of truth: device contracts
 
 Do **not** hardcode PCI IDs, subsystem IDs, or service names in installer scripts.
 
-All device/driver binding information is specified in:
+For **virtio** devices, the definitive contract is:
 
-- [`docs/windows-device-contract.md`](../windows-device-contract.md) (human-readable contract)
-- [`docs/windows-device-contract.json`](../windows-device-contract.json) (machine-readable manifest)
+- [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO`)
+
+For automation (Guest Tools installer), the machine-readable manifest is:
+
+- [`docs/windows-device-contract.json`](../windows-device-contract.json)
+
+`windows-device-contract.json` MUST remain consistent with `AERO-W7-VIRTIO` for virtio devices.
 
 The Guest Tools installer should consume `windows-device-contract.json` to:
 
@@ -23,4 +28,3 @@ The Guest Tools installer should consume `windows-device-contract.json` to:
 
 If emulator-side PCI IDs change without updating the contract, Windows may fail to bind drivers or
 may bluescreen on boot due to missing boot-critical storage drivers.
-

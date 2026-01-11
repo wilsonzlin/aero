@@ -7,6 +7,7 @@ on:
       - "AGENTS.md"
       - "README*"
       - ".markdownlint-cli2.jsonc"
+      - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - ".github/workflows/docs.yml"
   push:
     branches: ["main"]
@@ -15,6 +16,7 @@ on:
       - "AGENTS.md"
       - "README*"
       - ".markdownlint-cli2.jsonc"
+      - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
@@ -46,6 +48,9 @@ jobs:
             AGENTS.md
             README*.md
             docs/**/*.md
+
+      - name: Check Windows 7 virtio contract consistency
+        run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
 
       # Fast, deterministic check for broken relative links in markdown.
       # We intentionally run lychee in `--offline` mode so docs-only PRs get

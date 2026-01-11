@@ -44,17 +44,18 @@ Implementing Windows 7 kernel drivers for Storport (block) and NDIS (network) fr
 
 We target the **virtio-win** driver distribution (commonly shipped as `virtio-win.iso`) and specifically the packages:
 
-| Aero device | virtio PCI ID (transitional / modern) | virtio-win package name (typical) |
+| Aero device | virtio PCI ID (Aero / `AERO-W7-VIRTIO` v1) | virtio-win package name (typical) |
 |------------|----------------------------------------|-----------------------------------|
-| virtio-net | `VEN_1AF4&DEV_1000` / `VEN_1AF4&DEV_1041` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
-| virtio-blk | `VEN_1AF4&DEV_1001` / `VEN_1AF4&DEV_1042` | `viostor` (`viostor.inf` / `viostor.sys`) |
-| virtio-input | `VEN_1AF4&DEV_1011` / `VEN_1AF4&DEV_1052` | `vioinput` (best-effort; Win7 package not present in all virtio-win releases) |
-| virtio-snd | `VEN_1AF4&DEV_1018` / `VEN_1AF4&DEV_1059` | `viosnd` (optional; Win7 package not present in all virtio-win releases) |
+| virtio-net | `VEN_1AF4&DEV_1041` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
+| virtio-blk | `VEN_1AF4&DEV_1042` | `viostor` (`viostor.inf` / `viostor.sys`) |
+| virtio-input | `VEN_1AF4&DEV_1052` | `vioinput` (best-effort; Win7 package not present in all virtio-win releases) |
+| virtio-snd | `VEN_1AF4&DEV_1059` | `viosnd` (optional; Win7 package not present in all virtio-win releases) |
 
 Notes:
 
 - `VEN_1AF4` is the conventional VirtIO PCI vendor ID used by the upstream ecosystem.
-- Aero’s current virtio device contract (see `docs/windows7-virtio-driver-contract.md`) is trending toward **modern-only** device IDs (`0x1040 + device_id`). Transitional IDs may still be exposed for compatibility, but drivers should not rely on them.
+- Aero’s virtio device contract is `AERO-W7-VIRTIO` (see `docs/windows7-virtio-driver-contract.md`) and is **modern-only** (no transitional IDs).
+- Many upstream virtio-win drivers also match the transitional ID range (`DEV_1000`, `DEV_1001`, etc.), but Aero does not expose those IDs under the contract.
 
 ### Licensing policy (project requirement)
 
