@@ -27,7 +27,7 @@ The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:
   * Historical reference: `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`
   * The KMD does **not** include `aerogpu_protocol_legacy.h` directly; it uses a minimal internal shim:
     `include/aerogpu_legacy_abi.h`
-  * PCI IDs: `VID=0x1AED`, `DID=0x0001`
+  * PCI identity: legacy bring-up device model (see `docs/abi/aerogpu-pci-identity.md`)
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`)
 * This ABI is deprecated and retained only for optional compatibility/regression testing.
 
@@ -51,7 +51,7 @@ During `DxgkDdiStartDevice`, the KMD reads BAR0 `AEROGPU_MMIO_REG_MAGIC`:
 Some legacy device models (including the in-tree emulator legacy device) also expose the versioned
 `FEATURES_*`, `IRQ_*`, and `SCANOUT0_VBLANK_*` registers. The KMD will opportunistically use these
 when present (and the reported feature bits contain no unknown values) so Win7 can receive vblank
-interrupts and query scanline state even on `PCI\VEN_1AED&DEV_0001`.
+interrupts and query scanline state even on the legacy `"ARGP"` device model.
 
 See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.

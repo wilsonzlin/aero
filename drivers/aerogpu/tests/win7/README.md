@@ -205,15 +205,15 @@ To require a specific PCI VID/DID (recommended for automation):
 ```cmd
 :: Versioned ABI device model (AEROGPU_PCI_VENDOR_ID=0xA3A0 in aerogpu_pci.h)
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
- 
-:: Legacy bring-up device model (deprecated; AEROGPU_PCI_VENDOR_ID=0x1AED in drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h)
+  
+:: Legacy bring-up device model (deprecated; PCI identity defined in drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h)
 :: NOTE: the shipped Win7 AeroGPU INFs bind to PCI\VEN_A3A0&DEV_0001 only; installing against the
-:: legacy 1AED device model requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/
+:: legacy device model requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/
 :: and enabling `emulator/aerogpu-legacy`.
-run_all.cmd --require-vid=0x1AED --require-did=0x0001
+run_all.cmd --require-vid=0x<legacy_vid> --require-did=0x0001
 ```
-
-Note: the in-tree Win7 driver package binds to the versioned device (`VID=0xA3A0`). Running against the legacy device model (`VID=0x1AED`) requires enabling the legacy emulator device model feature (`emulator/aerogpu-legacy`) and installing using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
+ 
+Note: the in-tree Win7 driver package binds to the versioned device (`VID=0xA3A0`). Running against the legacy device model requires enabling the legacy emulator device model feature (`emulator/aerogpu-legacy`) and installing using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
 
 You can find the correct VID/DID in the Win7 guest via:
 
