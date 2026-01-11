@@ -222,4 +222,39 @@ describe("usb/UsbBroker", () => {
     const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
     expect(selected).toHaveLength(1);
   });
+
+  it("falls back to alternate requestDevice filter shapes when the browser rejects filters: []", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = { vendorId: 0x1234, productId: 0x5678, close: async () => {} } as unknown as USBDevice;
+    const calls: USBDeviceRequestOptions[] = [];
+    const usb = new (class extends EventTarget {
+      async requestDevice(options: USBDeviceRequestOptions): Promise<USBDevice> {
+        calls.push(options);
+        if (calls.length === 1) throw new TypeError("filters rejected");
+        return device;
+      }
+    })();
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const info = await broker.requestDevice();
+    expect(info.vendorId).toBe(0x1234);
+    expect(info.productId).toBe(0x5678);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.filters).toEqual([]);
+    expect(Array.isArray(calls[1]?.filters)).toBe(true);
+    expect(calls[1]?.filters?.length).toBe(1);
+  });
 });
