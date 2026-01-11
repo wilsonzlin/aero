@@ -57,13 +57,18 @@ node --experimental-strip-types proxy/aero-l2-proxy/src/index.ts
 
 Expected behavior:
 
-- Proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
-- Proxy serves operational endpoints:
-  - `GET /healthz` – liveness
-  - `GET /readyz` – readiness (Rust proxy only)
-  - `GET /version` – build/version info (Rust proxy only)
-  - `GET /metrics` – Prometheus metrics
-- Proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
+- Rust proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
+- Node harness listens on `AERO_L2_LISTEN_HOST` + `AERO_L2_PORT` (default: `127.0.0.1:8082`).
+- Operational endpoints:
+  - Rust proxy:
+    - `GET /healthz` – liveness
+    - `GET /readyz` – readiness
+    - `GET /version` – build/version info
+    - `GET /metrics` – Prometheus metrics
+  - Node harness:
+    - `GET /healthz` – liveness
+    - `GET /metrics` – Prometheus metrics (quota/upgrade harness stats)
+- The Rust proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 
