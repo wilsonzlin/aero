@@ -14,6 +14,16 @@ SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE=101
 SMOKE_WEBRTC_UDP_PORT_MIN=50000
 SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE - 1))
 SMOKE_SESSION_SECRET="__aero_smoke_session_${PROJECT_NAME}"
+SMOKE_COMPOSE_OVERRIDE_FILE="$(mktemp "${TMPDIR:-/tmp}/aero-smoke-compose-override-XXXXXX.yml")"
+
+cat >"$SMOKE_COMPOSE_OVERRIDE_FILE" <<'YAML'
+services:
+  aero-l2-proxy:
+    environment:
+      # Enforce gateway session cookies (aero_session) for /l2 upgrades.
+      AERO_L2_AUTH_MODE: cookie
+      AERO_L2_SESSION_SECRET: ${SESSION_SECRET}
+YAML
 
 compose() {
   # The /udp smoke test sends a UDP datagram to the host via the docker network.
@@ -88,7 +98,7 @@ compose() {
     TRUST_PROXY=1 \
     CROSS_ORIGIN_ISOLATION=0 \
     AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
-    docker compose --env-file /dev/null -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
+    docker compose --env-file /dev/null -f "$COMPOSE_FILE" -f "$SMOKE_COMPOSE_OVERRIDE_FILE" -p "$PROJECT_NAME" "$@"
 }
 
 on_exit() {
@@ -105,6 +115,7 @@ on_exit() {
 
   rm -f "$SMOKE_WASM_PATH" >/dev/null 2>&1 || true
   rmdir "$SMOKE_WASM_DIR" >/dev/null 2>&1 || true
+  rm -f "$SMOKE_COMPOSE_OVERRIDE_FILE" >/dev/null 2>&1 || true
 }
 trap on_exit EXIT
 
@@ -537,7 +548,7 @@ function checkTcpUpgrade(cookiePair) {
   });
 }
 
-function checkL2Upgrade(path) {
+function checkL2Upgrade(cookiePair, path) {
   return new Promise((resolve, reject) => {
     const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     const key = crypto.randomBytes(16).toString("base64");
@@ -551,6 +562,7 @@ function checkL2Upgrade(path) {
       "Sec-WebSocket-Version: 13",
       `Sec-WebSocket-Key: ${key}`,
       `Sec-WebSocket-Protocol: ${l2Protocol}`,
+      `Cookie: ${cookiePair}`,
       `Origin: https://${host}`,
       "",
       "",
@@ -613,6 +625,66 @@ function checkL2Upgrade(path) {
       }
 
       resolve();
+    });
+
+    socket.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+function checkL2RejectsMissingCookie(path) {
+  return new Promise((resolve, reject) => {
+    const key = crypto.randomBytes(16).toString("base64");
+
+    const req = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${host}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Version: 13",
+      `Sec-WebSocket-Key: ${key}`,
+      `Sec-WebSocket-Protocol: ${l2Protocol}`,
+      `Origin: https://${host}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      rejectUnauthorized: false,
+    });
+
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`timeout waiting for ${path} unauthenticated response`));
+    }, 5000);
+
+    let buf = "";
+    socket.on("secureConnect", () => {
+      socket.write(req);
+    });
+
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx === -1) return;
+
+      clearTimeout(timeout);
+      socket.end();
+
+      const headerBlock = buf.slice(0, idx);
+      const lines = headerBlock.split("\r\n");
+      const statusLine = lines[0] ?? "";
+      const status = parseStatusCode(statusLine);
+      if (status === 401 || status === 403) {
+        resolve();
+        return;
+      }
+      reject(new Error(`expected ${path} without Cookie to be rejected with 401/403 (got: ${statusLine})`));
     });
 
     socket.on("error", (err) => {
@@ -1224,7 +1296,7 @@ function checkUdpRelayToken(cookiePair) {
   let lastL2Error;
   for (let attempt = 1; attempt <= 30; attempt++) {
     try {
-      await checkL2Upgrade(session.l2Path);
+      await checkL2Upgrade(session.cookiePair, session.l2Path);
       lastL2Error = undefined;
       break;
     } catch (err) {
@@ -1238,6 +1310,7 @@ function checkUdpRelayToken(cookiePair) {
     throw lastL2Error;
   }
 
+  await checkL2RejectsMissingCookie(session.l2Path);
   await checkL2RejectsMissingOrigin(session.l2Path);
   const token = await checkUdpRelayToken(session.cookiePair);
   if (token !== session.udpRelayToken) {
