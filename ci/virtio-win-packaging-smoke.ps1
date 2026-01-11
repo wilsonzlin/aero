@@ -669,6 +669,105 @@ if (-not $SkipGuestToolsDefaultsCheck) {
       }
     }
   }
+
+  # Validate -Profile minimal defaults without explicitly passing -SpecPath/-Drivers. This ensures
+  # the profile mapping remains stable and the resulting media doesn't accidentally pick up optional
+  # driver payloads.
+  $guestToolsProfileMinimalOutDir = Join-Path $OutRoot "guest-tools-profile-minimal"
+  Ensure-EmptyDirectory -Path $guestToolsProfileMinimalOutDir
+  $guestToolsProfileMinimalLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-profile-minimal.log"
+  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (-Profile minimal)..."
+  $guestToolsProfileMinimalArgs = @(
+    "-OutDir", $guestToolsProfileMinimalOutDir,
+    "-Profile", "minimal",
+    "-Version", "0.0.0",
+    "-BuildId", "ci-profile-minimal",
+    "-CleanStage"
+  )
+  if ($TestIsoMode) {
+    $guestToolsProfileMinimalArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+  } else {
+    $guestToolsProfileMinimalArgs += @("-VirtioWinRoot", $syntheticRoot)
+  }
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsProfileMinimalArgs *>&1 | Tee-Object -FilePath $guestToolsProfileMinimalLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-guest-tools-from-virtio-win.ps1 (-Profile minimal) failed (exit $LASTEXITCODE). See $guestToolsProfileMinimalLog"
+  }
+
+  $profileMinimalLogText = Get-Content -LiteralPath $guestToolsProfileMinimalLog -Raw
+  if ($profileMinimalLogText -notmatch '(?m)^\s*profile\s*:\s*minimal\s*$') {
+    throw "Expected -Profile minimal run to use profile=minimal. See $guestToolsProfileMinimalLog"
+  }
+  if ($profileMinimalLogText -notmatch 'win7-virtio-win\.json') {
+    throw "Expected -Profile minimal run to select win7-virtio-win.json. See $guestToolsProfileMinimalLog"
+  }
+  if ($profileMinimalLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm\s*$') {
+    throw "Expected -Profile minimal run to extract only viostor,netkvm. See $guestToolsProfileMinimalLog"
+  }
+
+  $profileMinimalManifestPath = Join-Path $guestToolsProfileMinimalOutDir "manifest.json"
+  if (-not (Test-Path -LiteralPath $profileMinimalManifestPath -PathType Leaf)) {
+    throw "Expected Guest Tools -Profile minimal manifest not found: $profileMinimalManifestPath"
+  }
+  $profileMinimalManifest = Get-Content -LiteralPath $profileMinimalManifestPath -Raw | ConvertFrom-Json
+  if ($profileMinimalManifest.package.build_id -ne "ci-profile-minimal") {
+    throw "Guest Tools -Profile minimal manifest build_id mismatch: expected ci-profile-minimal, got $($profileMinimalManifest.package.build_id)"
+  }
+  if ($profileMinimalManifest.signing_policy -ne "none") {
+    throw "Guest Tools -Profile minimal manifest signing_policy mismatch: expected none, got $($profileMinimalManifest.signing_policy)"
+  }
+  $profileMinimalPaths = @($profileMinimalManifest.files | ForEach-Object { $_.path })
+  foreach ($p in $profileMinimalPaths) {
+    if ($p -like "certs/*" -and $p -ne "certs/README.md") {
+      throw "Did not expect certificate files to be packaged for signing_policy=none (-Profile minimal run): $p"
+    }
+  }
+  foreach ($p in @(
+    "drivers/x86/viosnd/viosnd.inf",
+    "drivers/amd64/viosnd/viosnd.inf",
+    "drivers/x86/vioinput/vioinput.inf",
+    "drivers/amd64/vioinput/vioinput.inf"
+  )) {
+    if ($profileMinimalPaths -contains $p) {
+      throw "Did not expect optional driver file path to be packaged under -Profile minimal: $p"
+    }
+  }
+
+  # Validate that a relative -SpecPath is resolved against the repo root (not the current working directory).
+  $guestToolsRelativeSpecOutDir = Join-Path $OutRoot "guest-tools-relative-spec"
+  Ensure-EmptyDirectory -Path $guestToolsRelativeSpecOutDir
+  $guestToolsRelativeSpecLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-relative-spec.log"
+  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (relative -SpecPath)..."
+  $guestToolsRelativeSpecArgs = @(
+    "-OutDir", $guestToolsRelativeSpecOutDir,
+    "-Profile", "full",
+    "-SpecPath", "tools/packaging/specs/win7-virtio-full.json",
+    "-Version", "0.0.0",
+    "-BuildId", "ci-relative-spec",
+    "-CleanStage"
+  )
+  if ($TestIsoMode) {
+    $guestToolsRelativeSpecArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+  } else {
+    $guestToolsRelativeSpecArgs += @("-VirtioWinRoot", $syntheticRoot)
+  }
+  Push-Location -LiteralPath $OutRoot
+  try {
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsRelativeSpecArgs *>&1 | Tee-Object -FilePath $guestToolsRelativeSpecLog
+  } finally {
+    Pop-Location
+  }
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-guest-tools-from-virtio-win.ps1 (relative -SpecPath) failed (exit $LASTEXITCODE). See $guestToolsRelativeSpecLog"
+  }
+
+  $relativeSpecLogText = Get-Content -LiteralPath $guestToolsRelativeSpecLog -Raw
+  if ($relativeSpecLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
+    throw "Expected relative -SpecPath run to use -Profile full. See $guestToolsRelativeSpecLog"
+  }
+  if ($relativeSpecLogText -notmatch 'win7-virtio-full\.json') {
+    throw "Expected relative -SpecPath run to select win7-virtio-full.json. See $guestToolsRelativeSpecLog"
+  }
 }
 
 $isoScript = Join-Path $repoRoot "drivers\scripts\make-virtio-driver-iso.ps1"
