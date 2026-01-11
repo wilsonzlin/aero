@@ -58,19 +58,24 @@ export type L2TunnelTokenTransport = "subprotocol" | "query" | "both";
 
 export type L2TunnelClientOptions = {
   /**
-   * Maximum number of bytes allowed to be queued in JS before outbound frames
-   * are dropped.
+   * Maximum number of bytes allowed to be queued in JS before the tunnel is
+   * closed.
    */
   maxQueuedBytes?: number;
 
   /**
-   * If the underlying transport's buffered amount exceeds this, the client will
-   * drop outbound frames.
+   * Backpressure threshold for the underlying transport (`WebSocket` or
+   * `RTCDataChannel`): when `bufferedAmount` exceeds this, the client pauses
+   * sending and waits for the transport to drain (messages remain queued, up to
+   * `maxQueuedBytes`).
    */
   maxBufferedAmount?: number;
 
   /**
-   * Drop outbound Ethernet frames larger than this.
+   * Maximum Ethernet frame size allowed.
+   *
+   * Outbound frames larger than this are treated as an error and the tunnel is
+   * closed (to avoid silent frame loss).
    */
   maxFrameSize?: number;
 
@@ -258,7 +263,9 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     if (frame.byteLength > this.opts.maxFrameSize) {
-      const err = new Error(`dropping outbound frame: size ${frame.byteLength} > maxFrameSize ${this.opts.maxFrameSize}`);
+      const err = new Error(
+        `closing L2 tunnel: outbound frame too large (size ${frame.byteLength} > maxFrameSize ${this.opts.maxFrameSize})`,
+      );
       this.emitSessionErrorThrottled(err);
       this.close();
       return;
