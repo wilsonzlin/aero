@@ -427,6 +427,15 @@ impl AeroGpuCommandProcessor {
                     if buffer_handle == 0 {
                         return Err(CommandProcessorError::InvalidResourceHandle(buffer_handle));
                     }
+                    if let Some(underlying) = self.shared_surface_handles.get(&buffer_handle) {
+                        // Shared surface aliases live in the same global handle namespace, so they
+                        // must not be reused for a different resource type.
+                        if *underlying != buffer_handle {
+                            return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                                buffer_handle,
+                            ));
+                        }
+                    }
                     if size_bytes == 0 || size_bytes % 4 != 0 {
                         return Err(CommandProcessorError::InvalidCreateBuffer);
                     }
