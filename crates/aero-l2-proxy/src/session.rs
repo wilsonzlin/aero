@@ -86,7 +86,7 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
 
     let mut cfg = StackConfig::default();
     cfg.host_policy.enabled = true;
-    if !state.cfg.policy.allows_ip(Ipv4Addr::new(10, 0, 0, 1)) {
+    if !state.cfg.policy.allow_private_ips() {
         cfg.host_policy
             .deny_ips
             .extend_from_slice(STACK_DEFAULT_DENY_IPV4);

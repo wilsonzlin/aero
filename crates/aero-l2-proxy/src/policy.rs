@@ -70,6 +70,10 @@ impl EgressPolicy {
         })
     }
 
+    pub fn allow_private_ips(&self) -> bool {
+        self.allow_private_ips
+    }
+
     pub fn allows_ip(&self, ip: Ipv4Addr) -> bool {
         if self.allow_private_ips {
             return true;
