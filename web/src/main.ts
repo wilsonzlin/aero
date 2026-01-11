@@ -2020,6 +2020,10 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoWorker.terminate();
     hdaDemoWorker = null;
     hdaDemoStats = null;
+    if (toneTimer !== null) {
+      window.clearInterval(toneTimer);
+      toneTimer = null;
+    }
   }
 
   async function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
