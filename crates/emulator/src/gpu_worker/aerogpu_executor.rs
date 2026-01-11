@@ -9,13 +9,11 @@ use memory::MemoryBus;
 use crate::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, FEATURE_VBLANK};
 use crate::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
-    AEROGPU_RING_HEADER_SIZE_BYTES, FENCE_PAGE_ABI_VERSION_OFFSET, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
-    FENCE_PAGE_MAGIC_OFFSET,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
 };
 use crate::gpu_worker::aerogpu_backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
-    AeroGpuCommandBackend, NullAeroGpuBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    NullAeroGpuBackend,
 };
 
 #[cfg(feature = "aerogpu-trace")]
@@ -391,11 +389,8 @@ impl AeroGpuExecutor {
             let desc = AeroGpuSubmitDesc::read_from(mem, desc_gpa);
 
             regs.stats.submissions = regs.stats.submissions.saturating_add(1);
-            if desc.desc_size_bytes < AeroGpuSubmitDesc::SIZE_BYTES
-                || desc.desc_size_bytes > ring.entry_stride_bytes
-            {
-                regs.stats.malformed_submissions =
-                    regs.stats.malformed_submissions.saturating_add(1);
+            if desc.validate_prefix().is_err() || desc.desc_size_bytes > ring.entry_stride_bytes {
+                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
             }
 
             let mut decode_errors = Vec::new();
@@ -651,16 +646,12 @@ impl AeroGpuExecutor {
             return;
         }
 
-        // Initialize header (idempotent) and update completed value.
-        mem.write_u32(regs.fence_gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
-        mem.write_u32(regs.fence_gpa + FENCE_PAGE_ABI_VERSION_OFFSET, regs.abi_version);
-        mem.write_u64(
-            regs.fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+        crate::devices::aerogpu_ring::write_fence_page(
+            mem,
+            regs.fence_gpa,
+            regs.abi_version,
             regs.completed_fence,
         );
-
-        // Keep writes within the defined struct size; do not touch the rest of the page.
-        let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
     }
 
     fn maybe_raise_fence_irq(&self, regs: &mut AeroGpuRegs, wants_irq: bool) {
@@ -732,22 +723,8 @@ fn decode_alloc_table(
         return (Some(header), Vec::new());
     }
 
-    let Some(entry_bytes) =
-        u64::from(header.entry_count).checked_mul(u64::from(header.entry_stride_bytes))
-    else {
-        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
-            AeroGpuAllocTableDecodeError::AddressOverflow,
-        ));
-        return (Some(header), Vec::new());
-    };
-    let Some(required) = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES).checked_add(entry_bytes)
-    else {
-        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
-            AeroGpuAllocTableDecodeError::AddressOverflow,
-        ));
-        return (Some(header), Vec::new());
-    };
-    if required > u64::from(header.size_bytes) {
+    // Confirm the table contains the declared entries before walking them.
+    if header.validate_prefix().is_err() {
         decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
             AeroGpuAllocTableDecodeError::EntriesOutOfBounds,
         ));
@@ -1048,8 +1025,8 @@ mod tests {
     use super::*;
 
     use crate::devices::aerogpu_ring::{
-        AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
-        RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+        AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+        FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
     };
     use memory::Bus;
 
@@ -1255,7 +1232,7 @@ impl AerogpuSubmissionTrace {
 
         if let Some(table) = &alloc_table_bytes {
             // Best-effort parse of the allocation table; invalid tables are still recorded as raw bytes.
-            if table.len() >= 24 {
+            if table.len() >= AeroGpuAllocTableHeader::SIZE_BYTES as usize {
                 let magic = u32::from_le_bytes(table[0..4].try_into().unwrap());
                 let size_bytes = u32::from_le_bytes(table[8..12].try_into().unwrap());
                 let entry_count = u32::from_le_bytes(table[12..16].try_into().unwrap());
@@ -1263,12 +1240,12 @@ impl AerogpuSubmissionTrace {
 
                 if magic == AEROGPU_ALLOC_TABLE_MAGIC
                     && size_bytes as usize <= table.len()
-                    && entry_stride == 32
+                    && entry_stride == AeroGpuAllocEntry::SIZE_BYTES
                 {
                     let count = entry_count as usize;
-                    let mut off = 24usize;
+                    let mut off = AeroGpuAllocTableHeader::SIZE_BYTES as usize;
                     for _ in 0..count {
-                        if off + 32 > table.len() {
+                        if off + AeroGpuAllocEntry::SIZE_BYTES as usize > table.len() {
                             break;
                         }
                         let alloc_id = u32::from_le_bytes(table[off..off + 4].try_into().unwrap());
@@ -1292,7 +1269,7 @@ impl AerogpuSubmissionTrace {
                             }
                         }
 
-                        off += 32;
+                        off += AeroGpuAllocEntry::SIZE_BYTES as usize;
                     }
                 }
             }

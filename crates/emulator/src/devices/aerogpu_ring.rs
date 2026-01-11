@@ -1,4 +1,6 @@
-use aero_protocol::aerogpu::{aerogpu_pci, aerogpu_ring as protocol_ring};
+use core::mem::offset_of;
+
+use aero_protocol::aerogpu::aerogpu_ring as protocol_ring;
 use memory::MemoryBus;
 
 pub use protocol_ring::{AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
@@ -6,64 +8,20 @@ pub use protocol_ring::{AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AER
 pub const AEROGPU_RING_HEADER_SIZE_BYTES: u64 = protocol_ring::AerogpuRingHeader::SIZE_BYTES as u64;
 pub const AEROGPU_FENCE_PAGE_SIZE_BYTES: u64 = protocol_ring::AerogpuFencePage::SIZE_BYTES as u64;
 
-pub const RING_HEAD_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, head) as u64;
-pub const RING_TAIL_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, tail) as u64;
-
 pub const AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES: u32 =
     protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32;
 
-pub const FENCE_PAGE_MAGIC_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuFencePage, magic) as u64;
+pub const AEROGPU_SUBMIT_FLAG_PRESENT: u32 = protocol_ring::AEROGPU_SUBMIT_FLAG_PRESENT;
+pub const AEROGPU_SUBMIT_FLAG_NO_IRQ: u32 = protocol_ring::AEROGPU_SUBMIT_FLAG_NO_IRQ;
+
+pub const RING_HEAD_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, head) as u64;
+pub const RING_TAIL_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, tail) as u64;
+
+pub const FENCE_PAGE_MAGIC_OFFSET: u64 = offset_of!(protocol_ring::AerogpuFencePage, magic) as u64;
 pub const FENCE_PAGE_ABI_VERSION_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuFencePage, abi_version) as u64;
+    offset_of!(protocol_ring::AerogpuFencePage, abi_version) as u64;
 pub const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuFencePage, completed_fence) as u64;
-
-const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, magic) as u64;
-const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, abi_version) as u64;
-const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, size_bytes) as u64;
-const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, entry_count) as u64;
-const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuRingHeader, entry_stride_bytes) as u64;
-const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuRingHeader, flags) as u64;
-
-const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, desc_size_bytes) as u64;
-const SUBMIT_DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, flags) as u64;
-const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, context_id) as u64;
-const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, engine_id) as u64;
-const SUBMIT_DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, cmd_gpa) as u64;
-const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, cmd_size_bytes) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, alloc_table_gpa) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, alloc_table_size_bytes) as u64;
-const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuSubmitDesc, signal_fence) as u64;
-
-const ALLOC_TABLE_MAGIC_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocTableHeader, magic) as u64;
-const ALLOC_TABLE_ABI_VERSION_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocTableHeader, abi_version) as u64;
-const ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocTableHeader, size_bytes) as u64;
-const ALLOC_TABLE_ENTRY_COUNT_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocTableHeader, entry_count) as u64;
-const ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocTableHeader, entry_stride_bytes) as u64;
-const ALLOC_TABLE_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocTableHeader, reserved0) as u64;
-
-const ALLOC_ENTRY_ALLOC_ID_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocEntry, alloc_id) as u64;
-const ALLOC_ENTRY_FLAGS_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuAllocEntry, flags) as u64;
-const ALLOC_ENTRY_GPA_OFFSET: u64 = core::mem::offset_of!(protocol_ring::AerogpuAllocEntry, gpa) as u64;
-const ALLOC_ENTRY_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocEntry, size_bytes) as u64;
-const ALLOC_ENTRY_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(protocol_ring::AerogpuAllocEntry, reserved0) as u64;
+    offset_of!(protocol_ring::AerogpuFencePage, completed_fence) as u64;
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuRingHeader {
@@ -78,26 +36,42 @@ pub struct AeroGpuRingHeader {
 }
 
 impl AeroGpuRingHeader {
+    pub const SIZE_BYTES: u32 = protocol_ring::AerogpuRingHeader::SIZE_BYTES as u32;
+
     pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
-        let magic = mem.read_u32(gpa + RING_MAGIC_OFFSET);
-        let abi_version = mem.read_u32(gpa + RING_ABI_VERSION_OFFSET);
-        let size_bytes = mem.read_u32(gpa + RING_SIZE_BYTES_OFFSET);
-        let entry_count = mem.read_u32(gpa + RING_ENTRY_COUNT_OFFSET);
-        let entry_stride_bytes = mem.read_u32(gpa + RING_ENTRY_STRIDE_BYTES_OFFSET);
-        let flags = mem.read_u32(gpa + RING_FLAGS_OFFSET);
-        let head = mem.read_u32(gpa + RING_HEAD_OFFSET);
-        let tail = mem.read_u32(gpa + RING_TAIL_OFFSET);
+        let mut buf = [0u8; protocol_ring::AerogpuRingHeader::SIZE_BYTES];
+        mem.read_physical(gpa, &mut buf);
+        let hdr = protocol_ring::AerogpuRingHeader::decode_from_le_bytes(&buf)
+            .expect("buffer matches AerogpuRingHeader::SIZE_BYTES");
 
         Self {
-            magic,
-            abi_version,
-            size_bytes,
-            entry_count,
-            entry_stride_bytes,
-            flags,
-            head,
-            tail,
+            magic: hdr.magic,
+            abi_version: hdr.abi_version,
+            size_bytes: hdr.size_bytes,
+            entry_count: hdr.entry_count,
+            entry_stride_bytes: hdr.entry_stride_bytes,
+            flags: hdr.flags,
+            head: hdr.head,
+            tail: hdr.tail,
         }
+    }
+
+    pub fn validate_prefix(&self) -> Result<(), protocol_ring::AerogpuRingDecodeError> {
+        let hdr = protocol_ring::AerogpuRingHeader {
+            magic: self.magic,
+            abi_version: self.abi_version,
+            size_bytes: self.size_bytes,
+            entry_count: self.entry_count,
+            entry_stride_bytes: self.entry_stride_bytes,
+            flags: self.flags,
+            head: self.head,
+            tail: self.tail,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: [0; 3],
+        };
+
+        hdr.validate_prefix()
     }
 
     pub fn write_head(mem: &mut dyn MemoryBus, gpa: u64, head: u32) {
@@ -110,28 +84,13 @@ impl AeroGpuRingHeader {
     }
 
     pub fn is_valid(&self, mmio_ring_size_bytes: u32) -> bool {
-        if self.magic != AEROGPU_RING_MAGIC {
+        if self.validate_prefix().is_err() {
             return false;
         }
-        if aerogpu_pci::parse_and_validate_abi_version_u32(self.abi_version).is_err() {
-            return false;
-        }
-        if self.entry_count == 0 || !self.entry_count.is_power_of_two() {
-            return false;
-        }
-        if self.entry_stride_bytes == 0 || self.entry_stride_bytes < AeroGpuSubmitDesc::SIZE_BYTES {
-            return false;
-        }
-        let required = match u64::from(self.entry_count)
-            .checked_mul(u64::from(self.entry_stride_bytes))
-            .and_then(|bytes| AEROGPU_RING_HEADER_SIZE_BYTES.checked_add(bytes))
-        {
-            Some(total) => total,
-            None => return false,
-        };
-        let size_bytes = u64::from(self.size_bytes);
-        let mmio_size = u64::from(mmio_ring_size_bytes);
-        required <= size_bytes && size_bytes <= mmio_size
+
+        // Caller has an MMIO mapping of size `mmio_ring_size_bytes`; the guest-declared ring size
+        // must not exceed it.
+        u64::from(self.size_bytes) <= u64::from(mmio_ring_size_bytes)
     }
 }
 
@@ -193,27 +152,41 @@ impl AeroGpuSubmitDesc {
     pub const FLAG_NO_IRQ: u32 = protocol_ring::AEROGPU_SUBMIT_FLAG_NO_IRQ;
 
     pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
-        let desc_size_bytes = mem.read_u32(gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET);
-        let flags = mem.read_u32(gpa + SUBMIT_DESC_FLAGS_OFFSET);
-        let context_id = mem.read_u32(gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET);
-        let engine_id = mem.read_u32(gpa + SUBMIT_DESC_ENGINE_ID_OFFSET);
-        let cmd_gpa = mem.read_u64(gpa + SUBMIT_DESC_CMD_GPA_OFFSET);
-        let cmd_size_bytes = mem.read_u32(gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET);
-        let alloc_table_gpa = mem.read_u64(gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET);
-        let alloc_table_size_bytes = mem.read_u32(gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET);
-        let signal_fence = mem.read_u64(gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET);
+        let mut buf = [0u8; protocol_ring::AerogpuSubmitDesc::SIZE_BYTES];
+        mem.read_physical(gpa, &mut buf);
+        let desc = protocol_ring::AerogpuSubmitDesc::decode_from_le_bytes(&buf)
+            .expect("buffer matches AerogpuSubmitDesc::SIZE_BYTES");
 
         Self {
-            desc_size_bytes,
-            flags,
-            context_id,
-            engine_id,
-            cmd_gpa,
-            cmd_size_bytes,
-            alloc_table_gpa,
-            alloc_table_size_bytes,
-            signal_fence,
+            desc_size_bytes: desc.desc_size_bytes,
+            flags: desc.flags,
+            context_id: desc.context_id,
+            engine_id: desc.engine_id,
+            cmd_gpa: desc.cmd_gpa,
+            cmd_size_bytes: desc.cmd_size_bytes,
+            alloc_table_gpa: desc.alloc_table_gpa,
+            alloc_table_size_bytes: desc.alloc_table_size_bytes,
+            signal_fence: desc.signal_fence,
         }
+    }
+
+    pub fn validate_prefix(&self) -> Result<(), protocol_ring::AerogpuRingDecodeError> {
+        let desc = protocol_ring::AerogpuSubmitDesc {
+            desc_size_bytes: self.desc_size_bytes,
+            flags: self.flags,
+            context_id: self.context_id,
+            engine_id: self.engine_id,
+            cmd_gpa: self.cmd_gpa,
+            cmd_size_bytes: self.cmd_size_bytes,
+            cmd_reserved0: 0,
+            alloc_table_gpa: self.alloc_table_gpa,
+            alloc_table_size_bytes: self.alloc_table_size_bytes,
+            alloc_table_reserved0: 0,
+            signal_fence: self.signal_fence,
+            reserved0: 0,
+        };
+
+        desc.validate_prefix()
     }
 }
 
@@ -228,24 +201,35 @@ pub struct AeroGpuAllocTableHeader {
 }
 
 impl AeroGpuAllocTableHeader {
-    pub const SIZE_BYTES: u32 = AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES;
+    pub const SIZE_BYTES: u32 = protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32;
 
     pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
-        let magic = mem.read_u32(gpa + ALLOC_TABLE_MAGIC_OFFSET);
-        let abi_version = mem.read_u32(gpa + ALLOC_TABLE_ABI_VERSION_OFFSET);
-        let size_bytes = mem.read_u32(gpa + ALLOC_TABLE_SIZE_BYTES_OFFSET);
-        let entry_count = mem.read_u32(gpa + ALLOC_TABLE_ENTRY_COUNT_OFFSET);
-        let entry_stride_bytes = mem.read_u32(gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET);
-        let reserved0 = mem.read_u32(gpa + ALLOC_TABLE_RESERVED0_OFFSET);
+        let mut buf = [0u8; protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES];
+        mem.read_physical(gpa, &mut buf);
+        let hdr = protocol_ring::AerogpuAllocTableHeader::decode_from_le_bytes(&buf)
+            .expect("buffer matches AerogpuAllocTableHeader::SIZE_BYTES");
 
         Self {
-            magic,
-            abi_version,
-            size_bytes,
-            entry_count,
-            entry_stride_bytes,
-            reserved0,
+            magic: hdr.magic,
+            abi_version: hdr.abi_version,
+            size_bytes: hdr.size_bytes,
+            entry_count: hdr.entry_count,
+            entry_stride_bytes: hdr.entry_stride_bytes,
+            reserved0: hdr.reserved0,
         }
+    }
+
+    pub fn validate_prefix(&self) -> Result<(), protocol_ring::AerogpuRingDecodeError> {
+        let hdr = protocol_ring::AerogpuAllocTableHeader {
+            magic: self.magic,
+            abi_version: self.abi_version,
+            size_bytes: self.size_bytes,
+            entry_count: self.entry_count,
+            entry_stride_bytes: self.entry_stride_bytes,
+            reserved0: self.reserved0,
+        };
+
+        hdr.validate_prefix()
     }
 }
 
@@ -261,17 +245,25 @@ impl AeroGpuAllocEntry {
     pub const SIZE_BYTES: u32 = protocol_ring::AerogpuAllocEntry::SIZE_BYTES as u32;
 
     pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
-        let alloc_id = mem.read_u32(gpa + ALLOC_ENTRY_ALLOC_ID_OFFSET);
-        let flags = mem.read_u32(gpa + ALLOC_ENTRY_FLAGS_OFFSET);
-        let gpa_val = mem.read_u64(gpa + ALLOC_ENTRY_GPA_OFFSET);
-        let size_bytes = mem.read_u64(gpa + ALLOC_ENTRY_SIZE_BYTES_OFFSET);
-        let _reserved0 = mem.read_u64(gpa + ALLOC_ENTRY_RESERVED0_OFFSET);
+        let mut buf = [0u8; protocol_ring::AerogpuAllocEntry::SIZE_BYTES];
+        mem.read_physical(gpa, &mut buf);
+        let entry =
+            protocol_ring::AerogpuAllocEntry::decode_from_le_bytes(&buf).expect("buffer matches SIZE_BYTES");
 
         Self {
-            alloc_id,
-            flags,
-            gpa: gpa_val,
-            size_bytes,
+            alloc_id: entry.alloc_id,
+            flags: entry.flags,
+            gpa: entry.gpa,
+            size_bytes: entry.size_bytes,
         }
     }
+}
+
+pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
+    mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
+    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
+    mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
+
+    // Keep writes within the defined struct size; do not touch the rest of the page.
+    let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
 }
