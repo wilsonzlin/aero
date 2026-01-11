@@ -2,7 +2,7 @@
   {
     "usagePage": 1,
     "usage": 2,
-    "type": "application",
+    "collectionType": 1,
     "children": [],
     "inputReports": [
       {

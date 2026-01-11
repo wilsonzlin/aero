@@ -7,6 +7,9 @@ export type HidCollectionType =
   | "usageSwitch"
   | "usageModifier";
 
+// HID collection type codes (HID 1.11, Collection main item payload).
+export type HidCollectionTypeCode = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
 export interface HidReportItem {
   usagePage: number;
   usages: readonly number[];
@@ -56,11 +59,42 @@ export interface HidCollectionInfo {
   featureReports: readonly HidReportInfo[];
 }
 
-export type NormalizedHidCollectionInfo = HidCollectionInfo;
+export interface NormalizedHidCollectionInfo {
+  usagePage: number;
+  usage: number;
+  collectionType: HidCollectionTypeCode;
+  children: readonly NormalizedHidCollectionInfo[];
+  inputReports: readonly NormalizedHidReportInfo[];
+  outputReports: readonly NormalizedHidReportInfo[];
+  featureReports: readonly NormalizedHidReportInfo[];
+}
 export type NormalizedHidReportInfo = HidReportInfo;
 export type NormalizedHidReportItem = HidReportItem;
 
 const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
+
+function normalizeCollectionType(type: HidCollectionType): HidCollectionTypeCode {
+  switch (type) {
+    case "physical":
+      return 0;
+    case "application":
+      return 1;
+    case "logical":
+      return 2;
+    case "report":
+      return 3;
+    case "namedArray":
+      return 4;
+    case "usageSwitch":
+      return 5;
+    case "usageModifier":
+      return 6;
+    default: {
+      const _exhaustive: never = type;
+      throw new Error(`unknown HID collection type: ${_exhaustive}`);
+    }
+  }
+}
 
 function isContiguousUsageRange(usages: readonly number[]): boolean {
   if (usages.length === 0) return true;
@@ -134,7 +168,7 @@ function normalizeCollection(collection: HidCollectionInfo): NormalizedHidCollec
   return {
     usagePage: collection.usagePage,
     usage: collection.usage,
-    type: collection.type,
+    collectionType: normalizeCollectionType(collection.type),
     children: collection.children.map(normalizeCollection),
     inputReports: collection.inputReports.map(normalizeReportInfo),
     outputReports: collection.outputReports.map(normalizeReportInfo),

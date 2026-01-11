@@ -1,25 +1,23 @@
 use serde::de::{Error as DeError, Unexpected, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use super::report_descriptor;
 
 /// JSON-compatible representation of WebHID collection metadata.
 ///
-/// This mirrors the shape returned by the browser WebHID API (and the output of
-/// `web/src/hid/webhid_normalize.ts`). The contract is locked down by cross-lang
-/// fixtures under `tests/fixtures/hid/`.
+/// This is the normalized metadata contract derived from the browser WebHID API (see
+/// `web/src/hid/webhid_normalize.ts`). The contract is locked down by cross-lang fixtures under
+/// `tests/fixtures/hid/`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HidCollectionInfo {
     pub usage_page: u32,
     pub usage: u32,
-    // WebHID exposes `type` as a string enum (`"physical" | "application" | ...`).
-    //
-    // Accept `collectionType` (numeric code 0..6) as an alias for resilience because:
-    // - internal/older fixtures may have already canonicalized to the numeric code, and
-    // - the report descriptor encodes the collection type as a numeric payload anyway.
-    #[serde(rename = "type", alias = "collectionType")]
+    // Normalized WebHID metadata uses a numeric `collectionType` code (0..=6) that matches the
+    // HID report descriptor `Collection(...)` payload. For resilience we also accept the WebHID
+    // string enum form under the `type` field.
+    #[serde(alias = "type")]
     pub collection_type: HidCollectionType,
     pub children: Vec<HidCollectionInfo>,
     pub input_reports: Vec<HidReportInfo>,
@@ -27,8 +25,7 @@ pub struct HidCollectionInfo {
     pub feature_reports: Vec<HidReportInfo>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum HidCollectionType {
     Physical = 0x00,
@@ -56,6 +53,15 @@ impl HidCollectionType {
             0x06 => Some(HidCollectionType::UsageModifier),
             _ => None,
         }
+    }
+}
+
+impl Serialize for HidCollectionType {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u8(self.code())
     }
 }
 

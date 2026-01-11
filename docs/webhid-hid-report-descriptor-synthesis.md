@@ -48,7 +48,7 @@ For each `HIDCollectionInfo`:
 1. Emit the collection “header” items:
    - `Usage Page` (from `usagePage`)
    - `Usage` (from `usage`)
-   - `Collection(type)` (from `type`)
+   - `Collection(collectionType)` (from `collectionType`)
 2. Inside the collection, emit the report definitions in a deterministic grouping:
    - all `inputReports`, then all `outputReports`, then all `featureReports`
    - within a given `HIDReportInfo`, preserve the order of `items` (this defines bit/field layout)
@@ -62,22 +62,22 @@ Because WebHID does not expose the original descriptor byte stream, this groupin
 
 ### Collections (`HIDCollectionInfo`)
 
-`HIDCollectionInfo.usagePage/usage/type/children` maps to:
+`HIDCollectionInfo.usagePage/usage/collectionType/children` maps to:
 
 ```
 Usage Page (usagePage)
 Usage (usage)
-Collection (type)
+Collection (collectionType)
   …contents…
 End Collection
 ```
 
 Notes:
 
-- `type` is emitted as the 1-byte collection type value used by the HID specification (e.g. `Application`, `Physical`, …).
+- `collectionType` is emitted as the 1-byte collection type value used by the HID specification (e.g. `Application`, `Physical`, …).
 - We **do not** emit `Push`/`Pop`; each report item is emitted with the global state it needs (see below).
 
-Collection type codes (as used by the WebHID normalization layer and by HID):
+Collection type codes (as used by the WebHID API, our normalization layer, and by HID):
 
 | WebHID `type` | `Collection(...)` byte |
 | --- | ---: |
@@ -91,8 +91,8 @@ Collection type codes (as used by the WebHID normalization layer and by HID):
 
 JSON note:
 
-- In our normalized metadata JSON we keep `HIDCollectionInfo.type` in the WebHID string form shown above.
-- The Rust deserializer also accepts the numeric code (`0..=6`) and the legacy field name `collectionType` to make the synthesis code resilient to older fixtures/tools.
+- In our normalized metadata JSON we store the numeric HID collection type code in `HIDCollectionInfo.collectionType` (`0..=6`).
+- The Rust deserializer also accepts the WebHID string enum in the `type` field for resilience (e.g. older fixtures/tools or hand-authored metadata).
 
 ### Reports (`HIDReportInfo`)
 
