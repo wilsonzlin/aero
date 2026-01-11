@@ -86,11 +86,17 @@ impl MonoRingBuffer {
         if used > self.capacity_samples {
             // Consumer fell behind far enough that we no longer know what's valid.
             // Drop this block to avoid making things worse (mirrors JS worklet).
+            self.dropped_samples = self
+                .dropped_samples
+                .saturating_add(samples.len() as u64);
             return 0;
         }
 
         let free = self.capacity_samples - used;
         if free == 0 {
+            self.dropped_samples = self
+                .dropped_samples
+                .saturating_add(samples.len() as u64);
             return 0;
         }
 
@@ -207,11 +213,40 @@ mod tests {
         // the older part of the block (3,4).
         let written = rb.write(&[3.0, 4.0, 5.0]);
         assert_eq!(written, 1);
+        assert_eq!(rb.take_dropped_samples_delta(), 2);
 
         let mut out = [0.0f32; 4];
         let read = rb.read(&mut out);
         assert_eq!(read, 4);
         assert_eq!(out, [0.0, 1.0, 2.0, 5.0]);
+    }
+
+    #[test]
+    fn test_dropped_samples_counts_full_block_drop_when_full() {
+        let mut rb = MonoRingBuffer::new(4);
+
+        let written = rb.write(&[0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(written, 4);
+        assert_eq!(rb.take_dropped_samples_delta(), 0);
+
+        let written = rb.write(&[4.0, 5.0]);
+        assert_eq!(written, 0);
+        assert_eq!(rb.take_dropped_samples_delta(), 2);
+        assert_eq!(rb.take_dropped_samples_delta(), 0);
+    }
+
+    #[test]
+    fn test_dropped_samples_counts_full_block_drop_when_consumer_behind() {
+        let mut rb = MonoRingBuffer::new(4);
+
+        // Force an impossible state where the producer ran far ahead of the consumer.
+        rb.read_pos = u32::MAX - 10;
+        rb.write_pos = rb.read_pos.wrapping_add(8);
+
+        let written = rb.write(&[1.0, 2.0, 3.0]);
+        assert_eq!(written, 0);
+        assert_eq!(rb.take_dropped_samples_delta(), 3);
+        assert_eq!(rb.take_dropped_samples_delta(), 0);
     }
 
     #[test]
