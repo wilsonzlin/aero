@@ -180,6 +180,12 @@ $defaultInfAllowList = @(
   "virtio-input.inf",
   "aero-virtio-snd.inf"
 )
+if ($AllowVirtioSndTransitional) {
+  # When we allow the transitional virtio-snd PCI ID in the guest selftest, also stage the optional
+  # transitional driver package by default (if present in the provided drivers directory).
+  # This is a no-op in strict contract-v1 setups since the legacy INF matches only DEV_1018.
+  $defaultInfAllowList += "aero-virtio-snd-legacy.inf"
+}
 
 $installDriversCmd = ""
 $readmeDriverInstallDesc = ""

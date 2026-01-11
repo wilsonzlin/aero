@@ -367,6 +367,9 @@ To run the virtio-snd **capture** smoke test when a capture endpoint exists, pro
 - Add `-RequireNonSilence` to fail the smoke test if only silence is captured.
 - Add `-AllowVirtioSndTransitional` to accept a transitional virtio-snd PCI ID in the guest selftest
   (intended for debugging/backcompat outside the strict harness setup).
+  - Tip: when using this mode, also stage/install the QEMU compatibility driver package
+    (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`), for example by including `aero-virtio-snd-legacy.inf`
+    in `-InfAllowList`.
 
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
 `"windows7\\virtio\\net\\x64\\aerovnet.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
