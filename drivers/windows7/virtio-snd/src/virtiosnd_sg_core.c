@@ -2,6 +2,13 @@
 
 #include "virtiosnd_sg_core.h"
 
+/*
+ * Avoid relying on UINT64_MAX/UINT32_MAX from <stdint.h> for maximum toolchain
+ * compatibility (WDK 7.1 + older MSVC). Use explicit constants instead.
+ */
+#define VIRTIOSND_U64_MAX ((uint64_t)~(uint64_t)0)
+#define VIRTIOSND_U32_MAX ((uint32_t)0xffffffffu)
+
 static uint32_t virtiosnd_sg_pages_spanned(uint32_t mdl_byte_offset, uint32_t start_offset, uint32_t length)
 {
     uint64_t start;
@@ -106,7 +113,7 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
         chunk = remaining < bytes_in_page ? remaining : bytes_in_page;
 
         pfn = (uint64_t)pfn_array[page_index];
-        if (pfn > (UINT64_MAX >> VIRTIOSND_SG_PAGE_SHIFT)) {
+        if (pfn > (VIRTIOSND_U64_MAX >> VIRTIOSND_SG_PAGE_SHIFT)) {
             return VIRTIO_ERR_INVAL;
         }
         paddr = (pfn << VIRTIOSND_SG_PAGE_SHIFT) + (uint64_t)page_off;
@@ -114,11 +121,11 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
         /* Coalesce adjacent physical ranges. */
         if (*inout_count != 0) {
             prev = &out[(uint16_t)(*inout_count - 1u)];
-            if (prev->device_writes == VIRTIO_FALSE && prev->addr <= (UINT64_MAX - (uint64_t)prev->len) &&
+            if (prev->device_writes == VIRTIO_FALSE && prev->addr <= (VIRTIOSND_U64_MAX - (uint64_t)prev->len) &&
                 (prev->addr + (uint64_t)prev->len) == paddr) {
                 uint64_t merged_len;
                 merged_len = (uint64_t)prev->len + (uint64_t)chunk;
-                if (merged_len > UINT32_MAX) {
+                if (merged_len > VIRTIOSND_U32_MAX) {
                     return VIRTIO_ERR_INVAL;
                 }
                 prev->len = (uint32_t)merged_len;
