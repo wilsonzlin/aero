@@ -157,6 +157,21 @@ describe("normalizeCollections(WebHID)", () => {
     expect(() => normalizeCollections([root])).toThrow(/isRange/i);
   });
 
+  it("accepts degenerate isRange items (usageMinimum == usageMaximum) with a single usage", () => {
+    const root = mockCollection({
+      inputReports: [
+        mockReport({
+          reportId: 1,
+          items: [mockItem({ isRange: true, usages: u32([5]), usageMinimum: 5, usageMaximum: 5 })],
+        }),
+      ] as unknown as HidReportInfo[],
+    });
+
+    const normalized = normalizeCollections([root]);
+    expect(normalized[0]?.inputReports[0]?.items[0]?.isRange).toBe(true);
+    expect(normalized[0]?.inputReports[0]?.items[0]?.usages).toEqual([5]);
+  });
+
   it("normalizes a small keyboard-like collection tree", () => {
     const modifierBits = mockItem({
       isArray: false,
