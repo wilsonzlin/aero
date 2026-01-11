@@ -132,6 +132,13 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
         aerogpu_inf_text.contains(&expected_hwid_short),
         "aerogpu.inf must contain {expected_hwid_short:?}"
     );
+    let expected_add_service = format!("AddService = {}", require_json_str(aerogpu, "driver_service_name"));
+    assert!(
+        aerogpu_inf_text
+            .to_ascii_uppercase()
+            .contains(&expected_add_service.to_ascii_uppercase()),
+        "aerogpu.inf must contain {expected_add_service:?} (case-insensitive)"
+    );
 
     // Keep the human-readable contract document in sync too (at least for the AeroGPU row).
     let contract_md_path = root.join("docs/windows-device-contract.md");
