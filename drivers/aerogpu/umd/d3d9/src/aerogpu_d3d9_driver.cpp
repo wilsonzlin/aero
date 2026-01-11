@@ -3919,23 +3919,109 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     if (!res) {
       return trace.ret(E_INVALIDARG);
     }
+    if (std::find(resources.begin(), resources.end(), res) != resources.end()) {
+      // Reject duplicates: D3D9 expects a set of distinct resources.
+      return trace.ret(E_INVALIDARG);
+    }
     resources.push_back(res);
   }
-  const aerogpu_handle_t saved = resources[0]->handle;
 
-  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
-    resources[i]->handle = resources[i + 1]->handle;
+  auto matches_desc = [&resources](const Resource* res) -> bool {
+    const Resource* base = resources.empty() ? nullptr : resources[0];
+    if (!base || !res) {
+      return false;
+    }
+    return res->kind == base->kind &&
+           res->type == base->type &&
+           res->format == base->format &&
+           res->width == base->width &&
+           res->height == base->height &&
+           res->depth == base->depth &&
+           res->mip_levels == base->mip_levels &&
+           res->usage == base->usage &&
+           res->pool == base->pool &&
+           res->size_bytes == base->size_bytes &&
+           res->row_pitch == base->row_pitch &&
+           res->slice_pitch == base->slice_pitch;
+  };
+
+  for (Resource* res : resources) {
+    if (!matches_desc(res)) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
+    if (res->locked) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
+    // Shared resources have stable identities (`share_token`); rotating them is
+    // likely to break EXPORT/IMPORT semantics across processes.
+    if (res->is_shared || res->is_shared_alias || res->share_token != 0) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
   }
 
-  resources[resource_count - 1]->handle = saved;
+  struct ResourceIdentity {
+    aerogpu_handle_t handle = 0;
+    uint32_t backing_alloc_id = 0;
+    uint32_t backing_offset_bytes = 0;
+    uint64_t share_token = 0;
+    bool is_shared = false;
+    bool is_shared_alias = false;
+    bool locked = false;
+    uint32_t locked_offset = 0;
+    uint32_t locked_size = 0;
+    uint32_t locked_flags = 0;
+    WddmAllocationHandle wddm_hAllocation = 0;
+    std::vector<uint8_t> storage;
+    std::vector<uint8_t> shared_private_driver_data;
+  };
+
+  auto take_identity = [](Resource* res) -> ResourceIdentity {
+    ResourceIdentity id{};
+    id.handle = res->handle;
+    id.backing_alloc_id = res->backing_alloc_id;
+    id.backing_offset_bytes = res->backing_offset_bytes;
+    id.share_token = res->share_token;
+    id.is_shared = res->is_shared;
+    id.is_shared_alias = res->is_shared_alias;
+    id.locked = res->locked;
+    id.locked_offset = res->locked_offset;
+    id.locked_size = res->locked_size;
+    id.locked_flags = res->locked_flags;
+    id.wddm_hAllocation = res->wddm_hAllocation;
+    id.storage = std::move(res->storage);
+    id.shared_private_driver_data = std::move(res->shared_private_driver_data);
+    return id;
+  };
+
+  auto put_identity = [](Resource* res, ResourceIdentity&& id) {
+    res->handle = id.handle;
+    res->backing_alloc_id = id.backing_alloc_id;
+    res->backing_offset_bytes = id.backing_offset_bytes;
+    res->share_token = id.share_token;
+    res->is_shared = id.is_shared;
+    res->is_shared_alias = id.is_shared_alias;
+    res->locked = id.locked;
+    res->locked_offset = id.locked_offset;
+    res->locked_size = id.locked_size;
+    res->locked_flags = id.locked_flags;
+    res->wddm_hAllocation = id.wddm_hAllocation;
+    res->storage = std::move(id.storage);
+    res->shared_private_driver_data = std::move(id.shared_private_driver_data);
+  };
+
+  ResourceIdentity saved = take_identity(resources[0]);
+  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
+    put_identity(resources[i], take_identity(resources[i + 1]));
+  }
+  put_identity(resources[resource_count - 1], std::move(saved));
 
   if (!emit_set_render_targets_locked(dev)) {
     // Undo the rotation (rotate right by one).
-    const aerogpu_handle_t undo_saved = resources[resource_count - 1]->handle;
+    ResourceIdentity undo_saved = take_identity(resources[resource_count - 1]);
     for (uint32_t i = resource_count - 1; i > 0; --i) {
-      resources[i]->handle = resources[i - 1]->handle;
+      put_identity(resources[i], take_identity(resources[i - 1]));
     }
-    resources[0]->handle = undo_saved;
+    put_identity(resources[0], std::move(undo_saved));
     return trace.ret(E_OUTOFMEMORY);
   }
 

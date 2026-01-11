@@ -2893,6 +2893,14 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   reset_stream();
   auto* vb0 = reinterpret_cast<Resource*>(hVb0.pDrvPrivate);
   auto* vb1 = reinterpret_cast<Resource*>(hVb1.pDrvPrivate);
+  vb0->backing_alloc_id = 101;
+  vb1->backing_alloc_id = 202;
+  vb0->backing_offset_bytes = 1;
+  vb1->backing_offset_bytes = 2;
+  vb0->wddm_hAllocation = 0x101;
+  vb1->wddm_hAllocation = 0x202;
+  vb0->storage[0] = 0xA0;
+  vb1->storage[0] = 0xB0;
   const aerogpu_handle_t vb0_before = vb0->handle;
   const aerogpu_handle_t vb1_before = vb1->handle;
   AEROGPU_D3D9DDI_HRESOURCE vb_rotate[2] = {hVb0, hVb1};
@@ -2901,6 +2909,18 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return false;
   }
   if (!Check(vb0->handle == vb1_before && vb1->handle == vb0_before, "vertex buffer handles rotated")) {
+    return false;
+  }
+  if (!Check(vb0->backing_alloc_id == 202 && vb1->backing_alloc_id == 101, "vertex buffer alloc_id rotated")) {
+    return false;
+  }
+  if (!Check(vb0->backing_offset_bytes == 2 && vb1->backing_offset_bytes == 1, "vertex buffer backing_offset_bytes rotated")) {
+    return false;
+  }
+  if (!Check(vb0->wddm_hAllocation == 0x202 && vb1->wddm_hAllocation == 0x101, "vertex buffer hAllocation rotated")) {
+    return false;
+  }
+  if (!Check(vb0->storage[0] == 0xB0 && vb1->storage[0] == 0xA0, "vertex buffer storage rotated")) {
     return false;
   }
 
@@ -2925,6 +2945,14 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   reset_stream();
   auto* tex0 = reinterpret_cast<Resource*>(hTex0.pDrvPrivate);
   auto* tex1 = reinterpret_cast<Resource*>(hTex1.pDrvPrivate);
+  tex0->backing_alloc_id = 303;
+  tex1->backing_alloc_id = 404;
+  tex0->backing_offset_bytes = 3;
+  tex1->backing_offset_bytes = 4;
+  tex0->wddm_hAllocation = 0x303;
+  tex1->wddm_hAllocation = 0x404;
+  tex0->storage[0] = 0xC0;
+  tex1->storage[0] = 0xD0;
   const aerogpu_handle_t tex0_before = tex0->handle;
   const aerogpu_handle_t tex1_before = tex1->handle;
   AEROGPU_D3D9DDI_HRESOURCE tex_rotate[2] = {hTex0, hTex1};
@@ -2933,6 +2961,18 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return false;
   }
   if (!Check(tex0->handle == tex1_before && tex1->handle == tex0_before, "texture handles rotated")) {
+    return false;
+  }
+  if (!Check(tex0->backing_alloc_id == 404 && tex1->backing_alloc_id == 303, "texture alloc_id rotated")) {
+    return false;
+  }
+  if (!Check(tex0->backing_offset_bytes == 4 && tex1->backing_offset_bytes == 3, "texture backing_offset_bytes rotated")) {
+    return false;
+  }
+  if (!Check(tex0->wddm_hAllocation == 0x404 && tex1->wddm_hAllocation == 0x303, "texture hAllocation rotated")) {
+    return false;
+  }
+  if (!Check(tex0->storage[0] == 0xD0 && tex1->storage[0] == 0xC0, "texture storage rotated")) {
     return false;
   }
 
@@ -2952,6 +2992,14 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   reset_stream();
   auto* ib0 = reinterpret_cast<Resource*>(hIb0.pDrvPrivate);
   auto* ib1 = reinterpret_cast<Resource*>(hIb1.pDrvPrivate);
+  ib0->backing_alloc_id = 505;
+  ib1->backing_alloc_id = 606;
+  ib0->backing_offset_bytes = 5;
+  ib1->backing_offset_bytes = 6;
+  ib0->wddm_hAllocation = 0x505;
+  ib1->wddm_hAllocation = 0x606;
+  ib0->storage[0] = 0xE0;
+  ib1->storage[0] = 0xF0;
   const aerogpu_handle_t ib0_before = ib0->handle;
   const aerogpu_handle_t ib1_before = ib1->handle;
   AEROGPU_D3D9DDI_HRESOURCE ib_rotate[2] = {hIb0, hIb1};
@@ -2960,6 +3008,18 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return false;
   }
   if (!Check(ib0->handle == ib1_before && ib1->handle == ib0_before, "index buffer handles rotated")) {
+    return false;
+  }
+  if (!Check(ib0->backing_alloc_id == 606 && ib1->backing_alloc_id == 505, "index buffer alloc_id rotated")) {
+    return false;
+  }
+  if (!Check(ib0->backing_offset_bytes == 6 && ib1->backing_offset_bytes == 5, "index buffer backing_offset_bytes rotated")) {
+    return false;
+  }
+  if (!Check(ib0->wddm_hAllocation == 0x606 && ib1->wddm_hAllocation == 0x505, "index buffer hAllocation rotated")) {
+    return false;
+  }
+  if (!Check(ib0->storage[0] == 0xF0 && ib1->storage[0] == 0xE0, "index buffer storage rotated")) {
     return false;
   }
 
@@ -3454,6 +3514,20 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
 
   const aerogpu_handle_t h0 = res0->handle;
   const aerogpu_handle_t h1 = res1->handle;
+  res0->backing_alloc_id = 111;
+  res1->backing_alloc_id = 222;
+  res0->backing_offset_bytes = 4;
+  res1->backing_offset_bytes = 8;
+  res0->wddm_hAllocation = 0xABC;
+  res1->wddm_hAllocation = 0xDEF;
+  if (!res0->storage.empty()) {
+    res0->storage[0] = 0xA1;
+  }
+  if (!res1->storage.empty()) {
+    res1->storage[0] = 0xB2;
+  }
+  res0->shared_private_driver_data = {0x01, 0x02, 0x03};
+  res1->shared_private_driver_data = {0x04, 0x05};
 
   // Too small for SET_RENDER_TARGETS (48 bytes), so rotate should fail and restore.
   uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 32] = {};
@@ -3466,13 +3540,61 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   if (!Check(res0->handle == h0 && res1->handle == h1, "rotate identities restored handles on failure")) {
     return false;
   }
+  if (!Check(res0->backing_alloc_id == 111 && res1->backing_alloc_id == 222, "rotate identities restored alloc_id on failure")) {
+    return false;
+  }
+  if (!Check(res0->backing_offset_bytes == 4 && res1->backing_offset_bytes == 8,
+             "rotate identities restored backing_offset_bytes on failure")) {
+    return false;
+  }
+  if (!Check(res0->wddm_hAllocation == 0xABC && res1->wddm_hAllocation == 0xDEF, "rotate identities restored hAllocation on failure")) {
+    return false;
+  }
+  if (!Check(!res0->storage.empty() && res0->storage[0] == 0xA1, "rotate identities restored storage[0] for res0 on failure")) {
+    return false;
+  }
+  if (!Check(!res1->storage.empty() && res1->storage[0] == 0xB2, "rotate identities restored storage[0] for res1 on failure")) {
+    return false;
+  }
+  if (!Check(res0->shared_private_driver_data.size() == 3 && res0->shared_private_driver_data[0] == 0x01,
+             "rotate identities restored shared_private_driver_data for res0 on failure")) {
+    return false;
+  }
+  if (!Check(res1->shared_private_driver_data.size() == 2 && res1->shared_private_driver_data[0] == 0x04,
+             "rotate identities restored shared_private_driver_data for res1 on failure")) {
+    return false;
+  }
 
   dev->cmd.set_vector();
   hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, cleanup.resources, 2);
   if (!Check(hr == S_OK, "RotateResourceIdentities succeeds with vector cmd buffer")) {
     return false;
   }
-  return Check(res0->handle == h1 && res1->handle == h0, "rotate identities swaps handles on success");
+  if (!Check(res0->handle == h1 && res1->handle == h0, "rotate identities swaps handles on success")) {
+    return false;
+  }
+  if (!Check(res0->backing_alloc_id == 222 && res1->backing_alloc_id == 111, "rotate identities swaps alloc_id on success")) {
+    return false;
+  }
+  if (!Check(res0->backing_offset_bytes == 8 && res1->backing_offset_bytes == 4,
+             "rotate identities swaps backing_offset_bytes on success")) {
+    return false;
+  }
+  if (!Check(res0->wddm_hAllocation == 0xDEF && res1->wddm_hAllocation == 0xABC, "rotate identities swaps hAllocation on success")) {
+    return false;
+  }
+  if (!Check(!res0->storage.empty() && res0->storage[0] == 0xB2, "rotate identities swaps storage[0] for res0 on success")) {
+    return false;
+  }
+  if (!Check(!res1->storage.empty() && res1->storage[0] == 0xA1, "rotate identities swaps storage[0] for res1 on success")) {
+    return false;
+  }
+  if (!Check(res0->shared_private_driver_data.size() == 2 && res0->shared_private_driver_data[0] == 0x04,
+             "rotate identities swaps shared_private_driver_data for res0 on success")) {
+    return false;
+  }
+  return Check(res1->shared_private_driver_data.size() == 3 && res1->shared_private_driver_data[0] == 0x01,
+               "rotate identities swaps shared_private_driver_data for res1 on success");
 }
 
 bool TestResetRebindsBackbufferTexture() {
