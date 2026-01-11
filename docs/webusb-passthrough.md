@@ -640,5 +640,5 @@ The TypeScript side has unit tests for the WebUSB executor/broker under `web/src
 
 ## Related docs
 
-- [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) — overall physical device passthrough model (WebHID MVP + WebUSB future)
+- [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) — overall physical device passthrough model (WebHID MVP + experimental WebUSB passthrough)
 - [`docs/webusb.md`](./webusb.md) — WebUSB troubleshooting (permissions, WinUSB, udev, etc.)
