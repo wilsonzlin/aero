@@ -218,13 +218,15 @@ static int RunVblankWaitSanity(int argc, char** argv) {
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--samples=N] [--timeout-ms=N] [--wait-timeout-ms=N] [--allow-remote] "
+        "Usage: %s.exe [--samples=N] [--wait-timeout-ms=N] [--timeout-ms=N] [--allow-remote] "
         "[--require-vid=0x####] [--require-did=0x####]",
         kTestName);
-    aerogpu_test::PrintfStdout("Default: --samples=120 --timeout-ms=2000");
+    aerogpu_test::PrintfStdout("Default: --samples=120 --wait-timeout-ms=2000");
     aerogpu_test::PrintfStdout(
         "Measures WDDM vblank delivery directly via D3DKMTWaitForVerticalBlankEvent.");
-    aerogpu_test::PrintfStdout("Note: --wait-timeout-ms is accepted as an alias for --timeout-ms.");
+    aerogpu_test::PrintfStdout(
+        "Note: run_all.cmd reserves --timeout-ms for the suite timeout runner. Use --wait-timeout-ms when running via the suite.");
+    aerogpu_test::PrintfStdout("Note: --timeout-ms is accepted as an alias for --wait-timeout-ms.");
     return 0;
   }
 
