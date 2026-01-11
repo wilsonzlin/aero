@@ -569,7 +569,8 @@ impl AcpiTables {
         // IRQ0 -> GSI2 (timer)
         self.add_iso(&mut madt, 0, 0, 2, 0);
         // IRQ9 -> GSI9 (ACPI SCI)
-        self.add_iso(&mut madt, 0, 9, 9, 0x000D);
+        // Flags use the MPS INTI encoding: active-low + level-triggered (0b11, 0b11).
+        self.add_iso(&mut madt, 0, 9, 9, 0x000F);
         
         // Update length and checksum
         let len = madt.len() as u32;
