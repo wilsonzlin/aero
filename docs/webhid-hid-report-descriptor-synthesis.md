@@ -26,6 +26,10 @@ Implementation references:
 - Browser normalization: `web/src/hid/webhid_normalize.ts`
 - Rust synthesis: `crates/emulator/src/io/usb/hid/webhid.rs`
 
+For the end-to-end “real device” passthrough architecture (main thread owns the
+`HIDDevice`, worker models UHCI + a generic HID device), see
+[`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
+
 ---
 
 ## High-level algorithm (deterministic descriptor emission)

@@ -72,7 +72,7 @@ export default {
 | Gamepad | ✓ | ✓ | 10.1+ | ✓ | Optional |
 | WebCodecs | 94+ | 🚧 | 🚧 | 94+ | Optional |
 | WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional (Chromium-only; limited passthrough) |
-| WebHID (`navigator.hid`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only; not a passthrough API) |
+| WebHID (`navigator.hid`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only; HID devices) |
 | WebSerial (`navigator.serial`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only) |
 
 Legend: `✓` supported · `🚧` in progress/partial · `✗` not available.
@@ -101,6 +101,8 @@ Because Aero prefers worker-side I/O, there are two viable integration patterns:
 
 > `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime (see the [WebUSB probe panel](../src/main.ts) in the repo-root dev harness).
 
+See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
+
 ---
 
 ## WebHID (HID device access)
@@ -113,7 +115,9 @@ WebHID (`navigator.hid`) enables direct access to HID-class devices from the bro
 - **Report descriptor access:** WebHID does **not** expose the raw HID report descriptor bytes. It only provides a structured view (collections/reports/items), so Aero must synthesize a report descriptor when it needs byte-accurate HID descriptors for a Windows 7 guest.
 
 See: [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
+See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
 
+---
 ## Cross-Origin Isolation (COOP/COEP) Deployment Requirements
 
 Modern browsers gate **WebAssembly threads** and **SharedArrayBuffer** behind **cross-origin isolation** (a Spectre mitigation). In practice:

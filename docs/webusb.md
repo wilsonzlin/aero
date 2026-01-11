@@ -9,6 +9,9 @@ In practice, WebUSB failures are dominated by two constraints:
 1. **Browser restrictions**: some USB interface classes are treated as “protected” and cannot be accessed via WebUSB.
 2. **Host OS driver / permissions**: even when `navigator.usb` exists, `open()` / `claimInterface()` can fail if the OS driver binding or permissions are incorrect (especially on Windows).
 
+See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) for the end-to-end passthrough
+architecture and security model (WebHID MVP + future WebUSB).
+
 ---
 
 ## Troubleshooting (common reasons WebUSB fails)
