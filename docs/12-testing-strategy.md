@@ -220,9 +220,17 @@ mod device_tests {
     }
 }
 ```
- 
+
+### USB (UHCI + WebHID/WebUSB passthrough) tests
+
+The canonical browser USB/UHCI stack is `crates/aero-usb` (see [ADR 0015](./adr/0015-canonical-usb-stack.md)).
+Keep correctness locked down with:
+
+- Rust unit/integration tests under `crates/aero-usb` (including UHCI schedule + passthrough mapping tests)
+- Web smoke panels (manual) described in [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
+
 ### GPU Persistent Cache Tests
- 
+  
 The persistent GPU cache should have unit tests that lock down **keying and versioning**, since subtle mistakes can lead to hard-to-debug correctness or performance issues.
  
 ```rust
