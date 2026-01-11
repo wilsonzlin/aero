@@ -4427,6 +4427,22 @@ int wmain(int argc, wchar_t** argv) {
   auto snd_pci =
       opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
                       : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
+  if (!opt.disable_snd && snd_pci.empty()) {
+    // The scheduled task that runs the selftest can sometimes start very early during boot,
+    // before PnP fully enumerates the virtio-snd PCI function. Give the bus a short grace
+    // period so we don't emit spurious SKIP markers (which causes the host harness to fail
+    // when virtio-snd is attached).
+    const DWORD deadline_ms = GetTickCount() + 10000;
+    int attempt = 0;
+    while (snd_pci.empty() && static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+      attempt++;
+      Sleep(250);
+      snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional, false);
+    }
+    if (!snd_pci.empty()) {
+      log.Logf("virtio-snd: pci device detected after wait (attempt=%d)", attempt);
+    }
+  }
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
   const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
   const bool want_snd_capture =
