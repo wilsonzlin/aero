@@ -66,6 +66,9 @@ call :run_test d3d11_geometry_shader_smoke !TEST_ARGS!
 call :run_test d3d11_swapchain_rotate_sanity !TEST_ARGS!
 call :run_test d3d11_map_dynamic_buffer_sanity !TEST_ARGS!
 call :run_test d3d11_update_subresource_texture_sanity !TEST_ARGS!
+call :run_test d3d11_texture_sampling_sanity !TEST_ARGS!
+call :run_test d3d11_dynamic_constant_buffer_sanity !TEST_ARGS!
+call :run_test d3d11_depth_test_sanity !TEST_ARGS!
 call :run_test readback_sanity !TEST_ARGS!
 
 echo.

@@ -28,6 +28,9 @@ call "%~dp0d3d11_swapchain_rotate_sanity\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_map_dynamic_buffer_sanity\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_update_subresource_texture_sanity\\build_vs2010.cmd" || exit /b 1
 call "%~dp0readback_sanity\\build_vs2010.cmd" || exit /b 1
+call "%~dp0d3d11_texture_sampling_sanity\\build_vs2010.cmd" || exit /b 1
+call "%~dp0d3d11_dynamic_constant_buffer_sanity\\build_vs2010.cmd" || exit /b 1
+call "%~dp0d3d11_depth_test_sanity\\build_vs2010.cmd" || exit /b 1
 
 echo.
 echo Build complete. Binaries are in: %~dp0bin\

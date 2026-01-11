@@ -58,6 +58,9 @@ drivers/aerogpu/tests/win7/
   d3d11_swapchain_rotate_sanity/
   d3d11_map_dynamic_buffer_sanity/
   d3d11_update_subresource_texture_sanity/
+  d3d11_texture_sampling_sanity/
+  d3d11_dynamic_constant_buffer_sanity/
+  d3d11_depth_test_sanity/
   readback_sanity/
 ```
 
@@ -178,6 +181,9 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_map_dynamic_buffer_sanity` writes a dynamic buffer via `Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)` and verifies the bytes via `CopyResource` + staging readback
 * `d3d11_update_subresource_texture_sanity` uploads a deterministic `B8G8R8A8` pattern via `UpdateSubresource` (full + boxed update, padded RowPitch) and verifies it via staging readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
+* `d3d11_texture_sampling_sanity` renders a textured quad into an offscreen render target and validates a few sampled texels via readback
+* `d3d11_dynamic_constant_buffer_sanity` draws using a dynamic constant buffer updated with `Map(WRITE_DISCARD)` and validates output via readback
+* `d3d11_depth_test_sanity` draws overlapping triangles with a depth buffer and validates depth testing via readback
 
 All rendering tests also print the active adapter description + VendorId/DeviceId to help confirm the expected GPU/driver is being exercised.
 The D3D9Ex and D3D10/11-based tests also print the resolved path of the loaded AeroGPU UMD DLL (including process bitness and WOW64 state, e.g. `x86 (WOW64)`), to validate WOW64 registration.
