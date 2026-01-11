@@ -49,8 +49,9 @@ Implementation status note:
     `UsbPassthroughBridge` (`crates/aero-wasm/src/lib.rs`)
   - host-side WebUSB broker/executor + RPC (`web/src/usb/*`)
   - descriptor fixups (where possible)
-  - a small end-to-end demo driver (`UsbPassthroughDemo` + `usb.demoResult`) that queues a
-    GET_DESCRIPTOR(Device) request via the broker to validate the action↔completion wiring
+  - a small end-to-end demo driver (`UsbPassthroughDemo` + `usb.demoResult`) that queues
+    GET_DESCRIPTOR requests via the broker to validate the action↔completion wiring (rerun via
+    `usb.demo.run` in the Web UI)
     (`crates/aero-wasm/src/lib.rs`, `web/src/usb/usb_passthrough_demo_runtime.ts`, `web/src/main.ts`)
   - Guest-visible WebUSB passthrough is now wired through the canonical UHCI controller
     (`UhciControllerBridge`) with a passthrough device attached on **UHCI root port 1**.
