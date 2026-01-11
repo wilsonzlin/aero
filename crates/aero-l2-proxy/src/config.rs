@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
 
@@ -17,6 +17,8 @@ pub struct ProxyConfig {
 
     pub dns_default_ttl_secs: u32,
     pub dns_max_ttl_secs: u32,
+
+    pub capture_dir: Option<PathBuf>,
 
     pub policy: EgressPolicy,
     pub test_overrides: TestOverrides,
@@ -67,6 +69,10 @@ impl ProxyConfig {
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(300);
 
+        let capture_dir = std::env::var("AERO_L2_CAPTURE_DIR")
+            .ok()
+            .and_then(|v| (!v.trim().is_empty()).then(|| PathBuf::from(v)));
+
         let policy = EgressPolicy::from_env().context("parse egress policy")?;
         let test_overrides = TestOverrides::from_env().context("parse test-mode overrides")?;
 
@@ -79,6 +85,7 @@ impl ProxyConfig {
             ws_send_buffer,
             dns_default_ttl_secs,
             dns_max_ttl_secs,
+            capture_dir,
             policy,
             test_overrides,
         })

@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod capture;
+mod metrics;
+mod pcapng;
+
 mod config;
 mod dns;
 mod overrides;

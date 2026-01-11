@@ -12,13 +12,18 @@ use axum::{
 };
 use tokio::{sync::oneshot, task::JoinHandle};
 
-use crate::{dns::DnsService, session, ProxyConfig, TUNNEL_SUBPROTOCOL};
+use crate::{
+    capture::CaptureManager, dns::DnsService, metrics::Metrics, session, ProxyConfig,
+    TUNNEL_SUBPROTOCOL,
+};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) cfg: Arc<ProxyConfig>,
     pub(crate) dns: Arc<DnsService>,
     pub(crate) l2_limits: aero_l2_protocol::Limits,
+    pub(crate) metrics: Metrics,
+    pub(crate) capture: CaptureManager,
 }
 
 pub struct ServerHandle {
@@ -69,10 +74,15 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         max_control_payload: cfg.l2_max_control_payload,
     };
 
+    let metrics = Metrics::new();
+    let capture = CaptureManager::new(cfg.capture_dir.clone()).await?;
+
     let state = AppState {
         cfg: Arc::new(cfg),
         dns: Arc::new(dns),
         l2_limits,
+        metrics,
+        capture,
     };
     let app = build_app(state);
 
@@ -96,6 +106,7 @@ fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
         .route("/l2", get(l2_ws_handler))
         .with_state(state)
 }
@@ -106,6 +117,17 @@ async fn healthz() -> impl IntoResponse {
 
 async fn readyz() -> impl IntoResponse {
     StatusCode::OK
+}
+
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let body = state.metrics.render_prometheus();
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        body,
+    )
 }
 
 async fn l2_ws_handler(
@@ -126,8 +148,9 @@ async fn l2_ws_handler(
 }
 
 async fn handle_l2_ws(socket: WebSocket, state: AppState) {
-    if let Err(err) = session::run_session(socket, state).await {
-        tracing::debug!("l2 session ended: {err:#}");
+    let session_id = state.metrics.next_session_id();
+    if let Err(err) = session::run_session(socket, state, session_id).await {
+        tracing::debug!(session_id, "l2 session ended: {err:#}");
     }
 }
 

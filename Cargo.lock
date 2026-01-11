@@ -326,6 +326,8 @@ dependencies = [
  "anyhow",
  "axum",
  "futures-util",
+ "reqwest 0.11.27",
+ "tempfile",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",

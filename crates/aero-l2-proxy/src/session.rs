@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use aero_net_stack::{
@@ -15,6 +16,7 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
+use tracing::Instrument;
 
 use crate::{overrides::ForwardKey, server::AppState};
 
@@ -69,7 +71,34 @@ enum SessionEvent {
     Dns(DnsResolved),
 }
 
-pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::Result<()> {
+pub(crate) async fn run_session(
+    socket: WebSocket,
+    state: AppState,
+    session_id: u64,
+) -> anyhow::Result<()> {
+    run_session_inner(socket, state, session_id)
+        .instrument(tracing::info_span!("l2_session", session_id))
+        .await
+}
+
+async fn run_session_inner(
+    socket: WebSocket,
+    state: AppState,
+    session_id: u64,
+) -> anyhow::Result<()> {
+    state.metrics.session_opened();
+    let _session_guard = SessionGuard::new(state.metrics.clone());
+
+    tracing::info!("session opened");
+
+    let mut capture = match state.capture.open_session(session_id).await {
+        Ok(capture) => capture,
+        Err(err) => {
+            tracing::warn!("failed to initialise capture: {err}");
+            None
+        }
+    };
+
     let (ws_sender, mut ws_receiver) = socket.split();
 
     let (ws_out_tx, mut ws_out_rx) = mpsc::channel::<Message>(state.cfg.ws_send_buffer);
@@ -100,6 +129,7 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
     let mut udp_flows: HashMap<UdpKey, UdpFlowHandle> = HashMap::new();
 
     let start = tokio::time::Instant::now();
+    let mut fatal_err: Option<anyhow::Error> = None;
 
     loop {
         tokio::select! {
@@ -118,8 +148,16 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
                             Ok(decoded) => {
                                 match decoded.msg_type {
                                     aero_l2_protocol::L2_TUNNEL_TYPE_FRAME => {
-                                        let actions = stack.process_outbound_ethernet(decoded.payload, now_ms);
-                                        process_actions(
+                                        let frame = decoded.payload;
+                                        state.metrics.frame_rx(frame.len());
+
+                                        let ts_in = now_unix_timestamp_ns();
+                                        if let Some(capture) = capture.as_mut() {
+                                            let _ = capture.record_guest_to_proxy(ts_in, frame).await;
+                                        }
+
+                                        let actions = stack.process_outbound_ethernet(frame, now_ms);
+                                        if let Err(err) = process_actions(
                                             &mut stack,
                                             actions,
                                             now_ms,
@@ -127,9 +165,14 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
                                             &event_tx,
                                             &mut tcp_conns,
                                             &mut udp_flows,
+                                            &mut capture,
                                             &state,
                                         )
-                                        .await?;
+                                        .await
+                                        {
+                                            fatal_err = Some(err);
+                                            break;
+                                        }
                                     }
                                     aero_l2_protocol::L2_TUNNEL_TYPE_PING => {
                                         if let Ok(pong) = aero_l2_protocol::encode_with_limits(
@@ -146,6 +189,7 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
                                 }
                             }
                             Err(err) => {
+                                state.metrics.frame_dropped();
                                 tracing::debug!("dropping invalid l2 message: {err}");
                                 let msg = err.to_string();
                                 let payload = msg.as_bytes();
@@ -184,6 +228,7 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
                     SessionEvent::Tcp(TcpProxyEvent::Closed { connection_id } | TcpProxyEvent::Error { connection_id }) => {
                         if let Some(handle) = tcp_conns.remove(connection_id) {
                             handle.task.abort();
+                            state.metrics.tcp_conn_closed();
                         }
                     }
                     _ => {}
@@ -195,7 +240,7 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
                     SessionEvent::Dns(ev) => stack.handle_dns_resolved(ev, now_ms),
                 };
 
-                process_actions(
+                if let Err(err) = process_actions(
                     &mut stack,
                     actions,
                     now_ms,
@@ -203,28 +248,78 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
                     &event_tx,
                     &mut tcp_conns,
                     &mut udp_flows,
+                    &mut capture,
                     &state,
                 )
-                .await?;
+                .await
+                {
+                    fatal_err = Some(err);
+                    break;
+                }
             }
         }
     }
 
     for (_, conn) in tcp_conns {
         conn.task.abort();
+        state.metrics.tcp_conn_closed();
     }
     for (_, flow) in udp_flows {
         flow.task.abort();
+        state.metrics.udp_flow_closed();
     }
 
     drop(ws_out_tx);
     ws_writer.abort();
 
-    Ok(())
+    if let Some(capture) = capture {
+        let path = capture.path().to_path_buf();
+        if let Err(err) = capture.close().await {
+            tracing::warn!("failed to flush capture file: {err}");
+        } else {
+            tracing::info!(path = ?path, "wrote capture file");
+        }
+    }
+
+    tracing::info!("session closed");
+
+    match fatal_err {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 fn elapsed_ms(start: tokio::time::Instant) -> Millis {
     start.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+struct SessionGuard {
+    metrics: crate::metrics::Metrics,
+}
+
+impl SessionGuard {
+    fn new(metrics: crate::metrics::Metrics) -> Self {
+        Self { metrics }
+    }
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.metrics.session_closed();
+    }
+}
+
+fn now_unix_timestamp_ns() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(dur) => duration_to_ns(dur),
+        Err(err) => duration_to_ns(err.duration()),
+    }
+}
+
+fn duration_to_ns(dur: std::time::Duration) -> u64 {
+    dur.as_secs()
+        .saturating_mul(1_000_000_000)
+        .saturating_add(u64::from(dur.subsec_nanos()))
 }
 
 async fn process_actions(
@@ -235,6 +330,7 @@ async fn process_actions(
     event_tx: &mpsc::Sender<SessionEvent>,
     tcp_conns: &mut HashMap<u32, TcpConnHandle>,
     udp_flows: &mut HashMap<UdpKey, UdpFlowHandle>,
+    capture: &mut Option<crate::capture::SessionCapture>,
     state: &AppState,
 ) -> anyhow::Result<()> {
     let mut queue: VecDeque<Action> = actions.into();
@@ -247,11 +343,18 @@ async fn process_actions(
                     &frame,
                     &state.l2_limits,
                 ) else {
+                    state.metrics.frame_dropped();
                     continue;
                 };
+
+                let ts_out = now_unix_timestamp_ns();
+                if let Some(capture) = capture.as_mut() {
+                    let _ = capture.record_proxy_to_guest(ts_out, &frame).await;
+                }
                 if ws_out_tx.send(Message::Binary(wire)).await.is_err() {
                     return Ok(());
                 }
+                state.metrics.frame_tx(frame.len());
             }
             Action::TcpProxyConnect {
                 connection_id,
@@ -276,6 +379,7 @@ async fn process_actions(
                     && (!state.cfg.policy.allows_ip(remote_ip)
                         || !state.cfg.policy.allows_tcp_port(remote_port))
                 {
+                    state.metrics.policy_denied();
                     queue.extend(
                         stack
                             .handle_tcp_proxy_event(TcpProxyEvent::Error { connection_id }, now_ms),
@@ -285,6 +389,7 @@ async fn process_actions(
 
                 let (tx, rx) = mpsc::channel::<TcpOutMsg>(state.cfg.tcp_send_buffer);
                 let event_tx = event_tx.clone();
+                let metrics = state.metrics.clone();
                 let timeout_dur = state.cfg.tcp_connect_timeout;
 
                 let target = forward
@@ -292,10 +397,11 @@ async fn process_actions(
                     .unwrap_or_else(|| (remote_ip.to_string(), remote_port));
 
                 let task = tokio::spawn(async move {
-                    tcp_task(connection_id, target, rx, event_tx, timeout_dur).await;
+                    tcp_task(connection_id, target, rx, event_tx, timeout_dur, metrics).await;
                 });
 
                 tcp_conns.insert(connection_id, TcpConnHandle { tx, task });
+                state.metrics.tcp_conn_opened();
             }
             Action::TcpProxySend {
                 connection_id,
@@ -342,6 +448,7 @@ async fn process_actions(
                     && (!state.cfg.policy.allows_ip(dst_ip)
                         || !state.cfg.policy.allows_udp_port(dst_port))
                 {
+                    state.metrics.policy_denied();
                     continue;
                 }
 
@@ -365,14 +472,19 @@ async fn process_actions(
                         udp_task(key, socket_task, event_tx).await;
                     });
                     udp_flows.insert(key, UdpFlowHandle { socket, task });
+                    state.metrics.udp_flow_opened();
                 }
 
                 if let Some(flow) = udp_flows.get(&key) {
-                    let _ = flow.socket.send(&data).await;
+                    if flow.socket.send(&data).await.is_err() {
+                        state.metrics.udp_send_failed();
+                    }
                 }
             }
             Action::DnsResolve { request_id, name } => {
+                state.metrics.dns_query();
                 if !state.cfg.policy.allows_domain(&name) {
+                    state.metrics.policy_denied();
                     queue.extend(stack.handle_dns_resolved(
                         DnsResolved {
                             request_id,
@@ -389,24 +501,35 @@ async fn process_actions(
                 let event_tx = event_tx.clone();
                 let policy = state.cfg.policy.clone();
                 let name_task = name.clone();
+                let metrics = state.metrics.clone();
 
                 tokio::spawn(async move {
                     let resolved = match dns.resolve_ipv4(&name_task).await {
                         Ok((addr, ttl, is_override)) => {
-                            let addr = addr.filter(|ip| is_override || policy.allows_ip(*ip));
+                            if addr.is_none() {
+                                metrics.dns_fail();
+                            }
+
+                            let filtered = addr.filter(|ip| is_override || policy.allows_ip(*ip));
+                            if addr.is_some() && filtered.is_none() && !is_override {
+                                metrics.policy_denied();
+                            }
                             DnsResolved {
                                 request_id,
                                 name: name_task,
-                                addr,
+                                addr: filtered,
                                 ttl_secs: ttl,
                             }
                         }
-                        Err(_) => DnsResolved {
-                            request_id,
-                            name: name_task,
-                            addr: None,
-                            ttl_secs: 0,
-                        },
+                        Err(_) => {
+                            metrics.dns_fail();
+                            DnsResolved {
+                                request_id,
+                                name: name_task,
+                                addr: None,
+                                ttl_secs: 0,
+                            }
+                        }
                     };
 
                     let _ = event_tx.send(SessionEvent::Dns(resolved)).await;
@@ -424,10 +547,12 @@ async fn tcp_task(
     mut rx: mpsc::Receiver<TcpOutMsg>,
     event_tx: mpsc::Sender<SessionEvent>,
     connect_timeout: std::time::Duration,
+    metrics: crate::metrics::Metrics,
 ) {
     let addr = match resolve_host_port(&target.0, target.1).await {
         Ok(addr) => addr,
         Err(_) => {
+            metrics.tcp_connect_failed();
             let _ = event_tx
                 .send(SessionEvent::Tcp(TcpProxyEvent::Error { connection_id }))
                 .await;
@@ -438,6 +563,7 @@ async fn tcp_task(
     let stream = match timeout(connect_timeout, TcpStream::connect(addr)).await {
         Ok(Ok(stream)) => stream,
         _ => {
+            metrics.tcp_connect_failed();
             let _ = event_tx
                 .send(SessionEvent::Tcp(TcpProxyEvent::Error { connection_id }))
                 .await;
