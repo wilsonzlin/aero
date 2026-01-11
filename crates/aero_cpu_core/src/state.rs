@@ -1191,11 +1191,7 @@ impl CpuState {
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave32(&mut image);
-        for i in 0..(FXSAVE_AREA_SIZE / 16) {
-            let start = i * 16;
-            let chunk: [u8; 16] = image[start..start + 16].try_into().unwrap();
-            bus.write_u128(addr + start as u64, u128::from_le_bytes(chunk))?;
-        }
+        bus.write_bytes(addr, &image)?;
         Ok(())
     }
 
@@ -1207,11 +1203,7 @@ impl CpuState {
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave64(&mut image);
-        for i in 0..(FXSAVE_AREA_SIZE / 16) {
-            let start = i * 16;
-            let chunk: [u8; 16] = image[start..start + 16].try_into().unwrap();
-            bus.write_u128(addr + start as u64, u128::from_le_bytes(chunk))?;
-        }
+        bus.write_bytes(addr, &image)?;
         Ok(())
     }
 
@@ -1222,11 +1214,7 @@ impl CpuState {
             return Err(Exception::gp0());
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
-        for i in 0..(FXSAVE_AREA_SIZE / 16) {
-            let start = i * 16;
-            let v = bus.read_u128(addr + start as u64)?;
-            image[start..start + 16].copy_from_slice(&v.to_le_bytes());
-        }
+        bus.read_bytes(addr, &mut image)?;
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             let mxcsr = u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
@@ -1245,11 +1233,7 @@ impl CpuState {
             return Err(Exception::gp0());
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
-        for i in 0..(FXSAVE_AREA_SIZE / 16) {
-            let start = i * 16;
-            let v = bus.read_u128(addr + start as u64)?;
-            image[start..start + 16].copy_from_slice(&v.to_le_bytes());
-        }
+        bus.read_bytes(addr, &mut image)?;
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             let mxcsr = u32::from_le_bytes(image[24..28].try_into().unwrap()) | Self::MXCSR_EXCEPTION_MASK;
