@@ -4,8 +4,19 @@
   #endif
   #include <windows.h>
 
-BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) {
+  #include "aerogpu_trace.h"
+
+BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID) {
+  switch (reason) {
+    case DLL_PROCESS_ATTACH:
+      aerogpu::d3d9_trace_init_from_env();
+      break;
+    case DLL_PROCESS_DETACH:
+      aerogpu::d3d9_trace_on_process_detach();
+      break;
+    default:
+      break;
+  }
   return TRUE;
 }
 #endif
-
