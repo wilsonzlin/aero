@@ -118,6 +118,16 @@ export class UhciHidTopologyManager {
     }
     const existing = this.#hubAttachedPortCountByRoot.get(rootPort);
     if (existing !== undefined && existing >= portCount) return false;
+    if (existing !== undefined) {
+      // Replacing the hub without a disconnect would not toggle the UHCI connection-status-change
+      // (CSC) bit, so the guest OS could keep using a cached hub descriptor (port count, etc).
+      // Detach first so this behaves like a real hotplug event.
+      try {
+        uhci.detach_at_path([rootPort]);
+      } catch {
+        // ignore
+      }
+    }
     try {
       uhci.attach_hub(rootPort >>> 0, portCount >>> 0);
       this.#hubAttachedPortCountByRoot.set(rootPort, portCount);

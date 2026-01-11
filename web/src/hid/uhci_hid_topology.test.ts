@@ -124,6 +124,7 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.attachDevice(2, [0, 20], "webhid", dev2);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(2);
     expect(uhci.attach_hub).toHaveBeenNthCalledWith(2, 0, 20);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0]);
 
     const dev1Calls = uhci.attach_webhid_device.mock.calls.filter(([, dev]) => dev === dev1);
     expect(dev1Calls).toHaveLength(2);
