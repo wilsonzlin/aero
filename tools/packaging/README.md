@@ -66,7 +66,7 @@ WHQL/production-signed drivers without requiring any certificate files.
 
 This repo maintains two variants:
 
-- `docs/windows-device-contract.json` (canonical, in-tree Aero driver service names like `aerovblk` / `aerovnet`)
+- `docs/windows-device-contract.json` (canonical, in-tree Aero driver service names like `aero_virtio_blk` / `aero_virtio_net`)
 - `docs/windows-device-contract-virtio-win.json` (upstream virtio-win service names like `viostor` / `netkvm`)
 
 Virtio-win Guest Tools builds **must** use the virtio-win contract so `guest-tools/setup.cmd` can

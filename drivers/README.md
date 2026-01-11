@@ -281,7 +281,7 @@ See: `drivers/docs/wdk-build.md`.
 
 - **Device Manager**
   - Verify devices bind to the expected storage/network drivers.
-    - CI/in-tree Guest Tools typically uses `aerovblk` (virtio-blk) and `aerovnet` (virtio-net).
+    - CI/in-tree Guest Tools typically uses `aero_virtio_blk` (virtio-blk) and `aero_virtio_net` (virtio-net).
     - virtio-win-derived packs typically use `viostor` and `NetKVM` (`netkvm`).
   - If present in your media, also verify audio/input drivers (`virtio-snd`/`virtio-input` or `viosnd`/`vioinput` depending on source).
 - **Storage throughput**

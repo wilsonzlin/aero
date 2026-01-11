@@ -130,7 +130,7 @@ guest-tools/
 `config/devices.cmd` is generated during packaging from a Windows device contract JSON
 (`--windows-device-contract` / `-WindowsDeviceContractPath`):
 
-- `docs/windows-device-contract.json` (canonical; in-tree Aero driver service names like `aerovblk` / `aerovnet`)
+- `docs/windows-device-contract.json` (canonical; in-tree Aero driver service names like `aero_virtio_blk` / `aero_virtio_net`)
 - `docs/windows-device-contract-virtio-win.json` (virtio-win; upstream service names like `viostor` / `netkvm` / `vioinput` / `viosnd`)
 
 Virtio-win Guest Tools builds **must** use the virtio-win contract so `guest-tools/setup.cmd` can

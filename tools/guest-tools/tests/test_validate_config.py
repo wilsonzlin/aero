@@ -258,7 +258,7 @@ class ValidateConfigTests(unittest.TestCase):
                 validate_config.validate(devices, spec_path, expected)
 
     def test_windows_device_contract_override_supports_virtio_win_services(self) -> None:
-        # The in-repo Guest Tools config uses Aero in-tree service names (aerovblk, etc), but
+        # The in-repo Guest Tools config uses Aero in-tree service names (aero_virtio_blk, etc), but
         # virtio-win Guest Tools packaging needs to validate against upstream service names
         # (viostor/netkvm). The validator should support selecting the contract variant.
         virtio_contract_path = validate_config.REPO_ROOT / "docs/windows-device-contract-virtio-win.json"

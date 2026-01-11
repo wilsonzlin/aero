@@ -390,10 +390,10 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
   -InfAllowList @(
-    "aerovblk.inf",
-    "aerovnet.inf",
-    "virtio-input.inf",
-    "aero-virtio-snd.inf"
+    "aero_virtio_blk.inf",
+    "aero_virtio_net.inf",
+    "aero_virtio_input.inf",
+    "aero_virtio_snd.inf"
   ) `
   -DisableSndCapture
 ```

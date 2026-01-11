@@ -1124,7 +1124,7 @@ static VirtioSndBindingCheckResult CheckVirtioSndPciBinding(Logger& log,
     log.LogLine("virtio-snd: no virtio-snd PCI device is healthy and bound to the expected driver");
     log.LogLine("virtio-snd: troubleshooting hints:");
     log.LogLine("virtio-snd: - check Device Manager for Code 28/52/10 and inspect setupapi.dev.log");
-    log.LogLine("virtio-snd: - for QEMU contract v1: use disable-legacy=on,x-pci-revision=0x01 and install aero-virtio-snd.inf");
+    log.LogLine("virtio-snd: - for QEMU contract v1: use disable-legacy=on,x-pci-revision=0x01 and install aero_virtio_snd.inf");
     log.LogLine("virtio-snd: - for transitional QEMU: install aero-virtio-snd-legacy.inf and pass --allow-virtio-snd-transitional");
   }
 
