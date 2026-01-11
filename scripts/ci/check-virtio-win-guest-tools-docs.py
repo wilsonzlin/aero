@@ -93,7 +93,9 @@ def check_docs() -> list[str]:
             "claims by-default uses -Profile minimal",
             # Allow line-wrapping but avoid crossing sentence boundaries (so we don't flag
             # "By default ... -Profile full. ... use -Profile minimal").
-            re.compile(r"(?i)\bBy default\b[^.]{0,200}`?-Profile\s+minimal`?"),
+            # Also avoid crossing semicolons because docs sometimes write:
+            # "By default ... -Profile full; use -Profile minimal ..." (which should not fail CI).
+            re.compile(r"(?i)\bBy default\b[^.;]{0,200}`?-Profile\s+minimal`?"),
         ),
         (
             "claims `--profile minimal` is default",
@@ -109,7 +111,7 @@ def check_docs() -> list[str]:
         ),
         (
             "claims by-default uses --profile minimal",
-            re.compile(r"(?i)\bBy default\b[^.]{0,200}`?--profile\s+minimal`?"),
+            re.compile(r"(?i)\bBy default\b[^.;]{0,200}`?--profile\s+minimal`?"),
         ),
     ]
 
