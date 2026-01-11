@@ -79,8 +79,8 @@ On Win32, `__stdcall` would normally decorate the symbol names (for example,
 `_OpenAdapter10@4`). The build uses module-definition files to ensure the DLL
 exports the undecorated names expected by the runtimes:
 
-- `aerogpu_d3d10_11_x86.def`
-- `aerogpu_d3d10_11_x64.def`
+- `aerogpu_d3d10_x86.def`
+- `aerogpu_d3d10_x64.def`
 
 Recommended build entrypoint (MSBuild/WDK10):
 

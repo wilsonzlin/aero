@@ -69,7 +69,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <ModuleDefinitionFile>aerogpu_d3d10_11_x86.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>aerogpu_d3d10_x86.def</ModuleDefinitionFile>
       <TargetName>aerogpu_d3d10</TargetName>
     </Link>
   </ItemDefinitionGroup>
@@ -90,7 +90,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <ModuleDefinitionFile>aerogpu_d3d10_11_x86.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>aerogpu_d3d10_x86.def</ModuleDefinitionFile>
       <TargetName>aerogpu_d3d10</TargetName>
     </Link>
   </ItemDefinitionGroup>
@@ -106,7 +106,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <ModuleDefinitionFile>aerogpu_d3d10_11_x64.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>aerogpu_d3d10_x64.def</ModuleDefinitionFile>
       <TargetName>aerogpu_d3d10_x64</TargetName>
     </Link>
   </ItemDefinitionGroup>
@@ -127,7 +127,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <ModuleDefinitionFile>aerogpu_d3d10_11_x64.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>aerogpu_d3d10_x64.def</ModuleDefinitionFile>
       <TargetName>aerogpu_d3d10_x64</TargetName>
     </Link>
   </ItemDefinitionGroup>
@@ -143,8 +143,8 @@
     <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="aerogpu_d3d10_11_x86.def" />
-    <None Include="aerogpu_d3d10_11_x64.def" />
+    <None Include="aerogpu_d3d10_x86.def" />
+    <None Include="aerogpu_d3d10_x64.def" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
