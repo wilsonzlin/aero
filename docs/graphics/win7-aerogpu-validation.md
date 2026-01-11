@@ -424,6 +424,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
    aerogpu_dbgctl --query-umd-private
    aerogpu_dbgctl --query-fence
    aerogpu_dbgctl --dump-ring --ring-id 0
+   aerogpu_dbgctl --dump-createalloc
    aerogpu_dbgctl --dump-vblank
    ```
 4. **If the desktop is frozen but the VM is alive**, dump again (to see if anything advances).

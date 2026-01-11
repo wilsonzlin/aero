@@ -486,6 +486,30 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long long)qv.last_vblank_time_ns);
   };
 
+  const auto DumpCreateAllocationSummary = [&]() {
+    aerogpu_escape_dump_createallocation_inout qa;
+    ZeroMemory(&qa, sizeof(qa));
+    qa.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qa.hdr.op = AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION;
+    qa.hdr.size = sizeof(qa);
+    qa.hdr.reserved0 = 0;
+    qa.entry_capacity = AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
+
+    NTSTATUS stAlloc = SendAerogpuEscape(f, hAdapter, &qa, sizeof(qa));
+    if (!NT_SUCCESS(stAlloc)) {
+      if (stAlloc == STATUS_NOT_SUPPORTED) {
+        wprintf(L"CreateAllocation trace: (not supported)\n");
+      } else {
+        PrintNtStatus(L"D3DKMTEscape(dump-createalloc) failed", f, stAlloc);
+      }
+      return;
+    }
+
+    wprintf(L"CreateAllocation trace: write_index=%lu entry_count=%lu\n",
+            (unsigned long)qa.write_index,
+            (unsigned long)qa.entry_count);
+  };
+
   aerogpu_escape_query_device_v2_out q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -520,6 +544,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     DumpFenceSnapshot();
     DumpScanoutSnapshot();
     DumpVblankSnapshot();
+    DumpCreateAllocationSummary();
     return 0;
   }
 
@@ -578,6 +603,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   DumpFenceSnapshot();
   DumpScanoutSnapshot();
   DumpVblankSnapshot();
+  DumpCreateAllocationSummary();
 
   return 0;
 }
