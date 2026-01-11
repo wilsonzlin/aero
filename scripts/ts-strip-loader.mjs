@@ -46,6 +46,12 @@ export async function load(url, context, nextLoad) {
     const base = new URL(url);
     base.search = "";
     base.hash = "";
+    // Some `.js` modules (e.g. AudioWorklet processors) are written to be safe to
+    // import directly in Node and intentionally provide a default export. In that
+    // case, preserve the real module so tests can access named exports too.
+    if (base.pathname.endsWith(".js")) {
+      return nextLoad(url, context);
+    }
     return {
       format: "module",
       source: `export default ${JSON.stringify(base.href)};\n`,

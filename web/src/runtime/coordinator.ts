@@ -24,6 +24,8 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
+  type ResetRequestMessage,
+  type SerialOutputMessage,
   type SetAudioRingBufferMessage,
   type SetMicrophoneRingBufferMessage,
   type WorkerInitMessage,
@@ -104,16 +106,6 @@ type GpuWorkerGpuErrorMessage = {
 type GpuWorkerErrorEventMessage = {
   type: "gpu_error_event";
   event: { category?: string; message?: string };
-};
-
-type SerialOutputMessage = {
-  kind: "serial.output";
-  port: number;
-  data: Uint8Array;
-};
-
-type ResetRequestMessage = {
-  kind: "reset.request";
 };
 
 function nowMs(): number {

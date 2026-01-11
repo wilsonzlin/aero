@@ -330,17 +330,21 @@ async function withPatchedMemoryImport<T>(
     const hasInstantiateStreaming = typeof WebAssembly.instantiateStreaming === "function";
     const originalInstantiateStreaming = hasInstantiateStreaming ? WebAssembly.instantiateStreaming : undefined;
 
-    const instantiatePatched = ((module: WebAssembly.Module | BufferSource, imports?: WebAssembly.Imports) => {
+    // Avoid strict typing here: `WebAssembly.instantiate*` are overloaded and
+    // Node/Vitest execute these `.ts` sources directly with stripped types.
+    // Keep the runtime behavior correct while sidestepping TypeScript overload
+    // assignability issues across TS versions.
+    const instantiatePatched = (module: any, imports?: any) => {
         patchWasmImportsWithMemory(imports, memory);
         return originalInstantiate(module as any, imports as any);
-    }) as typeof WebAssembly.instantiate;
+    };
 
     (WebAssembly as any).instantiate = instantiatePatched;
     if (hasInstantiateStreaming) {
-        const instantiateStreamingPatched = ((source: any, imports?: WebAssembly.Imports) => {
+        const instantiateStreamingPatched = (source: any, imports?: any) => {
             patchWasmImportsWithMemory(imports, memory);
             return originalInstantiateStreaming!(source as any, imports as any);
-        }) as typeof WebAssembly.instantiateStreaming;
+        };
         (WebAssembly as any).instantiateStreaming = instantiateStreamingPatched;
     }
     try {
