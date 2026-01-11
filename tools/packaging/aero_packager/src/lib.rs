@@ -323,7 +323,6 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
             certs_dir.to_string_lossy()
         );
     }
-
     // Optional: include documentation alongside the packaged driver tree.
     // (Driver binaries themselves come from `drivers_dir`.)
     let drivers_readme = config.guest_tools_dir.join("drivers").join("README.md");

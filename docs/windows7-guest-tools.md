@@ -96,10 +96,11 @@ If Aero’s driver packages (or signing certificates) use **SHA-256 / SHA-2**, s
   - Practical benefit: can be easier to get started if you are troubleshooting signing issues.
 - **Windows 7 x64**
   - Enforces kernel driver signature validation.
-  - Depending on how the Aero drivers are signed, you may need:
-    - the Aero signing certificate installed (via Guest Tools), and/or
-    - **Test Signing** enabled, and/or
-    - SHA-2 updates (commonly **KB3033929**, sometimes **KB4474419**) if the catalogs/certificates are SHA-2-signed.
+  - Aero Guest Tools media includes a `manifest.json` that describes signing expectations via `signing_policy`:
+    - `test`: Guest Tools will install certificate(s) (from `certs\`) and may prompt to enable **Test Signing**.
+    - `production`: drivers are production/WHQL-signed; no custom certificate or Test Signing is expected.
+    - `none`: no signing expectations (development use).
+  - You may still need SHA-2 updates (commonly **KB3033929**, sometimes **KB4474419**) if the driver catalogs/certificates are SHA-2-signed.
 
 ## Step 1: Install Windows 7 using baseline (compatibility) devices
 
@@ -168,28 +169,29 @@ Running directly from the mounted CD/DVD is fine. Copying the files locally is o
 During installation you may see driver install prompts:
 
 - **Windows 7 x86:** Windows may warn about unsigned drivers. Choose **Install this driver software anyway** (only if you trust the Guest Tools you’re using).
-- **Windows 7 x64:** Windows enforces kernel driver signatures. Depending on how the Guest Tools media was built, `setup.cmd` may:
-  - install one or more certificates from `certs\` (if present), and/or
-  - prompt to enable **Test Signing** or **nointegritychecks** based on `manifest.json` `signing_policy`.
-  - Guest Tools built for WHQL/production-signed drivers use `signing_policy=none` and do **not** prompt by default.
+- **Windows 7 x64:** Windows enforces kernel driver signatures. Guest Tools behavior is controlled by `manifest.json` `signing_policy`:
+  - `test`: installs certificate(s) from `certs\` (when present) and may prompt to enable **Test Signing** so the drivers can load.
+  - `production` / `none`: production/WHQL-signed drivers are expected; Guest Tools will not prompt to enable Test Signing by default.
 
 When `setup.cmd` finishes, reboot Windows if prompted.
 
 ### x64: `setup.cmd` signing policy (Test Signing / nointegritychecks)
 
-Guest Tools media built by `tools/packaging/aero_packager` includes a `manifest.json` with a `signing_policy` field:
+Guest Tools media built by `tools/packaging/aero_packager` includes a `manifest.json` that describes signing expectations via `signing_policy`:
 
-- `none`: do not prompt or change boot policy (for WHQL/production-signed drivers).
-- `testsigning`: prompt to enable Test Signing (default for dev/test builds).
-- `nointegritychecks`: prompt to disable signature enforcement (**not recommended**).
+- `test`: intended for test-signed/custom-signed drivers.
+  - The packager requires shipping certificate files under `certs\` and `setup.cmd` will install them.
+  - On Windows 7 x64, `setup.cmd` may prompt to enable **Test Signing** (or enable it automatically under `/force`).
+- `production`: intended for production/WHQL-signed drivers (no custom root cert, no Test Mode watermark expected).
+  - `certs\` may be empty (or docs-only).
+  - `setup.cmd` will not prompt to enable Test Signing by default.
+- `none`: same as `production` for certificate/Test Signing behavior (development use).
 
-If you are building your own Guest Tools media for WHQL/production-signed drivers (no custom root cert, no Test Mode watermark), package with:
+If you are building your own Guest Tools media for WHQL/production-signed drivers, package with:
 
-- `aero_packager --signing-policy none`
+- `aero_packager --signing-policy production`
 
-and ensure the input Guest Tools `certs\` directory contains **zero** certificate files.
-
-On Windows 7 x64, when `signing_policy=testsigning`, `setup.cmd` may ask:
+On Windows 7 x64, **test-signed** Guest Tools builds (`signing_policy=test`) may ask:
 
 - `Enable Test Signing now (recommended for test-signed drivers)? [Y/N]`
 
@@ -201,11 +203,13 @@ Explicit command-line flags override the manifest:
 
 - `setup.cmd /testsigning` or `setup.cmd /forcetestsigning` (enable Test Signing without prompting)
 - `setup.cmd /nointegritychecks` or `setup.cmd /forcenointegritychecks` (enable `nointegritychecks` without prompting; **not recommended**)
-- `setup.cmd /forcesigningpolicy:none|testsigning|nointegritychecks` (override `manifest.json` policy)
+- `setup.cmd /forcesigningpolicy:none|test|production` (override `manifest.json` `signing_policy`; legacy aliases: `testsigning`→`test`, `nointegritychecks`→`none`)
 
 To keep the current boot policy unchanged, use:
 
 - `setup.cmd /notestsigning` (skip changing the Test Signing state)
+
+`setup.cmd /force` only implies `/testsigning` on x64 when `signing_policy=test`.
 
 If `setup.cmd` fails or prints warnings, **do not** switch the boot disk to virtio-blk yet. Review:
 
@@ -232,7 +236,7 @@ Guest Tools may support additional command-line flags. Common examples include:
 - `setup.cmd /testsigning` / `setup.cmd /forcetestsigning` (x64: enable Test Signing without prompting)
 - `setup.cmd /notestsigning` (x64: keep Test Signing state unchanged)
 - `setup.cmd /nointegritychecks` / `setup.cmd /forcenointegritychecks` (x64: enable `nointegritychecks`; **not recommended**)
-- `setup.cmd /forcesigningpolicy:none|testsigning|nointegritychecks` (override `manifest.json` `signing_policy`)
+- `setup.cmd /forcesigningpolicy:none|test|production` (override `manifest.json` `signing_policy`; legacy aliases: `testsigning`→`test`, `nointegritychecks`→`none`)
 - `setup.cmd /noreboot` (do not prompt for reboot/shutdown at the end)
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
   Skip boot-critical virtio-blk storage pre-seeding. Intended for partial Guest Tools payloads (for example AeroGPU-only development builds).  
@@ -258,7 +262,12 @@ The exact actions depend on the Guest Tools version, but the workflow generally 
 
 ### 1) Certificate store
 
-If the Guest Tools media includes certificate files under `certs\` (`*.cer`, `*.crt`, `*.p7b`), installs them into the **Local Machine** certificate stores so Windows can trust the driver packages. Common targets:
+Installs any certificate file(s) shipped under `certs\` (`*.cer`, `*.crt`, `*.p7b`) into the **Local Machine** certificate stores so Windows can trust Aero’s driver packages.
+
+This step is policy-driven:
+
+- If `signing_policy=test` (or certificate files are present), `setup.cmd` installs them.
+- If no certificate files are present and `signing_policy` does not require them, `setup.cmd` logs and continues.
 
 - **Trusted Root Certification Authorities**
 - **Trusted Publishers**
@@ -267,7 +276,7 @@ If the Guest Tools media includes certificate files under `certs\` (`*.cer`, `*.
 
 Updates the boot configuration database via `bcdedit` when needed (based on `manifest.json` `signing_policy` or explicit override flags), for example:
 
-- Enabling **Test Signing** (`testsigning on`) so test-signed kernel drivers load on Windows 7 x64.
+- Enabling **Test Signing** (`testsigning on`) so test-signed kernel drivers load on Windows 7 x64 (typically only when `signing_policy=test`, unless you explicitly pass `/testsigning`).
 - Optionally enabling `nointegritychecks` (disables signature enforcement entirely; **not recommended**).
 
 Reboot is required after changing BCD settings.

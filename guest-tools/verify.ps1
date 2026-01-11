@@ -844,6 +844,9 @@ try {
     Add-Check "os" "OS + Architecture" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
+$gtSigningPolicy = $null
+$gtCertsRequired = $null
+
 # --- Guest Tools manifest (media integrity + provenance) ---
 try {
     $manifestPath = Join-Path $scriptDir "manifest.json"
@@ -909,12 +912,28 @@ try {
                 source_date_epoch = $sde
             }
 
-            if ($parsed.ContainsKey("signing_policy")) {
-                $mediaIntegrity.signing_policy = "" + $parsed["signing_policy"]
+            $signingPolicy = $null
+            $certsRequired = $null
+            if ($parsed.ContainsKey("signing_policy")) { $signingPolicy = "" + $parsed["signing_policy"] }
+            if ($parsed.ContainsKey("certs_required")) { $certsRequired = $parsed["certs_required"] }
+
+            # Normalize legacy signing_policy values to the current surface (test|production|none).
+            if ($signingPolicy) {
+                $sp = $signingPolicy.ToLower()
+                if (($sp -eq "testsigning") -or ($sp -eq "test-signing")) { $signingPolicy = "test" }
+                if ($sp -eq "nointegritychecks") { $signingPolicy = "none" }
+                if (($sp -eq "prod") -or ($sp -eq "whql")) { $signingPolicy = "production" }
             }
-            if ($parsed.ContainsKey("certs_required")) {
-                $mediaIntegrity.certs_required = $parsed["certs_required"]
+
+            if (($certsRequired -eq $null) -and $signingPolicy) {
+                $sp = $signingPolicy.ToLower()
+                if ($sp -eq "test") { $certsRequired = $true } else { $certsRequired = $false }
             }
+
+            $mediaIntegrity.signing_policy = $signingPolicy
+            $mediaIntegrity.certs_required = $certsRequired
+            $gtSigningPolicy = $signingPolicy
+            $gtCertsRequired = $certsRequired
 
             $files = $null
             if ($parsed.ContainsKey("files")) { $files = $parsed["files"] }
@@ -988,11 +1007,11 @@ try {
                     $mStatus = "PASS"
                 }
 
-                 $policySummary = ""
-                 if ($mediaIntegrity.signing_policy) {
-                     $policySummary = ", signing_policy=" + ("" + $mediaIntegrity.signing_policy)
-                 }
-                 $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + $policySummary + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
+                $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
+                if ($gtSigningPolicy) {
+                    $mSummary += "; signing_policy=" + $gtSigningPolicy
+                    if ($gtCertsRequired -ne $null) { $mSummary += ", certs_required=" + $gtCertsRequired }
+                }
 
                 if ($missingCount -gt 0) {
                     foreach ($p in $mediaIntegrity.missing_files) { $mDetails += ("FAIL: Missing file: " + $p) }
@@ -1521,6 +1540,8 @@ try {
     $sigData = @{
         bcdedit_exit_code = $bcd.exit_code
         bcdedit_raw = $raw
+        signing_policy = $gtSigningPolicy
+        certs_required = $gtCertsRequired
         testsigning = $testsigning
         nointegritychecks = $nointegritychecks
     }
@@ -1555,33 +1576,36 @@ try {
             $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
         }
 
+        $policy = $gtSigningPolicy
+        if (-not $policy) { $policy = "unknown" }
+        $policyLower = ("" + $policy).ToLower()
+
         if ($nicOn) {
-            if ($policyLower -eq "nointegritychecks") {
-                $sigDetails += "nointegritychecks is enabled (expected by signing_policy=nointegritychecks). Note: this is not recommended; prefer properly signed drivers when possible."
-            } else {
-                $sigStatus = Merge-Status $sigStatus "WARN"
-                $sigDetails += "nointegritychecks is enabled. This is not recommended; prefer testsigning or properly signed drivers."
-            }
-        } else {
-            if ($is64 -and ($policyLower -eq "nointegritychecks")) {
-                $sigStatus = Merge-Status $sigStatus "WARN"
-                $sigDetails += "signing_policy=nointegritychecks but nointegritychecks is not enabled. Enable it: bcdedit /set nointegritychecks on"
-            }
+            $sigStatus = Merge-Status $sigStatus "WARN"
+            $sigDetails += "nointegritychecks is enabled. This is not recommended; prefer testsigning or properly signed drivers."
         }
 
         if ($is64) {
-            if ($policyLower -eq "none") {
+            if (($policyLower -eq "production") -or ($policyLower -eq "none")) {
                 if ($tsOn) {
                     $sigStatus = Merge-Status $sigStatus "WARN"
-                    $sigDetails += "testsigning is enabled, but signing_policy=none indicates production-signed drivers. Consider disabling it: bcdedit /set testsigning off"
+                    $sigDetails += ("signing_policy=" + $policyLower + " but testsigning is enabled. Consider disabling it: bcdedit /set testsigning off (then reboot).")
                 }
-            } elseif ($policyLower -eq "nointegritychecks") {
-                # testsigning is not required when nointegritychecks is used.
+            } elseif ($policyLower -eq "test") {
+                if (-not $tsOn) {
+                    if ($nicOn) {
+                        $sigStatus = Merge-Status $sigStatus "WARN"
+                        $sigDetails += "signing_policy=test but testsigning is not enabled. nointegritychecks is enabled, so drivers may still load, but this is not recommended."
+                    } else {
+                        $sigStatus = Merge-Status $sigStatus "FAIL"
+                        $sigDetails += "signing_policy=test but testsigning is not enabled. Enable it: bcdedit /set testsigning on (then reboot)."
+                    }
+                }
             } else {
-                # signing_policy=testsigning (or unknown / no manifest): testsigning is commonly required.
+                # Unknown policy: keep legacy guidance (best-effort).
                 if (-not $tsOn) {
                     $sigStatus = Merge-Status $sigStatus "WARN"
-                    $sigDetails += "testsigning is not enabled. If the Guest Tools media uses test-signed/custom-signed drivers (signing_policy=testsigning), enable it: bcdedit /set testsigning on"
+                    $sigDetails += "testsigning is not enabled. If Aero drivers are test-signed (common on Windows 7 x64), enable it: bcdedit /set testsigning on (then reboot)."
                 }
             }
         }

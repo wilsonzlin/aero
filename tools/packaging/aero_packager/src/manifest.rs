@@ -1,48 +1,41 @@
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SigningPolicy {
+    /// Test-signed drivers. Requires shipping a certificate and (typically) enabling Test Signing
+    /// on Windows 7 x64.
+    #[value(name = "test", alias = "testsigning", alias = "test-signing")]
+    Test,
+    /// Production/WHQL-signed drivers. No custom certificate is expected.
+    #[value(name = "production", alias = "prod", alias = "whql")]
+    Production,
+    /// No signing expectations. Used for development scenarios where drivers may not be signed.
+    #[value(name = "none")]
     None,
-    TestSigning,
-    NoIntegrityChecks,
 }
 
 impl SigningPolicy {
     pub fn certs_required(self) -> bool {
-        self != SigningPolicy::None
+        matches!(self, SigningPolicy::Test)
     }
 }
 
 impl Default for SigningPolicy {
     fn default() -> Self {
-        SigningPolicy::TestSigning
+        SigningPolicy::Test
     }
 }
 
 impl std::fmt::Display for SigningPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            SigningPolicy::Test => "test",
+            SigningPolicy::Production => "production",
             SigningPolicy::None => "none",
-            SigningPolicy::TestSigning => "testsigning",
-            SigningPolicy::NoIntegrityChecks => "nointegritychecks",
         };
         f.write_str(s)
-    }
-}
-
-impl std::str::FromStr for SigningPolicy {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "none" => Ok(SigningPolicy::None),
-            "testsigning" | "test-signing" => Ok(SigningPolicy::TestSigning),
-            "nointegritychecks" | "no-integrity-checks" => Ok(SigningPolicy::NoIntegrityChecks),
-            other => Err(format!(
-                "invalid signing policy: {other} (expected: none|testsigning|nointegritychecks)"
-            )),
-        }
     }
 }
 

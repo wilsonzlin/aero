@@ -96,10 +96,11 @@ guest-tools/
   THIRD_PARTY_NOTICES.md
   licenses/ (optional)
   config/
-    README.md
+    README.md (optional)
     devices.cmd   (generated during packaging)
-  certs/          (required when signing_policy != none; may be empty/absent when signing_policy=none)
-    *.{cer,crt,p7b}
+  certs/          (optional when signing_policy is production/none)
+    README.md (optional but recommended)
+    *.{cer,crt,p7b} (required for signing_policy=test; optional otherwise)
 ```
 
 `config/devices.cmd` is generated during packaging from the canonical Windows device contract:
@@ -133,8 +134,9 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
   manifest.json
   config/
     devices.cmd
-  certs/ (optional)
-    *.{cer,crt,p7b}   (optional)
+  certs/
+    README.md (optional)
+    *.{cer,crt,p7b} (optional)
   licenses/ (optional)
   drivers/
     x86/
@@ -229,14 +231,30 @@ SOURCE_DATE_EPOCH=0 cargo run --release --locked -- \
   --out-dir /path/to/out \
   --version 1.2.3 \
   --build-id local \
-  --signing-policy testsigning
+  --signing-policy test
 ```
 
-Signing policy notes:
+### Signing policy (test vs production vs none)
 
-- `--signing-policy testsigning` (default): media is intended for test-signed/custom-signed drivers; `setup.cmd` may prompt to enable Test Signing on Win7 x64 and the packager requires at least one public cert under `certs/`.
-- `--signing-policy nointegritychecks`: media may prompt to enable `nointegritychecks` on Win7 x64; also requires at least one public cert under `certs/`.
-- `--signing-policy none`: media is intended for WHQL/production-signed drivers; `setup.cmd` does **not** prompt to enable Test Mode / `nointegritychecks` by default and the packager allows packaging with **zero** cert files.
+Guest Tools media includes a `manifest.json` that describes **signing expectations**:
+
+- `signing_policy`: `test` | `production` | `none`
+- `certs_required`: derived from `signing_policy` (currently `true` only for `test`)
+
+This is consumed by `guest-tools/setup.cmd` / `verify.ps1` so they can behave appropriately:
+
+- `test`: packager requires at least one cert file under `guest-tools/certs/` and setup will
+  prompt to enable Test Signing on Windows 7 x64 (or enable it automatically under `/force`).
+- `production`: packager allows `guest-tools/certs/` to contain only docs (or be empty) and setup
+  will not prompt to enable Test Signing by default.
+- `none`: same as `production` for certificate/Test Signing behavior (intended for development).
+
+The packager default is `--signing-policy test` to preserve historical behavior.
+
+For back-compat, the packager also accepts legacy aliases:
+
+- `testsigning` / `test-signing` → `test`
+- `nointegritychecks` → `none`
 
 ### Building Guest Tools from an upstream virtio-win ISO (Win7 virtio drivers)
 

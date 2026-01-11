@@ -11,7 +11,8 @@ struct Cli {
 
     /// Directory containing Guest Tools scripts (setup.cmd, uninstall.cmd, README.md, etc).
     ///
-    /// Note: `certs/` may be empty/absent when `--signing-policy none` is used (WHQL/production-signed drivers).
+    /// Note: `certs/` may be empty/absent when `--signing-policy production` or `--signing-policy none`
+    /// is used (no custom certificate required).
     #[arg(long)]
     guest_tools_dir: PathBuf,
 
@@ -41,16 +42,15 @@ struct Cli {
     #[arg(long, default_value = "AERO_GUEST_TOOLS")]
     volume_id: String,
 
-    /// Driver signing / boot policy for the packaged media.
+    /// Signing expectations for the packaged drivers.
     ///
-    /// - `testsigning`: prompt to enable Test Signing on Win7 x64 (default)
-    /// - `nointegritychecks`: prompt to disable signature enforcement on Win7 x64
-    /// - `none`: do not prompt or change boot policy (for WHQL/production-signed drivers)
-    #[arg(
-        long,
-        env = "AERO_GUEST_TOOLS_SIGNING_POLICY",
-        default_value = "testsigning"
-    )]
+    /// - test: requires shipping at least one certificate in guest-tools/certs/ and will prompt
+    ///   setup.cmd to enable Test Signing on Windows 7 x64.
+    /// - production: drivers are production/WHQL-signed; no custom certificate is expected.
+    /// - none: no signing expectations (development use).
+    ///
+    /// Legacy aliases accepted: `testsigning`, `test-signing`.
+    #[arg(long, value_enum, env = "AERO_GUEST_TOOLS_SIGNING_POLICY", default_value = "test")]
     signing_policy: aero_packager::SigningPolicy,
 
     /// Override SOURCE_DATE_EPOCH (seconds since Unix epoch) for deterministic timestamps.

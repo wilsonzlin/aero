@@ -10,6 +10,7 @@ If you have not installed Guest Tools yet, start here:
 
 1. **Don’t keep rebooting** if you hit a boot loop or `0x7B` BSOD after switching storage. Power off and use the rollback path.
 2. Collect `report.txt` by running `verify.cmd` as Administrator and opening `C:\AeroGuestTools\report.txt`. Pay special attention to any `Code 52` (signing/trust) or `Code 28` (driver not installed) device errors.
+   - Also note the Guest Tools `signing_policy` (from `manifest.json`) and the **Signature Mode (BCDEdit)** check; together they tell you whether Test Signing is expected.
 3. Confirm you’re using drivers that match your OS:
    - Windows 7 **x86** requires x86 drivers.
    - Windows 7 **x64** requires x64 drivers. (32-bit drivers cannot load.)
@@ -125,13 +126,21 @@ Tip: in `report.txt`, check:
 
 ### Fix steps
 
-1. **Confirm test signing state (x64):**
+1. **Confirm signature mode (x64):**
+   - Run `verify.cmd` and check:
+     - `signing_policy` (from the Guest Tools `manifest.json`)
+     - **Signature Mode (BCDEdit)** (`testsigning` / `nointegritychecks`)
+   - General guidance:
+     - If `signing_policy=test`: ensure `testsigning` is **on**.
+     - If `signing_policy=production` (WHQL/prod-signed drivers): ensure `testsigning` is **off**.
+       - `verify.cmd` will warn if production builds are running in Test Mode.
    - Open an elevated Command Prompt and run:
-     - `bcdedit /enum {current}`
+      - `bcdedit /enum {current}`
    - Look for `testsigning Yes`.
-   - If needed, enable it:
-     - `bcdedit /set {current} testsigning on`
-     - Reboot.
+   - If needed, enable or disable it:
+      - `bcdedit /set {current} testsigning on`
+      - or: `bcdedit /set {current} testsigning off`
+      - Reboot.
 
 2. **Confirm the driver signing certificate is installed (recommended for test-signed/custom-signed drivers):**
     - Run `certlm.msc` (Local Computer certificate manager).
@@ -139,7 +148,7 @@ Tip: in `report.txt`, check:
       - **Trusted Root Certification Authorities → Certificates**
       - **Trusted Publishers → Certificates**
     - If the certificate is missing, re-run `setup.cmd` as Administrator.
-    - Note: If you are using WHQL/production-signed drivers and your Guest Tools media has `signing_policy=none`, the media may not ship any `certs\*.cer/*.crt/*.p7b`, and installing a custom certificate is typically unnecessary.
+    - Note: If you are using WHQL/production-signed drivers and your Guest Tools media has `signing_policy=production` (or `none`), the media may not ship any `certs\*.cer/*.crt/*.p7b`, and installing a custom certificate is typically unnecessary.
 
 3. **Check KB3033929 (SHA-256 support):**
    - See the KB3033929 section below.
@@ -548,7 +557,7 @@ Fix (from an elevated Command Prompt):
 
 If test signing is enabled, Windows 7 x64 shows a “Test Mode” watermark. This is expected if you are using test-signed drivers.
 
-Only disable test signing if you are sure you have production-signed drivers installed and loading:
+Only disable test signing if you are sure you have production-signed drivers installed and loading (for example, `verify.cmd` reports `signing_policy=production`):
 
 - Disable:
   - `bcdedit /set {current} testsigning off`

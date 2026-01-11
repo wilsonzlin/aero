@@ -25,7 +25,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let config2 = aero_packager::PackageConfig {
@@ -111,6 +111,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         "manifest.json",
         "config/README.md",
         "config/devices.cmd",
+        "certs/README.md",
         "certs/test.cer",
         "drivers/x86/testdrv/test.inf",
         "drivers/x86/testdrv/test.sys",
@@ -166,10 +167,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     assert_eq!(manifest.package.version, "1.2.3");
     assert_eq!(manifest.package.build_id, "test");
     assert_eq!(manifest.package.source_date_epoch, 0);
-    assert_eq!(
-        manifest.signing_policy,
-        aero_packager::SigningPolicy::TestSigning
-    );
+    assert_eq!(manifest.signing_policy, aero_packager::SigningPolicy::Test);
     assert!(manifest.certs_required);
 
     let mut manifest_paths = BTreeSet::new();
@@ -229,7 +227,7 @@ fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -342,7 +340,7 @@ fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -382,6 +380,91 @@ fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
             .any(|p| p.starts_with("drivers/amd64/optdrv/")),
         "missing optional driver unexpectedly packaged for amd64"
     );
+
+    Ok(())
+}
+
+#[test]
+fn signing_policy_controls_certificate_requirements() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+    let spec_path = testdata.join("spec.json");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_dir, guest_tools_tmp.path())?;
+
+    // Remove certificate artifacts while keeping certs/README.md.
+    let certs_dir = guest_tools_tmp.path().join("certs");
+    for entry in fs::read_dir(&certs_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(ext.as_str(), "cer" | "crt" | "p7b") {
+            fs::remove_file(path)?;
+        }
+    }
+
+    let out_tmp = tempfile::tempdir()?;
+    let base = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out_tmp.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    // test: requires at least one cert file.
+    let err = aero_packager::package_guest_tools(&base).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("contains no certificate files"),
+        "unexpected error: {msg}"
+    );
+
+    // production/none: allow empty certs dir.
+    for policy in [
+        aero_packager::SigningPolicy::Production,
+        aero_packager::SigningPolicy::None,
+    ] {
+        let out_dir = tempfile::tempdir()?;
+        let config = aero_packager::PackageConfig {
+            out_dir: out_dir.path().to_path_buf(),
+            signing_policy: policy,
+            ..base.clone()
+        };
+
+        let outputs = aero_packager::package_guest_tools(&config)?;
+
+        let manifest_bytes = fs::read(&outputs.manifest_path)?;
+        let manifest: aero_packager::Manifest = serde_json::from_slice(&manifest_bytes)?;
+        assert_eq!(manifest.signing_policy, policy);
+        assert!(!manifest.certs_required);
+
+        let iso_bytes = fs::read(&outputs.iso_path)?;
+        let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+        assert!(
+            tree.contains("certs/README.md"),
+            "expected certs/README.md to be packaged"
+        );
+        assert!(
+            !tree.contains("certs/test.cer"),
+            "unexpected certificate file packaged under production/none policy"
+        );
+    }
 
     Ok(())
 }
@@ -437,7 +520,7 @@ fn optional_drivers_are_validated_when_present() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -518,7 +601,7 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
             version: "0.0.0".to_string(),
             build_id: "test".to_string(),
             volume_id: "AERO_GUEST_TOOLS".to_string(),
-            signing_policy: aero_packager::SigningPolicy::TestSigning,
+            signing_policy: aero_packager::SigningPolicy::Test,
             source_date_epoch: 0,
         };
 
@@ -565,7 +648,7 @@ fn package_rejects_private_key_materials_in_licenses_dir() -> anyhow::Result<()>
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
@@ -603,7 +686,7 @@ fn package_rejects_private_key_materials_in_config_dir() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
@@ -641,7 +724,7 @@ fn package_rejects_private_key_materials_in_certs_dir() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
@@ -672,7 +755,7 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let outputs_base = aero_packager::package_guest_tools(&config_base)?;
@@ -756,7 +839,7 @@ fn driver_dll_extensions_are_handled_case_insensitively() -> anyhow::Result<()> 
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let outputs = aero_packager::package_guest_tools(&config)?;
@@ -805,7 +888,7 @@ fn copyinf_directives_are_validated() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
@@ -855,7 +938,7 @@ fn utf8_bom_infs_are_parsed_for_reference_validation() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -904,7 +987,7 @@ fn utf16le_bom_infs_are_parsed_for_reference_validation() -> anyhow::Result<()> 
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -957,7 +1040,7 @@ fn wdfcoinstaller_mentioned_only_in_comment_does_not_require_payload() -> anyhow
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -988,7 +1071,7 @@ fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Resul
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
     let outputs_base = aero_packager::package_guest_tools(&config_base)?;
@@ -1157,7 +1240,7 @@ fn packaging_fails_when_signing_policy_requires_certs_but_none_present() -> anyh
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -1208,7 +1291,7 @@ fn duplicate_driver_names_in_spec_are_rejected() -> anyhow::Result<()> {
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
         source_date_epoch: 0,
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
     };
 
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
@@ -1252,7 +1335,7 @@ fn driver_names_with_whitespace_are_rejected() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
@@ -1289,7 +1372,7 @@ fn empty_driver_list_is_rejected() -> anyhow::Result<()> {
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
