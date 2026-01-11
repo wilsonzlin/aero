@@ -1,4 +1,4 @@
-use perf::jit::{JitTier, JitTier2Pass};
+use perf::jit::{ns_to_ms, JitTier, JitTier2Pass};
 use perf::telemetry::Telemetry;
 use std::time::Duration;
 
@@ -97,4 +97,19 @@ fn jit_metrics_rolling_reports_rates() {
     assert!(snapshot.jit.rolling.blocks_compiled_per_s > 0.0);
     assert!(snapshot.jit.rolling.cache_hit_rate >= 0.0);
     assert!(snapshot.jit.rolling.cache_hit_rate <= 1.0);
+}
+
+#[test]
+fn jit_metrics_compile_time_saturates_on_overflow() {
+    let telemetry = Telemetry::new(true);
+
+    telemetry
+        .jit
+        .add_compile_time(JitTier::Tier1, Duration::from_secs(u64::MAX));
+    telemetry
+        .jit
+        .add_compile_time(JitTier::Tier1, Duration::from_secs(1));
+
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.jit.totals.tier1.compile_ms, ns_to_ms(u64::MAX));
 }

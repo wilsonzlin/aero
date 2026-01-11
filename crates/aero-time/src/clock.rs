@@ -2,6 +2,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[inline]
+fn duration_as_u64_ns(duration: Duration) -> u64 {
+    duration.as_nanos().min(u64::MAX as u128) as u64
+}
+
 pub trait HostClock: Send + Sync + 'static {
     /// Monotonic nanoseconds from an arbitrary origin.
     fn now_ns(&self) -> u64;
@@ -28,7 +33,7 @@ impl Default for StdHostClock {
 
 impl HostClock for StdHostClock {
     fn now_ns(&self) -> u64 {
-        self.start.elapsed().as_nanos() as u64
+        duration_as_u64_ns(self.start.elapsed())
     }
 }
 
@@ -56,6 +61,21 @@ impl FakeHostClock {
 impl HostClock for FakeHostClock {
     fn now_ns(&self) -> u64 {
         self.now_ns.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::duration_as_u64_ns;
+    use std::time::Duration;
+
+    #[test]
+    fn duration_as_u64_ns_saturates_instead_of_wrapping() {
+        let huge = Duration::from_secs(u64::MAX);
+        assert_eq!(duration_as_u64_ns(huge), u64::MAX);
+
+        let small = Duration::from_nanos(123);
+        assert_eq!(duration_as_u64_ns(small), 123);
     }
 }
 

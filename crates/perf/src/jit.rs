@@ -2,6 +2,18 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+#[inline]
+fn duration_as_u64_ns(duration: Duration) -> u64 {
+    duration.as_nanos().min(u64::MAX as u128) as u64
+}
+
+#[inline]
+fn saturating_fetch_add(cell: &AtomicU64, delta: u64) {
+    let _ = cell.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+        Some(cur.saturating_add(delta))
+    });
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JitTier {
     Tier1,
@@ -116,13 +128,13 @@ impl JitMetrics {
         if !self.enabled {
             return;
         }
-        let ns = duration.as_nanos() as u64;
+        let ns = duration_as_u64_ns(duration);
         match tier {
             JitTier::Tier1 => {
-                self.tier1_compile_ns_total.fetch_add(ns, Ordering::Relaxed);
+                saturating_fetch_add(&self.tier1_compile_ns_total, ns);
             }
             JitTier::Tier2 => {
-                self.tier2_compile_ns_total.fetch_add(ns, Ordering::Relaxed);
+                saturating_fetch_add(&self.tier2_compile_ns_total, ns);
             }
         }
     }
@@ -132,19 +144,16 @@ impl JitMetrics {
         if !self.enabled {
             return;
         }
-        let ns = duration.as_nanos() as u64;
+        let ns = duration_as_u64_ns(duration);
         match pass {
             JitTier2Pass::ConstFold => {
-                self.tier2_pass_const_fold_ns_total
-                    .fetch_add(ns, Ordering::Relaxed);
+                saturating_fetch_add(&self.tier2_pass_const_fold_ns_total, ns);
             }
             JitTier2Pass::Dce => {
-                self.tier2_pass_dce_ns_total
-                    .fetch_add(ns, Ordering::Relaxed);
+                saturating_fetch_add(&self.tier2_pass_dce_ns_total, ns);
             }
             JitTier2Pass::RegAlloc => {
-                self.tier2_pass_regalloc_ns_total
-                    .fetch_add(ns, Ordering::Relaxed);
+                saturating_fetch_add(&self.tier2_pass_regalloc_ns_total, ns);
             }
         }
     }
