@@ -1488,6 +1488,46 @@ impl AerogpuD3d11Executor {
         let mut bound_bind_groups: Vec<Option<*const wgpu::BindGroup>> =
             vec![None; pipeline_bindings.group_layouts.len()];
 
+        // Precompute which binding slots are actually referenced by the current shader pair so we
+        // can avoid breaking the render pass for state updates that will not be read by any draw
+        // in this pass.
+        let mut used_textures_vs = vec![false; DEFAULT_MAX_TEXTURE_SLOTS];
+        let mut used_textures_ps = vec![false; DEFAULT_MAX_TEXTURE_SLOTS];
+        let mut used_textures_cs = vec![false; DEFAULT_MAX_TEXTURE_SLOTS];
+        let mut used_cb_vs = vec![false; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS];
+        let mut used_cb_ps = vec![false; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS];
+        let mut used_cb_cs = vec![false; DEFAULT_MAX_CONSTANT_BUFFER_SLOTS];
+        for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
+            let stage = group_index_to_stage(group_index as u32)?;
+            for binding in group_bindings {
+                match &binding.kind {
+                    crate::BindingKind::ConstantBuffer { slot, .. } => {
+                        let slot_usize = *slot as usize;
+                        let used = match stage {
+                            ShaderStage::Vertex => used_cb_vs.get_mut(slot_usize),
+                            ShaderStage::Pixel => used_cb_ps.get_mut(slot_usize),
+                            ShaderStage::Compute => used_cb_cs.get_mut(slot_usize),
+                        };
+                        if let Some(entry) = used {
+                            *entry = true;
+                        }
+                    }
+                    crate::BindingKind::Texture2D { slot } => {
+                        let slot_usize = *slot as usize;
+                        let used = match stage {
+                            ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
+                            ShaderStage::Pixel => used_textures_ps.get_mut(slot_usize),
+                            ShaderStage::Compute => used_textures_cs.get_mut(slot_usize),
+                        };
+                        if let Some(entry) = used {
+                            *entry = true;
+                        }
+                    }
+                    crate::BindingKind::Sampler { .. } => {}
+                }
+            }
+        }
+
         loop {
             let Some(next) = iter.peek() else {
                 break;
@@ -1539,11 +1579,26 @@ impl AerogpuD3d11Executor {
             if opcode == OPCODE_SET_TEXTURE {
                 // `struct aerogpu_cmd_set_texture` (24 bytes)
                 if cmd_bytes.len() >= 20 {
+                    let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                    let slot = read_u32_le(cmd_bytes, 12)?;
                     let texture = read_u32_le(cmd_bytes, 16)?;
                     if texture != 0 {
-                        if let Some(tex) = self.resources.textures.get(&texture) {
-                            if tex.dirty && tex.backing.is_some() {
-                                break;
+                        let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
+                            break;
+                        };
+                        let used_slots = match stage {
+                            ShaderStage::Vertex => &used_textures_vs,
+                            ShaderStage::Pixel => &used_textures_ps,
+                            ShaderStage::Compute => &used_textures_cs,
+                        };
+                        let slot_usize: usize = slot
+                            .try_into()
+                            .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
+                        if slot_usize < used_slots.len() && used_slots[slot_usize] {
+                            if let Some(tex) = self.resources.textures.get(&texture) {
+                                if tex.dirty && tex.backing.is_some() {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1558,6 +1613,7 @@ impl AerogpuD3d11Executor {
                 // copy for unaligned uniform offsets.
                 if cmd_bytes.len() >= 24 {
                     let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                    let start_slot = read_u32_le(cmd_bytes, 12)?;
                     let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
                     let buffer_count: usize = buffer_count_u32
                         .try_into()
@@ -1575,8 +1631,23 @@ impl AerogpuD3d11Executor {
                         let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
                             break;
                         };
+                        let used_slots = match stage {
+                            ShaderStage::Vertex => &used_cb_vs,
+                            ShaderStage::Pixel => &used_cb_ps,
+                            ShaderStage::Compute => &used_cb_cs,
+                        };
                         let mut needs_break = false;
                         for i in 0..buffer_count {
+                            let slot = start_slot
+                                .checked_add(i as u32)
+                                .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: slot overflow"))?;
+                            let slot_usize: usize = slot
+                                .try_into()
+                                .map_err(|_| anyhow!("SET_CONSTANT_BUFFERS: slot out of range"))?;
+                            if slot_usize >= used_slots.len() || !used_slots[slot_usize] {
+                                continue;
+                            }
+
                             let base = 24 + i * 16;
                             let buffer = read_u32_le(cmd_bytes, base)?;
                             let offset_bytes = read_u32_le(cmd_bytes, base + 4)? as u64;
