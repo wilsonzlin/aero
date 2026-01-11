@@ -255,13 +255,37 @@ fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem
     }
 
     let usages = if item.is_range {
-        if item.usage_minimum > item.usage_maximum {
-            return Err(HidDescriptorSynthesisError::InvalidUsageRange {
-                min: item.usage_minimum,
-                max: item.usage_maximum,
-            });
+        // WebHID's `usages` is expected to contain the expanded list of usages covered by the
+        // range (inclusive). However, be robust:
+        // - If the list is missing, fall back to `usageMinimum/usageMaximum`.
+        // - If the list is huge, avoid cloning it; store the compact `[min, max]` representation.
+        const MAX_EXPANDED_USAGE_RANGE: usize = 4096;
+
+        if item.usages.is_empty() {
+            if item.usage_minimum > item.usage_maximum {
+                return Err(HidDescriptorSynthesisError::InvalidUsageRange {
+                    min: item.usage_minimum,
+                    max: item.usage_maximum,
+                });
+            }
+
+            let span = item
+                .usage_maximum
+                .checked_sub(item.usage_minimum)
+                .and_then(|d| d.checked_add(1))
+                .unwrap_or(u32::MAX);
+            if span as usize <= MAX_EXPANDED_USAGE_RANGE {
+                (item.usage_minimum..=item.usage_maximum).collect::<Vec<u32>>()
+            } else {
+                vec![item.usage_minimum, item.usage_maximum]
+            }
+        } else if item.usages.len() > MAX_EXPANDED_USAGE_RANGE {
+            let min = *item.usages.iter().min().unwrap();
+            let max = *item.usages.iter().max().unwrap();
+            vec![min, max]
+        } else {
+            item.usages.clone()
         }
-        vec![item.usage_minimum, item.usage_maximum]
     } else {
         item.usages.clone()
     };
@@ -381,6 +405,25 @@ mod tests {
         assert!(
             !desc.windows(3).any(|w| w == [0x82, 0x00, 0x01]),
             "did not expect Input Buffered Bytes to be encoded as a 2-byte payload (0x82 0x00 0x01): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn range_items_use_expanded_usages_list_for_min_max_emission() {
+        let mut item = make_item(0);
+        item.usage_page = 0x07;
+        item.usages = (0xE0u32..=0xE7u32).collect();
+        item.usage_minimum = 0xE0;
+        item.usage_maximum = 0xE7;
+        item.is_range = true;
+        item.report_size = 1;
+        item.report_count = 8;
+        let collections = make_collections(item);
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(4).any(|w| w == [0x19, 0xE0, 0x29, 0xE7]),
+            "expected Usage Minimum/Maximum (E0..E7) in descriptor: {desc:02x?}"
         );
     }
 }
