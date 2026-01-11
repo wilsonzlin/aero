@@ -185,6 +185,7 @@ export default defineConfig({
         debug: resolve(rootDir, "debug.html"),
         ipc_demo: resolve(rootDir, "demo/ipc_demo.html"),
         webusb_diagnostics: resolve(rootDir, "webusb_diagnostics.html"),
+        webgl2_fallback_demo: resolve(rootDir, "webgl2_fallback_demo.html"),
       },
     },
   },
