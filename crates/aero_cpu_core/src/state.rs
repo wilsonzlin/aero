@@ -87,6 +87,10 @@ pub const FLAG_OF: u64 = RFLAGS_OF;
 // ---- Control/Model-specific register bits ---------------------------------
 
 pub const CR0_PE: u64 = 1 << 0;
+pub const CR0_MP: u64 = 1 << 1;
+pub const CR0_EM: u64 = 1 << 2;
+pub const CR0_TS: u64 = 1 << 3;
+pub const CR0_NE: u64 = 1 << 5;
 pub const CR0_PG: u64 = 1 << 31;
 
 pub const CR4_PAE: u64 = 1 << 5;
@@ -685,6 +689,9 @@ pub struct CpuState {
     /// When disabled, physical addresses are masked to 20 bits (1MiB wraparound).
     /// This is only applied by real/v8086 mode linearization helpers.
     pub a20_enabled: bool,
+    /// x87 external interrupt indicator for `CR0.NE = 0` mode (IRQ13).
+    pub irq13_pending: bool,
+    pub _pad_irq13: [u8; 14],
 }
 
 impl Default for CpuState {
@@ -706,6 +713,8 @@ impl Default for CpuState {
             fpu: FpuState::default(),
             sse: SseState::default(),
             a20_enabled: true,
+            irq13_pending: false,
+            _pad_irq13: [0; 14],
         }
     }
 }

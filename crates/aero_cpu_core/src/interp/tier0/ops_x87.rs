@@ -1,7 +1,9 @@
 use crate::exception::Exception;
 use crate::interp::x87::{Fault as X87Fault, X87};
 use crate::mem::CpuBus;
-use crate::state::{CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
+use crate::state::{
+    CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF,
+};
 use aero_x86::{DecodedInst, Instruction, MemorySize, Mnemonic, OpKind, Register};
 
 use super::ops_data::calc_ea;
@@ -52,6 +54,7 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Fnstcw
             | Mnemonic::Fnstsw
             | Mnemonic::Fstsw
+            | Mnemonic::Wait
     )
 }
 
@@ -61,6 +64,13 @@ pub fn exec<B: CpuBus>(
     decoded: &DecodedInst,
     next_ip: u64,
 ) -> Result<ExecOutcome, Exception> {
+    let instr = &decoded.instr;
+    if instr.mnemonic() == Mnemonic::Wait {
+        return exec_wait(state);
+    }
+
+    check_x87_available(state)?;
+
     // The architectural x87 state is stored in `state.fpu` (FXSAVE-compatible
     // image). For convenience, the x87 interpreter operates on a transient
     // `X87` value and writes the result back after every instruction.
@@ -68,7 +78,6 @@ pub fn exec<B: CpuBus>(
     x87.load_from_fpu_state(&state.fpu);
 
     let res = (|| {
-        let instr = &decoded.instr;
         match instr.mnemonic() {
             Mnemonic::Finit | Mnemonic::Fninit => {
                 x87.fninit();
@@ -182,6 +191,36 @@ pub fn exec<B: CpuBus>(
 
     x87.store_to_fpu_state(&mut state.fpu);
     res
+}
+
+fn check_x87_available(state: &CpuState) -> Result<(), Exception> {
+    let cr0 = state.control.cr0;
+    if (cr0 & CR0_EM) != 0 {
+        return Err(Exception::InvalidOpcode);
+    }
+    if (cr0 & CR0_TS) != 0 {
+        return Err(Exception::DeviceNotAvailable);
+    }
+    Ok(())
+}
+
+fn exec_wait(state: &mut CpuState) -> Result<ExecOutcome, Exception> {
+    let cr0 = state.control.cr0;
+    if (cr0 & CR0_EM) != 0 {
+        return Err(Exception::InvalidOpcode);
+    }
+    if (cr0 & CR0_MP) != 0 && (cr0 & CR0_TS) != 0 {
+        return Err(Exception::DeviceNotAvailable);
+    }
+
+    if state.fpu.has_unmasked_exception() {
+        if (cr0 & CR0_NE) != 0 {
+            return Err(Exception::X87Fpu);
+        }
+        state.irq13_pending = true;
+    }
+
+    Ok(ExecOutcome::Continue)
 }
 
 fn map_x87_fault(_: X87Fault) -> Exception {
