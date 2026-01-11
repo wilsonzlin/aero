@@ -353,10 +353,10 @@ static VOID VioInputEventQProcessUsedBuffersLocked(_Inout_ PDEVICE_CONTEXT Ctx)
             continue;
         }
 
-        if (len < (UINT32)bufBytes) {
+        if (len != (UINT32)bufBytes) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                "eventq used buffer too small: len=%lu (need %Iu)\n",
+                "eventq used buffer length mismatch: len=%lu (expected %Iu)\n",
                 (ULONG)len,
                 bufBytes);
             VioInputCounterInc(&Ctx->Counters.VirtioEventDrops);
