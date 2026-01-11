@@ -985,6 +985,11 @@ void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
           }
         }
       }
+      __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
+        if (dealloc.DmaBufferPrivateDataSize == 0 && alloc.pDmaBufferPrivateData) {
+          dealloc.DmaBufferPrivateDataSize = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+        }
+      }
     }
 
     (void)CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDevice11(runtime_device_private), MakeRtDevice10(runtime_device_private), &dealloc);
