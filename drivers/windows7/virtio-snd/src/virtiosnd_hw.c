@@ -245,12 +245,20 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtIoSndResetDeviceBestEffort(Dx);
 
-    /* Best-effort cancel any in-flight protocol operations before teardown. */
-    if (Dx->Started) {
-        VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
+    /*
+     * Cancel and drain protocol operations before teardown so request DMA common
+     * buffers are freed while the DMA adapter is still valid.
+     *
+     * Note: StopHardware is also used as a best-effort cleanup routine on the
+     * first START_DEVICE before the control engine has been initialized. Guard
+     * against calling Control::Uninit on a zeroed (uninitialized) struct.
+     */
+    if (Dx->Control.DmaCtx != NULL) {
+        if (Dx->Started) {
+            VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
+        }
+        VirtioSndCtrlUninit(&Dx->Control);
     }
-
-    VirtioSndCtrlUninit(&Dx->Control);
 
     VirtioSndTxUninit(&Dx->Tx);
     (VOID)InterlockedExchange(&Dx->TxEngineInitialized, 0);
