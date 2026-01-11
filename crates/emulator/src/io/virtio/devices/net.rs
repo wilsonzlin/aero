@@ -171,6 +171,9 @@ impl VirtioNetDevice {
 
         while let Some(frame) = backend.poll_receive() {
             self.enqueue_rx_frame(frame);
+            if self.process_pending_rx(mem)? {
+                should_interrupt = true;
+            }
         }
 
         if self.process_pending_rx(mem)? {
@@ -1441,6 +1444,106 @@ mod tests {
         let mut payload = vec![0u8; expected.len()];
         mem.read_into(payload_addr, &mut payload).unwrap();
         assert_eq!(payload, expected);
+    }
+
+    #[test]
+    fn poll_delivers_available_buffers_before_pending_queue_overflows() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let header0_addr = 0x400;
+        let payload0_addr = 0x500;
+        let header2_addr = 0x600;
+        let payload2_addr = 0x700;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header0_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload0_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            Descriptor {
+                addr: header2_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 3,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            3,
+            Descriptor {
+                addr: payload2_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let mut backend = TestBackend::default();
+        for idx in 0..=MAX_PENDING_RX_FRAMES {
+            let mut frame = vec![0u8; MIN_FRAME_LEN];
+            frame[0] = (idx & 0xff) as u8;
+            frame[1] = ((idx >> 8) & 0xff) as u8;
+            backend.rx_frames.push_back(frame);
+        }
+
+        let irq = dev.poll(&mut mem, &mut backend).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+        assert!(backend.rx_frames.is_empty());
+
+        let mut payload0 = vec![0u8; MIN_FRAME_LEN];
+        mem.read_into(payload0_addr, &mut payload0).unwrap();
+        assert_eq!(payload0[0], 0);
+        assert_eq!(payload0[1], 0);
+
+        init_avail_multi(&mut mem, avail, 0, &[0, 2]);
+        let irq = dev.notify_rx(&mut mem).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        let mut payload1 = vec![0u8; MIN_FRAME_LEN];
+        mem.read_into(payload2_addr, &mut payload1).unwrap();
+        assert_eq!(payload1[0], 1);
+        assert_eq!(payload1[1], 0);
     }
 
     #[test]
