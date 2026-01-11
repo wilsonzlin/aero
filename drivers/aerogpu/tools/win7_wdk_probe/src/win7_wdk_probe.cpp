@@ -45,6 +45,8 @@ int main() {
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnCreateContextCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnDestroyContextCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnDestroySynchronizationObjectCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnAllocateCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnDeallocateCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnGetCommandBufferCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnRenderCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnPresentCb);
@@ -101,6 +103,43 @@ int main() {
   }
 #endif
 
+  // DMA buffer allocation/release structs (common Win7 D3D10/11 submission pattern).
+#if defined(_MSC_VER)
+  __if_exists(D3DDDICB_ALLOCATE) {
+    PRINT_SIZE(D3DDDICB_ALLOCATE);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, hContext);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, DmaBufferSize);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, CommandBufferSize);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, pDmaBuffer);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, pCommandBuffer);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, pAllocationList);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, AllocationListSize);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, pPatchLocationList);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, PatchLocationListSize);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, pDmaBufferPrivateData);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, DmaBufferPrivateDataSize);
+    PrintSeparator();
+  }
+  __if_not_exists(D3DDDICB_ALLOCATE) {
+    printf("%-48s <n/a>\n", "D3DDDICB_ALLOCATE");
+    PrintSeparator();
+  }
+
+  __if_exists(D3DDDICB_DEALLOCATE) {
+    PRINT_SIZE(D3DDDICB_DEALLOCATE);
+    PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pDmaBuffer);
+    PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pCommandBuffer);
+    PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pAllocationList);
+    PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pPatchLocationList);
+    PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pDmaBufferPrivateData);
+    PrintSeparator();
+  }
+  __if_not_exists(D3DDDICB_DEALLOCATE) {
+    printf("%-48s <n/a>\n", "D3DDDICB_DEALLOCATE");
+    PrintSeparator();
+  }
+#endif
+
   // Core submission/wait CB structs used by D3D10/D3D11 UMDs on WDDM 1.1.
   PRINT_SIZE(D3DDDICB_GETCOMMANDINFO);
   PRINT_OFF_OPT(D3DDDICB_GETCOMMANDINFO, hContext);
@@ -116,6 +155,8 @@ int main() {
 
   PRINT_SIZE(D3DDDICB_RENDER);
   PRINT_OFF_OPT(D3DDDICB_RENDER, hContext);
+  PRINT_OFF_OPT(D3DDDICB_RENDER, pDmaBuffer);
+  PRINT_OFF_OPT(D3DDDICB_RENDER, DmaBufferSize);
   PRINT_OFF_OPT(D3DDDICB_RENDER, pCommandBuffer);
   PRINT_OFF_OPT(D3DDDICB_RENDER, CommandLength);
   PRINT_OFF_OPT(D3DDDICB_RENDER, CommandBufferSize);
@@ -126,6 +167,7 @@ int main() {
   PRINT_OFF_OPT(D3DDDICB_RENDER, pDmaBufferPrivateData);
   PRINT_OFF_OPT(D3DDDICB_RENDER, DmaBufferPrivateDataSize);
 #if defined(_MSC_VER)
+  __if_exists(D3DDDICB_RENDER::SubmissionFenceId) { PRINT_OFF(D3DDDICB_RENDER, SubmissionFenceId); }
   __if_exists(D3DDDICB_RENDER::NewFenceValue) { PRINT_OFF(D3DDDICB_RENDER, NewFenceValue); }
   __if_exists(D3DDDICB_RENDER::NewCommandBufferSize) { PRINT_OFF(D3DDDICB_RENDER, NewCommandBufferSize); }
   __if_exists(D3DDDICB_RENDER::NewAllocationListSize) { PRINT_OFF(D3DDDICB_RENDER, NewAllocationListSize); }
@@ -135,6 +177,8 @@ int main() {
 
   PRINT_SIZE(D3DDDICB_PRESENT);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, hContext);
+  PRINT_OFF_OPT(D3DDDICB_PRESENT, pDmaBuffer);
+  PRINT_OFF_OPT(D3DDDICB_PRESENT, DmaBufferSize);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, pCommandBuffer);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, CommandLength);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, CommandBufferSize);
@@ -145,6 +189,7 @@ int main() {
   PRINT_OFF_OPT(D3DDDICB_PRESENT, pDmaBufferPrivateData);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, DmaBufferPrivateDataSize);
 #if defined(_MSC_VER)
+  __if_exists(D3DDDICB_PRESENT::SubmissionFenceId) { PRINT_OFF(D3DDDICB_PRESENT, SubmissionFenceId); }
   __if_exists(D3DDDICB_PRESENT::NewFenceValue) { PRINT_OFF(D3DDDICB_PRESENT, NewFenceValue); }
 #endif
   PrintSeparator();

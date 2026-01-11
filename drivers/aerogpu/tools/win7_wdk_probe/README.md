@@ -9,6 +9,9 @@ printing `sizeof`/`offsetof` for the key structs involved in Win7 (WDDM 1.1) D3D
 - device/context creation (kernel `hContext` + `hSyncObject` acquisition):
   - `D3DDDICB_CREATEDEVICE`
   - `D3DDDICB_CREATECONTEXT`
+- DMA buffer acquisition/release (submission backing store):
+  - `D3DDDICB_ALLOCATE`
+  - `D3DDDICB_DEALLOCATE`
 - DMA buffer acquisition: `D3DDDICB_GETCOMMANDINFO`
 - submission: `D3DDDICB_RENDER`, `D3DDDICB_PRESENT`
 - fence waits: `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`, `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT`
