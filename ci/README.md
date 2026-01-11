@@ -169,9 +169,10 @@ refuses to include any driver package that does not have a corresponding `driver
 For WHQL/production-signed drivers, pass `-SigningPolicy production` (or `none`) to build Guest Tools media
 without injecting (or requiring) any custom certificate files.
 
-Additionally, `aero_packager` generates `guest-tools/config/devices.cmd` from the canonical
-device contract (`docs/windows-device-contract.json`) during packaging. This keeps
-`guest-tools/setup.cmd` boot-critical pre-seeding aligned with the contract.
+Additionally, `aero_packager` generates `guest-tools/config/devices.cmd` from a Windows device
+contract JSON during packaging (default: `docs/windows-device-contract.json`). Use
+`ci/package-guest-tools.ps1 -WindowsDeviceContractPath` to override the contract when packaging
+Guest Tools from a different driver stack (for example, upstream virtio-win service names).
 
 ## `ci/make-fat-image.ps1`
 

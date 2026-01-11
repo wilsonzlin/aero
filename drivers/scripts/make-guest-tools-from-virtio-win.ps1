@@ -370,11 +370,17 @@ if (-not (Test-Path -LiteralPath $wrapperScript -PathType Leaf)) {
   throw "Expected Guest Tools packaging wrapper script not found: $wrapperScript"
 }
 
+$deviceContractPath = Join-Path (Join-Path $repoRoot "docs") "windows-device-contract-virtio-win.json"
+if (-not (Test-Path -LiteralPath $deviceContractPath -PathType Leaf)) {
+  throw "Expected Windows device contract not found: $deviceContractPath"
+}
+
 Ensure-Directory -Path $OutDir
 
 Write-Host "Packaging Guest Tools via CI wrapper..."
 Write-Host "  spec : $SpecPath"
 Write-Host "  out  : $OutDir"
+Write-Host "  contract : $deviceContractPath"
 
 & $wrapperScript `
   -InputRoot $packagerDriversRoot `
@@ -383,6 +389,7 @@ Write-Host "  out  : $OutDir"
   -CertPath $CertPath `
   -WindowsDeviceContractPath $virtioWinContractPath `
   -SpecPath $SpecPath `
+  -WindowsDeviceContractPath $deviceContractPath `
   -OutDir $OutDir `
   -Version $Version `
   -BuildId $BuildId

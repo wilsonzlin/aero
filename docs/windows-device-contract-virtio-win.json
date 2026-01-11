@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "contract_name": "aero-windows-pci-device-contract-virtio-win",
+  "contract_version": "1.0.2",
+  "devices": [
+    {
+      "device": "virtio-blk",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1042",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1042&SUBSYS_00021AF4",
+        "PCI\\VEN_1AF4&DEV_1042&REV_01",
+        "PCI\\VEN_1AF4&DEV_1042"
+      ],
+      "driver_service_name": "viostor",
+      "inf_name": "viostor.inf",
+      "virtio_device_type": 2
+    },
+    {
+      "device": "virtio-net",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1041",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
+        "PCI\\VEN_1AF4&DEV_1041&REV_01",
+        "PCI\\VEN_1AF4&DEV_1041"
+      ],
+      "driver_service_name": "netkvm",
+      "inf_name": "netkvm.inf",
+      "virtio_device_type": 1
+    },
+    {
+      "device": "virtio-snd",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1059",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4",
+        "PCI\\VEN_1AF4&DEV_1059&REV_01",
+        "PCI\\VEN_1AF4&DEV_1059"
+      ],
+      "driver_service_name": "viosnd",
+      "inf_name": "viosnd.inf",
+      "virtio_device_type": 25
+    },
+    {
+      "device": "virtio-input",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1052",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4",
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4",
+        "PCI\\VEN_1AF4&DEV_1052&REV_01",
+        "PCI\\VEN_1AF4&DEV_1052"
+      ],
+      "driver_service_name": "vioinput",
+      "inf_name": "vioinput.inf",
+      "virtio_device_type": 18
+    },
+    {
+      "device": "aero-gpu",
+      "pci_vendor_id": "0xA3A0",
+      "pci_device_id": "0x0001",
+      "hardware_id_patterns": [
+        "PCI\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
+        "PCI\\VEN_A3A0&DEV_0001"
+      ],
+      "driver_service_name": "aerogpu",
+      "inf_name": "aerogpu.inf"
+    }
+  ]
+}
