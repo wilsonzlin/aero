@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, mkdir, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -44,17 +44,60 @@ async function withBuildLock(fn) {
   const targetDir = await getCargoTargetDir();
   await mkdir(targetDir, { recursive: true });
   const lockDir = path.join(targetDir, ".aero-l2-proxy-build.lock");
+  const lockOwnerPath = path.join(lockDir, "owner.json");
   const start = Date.now();
 
   while (true) {
     try {
       await mkdir(lockDir);
+      try {
+        await writeFile(lockOwnerPath, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), "utf8");
+      } catch (err) {
+        await rm(lockDir, { recursive: true, force: true });
+        throw err;
+      }
       break;
     } catch (err) {
       if (!err || typeof err !== "object" || err.code !== "EEXIST") throw err;
       if (Date.now() - start > BUILD_LOCK_TIMEOUT_MS) {
         throw new Error(`timeout waiting for aero-l2-proxy build lock (${lockDir})`);
       }
+
+      // If the worker holding the lock died (e.g. test runner SIGKILL), clean up the lock dir so
+      // other test processes can proceed.
+      let cleaned = false;
+      try {
+        const raw = await readFile(lockOwnerPath, "utf8");
+        const parsed = JSON.parse(raw);
+        const pid = Number(parsed?.pid ?? 0);
+        if (Number.isFinite(pid) && pid > 0) {
+          let alive = true;
+          try {
+            process.kill(pid, 0);
+          } catch (probeErr) {
+            // `process.kill(pid, 0)` throws `ESRCH` when the process doesn't exist.
+            alive = !(probeErr && typeof probeErr === "object" && probeErr.code === "ESRCH");
+          }
+          if (!alive) {
+            await rm(lockDir, { recursive: true, force: true });
+            cleaned = true;
+          }
+        }
+      } catch {
+        // If we can't read/parse the owner file, fall back to an age-based cleanup so a corrupt lock
+        // doesn't wedge tests forever.
+        try {
+          const info = await stat(lockDir);
+          if (Date.now() - info.mtimeMs > BUILD_LOCK_TIMEOUT_MS) {
+            await rm(lockDir, { recursive: true, force: true });
+            cleaned = true;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (cleaned) continue;
       await sleep(BUILD_LOCK_RETRY_MS);
     }
   }
