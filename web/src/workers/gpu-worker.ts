@@ -188,6 +188,7 @@ const aerogpuContexts = new Map<number, AerogpuCpuExecutorState>();
 
 type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresentedFrame"]>;
 let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
+let aerogpuPresentCount = 0n;
 
 const getAerogpuContextState = (contextId: number): AerogpuCpuExecutorState => {
   const key = contextId >>> 0;
@@ -204,6 +205,7 @@ const resetAerogpuContexts = (): void => {
   }
   aerogpuContexts.clear();
   aerogpuLastPresentedFrame = null;
+  aerogpuPresentCount = 0n;
 };
 
 type AeroGpuWasmApi = typeof import("../wasm/aero-gpu.ts");
@@ -1347,29 +1349,29 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   presenter.present(tex.data, tex.width * 4);
 };
 
-const cmdStreamHasVsyncPresent = (cmdStream: ArrayBuffer): boolean => {
+type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; presentCount: bigint; requiresD3d9: boolean };
+
+const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalysis => {
   try {
     const iter = new AerogpuCmdStreamIter(cmdStream);
     const dv = iter.view;
+    let vsyncPaced = false;
+    let presentCount = 0n;
+    let requiresD3d9 = false;
+
     for (const packet of iter) {
       const opcode = packet.hdr.opcode;
-      if (opcode !== AerogpuCmdOpcode.Present && opcode !== AerogpuCmdOpcode.PresentEx) continue;
-      // flags is always after the scanout_id field (hdr + scanout_id => offset + 12).
-      if (packet.offsetBytes + 16 > packet.endBytes) continue;
-      const flags = dv.getUint32(packet.offsetBytes + 12, true);
-      if ((flags & AEROGPU_PRESENT_FLAG_VSYNC) !== 0) return true;
-    }
-  } catch {
-    // Malformed streams should not gate completion on tick (avoid deadlocks).
-  }
-  return false;
-};
+      if (opcode === AerogpuCmdOpcode.Present || opcode === AerogpuCmdOpcode.PresentEx) {
+        presentCount += 1n;
+        // flags is always after the scanout_id field (hdr + scanout_id => offset + 12).
+        if (packet.offsetBytes + 16 <= packet.endBytes) {
+          const flags = dv.getUint32(packet.offsetBytes + 12, true);
+          if ((flags & AEROGPU_PRESENT_FLAG_VSYNC) !== 0) vsyncPaced = true;
+        }
+      }
 
-const cmdStreamRequiresD3d9Executor = (cmdStream: ArrayBuffer): boolean => {
-  try {
-    const iter = new AerogpuCmdStreamIter(cmdStream);
-    for (const packet of iter) {
-      switch (packet.hdr.opcode) {
+      if (requiresD3d9) continue;
+      switch (opcode) {
         // Opcodes handled by the lightweight TypeScript CPU executor.
         case AerogpuCmdOpcode.CreateBuffer:
         case AerogpuCmdOpcode.CreateTexture2d:
@@ -1384,21 +1386,26 @@ const cmdStreamRequiresD3d9Executor = (cmdStream: ArrayBuffer): boolean => {
         case AerogpuCmdOpcode.Flush:
           break;
         default:
-          return true;
+          requiresD3d9 = true;
+          break;
       }
     }
+
+    return { vsyncPaced, presentCount, requiresD3d9 };
   } catch {
-    // Malformed streams will be handled by the executor; don't force the wasm path here.
+    // Malformed streams should not gate completion on tick (avoid deadlocks) and should not
+    // force a wasm executor path selection.
+    return { vsyncPaced: false, presentCount: 0n, requiresD3d9: false };
   }
-  return false;
 };
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
-  const vsyncPaced = cmdStreamHasVsyncPresent(req.cmdStream);
+  const cmdAnalysis = analyzeAerogpuCmdStream(req.cmdStream);
+  const vsyncPaced = cmdAnalysis.vsyncPaced;
   const rawContextId = (req as unknown as { contextId?: unknown }).contextId;
   const contextId = typeof rawContextId === "number" && Number.isFinite(rawContextId) ? rawContextId >>> 0 : 0;
   const aerogpuState = getAerogpuContextState(contextId);
-  const requiresD3d9 = cmdStreamRequiresD3d9Executor(req.cmdStream);
+  const requiresD3d9 = cmdAnalysis.requiresD3d9;
 
   let presentCount: bigint | undefined = undefined;
   let submitOk = false;
@@ -1413,7 +1420,8 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         presentTexture: presentAerogpuTexture,
       });
       if (presentDelta > 0n) {
-        presentCount = aerogpuState.presentCount;
+        aerogpuPresentCount += presentDelta;
+        presentCount = aerogpuPresentCount;
         if (aerogpuState.lastPresentedFrame) {
           aerogpuLastPresentedFrame = aerogpuState.lastPresentedFrame;
         }
@@ -1458,10 +1466,11 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         const cmdU8 = new Uint8Array(req.cmdStream);
         const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
 
-        const submit = wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
-        presentCount = submit.presentCount;
+        void wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
 
-        if (presentCount !== undefined) {
+        if (cmdAnalysis.presentCount > 0n) {
+          aerogpuPresentCount += cmdAnalysis.presentCount;
+          presentCount = aerogpuPresentCount;
           const shot = await wasm.request_screenshot_info();
           const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
           aerogpuState.lastPresentedFrame = frame;
