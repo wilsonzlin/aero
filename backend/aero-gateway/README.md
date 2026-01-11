@@ -11,7 +11,7 @@ This gateway can run either:
 
 ## Requirements
 
-- Node.js 20+
+- Node.js (use the repo-pinned version from [`.nvmrc`](../../.nvmrc))
 
 ## Install
 
