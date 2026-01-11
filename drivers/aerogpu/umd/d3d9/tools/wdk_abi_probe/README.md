@@ -102,11 +102,11 @@ If you want ABI drift to fail the build immediately, there is an optional header
 
 In your **WDK build only**:
 
-1. Define `AEROGPU_D3D9_USE_WDK_DDI`.
+1. Define `AEROGPU_D3D9_USE_WDK_DDI=1`.
 2. Include the header in one `.cpp` file.
 3. Define one or more `AEROGPU_D3D9_WDK_ABI_EXPECT_*` macros (using values captured from this probe).
 
-The header is inert unless `AEROGPU_D3D9_USE_WDK_DDI` is defined, so it will not affect repo-local builds that do not have the WDK installed.
+The header is inert unless `AEROGPU_D3D9_USE_WDK_DDI` is defined and truthy, so it will not affect repo-local builds that do not have the WDK installed.
 
 ## How to regenerate `aerogpu_d3d9_wdk_abi_expected.h` (checked-in expectations)
 

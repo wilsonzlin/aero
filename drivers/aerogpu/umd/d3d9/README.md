@@ -110,7 +110,7 @@ To make ABI drift obvious *before* you debug a Win7 loader crash, the repo inclu
 - A standalone **WDK ABI probe** tool:
   - `tools/wdk_abi_probe/`
 - Optional **compile-time ABI asserts** wired into WDK builds:
-  - `src/aerogpu_d3d9_wdk_abi_asserts.h` (included automatically when `AEROGPU_D3D9_USE_WDK_DDI` is defined)
+  - `src/aerogpu_d3d9_wdk_abi_asserts.h` (included automatically; inert unless `AEROGPU_D3D9_USE_WDK_DDI=1`)
 
 ### Step-by-step
 
