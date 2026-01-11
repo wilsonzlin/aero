@@ -38,6 +38,20 @@ Artifacts produced by the workflow:
 - `win7-drivers-signed-packages` (from `out/packages/**` + `out/certs/aero-test.cer`; raw INF/CAT staging)
 - `aero-guest-tools` (Guest Tools ISO/zip/manifest built from the signed packages)
 
+## CI packaging manifest (`ci-package.json`)
+
+Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-package.json`:
+
+- `infFiles` selects which INF(s) to stage. CI currently stages `packaging/win7/aerogpu.inf`
+  (the D3D9 UMD package). If you want to also package `packaging/win7/aerogpu_dx11.inf`,
+  update `infFiles` accordingly.
+- `wow64Files` lists x86 UMD DLLs that must be present in the x64 package during `Inf2Cat`.
+  For AeroGPU this includes `aerogpu_d3d9.dll` so it can be hashed into the x64 catalog.
+  This means you must build the Win32 outputs even if you only care about the x64 package
+  (the CI flow does this by default).
+
+Details: `docs/16-driver-packaging-and-signing.md`.
+
 ## Key docs / entrypoints
 
 * Build + toolchain setup: `drivers/aerogpu/build/README.md`

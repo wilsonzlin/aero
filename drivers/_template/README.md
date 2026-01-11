@@ -18,7 +18,10 @@ The manifest can declare:
 - WOW64 payload DLL file names to copy from x86 build outputs into the x64 staged package (`wow64Files`)
   - entries must be file names only (no path separators)
 - extra non-binary files to copy into the staged package (`additionalFiles`)
-- whether the driver needs a WDF coinstaller (`wdfCoInstaller`)
+- whether the driver needs a WDF coinstaller (`wdfCoInstaller`, explicit opt-in)
+
+See `ci-package.README.md` in this directory for a short field reference, and the canonical
+doc at `docs/16-driver-packaging-and-signing.md` for details.
 
 ## Files
 
