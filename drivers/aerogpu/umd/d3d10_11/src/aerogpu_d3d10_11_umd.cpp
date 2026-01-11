@@ -4204,7 +4204,19 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   resources.reserve(numResources);
   for (UINT i = 0; i < numResources; ++i) {
     auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pResources[i]) : nullptr;
-    if (!res || res->mapped) {
+    if (!res) {
+      return;
+    }
+    if (std::find(resources.begin(), resources.end(), res) != resources.end()) {
+      // Reject duplicates: RotateResourceIdentities expects distinct resources.
+      return;
+    }
+    if (res->mapped) {
+      return;
+    }
+    // Shared resources have stable identities (`share_token`); rotating them is
+    // likely to break EXPORT/IMPORT semantics across processes.
+    if (res->is_shared || res->is_shared_alias || res->share_token != 0) {
       return;
     }
     resources.push_back(res);
@@ -4223,17 +4235,85 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     }
   }
 
-  const aerogpu_handle_t saved_handle = resources[0]->handle;
-  auto saved_wddm = std::move(resources[0]->wddm);
-  auto saved_storage = std::move(resources[0]->storage);
+  struct ResourceIdentity {
+    aerogpu_handle_t handle = 0;
+    uint32_t backing_alloc_id = 0;
+    uint64_t share_token = 0;
+    bool is_shared = false;
+    bool is_shared_alias = false;
+    AeroGpuResource::WddmIdentity wddm;
+    uint64_t wddm_allocation = 0;
+    void* mapped_wddm_ptr = nullptr;
+    uint32_t mapped_wddm_pitch = 0;
+    uint32_t mapped_wddm_slice_pitch = 0;
+    std::vector<uint8_t> storage;
+    bool mapped = false;
+    bool mapped_write = false;
+    uint32_t mapped_subresource = 0;
+    uint32_t mapped_map_type = 0;
+    uint64_t mapped_offset_bytes = 0;
+    uint64_t mapped_size_bytes = 0;
+    D3DKMT_HANDLE hkm_resource = 0;
+    D3DKMT_HANDLE hkm_allocation = 0;
+  };
+
+  auto take_identity = [](AeroGpuResource* res) -> ResourceIdentity {
+    ResourceIdentity id{};
+    if (!res) {
+      return id;
+    }
+    id.handle = res->handle;
+    id.backing_alloc_id = res->backing_alloc_id;
+    id.share_token = res->share_token;
+    id.is_shared = res->is_shared;
+    id.is_shared_alias = res->is_shared_alias;
+    id.wddm = std::move(res->wddm);
+    id.wddm_allocation = res->wddm_allocation;
+    id.mapped_wddm_ptr = res->mapped_wddm_ptr;
+    id.mapped_wddm_pitch = res->mapped_wddm_pitch;
+    id.mapped_wddm_slice_pitch = res->mapped_wddm_slice_pitch;
+    id.storage = std::move(res->storage);
+    id.mapped = res->mapped;
+    id.mapped_write = res->mapped_write;
+    id.mapped_subresource = res->mapped_subresource;
+    id.mapped_map_type = res->mapped_map_type;
+    id.mapped_offset_bytes = res->mapped_offset_bytes;
+    id.mapped_size_bytes = res->mapped_size_bytes;
+    id.hkm_resource = res->hkm_resource;
+    id.hkm_allocation = res->hkm_allocation;
+    return id;
+  };
+
+  auto put_identity = [](AeroGpuResource* res, ResourceIdentity&& id) {
+    if (!res) {
+      return;
+    }
+    res->handle = id.handle;
+    res->backing_alloc_id = id.backing_alloc_id;
+    res->share_token = id.share_token;
+    res->is_shared = id.is_shared;
+    res->is_shared_alias = id.is_shared_alias;
+    res->wddm = std::move(id.wddm);
+    res->wddm_allocation = id.wddm_allocation;
+    res->mapped_wddm_ptr = id.mapped_wddm_ptr;
+    res->mapped_wddm_pitch = id.mapped_wddm_pitch;
+    res->mapped_wddm_slice_pitch = id.mapped_wddm_slice_pitch;
+    res->storage = std::move(id.storage);
+    res->mapped = id.mapped;
+    res->mapped_write = id.mapped_write;
+    res->mapped_subresource = id.mapped_subresource;
+    res->mapped_map_type = id.mapped_map_type;
+    res->mapped_offset_bytes = id.mapped_offset_bytes;
+    res->mapped_size_bytes = id.mapped_size_bytes;
+    res->hkm_resource = id.hkm_resource;
+    res->hkm_allocation = id.hkm_allocation;
+  };
+
+  ResourceIdentity saved = take_identity(resources[0]);
   for (UINT i = 0; i + 1 < numResources; ++i) {
-    resources[i]->handle = resources[i + 1]->handle;
-    resources[i]->wddm = std::move(resources[i + 1]->wddm);
-    resources[i]->storage = std::move(resources[i + 1]->storage);
+    put_identity(resources[i], take_identity(resources[i + 1]));
   }
-  resources[numResources - 1]->handle = saved_handle;
-  resources[numResources - 1]->wddm = std::move(saved_wddm);
-  resources[numResources - 1]->storage = std::move(saved_storage);
+  put_identity(resources[numResources - 1], std::move(saved));
 
   bool needs_rebind = false;
   for (AeroGpuResource* r : resources) {
@@ -4253,12 +4333,31 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   }
 
   if (needs_rebind) {
+    aerogpu_handle_t new_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
     for (uint32_t i = 0; i < ctx->current_rtv_count; ++i) {
-      ctx->current_rtvs[i] = ctx->current_rtv_resources[i] ? ctx->current_rtv_resources[i]->handle : 0;
+      new_rtvs[i] = ctx->current_rtv_resources[i] ? ctx->current_rtv_resources[i]->handle : 0;
     }
-    ctx->current_dsv = ctx->current_dsv_resource ? ctx->current_dsv_resource->handle : 0;
+    const aerogpu_handle_t new_dsv = ctx->current_dsv_resource ? ctx->current_dsv_resource->handle : 0;
 
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!cmd) {
+      // Undo the rotation (rotate right by one).
+      ResourceIdentity undo_saved = take_identity(resources[numResources - 1]);
+      for (UINT i = numResources - 1; i > 0; --i) {
+        put_identity(resources[i], take_identity(resources[i - 1]));
+      }
+      put_identity(resources[0], std::move(undo_saved));
+      SetError(ctx->device, E_OUTOFMEMORY);
+      return;
+    }
+
+    // Update cached handles after the command buffer append succeeds so the
+    // cached state stays consistent even if the append fails (e.g. small DMA
+    // buffer).
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      ctx->current_rtvs[i] = new_rtvs[i];
+    }
+    ctx->current_dsv = new_dsv;
     cmd->color_count = ctx->current_rtv_count;
     cmd->depth_stencil = ctx->current_dsv;
     for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
