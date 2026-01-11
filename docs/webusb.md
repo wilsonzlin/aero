@@ -61,6 +61,11 @@ Chromium maintains a list of **protected USB interface classes**. Interfaces in 
 
 > Note: Chromium’s protected list is maintained in Chromium source and may evolve. The table above captures the classes that matter most for Aero’s “USB passthrough” planning.
 
+Implementation note: Aero mirrors a best-effort version of this list in code (for diagnostics / UI):
+
+- `web/src/platform/webusb_protection.ts`
+- `web/src/platform/webusb.ts`
+
 ### What “protected” means in practice
 
 - **Devices with only protected interfaces won’t appear** in the `navigator.usb.requestDevice()` chooser at all.
