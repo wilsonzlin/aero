@@ -1658,6 +1658,36 @@ mod tests {
         assert!(parsed.collections[0].input_reports[0].items[0].is_buffered_bytes);
     }
 
+    #[test]
+    fn parse_input_buffered_bytes_ignores_bit8_in_two_byte_payloads() {
+        // For Input main items, Buffered Bytes is bit7; bit8 and above are reserved.
+        let desc_bit7 = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xA1, 0x01, // Collection (Application)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x82, 0x80, 0x00, // Input (2-byte payload, bit7 set)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc_bit7).unwrap();
+        assert!(parsed.collections[0].input_reports[0].items[0].is_buffered_bytes);
+
+        let desc_bit8 = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xA1, 0x01, // Collection (Application)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x82, 0x00, 0x01, // Input (2-byte payload, reserved bit8 set)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc_bit8).unwrap();
+        assert!(!parsed.collections[0].input_reports[0].items[0].is_buffered_bytes);
+    }
+
     fn simple_item(report_size: u32, report_count: u32) -> HidReportItem {
         HidReportItem {
             is_array: false,
