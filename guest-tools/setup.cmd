@@ -192,9 +192,10 @@ if not exist "%INSTALL_ROOT%" (
 exit /b 0
 
 :log
+setlocal DisableDelayedExpansion
 echo(%*
 >>"%LOG%" echo(%*
-exit /b 0
+endlocal & exit /b 0
 
 :require_admin_stdout
 "%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
