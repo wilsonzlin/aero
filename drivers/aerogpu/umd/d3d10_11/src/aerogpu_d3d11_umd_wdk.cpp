@@ -6542,6 +6542,9 @@ static HRESULT MapLocked11(Device* dev,
       (do_not_wait && (lock_hr == kHrPending || lock_hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
                        lock_hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || lock_hr == static_cast<HRESULT>(0x10000102L) ||
                        lock_hr == kHrNtStatusGraphicsGpuBusy))) {
+    if (allow_storage_map && !want_read) {
+      return map_storage();
+    }
     return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(lock_hr)) {

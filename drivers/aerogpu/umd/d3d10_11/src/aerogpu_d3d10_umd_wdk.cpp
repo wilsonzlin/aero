@@ -2338,6 +2338,9 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {
+    if (allow_storage_map && !want_read) {
+      return map_storage();
+    }
     return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(hr)) {

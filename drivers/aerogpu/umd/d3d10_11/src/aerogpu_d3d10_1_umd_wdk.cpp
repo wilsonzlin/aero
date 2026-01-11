@@ -2793,6 +2793,9 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {
+    if (allow_storage_map && !want_read) {
+      return map_storage();
+    }
     return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(hr)) {
@@ -3057,6 +3060,9 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
 
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
   if (hr == kDxgiErrorWasStillDrawing) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return hr;
   }
   if (FAILED(hr)) {
