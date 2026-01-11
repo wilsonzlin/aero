@@ -2873,8 +2873,13 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   }) as HTMLButtonElement;
   runConfigFullButton.hidden = true;
 
-  function formatHexBytes(bytes: Uint8Array): string {
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
+  function formatHexBytes(bytes: Uint8Array, maxBytes = 256): string {
+    const limit = Math.max(0, maxBytes | 0);
+    const head = bytes.subarray(0, Math.min(bytes.byteLength, limit));
+    const hex = Array.from(head, (b) => b.toString(16).padStart(2, "0")).join(" ");
+    if (bytes.byteLength <= limit) return hex;
+    const remaining = bytes.byteLength - limit;
+    return `${hex} … (+${remaining} bytes)`;
   }
 
   const refreshUi = (): void => {
