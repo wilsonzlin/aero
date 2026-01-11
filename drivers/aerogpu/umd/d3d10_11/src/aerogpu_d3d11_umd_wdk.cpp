@@ -2011,13 +2011,19 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       constexpr size_t kPtrOffset = offsetof(FeatureLevelsCapsPtr, pFeatureLevels);
 
       // On 32-bit builds the pointer field overlaps the first inline element
-      // (both start at offset 4). Prefer the pointer layout in that case so we
-      // never return a bogus pointer that could crash the runtime.
-      if (size >= sizeof(FeatureLevelsCapsPtr) && kPtrOffset == kInlineLevelsOffset) {
-        auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
-        out_ptr->NumFeatureLevels = 1;
-        out_ptr->pFeatureLevels = kLevels;
-        return S_OK;
+      // (both start at offset 4), so we cannot populate both layouts. Use the
+      // provided DataSize as a heuristic:
+      //   - If the runtime asks for exactly the pointer-struct size, assume it
+      //     expects the {count, pointer} layout.
+      //   - Otherwise, assume it allocated room for an inline list.
+      if (kPtrOffset == kInlineLevelsOffset) {
+        if (size == sizeof(FeatureLevelsCapsPtr)) {
+          auto* out_ptr = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
+          out_ptr->NumFeatureLevels = 1;
+          out_ptr->pFeatureLevels = kLevels;
+          return S_OK;
+        }
+        // Fall through to the inline-list path below.
       }
 
       if (size >= sizeof(UINT) + sizeof(D3D_FEATURE_LEVEL)) {

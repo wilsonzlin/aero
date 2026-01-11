@@ -21,6 +21,22 @@ Build the UMD with:
 
 * `AEROGPU_D3D10_TRACE=1`
 
+For **caps-only bring-up** (discovering which `GetCaps` query IDs Win7 requests),
+you can also build with:
+
+* `AEROGPU_D3D10_11_CAPS_LOG=1`
+
+`AEROGPU_D3D10_11_CAPS_LOG` is a low-noise trace that prints the raw caps query
+`Type` values (and `DataSize`) via `OutputDebugStringA` across:
+
+* D3D10 (`d3d10umddi.h`)
+* D3D10.1 (`d3d10_1umddi.h`)
+* D3D11 (`d3d11umddi.h`)
+
+It is **compile-time only** and intentionally bypasses the runtime logging gate
+used by `AEROGPU_D3D10_11_LOG`, since bring-up often happens on retail builds
+where the environment-controlled log may be disabled.
+
 If you are building the real Win7 driver against WDK headers, also build with:
 
 * `/p:AeroGpuUseWdkHeaders=1` (defines `AEROGPU_UMD_USE_WDK_HEADERS=1` in the D3D10/11 UMD project)
