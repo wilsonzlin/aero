@@ -187,10 +187,6 @@ impl UsbDeviceModel for DummyInterruptOutDevice {
         ControlResponse::Stall
     }
 
-    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
-        None
-    }
-
     fn handle_interrupt_out(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
         self.received.borrow_mut().push((ep_addr, data.to_vec()));
         UsbOutResult::Ack
@@ -217,8 +213,16 @@ impl UsbDeviceModel for TestInterruptInDevice {
         ControlResponse::Stall
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        (ep == self.ep).then(|| self.data.clone())
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        if ep_addr != self.ep {
+            return UsbInResult::Nak;
+        }
+
+        let mut data = self.data.clone();
+        if data.len() > max_len {
+            data.truncate(max_len);
+        }
+        UsbInResult::Data(data)
     }
 }
 
@@ -261,10 +265,6 @@ impl UsbDeviceModel for DynamicDescriptorDevice {
             },
             _ => ControlResponse::Stall,
         }
-    }
-
-    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
-        None
     }
 }
 

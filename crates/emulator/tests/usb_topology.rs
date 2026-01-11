@@ -107,10 +107,6 @@ impl UsbDeviceModel for TestHub {
         ControlResponse::Ack
     }
 
-    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
-        None
-    }
-
     fn as_hub(&self) -> Option<&dyn UsbHub> {
         Some(self)
     }
@@ -129,10 +125,6 @@ impl UsbDeviceModel for TestLeaf {
         _data_stage: Option<&[u8]>,
     ) -> ControlResponse {
         ControlResponse::Ack
-    }
-
-    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
-        None
     }
 }
 

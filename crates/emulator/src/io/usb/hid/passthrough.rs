@@ -143,13 +143,6 @@ impl UsbDeviceModel for UsbHidPassthroughHandle {
             .handle_control_request(setup, data_stage)
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        match self.inner.borrow_mut().handle_interrupt_in(ep) {
-            UsbInResult::Data(data) => Some(data),
-            UsbInResult::Nak | UsbInResult::Stall => None,
-        }
-    }
-
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.inner.borrow_mut().handle_interrupt_in(ep_addr)
     }
@@ -698,16 +691,6 @@ impl UsbDeviceModel for UsbHidPassthrough {
             Some(data) => UsbInResult::Data(data),
             None => UsbInResult::Nak,
         }
-    }
-
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if ep != INTERRUPT_IN_EP {
-            return None;
-        }
-        if self.configuration == 0 || self.interrupt_in_halted {
-            return None;
-        }
-        self.pending_input_reports.pop_front()
     }
 
     fn handle_interrupt_out(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {

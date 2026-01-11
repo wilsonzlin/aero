@@ -12,10 +12,6 @@ impl UsbDeviceModel for TestUsbDevice {
     ) -> ControlResponse {
         ControlResponse::Stall
     }
-
-    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
-        None
-    }
 }
 
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {

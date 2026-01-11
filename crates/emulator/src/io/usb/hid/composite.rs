@@ -467,13 +467,6 @@ impl UsbDeviceModel for UsbCompositeHidInputHandle {
             .handle_control_request(setup, data_stage)
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        match self.0.borrow_mut().handle_interrupt_in(ep) {
-            UsbInResult::Data(data) => Some(data),
-            UsbInResult::Nak | UsbInResult::Stall => None,
-        }
-    }
-
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
@@ -1004,33 +997,6 @@ impl UsbDeviceModel for UsbCompositeHidInput {
         }
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if self.configuration == 0 {
-            return None;
-        }
-
-        match ep {
-            KEYBOARD_INTERRUPT_IN_EP => {
-                if self.keyboard_interrupt_in_halted {
-                    return None;
-                }
-                self.keyboard.poll_interrupt_in()
-            }
-            MOUSE_INTERRUPT_IN_EP => {
-                if self.mouse_interrupt_in_halted {
-                    return None;
-                }
-                self.mouse.poll_interrupt_in()
-            }
-            GAMEPAD_INTERRUPT_IN_EP => {
-                if self.gamepad_interrupt_in_halted {
-                    return None;
-                }
-                self.gamepad.poll_interrupt_in()
-            }
-            _ => None,
-        }
-    }
 }
 
 fn modifier_bit(usage: u8) -> Option<u8> {

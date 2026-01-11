@@ -761,22 +761,6 @@ impl UsbDeviceModel for UsbHubDevice {
         }
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if ep != HUB_INTERRUPT_IN_EP || self.configuration == 0 || self.interrupt_ep_halted {
-            return None;
-        }
-
-        let mut bitmap = vec![0u8; self.interrupt_bitmap_len];
-        for (idx, port) in self.ports.iter().enumerate() {
-            if !port.has_change() {
-                continue;
-            }
-            let bit = idx + 1;
-            bitmap[bit / 8] |= 1u8 << (bit % 8);
-        }
-        bitmap.iter().any(|&b| b != 0).then_some(bitmap)
-    }
-
     fn as_hub(&self) -> Option<&dyn UsbHub> {
         Some(self)
     }

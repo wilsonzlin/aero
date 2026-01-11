@@ -134,13 +134,6 @@ impl UsbDeviceModel for UsbHidGamepadHandle {
             .handle_control_request(setup, data_stage)
     }
 
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        match self.0.borrow_mut().handle_interrupt_in(ep) {
-            UsbInResult::Data(data) => Some(data),
-            UsbInResult::Nak | UsbInResult::Stall => None,
-        }
-    }
-
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
@@ -579,16 +572,6 @@ impl UsbDeviceModel for UsbHidGamepad {
             Some(r) => UsbInResult::Data(r.to_vec()),
             None => UsbInResult::Nak,
         }
-    }
-
-    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if ep != INTERRUPT_IN_EP {
-            return None;
-        }
-        if self.configuration == 0 || self.interrupt_in_halted {
-            return None;
-        }
-        self.pending_reports.pop_front().map(|r| r.to_vec())
     }
 }
 
