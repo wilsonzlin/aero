@@ -41,10 +41,34 @@ export type DemoVmWorkerSerialStatsResult = { steps: number; serialBytes: number
 
 export function isDemoVmWorkerMessage(value: unknown): value is DemoVmWorkerMessage {
   if (!value || typeof value !== "object") return false;
-  const type = (value as { type?: unknown }).type;
-  return (
-    type === "rpcResult" ||
-    type === "status" ||
-    type === "error"
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const msg = value as any;
+  switch (msg.type) {
+    case "rpcResult": {
+      if (typeof msg.id !== "number" || typeof msg.ok !== "boolean") return false;
+      if (msg.ok) return true;
+      const err = msg.error;
+      return (
+        !!err &&
+        typeof err === "object" &&
+        typeof err.name === "string" &&
+        typeof err.message === "string" &&
+        (typeof err.stack === "string" || typeof err.stack === "undefined")
+      );
+    }
+    case "status":
+      return typeof msg.steps === "number" && (typeof msg.serialBytes === "number" || msg.serialBytes === null);
+    case "error": {
+      const err = msg.error;
+      return (
+        !!err &&
+        typeof err === "object" &&
+        typeof err.name === "string" &&
+        typeof err.message === "string" &&
+        (typeof err.stack === "string" || typeof err.stack === "undefined")
+      );
+    }
+    default:
+      return false;
+  }
 }
