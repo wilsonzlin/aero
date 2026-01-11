@@ -70,7 +70,7 @@ compose() {
     TRUST_PROXY=1 \
     CROSS_ORIGIN_ISOLATION=0 \
     AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
-    docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
+    docker compose --env-file /dev/null -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
 }
 
 on_exit() {
