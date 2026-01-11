@@ -6,12 +6,12 @@ on:
       - main
     paths:
       - net-proxy/**
-      - tests/protocol-vectors/**
+      - protocol-vectors/**
       - .github/workflows/net-proxy.yml
   pull_request:
     paths:
       - net-proxy/**
-      - tests/protocol-vectors/**
+      - protocol-vectors/**
       - .github/workflows/net-proxy.yml
   workflow_dispatch:
 
