@@ -251,6 +251,21 @@ function Get-DevicesCmdVarValue {
   return $null
 }
 
+function Get-DevicesCmdContractName {
+  param([Parameter(Mandatory = $true)][string]$DevicesCmdText)
+
+  foreach ($rawLine in ($DevicesCmdText -split "`r?`n")) {
+    $line = $rawLine.Trim()
+    if (-not $line) { continue }
+    if ($line -match '^(?i)\s*rem\s+Contract name:\s*(.+?)\s*$') {
+      $name = $matches[1].Trim()
+      if ($name) { return $name }
+    }
+  }
+
+  return $null
+}
+
 function Assert-DevicesCmdVarEquals {
   param(
     [Parameter(Mandatory = $true)][string]$DevicesCmdText,
@@ -313,6 +328,28 @@ function Assert-GuestToolsDevicesCmdServices {
   )
 
   $devicesCmdText = ReadZipEntryText -ZipPath $ZipPath -EntryPath "config/devices.cmd"
+
+  # Assert the packaged devices.cmd identifies the virtio-win device contract variant. We expect
+  # `make-guest-tools-from-virtio-win.ps1` to pass `docs/windows-device-contract-virtio-win.json`
+  # so the contract name in the header is a stable indicator of which contract generated the file
+  # (in addition to the service-name assertions below).
+  $repoRoot = Resolve-RepoRoot
+  $contractPath = Join-Path $repoRoot "docs\windows-device-contract-virtio-win.json"
+  if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) {
+    throw "Expected virtio-win Windows device contract not found: $contractPath"
+  }
+  $contractObj = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
+  $expectedContractName = ("" + $contractObj.contract_name).Trim()
+  if (-not $expectedContractName) {
+    throw "virtio-win Windows device contract has empty contract_name: $contractPath"
+  }
+  $actualContractName = Get-DevicesCmdContractName -DevicesCmdText $devicesCmdText
+  if (-not $actualContractName) {
+    throw "Guest Tools devices.cmd is missing the expected 'rem Contract name: ...' header line."
+  }
+  if ($actualContractName.Trim().ToLowerInvariant() -ne $expectedContractName.Trim().ToLowerInvariant()) {
+    throw "Guest Tools devices.cmd contract_name mismatch: expected '$expectedContractName', got '$actualContractName'"
+  }
 
   # Required for boot-critical storage pre-seeding and network validation.
   Assert-DevicesCmdVarEquals -DevicesCmdText $devicesCmdText -VarName "AERO_VIRTIO_BLK_SERVICE" -Expected "viostor"
