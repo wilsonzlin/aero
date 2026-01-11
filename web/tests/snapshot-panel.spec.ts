@@ -10,6 +10,7 @@ test("snapshot panel: Save → Load (OPFS streaming, demo VM worker)", async ({ 
 
   const saveButton = panel.getByRole("button", { name: "Save" });
   const loadButton = panel.getByRole("button", { name: "Load" });
+  const deleteButton = panel.getByRole("button", { name: "Delete" });
   const status = panel.locator("pre").nth(0);
 
   // Wait for the panel to either become ready, or surface an error (e.g. missing
@@ -33,5 +34,7 @@ test("snapshot panel: Save → Load (OPFS streaming, demo VM worker)", async ({ 
 
   await loadButton.click();
   await expect(status).toContainText("Loaded snapshot");
-});
 
+  await deleteButton.click();
+  await expect(status).toContainText("Deleted snapshot");
+});

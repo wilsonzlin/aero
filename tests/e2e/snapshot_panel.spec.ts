@@ -10,6 +10,7 @@ test("snapshot panel: Save → Load (OPFS streaming snapshots)", async ({ page }
 
   const saveButton = panel.getByRole("button", { name: "Save" });
   const loadButton = panel.getByRole("button", { name: "Load" });
+  const deleteButton = panel.getByRole("button", { name: "Delete" });
   const status = panel.locator("pre").nth(0);
 
   // Wait for the panel to either become ready, or surface an error (e.g. OPFS missing,
@@ -33,5 +34,8 @@ test("snapshot panel: Save → Load (OPFS streaming snapshots)", async ({ page }
 
   await loadButton.click();
   await expect(status).toContainText("Loaded snapshot");
-});
 
+  // Clean up so parallel tests don't share OPFS state.
+  await deleteButton.click();
+  await expect(status).toContainText("Deleted snapshot");
+});
