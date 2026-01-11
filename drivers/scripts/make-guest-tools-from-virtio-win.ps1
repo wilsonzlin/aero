@@ -215,48 +215,13 @@ if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
 
 Ensure-Directory -Path $driversOutDir
 
-# The Guest Tools packager now generates `config/devices.cmd` from a Windows device contract JSON.
-# The in-repo contract uses Aero driver service names (aerovblk/aerovnet/...), but virtio-win uses
-# upstream service names (viostor/netkvm/vioinput/viosnd). Create a temporary contract override so
-# the packaged media seeds the correct service names for virtio-win.
-$baseContractPath = Join-Path $repoRoot "docs/windows-device-contract.json"
-if (-not (Test-Path -LiteralPath $baseContractPath -PathType Leaf)) {
-  throw "Expected Windows device contract not found: $baseContractPath"
+# The Guest Tools packager generates `config/devices.cmd` from a Windows device contract JSON.
+# Use the dedicated virtio-win contract so the generated service names match upstream virtio-win
+# AddService names (viostor/netkvm/vioinput/viosnd) while keeping Aero's PCI IDs/HWID patterns.
+$deviceContractPath = Join-Path (Join-Path $repoRoot "docs") "windows-device-contract-virtio-win.json"
+if (-not (Test-Path -LiteralPath $deviceContractPath -PathType Leaf)) {
+  throw "Expected Windows device contract not found: $deviceContractPath"
 }
-$virtioWinContractPath = Join-Path $driversOutDir "windows-device-contract.virtio-win.json"
-
-try {
-  $contractObj = Get-Content -LiteralPath $baseContractPath -Raw | ConvertFrom-Json
-} catch {
-  throw "Failed to parse device contract JSON: $baseContractPath`n$($_.Exception.Message)"
-}
-if ($null -eq $contractObj.devices) {
-  throw "Device contract JSON is missing 'devices': $baseContractPath"
-}
-
-$updated = 0
-foreach ($dev in $contractObj.devices) {
-  $name = ("" + $dev.device).ToLowerInvariant()
-  switch ($name) {
-    "virtio-blk" { $dev.driver_service_name = "viostor"; $updated += 1 }
-    "virtio-net" { $dev.driver_service_name = "netkvm"; $updated += 1 }
-    "virtio-input" { $dev.driver_service_name = "vioinput"; $updated += 1 }
-    "virtio-snd" { $dev.driver_service_name = "viosnd"; $updated += 1 }
-  }
-}
-if ($updated -lt 2) {
-  throw "Failed to patch virtio-win service names in device contract: $baseContractPath"
-}
-
-$contractJson = $contractObj | ConvertTo-Json -Depth 16
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllText($virtioWinContractPath, $contractJson, $utf8NoBom)
-if (-not (Test-Path -LiteralPath $virtioWinContractPath -PathType Leaf)) {
-  throw "Failed to write virtio-win device contract override: $virtioWinContractPath"
-}
-Write-Host "Using virtio-win device contract override:"
-Write-Host "  base: $baseContractPath"
-Write-Host "  out : $virtioWinContractPath"
 
 # 1) Build the standard Win7 driver pack staging directory (from virtio-win ISO/root).
 $packArgs = @(
@@ -370,11 +335,6 @@ if (-not (Test-Path -LiteralPath $wrapperScript -PathType Leaf)) {
   throw "Expected Guest Tools packaging wrapper script not found: $wrapperScript"
 }
 
-$deviceContractPath = Join-Path (Join-Path $repoRoot "docs") "windows-device-contract-virtio-win.json"
-if (-not (Test-Path -LiteralPath $deviceContractPath -PathType Leaf)) {
-  throw "Expected Windows device contract not found: $deviceContractPath"
-}
-
 Ensure-Directory -Path $OutDir
 
 Write-Host "Packaging Guest Tools via CI wrapper..."
@@ -387,7 +347,6 @@ Write-Host "  contract : $deviceContractPath"
   -GuestToolsDir $guestToolsStageDir `
   -SigningPolicy $SigningPolicy `
   -CertPath $CertPath `
-  -WindowsDeviceContractPath $virtioWinContractPath `
   -SpecPath $SpecPath `
   -WindowsDeviceContractPath $deviceContractPath `
   -OutDir $OutDir `
@@ -401,6 +360,5 @@ if ($CleanStage) {
   Remove-Item -LiteralPath $driverPackRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $packagerDriversRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $guestToolsStageDir -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $virtioWinContractPath -Force -ErrorAction SilentlyContinue
 }
 
