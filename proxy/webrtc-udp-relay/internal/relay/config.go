@@ -103,6 +103,7 @@ func (c Config) WithDefaults() Config {
 //
 // Environment variables:
 //   - PREFER_V2 (bool) - prefer v2 relay->client frames once the client has demonstrated v2 support
+//   - MAX_DATAGRAM_PAYLOAD_BYTES (int)
 //   - MAX_UDP_BINDINGS_PER_SESSION (int)
 //   - UDP_BINDING_IDLE_TIMEOUT (duration, e.g. 60s)
 //   - UDP_READ_BUFFER_BYTES (int)
@@ -114,6 +115,11 @@ func ConfigFromEnv() Config {
 	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.L2MaxMessageBytes = i
+		}
+	}
+	if v := os.Getenv("MAX_DATAGRAM_PAYLOAD_BYTES"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil && i > 0 {
+			c.MaxDatagramPayloadBytes = i
 		}
 	}
 	if v := os.Getenv("MAX_UDP_BINDINGS_PER_SESSION"); v != "" {
