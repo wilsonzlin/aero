@@ -379,8 +379,8 @@ func TestL2BackendOriginOverride_NormalizesAndValidates(t *testing.T) {
 
 func TestL2BackendOriginAlias_NormalizesAndValidates(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendWSURL: "ws://127.0.0.1:8090/l2",
+		EnvAPIKey:          "secret",
+		EnvL2BackendWSURL:  "ws://127.0.0.1:8090/l2",
 		EnvL2BackendOrigin: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
@@ -393,7 +393,7 @@ func TestL2BackendOriginAlias_NormalizesAndValidates(t *testing.T) {
 
 func TestL2BackendTokenAlias_AcceptsHTTPToken(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:        "secret",
+		EnvAPIKey:         "secret",
 		EnvL2BackendToken: "jwt_like.token-123",
 	}), nil)
 	if err != nil {
@@ -406,9 +406,9 @@ func TestL2BackendTokenAlias_AcceptsHTTPToken(t *testing.T) {
 
 func TestL2BackendOriginOverride_IgnoresInvalidWSOrigin(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                "secret",
-		EnvL2BackendWSURL:        "ws://127.0.0.1:8090/l2",
-		EnvL2BackendWSOrigin:     "https://invalid.example.com/path",
+		EnvAPIKey:                  "secret",
+		EnvL2BackendWSURL:          "ws://127.0.0.1:8090/l2",
+		EnvL2BackendWSOrigin:       "https://invalid.example.com/path",
 		EnvL2BackendOriginOverride: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
