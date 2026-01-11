@@ -42,7 +42,8 @@ use aero_protocol::aerogpu::aerogpu_pci::{
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader,
     AerogpuFencePage, AerogpuRingDecodeError, AerogpuRingHeader, AerogpuSubmitDesc,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
+    AEROGPU_ALLOC_FLAG_NONE, AEROGPU_ALLOC_FLAG_READONLY, AEROGPU_ALLOC_TABLE_MAGIC,
+    AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, AEROGPU_SUBMIT_FLAG_NONE,
     AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 use aero_protocol::aerogpu::aerogpu_umd_private::{
@@ -2300,6 +2301,19 @@ fn rust_layout_matches_c_headers() {
         AerogpuFormat::D32Float as u64
     );
 
+    assert_eq!(
+        abi.konst("AEROGPU_ALLOC_FLAG_NONE"),
+        AEROGPU_ALLOC_FLAG_NONE as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_ALLOC_FLAG_READONLY"),
+        AEROGPU_ALLOC_FLAG_READONLY as u64
+    );
+
+    assert_eq!(
+        abi.konst("AEROGPU_SUBMIT_FLAG_NONE"),
+        AEROGPU_SUBMIT_FLAG_NONE as u64
+    );
     assert_eq!(
         abi.konst("AEROGPU_SUBMIT_FLAG_PRESENT"),
         AEROGPU_SUBMIT_FLAG_PRESENT as u64

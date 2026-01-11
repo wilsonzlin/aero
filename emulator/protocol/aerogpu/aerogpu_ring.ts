@@ -8,11 +8,13 @@ export const AEROGPU_ALLOC_TABLE_MAGIC = 0x434f4c41; // "ALOC" LE
 export const AEROGPU_RING_MAGIC = 0x474e5241; // "ARNG" LE
 export const AEROGPU_FENCE_PAGE_MAGIC = 0x434e4546; // "FENC" LE
 
+export const AEROGPU_SUBMIT_FLAG_NONE = 0;
 export const AEROGPU_SUBMIT_FLAG_PRESENT = 1 << 0;
 export const AEROGPU_SUBMIT_FLAG_NO_IRQ = 1 << 1;
 
 export const AEROGPU_ENGINE_0 = 0;
 
+export const AEROGPU_ALLOC_FLAG_NONE = 0;
 export const AEROGPU_ALLOC_FLAG_READONLY = 1 << 0;
 
 export class AerogpuRingError extends Error {
