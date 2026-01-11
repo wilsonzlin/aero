@@ -81,12 +81,13 @@ use aero_usb::{
     hid::passthrough::{SharedUsbHidPassthroughDevice, UsbHidPassthrough},
     hid::webhid,
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
-    usb::{SetupPacket, UsbDevice, UsbHandshake},
+    usb::{SetupPacket as UsbSetupPacket, UsbDevice, UsbHandshake},
 };
 
 #[cfg(any(target_arch = "wasm32", test))]
 use aero_usb::passthrough::{
-    ControlResponse, SetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+    ControlResponse, SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion,
+    UsbHostCompletionIn,
     UsbPassthroughDevice,
 };
 
@@ -372,7 +373,7 @@ impl UsbHidBridge {
             // The web runtime uses `UsbHidBridge` as a lightweight "report
             // generator" in tests and in the I/O worker, so configure the devices
             // eagerly to make `drain_next_*_report()` immediately usable.
-            dev.handle_setup(SetupPacket {
+            dev.handle_setup(UsbSetupPacket {
                 request_type: 0x00,
                 request: 0x09, // SET_CONFIGURATION
                 value: 1,
@@ -780,7 +781,7 @@ impl UsbPassthroughBridge {
 #[derive(Debug, Default)]
 struct UsbPassthroughDemoCore {
     device: UsbPassthroughDevice,
-    pending_control: Option<SetupPacket>,
+    pending_control: Option<HostSetupPacket>,
     ready_result: Option<UsbHostCompletionIn>,
 }
 
@@ -797,7 +798,7 @@ impl UsbPassthroughDemoCore {
     }
 
     fn queue_get_device_descriptor(&mut self, len: u16) {
-        let setup = SetupPacket {
+        let setup = HostSetupPacket {
             bm_request_type: 0x80,
             b_request: 0x06,
             w_value: 0x0100,
@@ -808,7 +809,7 @@ impl UsbPassthroughDemoCore {
     }
 
     fn queue_get_config_descriptor(&mut self, len: u16) {
-        let setup = SetupPacket {
+        let setup = HostSetupPacket {
             bm_request_type: 0x80,
             b_request: 0x06,
             w_value: 0x0200,
@@ -818,7 +819,7 @@ impl UsbPassthroughDemoCore {
         self.queue_control_in(setup);
     }
 
-    fn queue_control_in(&mut self, setup: SetupPacket) {
+    fn queue_control_in(&mut self, setup: HostSetupPacket) {
         self.pending_control = Some(setup);
         match self.device.handle_control_request(setup, None) {
             ControlResponse::Nak => {}

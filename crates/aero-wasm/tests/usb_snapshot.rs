@@ -153,3 +153,92 @@ fn usb_snapshot_restore_rejects_device_id_mismatch() {
         );
     }
 }
+
+#[wasm_bindgen_test]
+fn usb_snapshot_restore_rejects_oversized_payload() {
+    // Must match the size caps in the WASM USB bridges.
+    const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
+    let oversized = vec![0u8; MAX_USB_SNAPSHOT_BYTES + 1];
+
+    // UhciControllerBridge.
+    {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let mut bridge = UhciControllerBridge::new(guest_base, guest.len() as u32)
+            .expect("new UhciControllerBridge");
+        assert!(
+            bridge.restore_state(&oversized).is_err(),
+            "expected restore_state to reject oversized payload"
+        );
+    }
+
+    // WebUsbUhciBridge.
+    {
+        let mut bridge = WebUsbUhciBridge::new(0);
+        assert!(
+            bridge.restore_state(&oversized).is_err(),
+            "expected restore_state to reject oversized payload"
+        );
+    }
+
+    // UhciRuntime.
+    {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+        assert!(
+            runtime.restore_state(&oversized).is_err(),
+            "expected restore_state to reject oversized payload"
+        );
+    }
+}
+
+#[wasm_bindgen_test]
+fn usb_snapshot_restore_rejects_truncated_bytes() {
+    // UhciControllerBridge.
+    {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let mut bridge = UhciControllerBridge::new(guest_base, guest.len() as u32)
+            .expect("new UhciControllerBridge");
+
+        let snap = bridge.snapshot_state().to_vec();
+        assert!(snap.len() >= 16, "expected snapshot to include header bytes");
+
+        for len in [0usize, 1, snap.len().saturating_sub(1)] {
+            assert!(
+                bridge.restore_state(&snap[..len]).is_err(),
+                "expected restore_state to reject truncated bytes"
+            );
+        }
+    }
+
+    // WebUsbUhciBridge.
+    {
+        let mut bridge = WebUsbUhciBridge::new(0);
+        let snap = bridge.snapshot_state().to_vec();
+        assert!(snap.len() >= 16, "expected snapshot to include header bytes");
+        for len in [0usize, 1, snap.len().saturating_sub(1)] {
+            assert!(
+                bridge.restore_state(&snap[..len]).is_err(),
+                "expected restore_state to reject truncated bytes"
+            );
+        }
+    }
+
+    // UhciRuntime.
+    {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+        let snap = runtime.snapshot_state().to_vec();
+        assert!(snap.len() >= 16, "expected snapshot to include header bytes");
+        for len in [0usize, 1, snap.len().saturating_sub(1)] {
+            assert!(
+                runtime.restore_state(&snap[..len]).is_err(),
+                "expected restore_state to reject truncated bytes"
+            );
+        }
+    }
+}
