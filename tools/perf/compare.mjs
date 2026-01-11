@@ -149,6 +149,13 @@ async function main() {
     return captured ? "captured" : "not captured";
   };
 
+  const fmtPerfExportStatus = (meta) => {
+    const aeroPerf = meta?.aeroPerf;
+    if (!aeroPerf || typeof aeroPerf !== "object") return "unknown";
+    if (aeroPerf.exportApiTimedOut === true) return "timed out";
+    return aeroPerf.exportAvailable === true ? "available" : "unavailable";
+  };
+
   const thresholdsPolicy = await loadThresholdPolicy(opts.thresholdsFile);
   const { name: profileName, profile } = pickThresholdProfile(thresholdsPolicy, opts.profile);
   const suiteThresholds = getSuiteThresholds(profile, "browser");
@@ -255,6 +262,8 @@ async function main() {
   const summaryIdx = reportLines.findIndex((line) => line.startsWith("## Summary"));
   if (summaryIdx !== -1) {
     reportLines.splice(summaryIdx - 1, 0, [
+      `- Baseline perf export: ${fmtPerfExportStatus(baseline.meta)} (\`${path.join(path.dirname(opts.baseline), "perf_export.json")}\`)`,
+      `- Candidate perf export: ${fmtPerfExportStatus(candidate.meta)} (\`${path.join(path.dirname(opts.candidate), "perf_export.json")}\`)`,
       `- Baseline trace: ${fmtTraceStatus(baseline.meta)} (\`${path.join(path.dirname(opts.baseline), "trace.json")}\`)`,
       `- Candidate trace: ${fmtTraceStatus(candidate.meta)} (\`${path.join(path.dirname(opts.candidate), "trace.json")}\`)`,
     ].join("\n"));
