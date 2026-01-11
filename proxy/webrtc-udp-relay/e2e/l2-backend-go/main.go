@@ -78,13 +78,16 @@ func main() {
 		pToken := tokenFromSubprotocols(protocols)
 
 		// Match `crates/aero-l2-proxy` precedence: check query-string credentials
-		// (apiKey/token) before `aero-l2-token.*` subprotocol tokens.
-		token := qAPIKey
+		// (token/apiKey) before `aero-l2-token.*` subprotocol tokens.
+		//
+		// Note: `crates/aero-l2-proxy` treats `apiKey` as a compatibility alias but
+		// prefers `token` when both are present.
+		token := qToken
 		tokenSource := ""
 		if token != "" {
 			tokenSource = "query"
-		} else if qToken != "" {
-			token = qToken
+		} else if qAPIKey != "" {
+			token = qAPIKey
 			tokenSource = "query"
 		} else if pToken != "" {
 			token = pToken
