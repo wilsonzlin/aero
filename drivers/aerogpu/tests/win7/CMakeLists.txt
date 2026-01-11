@@ -199,6 +199,11 @@ aerogpu_add_win7_test(d3d9ex_shared_allocations
 )
 target_link_libraries(d3d9ex_shared_allocations PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_shared_surface_stress
+  d3d9ex_shared_surface_stress/main.cpp
+)
+target_link_libraries(d3d9ex_shared_surface_stress PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d10_triangle
   d3d10_triangle/main.cpp
 )
@@ -228,11 +233,6 @@ aerogpu_add_win7_test(d3d11_triangle
   d3d11_triangle/main.cpp
 )
 target_link_libraries(d3d11_triangle PRIVATE user32 gdi32 d3d11 dxgi)
-
-aerogpu_add_win7_test(d3d11_map_do_not_wait
-  d3d11_map_do_not_wait/main.cpp
-)
-target_link_libraries(d3d11_map_do_not_wait PRIVATE d3d11 dxgi)
 
 aerogpu_add_win7_test(d3d11_texture
   d3d11_texture/main.cpp

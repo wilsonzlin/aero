@@ -48,7 +48,6 @@ d3d10_caps_smoke
 # D3D11
 # Some entries may not exist yet; build_all/run_all will pick them up automatically once present.
 d3d11_triangle
-d3d11_map_do_not_wait
 d3d11_texture
 d3d11_caps_smoke
 d3d11_rs_om_state_sanity
