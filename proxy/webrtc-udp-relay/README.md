@@ -136,7 +136,12 @@ default to same-host only).
 
 ## E2E interoperability test (Playwright)
 
-`e2e/` contains a Playwright test that launches headless Chromium and exercises the WebRTC `udp` DataChannel framing against a local UDP echo server.
+`e2e/` contains Playwright tests that launch headless Chromium and exercise:
+
+- the WebRTC `udp` DataChannel framing, and
+- the `/udp` WebSocket UDP relay fallback,
+
+against a local UDP echo server.
 
 ```bash
 # From the repo root (npm workspaces)
@@ -166,12 +171,14 @@ The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/
 - `GET /healthz` → `{"ok":true}`
 - `GET /readyz` → readiness (200 once serving, 503 during shutdown or when ICE config is invalid)
 - `GET /version` → build metadata (commit/build time may be empty)
+- `GET /metrics` → Prometheus text exposition of internal counters
 - `GET /webrtc/ice` → ICE server list for browser clients: `{"iceServers":[...]}`
   - guarded by the same origin policy as signaling endpoints (to avoid leaking TURN credentials cross-origin)
 - `POST /offer` → signaling: exchange SDP offer/answer (non-trickle ICE) per `PROTOCOL.md`
 - `POST /session` → allocate a server-side session (primarily for quota enforcement; not required by the v1 offer/answer flow)
 - `GET /webrtc/signal` → WebSocket signaling (trickle ICE)
 - `POST /webrtc/offer` → HTTP offer → answer (non-trickle ICE fallback)
+- `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`)
 
 ## Implemented
 
@@ -186,6 +193,8 @@ The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/
 - Signaling authentication (`AUTH_MODE=none|api_key|jwt`) on HTTP + WebSocket endpoints
 - WebRTC DataChannel (`udp`) ↔ UDP datagram relay with per-guest-port UDP bindings and destination policy enforcement
 - Per-session quota/rate limiting for UDP + relay→client DataChannel traffic (with optional hard-close after repeated violations)
+- WebSocket UDP relay fallback (`GET /udp`) using the same datagram framing as the DataChannel
+- `/metrics` Prometheus endpoint for internal counters
 - Protocol documentation (`PROTOCOL.md`)
 - Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
 

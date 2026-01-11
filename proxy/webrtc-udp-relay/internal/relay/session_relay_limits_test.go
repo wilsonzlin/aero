@@ -61,15 +61,25 @@ func TestSessionRelay_EnforcesOutboundUDPRateLimit(t *testing.T) {
 	send()
 
 	select {
-	case <-recv:
+	case _, ok := <-recv:
+		if !ok {
+			t.Fatalf("receiver closed before first forwarded packet (expected one packet)")
+		}
 		// ok
 	case <-time.After(750 * time.Millisecond):
 		t.Fatalf("timed out waiting for first forwarded packet")
 	}
 
 	select {
-	case <-recv:
-		t.Fatalf("unexpected second forwarded packet (expected rate limiting)")
+	case _, ok := <-recv:
+		// The receiver goroutine closes the channel once it hits its read deadline
+		// (i.e. no packet arrived for the deadline window). A closed channel means
+		// "no more packets", which is acceptable for this assertion. Treat only an
+		// actual receive (ok=true) as a forwarded packet.
+		if ok {
+			t.Fatalf("unexpected second forwarded packet (expected rate limiting)")
+		}
+		// ok (channel closed)
 	case <-time.After(250 * time.Millisecond):
 		// ok
 	}

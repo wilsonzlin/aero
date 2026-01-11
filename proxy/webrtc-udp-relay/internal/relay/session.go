@@ -19,6 +19,7 @@ type Session struct {
 
 	mu       sync.Mutex
 	closed   bool
+	done     chan struct{}
 	bindings map[uint16]struct{}
 
 	lastViolation time.Time
@@ -49,12 +50,22 @@ func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimi
 		metrics:  m,
 		clock:    clock,
 		limiter:  rl,
+		done:     make(chan struct{}),
 		bindings: make(map[uint16]struct{}),
 		onClose:  onClose,
 	}
 }
 
 func (s *Session) ID() string { return s.id }
+
+// Done is closed when the session is closed (either explicitly or due to hard
+// enforcement mode).
+func (s *Session) Done() <-chan struct{} {
+	s.mu.Lock()
+	ch := s.done
+	s.mu.Unlock()
+	return ch
+}
 
 func (s *Session) Closed() bool {
 	s.mu.Lock()
@@ -103,6 +114,7 @@ func (s *Session) closeLocked() func() {
 		return nil
 	}
 	s.closed = true
+	close(s.done)
 	onClose := s.onClose
 	s.onClose = nil
 	return onClose
@@ -140,13 +152,23 @@ func (s *Session) EnsureBinding(srcPort uint16) error {
 	return nil
 }
 
-// HandleClientDatagram applies rate limiting and quota enforcement to a client
-// request to send UDP to destKey.
+// ReleaseBinding decrements the session's active UDP binding count.
 //
-// On soft failures the datagram is dropped and false is returned. In hard mode
-// the session may also be closed after repeated violations.
-func (s *Session) HandleClientDatagram(srcPort uint16, destKey string, payload []byte) bool {
-	if err := s.EnsureBinding(srcPort); err != nil {
+// It should be called when a guest-port binding is closed (e.g. due to idle
+// timeout). Calling ReleaseBinding on an unknown binding is a no-op.
+func (s *Session) ReleaseBinding(srcPort uint16) {
+	s.mu.Lock()
+	delete(s.bindings, srcPort)
+	s.mu.Unlock()
+}
+
+// AllowClientDatagram applies rate limiting and destination quota enforcement
+// to a client request to send UDP to destKey.
+//
+// It does not enforce guest-port binding quotas (MAX_UDP_BINDINGS_PER_SESSION);
+// that is handled separately by the relay engine.
+func (s *Session) AllowClientDatagram(destKey string, payload []byte) bool {
+	if s.Closed() {
 		return false
 	}
 
@@ -165,6 +187,18 @@ func (s *Session) HandleClientDatagram(srcPort uint16, destKey string, payload [
 
 	s.recordViolation()
 	return false
+}
+
+// HandleClientDatagram applies rate limiting and quota enforcement to a client
+// request to send UDP to destKey.
+//
+// On soft failures the datagram is dropped and false is returned. In hard mode
+// the session may also be closed after repeated violations.
+func (s *Session) HandleClientDatagram(srcPort uint16, destKey string, payload []byte) bool {
+	if err := s.EnsureBinding(srcPort); err != nil {
+		return false
+	}
+	return s.AllowClientDatagram(destKey, payload)
 }
 
 // HandleInboundToClient enforces the DataChannel (relay -> client) bytes/sec

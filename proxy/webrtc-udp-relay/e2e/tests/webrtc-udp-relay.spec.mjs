@@ -339,3 +339,150 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
   }
 });
+
+test("relays UDP datagrams via the /udp WebSocket fallback (v1 + v2)", async ({ page }) => {
+  const echo = await startUdpEchoServer("udp4", "127.0.0.1");
+  const relay = await spawnRelayServer();
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const echoed = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        ws.binaryType = "arraybuffer";
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const sendAndRecv = async (frame) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
+            ws.addEventListener(
+              "message",
+              (event) => {
+                clearTimeout(timeout);
+                resolve(new Uint8Array(event.data));
+              },
+              { once: true },
+            );
+            ws.send(frame);
+          });
+
+        const guestPort = 10_000;
+
+        const payload1 = new TextEncoder().encode("hello from websocket v1");
+        const frame1 = new Uint8Array(8 + payload1.length);
+        frame1[0] = (guestPort >> 8) & 0xff;
+        frame1[1] = guestPort & 0xff;
+        frame1.set([127, 0, 0, 1], 2);
+        frame1[6] = (echoPort >> 8) & 0xff;
+        frame1[7] = echoPort & 0xff;
+        frame1.set(payload1, 8);
+
+        const echoedFrame1 = await sendAndRecv(frame1);
+        if (echoedFrame1.length < 8) throw new Error("echoed frame too short");
+        const echoedPayload1 = echoedFrame1.slice(8);
+        const text1 = new TextDecoder().decode(echoedPayload1);
+
+        const payload2 = new TextEncoder().encode("hello from websocket v2");
+        const frame2 = new Uint8Array(12 + payload2.length);
+        frame2[0] = 0xa2;
+        frame2[1] = 0x02;
+        frame2[2] = 0x04;
+        frame2[3] = 0x00;
+        frame2[4] = (guestPort >> 8) & 0xff;
+        frame2[5] = guestPort & 0xff;
+        frame2.set([127, 0, 0, 1], 6);
+        frame2[10] = (echoPort >> 8) & 0xff;
+        frame2[11] = echoPort & 0xff;
+        frame2.set(payload2, 12);
+
+        const echoedFrame2 = await sendAndRecv(frame2);
+        if (echoedFrame2.length < 12) throw new Error("echoed v2 frame too short");
+        if (echoedFrame2[0] !== 0xa2 || echoedFrame2[1] !== 0x02 || echoedFrame2[2] !== 0x04 || echoedFrame2[3] !== 0x00) {
+          throw new Error("echoed v2 header mismatch");
+        }
+        const echoedPayload2 = echoedFrame2.slice(12);
+        const text2 = new TextDecoder().decode(echoedPayload2);
+
+        ws.close();
+        return { text1, text2 };
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(echoed.text1).toBe("hello from websocket v1");
+    expect(echoed.text2).toBe("hello from websocket v2");
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo.close()]);
+  }
+});
+
+test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallback (v2)", async ({ page }) => {
+  const echo = await startUdpEchoServer("udp6", "::1");
+  test.skip(!echo, "ipv6 not supported in test environment");
+  const relay = await spawnRelayServer();
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const echoed = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        ws.binaryType = "arraybuffer";
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const payload = new TextEncoder().encode("hello from websocket ipv6");
+        const guestPort = 10_000;
+
+        const frame = new Uint8Array(24 + payload.length);
+        frame[0] = 0xa2;
+        frame[1] = 0x02;
+        frame[2] = 0x06;
+        frame[3] = 0x00;
+        frame[4] = (guestPort >> 8) & 0xff;
+        frame[5] = guestPort & 0xff;
+        // ::1
+        frame[21] = 1;
+        frame[22] = (echoPort >> 8) & 0xff;
+        frame[23] = echoPort & 0xff;
+        frame.set(payload, 24);
+
+        const echoedFrame = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
+          ws.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(new Uint8Array(event.data));
+            },
+            { once: true },
+          );
+          ws.send(frame);
+        });
+
+        if (echoedFrame.length < 24) throw new Error("echoed frame too short");
+        if (echoedFrame[0] !== 0xa2 || echoedFrame[1] !== 0x02 || echoedFrame[2] !== 0x06 || echoedFrame[3] !== 0x00) {
+          throw new Error("v2 header mismatch");
+        }
+
+        const echoedPayload = echoedFrame.slice(24);
+        const echoedText = new TextDecoder().decode(echoedPayload);
+        ws.close();
+        return echoedText;
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(echoed).toBe("hello from websocket ipv6");
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});

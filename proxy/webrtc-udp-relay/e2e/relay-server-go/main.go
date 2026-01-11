@@ -17,6 +17,8 @@ import (
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
@@ -62,6 +64,30 @@ func main() {
 		}),
 	}
 	mux.Handle("/webrtc/signal", wsSrv)
+
+	// WebSocket UDP relay fallback (/udp).
+	destPolicy := policy.NewDevDestinationPolicy()
+	relayCfg := relay.Config{
+		MaxUDPBindingsPerSession:  128,
+		UDPBindingIdleTimeout:     60 * time.Second,
+		UDPReadBufferBytes:        65535,
+		DataChannelSendQueueBytes: 1 << 20,
+		PreferV2:                  true,
+	}.WithDefaults()
+	relayCfg.PreferV2 = true
+	udpCfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+		MaxSessions:              0,
+	}
+	sessionMgr := relay.NewSessionManager(udpCfg, metrics.New(), nil)
+	udpSrv, err := relay.NewUDPWebSocketServer(udpCfg, sessionMgr, relayCfg, destPolicy)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create /udp server: %v\n", err)
+		os.Exit(2)
+	}
+	mux.Handle("GET /udp", udpSrv)
 
 	srv := &http.Server{
 		Handler:           mux,

@@ -25,6 +25,52 @@ message).
 
 ---
 
+## WebSocket UDP relay fallback (`GET /udp`)
+
+Some environments (or debugging workflows) cannot use WebRTC. The relay also
+supports proxying UDP over a WebSocket connection:
+
+- **Endpoint:** `GET /udp` (upgrades to WebSocket)
+- **Data plane:** identical to the WebRTC DataChannel framing below.
+
+### Message semantics
+
+- Each **binary** WebSocket message is treated as exactly one UDP relay datagram
+  frame (v1 or v2) as defined in this document.
+- Servers do not stream/fragment/reassemble datagrams beyond WebSocket message
+  boundaries.
+
+### Authentication
+
+Because browsers cannot attach arbitrary headers to WebSocket upgrade requests,
+`/udp` supports the same credential delivery patterns as signaling:
+
+1. **Query string** (less preferred; may leak into logs/history):
+   - `AUTH_MODE=api_key` → `?apiKey=...`
+   - `AUTH_MODE=jwt` → `?token=...`
+2. **First WebSocket message** (preferred): a JSON **text** message:
+
+```json
+{"type":"auth","apiKey":"..."}
+```
+
+or:
+
+```json
+{"type":"auth","token":"..."}
+```
+
+After the connection is authenticated, the relay expects only **binary**
+datagram frames.
+
+### Limits / backpressure
+
+- Datagram `payload` length is capped (see "Maximum payload size").
+- The relay maintains a byte-bounded outbound send queue. When the queue is
+  full, outbound frames are dropped to avoid unbounded memory growth.
+
+---
+
 ## Data plane: Binary datagram frames
 
 Two frame versions exist:
