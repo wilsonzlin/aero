@@ -5,6 +5,15 @@
 # - with-turn-rest: relay + a local coturn instance using TURN REST (auth-secret) credentials
 #
 
+x-relay-env-base: &relay-env-base
+  # Default to unauthenticated local development.
+  #
+  # In production, set AUTH_MODE=api_key or AUTH_MODE=jwt and provide the
+  # matching API_KEY/JWT_SECRET.
+  AUTH_MODE: ${AUTH_MODE:-none}
+  API_KEY: ${API_KEY:-}
+  JWT_SECRET: ${JWT_SECRET:-}
+
 x-relay-base: &relay-base
   build:
     context: .
@@ -17,6 +26,7 @@ x-relay-base: &relay-base
     # Must align with WEBRTC_UDP_PORT_MIN/MAX and any firewall rules.
     - "50000-50100:50000-50100/udp"
   environment:
+    <<: *relay-env-base
     # Must align with the published UDP range above.
     WEBRTC_UDP_PORT_MIN: "50000"
     WEBRTC_UDP_PORT_MAX: "50100"
@@ -32,6 +42,7 @@ services:
     <<: *relay-base
     profiles: ["with-turn"]
     environment:
+      <<: *relay-env-base
       WEBRTC_UDP_PORT_MIN: "50000"
       WEBRTC_UDP_PORT_MAX: "50100"
       AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR: "0.0.0.0:8080"
@@ -47,6 +58,7 @@ services:
     <<: *relay-base
     profiles: ["with-turn-rest"]
     environment:
+      <<: *relay-env-base
       WEBRTC_UDP_PORT_MIN: "50000"
       WEBRTC_UDP_PORT_MAX: "50100"
       AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR: "0.0.0.0:8080"
