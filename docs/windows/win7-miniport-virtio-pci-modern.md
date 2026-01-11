@@ -93,7 +93,7 @@ Inputs you need:
 * `Offset = 0`
 * `Length = 256`
 
-WDK7-compatible pseudocode:
+WinDDK 7600-compatible pseudocode:
 
 ```c
 #ifndef PCI_WHICHSPACE_CONFIG
@@ -287,7 +287,7 @@ This is enough for Vendor/Device/Revision checks, but it is not guaranteed to co
 
 #### Pattern B (robust): always fetch 256 bytes with `StorPortGetBusData`
 
-WDK7-compatible pseudocode:
+WinDDK 7600-compatible pseudocode:
 
 ```c
 UCHAR cfg[256];

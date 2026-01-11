@@ -108,7 +108,7 @@ typedef uint64_t UINT64;
  *
  * Note: The spec defines 64-bit queue addresses. This struct exposes both the
  * 64-bit fields and 32-bit lo/hi views so code can safely use 32-bit MMIO
- * accessors on WDK7.
+ * accessors on WinDDK 7600.
  */
 typedef struct virtio_pci_common_cfg {
     UINT32 device_feature_select; /* read-write */

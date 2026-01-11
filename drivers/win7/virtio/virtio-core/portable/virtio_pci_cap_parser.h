@@ -4,8 +4,8 @@
 #include <stddef.h>
 
 /*
- * WDK7 / older MSVC toolchains don't always provide <stdint.h>. Provide a small
- * fallback so the portable capability parser can be built for Windows 7.
+ * WinDDK 7600 / older MSVC toolchains don't always provide <stdint.h>. Provide
+ * a small fallback so the portable capability parser can be built for Windows 7.
  */
 #if defined(_MSC_VER) && (_MSC_VER < 1600)
 typedef signed __int8 int8_t;
