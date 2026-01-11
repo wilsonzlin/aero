@@ -324,7 +324,7 @@ export function decodeCmdSetBlendState(view: DataView, cmdByteOffset = 0): Aerog
   const dstFactorAlpha = hdr.sizeBytes >= 36 ? view.getUint32(cmdByteOffset + 32, true) : dstFactor;
   const blendOpAlpha = hdr.sizeBytes >= 40 ? view.getUint32(cmdByteOffset + 36, true) : blendOp;
 
-  const blendConstantRgba: [number, number, number, number] = [0, 0, 0, 0];
+  const blendConstantRgba: [number, number, number, number] = [1, 1, 1, 1];
   for (let i = 0; i < 4; i++) {
     const off = cmdByteOffset + 40 + i * 4;
     const needed = off + 4 - cmdByteOffset;

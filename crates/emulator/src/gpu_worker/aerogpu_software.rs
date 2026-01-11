@@ -2948,7 +2948,7 @@ impl AeroGpuSoftwareExecutor {
             }
             cmd::AerogpuCmdOpcode::SetBlendState => {
                 // `SET_BLEND_STATE` was extended over time; accept older 28-byte packets and
-                // default missing fields (alpha=params, constant=0, sample_mask=0xFFFFFFFF).
+                // default missing fields (alpha=params, constant=1, sample_mask=0xFFFFFFFF).
                 if packet.len() < 28 {
                     Self::record_error(regs);
                     return false;

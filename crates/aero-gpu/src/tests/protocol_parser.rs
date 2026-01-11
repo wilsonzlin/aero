@@ -1019,7 +1019,7 @@ fn protocol_accepts_legacy_set_blend_state_packet() {
             assert_eq!(state.src_factor_alpha, state.src_factor);
             assert_eq!(state.dst_factor_alpha, state.dst_factor);
             assert_eq!(state.blend_op_alpha, state.blend_op);
-            assert_eq!(state.blend_constant_rgba_f32, [0, 0, 0, 0]);
+            assert_eq!(state.blend_constant_rgba_f32, [1.0f32.to_bits(); 4]);
             assert_eq!(state.sample_mask, 0xFFFF_FFFF);
         }
         other => panic!("unexpected cmd: {other:?}"),

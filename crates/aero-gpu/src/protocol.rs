@@ -747,7 +747,7 @@ pub fn parse_cmd_stream(
                     blend_op
                 };
 
-                let mut blend_constant_rgba_f32 = [0u32; 4];
+                let mut blend_constant_rgba_f32 = [1.0f32.to_bits(); 4];
                 if packet.len() >= 44 {
                     blend_constant_rgba_f32[0] = read_u32_le(&packet[40..44]);
                 }

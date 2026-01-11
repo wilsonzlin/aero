@@ -180,6 +180,6 @@ test("SET_BLEND_STATE decoder accepts legacy 28-byte packets", () => {
   assert.equal(decoded.srcFactorAlpha, decoded.srcFactor);
   assert.equal(decoded.dstFactorAlpha, decoded.dstFactor);
   assert.equal(decoded.blendOpAlpha, decoded.blendOp);
-  assert.deepEqual(decoded.blendConstantRgba, [0, 0, 0, 0]);
+  assert.deepEqual(decoded.blendConstantRgba, [1, 1, 1, 1]);
   assert.equal(decoded.sampleMask >>> 0, 0xffff_ffff);
 });
