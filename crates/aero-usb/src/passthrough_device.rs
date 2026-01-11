@@ -13,6 +13,7 @@ use crate::passthrough::{
     UsbHostCompletion, UsbInResult, UsbOutResult, UsbPassthroughDevice,
 };
 use crate::usb::{SetupPacket as UsbSetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
+use std::mem;
 
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
 
@@ -238,7 +239,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
         }
 
         let Some(state) = self.control.as_mut() else {
-            return UsbHandshake::Stall;
+            return UsbHandshake::Nak;
         };
         if state.stalled {
             return UsbHandshake::Stall;
@@ -260,7 +261,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                             // The DATA stage carries the OUT payload; once buffered we ACK the final
                             // OUT packet and backpressure using NAK on the STATUS stage.
                             state.stage = ControlStage::StatusInPending {
-                                data: Some(received.clone()),
+                                data: Some(mem::take(received)),
                             };
                         }
                         ControlResponse::Stall => return UsbHandshake::Stall,
@@ -297,7 +298,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                     }
                 }
             }
-            _ => UsbHandshake::Stall,
+            _ => UsbHandshake::Nak,
         }
     }
 
@@ -317,7 +318,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
         }
 
         let Some(state) = self.control.as_mut() else {
-            return UsbHandshake::Stall;
+            return UsbHandshake::Nak;
         };
         if state.stalled {
             return UsbHandshake::Stall;
@@ -404,7 +405,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                     ControlResponse::Data(_) => UsbHandshake::Stall,
                 }
             }
-            _ => UsbHandshake::Stall,
+            _ => UsbHandshake::Nak,
         }
     }
 }
