@@ -207,8 +207,7 @@ It MUST be treated as a high-risk surface (SSRF / open proxy).
 The L2 tunnel is an egress-capable primitive; deploy it like you would deploy `/tcp`.
 
 These environment variables are enforced by the **production Rust implementation**
-(`crates/aero-l2-proxy`). The Node "upgrade policy harness" under `proxy/aero-l2-proxy` is
-dev/test-only and must not be treated as a security boundary for production deployments.
+(`crates/aero-l2-proxy`).
 
 ### Origin allowlist
 

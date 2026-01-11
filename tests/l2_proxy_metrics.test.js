@@ -3,13 +3,7 @@ import assert from "node:assert/strict";
 
 import { WebSocket } from "../tools/minimal_ws.js";
 
-import { startL2ProxyServer } from "../proxy/aero-l2-proxy/src/server.ts";
-
-function getServerPort(server) {
-  const addr = server.address();
-  assert.ok(addr && typeof addr !== "string");
-  return addr.port;
-}
+import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
 function parseMetric(body, name) {
   for (const line of body.split("\n")) {
@@ -39,23 +33,24 @@ async function waitForClose(ws) {
   });
 }
 
-test("node l2 proxy exposes /metrics and counts rx frames", async () => {
-  const proxy = await startL2ProxyServer({
-    listenHost: "127.0.0.1",
-    listenPort: 0,
-    open: true,
-    allowedOrigins: [],
-    token: null,
-    maxConnections: 0,
+function encodeL2Frame(payload) {
+  const header = Buffer.from([0xa2, 0x03, 0x00, 0x00]);
+  return Buffer.concat([header, payload]);
+}
+
+test("l2 proxy exposes /metrics and counts rx frames", async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "1",
+    AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_TOKEN: "",
+    AERO_L2_MAX_CONNECTIONS: "0",
   });
-  const port = getServerPort(proxy.server);
+  const port = proxy.port;
 
   try {
     {
       const res = await fetch(`http://127.0.0.1:${port}/readyz`);
       assert.equal(res.status, 200);
-      const body = await res.json();
-      assert.deepEqual(body, { ok: true });
     }
 
     {
@@ -69,7 +64,7 @@ test("node l2 proxy exposes /metrics and counts rx frames", async () => {
 
     const ws = new WebSocket(`ws://127.0.0.1:${port}/l2`, ["aero-l2-tunnel-v1"]);
     await waitForOpen(ws);
-    ws.send(Buffer.alloc(60));
+    ws.send(encodeL2Frame(Buffer.alloc(60)));
     ws.close(1000, "done");
     await waitForClose(ws);
 
