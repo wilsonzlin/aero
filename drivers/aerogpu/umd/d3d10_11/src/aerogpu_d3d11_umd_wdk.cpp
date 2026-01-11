@@ -5888,9 +5888,109 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
     const size_t row_bytes = static_cast<size_t>(copy_width) * bpp;
 
-    if (row_bytes && dst->row_pitch_bytes >= static_cast<size_t>(dst_x) * bpp + row_bytes &&
+    if (row_bytes && copy_height && dst->row_pitch_bytes >= static_cast<size_t>(dst_x) * bpp + row_bytes &&
         src->row_pitch_bytes >= static_cast<size_t>(src_left) * bpp + row_bytes &&
         dst_y + copy_height <= dst->height && src_top + copy_height <= src->height) {
+      // Staging resources are guest-backed and Map(READ) exposes the runtime
+      // allocation pointer. When running without a functional transfer backend,
+      // mirror CPU-side texture copies into the allocation so readbacks observe
+      // the software shadow (`dst->storage`).
+      const bool want_staging_readback = (dst->usage == kD3D11UsageStaging) &&
+                                         ((dst->cpu_access_flags & kD3D11CpuAccessRead) != 0) &&
+                                         (dst->backing_alloc_id != 0) && (dst->wddm_allocation_handle != 0);
+
+      uint8_t* dst_wddm_bytes = nullptr;
+      uint32_t dst_wddm_pitch = 0;
+      D3DDDICB_LOCK lock_args = {};
+      const auto* ddi = want_staging_readback ? reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks) : nullptr;
+      const auto* cb_device =
+          want_staging_readback ? reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks) : nullptr;
+
+      const auto lock_for_write = [&](D3DDDICB_LOCK* args) -> HRESULT {
+        if (!args || !dev->runtime_device) {
+          return E_NOTIMPL;
+        }
+        if (ddi && ddi->pfnLockCb) {
+          return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+        }
+        if (cb_device && cb_device->pfnLockCb) {
+          return CallCbMaybeHandle(cb_device->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+        }
+        return E_NOTIMPL;
+      };
+
+      const auto unlock = [&](D3DDDICB_UNLOCK* args) -> HRESULT {
+        if (!args || !dev->runtime_device) {
+          return E_NOTIMPL;
+        }
+        if (ddi && ddi->pfnUnlockCb) {
+          return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+        }
+        if (cb_device && cb_device->pfnUnlockCb) {
+          return CallCbMaybeHandle(cb_device->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+        }
+        return E_NOTIMPL;
+      };
+
+      if (want_staging_readback) {
+        const bool has_lock_unlock = (ddi && ddi->pfnLockCb && ddi->pfnUnlockCb) || (cb_device && cb_device->pfnLockCb && cb_device->pfnUnlockCb);
+        if (!has_lock_unlock) {
+          SetError(dev, E_NOTIMPL);
+          return;
+        }
+
+        lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(dst->wddm_allocation_handle);
+        __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+          lock_args.SubresourceIndex = dst_subresource;
+        }
+        __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+          lock_args.SubResourceIndex = dst_subresource;
+        }
+        InitLockForWrite(&lock_args);
+
+        HRESULT hr = lock_for_write(&lock_args);
+        if (FAILED(hr)) {
+          SetError(dev, hr);
+          return;
+        }
+        if (!lock_args.pData) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = dst_subresource;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = dst_subresource;
+          }
+          (void)unlock(&unlock_args);
+          SetError(dev, E_FAIL);
+          return;
+        }
+
+        dst_wddm_pitch = dst->row_pitch_bytes;
+        __if_exists(D3DDDICB_LOCK::Pitch) {
+          if (lock_args.Pitch) {
+            dst_wddm_pitch = lock_args.Pitch;
+          }
+        }
+        const uint64_t dst_row_needed = static_cast<uint64_t>(dst_x) * static_cast<uint64_t>(bpp) + static_cast<uint64_t>(row_bytes);
+        if (dst_row_needed > dst_wddm_pitch) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = dst_subresource;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = dst_subresource;
+          }
+          (void)unlock(&unlock_args);
+          SetError(dev, E_INVALIDARG);
+          return;
+        }
+
+        dst_wddm_bytes = static_cast<uint8_t*>(lock_args.pData);
+      }
+
       for (uint32_t y = 0; y < copy_height; y++) {
         const size_t dst_off =
             static_cast<size_t>(dst_y + y) * dst->row_pitch_bytes + static_cast<size_t>(dst_x) * bpp;
@@ -5898,7 +5998,33 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
             static_cast<size_t>(src_top + y) * src->row_pitch_bytes + static_cast<size_t>(src_left) * bpp;
         if (dst_off + row_bytes <= dst->storage.size() && src_off + row_bytes <= src->storage.size()) {
           std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
+          if (dst_wddm_bytes) {
+            const size_t dst_wddm_off =
+                static_cast<size_t>(dst_y + y) * dst_wddm_pitch + static_cast<size_t>(dst_x) * bpp;
+            std::memcpy(dst_wddm_bytes + dst_wddm_off, src->storage.data() + src_off, row_bytes);
+          }
         }
+      }
+
+      if (dst_wddm_bytes) {
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_args.SubresourceIndex = dst_subresource;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_args.SubResourceIndex = dst_subresource;
+        }
+        HRESULT hr = unlock(&unlock_args);
+        if (FAILED(hr)) {
+          SetError(dev, hr);
+          return;
+        }
+
+        EmitDirtyRangeLocked(dev,
+                             dst,
+                             0,
+                             static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height));
       }
     }
 

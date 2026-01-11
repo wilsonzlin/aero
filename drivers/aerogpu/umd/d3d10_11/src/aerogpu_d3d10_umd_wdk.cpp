@@ -3286,6 +3286,16 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       }
     }
 
+    // Keep guest-backed staging allocations coherent for CPU readback when the
+    // transfer backend is unavailable or stubbed out.
+    if (copy_width && copy_height &&
+        dst->backing_alloc_id != 0 &&
+        dst->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING) &&
+        (dst->cpu_access_flags == 0 ||
+         (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) != 0)) {
+      EmitUploadLocked(hDevice, dev, dst, 0, dst->storage.size());
+    }
+
     if (!SupportsTransfer(dev)) {
       return;
     }
