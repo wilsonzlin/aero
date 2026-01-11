@@ -15,8 +15,8 @@ use wgpu::util::DeviceExt;
 use crate::aerogpu_executor::AllocTable;
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
-use crate::readback_rgba8;
 use crate::texture_manager::TextureRegion;
+use crate::{readback_rgba8, readback_stencil8};
 
 /// Minimal executor for the D3D9 UMD-produced `aerogpu_cmd.h` command stream.
 ///
@@ -160,6 +160,8 @@ pub enum AerogpuD3d9Error {
     CopyOutOfBounds { src: u32, dst: u32 },
     #[error("readback only supported for RGBA8/BGRA8 textures (handle {0})")]
     ReadbackUnsupported(u32),
+    #[error("stencil readback only supported for D24_UNORM_S8_UINT textures (handle {0})")]
+    ReadbackStencilUnsupported(u32),
     #[error("unknown shared surface token 0x{0:016X}")]
     UnknownShareToken(u64),
     #[error(
@@ -843,6 +845,14 @@ impl AerogpuD3d9Executor {
         self.readback_texture_rgba8_underlying(underlying).await
     }
 
+    pub async fn readback_texture_stencil8(
+        &self,
+        texture_handle: u32,
+    ) -> Result<(u32, u32, Vec<u8>), AerogpuD3d9Error> {
+        let underlying = self.resolve_resource_handle(texture_handle)?;
+        self.readback_texture_stencil8_underlying(underlying).await
+    }
+
     async fn readback_texture_rgba8_underlying(
         &self,
         texture_handle: u32,
@@ -891,6 +901,48 @@ impl AerogpuD3d9Executor {
         };
 
         Ok((width, height, out))
+    }
+
+    async fn readback_texture_stencil8_underlying(
+        &self,
+        texture_handle: u32,
+    ) -> Result<(u32, u32, Vec<u8>), AerogpuD3d9Error> {
+        let res = self
+            .resources
+            .get(&texture_handle)
+            .ok_or(AerogpuD3d9Error::UnknownResource(texture_handle))?;
+        let (texture, format, width, height) = match res {
+            Resource::Texture2d {
+                texture,
+                format,
+                width,
+                height,
+                ..
+            } => (texture, *format, *width, *height),
+            _ => return Err(AerogpuD3d9Error::ReadbackStencilUnsupported(texture_handle)),
+        };
+
+        if format != wgpu::TextureFormat::Depth24PlusStencil8 {
+            return Err(AerogpuD3d9Error::ReadbackStencilUnsupported(texture_handle));
+        }
+
+        let bytes = readback_stencil8(
+            &self.device,
+            &self.queue,
+            texture,
+            TextureRegion {
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            },
+        )
+        .await;
+
+        Ok((width, height, bytes))
     }
 
     fn resolve_resource_handle(&self, handle: u32) -> Result<u32, AerogpuD3d9Error> {
