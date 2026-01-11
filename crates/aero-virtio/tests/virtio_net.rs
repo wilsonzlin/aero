@@ -422,3 +422,218 @@ fn virtio_net_drops_frame_when_buffer_insufficient_without_consuming_chain() {
         small_frame.as_slice()
     );
 }
+
+#[test]
+fn virtio_net_tx_chain_with_writable_descriptor_is_dropped_but_completes() {
+    let backing = Rc::new(RefCell::new(LoopbackNet::default()));
+    let backend = SharedNet(backing.clone());
+
+    let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x03]);
+    let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure TX queue 1.
+    let tx_desc = 0x1000;
+    let tx_avail = 0x2000;
+    let tx_used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, tx_desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, tx_avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, tx_used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // TX chain with a writable descriptor must be dropped but still completed.
+    let hdr_addr = 0x4000;
+    let payload_addr = 0x4100;
+    let hdr = [0u8; VirtioNetHdr::BASE_LEN];
+    let payload = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
+    mem.write(hdr_addr, &hdr).unwrap();
+    mem.write(payload_addr, payload).unwrap();
+
+    write_desc(
+        &mut mem,
+        tx_desc,
+        0,
+        hdr_addr,
+        hdr.len() as u32,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(
+        &mut mem,
+        tx_desc,
+        1,
+        payload_addr,
+        payload.len() as u32,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    write_u16_le(&mut mem, tx_avail, 0).unwrap();
+    write_u16_le(&mut mem, tx_avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, tx_used, 0).unwrap();
+    write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + 1 * u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+        &mut mem,
+    );
+
+    assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
+    assert_eq!(read_u32_le(&mem, tx_used + 4).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, tx_used + 8).unwrap(), 0);
+    assert!(backing.borrow().tx_packets.is_empty());
+}
+
+#[test]
+fn virtio_net_tx_drops_invalid_sized_frames_but_completes_chain() {
+    let backing = Rc::new(RefCell::new(LoopbackNet::default()));
+    let backend = SharedNet(backing.clone());
+
+    let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x04]);
+    let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x40000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure TX queue 1.
+    let tx_desc = 0x1000;
+    let tx_avail = 0x2000;
+    let tx_used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, tx_desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, tx_avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, tx_used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Contract v1: frames <14 or >1514 bytes must be dropped but the chain must still complete.
+    let hdr0 = 0x4000;
+    let payload0 = 0x4100;
+    mem.write(hdr0, &[0u8; VirtioNetHdr::BASE_LEN]).unwrap();
+    mem.write(payload0, &[0u8; 10]).unwrap();
+
+    let hdr1 = 0x4200;
+    let payload1 = 0x4300;
+    mem.write(hdr1, &[0u8; VirtioNetHdr::BASE_LEN]).unwrap();
+    mem.write(payload1, &vec![0u8; 1515]).unwrap();
+
+    // Chain 0: undersized payload.
+    write_desc(
+        &mut mem,
+        tx_desc,
+        0,
+        hdr0,
+        VirtioNetHdr::BASE_LEN as u32,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(&mut mem, tx_desc, 1, payload0, 10, 0, 0);
+    // Chain 2: oversized payload.
+    write_desc(
+        &mut mem,
+        tx_desc,
+        2,
+        hdr1,
+        VirtioNetHdr::BASE_LEN as u32,
+        VIRTQ_DESC_F_NEXT,
+        3,
+    );
+    write_desc(&mut mem, tx_desc, 3, payload1, 1515, 0, 0);
+
+    write_u16_le(&mut mem, tx_avail, 0).unwrap();
+    write_u16_le(&mut mem, tx_avail + 2, 2).unwrap();
+    write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, tx_avail + 6, 2).unwrap();
+    write_u16_le(&mut mem, tx_used, 0).unwrap();
+    write_u16_le(&mut mem, tx_used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + 1 * u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+        &mut mem,
+    );
+
+    assert!(backing.borrow().tx_packets.is_empty());
+    assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 2);
+    // used[0] corresponds to head 0; used[1] corresponds to head 2.
+    assert_eq!(read_u32_le(&mem, tx_used + 4).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, tx_used + 8).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, tx_used + 12).unwrap(), 2);
+    assert_eq!(read_u32_le(&mem, tx_used + 16).unwrap(), 0);
+}
