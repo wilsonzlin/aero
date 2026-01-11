@@ -3,6 +3,9 @@ export const L2_TUNNEL_MAGIC = 0xa2;
 // Version is intentionally distinct from the WebRTC UDP relay v2 prefix (0x02).
 export const L2_TUNNEL_VERSION = 0x03;
 
+// Keep in sync with docs/l2-tunnel-protocol.md.
+export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
+
 export const L2_TUNNEL_HEADER_LEN = 4;
 
 export const L2_TUNNEL_TYPE_FRAME = 0x00;

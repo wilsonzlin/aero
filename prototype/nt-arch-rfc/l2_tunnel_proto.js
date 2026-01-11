@@ -6,6 +6,7 @@
 import {
   L2_TUNNEL_HEADER_LEN,
   L2_TUNNEL_MAGIC,
+  L2_TUNNEL_SUBPROTOCOL,
   L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
@@ -17,8 +18,6 @@ import {
   encodePing,
   encodePong,
 } from "../../web/src/shared/l2TunnelProtocol.ts";
-
-const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
 
 function normalizePayload(payload) {
   if (payload === undefined) return new Uint8Array();

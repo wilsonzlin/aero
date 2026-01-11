@@ -3,13 +3,14 @@ import {
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
+  L2_TUNNEL_SUBPROTOCOL,
   decodeL2Message,
   encodeL2Frame,
   encodePing,
   encodePong,
 } from "../shared/l2TunnelProtocol";
 
-export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
+export { L2_TUNNEL_SUBPROTOCOL };
 export const L2_TUNNEL_DATA_CHANNEL_LABEL = "l2";
 const L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX = "aero-l2-token.";
 
