@@ -174,7 +174,7 @@ npm run bench:storage -- --out-dir storage-perf-results/head
 ### Comparing two runs
 
 ```bash
-node --experimental-strip-types bench/compare.ts \
+npm run compare:storage -- \
   --baseline storage-perf-results/base/storage_bench.json \
   --candidate storage-perf-results/head/storage_bench.json \
   --out-dir storage-perf-results/compare \
@@ -194,7 +194,11 @@ It also includes any `warnings[]` from the benchmark output in the Markdown repo
 The exit code matches other perf suites (`0` pass, `1` regression, `2` unstable).
 
 `scripts/compare_storage_benchmarks.ts` remains as a compatibility wrapper for older invocations
-(`--current`, `--outDir`, `--thresholdPct`, `--json`) and can write `compare.json` for legacy tooling.
+(`--current`, `--outDir`, `--thresholdPct`, `--json`) and can write `compare.json` for legacy tooling:
+
+```bash
+npm run compare:storage:legacy -- --help
+```
 
 ## Gateway benchmark suite (backend networking)
 

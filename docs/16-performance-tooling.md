@@ -358,7 +358,7 @@ To reproduce the CI compare locally:
 npm run bench:storage -- --out-dir storage-perf-results/base
 npm run bench:storage -- --out-dir storage-perf-results/head
 
-node --experimental-strip-types bench/compare.ts \
+npm run compare:storage -- \
   --baseline storage-perf-results/base/storage_bench.json \
   --candidate storage-perf-results/head/storage_bench.json \
   --out-dir storage-perf-results/compare \
