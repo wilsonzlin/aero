@@ -90,7 +90,11 @@ In the browser, create a WebSocket L2 tunnel client and connect it to the proxy:
 ```ts
 import { WebSocketL2TunnelClient } from "./net";
 
-const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", (ev) => {
+// `gatewayBaseUrl` can be:
+// - `ws://...` / `wss://...` (explicit WebSocket URL), or
+// - `http://...` / `https://...` (auto-converted to ws(s) and `/l2` appended), or
+// - a same-origin path like `/l2` when running the full web app.
+const l2 = new WebSocketL2TunnelClient("http://127.0.0.1:8090", (ev) => {
   if (ev.type === "frame") nicRx(ev.frame);
   if (ev.type === "error") console.error(ev.error);
 });
