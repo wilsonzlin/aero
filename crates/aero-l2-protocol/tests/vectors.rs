@@ -31,7 +31,7 @@ fn b64_to_bytes(b64: &str) -> Vec<u8> {
 
     let bytes = b64.as_bytes();
     assert!(
-        bytes.len() % 4 == 0,
+        bytes.len().is_multiple_of(4),
         "base64 length must be a multiple of 4 (got {})",
         bytes.len()
     );
@@ -244,7 +244,7 @@ fn l2_tunnel_vectors_match_golden_bytes() {
                     let mut expected_payload = Vec::new();
                     expected_payload.extend_from_slice(&code.to_be_bytes());
                     expected_payload
-                        .extend_from_slice(&(message.as_bytes().len() as u16).to_be_bytes());
+                        .extend_from_slice(&(message.len() as u16).to_be_bytes());
                     expected_payload.extend_from_slice(message.as_bytes());
                     assert_eq!(
                         expected_payload, payload,

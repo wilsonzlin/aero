@@ -49,7 +49,7 @@ struct L2InvalidVector {
 
 fn decode_hex(hex: &str) -> Vec<u8> {
     assert!(
-        hex.len() % 2 == 0,
+        hex.len().is_multiple_of(2),
         "hex string must be an even number of chars, got {}",
         hex.len()
     );
@@ -112,7 +112,7 @@ fn l2_tunnel_vectors_roundtrip() {
             let mut expected_payload = Vec::new();
             expected_payload.extend_from_slice(&structured.code.to_be_bytes());
             expected_payload
-                .extend_from_slice(&(structured.message.as_bytes().len() as u16).to_be_bytes());
+                .extend_from_slice(&(structured.message.len() as u16).to_be_bytes());
             expected_payload.extend_from_slice(structured.message.as_bytes());
             assert_eq!(expected_payload, payload, "{}", vector.name);
         }

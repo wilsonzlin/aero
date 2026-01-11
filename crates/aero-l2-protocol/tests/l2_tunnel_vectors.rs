@@ -52,7 +52,7 @@ fn l2_tunnel_v1_vectors() {
             .wire_b64
             .as_deref()
             .or(v.frame_b64.as_deref())
-            .expect(&format!("vector {} missing wire_b64/frame_b64", v.name));
+            .unwrap_or_else(|| panic!("vector {} missing wire_b64/frame_b64", v.name));
         let wire = decode_b64(wire_b64);
 
         if v.expect_error.unwrap_or(false) {
@@ -74,15 +74,16 @@ fn l2_tunnel_v1_vectors() {
         let msg_type = v
             .msg_type
             .or(v.type_)
-            .expect(&format!("vector {} missing msgType/type", v.name));
+            .unwrap_or_else(|| panic!("vector {} missing msgType/type", v.name));
         let flags = v.flags.unwrap_or(0);
         let payload_b64 = v
             .payload_b64
             .as_deref()
-            .expect(&format!("vector {} missing payload_b64", v.name));
+            .unwrap_or_else(|| panic!("vector {} missing payload_b64", v.name));
         let payload = decode_b64(payload_b64);
 
-        let decoded = decode_message(&wire).expect(&format!("vector {} decode", v.name));
+        let decoded =
+            decode_message(&wire).unwrap_or_else(|err| panic!("vector {} decode: {err}", v.name));
         assert_eq!(decoded.version, L2_TUNNEL_VERSION, "vector {}", v.name);
         assert_eq!(decoded.msg_type, msg_type, "vector {}", v.name);
         assert_eq!(decoded.flags, flags, "vector {}", v.name);
