@@ -358,7 +358,11 @@ HRESULT query_adapter_info(Adapter* adapter, const D3D9DDIARG_QUERYADAPTERINFO* 
       logf("aerogpu-d3d9: QueryAdapterInfo unknown type=%u size=%u\n",
            pQueryAdapterInfo->Type,
            pQueryAdapterInfo->PrivateDriverDataSize);
-      return E_INVALIDARG;
+      // Be permissive: unknown adapter-info queries should not break D3D9Ex/DWM
+      // bring-up. Return a zeroed buffer to signal "no extra data" rather than
+      // failing the call.
+      std::memset(pQueryAdapterInfo->pPrivateDriverData, 0, pQueryAdapterInfo->PrivateDriverDataSize);
+      return S_OK;
   }
 }
 
