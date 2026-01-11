@@ -40,16 +40,25 @@ struct MapDoNotWaitThreadArgs {
   ID3D11DeviceContext* ctx;
   ID3D11Texture2D* tex;
   HRESULT hr;
+  UINT row_pitch;
+  uint32_t pixel;
+  bool has_pixel;
 };
 
 static DWORD WINAPI MapDoNotWaitThreadProc(LPVOID param) {
   MapDoNotWaitThreadArgs* args = (MapDoNotWaitThreadArgs*)param;
   args->hr = E_FAIL;
+  args->row_pitch = 0;
+  args->pixel = 0;
+  args->has_pixel = false;
 
   D3D11_MAPPED_SUBRESOURCE mapped;
   ZeroMemory(&mapped, sizeof(mapped));
   args->hr = args->ctx->Map(args->tex, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
-  if (SUCCEEDED(args->hr)) {
+  if (SUCCEEDED(args->hr) && mapped.pData) {
+    args->row_pitch = mapped.RowPitch;
+    args->pixel = aerogpu_test::ReadPixelBGRA(mapped.pData, (int)mapped.RowPitch, 5, 5);
+    args->has_pixel = true;
     args->ctx->Unmap(args->tex, 0);
   }
 
@@ -459,6 +468,21 @@ static int RunD3D11Triangle(int argc, char** argv) {
       // Expected: the CopyResource is still being processed by the GPU.
     } else if (SUCCEEDED(hr)) {
       // Allowed: work completed quickly.
+      if (!args.has_pixel) {
+        return reporter.Fail("Map(staging, DO_NOT_WAIT) returned NULL pData");
+      }
+      const UINT min_row_pitch = bb_desc.Width * 4u;
+      if (args.row_pitch < min_row_pitch) {
+        return reporter.Fail("Map(staging, DO_NOT_WAIT) returned too-small RowPitch=%u (min=%u)",
+                             (unsigned)args.row_pitch,
+                             (unsigned)min_row_pitch);
+      }
+      const uint32_t expected_corner = 0xFFFF0000u;  // red in BGRA memory order
+      if ((args.pixel & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
+        return reporter.Fail("Map(staging, DO_NOT_WAIT) pixel mismatch at (5,5): got 0x%08lX expected ~0x%08lX",
+                             (unsigned long)args.pixel,
+                             (unsigned long)expected_corner);
+      }
     } else {
       return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging, DO_NOT_WAIT)", hr, device.get());
     }
