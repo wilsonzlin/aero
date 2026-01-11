@@ -84,14 +84,14 @@ describe('waitUntilNotEqual', () => {
 
       const notifier = new Worker(
         `
-        const { workerData } = require('node:worker_threads');
+        import { workerData } from 'node:worker_threads';
         const i32 = new Int32Array(workerData.sab);
         setTimeout(() => {
           Atomics.store(i32, 0, 1);
           Atomics.notify(i32, 0, 1);
         }, 10);
       `,
-        { eval: true, workerData: { sab } },
+        { eval: true, type: 'module', workerData: { sab } },
       );
 
       try {

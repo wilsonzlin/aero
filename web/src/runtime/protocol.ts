@@ -114,6 +114,16 @@ export type WorkerInitMessage = {
    * Layout is defined in `src/shared/frameProtocol.ts`.
    */
   frameStateSab?: SharedArrayBuffer;
+  /**
+   * Optional perf channel attachment that allows workers to write samples into the
+   * shared Perf HUD ring buffers.
+   */
+  perfChannel?: {
+    runStartEpochMs: number;
+    frameHeader: SharedArrayBuffer;
+    buffer: SharedArrayBuffer;
+    workerKind: number;
+  };
 };
 
 /**

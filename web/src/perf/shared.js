@@ -1,6 +1,10 @@
 import { PERF_RECORD_SIZE_BYTES, WorkerKind } from "./record.js";
 import { createSpscRingBufferSharedArrayBuffer } from "./ring_buffer.js";
 
+export const PERF_FRAME_HEADER_FRAME_ID_INDEX = 0;
+export const PERF_FRAME_HEADER_T_US_INDEX = 1;
+export const PERF_FRAME_HEADER_I32_LEN = 2;
+
 export function nowEpochMs() {
   // `performance.timeOrigin + performance.now()` is available in both Window and Worker
   // contexts and produces an epoch-ish timestamp.
@@ -12,6 +16,8 @@ export function createPerfChannel({
   workerKinds = [WorkerKind.Main, WorkerKind.CPU, WorkerKind.GPU, WorkerKind.IO, WorkerKind.JIT],
 } = {}) {
   const runStartEpochMs = nowEpochMs();
+
+  const frameHeader = new SharedArrayBuffer(PERF_FRAME_HEADER_I32_LEN * Int32Array.BYTES_PER_ELEMENT);
 
   const buffers = {};
   for (const kind of workerKinds) {
@@ -26,7 +32,7 @@ export function createPerfChannel({
     runStartEpochMs,
     capacity,
     recordSize: PERF_RECORD_SIZE_BYTES,
+    frameHeader,
     buffers,
   };
 }
-

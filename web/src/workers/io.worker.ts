@@ -4,6 +4,8 @@ import type { AeroConfig } from "../config/aero_config";
 import { InputEventType } from "../input/event_queue";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
+import { PerfWriter } from "../perf/writer.js";
+import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import {
@@ -62,6 +64,33 @@ let activeAccessHandle: FileSystemSyncAccessHandle | null = null;
 let micRingBuffer: SharedArrayBuffer | null = null;
 let micSampleRate = 0;
 
+let perfWriter: PerfWriter | null = null;
+let perfFrameHeader: Int32Array | null = null;
+let perfLastFrameId = 0;
+let perfIoMs = 0;
+let perfIoReadBytes = 0;
+let perfIoWriteBytes = 0;
+
+function maybeEmitPerfSample(): void {
+  if (!perfWriter || !perfFrameHeader) return;
+  const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+  if (frameId === 0 || frameId === perfLastFrameId) return;
+  perfLastFrameId = frameId;
+
+  const ioMs = perfIoMs > 0 ? perfIoMs : 0.01;
+  perfWriter.frameSample(frameId, {
+    durations: { io_ms: ioMs },
+    counters: {
+      io_read_bytes: perfIoReadBytes,
+      io_write_bytes: perfIoWriteBytes,
+    },
+  });
+
+  perfIoMs = 0;
+  perfIoReadBytes = 0;
+  perfIoWriteBytes = 0;
+}
+
 function attachMicRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate?: number): void {
   if (ringBuffer !== null) {
     const Sab = globalThis.SharedArrayBuffer;
@@ -86,6 +115,7 @@ async function openOpfsDisk(directory: string, name: string): Promise<{ size: nu
 }
 
 async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
+  const t0 = performance.now();
   try {
     if (msg.token.kind === "opfs") {
       const { size } = await openOpfsDisk(msg.token.directory, msg.token.name);
@@ -116,6 +146,8 @@ async function handleOpenActiveDisk(msg: OpenActiveDiskRequest): Promise<void> {
       error: err instanceof Error ? err.message : String(err),
     };
     ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
   }
 }
 
@@ -164,6 +196,14 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const regions = ringRegionsForWorker(role);
         commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
 
+        if (init.perfChannel) {
+          perfWriter = new PerfWriter(init.perfChannel.buffer, {
+            workerKind: init.perfChannel.workerKind,
+            runStartEpochMs: init.perfChannel.runStartEpochMs,
+          });
+          perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+        }
+
         setReadyFlag(status, role, true);
         ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
         if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
@@ -201,7 +241,10 @@ function startPolling(): void {
   // This worker must remain responsive to `postMessage` input batches. Avoid blocking loops / Atomics.wait
   // here; instead poll the command ring at a low rate.
   pollTimer = setInterval(() => {
+    const t0 = performance.now();
     drainCommands();
+    perfIoMs += performance.now() - t0;
+    maybeEmitPerfSample();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
       shutdown();
     }
@@ -221,6 +264,7 @@ function drainCommands(): void {
 }
 
 function handleInputBatch(buffer: ArrayBuffer): void {
+  const t0 = performance.now();
   // `buffer` is transferred from the main thread, so it is uniquely owned here.
   const words = new Int32Array(buffer);
   const count = words[0] >>> 0;
@@ -240,6 +284,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       continue;
     }
   }
+
+  perfIoReadBytes += buffer.byteLength;
+  perfIoMs += performance.now() - t0;
 }
 
 function shutdown(): void {

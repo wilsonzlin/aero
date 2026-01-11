@@ -3,6 +3,8 @@
 import type { AeroConfig } from "../config/aero_config";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
+import { PerfWriter } from "../perf/writer.js";
+import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { RingBuffer } from "../runtime/ring_buffer";
 import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
 import {
@@ -121,6 +123,12 @@ async function waitForCommandRingDataNonBlocking(timeoutMs?: number): Promise<vo
   }
 }
 
+let perfWriter: PerfWriter | null = null;
+let perfFrameHeader: Int32Array | null = null;
+let perfLastFrameId = 0;
+let perfJitMs = 0;
+let perfBlocksCompiled = 0;
+
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   if (isJitCompileRequest(ev.data)) {
     void handleCompile(ev.data);
@@ -154,6 +162,17 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       status = createSharedMemoryViews(segments).status;
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset, regions.command.byteLength);
+
+      if (init.perfChannel) {
+        perfWriter = new PerfWriter(init.perfChannel.buffer, {
+          workerKind: init.perfChannel.workerKind,
+          runStartEpochMs: init.perfChannel.runStartEpochMs,
+        });
+        perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+        perfLastFrameId = 0;
+        perfJitMs = 0;
+        perfBlocksCompiled = 0;
+      }
 
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
@@ -219,6 +238,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
     module = await WebAssembly.compile(req.wasmBytes);
   } catch (err) {
     const durationMs = performance.now() - startMs;
+    perfJitMs += durationMs;
     const message = err instanceof Error ? err.message : String(err);
     postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
     return;
@@ -227,6 +247,8 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
   }
 
   const durationMs = performance.now() - startMs;
+  perfJitMs += durationMs;
+  perfBlocksCompiled += 1;
   if (perf.traceEnabled) perf.instant("jit:compile:end", "t", { key, durationMs });
 
   cacheSet(key, module);
@@ -251,6 +273,8 @@ function postJitResponse(msg: JitWorkerResponse): void {
 }
 
 async function runLoop(): Promise<void> {
+  const pollIntervalMs = 16;
+
   while (true) {
     while (true) {
       const bytes = commandRing.pop();
@@ -263,7 +287,21 @@ async function runLoop(): Promise<void> {
     }
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
-    await waitForCommandRingDataNonBlocking();
+
+    if (perfWriter && perfFrameHeader) {
+      const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+      if (frameId !== 0 && frameId !== perfLastFrameId) {
+        perfLastFrameId = frameId;
+        perfWriter.frameSample(frameId, {
+          durations: { jit_ms: perfJitMs > 0 ? perfJitMs : 0.01 },
+          counters: { instructions: perfBlocksCompiled },
+        });
+        perfJitMs = 0;
+        perfBlocksCompiled = 0;
+      }
+    }
+
+    await waitForCommandRingDataNonBlocking(perfWriter && perfFrameHeader ? pollIntervalMs : undefined);
   }
 
   setReadyFlag(status, role, false);

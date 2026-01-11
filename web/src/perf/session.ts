@@ -4,7 +4,7 @@ import type { PerfChannel } from "./shared.js";
 import { PerfAggregator as PerfAggregatorImpl } from "./aggregator.js";
 import { encodeFrameSampleRecord, msToUsU32, PERF_RECORD_SIZE_BYTES, WorkerKind } from "./record.js";
 import { SpscRingBuffer } from "./ring_buffer.js";
-import { createPerfChannel } from "./shared.js";
+import { createPerfChannel, PERF_FRAME_HEADER_FRAME_ID_INDEX, PERF_FRAME_HEADER_T_US_INDEX } from "./shared.js";
 import type { ByteSizedCacheTracker, GpuAllocationTracker } from "./memory";
 import { WASM_PAGE_SIZE_BYTES } from "./memory";
 import type { PerfApi, PerfHudSnapshot, PerfTimeBreakdownMs } from "./types";
@@ -46,6 +46,7 @@ export class PerfSession implements PerfApi {
   readonly shaderCacheTracker?: ByteSizedCacheTracker;
 
   readonly channel: PerfChannel;
+  private readonly frameHeader: Int32Array;
   private readonly runStartNowMs: number;
   private readonly mainRing: SpscRingBuffer;
   private readonly mainRecord: {
@@ -109,6 +110,10 @@ export class PerfSession implements PerfApi {
 
     this.channel = createPerfChannel();
     this.runStartNowMs = this.channel.runStartEpochMs - performance.timeOrigin;
+    if (!(this.channel.frameHeader instanceof SharedArrayBuffer)) {
+      throw new Error("PerfSession expected perf frame header to be a SharedArrayBuffer.");
+    }
+    this.frameHeader = new Int32Array(this.channel.frameHeader);
     const mainBuffer = this.channel.buffers[WorkerKind.Main];
     if (!(mainBuffer instanceof SharedArrayBuffer)) {
       throw new Error("PerfSession expected main perf buffer to be a SharedArrayBuffer.");
@@ -137,6 +142,10 @@ export class PerfSession implements PerfApi {
     };
 
     this.aggregator = new PerfAggregatorImpl(this.channel, this.aggregatorOptions);
+  }
+
+  getChannel(): PerfChannel {
+    return this.channel;
   }
 
   setHudActive(active: boolean): void {
@@ -359,10 +368,14 @@ export class PerfSession implements PerfApi {
       this.lastRafNowMs = nowMs;
 
       this.frameId = (this.frameId + 1) >>> 0;
+      const frameId = this.frameId;
       this.responsiveness.notePresent(nowMs);
-      this.mainRecord.frameId = this.frameId;
-      this.mainRecord.frameUs = msToUsU32(frameTimeMs);
       const tUs = Math.max(0, Math.min(0xffff_ffff, Math.round((nowMs - this.runStartNowMs) * 1000))) >>> 0;
+      Atomics.store(this.frameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX, frameId);
+      Atomics.store(this.frameHeader, PERF_FRAME_HEADER_T_US_INDEX, tUs);
+
+      this.mainRecord.frameId = frameId;
+      this.mainRecord.frameUs = msToUsU32(frameTimeMs);
       this.mainRecord.tUs = tUs;
       const wrote = this.mainRing.tryWriteRecord(this.encodeMainRecord);
       if (this.captureActive && wrote) {

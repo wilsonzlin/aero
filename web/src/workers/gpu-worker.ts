@@ -11,6 +11,8 @@
 
 import { perf } from '../perf/perf';
 import { installWorkerPerfHandlers } from '../perf/worker';
+import { PerfWriter } from '../perf/writer.js';
+import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from '../perf/shared.js';
 
 import {
   FRAME_DIRTY,
@@ -78,6 +80,12 @@ let status: Int32Array | null = null;
 
 let frameState: Int32Array | null = null;
 
+let perfWriter: PerfWriter | null = null;
+let perfFrameHeader: Int32Array | null = null;
+let perfCurrentFrameId = 0;
+let perfGpuMs = 0;
+let perfUploadBytes = 0;
+
 // NOTE: `present()` is expected to be provided by the GPU wasm module once the rendering stack
 // is fully wired up. Until then, we keep a tiny no-op implementation so the frame pacing demo
 // can run end-to-end without keeping the main thread stuck in DIRTY→tick spam.
@@ -117,6 +125,39 @@ let lastFrameStartMs: number | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+
+const flushPerfFrameSample = () => {
+  if (!perfWriter) return;
+  if (perfCurrentFrameId === 0) return;
+
+  perfWriter.frameSample(perfCurrentFrameId, {
+    durations: { gpu_ms: perfGpuMs > 0 ? perfGpuMs : 0.01 },
+  });
+  if (perfUploadBytes > 0) {
+    perfWriter.graphicsSample(perfCurrentFrameId, {
+      counters: { upload_bytes: perfUploadBytes },
+    });
+  }
+
+  perfGpuMs = 0;
+  perfUploadBytes = 0;
+};
+
+const syncPerfFrame = () => {
+  if (!perfWriter || !perfFrameHeader) return;
+  const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+  if (frameId === 0) return;
+
+  if (perfCurrentFrameId === 0) {
+    perfCurrentFrameId = frameId;
+    return;
+  }
+
+  if (frameId !== perfCurrentFrameId) {
+    flushPerfFrameSample();
+    perfCurrentFrameId = frameId;
+  }
+};
 
 const tryInitSharedFramebufferViews = () => {
   if (framebufferViews) return;
@@ -311,6 +352,7 @@ const presentOnce = async (dirtyRects: DirtyRect[] | null) => {
 };
 
 const handleTick = async () => {
+  syncPerfFrame();
   tryInitSharedFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
 
@@ -351,7 +393,9 @@ const handleTick = async () => {
 
   presenting = true;
   try {
+    const presentStartMs = performance.now();
     const didPresent = await presentOnce(dirtyRects);
+    perfGpuMs += performance.now() - presentStartMs;
     if (didPresent) {
       framesPresented += 1;
 
@@ -361,6 +405,7 @@ const handleTick = async () => {
         const textureUploadBytes = estimateTextureUploadBytes(framebufferViews?.layout ?? null, dirtyRects);
         telemetry.recordTextureUploadBytes(textureUploadBytes);
         perf.counter("textureUploadBytes", textureUploadBytes);
+        perfUploadBytes += textureUploadBytes;
         telemetry.endFrame(now);
       }
       lastFrameStartMs = now;
@@ -470,6 +515,17 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
 
   if (init.frameStateSab) {
     frameState = new Int32Array(init.frameStateSab);
+  }
+
+  if (init.perfChannel) {
+    perfWriter = new PerfWriter(init.perfChannel.buffer, {
+      workerKind: init.perfChannel.workerKind,
+      runStartEpochMs: init.perfChannel.runStartEpochMs,
+    });
+    perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+    perfCurrentFrameId = 0;
+    perfGpuMs = 0;
+    perfUploadBytes = 0;
   }
 
   ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);

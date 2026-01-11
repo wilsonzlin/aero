@@ -3,6 +3,8 @@
 import type { AeroConfig } from "../config/aero_config";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
+import { PerfWriter } from "../perf/writer.js";
+import { PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
 import {
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -41,6 +43,12 @@ let guestI32!: Int32Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
 
+let perfWriter: PerfWriter | null = null;
+let perfFrameHeader: Int32Array | null = null;
+let perfLastFrameId = 0;
+let perfCpuMs = 0;
+let perfInstructions = 0n;
+
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
@@ -70,6 +78,14 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       guestI32 = views.guestI32;
       vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
       frameState = init.frameStateSab ? new Int32Array(init.frameStateSab) : null;
+
+      if (init.perfChannel) {
+        perfWriter = new PerfWriter(init.perfChannel.buffer, {
+          workerKind: init.perfChannel.workerKind,
+          runStartEpochMs: init.perfChannel.runStartEpochMs,
+        });
+        perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
+      }
 
       initFramebufferHeader(vgaFramebuffer.header, {
         width: 320,
@@ -158,6 +174,21 @@ async function runLoop(): Promise<void> {
   let modeIndex = 0;
   let mode = modes[0];
 
+  const maybeEmitPerfSample = () => {
+    if (!perfWriter || !perfFrameHeader) return;
+    const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
+    if (frameId === 0 || frameId === perfLastFrameId) return;
+    perfLastFrameId = frameId;
+
+    perfWriter.frameSample(frameId, {
+      durations: { cpu_ms: perfCpuMs },
+      counters: { instructions: perfInstructions },
+    });
+
+    perfCpuMs = 0;
+    perfInstructions = 0n;
+  };
+
   while (true) {
     // Drain commands.
     while (true) {
@@ -168,6 +199,9 @@ async function runLoop(): Promise<void> {
 
       if (cmd.type === MessageType.START) {
         running = true;
+        perfCpuMs = 0;
+        perfInstructions = 0n;
+        perfLastFrameId = 0;
         nextHeartbeatMs = performance.now();
         nextFrameMs = performance.now();
         nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
@@ -204,7 +238,10 @@ async function runLoop(): Promise<void> {
           nextModeSwitchMs = now + modeSwitchIntervalMs;
         }
 
+        const t0 = performance.now();
         renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+        perfCpuMs += performance.now() - t0;
+        perfInstructions += BigInt(mode.width * mode.height);
         addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
         if (frameState) {
           Atomics.add(frameState, FRAME_SEQ_INDEX, 1);
@@ -212,6 +249,8 @@ async function runLoop(): Promise<void> {
         }
         nextFrameMs = now + frameIntervalMs;
       }
+
+      maybeEmitPerfSample();
     }
 
     // Sleep until either new commands arrive or the next heartbeat tick.

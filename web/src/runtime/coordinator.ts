@@ -2,6 +2,8 @@ import type { AeroConfig } from "../config/aero_config";
 import { RingBuffer } from "./ring_buffer";
 import { perf } from "../perf/perf";
 import type { PlatformFeatureReport } from "../platform/features";
+import { WorkerKind } from "../perf/record.js";
+import type { PerfChannel } from "../perf/shared.js";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -43,6 +45,32 @@ interface WorkerInfo {
   status: WorkerStatus;
   commandRing: RingBuffer;
   eventRing: RingBuffer;
+}
+
+function maybeGetHudPerfChannel(): PerfChannel | null {
+  const aero = (globalThis as unknown as { aero?: unknown }).aero as { perf?: unknown } | undefined;
+  const perfApi = aero?.perf as { getChannel?: () => PerfChannel } | undefined;
+  if (perfApi && typeof perfApi.getChannel === "function") {
+    return perfApi.getChannel();
+  }
+  return null;
+}
+
+function workerRoleToPerfWorkerKind(role: WorkerRole): number {
+  switch (role) {
+    case "cpu":
+      return WorkerKind.CPU;
+    case "gpu":
+      return WorkerKind.GPU;
+    case "io":
+      return WorkerKind.IO;
+    case "jit":
+      return WorkerKind.JIT;
+    default: {
+      const neverRole: never = role;
+      throw new Error(`Unknown worker role: ${String(neverRole)}`);
+    }
+  }
 }
 
 export class WorkerCoordinator {
@@ -93,6 +121,8 @@ export class WorkerCoordinator {
     // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
     // Keeping it separate from the main control region avoids growing the core IPC layout.
     this.frameStateSab = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+
+    const perfChannel = maybeGetHudPerfChannel();
 
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
@@ -153,6 +183,19 @@ export class WorkerCoordinator {
         frameStateSab: this.frameStateSab,
         platformFeatures: this.platformFeatures ?? undefined,
       };
+
+      if (perfChannel) {
+        const workerKind = workerRoleToPerfWorkerKind(role);
+        const buffer = perfChannel.buffers[workerKind];
+        if (perfChannel.frameHeader instanceof SharedArrayBuffer && buffer instanceof SharedArrayBuffer) {
+          initMessage.perfChannel = {
+            runStartEpochMs: perfChannel.runStartEpochMs,
+            frameHeader: perfChannel.frameHeader,
+            buffer,
+            workerKind,
+          };
+        }
+      }
       worker.postMessage(initMessage);
     }
 
