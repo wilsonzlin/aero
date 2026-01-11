@@ -969,6 +969,10 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * - Associates an existing `resource_handle` with a driver-chosen `share_token`.
  * - `share_token` is an opaque non-zero 64-bit value that must be stable across
  *   guest processes.
+ * - `share_token` values must be treated as globally unique across time:
+ *   - Once a token is released (`RELEASE_SHARED_SURFACE`), it is retired and must
+ *     not be re-exported for a different resource.
+ *   - The host must detect and reject attempts to re-export a retired token.
  * - On Win7/WDDM 1.1, the guest KMD persists `share_token` in the preserved WDDM
  *   allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
  *   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl preserves this blob
@@ -1021,6 +1025,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_import_shared_surface) == 24);
  *   CloseAllocation/DestroyAllocation call patterns).
  * - The host must remove the (share_token -> exported resource) mapping so
  *   future IMPORT_SHARED_SURFACE attempts fail deterministically.
+ * - After release, the token must be considered retired and must not be reused
+ *   for another export.
  * - Existing imported alias handles remain valid; underlying resource lifetime
  *   is still governed by per-handle DESTROY_RESOURCE refcounting.
  * - MUST be idempotent: unknown or already-released tokens are a no-op.
