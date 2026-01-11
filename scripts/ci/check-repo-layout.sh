@@ -24,6 +24,16 @@ cd "$(git rev-parse --show-toplevel)"
 need_file "docs/repo-layout.md"
 need_file "docs/adr/0001-repo-layout.md"
 
+# Guardrail: an obsolete prototype GPU device crate must not be reintroduced.
+# (The canonical AeroGPU protocol is A3A0; see drivers/aerogpu/protocol/.)
+retired_gpu_device_dir="crates/aero-gpu""-device"
+if [[ -d "$retired_gpu_device_dir" ]]; then
+  die "$retired_gpu_device_dir is retired and must not exist in the repo"
+fi
+if grep -q "$retired_gpu_device_dir" Cargo.toml; then
+  die "Cargo workspace must not include the retired $retired_gpu_device_dir member"
+fi
+
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
 # (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)
 mapfile -t npm_lockfiles < <(git ls-files | grep -E '(^|/)package-lock\.json$' || true)
