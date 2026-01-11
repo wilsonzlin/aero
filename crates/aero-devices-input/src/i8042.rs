@@ -852,10 +852,13 @@ impl IoSnapshot for I8042Controller {
 
         self.prefer_mouse = r.bool(TAG_PREFER_MOUSE)?.unwrap_or(false);
 
-        // `irq_sink` is a host integration point; it is expected to be (re)attached by the coordinator.
+        // `irq_sink` and `sys_ctrl` are host integration points; they are expected to be
+        // (re)attached by the coordinator. If `sys_ctrl` is already attached, resynchronize the
+        // platform A20 line with the restored output-port image.
         if let Some(sink) = self.sys_ctrl.as_deref_mut() {
-            if (self.output_port & OUTPUT_PORT_A20) != 0 {
-                sink.set_a20(true);
+            let enabled = (self.output_port & OUTPUT_PORT_A20) != 0;
+            if sink.a20_enabled() != Some(enabled) {
+                sink.set_a20(enabled);
             }
         }
 
