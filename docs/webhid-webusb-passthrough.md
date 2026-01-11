@@ -192,6 +192,19 @@ Both APIs require a user gesture:
 Do not attempt to call these APIs automatically on page load or in response to
 background events; it will fail and is also poor UX.
 
+In practice:
+
+- Call `requestDevice()` directly from the gesture handler; if you `await` before
+  calling it, the user activation can be lost.
+- User activation does not propagate across `postMessage()`, so a “click →
+  postMessage → worker calls `requestDevice()`” flow will fail.
+
+### Secure context requirement
+
+WebHID/WebUSB require a **secure context** (`https://` or `http://localhost`).
+Passthrough should be disabled (with a clear UI error) when `isSecureContext`
+is false.
+
 ### Origin-scoped permission persistence and revocation
 
 Permissions are **scoped to the web origin** and may persist across reloads.
@@ -248,6 +261,7 @@ Recommended guardrails:
   - verify the forwarding protocol (input reports → worker messages/queue)
   - verify output requests are executed as WebHID `sendReport` calls
   - ensure attach/detach calls `open()`/`close()` and handles disconnect events
+- Implementation reference: `web/src/platform/webhid_passthrough.test.ts`
 
 ### Device model (Rust)
 
@@ -255,6 +269,16 @@ Recommended guardrails:
   - descriptor generation (stable and spec-compliant enough for Win7)
   - input/output queue behavior (ordering, boundedness, snapshotability)
   - translation between WebHID report IDs and guest-visible USB transfers
+- Implementation references:
+  - `crates/emulator/src/io/usb/hid/passthrough.rs`
+  - `crates/emulator/tests/uhci.rs`
+
+## Implementation references (current code)
+
+- Host-side WebHID attach/detach and debug UI: `web/src/platform/webhid_passthrough.ts`
+- WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
+- WebHID → HID report descriptor synthesis (Rust): `crates/emulator/src/io/usb/hid/webhid.rs`
+- Generic USB HID passthrough device model (Rust): `crates/emulator/src/io/usb/hid/passthrough.rs`
 
 ## Related docs
 
