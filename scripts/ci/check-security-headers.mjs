@@ -146,6 +146,17 @@ function parseNginxConf(filePath) {
   return [{ matcher: 'nginx', headers }];
 }
 
+function parseFastifyHeaders(filePath) {
+  const headers = {};
+  const content = readText(filePath);
+  const re = /reply\.header\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)/g;
+  for (const match of content.matchAll(re)) {
+    const [, key, value] = match;
+    headers[key] = value;
+  }
+  return [{ matcher: 'fastify', headers }];
+}
+
 function parseSimpleYamlValues(filePath) {
   const out = {};
   const stack = [];
@@ -238,6 +249,18 @@ function checkRules(fileLabel, rules) {
   return errors;
 }
 
+function pickCanonicalHeaders(keys) {
+  const out = {};
+  for (const key of keys) {
+    const value = canonicalSecurityHeaders[key];
+    if (value === undefined) {
+      throw new Error(`canonical header missing key: ${key}`);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 function checkViteConfig(fileLabel, filePath) {
   const content = readText(filePath);
   const errors = [];
@@ -275,6 +298,23 @@ const targets = [
   // Deployment templates that must stay in sync with the canonical headers.
   // Helm chart defaults (ingress header injection) should also match canonical headers.
   { type: 'helm-values', path: 'deploy/k8s/chart/aero-gateway/values.yaml' },
+  // Backend (aero-gateway) middleware that injects headers when the gateway is used as an origin.
+  // Keep this aligned so single-origin deployments stay crossOriginIsolated.
+  {
+    type: 'fastify',
+    path: 'backend/aero-gateway/src/middleware/crossOriginIsolation.ts',
+    expectedKeys: [
+      'Cross-Origin-Opener-Policy',
+      'Cross-Origin-Embedder-Policy',
+      'Cross-Origin-Resource-Policy',
+      'Origin-Agent-Cluster',
+    ],
+  },
+  {
+    type: 'fastify',
+    path: 'backend/aero-gateway/src/middleware/securityHeaders.ts',
+    expectedKeys: ['X-Content-Type-Options', 'Referrer-Policy', 'Permissions-Policy'],
+  },
   { type: 'headers', path: 'web/public/_headers' },
   { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
   { type: 'netlify', path: 'netlify.toml' },
@@ -309,6 +349,20 @@ for (const target of targets) {
       allErrors.push(...checkHelmValues(target.path, filePath));
     } catch (err) {
       allErrors.push(`${target.path}: failed to validate Helm values: ${err?.message ?? String(err)}`);
+    }
+    continue;
+  }
+  if (target.type === 'fastify') {
+    try {
+      const expected = pickCanonicalHeaders(target.expectedKeys ?? []);
+      const rules = parseFastifyHeaders(filePath);
+      const diffs = diffHeaderMaps(expected, toLowerHeaderMap(rules[0].headers));
+      if (diffs.length !== 0) {
+        allErrors.push(`\n${target.path}`);
+        allErrors.push(...diffs.map((line) => `  ${line}`));
+      }
+    } catch (err) {
+      allErrors.push(`${target.path}: failed to validate Fastify headers: ${err?.message ?? String(err)}`);
     }
     continue;
   }
