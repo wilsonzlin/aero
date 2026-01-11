@@ -1235,7 +1235,6 @@ inline bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnResolveSubresource)                                                                                          \
   X(pfnGenerateMips)                                                                                               \
   X(pfnSetResourceMinLOD)                                                                                           \
-  X(pfnGetResourceMinLOD)                                                                                           \
   X(pfnClearRenderTargetView)                                                                                      \
   X(pfnClearUnorderedAccessViewUint)                                                                               \
   X(pfnClearUnorderedAccessViewFloat)                                                                              \
