@@ -1231,18 +1231,18 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     }
 
     if ((data as Partial<UsbUhciHarnessStartMessage>).type === "usb.harness.start") {
-        if (usbUhciHarnessRuntime) {
-          usbUhciHarnessRuntime.start();
-        } else {
-          const snapshot: WebUsbUhciHarnessRuntimeSnapshot = {
-            available: false,
-            enabled: false,
-            blocked: true,
-            tickCount: 0,
-            actionsForwarded: 0,
-            completionsApplied: 0,
-            pendingCompletions: 0,
-            lastAction: null,
+      if (usbUhciHarnessRuntime) {
+        usbUhciHarnessRuntime.start();
+      } else {
+        const snapshot: WebUsbUhciHarnessRuntimeSnapshot = {
+          available: false,
+          enabled: false,
+          blocked: true,
+          tickCount: 0,
+          actionsForwarded: 0,
+          completionsApplied: 0,
+          pendingCompletions: 0,
+          lastAction: null,
           lastCompletion: null,
           deviceDescriptor: null,
           configDescriptor: null,
@@ -1254,18 +1254,18 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     }
 
     if ((data as Partial<UsbUhciHarnessStopMessage>).type === "usb.harness.stop") {
-        if (usbUhciHarnessRuntime) {
-          usbUhciHarnessRuntime.stop();
-        } else {
-          const snapshot: WebUsbUhciHarnessRuntimeSnapshot = {
-            available: false,
-            enabled: false,
-            blocked: true,
-            tickCount: 0,
-            actionsForwarded: 0,
-            completionsApplied: 0,
-            pendingCompletions: 0,
-            lastAction: null,
+      if (usbUhciHarnessRuntime) {
+        usbUhciHarnessRuntime.stop();
+      } else {
+        const snapshot: WebUsbUhciHarnessRuntimeSnapshot = {
+          available: false,
+          enabled: false,
+          blocked: true,
+          tickCount: 0,
+          actionsForwarded: 0,
+          completionsApplied: 0,
+          pendingCompletions: 0,
+          lastAction: null,
           lastCompletion: null,
           deviceDescriptor: null,
           configDescriptor: null,
