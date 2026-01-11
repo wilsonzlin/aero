@@ -53,7 +53,8 @@ class AerogpuKmdQuery {
   // NOTE: `last_submitted` is an adapter-global value (shared across all guest
   // processes using the same adapter). It must not be used to infer the fence
   // ID for a specific user-mode submission under multi-process workloads (DWM +
-  // apps); per-submission fence IDs must come from the D3D runtime callbacks.
+  // apps); per-submission fence IDs must come from the D3D runtime callbacks
+  // (for example `SubmissionFenceId` / `NewFenceValue`).
   // `last_completed` is still useful for polling overall forward progress.
   // Returns false if the query path is unavailable (missing exports, adapter
   // open failure, or escape failure).
