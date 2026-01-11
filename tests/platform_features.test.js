@@ -23,8 +23,10 @@ test("explainMissingRequirements is empty when all capabilities are present", ()
     wasmThreads: true,
     jit_dynamic_wasm: true,
     webgpu: true,
+    webusb: true,
     webgl2: true,
     opfs: true,
+    opfsSyncAccessHandle: true,
     audioWorklet: true,
     offscreenCanvas: true,
   };
