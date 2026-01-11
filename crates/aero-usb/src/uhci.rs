@@ -519,13 +519,21 @@ impl UhciController {
 
         let pid_raw = (td.token & TD_TOKEN_PID_MASK) as u8;
         let Some(pid) = UsbPid::from_u8(pid_raw) else {
-            self.complete_td(mem, td_addr, td.ctrl_sts | TD_CTRL_STALLED, 0);
+            let mut ctrl = td.ctrl_sts | TD_CTRL_STALLED;
+            ctrl &= !TD_CTRL_ACTIVE;
+            ctrl &= !(TD_CTRL_NAK
+                | TD_CTRL_BITSTUFF
+                | TD_CTRL_CRCERR
+                | TD_CTRL_BABBLE
+                | TD_CTRL_DBUFERR);
+            ctrl = (ctrl & !TD_CTRL_ACTLEN_MASK) | 0x7FF;
+            UhciTd::write_status(mem, td_addr, ctrl);
             self.set_usberr();
             if td.ctrl_sts & TD_CTRL_IOC != 0 {
                 self.usbint_causes |= USBINT_CAUSE_IOC;
                 self.set_usbint();
             }
-            return TdAdvance::Stop;
+            return TdAdvance::ContinueAndStop(td.link_ptr);
         };
 
         let devaddr = ((td.token & TD_TOKEN_DEVADDR_MASK) >> TD_TOKEN_DEVADDR_SHIFT) as u8;
@@ -605,7 +613,7 @@ impl UhciController {
                     self.usbint_causes |= USBINT_CAUSE_IOC;
                     self.set_usbint();
                 }
-                TdAdvance::Stop
+                TdAdvance::ContinueAndStop(td.link_ptr)
             }
             UsbHandshake::Timeout => {
                 let mut ctrl = td.ctrl_sts | TD_CTRL_CRCERR;
@@ -622,7 +630,7 @@ impl UhciController {
                     self.usbint_causes |= USBINT_CAUSE_IOC;
                     self.set_usbint();
                 }
-                TdAdvance::Stop
+                TdAdvance::ContinueAndStop(td.link_ptr)
             }
         }
     }
@@ -1276,6 +1284,7 @@ mod tests {
         let ctrl_sts = mem.read_u32(0x3004);
         assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
         assert_ne!(ctrl_sts & TD_CTRL_STALLED, 0);
+        assert_eq!(mem.read_u32(0x2004), LINK_PTR_T);
 
         assert_ne!(ctrl.usbsts & USBSTS_USBINT, 0);
         assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_IOC, 0);
