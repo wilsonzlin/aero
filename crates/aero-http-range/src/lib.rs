@@ -193,9 +193,27 @@ fn parse_range_spec(spec: &str) -> Result<ByteRangeSpec, RangeParseError> {
 }
 
 fn parse_u64_decimal(s: &str) -> Result<u64, RangeParseError> {
-    // Avoid scanning very long strings (potential DoS). `u64::MAX` is 20 digits.
-    if s.len() > 20 {
+    // Avoid scanning very long strings (potential DoS).
+    //
+    // We keep two guards:
+    // - hard cap to avoid pathological inputs that are still within the overall
+    //   header size limit
+    // - a tighter cap based on the maximum digits of `u64`, while still accepting
+    //   values that are zero-padded beyond 20 digits (e.g. "000...001").
+    const U64_MAX_DECIMAL_DIGITS: usize = 20; // `u64::MAX` is 20 digits.
+    const MAX_DECIMAL_DIGITS: usize = 64;
+
+    let mut s = s;
+    if s.len() > MAX_DECIMAL_DIGITS {
         return Err(RangeParseError::InvalidNumber);
+    }
+
+    if s.len() > U64_MAX_DECIMAL_DIGITS {
+        let extra = s.len() - U64_MAX_DECIMAL_DIGITS;
+        if s.as_bytes()[..extra].iter().any(|&b| b != b'0') {
+            return Err(RangeParseError::InvalidNumber);
+        }
+        s = &s[extra..];
     }
 
     let mut value: u64 = 0;
