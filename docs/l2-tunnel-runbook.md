@@ -187,9 +187,12 @@ Treat the L2 proxy as a **high-risk network egress surface**. A secure deploymen
 By default, `crates/aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade request and
 validates it against an allowlist:
 
-- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins (exact match).
+- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins.
+  - If unset, falls back to `ALLOWED_ORIGINS` (shared with the gateway + WebRTC relay).
+  - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (optional) is appended (comma-prefixed convention used by `deploy/docker-compose.yml`).
+  - Origins are normalized before comparison (see `docs/l2-tunnel-protocol.md` for rules/examples).
   - Example: `https://app.example.com,https://staging.example.com`
-  - `*` allows any Origin value (still requires the header to be present).
+  - `*` allows any **valid** Origin value (still requires the header to be present).
 
 Dev escape hatch:
 

@@ -223,13 +223,19 @@ By default, `aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade
 - `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins.
   - If unset, falls back to `ALLOWED_ORIGINS` (shared with the gateway + WebRTC relay).
   - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (optional) is appended (comma-prefixed convention used by `deploy/docker-compose.yml`).
-  - `*` allows any **non-empty** Origin header value (still requires the header to be present unless `AERO_L2_OPEN=1`).
+  - `*` allows any **valid** Origin header value (still requires the header to be present unless `AERO_L2_OPEN=1`).
+    - Malformed Origin values are rejected even when `*` is configured.
 
 Origins are normalized and compared as:
 
 ```
 <lowercase-scheme>://<lowercase-host>[:port]
 ```
+
+Default ports are normalized away:
+
+- `http://...:80` is treated as `http://...`
+- `https://...:443` is treated as `https://...`
 
 Configured origins (and the request `Origin` header) must:
 

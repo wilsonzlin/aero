@@ -12,7 +12,7 @@ pub struct SecurityConfig {
     pub open: bool,
     /// Comma-separated allowlist of normalized Origin strings.
     ///
-    /// `"*"` allows any Origin value (but still requires the header unless `open=1`).
+    /// `"*"` allows any valid Origin value (but still requires the header unless `open=1`).
     pub allowed_origins: AllowedOrigins,
     /// Comma-separated allowlist of exact Host values accepted at WebSocket upgrade time.
     ///
