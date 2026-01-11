@@ -2,6 +2,7 @@ use crate::io::input::ps2_set2_bytes_for_key_event;
 use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
 use crate::io::usb::hid::hid_usage_from_js_code;
 use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
+use crate::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::virtio::devices::input as vio_input;
@@ -23,6 +24,7 @@ pub struct InputPipeline {
     pub virtio: Option<VirtioInputHub>,
     pub usb_keyboard: Option<UsbHidKeyboardHandle>,
     pub usb_mouse: Option<UsbHidMouseHandle>,
+    pub usb_gamepad: Option<UsbHidGamepadHandle>,
     pub usb_composite: Option<UsbCompositeHidInputHandle>,
     pub policy: InputRoutingPolicy,
 }
@@ -38,6 +40,7 @@ impl InputPipeline {
             virtio,
             usb_keyboard: None,
             usb_mouse: None,
+            usb_gamepad: None,
             usb_composite: None,
             policy,
         }
@@ -55,6 +58,11 @@ impl InputPipeline {
 
     pub fn with_usb_composite_hid(mut self, composite: UsbCompositeHidInputHandle) -> Self {
         self.usb_composite = Some(composite);
+        self
+    }
+
+    pub fn with_usb_gamepad(mut self, gamepad: UsbHidGamepadHandle) -> Self {
+        self.usb_gamepad = Some(gamepad);
         self
     }
 
@@ -155,6 +163,56 @@ impl InputPipeline {
                     self.inject_mouse_wheel_ps2(delta)
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn handle_gamepad_buttons(&mut self, buttons: u16) -> Result<(), VirtQueueError> {
+        match self.policy {
+            InputRoutingPolicy::UsbOnly | InputRoutingPolicy::Auto => {
+                self.inject_gamepad_buttons_usb(buttons);
+            }
+            InputRoutingPolicy::Ps2Only | InputRoutingPolicy::VirtioOnly => {}
+        }
+        Ok(())
+    }
+
+    pub fn handle_gamepad_button(
+        &mut self,
+        button_idx: u8,
+        pressed: bool,
+    ) -> Result<(), VirtQueueError> {
+        match self.policy {
+            InputRoutingPolicy::UsbOnly | InputRoutingPolicy::Auto => {
+                self.inject_gamepad_button_usb(button_idx, pressed);
+            }
+            InputRoutingPolicy::Ps2Only | InputRoutingPolicy::VirtioOnly => {}
+        }
+        Ok(())
+    }
+
+    pub fn handle_gamepad_hat(&mut self, hat: Option<u8>) -> Result<(), VirtQueueError> {
+        match self.policy {
+            InputRoutingPolicy::UsbOnly | InputRoutingPolicy::Auto => {
+                self.inject_gamepad_hat_usb(hat);
+            }
+            InputRoutingPolicy::Ps2Only | InputRoutingPolicy::VirtioOnly => {}
+        }
+        Ok(())
+    }
+
+    pub fn handle_gamepad_axes(
+        &mut self,
+        x: i8,
+        y: i8,
+        rx: i8,
+        ry: i8,
+    ) -> Result<(), VirtQueueError> {
+        match self.policy {
+            InputRoutingPolicy::UsbOnly | InputRoutingPolicy::Auto => {
+                self.inject_gamepad_axes_usb(x, y, rx, ry);
+            }
+            InputRoutingPolicy::Ps2Only | InputRoutingPolicy::VirtioOnly => {}
         }
         Ok(())
     }
@@ -300,6 +358,50 @@ impl InputPipeline {
         };
         mouse.wheel(delta);
     }
+
+    fn inject_gamepad_buttons_usb(&mut self, buttons: u16) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.gamepad_set_buttons(buttons);
+            return;
+        }
+        let Some(pad) = self.usb_gamepad.as_ref().filter(|d| d.configured()) else {
+            return;
+        };
+        pad.set_buttons(buttons);
+    }
+
+    fn inject_gamepad_button_usb(&mut self, button_idx: u8, pressed: bool) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.gamepad_button_event(button_idx, pressed);
+            return;
+        }
+        let Some(pad) = self.usb_gamepad.as_ref().filter(|d| d.configured()) else {
+            return;
+        };
+        pad.button_event(button_idx, pressed);
+    }
+
+    fn inject_gamepad_hat_usb(&mut self, hat: Option<u8>) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.gamepad_set_hat(hat);
+            return;
+        }
+        let Some(pad) = self.usb_gamepad.as_ref().filter(|d| d.configured()) else {
+            return;
+        };
+        pad.set_hat(hat);
+    }
+
+    fn inject_gamepad_axes_usb(&mut self, x: i8, y: i8, rx: i8, ry: i8) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.gamepad_set_axes(x, y, rx, ry);
+            return;
+        }
+        let Some(pad) = self.usb_gamepad.as_ref().filter(|d| d.configured()) else {
+            return;
+        };
+        pad.set_axes(x, y, rx, ry);
+    }
 }
 
 fn js_code_to_linux_key(code: &str) -> Option<u16> {
@@ -396,6 +498,7 @@ fn js_code_to_linux_key(code: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
     use crate::io::virtio::devices::input::{
         VirtioInputDevice, VirtioInputDeviceKind, VirtioInputEvent, EV_KEY,
     };
@@ -421,6 +524,22 @@ mod tests {
     fn init_used(mem: &mut DenseMemory, used: u64) {
         mem.write_u16_le(used, 0).unwrap();
         mem.write_u16_le(used + 2, 0).unwrap();
+    }
+
+    fn configure_usb_device(dev: &mut impl UsbDeviceModel) {
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: 0x09, // SET_CONFIGURATION
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
     }
 
     #[test]
@@ -541,5 +660,113 @@ mod tests {
                 0xE1, 0x14, 0x77, 0xE1, 0xF0, 0x14, 0xF0, 0x77,
             ]
         );
+    }
+
+    #[test]
+    fn usb_composite_gamepad_injection_emits_reports() {
+        let mut composite = UsbCompositeHidInputHandle::new();
+        configure_usb_device(&mut composite);
+
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly)
+            .with_usb_composite_hid(composite.clone());
+
+        pipeline.handle_gamepad_buttons(0x0001).unwrap();
+        assert_eq!(
+            composite.poll_interrupt_in(0x83),
+            Some(vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+
+        pipeline.handle_gamepad_button(2, true).unwrap();
+        assert_eq!(
+            composite.poll_interrupt_in(0x83),
+            Some(vec![0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+
+        pipeline.handle_gamepad_hat(Some(2)).unwrap();
+        assert_eq!(
+            composite.poll_interrupt_in(0x83),
+            Some(vec![0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+
+        pipeline.handle_gamepad_axes(1, -1, 5, -5).unwrap();
+        assert_eq!(
+            composite.poll_interrupt_in(0x83),
+            Some(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
+        );
+
+        assert_eq!(composite.poll_interrupt_in(0x83), None);
+    }
+
+    #[test]
+    fn usb_gamepad_injection_emits_reports() {
+        let mut gamepad = UsbHidGamepadHandle::new();
+        configure_usb_device(&mut gamepad);
+
+        let mut pipeline =
+            InputPipeline::new(None, None, InputRoutingPolicy::Auto).with_usb_gamepad(gamepad.clone());
+
+        pipeline.handle_gamepad_buttons(0x0001).unwrap();
+        assert_eq!(
+            gamepad.poll_interrupt_in(0x81),
+            Some(vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+
+        pipeline.handle_gamepad_button(2, true).unwrap();
+        assert_eq!(
+            gamepad.poll_interrupt_in(0x81),
+            Some(vec![0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+
+        pipeline.handle_gamepad_hat(Some(2)).unwrap();
+        assert_eq!(
+            gamepad.poll_interrupt_in(0x81),
+            Some(vec![0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+
+        pipeline.handle_gamepad_axes(1, -1, 5, -5).unwrap();
+        assert_eq!(
+            gamepad.poll_interrupt_in(0x81),
+            Some(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
+        );
+
+        assert_eq!(gamepad.poll_interrupt_in(0x81), None);
+    }
+
+    #[test]
+    fn gamepad_injection_is_ignored_until_configured() {
+        let mut composite = UsbCompositeHidInputHandle::new();
+        let mut gamepad = UsbHidGamepadHandle::new();
+
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly)
+            .with_usb_composite_hid(composite.clone())
+            .with_usb_gamepad(gamepad.clone());
+
+        pipeline.handle_gamepad_buttons(0x0001).unwrap();
+
+        configure_usb_device(&mut composite);
+        configure_usb_device(&mut gamepad);
+
+        assert_eq!(composite.poll_interrupt_in(0x83), None);
+        assert_eq!(gamepad.poll_interrupt_in(0x81), None);
+    }
+
+    #[test]
+    fn usb_gamepad_routing_prefers_composite_device() {
+        let mut composite = UsbCompositeHidInputHandle::new();
+        let mut gamepad = UsbHidGamepadHandle::new();
+        configure_usb_device(&mut composite);
+        configure_usb_device(&mut gamepad);
+
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly)
+            .with_usb_composite_hid(composite.clone())
+            .with_usb_gamepad(gamepad.clone());
+
+        pipeline.handle_gamepad_buttons(0x0001).unwrap();
+
+        assert_eq!(
+            composite.poll_interrupt_in(0x83),
+            Some(vec![0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00])
+        );
+        assert_eq!(gamepad.poll_interrupt_in(0x81), None);
     }
 }
