@@ -153,6 +153,18 @@ static int RunCapsSmoke(int argc, char** argv) {
     }
   }
 
+  UINT quality_levels = 0;
+  hr = device->CheckMultisampleQualityLevels(DXGI_FORMAT_B8G8R8A8_UNORM, 1, &quality_levels);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CheckMultisampleQualityLevels(B8G8R8A8, 1x)", hr);
+  }
+  aerogpu_test::PrintfStdout("INFO: %s: msaa quality levels (B8G8R8A8, 1x) = %lu",
+                             kTestName,
+                             (unsigned long)quality_levels);
+  if (quality_levels < 1) {
+    return reporter.Fail("expected at least 1 quality level for 1x sample count");
+  }
+
   int rc = 0;
   rc = CheckFormat(&reporter,
                    kTestName,
