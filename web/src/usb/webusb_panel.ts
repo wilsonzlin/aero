@@ -53,6 +53,43 @@ function formatErrorWithHints(err: unknown): string {
   return parts.join("\n\n");
 }
 
+async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNote: string }> {
+  // Chromium versions differ on whether `filters: []` and/or `filters: [{}]` are allowed.
+  // Try a few reasonable fallbacks so the smoke test works in more environments.
+  const attempts: Array<{ note: string; options: USBDeviceRequestOptions }> = [
+    { note: "filters: [] (broadest, if allowed by this Chromium build)", options: { filters: [] } },
+    { note: "filters: [{}] (match-all, if allowed by this Chromium build)", options: { filters: [{}] } },
+    {
+      note: "filters: [{classCode: 0x00}, {classCode: 0xff}] (fallback broad device-class match)",
+      options: { filters: [{ classCode: 0x00 }, { classCode: 0xff }] },
+    },
+    { note: "filters: [{classCode: 0xff}] (vendor-specific only fallback)", options: { filters: [{ classCode: 0xff }] } },
+  ];
+
+  let lastErr: unknown = null;
+  for (const attempt of attempts) {
+    try {
+      const device = await usb.requestDevice(attempt.options);
+      return { device, filterNote: attempt.note };
+    } catch (err) {
+      lastErr = err;
+
+      // User canceled the chooser (or there were no matching devices).
+      if (err instanceof DOMException && err.name === "NotFoundError") {
+        throw err;
+      }
+
+      // If the browser rejected the filter shape, try the next fallback.
+      if (err instanceof TypeError) continue;
+      if (err instanceof DOMException && err.name === "TypeError") continue;
+
+      throw err;
+    }
+  }
+
+  throw lastErr ?? new Error("USB requestDevice failed");
+}
+
 async function runWebUsbProbeWorker(msg: unknown, timeoutMs = 10_000): Promise<unknown> {
   const worker = new Worker(new URL("./webusb_probe_worker.ts", import.meta.url), { type: "module" });
 
@@ -98,8 +135,18 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
   const note = document.createElement("div");
   note.className = "hint";
-  note.textContent =
-    "WebUSB device permission requires a user gesture (button click) and may fail on unsupported browsers or for devices with protected interfaces.";
+  note.append(
+    "WebUSB device permission requires a user gesture (button click) and may fail on unsupported browsers or for devices with protected interfaces.",
+    document.createElement("br"),
+    "For deeper inspection of protected interface classes and claimability, see ",
+    Object.assign(document.createElement("a"), {
+      href: "/webusb_diagnostics.html",
+      target: "_blank",
+      rel: "noopener",
+      textContent: "/webusb_diagnostics.html",
+    }),
+    ".",
+  );
 
   const requestButton = document.createElement("button");
   requestButton.type = "button";
@@ -190,10 +237,10 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       const usb = navigator.usb;
       if (!usb) throw new Error("navigator.usb is unavailable");
 
-      // Minimal filter list: `{}` matches any device (subject to browser restrictions).
-      selected = await usb.requestDevice({ filters: [{}] });
+      const { device, filterNote } = await requestUsbDevice(usb);
+      selected = device;
       status.textContent = "Device selected.";
-      output.textContent = JSON.stringify({ selected: summarizeUsbDevice(selected) }, null, 2);
+      output.textContent = JSON.stringify({ selected: summarizeUsbDevice(device), filterNote }, null, 2);
     } catch (err) {
       error.textContent = formatErrorWithHints(err);
       console.error(err);
