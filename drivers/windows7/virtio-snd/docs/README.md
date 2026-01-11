@@ -19,8 +19,6 @@ The driver currently:
 - Connects **INTx** and routes used-ring completions to the control/TX protocol engines in a DPC
 - Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet exposed via a PortCls miniport (WaveRT), so Windows will not enumerate an audio endpoint.
 
-It **does not** yet implement any PortCls miniports (WaveRT), so it will not expose audio endpoints yet.
-
 ## Compatibility / Aero contract v1
 
 This driver package targets the **Aero Windows 7 virtio device contract v1**:
