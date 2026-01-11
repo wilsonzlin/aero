@@ -50,6 +50,8 @@ The binding device/driver contract lives at:
 - Device discovery is via PCI vendor-specific capabilities:
   `COMMON_CFG`, `NOTIFY_CFG`, `ISR_CFG`, `DEVICE_CFG`.
 - Drivers map **BAR0 MMIO** and access the above regions as little-endian MMIO.
+- All required virtio vendor capabilities must reference **BAR0** and BAR0 must be
+  large enough to contain the fixed layout below (**>= 0x4000 bytes** per contract v1).
 - Feature negotiation is **64-bit** and drivers **MUST** accept `VIRTIO_F_VERSION_1`
   (feature bit 32).
 - Queues are programmed via the common configuration registers:
