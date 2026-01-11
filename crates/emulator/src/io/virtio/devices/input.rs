@@ -1,5 +1,5 @@
 use crate::io::virtio::vio_core::{Descriptor, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE};
-use memory::GuestMemory;
+use memory::{GuestMemory, GuestMemoryError};
 use std::collections::VecDeque;
 
 pub const VIRTIO_ID_INPUT: u16 = 18;
@@ -495,7 +495,11 @@ impl VirtioInputDevice {
             };
 
             let bytes = event.to_bytes_le();
-            let written = write_chain(mem, &chain.descriptors, 0, &bytes)?;
+            let written = match write_chain(mem, &chain.descriptors, 0, &bytes) {
+                Ok(written) => written,
+                Err(VirtQueueError::GuestMemory(_)) => 0,
+                Err(other) => return Err(other),
+            };
 
             if self.event_vq.push_used(mem, &chain, written as u32)? {
                 should_interrupt = true;
@@ -517,6 +521,7 @@ impl VirtioInputDevice {
             match read_chain_exact(mem, &chain.descriptors, 0, &mut bytes) {
                 Ok(()) => self.handle_status_event(VirtioInputEvent::from_bytes_le(bytes)),
                 Err(VirtQueueError::DescriptorChainTooShort { .. }) => {}
+                Err(VirtQueueError::GuestMemory(_)) => {}
                 Err(other) => return Err(other),
             }
 
@@ -647,10 +652,14 @@ fn read_chain_exact(
 
         let available = desc_len - offset;
         let to_read = usize::min(available, out.len() - written);
-        mem.read_into(
-            desc.addr + offset as u64,
-            &mut out[written..written + to_read],
-        )?;
+        let addr = desc.addr.checked_add(offset as u64).ok_or_else(|| {
+            VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+                paddr: desc.addr,
+                len: to_read,
+                size: mem.size(),
+            })
+        })?;
+        mem.read_into(addr, &mut out[written..written + to_read])?;
         written += to_read;
         offset = 0;
 
@@ -692,7 +701,14 @@ fn write_chain(
 
         let available = desc_len - offset;
         let to_write = usize::min(available, remaining.len());
-        mem.write_from(desc.addr + offset as u64, &remaining[..to_write])?;
+        let addr = desc.addr.checked_add(offset as u64).ok_or_else(|| {
+            VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+                paddr: desc.addr,
+                len: to_write,
+                size: mem.size(),
+            })
+        })?;
+        mem.write_from(addr, &remaining[..to_write])?;
         written += to_write;
         remaining = &remaining[to_write..];
         offset = 0;
@@ -887,5 +903,85 @@ mod tests {
         dev.write_config(1, &[EV_KEY as u8]);
         let key_bitmap = dev.read_config(8, 128);
         assert_ne!(key_bitmap[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8)), 0);
+    }
+
+    #[test]
+    fn event_queue_completes_used_ring_on_guest_memory_errors() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let event_desc = 0x1000;
+        let event_avail = 0x2000;
+        let event_used = 0x3000;
+
+        let status_desc = 0x4000;
+        let status_avail = 0x5000;
+        let status_used = 0x6000;
+
+        write_desc(
+            &mut mem,
+            event_desc,
+            0,
+            Descriptor {
+                addr: u64::MAX - 4,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, event_avail, 0, &[0]);
+        init_used(&mut mem, event_used);
+
+        init_avail(&mut mem, status_avail, VRING_AVAIL_F_NO_INTERRUPT, &[]);
+        init_used(&mut mem, status_used);
+
+        let event_vq = VirtQueue::new(8, event_desc, event_avail, event_used);
+        let status_vq = VirtQueue::new(8, status_desc, status_avail, status_used);
+
+        let mut dev = VirtioInputDevice::new(VirtioInputDeviceKind::Keyboard, event_vq, status_vq);
+        dev.set_status(VIRTIO_STATUS_DRIVER_OK);
+
+        let irq = dev.inject_key(&mut mem, KEY_A, true).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        let used_idx = mem.read_u16_le(event_used + 2).unwrap();
+        assert_eq!(used_idx, 1);
+    }
+
+    #[test]
+    fn status_queue_completes_used_ring_on_guest_memory_errors() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let event_vq = VirtQueue::new(8, 0, 0, 0);
+
+        let status_desc = 0x1000;
+        let status_avail = 0x2000;
+        let status_used = 0x3000;
+
+        write_desc(
+            &mut mem,
+            status_desc,
+            0,
+            Descriptor {
+                addr: u64::MAX - 4,
+                len: VirtioInputEvent::BYTE_SIZE as u32,
+                flags: 0,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, status_avail, 0, &[0]);
+        init_used(&mut mem, status_used);
+
+        let status_vq = VirtQueue::new(8, status_desc, status_avail, status_used);
+
+        let mut dev = VirtioInputDevice::new(VirtioInputDeviceKind::Keyboard, event_vq, status_vq);
+        let irq = dev.notify_status(&mut mem).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        let used_idx = mem.read_u16_le(status_used + 2).unwrap();
+        assert_eq!(used_idx, 1);
     }
 }
