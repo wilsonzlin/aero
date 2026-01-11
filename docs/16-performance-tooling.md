@@ -249,7 +249,7 @@ node -p "require('./package.json').dependencies['playwright-core']"
 ```
 
 ```bash
-node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
+npm run bench:browser -- --iterations 7 --out-dir perf-results/local
 ```
 
 Capture an Aero trace alongside the run (best-effort; requires the page to expose `window.aero.perf.traceStart/traceStop/exportTrace`):
@@ -278,7 +278,7 @@ What to expect:
 To benchmark a specific URL (e.g. your local preview server), pass `--url`:
 
 ```bash
-node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/
+npm run bench:browser -- --iterations 7 --out-dir perf-results/local --url http://127.0.0.1:4173/
 ```
 
 ### Run the GPU benchmark scenarios (Playwright + WebGPU/WebGL2)
@@ -325,12 +325,31 @@ Baselines are used to detect regressions in CI. Update them when:
 
 In CI:
 
-- The PR perf workflow compares **PR vs base commit** (no committed “golden baseline” file).
-- Thresholds live in [`/.github/workflows/perf.yml`](../.github/workflows/perf.yml) as environment variables (and can also be passed to `tools/perf/compare.mjs`):
+- The **browser CI perf** workflow (`tools/perf`) compares **PR vs base commit** (no committed “golden baseline” file).
+- Thresholds for that workflow live in [`/.github/workflows/perf.yml`](../.github/workflows/perf.yml) as environment variables (and can also be passed to `tools/perf/compare.mjs`):
   - `PERF_REGRESSION_THRESHOLD_PCT`
   - `PERF_EXTREME_CV_THRESHOLD`
 
-Use the baseline updater script: [`bench/update-baseline`](../bench/update-baseline).
+Separately, PF-009 adds a **checked-in baseline** file (`bench/baseline.json`) and threshold policy (`bench/thresholds.json`)
+used by `node bench/compare`.
+
+### Updating the PF-009 baseline (`bench/baseline.json`)
+
+Use the baseline updater script:
+
+```bash
+npm run bench:update-baseline -- --scenario all --iterations 15
+```
+
+This re-runs the lightweight Node microbench (`bench/run.js`) and updates `bench/baseline.json` in-place, printing a
+before/after summary table to make PR review easier.
+
+Sanity check the updated baseline:
+
+```bash
+npm run bench:node
+node bench/compare --fail-on-regression --json
+```
 
 Guidelines:
 
@@ -413,7 +432,7 @@ Capture a perf export:
 Run the microbench benchmark locally:
 
 1. `cd tools/perf && npm ci && npx --yes playwright@$(node -p "require('./package.json').dependencies['playwright-core']") install chromium && cd ../..` (one-time; see above if `$(...)` doesn’t work in your shell)
-2. `node bench/run --scenario microbench --iterations 7`
+2. `npm run bench:browser -- --scenario microbench --iterations 7`
 
 Alternative (run the underlying runner directly, without the wrapper):
 

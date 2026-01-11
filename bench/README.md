@@ -2,6 +2,18 @@
 
 This directory contains performance/telemetry tooling used for CI regression tracking and local profiling.
 
+## Quick-start (canonical commands)
+
+- `npm run bench:browser` — **browser CI-parity** perf run (wrapper around `tools/perf/run.mjs` via `bench/run`; requires `cd tools/perf && npm ci` once).
+- `npm run bench:node` — **lightweight Node** microbench for PF-009 (`bench/run.js` → `bench/results.json`).
+- `npm run bench:compare` — compare `bench/results.json` against the checked-in `bench/baseline.json` (PF-009).
+- `npm run bench:update-baseline` — re-record `bench/baseline.json` (PF-009).
+- `npm run bench:gpu` — GPU benchmark suite (`bench/gpu_bench.ts`).
+- `npm run bench:storage` — storage macrobench scenario (`bench/runner.ts storage_io`).
+
+Note: `bench/run` also has a **legacy macro mode** (triggered by `--output`/`--results-dir`), but it overlaps with
+`tools/perf` and is considered deprecated for contributor workflows (see “Legacy browser macrobench harness” below).
+
 ## Nightly perf history (dashboard)
 
 Files:
@@ -13,10 +25,10 @@ Files:
 
 Local usage:
 
-Append `tools/perf/run.mjs` output (recommended; matches the nightly workflow):
+Append a CI-parity browser perf run output (recommended; matches the nightly workflow):
 
 ```bash
-node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
+npm run bench:browser -- --iterations 7 --out-dir perf-results/local
 node bench/history.js append \
   --history bench/history.json \
   --input perf-results/local/raw.json \
@@ -28,7 +40,7 @@ node bench/history.js append \
 Or run the lightweight Node microbench:
 
 ```bash
-node bench/run.js --out bench/results.json
+npm run bench:node
 node bench/history.js append \
   --history bench/history.json \
   --input bench/results.json \
@@ -70,8 +82,14 @@ Files:
 Example:
 
 ```bash
-node bench/run.js --out bench/results.json
+npm run bench:node
 node bench/compare --fail-on-regression --json
+```
+
+To re-record the checked-in baseline (`bench/baseline.json`):
+
+```bash
+npm run bench:update-baseline -- --scenario all --iterations 15
 ```
 
 Comparisons use **median-of-N** (`samples`) per metric. If the current run has high variance, the
@@ -172,9 +190,12 @@ Macrobench scenarios should report consistent metric IDs/units:
 - `app_launch_time_ms` (`ms`): trigger → first stable frame
 - `input_latency_ms` (`ms`): representative latency while desktop is active
 
-## Browser macrobench harness (Playwright)
+## Legacy browser macrobench harness (Playwright)
 
 Playwright-driven runner that loads the app in Chromium, executes scenarios, and captures `window.aero.perf.export()` after each iteration.
+
+**Deprecated:** this predates `tools/perf` and overlaps with it. Prefer `npm run bench:browser` unless you are actively
+migrating these scenarios into the newer tooling.
 
 ```bash
 node bench/run --scenario microbench --iterations 5 --output out.json

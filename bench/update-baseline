@@ -1,39 +1,365 @@
-# bench/update-baseline
+#!/usr/bin/env node
 
-This path is reserved for the **baseline updater** used by Aero's benchmark runner.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-It exists to make it easy to:
+import stats from "./lib/stats.cjs";
 
-- Re-record benchmark baselines after an intentional performance change
-- Update thresholds when a metric becomes too noisy (or newly stable)
-- Keep CI perf checks meaningful while avoiding “baseline churn”
+const { median, coefficientOfVariation } = stats;
 
-For the contributor-facing workflow and expectations, see:
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-- [Performance Tooling](../docs/16-performance-tooling.md#updating-baselines-and-thresholds)
+function printHelp(exitCode = 0) {
+  process.stdout.write(`bench/update-baseline
 
-## Expected usage
+Updates the checked-in PF-009 baseline file (bench/baseline.json) by re-running the
+lightweight Node microbench harness (bench/run.js).
 
-```bash
-# Update the baseline for a single scenario (recommended for PRs)
-node bench/update-baseline --scenario microbench --iterations 15
+Usage:
+  node bench/update-baseline --scenario <startup|microbench|all> [--iterations <n>] [--notes <text>]
 
-# Update all scenarios (typically used for periodic refreshes)
-node bench/update-baseline --all --iterations 15
-```
+Options:
+  --scenario <name>    Which scenario(s) to refresh (default: all)
+  --iterations <n>     Samples per scenario (passed through to bench/run.js when set)
+  --notes <text>       Update baseline meta.environmentNotes
+  --help, -h           Show this help
+`);
+  process.exit(exitCode);
+}
 
-## What it should do
+export function parseUpdateBaselineArgs(argv) {
+  const options = {
+    scenario: "all",
+    iterations: undefined,
+    notes: undefined,
+    help: false,
+  };
 
-1. Run the Playwright benchmark runner for the selected scenarios
-2. Write updated baseline JSON files under `bench/baselines/`
-3. Optionally update thresholds (if invoked with an explicit flag)
-4. Print a short before/after summary to help reviewers spot unintended changes
+  const args = [...argv];
+  while (args.length > 0) {
+    const arg = args.shift();
+    if (arg === "--help" || arg === "-h") {
+      options.help = true;
+      continue;
+    }
+    if (arg === "--scenario") {
+      const value = args.shift();
+      if (!value) throw new Error("--scenario requires a value");
+      options.scenario = value;
+      continue;
+    }
+    if (arg === "--iterations") {
+      const value = args.shift();
+      if (!value) throw new Error("--iterations requires a value");
+      options.iterations = Number.parseInt(value, 10);
+      continue;
+    }
+    if (arg === "--notes") {
+      const value = args.shift();
+      if (!value) throw new Error("--notes requires a value");
+      options.notes = value;
+      continue;
+    }
+    if (arg === "--all") {
+      options.scenario = "all";
+      continue;
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
 
-## Review guidelines
+  if (!["startup", "microbench", "all"].includes(options.scenario)) {
+    throw new Error(`Invalid --scenario: ${options.scenario}`);
+  }
+  if (
+    options.iterations !== undefined &&
+    (!Number.isFinite(options.iterations) || options.iterations <= 0)
+  ) {
+    throw new Error("--iterations must be a positive integer");
+  }
 
-When submitting baseline updates:
+  return options;
+}
 
-- Include the **command** you ran and the **browser version**.
-- Prefer a quiet, stable machine and a “production-like” build.
-- Avoid updating baselines as a drive-by change unrelated to the PR.
+export function buildUpdateBaselinePlan(parsed, { outFile } = {}) {
+  const benchDir = __dirname;
+  const baselinePath = path.join(benchDir, "baseline.json");
+  const runnerPath = path.join(benchDir, "run.js");
 
+  /** @type {string[]} */
+  const runnerArgs = [runnerPath, "--out", outFile ?? "<temp>"];
+  if (parsed.scenario !== "all") {
+    runnerArgs.push("--scenario", parsed.scenario);
+  }
+  if (parsed.iterations !== undefined) {
+    runnerArgs.push("--iterations", String(parsed.iterations));
+  }
+
+  return {
+    baselinePath,
+    runner: {
+      command: process.execPath,
+      args: runnerArgs,
+      outFile: outFile ?? "<temp>",
+      kind: "node-microbench",
+    },
+    scenario: parsed.scenario,
+  };
+}
+
+function readJsonIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function formatNumber(value, digits = 2) {
+  if (!Number.isFinite(value)) return "n/a";
+  const abs = Math.abs(value);
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 10) return value.toFixed(1);
+  return value.toFixed(digits);
+}
+
+function formatWithUnit(value, unit) {
+  if (!Number.isFinite(value)) return "n/a";
+  if (unit === "ms") return `${formatNumber(value, 3)}ms`;
+  if (unit === "ops/s") return `${formatNumber(value, 2)} ops/s`;
+  return `${formatNumber(value, 2)} ${unit ?? ""}`.trim();
+}
+
+function collectMetricRows(payload) {
+  const rows = [];
+  const scenarios = payload?.scenarios && typeof payload.scenarios === "object" ? payload.scenarios : {};
+  for (const [scenarioId, scenario] of Object.entries(scenarios)) {
+    const metrics = scenario?.metrics && typeof scenario.metrics === "object" ? scenario.metrics : {};
+    for (const [metricId, metric] of Object.entries(metrics)) {
+      const samples = metric?.samples;
+      if (!Array.isArray(samples) || samples.length === 0) continue;
+      rows.push({
+        scenario: scenarioId,
+        metric: metricId,
+        unit: metric.unit,
+        better: metric.better,
+        samples,
+      });
+    }
+  }
+  rows.sort((a, b) => {
+    if (a.scenario !== b.scenario) return a.scenario.localeCompare(b.scenario);
+    return a.metric.localeCompare(b.metric);
+  });
+  return rows;
+}
+
+function printDiffTable({ before, after, scenarios }) {
+  const beforeRows = collectMetricRows(before);
+  const afterRows = collectMetricRows(after);
+
+  const key = (r) => `${r.scenario}.${r.metric}`;
+  const beforeMap = new Map(beforeRows.map((r) => [key(r), r]));
+  const afterMap = new Map(afterRows.map((r) => [key(r), r]));
+
+  const keys = new Set();
+  for (const k of beforeMap.keys()) keys.add(k);
+  for (const k of afterMap.keys()) keys.add(k);
+
+  const selectedKeys = [...keys]
+    .filter((k) => scenarios.includes(k.split(".")[0]))
+    .sort((a, b) => a.localeCompare(b));
+
+  if (selectedKeys.length === 0) {
+    process.stdout.write("No matching metrics found to diff.\n");
+    return;
+  }
+
+  const rows = selectedKeys.map((k) => {
+    const b = beforeMap.get(k);
+    const a = afterMap.get(k);
+    const unit = a?.unit ?? b?.unit ?? "";
+    const beforeMedian = b ? median(b.samples) : null;
+    const afterMedian = a ? median(a.samples) : null;
+    const deltaPct =
+      beforeMedian !== null &&
+      Number.isFinite(beforeMedian) &&
+      beforeMedian !== 0 &&
+      afterMedian !== null &&
+      Number.isFinite(afterMedian)
+        ? ((afterMedian - beforeMedian) / beforeMedian) * 100
+        : null;
+    return {
+      scenario: k.split(".")[0],
+      metric: k.split(".")[1],
+      unit,
+      before: {
+        median: beforeMedian,
+        n: b?.samples.length ?? 0,
+        cv: b ? coefficientOfVariation(b.samples) : null,
+      },
+      after: {
+        median: afterMedian,
+        n: a?.samples.length ?? 0,
+        cv: a ? coefficientOfVariation(a.samples) : null,
+      },
+      deltaPct,
+    };
+  });
+
+  const scenarioWidth = Math.max("scenario".length, ...rows.map((r) => r.scenario.length));
+  const metricWidth = Math.max("metric".length, ...rows.map((r) => r.metric.length));
+
+  const header = [
+    "scenario".padEnd(scenarioWidth),
+    "metric".padEnd(metricWidth),
+    "before".padStart(14),
+    "after".padStart(14),
+    "Δ%".padStart(8),
+    "n".padStart(8),
+    "cv%".padStart(8),
+  ].join("  ");
+
+  process.stdout.write(`${header}\n`);
+  process.stdout.write(`${"-".repeat(header.length)}\n`);
+
+  for (const row of rows) {
+    const beforeVal =
+      row.before.median === null ? "n/a" : formatWithUnit(row.before.median, row.unit);
+    const afterVal =
+      row.after.median === null ? "n/a" : formatWithUnit(row.after.median, row.unit);
+    const delta = row.deltaPct === null ? "n/a" : `${row.deltaPct >= 0 ? "+" : ""}${row.deltaPct.toFixed(2)}%`;
+    const n = `${row.before.n}→${row.after.n}`;
+    const cvBefore = row.before.cv === null ? null : row.before.cv * 100;
+    const cvAfter = row.after.cv === null ? null : row.after.cv * 100;
+    const cv = cvBefore === null || cvAfter === null ? "n/a" : `${cvBefore.toFixed(1)}→${cvAfter.toFixed(1)}`;
+
+    process.stdout.write(
+      [
+        row.scenario.padEnd(scenarioWidth),
+        row.metric.padEnd(metricWidth),
+        beforeVal.padStart(14),
+        afterVal.padStart(14),
+        delta.padStart(8),
+        n.padStart(8),
+        cv.padStart(8),
+      ].join("  ") + "\n",
+    );
+  }
+}
+
+function mergeBaseline({ previous, next, scenarioSelection, notes }) {
+  const schemaVersion = 1;
+  const prevMeta = previous?.meta && typeof previous.meta === "object" ? previous.meta : {};
+  const prevScenarios =
+    previous?.scenarios && typeof previous.scenarios === "object" ? previous.scenarios : {};
+
+  const nextScenarios =
+    next?.scenarios && typeof next.scenarios === "object" ? next.scenarios : {};
+
+  const scenariosToUpdate =
+    scenarioSelection === "all" ? Object.keys(nextScenarios) : [scenarioSelection];
+
+  const mergedScenarios = { ...prevScenarios };
+  for (const scenarioId of scenariosToUpdate) {
+    const nextScenario = nextScenarios[scenarioId];
+    if (!nextScenario) {
+      throw new Error(`Selected scenario "${scenarioId}" missing from new benchmark output`);
+    }
+
+    const prevScenario = prevScenarios[scenarioId];
+    const prevMetrics =
+      prevScenario?.metrics && typeof prevScenario.metrics === "object" ? prevScenario.metrics : {};
+    const nextMetrics =
+      nextScenario?.metrics && typeof nextScenario.metrics === "object" ? nextScenario.metrics : {};
+
+    const mergedMetrics = {};
+    for (const metricId of Object.keys(nextMetrics).sort()) {
+      const metric = nextMetrics[metricId];
+      const prevMetric = prevMetrics[metricId];
+      mergedMetrics[metricId] = {
+        unit: metric.unit,
+        better: metric.better,
+        samples: metric.samples,
+        ...(prevMetric?.expectedCvMax !== undefined ? { expectedCvMax: prevMetric.expectedCvMax } : {}),
+      };
+    }
+
+    mergedScenarios[scenarioId] = { metrics: mergedMetrics };
+  }
+
+  const orderedScenarioIds = [
+    ...["startup", "microbench"].filter((id) => Object.prototype.hasOwnProperty.call(mergedScenarios, id)),
+    ...Object.keys(mergedScenarios)
+      .filter((id) => !["startup", "microbench"].includes(id))
+      .sort(),
+  ];
+
+  const orderedScenarios = {};
+  for (const id of orderedScenarioIds) orderedScenarios[id] = mergedScenarios[id];
+
+  return {
+    schemaVersion,
+    meta: {
+      ...prevMeta,
+      recordedAt: new Date().toISOString(),
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      ...(notes !== undefined ? { environmentNotes: notes } : {}),
+    },
+    scenarios: orderedScenarios,
+  };
+}
+
+async function main() {
+  const parsed = parseUpdateBaselineArgs(process.argv.slice(2));
+  if (parsed.help) printHelp(0);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-baseline-"));
+  try {
+    const tmpOut = path.join(tmpDir, "results.json");
+    const plan = buildUpdateBaselinePlan(parsed, { outFile: tmpOut });
+
+    const run = spawnSync(plan.runner.command, plan.runner.args, { stdio: "inherit" });
+    if (run.status !== 0) {
+      process.exit(run.status ?? 1);
+    }
+
+    const next = readJsonIfExists(tmpOut);
+    if (!next) throw new Error(`Expected benchmark output at ${tmpOut}`);
+
+    const baselinePath = plan.baselinePath;
+    const previous = readJsonIfExists(baselinePath) ?? { schemaVersion: 1, meta: {}, scenarios: {} };
+
+    const beforeBaseline = previous;
+    const merged = mergeBaseline({
+      previous,
+      next,
+      scenarioSelection: parsed.scenario,
+      notes: parsed.notes,
+    });
+
+    fs.writeFileSync(baselinePath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+
+    const scenarios =
+      parsed.scenario === "all"
+        ? Object.keys(next.scenarios ?? {})
+        : [parsed.scenario];
+
+    process.stdout.write(`\nUpdated ${path.relative(process.cwd(), baselinePath)}\n\n`);
+    printDiffTable({ before: beforeBaseline, after: merged, scenarios });
+    process.stdout.write("\n");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
+  try {
+    await main();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  }
+}
