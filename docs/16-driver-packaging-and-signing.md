@@ -10,11 +10,15 @@ This repository’s CI is designed so that **no WDK redistributable binaries are
 
 ## Per-driver packaging manifest (`ci-package.json`)
 
-Each driver may include an optional manifest:
+Drivers intended to be built/packaged by CI must include a manifest:
 
 `drivers/<name>/ci-package.json`
 
 Schema: `ci/driver-package.schema.json`
+
+This file is the **explicit CI opt-in gate**: the Win7 driver pipeline only builds/stages/packages
+drivers that include `ci-package.json` at the driver root. This prevents accidentally shipping
+dev/test drivers (or conflicting INFs that match the same HWIDs).
 
 Supported fields:
 
