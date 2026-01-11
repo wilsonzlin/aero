@@ -127,6 +127,13 @@ After you have a working Windows 7 desktop:
 
 If you were given `aero-guest-tools.zip` instead of an ISO, you can extract it on the host and copy the extracted folder into the VM (for example into `C:\AeroGuestTools\media\`) and run `setup.cmd` from there.
 
+### Third-party notices
+
+Guest Tools media includes `THIRD_PARTY_NOTICES.md` at the ISO/zip root and may include
+additional upstream license/notice texts under `licenses/virtio-win/` (when the media
+was built from a virtio-win distribution). Review these files if you are redistributing
+the media.
+
 ### Where Guest Tools writes logs/reports
 
 Regardless of whether you run Guest Tools from the mounted CD/DVD or from a copied folder, the scripts write their output to:
