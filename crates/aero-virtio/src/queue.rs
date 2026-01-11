@@ -1,7 +1,4 @@
-use crate::memory::{
-    read_u16_le, read_u32_le, read_u64_le, write_u16_le, write_u32_le, GuestMemory,
-    GuestMemoryError,
-};
+use crate::memory::{read_u16_le, write_u16_le, GuestMemory, GuestMemoryError};
 
 pub const VIRTQ_DESC_F_NEXT: u16 = 1;
 pub const VIRTQ_DESC_F_WRITE: u16 = 2;
@@ -51,11 +48,19 @@ impl RawDescriptor {
         table_addr: u64,
         index: u16,
     ) -> Result<Self, VirtQueueError> {
-        let base = table_addr + u64::from(index) * 16;
-        let addr = read_u64_le(mem, base)?;
-        let len = read_u32_le(mem, base + 8)?;
-        let flags = read_u16_le(mem, base + 12)?;
-        let next = read_u16_le(mem, base + 14)?;
+        let offset = u64::from(index) * 16;
+        let base = table_addr
+            .checked_add(offset)
+            .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                addr: table_addr,
+                len: 16,
+            }))?;
+        let bytes = mem.get_slice(base, 16)?;
+
+        let addr = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let len = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let flags = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
+        let next = u16::from_le_bytes(bytes[14..16].try_into().unwrap());
         Ok(Self {
             addr,
             len,
@@ -217,13 +222,29 @@ impl VirtQueue {
         &mut self,
         mem: &M,
     ) -> Result<Option<PoppedDescriptorChain>, VirtQueueError> {
-        let avail_idx = read_u16_le(mem, self.config.avail_addr + 2)?;
+        let avail_idx_addr =
+            self.config
+                .avail_addr
+                .checked_add(2)
+                .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                    addr: self.config.avail_addr,
+                    len: 2,
+                }))?;
+        let avail_idx = read_u16_le(mem, avail_idx_addr)?;
         if avail_idx == self.next_avail {
             return Ok(None);
         }
 
         let ring_index = self.next_avail % self.config.size;
-        let elem_addr = self.config.avail_addr + 4 + u64::from(ring_index) * 2;
+        let elem_offset = 4 + u64::from(ring_index) * 2;
+        let elem_addr =
+            self.config
+                .avail_addr
+                .checked_add(elem_offset)
+                .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                    addr: self.config.avail_addr,
+                    len: 2,
+                }))?;
         let head = read_u16_le(mem, elem_addr)?;
         self.next_avail = self.next_avail.wrapping_add(1);
 
@@ -248,12 +269,30 @@ impl VirtQueue {
     ) -> Result<bool, VirtQueueError> {
         let old_used = self.next_used;
         let used_elem_index = old_used % self.config.size;
-        let elem_addr = self.config.used_addr + 4 + u64::from(used_elem_index) * 8;
-        write_u32_le(mem, elem_addr, u32::from(head_index))?;
-        write_u32_le(mem, elem_addr + 4, len)?;
+        let elem_offset = 4 + u64::from(used_elem_index) * 8;
+        let elem_addr =
+            self.config
+                .used_addr
+                .checked_add(elem_offset)
+                .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                    addr: self.config.used_addr,
+                    len: 8,
+                }))?;
+        let mut elem_bytes = [0u8; 8];
+        elem_bytes[0..4].copy_from_slice(&u32::from(head_index).to_le_bytes());
+        elem_bytes[4..8].copy_from_slice(&len.to_le_bytes());
+        mem.write(elem_addr, &elem_bytes)?;
 
         self.next_used = self.next_used.wrapping_add(1);
-        write_u16_le(mem, self.config.used_addr + 2, self.next_used)?;
+        let used_idx_addr =
+            self.config
+                .used_addr
+                .checked_add(2)
+                .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                    addr: self.config.used_addr,
+                    len: 2,
+                }))?;
+        write_u16_le(mem, used_idx_addr, self.next_used)?;
 
         Ok(self.needs_interrupt(mem, old_used, self.next_used)?)
     }
@@ -270,7 +309,15 @@ impl VirtQueue {
         if !self.event_idx {
             return Ok(());
         }
-        let avail_event_addr = self.config.used_addr + 4 + u64::from(self.config.size) * 8;
+        let avail_event_offset = 4 + u64::from(self.config.size) * 8;
+        let avail_event_addr = self
+            .config
+            .used_addr
+            .checked_add(avail_event_offset)
+            .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                addr: self.config.used_addr,
+                len: 2,
+            }))?;
         write_u16_le(mem, avail_event_addr, self.next_avail)?;
         Ok(())
     }
@@ -284,7 +331,15 @@ impl VirtQueue {
         if self.event_idx {
             // Virtio spec: vring_need_event(event_idx, new_idx, old_idx)
             // "used_event" lives after the avail ring and is written by the driver.
-            let used_event_addr = self.config.avail_addr + 4 + u64::from(self.config.size) * 2;
+            let used_event_offset = 4 + u64::from(self.config.size) * 2;
+            let used_event_addr = self
+                .config
+                .avail_addr
+                .checked_add(used_event_offset)
+                .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                    addr: self.config.avail_addr,
+                    len: 2,
+                }))?;
             let event_idx = read_u16_le(mem, used_event_addr)?;
             Ok(vring_need_event(event_idx, new_used, old_used))
         } else {

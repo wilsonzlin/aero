@@ -1,4 +1,6 @@
-use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
+use aero_virtio::memory::{
+    read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemoryError, GuestRam,
+};
 use aero_virtio::queue::{
     DescriptorChain, PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VirtQueueError,
     VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
@@ -317,4 +319,70 @@ fn descriptor_parsing_never_panics_on_garbage_guest_memory() {
 
         assert!(result.is_ok());
     }
+}
+
+#[test]
+fn descriptor_table_address_overflow_is_reported_as_invalid_chain() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = u64::MAX - 8;
+    let avail = 0x2000;
+    let used = 0x3000;
+
+    write_u16_le(&mut mem, avail, 0).unwrap(); // flags
+    write_u16_le(&mut mem, avail + 2, 1).unwrap(); // idx
+    write_u16_le(&mut mem, avail + 4, 1).unwrap(); // ring[0] = head 1
+
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 8,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let popped = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    match popped {
+        PoppedDescriptorChain::Invalid { head_index, error } => {
+            assert_eq!(head_index, 1);
+            assert_eq!(
+                error,
+                VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds {
+                    addr: desc,
+                    len: 16
+                })
+            );
+        }
+        PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
+    }
+}
+
+#[test]
+fn used_ring_address_overflow_returns_error_instead_of_wrapping() {
+    let mut mem = GuestRam::new(0x10000);
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = u64::MAX - 2;
+
+    let mut q = VirtQueue::new(
+        VirtQueueConfig {
+            size: 4,
+            desc_addr: desc,
+            avail_addr: avail,
+            used_addr: used,
+        },
+        false,
+    )
+    .unwrap();
+
+    let err = q.add_used(&mut mem, 0, 0).unwrap_err();
+    assert_eq!(
+        err,
+        VirtQueueError::GuestMemory(GuestMemoryError::OutOfBounds { addr: used, len: 8 })
+    );
 }
