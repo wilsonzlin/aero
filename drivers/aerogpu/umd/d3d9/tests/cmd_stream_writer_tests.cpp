@@ -3625,6 +3625,159 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
   return Check(alloc_list[0].WriteOperation == 1, "render-target write upgrades allocation list entry");
 }
 
+bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
+  // RotateResourceIdentities may need to emit multiple rebinding packets (RTs +
+  // rotated textures/streams/index). Allocation tracking can split the submission
+  // when the list is full; ensure we pre-split so earlier tracked allocations are
+  // not dropped.
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnRotateResourceIdentities != nullptr, "RotateResourceIdentities entrypoint")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
+  dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
+  dev->alloc_list_tracker.reset();
+
+  // Pre-fill the allocation list to simulate other work already tracked in the
+  // submission. This should force RotateResourceIdentities to split before it
+  // begins tracking its own dependencies.
+  const AllocRef dummy_ref = dev->alloc_list_tracker.track_buffer_read(/*hAllocation=*/0x9999u,
+                                                                       /*alloc_id=*/0x999u,
+                                                                       /*share_token=*/0);
+  if (!Check(dummy_ref.status == AllocRefStatus::kOk, "dummy allocation tracked")) {
+    return false;
+  }
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list has 1 pre-filled entry")) {
+    return false;
+  }
+
+  Resource rt{};
+  rt.kind = ResourceKind::Texture2D;
+  rt.handle = 0x2000u;
+  rt.backing_alloc_id = 1;
+  rt.share_token = 0;
+  rt.wddm_hAllocation = 0x2000u;
+
+  Resource tex0{};
+  tex0.kind = ResourceKind::Texture2D;
+  tex0.type = 0;
+  tex0.format = 22u; // D3DFMT_X8R8G8B8
+  tex0.width = 16;
+  tex0.height = 16;
+  tex0.depth = 1;
+  tex0.mip_levels = 1;
+  tex0.usage = 0;
+  tex0.pool = 0;
+  tex0.size_bytes = 16u * 16u * 4u;
+  tex0.row_pitch = 16u * 4u;
+  tex0.slice_pitch = tex0.size_bytes;
+  tex0.handle = 0x3000u;
+  tex0.backing_alloc_id = 2;
+  tex0.share_token = 0;
+  tex0.wddm_hAllocation = 0x3000u;
+
+  Resource tex1 = tex0;
+  tex1.handle = 0x3001u;
+  tex1.backing_alloc_id = 3;
+  tex1.wddm_hAllocation = 0x3001u;
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cmd.reset();
+    dev->render_targets[0] = &rt;
+    dev->render_targets[1] = nullptr;
+    dev->render_targets[2] = nullptr;
+    dev->render_targets[3] = nullptr;
+    dev->depth_stencil = nullptr;
+    dev->textures[0] = &tex0;
+    for (uint32_t i = 1; i < 16; ++i) {
+      dev->textures[i] = nullptr;
+    }
+    for (uint32_t i = 0; i < 16; ++i) {
+      dev->streams[i].vb = nullptr;
+    }
+    dev->index_buffer = nullptr;
+  }
+
+  D3DDDI_HRESOURCE rotate[2]{};
+  rotate[0].pDrvPrivate = &tex0;
+  rotate[1].pDrvPrivate = &tex1;
+
+  hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, rotate, 2);
+  if (!Check(hr == S_OK, "RotateResourceIdentities")) {
+    return false;
+  }
+
+  // The allocation list should contain both the RT and the rotated texture (now
+  // bound to stage 0), with the render target marked as WriteOperation.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->alloc_list_tracker.list_len() == 2, "allocation list contains rotate rebind deps after split")) {
+      return false;
+    }
+  }
+  if (!Check(alloc_list[0].hAllocation == rt.wddm_hAllocation, "allocation list contains RT mapping")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 1, "allocation list marks RT as write")) {
+    return false;
+  }
+  if (!Check(alloc_list[1].hAllocation == tex0.wddm_hAllocation, "allocation list contains rotated texture mapping")) {
+    return false;
+  }
+  return Check(alloc_list[1].WriteOperation == 0, "allocation list marks rotated texture as read");
+}
+
 bool TestOpenResourceCapturesWddmAllocationForTracking() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -5392,6 +5545,143 @@ bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
                "present rotation occurs when RT rebind succeeds");
 }
 
+bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
+  // Backbuffer rotation rebinding can touch multiple guest-backed allocations
+  // (render target + bound textures). If the allocation list cannot fit all
+  // referenced allocations, the UMD must undo the rotation rather than emit
+  // commands with an incomplete allocation table.
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+
+    ~Cleanup() {
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnPresentEx != nullptr, "PresentEx must be available")) {
+    return false;
+  }
+
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = 64;
+  create_sc.present_params.backbuffer_height = 64;
+  create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
+  create_sc.present_params.backbuffer_count = 2;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 0;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* sc = reinterpret_cast<SwapChain*>(create_sc.hSwapChain.pDrvPrivate);
+  if (!Check(dev && sc, "swapchain/device pointers")) {
+    return false;
+  }
+  if (!Check(sc->backbuffers.size() == 2, "swapchain has 2 backbuffers")) {
+    return false;
+  }
+
+  const aerogpu_handle_t h0 = sc->backbuffers[0]->handle;
+  const aerogpu_handle_t h1 = sc->backbuffers[1]->handle;
+
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST alloc_list[1] = {};
+  dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
+  dev->alloc_list_tracker.reset();
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    // Ensure the rebinding sequence references two distinct alloc-backed
+    // resources: RT0 = backbuffer0, texture0 = backbuffer1.
+    sc->backbuffers[0]->backing_alloc_id = 1;
+    sc->backbuffers[0]->wddm_hAllocation = 0x1111u;
+    sc->backbuffers[1]->backing_alloc_id = 2;
+    sc->backbuffers[1]->wddm_hAllocation = 0x2222u;
+
+    dev->render_targets[0] = sc->backbuffers[0];
+    dev->render_targets[1] = nullptr;
+    dev->render_targets[2] = nullptr;
+    dev->render_targets[3] = nullptr;
+    dev->textures[0] = sc->backbuffers[1];
+    for (uint32_t i = 1; i < 16; ++i) {
+      dev->textures[i] = nullptr;
+    }
+  }
+
+  D3D9DDIARG_PRESENTEX present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 0;
+  present.d3d9_present_flags = 0;
+
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx (small alloc list)")) {
+    return false;
+  }
+
+  if (!Check(sc->backbuffers[0]->handle == h0 && sc->backbuffers[1]->handle == h1,
+             "present rotation undone when alloc list cannot fit rebind deps")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->alloc_list_tracker.list_len() == 0, "allocation list cleared when present rotation undone")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -7051,6 +7341,7 @@ int main() {
   failures += !aerogpu::TestDrawStateTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestRenderTargetTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestDrawStateTrackingDedupsSharedAllocIds();
+  failures += !aerogpu::TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
   failures += !aerogpu::TestInvalidPayloadArgs();
@@ -7063,6 +7354,7 @@ int main() {
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
+  failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallAllocList();
   failures += !aerogpu::TestPresentBackbufferRotationRebindsBackbufferTexture();
   failures += !aerogpu::TestSetRenderTargetRejectsGaps();
   failures += !aerogpu::TestRotateResourceIdentitiesUndoOnSmallCmdBuffer();

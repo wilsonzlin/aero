@@ -2498,6 +2498,7 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
   if (dev->wddm_context.hContext == 0) {
     return S_OK;
   }
+
 #if defined(_WIN32)
   // Ensure the allocation list backing store is available before we attempt to
   // write D3DDDI_ALLOCATIONLIST entries.
@@ -2506,6 +2507,17 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
     return E_FAIL;
   }
 #endif
+
+  // Allocation tracking requires a bound allocation-list buffer. In portable
+  // builds/tests we may toggle `hContext` without wiring a list; treat that as
+  // "tracking disabled" so unit tests focused on other behavior keep working.
+  if (!dev->alloc_list_tracker.list_base() || dev->alloc_list_tracker.list_capacity_effective() == 0) {
+#if defined(_WIN32)
+    return E_FAIL;
+#else
+    return S_OK;
+#endif
+  }
 
   if (res->backing_alloc_id == 0) {
     // backing_alloc_id==0 denotes a host-allocated resource (no guest allocation
@@ -2574,6 +2586,14 @@ HRESULT track_draw_state_locked(Device* dev) {
     return E_FAIL;
   }
 #endif
+
+  if (!dev->alloc_list_tracker.list_base() || dev->alloc_list_tracker.list_capacity_effective() == 0) {
+#if defined(_WIN32)
+    return E_FAIL;
+#else
+    return S_OK;
+#endif
+  }
 
   // The allocation list is keyed by the stable `alloc_id` (backing_alloc_id) and
   // can legally alias multiple per-process WDDM allocation handles to the same
@@ -2693,6 +2713,14 @@ HRESULT track_render_targets_locked(Device* dev) {
     return E_FAIL;
   }
 #endif
+
+  if (!dev->alloc_list_tracker.list_base() || dev->alloc_list_tracker.list_capacity_effective() == 0) {
+#if defined(_WIN32)
+    return E_FAIL;
+#else
+    return S_OK;
+#endif
+  }
 
   std::array<UINT, 4 + 1> unique_allocs{};
   size_t unique_alloc_len = 0;
@@ -7485,6 +7513,86 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
   }
   put_identity(resources[resource_count - 1], std::move(saved));
 
+  if (dev->wddm_context.hContext != 0 &&
+      dev->alloc_list_tracker.list_base() != nullptr &&
+      dev->alloc_list_tracker.list_capacity_effective() != 0) {
+    // The rebinding packets reference multiple resources. `track_resource_allocation_locked`
+    // can internally split the submission (submit+retry) when the allocation list
+    // is full. If that happens mid-sequence, earlier tracked allocations would be
+    // dropped and the submission would be missing required alloc-table entries.
+    //
+    // Pre-scan all allocations referenced by the rebinding commands and split once
+    // up front when the remaining allocation-list capacity is insufficient.
+    std::array<UINT, 4 + 1 + 16 + 16 + 1> unique_allocs{};
+    size_t unique_alloc_len = 0;
+    auto add_alloc = [&unique_allocs, &unique_alloc_len](const Resource* res) {
+      if (!res) {
+        return;
+      }
+      if (res->backing_alloc_id == 0) {
+        return;
+      }
+      if (res->wddm_hAllocation == 0) {
+        return;
+      }
+      const UINT alloc_id = res->backing_alloc_id;
+      for (size_t i = 0; i < unique_alloc_len; ++i) {
+        if (unique_allocs[i] == alloc_id) {
+          return;
+        }
+      }
+      unique_allocs[unique_alloc_len++] = alloc_id;
+    };
+
+    for (uint32_t i = 0; i < 4; ++i) {
+      add_alloc(dev->render_targets[i]);
+    }
+    add_alloc(dev->depth_stencil);
+    for (uint32_t stage = 0; stage < 16; ++stage) {
+      if (is_rotated(dev->textures[stage])) {
+        add_alloc(dev->textures[stage]);
+      }
+    }
+    for (uint32_t stream = 0; stream < 16; ++stream) {
+      if (is_rotated(dev->streams[stream].vb)) {
+        add_alloc(dev->streams[stream].vb);
+      }
+    }
+    if (is_rotated(dev->index_buffer)) {
+      add_alloc(dev->index_buffer);
+    }
+
+    const UINT needed_total = static_cast<UINT>(unique_alloc_len);
+    if (needed_total != 0) {
+      const UINT cap = dev->alloc_list_tracker.list_capacity_effective();
+      if (needed_total > cap) {
+        logf("aerogpu-d3d9: rotate identities requires %u allocations but allocation list capacity is %u\n",
+             static_cast<unsigned>(needed_total),
+             static_cast<unsigned>(cap));
+        undo_rotation();
+        return trace.ret(E_FAIL);
+      }
+
+      UINT needed_new = 0;
+      for (size_t i = 0; i < unique_alloc_len; ++i) {
+        if (!dev->alloc_list_tracker.contains_alloc_id(unique_allocs[i])) {
+          needed_new++;
+        }
+      }
+      const UINT existing = dev->alloc_list_tracker.list_len();
+      if (existing > cap || needed_new > cap - existing) {
+        (void)submit(dev);
+      }
+    }
+
+    // If the allocation-list pre-scan split the submission, re-check command space
+    // so we don't end up splitting the command buffer after allocation tracking.
+    if (!ensure_cmd_space(dev, needed_bytes)) {
+      undo_rotation();
+      return trace.ret(E_OUTOFMEMORY);
+    }
+  }
+
   // Track allocations referenced by the rebinding commands so the KMD/emulator
   // can resolve alloc_id -> GPA even if the submission contains only state
   // updates (no draw).
@@ -10073,24 +10181,95 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
             };
 
             // Rotate left by one.
-            ResourceIdentity saved = take_identity(sc->backbuffers[0]);
-            for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
-              put_identity(sc->backbuffers[i], take_identity(sc->backbuffers[i + 1]));
-            }
-            put_identity(sc->backbuffers.back(), std::move(saved));
-
-            bool ok = true;
-            // Track allocations referenced by the rebinding commands so the KMD can
-            // resolve alloc_id -> GPA even if no draw occurs before the next
-            // flush/present.
-            if (track_render_targets_locked(dev) < 0) {
-              ok = false;
-            }
-            for (uint32_t stage = 0; ok && stage < 16; ++stage) {
-              if (!is_backbuffer(dev->textures[stage])) {
-                continue;
-              }
-              if (track_resource_allocation_locked(dev, dev->textures[stage], /*write=*/false) < 0) {
+             ResourceIdentity saved = take_identity(sc->backbuffers[0]);
+             for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
+               put_identity(sc->backbuffers[i], take_identity(sc->backbuffers[i + 1]));
+             }
+             put_identity(sc->backbuffers.back(), std::move(saved));
+ 
+             bool ok = true;
+             if (dev->wddm_context.hContext != 0 &&
+                 dev->alloc_list_tracker.list_base() != nullptr &&
+                 dev->alloc_list_tracker.list_capacity_effective() != 0) {
+               // The rebinding commands reference multiple resources. Individual
+               // allocation tracking calls can internally split the submission when
+               // the allocation list is full; if that happens mid-sequence, earlier
+               // tracked allocations are dropped and the submission would be missing
+               // alloc-table entries for some binds. Pre-scan and split once before
+               // tracking.
+               std::array<UINT, 4 + 1 + 16 + 16 + 1> unique_allocs{};
+               size_t unique_alloc_len = 0;
+               auto add_alloc = [&unique_allocs, &unique_alloc_len](const Resource* res) {
+                 if (!res) {
+                   return;
+                 }
+                 if (res->backing_alloc_id == 0) {
+                   return;
+                 }
+                 if (res->wddm_hAllocation == 0) {
+                   return;
+                 }
+                 const UINT alloc_id = res->backing_alloc_id;
+                 for (size_t i = 0; i < unique_alloc_len; ++i) {
+                   if (unique_allocs[i] == alloc_id) {
+                     return;
+                   }
+                 }
+                 unique_allocs[unique_alloc_len++] = alloc_id;
+               };
+ 
+               for (uint32_t i = 0; i < 4; ++i) {
+                 add_alloc(dev->render_targets[i]);
+               }
+               add_alloc(dev->depth_stencil);
+               for (uint32_t stage = 0; stage < 16; ++stage) {
+                 if (is_backbuffer(dev->textures[stage])) {
+                   add_alloc(dev->textures[stage]);
+                 }
+               }
+               for (uint32_t stream = 0; stream < 16; ++stream) {
+                 if (is_backbuffer(dev->streams[stream].vb)) {
+                   add_alloc(dev->streams[stream].vb);
+                 }
+               }
+               if (is_backbuffer(dev->index_buffer)) {
+                 add_alloc(dev->index_buffer);
+               }
+ 
+               const UINT needed_total = static_cast<UINT>(unique_alloc_len);
+               if (needed_total != 0) {
+                 const UINT cap = dev->alloc_list_tracker.list_capacity_effective();
+                 if (needed_total > cap) {
+                   ok = false;
+                 } else {
+                   UINT needed_new = 0;
+                   for (size_t i = 0; i < unique_alloc_len; ++i) {
+                     if (!dev->alloc_list_tracker.contains_alloc_id(unique_allocs[i])) {
+                       needed_new++;
+                     }
+                   }
+                   const UINT existing = dev->alloc_list_tracker.list_len();
+                   if (existing > cap || needed_new > cap - existing) {
+                     (void)submit(dev);
+                     if (!ensure_cmd_space(dev, needed_bytes)) {
+                       ok = false;
+                     }
+                   }
+                 }
+               }
+             }
+ 
+             // Track allocations referenced by the rebinding commands so the KMD can
+             // resolve alloc_id -> GPA even if no draw occurs before the next
+             // flush/present.
+             if (ok && track_render_targets_locked(dev) < 0) {
+               ok = false;
+             }
+             for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+               if (!is_backbuffer(dev->textures[stage])) {
+                 continue;
+               }
+               if (track_resource_allocation_locked(dev, dev->textures[stage], /*write=*/false) < 0) {
                 ok = false;
               }
             }
@@ -10422,7 +10601,75 @@ HRESULT AEROGPU_D3D9_CALL device_present(
           put_identity(sc->backbuffers.back(), std::move(saved));
 
           bool ok = true;
-          if (track_render_targets_locked(dev) < 0) {
+          if (dev->wddm_context.hContext != 0 &&
+              dev->alloc_list_tracker.list_base() != nullptr &&
+              dev->alloc_list_tracker.list_capacity_effective() != 0) {
+            // See PresentEx: pre-scan all allocations referenced by the rebinding
+            // commands and split once before tracking so we don't drop earlier
+            // allocations when the list is full.
+            std::array<UINT, 4 + 1 + 16 + 16 + 1> unique_allocs{};
+            size_t unique_alloc_len = 0;
+            auto add_alloc = [&unique_allocs, &unique_alloc_len](const Resource* res) {
+              if (!res) {
+                return;
+              }
+              if (res->backing_alloc_id == 0) {
+                return;
+              }
+              if (res->wddm_hAllocation == 0) {
+                return;
+              }
+              const UINT alloc_id = res->backing_alloc_id;
+              for (size_t i = 0; i < unique_alloc_len; ++i) {
+                if (unique_allocs[i] == alloc_id) {
+                  return;
+                }
+              }
+              unique_allocs[unique_alloc_len++] = alloc_id;
+            };
+
+            for (uint32_t i = 0; i < 4; ++i) {
+              add_alloc(dev->render_targets[i]);
+            }
+            add_alloc(dev->depth_stencil);
+            for (uint32_t stage = 0; stage < 16; ++stage) {
+              if (is_backbuffer(dev->textures[stage])) {
+                add_alloc(dev->textures[stage]);
+              }
+            }
+            for (uint32_t stream = 0; stream < 16; ++stream) {
+              if (is_backbuffer(dev->streams[stream].vb)) {
+                add_alloc(dev->streams[stream].vb);
+              }
+            }
+            if (is_backbuffer(dev->index_buffer)) {
+              add_alloc(dev->index_buffer);
+            }
+
+            const UINT needed_total = static_cast<UINT>(unique_alloc_len);
+            if (needed_total != 0) {
+              const UINT cap = dev->alloc_list_tracker.list_capacity_effective();
+              if (needed_total > cap) {
+                ok = false;
+              } else {
+                UINT needed_new = 0;
+                for (size_t i = 0; i < unique_alloc_len; ++i) {
+                  if (!dev->alloc_list_tracker.contains_alloc_id(unique_allocs[i])) {
+                    needed_new++;
+                  }
+                }
+                const UINT existing = dev->alloc_list_tracker.list_len();
+                if (existing > cap || needed_new > cap - existing) {
+                  (void)submit(dev);
+                  if (!ensure_cmd_space(dev, needed_bytes)) {
+                    ok = false;
+                  }
+                }
+              }
+            }
+          }
+
+          if (ok && track_render_targets_locked(dev) < 0) {
             ok = false;
           }
           for (uint32_t stage = 0; ok && stage < 16; ++stage) {
