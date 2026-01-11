@@ -142,8 +142,21 @@ User-mode simulation tests live in `tests/`.
 
 From the repository root:
 
+#### Linux (single-config generators)
+
 ```sh
-cmake -S . -B build-virtio-tests -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF
+cmake -S . -B build-virtio-tests \
+  -DAERO_VIRTIO_BUILD_TESTS=ON \
+  -DAERO_AEROGPU_BUILD_TESTS=OFF \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-virtio-tests
+ctest --test-dir build-virtio-tests --output-on-failure
+```
+
+#### Windows (Visual Studio multi-config generators)
+
+```sh
+cmake -S . -B build-virtio-tests -A x64 -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF
 cmake --build build-virtio-tests --config Release
 ctest --test-dir build-virtio-tests --output-on-failure -C Release
 ```
