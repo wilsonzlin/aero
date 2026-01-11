@@ -51,17 +51,18 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
     if (ctx->Dx->Tx.Buffers == NULL || ctx->Dx->Tx.MaxPeriodBytes != PeriodBytes) {
         VirtioSndTxUninit(&ctx->Dx->Tx);
 
-        status = VirtioSndTxInit(
-            &ctx->Dx->Tx,
-            &ctx->Dx->DmaCtx,
-            &ctx->Dx->Queues[VIRTIOSND_QUEUE_TX],
-            PeriodBytes,
-            8);
-        if (!NT_SUCCESS(status)) {
-            VIRTIOSND_TRACE_ERROR("backend(virtio): TxInit failed: 0x%08X\n", (UINT)status);
-            return status;
-        }
-    }
+         status = VirtioSndTxInit(
+             &ctx->Dx->Tx,
+             &ctx->Dx->DmaCtx,
+             &ctx->Dx->Queues[VIRTIOSND_QUEUE_TX],
+             PeriodBytes,
+             8,
+             FALSE);
+         if (!NT_SUCCESS(status)) {
+             VIRTIOSND_TRACE_ERROR("backend(virtio): TxInit failed: 0x%08X\n", (UINT)status);
+             return status;
+         }
+     }
 
     /*
      * Allow the INTx DPC to drain and dispatch txq used entries to the TX engine.

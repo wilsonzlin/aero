@@ -415,7 +415,45 @@ NTSTATUS VirtIoSndHwSubmitTx(
 }
 
 _Use_decl_annotations_
-NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBytes, ULONG BufferCount)
+NTSTATUS
+VirtIoSndHwSubmitTxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_TX_SEGMENT* Segments, ULONG SegmentCount)
+{
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    return VirtioSndTxSubmitSg(&Dx->Tx, Segments, SegmentCount);
+}
+
+_Use_decl_annotations_
+ULONG
+VirtIoSndHwDrainTxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    if (Dx == NULL) {
+        return 0;
+    }
+
+    if (!Dx->Started) {
+        return 0;
+    }
+
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL) {
+        return 0;
+    }
+
+    return VirtioSndTxDrainCompletions(&Dx->Tx);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBytes, ULONG BufferCount, BOOLEAN SuppressInterrupts)
 {
     NTSTATUS status;
 
@@ -436,7 +474,7 @@ NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBy
 #endif
     }
 
-    status = VirtioSndTxInit(&Dx->Tx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_TX], MaxPeriodBytes, BufferCount);
+    status = VirtioSndTxInit(&Dx->Tx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_TX], MaxPeriodBytes, BufferCount, SuppressInterrupts);
     if (NT_SUCCESS(status)) {
         InterlockedExchange(&Dx->TxEngineInitialized, 1);
     } else {

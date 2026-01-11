@@ -141,8 +141,34 @@ _Must_inspect_result_ NTSTATUS VirtIoSndHwSubmitTx(
     _In_ ULONG Pcm2Bytes,
     _In_ BOOLEAN AllowSilenceFill);
 
+/*
+ * Submit a TX period as a list of DMA segments (no copy).
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndHwSubmitTxSg(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_reads_(SegmentCount) const VIRTIOSND_TX_SEGMENT* Segments,
+    _In_ ULONG SegmentCount);
+
+/*
+ * Drain used completions from the TX virtqueue and recycle TX contexts.
+ *
+ * This is useful for polling-driven use cases (when txq interrupts are
+ * suppressed). The INTx DPC path drains completions automatically.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+ULONG VirtIoSndHwDrainTxCompletions(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
-_Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG MaxPeriodBytes, _In_ ULONG BufferCount);
+_Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngine(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_ ULONG MaxPeriodBytes,
+    _In_ ULONG BufferCount,
+    _In_ BOOLEAN SuppressInterrupts);
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtIoSndUninitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
