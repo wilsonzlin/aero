@@ -1,6 +1,6 @@
 //! Internet checksum helpers (RFC 1071).
 
-use core::net::Ipv4Addr;
+use core::net::{Ipv4Addr, Ipv6Addr};
 
 /// Add a slice of bytes interpreted as big-endian 16-bit words to a running sum.
 ///
@@ -62,6 +62,25 @@ pub fn transport_checksum_ipv4(
     ones_complement_finalize(sum)
 }
 
+/// Compute a TCP/UDP checksum over an IPv6 pseudo-header and the transport segment.
+///
+/// Callers must ensure the checksum field inside `segment` is set to zero before calling.
+pub fn transport_checksum_ipv6(
+    src_ip: Ipv6Addr,
+    dst_ip: Ipv6Addr,
+    next_header: u8,
+    segment: &[u8],
+) -> u16 {
+    let mut sum = 0u32;
+    sum = ones_complement_add(sum, &src_ip.octets());
+    sum = ones_complement_add(sum, &dst_ip.octets());
+    sum = ones_complement_add(sum, &((segment.len() as u32).to_be_bytes()));
+    // Pseudo-header includes 3 bytes of 0 followed by the 8-bit next header value.
+    sum = ones_complement_add(sum, &[0, 0, 0, next_header]);
+    sum = ones_complement_add(sum, segment);
+    ones_complement_finalize(sum)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +128,24 @@ mod tests {
         assert_eq!(csum, 0x23a6);
         seg[16..18].copy_from_slice(&csum.to_be_bytes());
         assert_eq!(transport_checksum_ipv4(src, dst, 6, &seg), 0);
+    }
+
+    #[test]
+    fn transport_checksum_ipv6_roundtrip_udp() {
+        let src = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        let dst = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
+        let payload = *b"hello";
+
+        let mut seg = [0u8; 8 + 5];
+        let seg_len = seg.len() as u16;
+        seg[0..2].copy_from_slice(&1234u16.to_be_bytes());
+        seg[2..4].copy_from_slice(&53u16.to_be_bytes());
+        seg[4..6].copy_from_slice(&seg_len.to_be_bytes());
+        seg[6..8].copy_from_slice(&0u16.to_be_bytes());
+        seg[8..].copy_from_slice(&payload);
+
+        let csum = transport_checksum_ipv6(src, dst, 17, &seg);
+        seg[6..8].copy_from_slice(&csum.to_be_bytes());
+        assert_eq!(transport_checksum_ipv6(src, dst, 17, &seg), 0);
     }
 }

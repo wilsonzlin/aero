@@ -1,4 +1,7 @@
 use core::fmt;
+use core::net::{Ipv4Addr, Ipv6Addr};
+
+use nt_packetlib::packet::checksum as nt_checksum;
 
 pub const VIRTIO_NET_HDR_F_NEEDS_CSUM: u8 = 1;
 pub const VIRTIO_NET_HDR_F_DATA_VALID: u8 = 2;
@@ -500,33 +503,17 @@ fn parse_tcp(buf: &[u8]) -> Result<TcpHeader, NetOffloadError> {
 }
 
 fn ones_complement_checksum(data: &[u8]) -> u16 {
-    let mut sum: u32 = 0;
-    let mut chunks = data.chunks_exact(2);
-    for chunk in &mut chunks {
-        sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
-    }
-    if let Some(&last) = chunks.remainder().first() {
-        sum += (last as u32) << 8;
-    }
-    fold_checksum_sum(sum)
+    nt_checksum::internet_checksum(data)
 }
 
-fn fold_checksum_sum(mut sum: u32) -> u16 {
-    while (sum >> 16) != 0 {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-    !(sum as u16)
+#[cfg(test)]
+fn fold_checksum_sum(sum: u32) -> u16 {
+    nt_checksum::ones_complement_finalize(sum)
 }
 
-fn checksum_sum_u16_words(data: &[u8], mut sum: u32) -> u32 {
-    let mut chunks = data.chunks_exact(2);
-    for chunk in &mut chunks {
-        sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
-    }
-    if let Some(&last) = chunks.remainder().first() {
-        sum += (last as u32) << 8;
-    }
-    sum
+#[cfg(test)]
+fn checksum_sum_u16_words(data: &[u8], sum: u32) -> u32 {
+    nt_checksum::ones_complement_add(sum, data)
 }
 
 fn transport_checksum_ipv4(
@@ -536,13 +523,13 @@ fn transport_checksum_ipv4(
     segment: &[u8],
     segment_len: u16,
 ) -> u16 {
-    let mut sum: u32 = 0;
-    sum = checksum_sum_u16_words(src, sum);
-    sum = checksum_sum_u16_words(dst, sum);
-    sum += protocol as u32;
-    sum += segment_len as u32;
-    sum = checksum_sum_u16_words(segment, sum);
-    fold_checksum_sum(sum)
+    debug_assert_eq!(segment.len(), segment_len as usize);
+    nt_checksum::transport_checksum_ipv4(
+        Ipv4Addr::new(src[0], src[1], src[2], src[3]),
+        Ipv4Addr::new(dst[0], dst[1], dst[2], dst[3]),
+        protocol,
+        segment,
+    )
 }
 
 fn transport_checksum_ipv6(
@@ -552,14 +539,13 @@ fn transport_checksum_ipv6(
     segment: &[u8],
     segment_len: u32,
 ) -> u16 {
-    let mut sum: u32 = 0;
-    sum = checksum_sum_u16_words(src, sum);
-    sum = checksum_sum_u16_words(dst, sum);
-    sum += (segment_len >> 16) as u32;
-    sum += (segment_len & 0xFFFF) as u32;
-    sum += next_header as u32;
-    sum = checksum_sum_u16_words(segment, sum);
-    fold_checksum_sum(sum)
+    debug_assert_eq!(segment.len(), segment_len as usize);
+    nt_checksum::transport_checksum_ipv6(
+        Ipv6Addr::from(*src),
+        Ipv6Addr::from(*dst),
+        next_header,
+        segment,
+    )
 }
 
 fn tcp_checksum_ipv4(src: &[u8; 4], dst: &[u8; 4], tcp_segment: &[u8], tcp_len: u16) -> u16 {
