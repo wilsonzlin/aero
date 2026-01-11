@@ -1243,11 +1243,11 @@ impl InFlightSubmission {
 mod tests {
     use super::*;
 
-    use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
     use crate::devices::aerogpu_ring::{
         AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
         FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
     };
+    use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
     use memory::Bus;
 
     fn write_ring_header(
