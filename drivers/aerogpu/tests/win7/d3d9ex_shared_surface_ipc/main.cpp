@@ -340,13 +340,17 @@ static bool PatchRemoteCommandLineSharedHandle(HANDLE child_process,
   return true;
 }
 
-static int CreateD3D9ExDevice(const char* test_name,
+static int CreateD3D9ExDevice(aerogpu_test::TestReporter* reporter,
+                              const char* test_name,
                               HWND hwnd,
                               ComPtr<IDirect3D9Ex>* out_d3d,
                               ComPtr<IDirect3DDevice9Ex>* out_dev) {
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
+    if (reporter) {
+      return reporter->FailHresult("Direct3DCreate9Ex", hr);
+    }
     return aerogpu_test::FailHresult(test_name, "Direct3DCreate9Ex", hr);
   }
 
@@ -381,6 +385,9 @@ static int CreateD3D9ExDevice(const char* test_name,
                              dev.put());
   }
   if (FAILED(hr)) {
+    if (reporter) {
+      return reporter->FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
+    }
     return aerogpu_test::FailHresult(test_name, "IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
@@ -403,6 +410,9 @@ static int ValidateAdapter(aerogpu_test::TestReporter* reporter,
                            bool has_require_did,
                            uint32_t require_did) {
   if (!d3d) {
+    if (reporter) {
+      return reporter->Fail("ValidateAdapter: d3d == NULL");
+    }
     return aerogpu_test::Fail(test_name, "ValidateAdapter: d3d == NULL");
   }
 
@@ -411,6 +421,9 @@ static int ValidateAdapter(aerogpu_test::TestReporter* reporter,
   HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (FAILED(hr)) {
     if (has_require_vid || has_require_did) {
+      if (reporter) {
+        return reporter->FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+      }
       return aerogpu_test::FailHresult(test_name,
                                        "GetAdapterIdentifier (required for --require-vid/--require-did)",
                                        hr);
@@ -428,6 +441,12 @@ static int ValidateAdapter(aerogpu_test::TestReporter* reporter,
   }
 
   if (!allow_microsoft && ident.VendorId == 0x1414) {
+    if (reporter) {
+      return reporter->Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                            "Install AeroGPU driver or pass --allow-microsoft.",
+                            (unsigned)ident.VendorId,
+                            (unsigned)ident.DeviceId);
+    }
     return aerogpu_test::Fail(test_name,
                               "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
                               "Install AeroGPU driver or pass --allow-microsoft.",
@@ -435,12 +454,22 @@ static int ValidateAdapter(aerogpu_test::TestReporter* reporter,
                               (unsigned)ident.DeviceId);
   }
   if (has_require_vid && ident.VendorId != require_vid) {
+    if (reporter) {
+      return reporter->Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                            (unsigned)ident.VendorId,
+                            (unsigned)require_vid);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter VID mismatch: got 0x%04X expected 0x%04X",
                               (unsigned)ident.VendorId,
                               (unsigned)require_vid);
   }
   if (has_require_did && ident.DeviceId != require_did) {
+    if (reporter) {
+      return reporter->Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                            (unsigned)ident.DeviceId,
+                            (unsigned)require_did);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter DID mismatch: got 0x%04X expected 0x%04X",
                               (unsigned)ident.DeviceId,
@@ -449,6 +478,11 @@ static int ValidateAdapter(aerogpu_test::TestReporter* reporter,
   if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
       !(ident.VendorId == 0x1414 && allow_microsoft) &&
       !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+    if (reporter) {
+      return reporter->Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                            "or use --require-vid/--require-did)",
+                            ident.Description);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
                               "or use --require-vid/--require-did)",
@@ -481,7 +515,7 @@ static int RunConsumer(int argc, char** argv) {
     std::string parse_err;
     if (!aerogpu_test::ParseUint32(expected_token_str, &expected_debug_token, &parse_err) ||
         expected_debug_token == 0) {
-      return aerogpu_test::Fail(kTestName, "invalid --expected-debug-token: %s", parse_err.c_str());
+      return reporter.Fail("invalid --expected-debug-token: %s", parse_err.c_str());
     }
     has_expected_debug_token = true;
   }
@@ -495,28 +529,28 @@ static int RunConsumer(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string parse_err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &parse_err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", parse_err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", parse_err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string parse_err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &parse_err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", parse_err.c_str());
+      return reporter.Fail("invalid --require-did: %s", parse_err.c_str());
     }
     has_require_did = true;
   }
 
   std::string handle_str;
   if (!aerogpu_test::GetArgValue(argc, argv, "--shared-handle", &handle_str)) {
-    return aerogpu_test::Fail(kTestName, "missing --shared-handle");
+    return reporter.Fail("missing --shared-handle");
   }
 
   errno = 0;
   char* end = NULL;
   unsigned __int64 hv = _strtoui64(handle_str.c_str(), &end, 0);
   if (errno == ERANGE || !end || end == handle_str.c_str() || *end != 0) {
-    return aerogpu_test::Fail(kTestName, "invalid --shared-handle value: %s", handle_str.c_str());
+    return reporter.Fail("invalid --shared-handle value: %s", handle_str.c_str());
   }
 
   const HANDLE shared_handle = (HANDLE)(uintptr_t)hv;
@@ -528,30 +562,29 @@ static int RunConsumer(int argc, char** argv) {
                                               64,
                                               false);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   if (has_expected_debug_token) {
     uint32_t token = 0;
     std::string map_err;
     if (!MapSharedHandleToken(hwnd, shared_handle, &token, &map_err)) {
-      return aerogpu_test::Fail(kTestName, "MAP_SHARED_HANDLE failed: %s", map_err.c_str());
+      return reporter.Fail("MAP_SHARED_HANDLE failed: %s", map_err.c_str());
     }
     aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE debug_token=%lu (expected=%lu)",
                                kTestName,
                                (unsigned long)token,
                                (unsigned long)expected_debug_token);
     if (token != expected_debug_token) {
-      return aerogpu_test::Fail(kTestName,
-                                "MAP_SHARED_HANDLE token mismatch: got=%lu expected=%lu",
-                                (unsigned long)token,
-                                (unsigned long)expected_debug_token);
+      return reporter.Fail("MAP_SHARED_HANDLE token mismatch: got=%lu expected=%lu",
+                           (unsigned long)token,
+                           (unsigned long)expected_debug_token);
     }
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  int rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev);
+  int rc = CreateD3D9ExDevice(&reporter, kTestName, hwnd, &d3d, &dev);
   if (rc != 0) {
     return rc;
   }
@@ -570,7 +603,7 @@ static int RunConsumer(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -594,7 +627,7 @@ static int RunConsumer(int argc, char** argv) {
                                  IID_IDirect3DTexture9,
                                  reinterpret_cast<void**>(tex.put()));
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateTexture/OpenSharedResource(open shared)", hr);
+      return reporter.FailHresult("CreateTexture/OpenSharedResource(open shared)", hr);
     }
   } else {
     if (open_handle != shared_handle) {
@@ -608,7 +641,7 @@ static int RunConsumer(int argc, char** argv) {
   ComPtr<IDirect3DSurface9> surf;
   hr = tex->GetSurfaceLevel(0, surf.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    return reporter.FailHresult("IDirect3DTexture9::GetSurfaceLevel", hr);
   }
 
   ComPtr<IDirect3DSurface9> sysmem;
@@ -619,19 +652,19 @@ static int RunConsumer(int argc, char** argv) {
                                         sysmem.put(),
                                         NULL);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateOffscreenPlainSurface", hr);
+    return reporter.FailHresult("CreateOffscreenPlainSurface", hr);
   }
 
   hr = dev->GetRenderTargetData(surf.get(), sysmem.get());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "GetRenderTargetData(shared)", hr);
+    return reporter.FailHresult("GetRenderTargetData(shared)", hr);
   }
 
   D3DLOCKED_RECT lr;
   ZeroMemory(&lr, sizeof(lr));
   hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DSurface9::LockRect", hr);
+    return reporter.FailHresult("IDirect3DSurface9::LockRect", hr);
   }
 
   const uint32_t pixel = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 2, 2);
@@ -655,10 +688,9 @@ static int RunConsumer(int argc, char** argv) {
         sysmem->UnlockRect();
       }
     }
-    return aerogpu_test::Fail(kTestName,
-                              "pixel mismatch: got=0x%08lX expected=0x%08lX",
-                              (unsigned long)pixel,
-                              (unsigned long)expected);
+    return reporter.Fail("pixel mismatch: got=0x%08lX expected=0x%08lX",
+                         (unsigned long)pixel,
+                         (unsigned long)expected);
   }
 
   if (dump) {
@@ -727,12 +759,12 @@ static int RunProducer(int argc, char** argv) {
                                               64,
                                               show);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  int rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev);
+  int rc = CreateD3D9ExDevice(&reporter, kTestName, hwnd, &d3d, &dev);
   if (rc != 0) {
     return rc;
   }
@@ -750,7 +782,7 @@ static int RunProducer(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -767,47 +799,47 @@ static int RunProducer(int argc, char** argv) {
                                   tex.put(),
                                   &shared);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(shared)", hr);
+    return reporter.FailHresult("CreateTexture(shared)", hr);
   }
   if (!shared) {
-    return aerogpu_test::Fail(kTestName, "CreateTexture returned NULL shared handle");
+    return reporter.Fail("CreateTexture returned NULL shared handle");
   }
   aerogpu_test::PrintfStdout("INFO: %s: created shared texture handle=%p", kTestName, shared);
 
   ComPtr<IDirect3DSurface9> rt;
   hr = tex->GetSurfaceLevel(0, rt.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    return reporter.FailHresult("IDirect3DTexture9::GetSurfaceLevel", hr);
   }
 
   hr = dev->SetRenderTarget(0, rt.get());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "SetRenderTarget(shared)", hr);
+    return reporter.FailHresult("SetRenderTarget(shared)", hr);
   }
 
   const DWORD clear_color = D3DCOLOR_ARGB(0xFF, 0x11, 0x22, 0x33);  // 0xFF112233.
   hr = dev->BeginScene();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "BeginScene", hr);
+    return reporter.FailHresult("BeginScene", hr);
   }
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, clear_color, 1.0f, 0);
   HRESULT hr_end = dev->EndScene();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Clear(shared)", hr);
+    return reporter.FailHresult("Clear(shared)", hr);
   }
   if (FAILED(hr_end)) {
-    return aerogpu_test::FailHresult(kTestName, "EndScene", hr_end);
+    return reporter.FailHresult("EndScene", hr_end);
   }
 
   // Ensure the clear has completed before the consumer opens/reads the surface.
   ComPtr<IDirect3DQuery9> q;
   hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, q.put());
   if (FAILED(hr) || !q) {
-    return aerogpu_test::FailHresult(kTestName, "CreateQuery(D3DQUERYTYPE_EVENT)", hr);
+    return reporter.FailHresult("CreateQuery(D3DQUERYTYPE_EVENT)", hr);
   }
   hr = q->Issue(D3DISSUE_END);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue", hr);
+    return reporter.FailHresult("IDirect3DQuery9::Issue", hr);
   }
 
   const DWORD start = GetTickCount();
@@ -817,10 +849,10 @@ static int RunProducer(int argc, char** argv) {
       break;
     }
     if (hr != S_FALSE) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::GetData", hr);
+      return reporter.FailHresult("IDirect3DQuery9::GetData", hr);
     }
     if (GetTickCount() - start > 5000) {
-      return aerogpu_test::Fail(kTestName, "GPU event query timed out");
+      return reporter.Fail("GPU event query timed out");
     }
     Sleep(0);
   }
@@ -828,7 +860,7 @@ static int RunProducer(int argc, char** argv) {
   wchar_t exe_path[MAX_PATH];
   DWORD exe_len = GetModuleFileNameW(NULL, exe_path, ARRAYSIZE(exe_path));
   if (!exe_len || exe_len >= ARRAYSIZE(exe_path)) {
-    return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
+    return reporter.Fail("GetModuleFileNameW failed");
   }
 
   uint32_t debug_token = 0;
@@ -894,9 +926,7 @@ static int RunProducer(int argc, char** argv) {
                            &si,
                            &pi);
   if (!ok) {
-    return aerogpu_test::Fail(kTestName,
-                              "CreateProcessW failed: %s",
-                              aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return reporter.Fail("CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
   HANDLE job = CreateJobObjectW(NULL, NULL);
@@ -984,7 +1014,7 @@ static int RunProducer(int argc, char** argv) {
     if (job) {
       CloseHandle(job);
     }
-    return aerogpu_test::Fail(kTestName, "failed to patch consumer command line: %s", patch_err.c_str());
+    return reporter.Fail("failed to patch consumer command line: %s", patch_err.c_str());
   }
 
   ResumeThread(pi.hThread);
@@ -998,7 +1028,7 @@ static int RunProducer(int argc, char** argv) {
     if (job) {
       CloseHandle(job);
     }
-    return aerogpu_test::Fail(kTestName, "consumer timed out");
+    return reporter.Fail("consumer timed out");
   }
 
   DWORD exit_code = 1;
@@ -1013,7 +1043,7 @@ static int RunProducer(int argc, char** argv) {
   }
 
   if (exit_code != 0) {
-    return aerogpu_test::Fail(kTestName, "consumer failed with exit code %lu", (unsigned long)exit_code);
+    return reporter.Fail("consumer failed with exit code %lu", (unsigned long)exit_code);
   }
 
   if (dump) {

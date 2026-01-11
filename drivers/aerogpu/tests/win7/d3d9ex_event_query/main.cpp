@@ -466,7 +466,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--iterations", &iterations_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(iterations_str, &iterations, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --iterations: %s", err.c_str());
+      return reporter.Fail("invalid --iterations: %s", err.c_str());
     }
   }
   if (iterations < 3) {
@@ -481,7 +481,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--stress-iterations", &stress_iterations_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(stress_iterations_str, &stress_iterations, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --stress-iterations: %s", err.c_str());
+      return reporter.Fail("invalid --stress-iterations: %s", err.c_str());
     }
   }
   if (stress_iterations < 10) {
@@ -498,21 +498,20 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     uint32_t child_index = 0;
     (void)aerogpu_test::GetArgUint32(argc, argv, "--child-index", &child_index);
     if (child_index > 1) {
-      return aerogpu_test::Fail(kTestName, "invalid --child-index=%u (expected 0 or 1)", (unsigned)child_index);
+      return reporter.Fail("invalid --child-index=%u (expected 0 or 1)", (unsigned)child_index);
     }
 
     std::string start_event_str;
     if (!aerogpu_test::GetArgValue(argc, argv, "--start-event", &start_event_str) || start_event_str.empty()) {
-      return aerogpu_test::Fail(kTestName, "missing --start-event for --child-stress");
+      return reporter.Fail("missing --start-event for --child-stress");
     }
 
     const std::wstring start_event_w(start_event_str.begin(), start_event_str.end());
     HANDLE start_event = OpenEventW(SYNCHRONIZE, FALSE, start_event_w.c_str());
     if (!start_event) {
-      return aerogpu_test::Fail(kTestName,
-                                "OpenEvent(%ls) failed: %s",
-                                start_event_w.c_str(),
-                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      return reporter.Fail("OpenEvent(%ls) failed: %s",
+                           start_event_w.c_str(),
+                           aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
     }
 
     volatile LONG any_failed = 0;
@@ -549,7 +548,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
@@ -561,13 +560,13 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                               kHeight,
                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -586,7 +585,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                        D3DCREATE_MULTITHREADED;
   hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
@@ -600,39 +599,34 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                (unsigned)ident.DeviceId);
     reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(kTestName,
-                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                "Install AeroGPU driver or pass --allow-microsoft.",
-                                (unsigned)ident.VendorId,
-                                (unsigned)ident.DeviceId);
+      return reporter.Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                           "Install AeroGPU driver or pass --allow-microsoft.",
+                           (unsigned)ident.VendorId,
+                           (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.VendorId,
-                                (unsigned)require_vid);
+      return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.VendorId,
+                           (unsigned)require_vid);
     }
     if (has_require_did && ident.DeviceId != require_did) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.DeviceId,
-                                (unsigned)require_did);
+      return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.DeviceId,
+                           (unsigned)require_did);
     }
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                                "or use --require-vid/--require-did)",
-                                ident.Description);
+      return reporter.Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                           "or use --require-vid/--require-did)",
+                           ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+    return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -641,12 +635,12 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   ComPtr<IDirect3DQuery9> query;
   hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, query.put());
   if (FAILED(hr) || !query) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateQuery(EVENT)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::CreateQuery(EVENT)", hr);
   }
 
   GetDataRunner getdata;
   if (!getdata.Start()) {
-    return aerogpu_test::Fail(kTestName, "GetDataRunner start failed");
+    return reporter.Fail("GetDataRunner start failed");
   }
 
   // `D3DGETDATA_DONOTFLUSH` is used by DWM to poll EVENT queries; it must return quickly and
@@ -655,11 +649,11 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(8, 8, 8), 1.0f, 0);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Clear(warmup)", hr);
+    return reporter.FailHresult("Clear(warmup)", hr);
   }
   hr = query->Issue(D3DISSUE_END);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END warmup)", hr);
+    return reporter.FailHresult("IDirect3DQuery9::Issue(END warmup)", hr);
   }
 
   // First poll must not block and should indicate "not ready" when using DONOTFLUSH.
@@ -679,23 +673,19 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     }
     const double call_ms = QpcToMs(end_qpc - start_qpc, qpc_freq);
     if (call_ms > kMaxGetDataCallMs) {
-      return aerogpu_test::Fail(kTestName,
-                                "GetData(D3DGETDATA_DONOTFLUSH warmup) blocked for %.3fms",
-                                call_ms);
+      return reporter.Fail("GetData(D3DGETDATA_DONOTFLUSH warmup) blocked for %.3fms", call_ms);
     }
     if (hr_immediate != S_FALSE && hr_immediate != D3DERR_WASSTILLDRAWING) {
       if (hr_immediate == S_OK) {
-        return aerogpu_test::Fail(kTestName,
-                                  "GetData(D3DGETDATA_DONOTFLUSH warmup) returned S_OK immediately; "
-                                  "expected not-ready");
+        return reporter.Fail("GetData(D3DGETDATA_DONOTFLUSH warmup) returned S_OK immediately; expected not-ready");
       }
-      return aerogpu_test::FailHresult(kTestName, "GetData(DONOTFLUSH warmup)", hr_immediate);
+      return reporter.FailHresult("GetData(DONOTFLUSH warmup)", hr_immediate);
     }
   }
 
   hr = dev->Flush();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Flush(warmup)", hr);
+    return reporter.FailHresult("Flush(warmup)", hr);
   }
   {
     const DWORD start = GetTickCount();
@@ -715,16 +705,16 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
       }
       const double poll_call_ms = QpcToMs(poll_end_qpc - poll_start_qpc, qpc_freq);
       if (poll_call_ms > kMaxGetDataCallMs) {
-        return aerogpu_test::Fail(kTestName, "GetData(DONOTFLUSH) warmup poll blocked for %.3fms", poll_call_ms);
+        return reporter.Fail("GetData(DONOTFLUSH) warmup poll blocked for %.3fms", poll_call_ms);
       }
       if (hr_poll == S_OK) {
         break;
       }
       if (hr_poll != S_FALSE && hr_poll != D3DERR_WASSTILLDRAWING) {
-        return aerogpu_test::FailHresult(kTestName, "GetData(warmup)", hr_poll);
+        return reporter.FailHresult("GetData(warmup)", hr_poll);
       }
       if ((GetTickCount() - start) > 2000) {
-        return aerogpu_test::Fail(kTestName, "warmup query did not complete within 2s");
+        return reporter.Fail("warmup query did not complete within 2s");
       }
       Sleep(1);
     }
@@ -733,12 +723,12 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   for (uint32_t it = 0; it < iterations; ++it) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(10 + it, 20 + it, 30 + it), 1.0f, 0);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "Clear", hr);
+      return reporter.FailHresult("Clear", hr);
     }
 
     hr = query->Issue(D3DISSUE_END);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END)", hr);
+      return reporter.FailHresult("IDirect3DQuery9::Issue(END)", hr);
     }
 
     HRESULT hr_immediate = E_FAIL;
@@ -758,25 +748,23 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
     if (hr_immediate != S_FALSE && hr_immediate != D3DERR_WASSTILLDRAWING) {
       if (hr_immediate == S_OK) {
-        return aerogpu_test::Fail(
-            kTestName,
+        return reporter.Fail(
             "GetData(D3DGETDATA_DONOTFLUSH) returned S_OK immediately (iteration %u); expected not-ready "
             "(S_FALSE/WASSTILLDRAWING) to confirm the query tracks real GPU progress",
             (unsigned)it);
       }
-      return aerogpu_test::FailHresult(kTestName, "GetData(DONOTFLUSH)", hr_immediate);
+      return reporter.FailHresult("GetData(DONOTFLUSH)", hr_immediate);
     }
     if (immediate_ms > kMaxGetDataCallMs) {
-      return aerogpu_test::Fail(kTestName,
-                                "GetData(DONOTFLUSH) took too long: %.3fms (iteration %u, hr=%s)",
-                                immediate_ms,
-                                (unsigned)it,
-                                aerogpu_test::HresultToString(hr_immediate).c_str());
+      return reporter.Fail("GetData(DONOTFLUSH) took too long: %.3fms (iteration %u, hr=%s)",
+                           immediate_ms,
+                           (unsigned)it,
+                           aerogpu_test::HresultToString(hr_immediate).c_str());
     }
 
     hr = dev->Flush();
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "Flush", hr);
+      return reporter.FailHresult("Flush", hr);
     }
 
     const DWORD poll_start = GetTickCount();
@@ -798,22 +786,20 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
       }
       const double poll_call_ms = QpcToMs(poll_end_qpc - poll_start_qpc, qpc_freq);
       if (poll_call_ms > kMaxGetDataCallMs) {
-        return aerogpu_test::Fail(kTestName,
-                                  "GetData(DONOTFLUSH) poll blocked for %.3fms (iteration %u)",
-                                  poll_call_ms,
-                                  (unsigned)it);
+        return reporter.Fail("GetData(DONOTFLUSH) poll blocked for %.3fms (iteration %u)",
+                             poll_call_ms,
+                             (unsigned)it);
       }
       if (hr_poll == S_OK) {
         break;
       }
       if (hr_poll != S_FALSE && hr_poll != D3DERR_WASSTILLDRAWING) {
-        return aerogpu_test::FailHresult(kTestName, "GetData poll", hr_poll);
+        return reporter.FailHresult("GetData poll", hr_poll);
       }
       if ((GetTickCount() - poll_start) > 2000) {
-        return aerogpu_test::Fail(kTestName,
-                                  "event query did not complete within 2s (iteration %u, polls=%u)",
-                                  (unsigned)it,
-                                  (unsigned)polls);
+        return reporter.Fail("event query did not complete within 2s (iteration %u, polls=%u)",
+                             (unsigned)it,
+                             (unsigned)polls);
       }
       Sleep(1);
     }
@@ -845,7 +831,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
       if (exe_err.empty()) {
         exe_err = "GetModuleFileNameW failed";
       }
-      return aerogpu_test::Fail(kTestName, "failed to resolve executable path: %s", exe_err.c_str());
+      return reporter.Fail("failed to resolve executable path: %s", exe_err.c_str());
     }
 
     char event_name_a[128];
@@ -857,9 +843,8 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
     HANDLE start_event = CreateEventW(NULL, TRUE, FALSE, event_name_w.c_str());
     if (!start_event) {
-      return aerogpu_test::Fail(kTestName,
-                                "CreateEvent(start_event) failed: %s",
-                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      return reporter.Fail("CreateEvent(start_event) failed: %s",
+                           aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
     }
 
     HANDLE job = CreateJobObjectW(NULL, NULL);
@@ -950,9 +935,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
             CloseHandle(procs[j]);
           }
         }
-        return aerogpu_test::Fail(kTestName,
-                                  "CreateProcessW failed: %s",
-                                  aerogpu_test::Win32ErrorToString(werr).c_str());
+        return reporter.Fail("CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(werr).c_str());
       }
 
       procs[i] = pi.hProcess;
@@ -1007,7 +990,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     }
 
     if (!ok) {
-      return aerogpu_test::Fail(kTestName, "multi-process stress child failed");
+      return reporter.Fail("multi-process stress child failed");
     }
   } else {
     // --- Multi-device stress test ---
@@ -1017,7 +1000,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
     HANDLE start_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!start_event) {
-      return aerogpu_test::Fail(kTestName, "CreateEvent failed");
+      return reporter.Fail("CreateEvent failed");
     }
 
     volatile LONG any_failed = 0;
@@ -1052,7 +1035,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
         CloseHandle(threads[1]);
       }
       CloseHandle(start_event);
-      return aerogpu_test::Fail(kTestName, "CreateThread failed");
+      return reporter.Fail("CreateThread failed");
     }
 
     SetEvent(start_event);
@@ -1079,7 +1062,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     }
 
     if (any_failed != 0) {
-      return aerogpu_test::Fail(kTestName, "multi-device stress worker failed");
+      return reporter.Fail("multi-device stress worker failed");
     }
 
     aerogpu_test::PrintfStdout("INFO: %s: PresentEx(DONOTWAIT) observed WASSTILLDRAWING=%s",
