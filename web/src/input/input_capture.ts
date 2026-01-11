@@ -345,6 +345,12 @@ export class InputCapture {
       return;
     }
 
+    // Refresh focus state in case the capture was stopped while the window was
+    // blurred/hidden and restarted later without another focus event firing.
+    this.windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
+    this.pageVisible = typeof document !== "undefined" ? document.visibilityState !== "hidden" : true;
+    this.hasFocus = typeof document !== "undefined" ? document.activeElement === this.canvas : false;
+
     // Optional: listen for recycled buffers from the worker.
     const workerWithEvents = this.ioWorker as unknown as MessageEventTarget;
     workerWithEvents.addEventListener?.("message", this.handleWorkerMessage);
