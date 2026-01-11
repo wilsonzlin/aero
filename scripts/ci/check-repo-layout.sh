@@ -178,6 +178,20 @@ for test in manifest_tests:
     if not build_script.is_file():
         raise SystemExit(f"{manifest_path}: missing build_vs2010.cmd for test {test!r}: {build_script}")
 
+    # All manifest tests should support `--json[=PATH]` via `aerogpu_test::TestReporter`
+    # so the suite runner can collect machine-readable results.
+    sources = [test_dir / "main.cpp"]
+    if test == "d3d9ex_shared_surface_wow64":
+        sources = [test_dir / "producer_main.cpp"]
+    for source_path in sources:
+        if not source_path.is_file():
+            raise SystemExit(f"{manifest_path}: missing source file for test {test!r}: {source_path}")
+        source_text = source_path.read_text(encoding="utf-8", errors="replace")
+        if "TestReporter reporter" not in source_text:
+            raise SystemExit(f"{source_path}: expected `TestReporter reporter` (for --json support)")
+        if "--json" not in source_text:
+            raise SystemExit(f"{source_path}: expected `--json` usage text (for discoverability)")
+
 mentioned = set()
 for raw in readme_path.read_text(encoding="utf-8").splitlines():
     # Only consider top-level bullets (`* ...`), not nested bullets.
