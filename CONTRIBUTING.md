@@ -99,12 +99,43 @@ When submitting a change:
 
 ## Dependency policy (licenses + advisories)
 
+### Automated updates (Dependabot)
+
+This repository uses Dependabot to keep dependencies fresh with minimal maintainer
+overhead. Update PRs are opened weekly and grouped to control noise:
+
+- GitHub Actions: patch/minor updates grouped together; majors separated.
+- npm: dev/tooling updates are grouped (Playwright + TS/Vite/Vitest toolchain).
+- Rust (Cargo): patch/minor updates grouped; majors separated.
+- Go modules: patch/minor updates grouped; majors separated.
+- Terraform: updates grouped by provider (currently AWS).
+
+### Auto-merge policy (safe updates only)
+
+Some Dependabot PRs are automatically approved and set to auto-merge **only**
+after required CI checks pass:
+
+- GitHub Actions: patch/minor updates.
+- npm: patch/minor updates for an allowlisted set of tooling dependencies
+  (Playwright + TS/Vite/Vitest + type packages).
+
+By default, Dependabot PRs that touch runtime/production dependencies are **not**
+auto-merged. Maintainers can explicitly opt a specific PR into auto-merge by
+adding the `automerge-deps` label.
+
+Auto-merge logic lives in `.github/workflows/dependabot-auto-merge.yml`. The
+allowlist is intentionally narrow; widen it only with intent.
+
+### License + vulnerability gating
+
 CI enforces a dependency policy to help keep the project compatible with the
 repository’s **MIT OR Apache-2.0** licensing and to catch known vulnerabilities
 early:
 
 - Rust: `cargo-deny` (`deny.toml`) checks license allowlist + banned sources
   (no git deps by default) + RustSec advisories.
+- Go: `govulncheck` runs for `proxy/webrtc-udp-relay` when Go deps/code change,
+  plus nightly/manual runs to catch newly published advisories.
 - npm: a scheduled `npm audit` runs against the lockfile for high/critical
   issues (nightly/manual only to avoid PR noise).
 

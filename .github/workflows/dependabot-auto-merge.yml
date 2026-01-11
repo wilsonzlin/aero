@@ -1,9 +1,9 @@
-name: Dependabot auto-merge (GitHub Actions)
+name: Dependabot auto-merge
 
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, labeled]
 
 permissions:
   contents: write
@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       ${{
-        github.actor == 'dependabot[bot]' &&
         github.event.pull_request.user.login == 'dependabot[bot]' &&
         github.event.pull_request.head.repo.full_name == github.repository
       }}
@@ -52,3 +51,82 @@ jobs:
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch/minor npm tooling updates (allowlisted)
+        if: >-
+          ${{
+            steps.metadata.outputs.package-ecosystem == 'npm' &&
+            (
+              steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+              steps.metadata.outputs.update-type == 'version-update:semver-patch'
+            )
+          }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "GitHub CLI (gh) is not available on this runner; skipping auto-merge."
+            exit 0
+          fi
+
+          dep_type="${DEPENDENCY_TYPE:-}"
+          labels="${PR_LABELS:-}"
+          opted_in=false
+          if [[ ",$labels," == *",automerge-deps,"* ]]; then
+            opted_in=true
+          fi
+
+          # By default we auto-merge only development/tooling dependencies.
+          # Maintainers can opt-in to auto-merging a specific PR that bumps runtime
+          # (production) deps by applying the `automerge-deps` label.
+          if [[ "$opted_in" != "true" && "$dep_type" != "direct:development" ]]; then
+            echo "Dependency type '$dep_type' is not direct:development and PR is not opted-in via label; skipping auto-merge."
+            exit 0
+          fi
+
+          # Allowlist dependency names that are considered "toolchain" and safe to
+          # auto-merge when bumped by Dependabot (patch/minor only).
+          #
+          # Keep this list narrow: contributors can always merge broader runtime
+          # updates manually, or maintainers can opt-in via `automerge-deps`.
+          if [[ "$opted_in" != "true" ]]; then
+            allowed=false
+            deps_raw="${DEPENDENCY_NAMES:-}"
+            if [[ -z "$deps_raw" ]]; then
+              echo "Dependabot metadata did not include dependency names; skipping auto-merge."
+              exit 0
+            fi
+
+            mapfile -t deps < <(printf '%s' "$deps_raw" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+            for dep in "${deps[@]}"; do
+              allowed=false
+              case "$dep" in
+                @playwright/*|playwright|playwright-core|@vitest/*|vitest|vite|vite-*|tsx|typescript|@types/*|@webgpu/types)
+                  allowed=true
+                  ;;
+              esac
+
+              if [[ "$allowed" != "true" ]]; then
+                echo "Dependency '$dep' is not in the npm auto-merge allowlist; skipping auto-merge."
+                exit 0
+              fi
+            done
+          else
+            echo "PR opted-in via automerge-deps; skipping npm allowlist checks."
+          fi
+
+          gh pr review --approve "$PR_URL" || true
+
+          # Enable auto-merge with whatever merge method the repo allows.
+          if gh pr merge --auto --squash "$PR_URL"; then exit 0; fi
+          if gh pr merge --auto --merge "$PR_URL"; then exit 0; fi
+          if gh pr merge --auto --rebase "$PR_URL"; then exit 0; fi
+
+          echo "Unable to enable auto-merge (auto-merge may be disabled or merge method restricted); leaving PR open."
+          exit 0
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          DEPENDENCY_TYPE: ${{ steps.metadata.outputs.dependency-type }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}

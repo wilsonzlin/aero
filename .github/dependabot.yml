@@ -462,3 +462,65 @@ updates:
           - "vitest"
         update-types:
           - "major"
+
+  - package-ecosystem: "npm"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/tools/net-proxy-server"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "gomod"
+    directory: "/proxy/webrtc-udp-relay"
+    schedule:
+      interval: "weekly"
+    groups:
+      gomod-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      gomod-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "terraform"
+    directory: "/infra/aws-s3-cloudfront-range"
+    schedule:
+      interval: "weekly"
+    groups:
+      terraform-aws:
+        patterns:
+          - "hashicorp/aws"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # AWS provider major upgrades often require state/migration review; keep
+      # them manual by default to avoid surprise infra drift.
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - "version-update:semver-major"
