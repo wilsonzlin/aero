@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit};
 use aero_cpu_core::state::CpuState as CoreCpuState;
-use wasmtime::{Caller, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
+use wasmtime::{Caller, Config, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 use super::Tier1Cpu;
 use crate::abi;
@@ -54,7 +54,14 @@ impl<Cpu> WasmtimeBackend<Cpu> {
     /// Create a backend with a configurable memory size and `cpu_ptr` base.
     #[must_use]
     pub fn new_with_memory_pages(memory_pages: u32, cpu_ptr: i32) -> Self {
-        let engine = Engine::default();
+        // Explicitly enable WebAssembly SIMD so the same backend can execute future tier-1 blocks
+        // that make use of SIMD ops.
+        //
+        // (Wasmtime's default feature set has historically changed over time; keeping this
+        // explicit makes the backend's capabilities stable across upgrades.)
+        let mut config = Config::new();
+        config.wasm_simd(true);
+        let engine = Engine::new(&config).expect("create wasmtime engine");
         let mut store = Store::new(&engine, ());
         let mut linker = Linker::new(&engine);
 
