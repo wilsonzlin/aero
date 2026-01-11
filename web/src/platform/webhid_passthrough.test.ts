@@ -288,4 +288,60 @@ describe("WebHID guest port allocation (UHCI 2-port root)", () => {
     expect((device as any).forget).toHaveBeenCalledTimes(1);
     expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });
+
+  it("detaches before forgetting attached devices", async () => {
+    let opened = false;
+    const callOrder: string[] = [];
+    const device = {
+      productName: "Forgettable Attached Device",
+      vendorId: 0x0010,
+      productId: 0x0020,
+      get opened() {
+        return opened;
+      },
+      open: vi.fn(async () => {
+        opened = true;
+        callOrder.push("open");
+      }),
+      close: vi.fn(async () => {
+        opened = false;
+        callOrder.push("close");
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      forget: vi.fn(async () => {
+        callOrder.push("forget");
+      }),
+    } as unknown as HIDDevice;
+
+    // Note: `mountWebHidPassthroughPanel` triggers an initial refreshKnownDevices()
+    // in the background, so keep this mock stable across calls.
+    const getDevices = vi.fn(async () => [device]);
+
+    const hid = new FakeHid({
+      getDevices,
+      requestDevice: vi.fn(async () => []),
+    });
+    stubNavigator({ hid } as any);
+    stubDocument(new FakeDocument());
+
+    const host = (document as any).createElement("div") as FakeElement;
+    const manager = new WebHidPassthroughManager();
+    mountWebHidPassthroughPanel(host as any, manager);
+
+    await manager.refreshKnownDevices();
+
+    const attachButtons = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Attach");
+    expect(attachButtons.length).toBe(1);
+    await (attachButtons[0].onclick as () => Promise<void>)();
+
+    const forgetButtons = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Forget");
+    expect(forgetButtons.length).toBe(1);
+    await (forgetButtons[0].onclick as () => Promise<void>)();
+
+    expect(callOrder).toEqual(["open", "close", "forget"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect((device.close as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
 });
