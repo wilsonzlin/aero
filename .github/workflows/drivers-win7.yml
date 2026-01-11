@@ -486,6 +486,26 @@ jobs:
           # recreate the expected `out/packages` + `out/certs` layout.
           path: out
 
+      - name: Normalize signed package layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ((Test-Path -LiteralPath 'out/packages') -and (Test-Path -LiteralPath 'out/certs')) {
+            Write-Host "Signed packages layout OK (out/packages + out/certs)."
+            exit 0
+          }
+
+          if ((Test-Path -LiteralPath 'out/out/packages') -and (Test-Path -LiteralPath 'out/out/certs')) {
+            Write-Host "Detected nested signed packages layout (out/out/*); normalizing..."
+            Move-Item -LiteralPath 'out/out/packages' -Destination 'out/packages' -Force
+            Move-Item -LiteralPath 'out/out/certs' -Destination 'out/certs' -Force
+            Remove-Item -LiteralPath 'out/out' -Recurse -Force -ErrorAction SilentlyContinue
+            exit 0
+          }
+
+          throw "Unexpected signed packages layout after download. Expected out/packages + out/certs (or nested out/out/*)."
+
       - name: Package Guest Tools (ci/package-guest-tools.ps1)
         shell: pwsh
         run: |
