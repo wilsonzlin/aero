@@ -119,7 +119,25 @@ pub fn verify_gateway_session_token(
         return None;
     }
 
-    let exp_unix = exp as i64;
+    // The gateway treats `exp` as a JS `number`, but our public API exposes it as an `i64`. Avoid
+    // silently saturating when casting large values that cannot fit in an `i64`.
+    //
+    // Note: For typical tokens issued by the gateway (`Math.floor(Date.now()/1000)+ttl`), `exp`
+    // is always in-range.
+    let exp_unix = match exp_val.as_i64() {
+        Some(v) => v,
+        None => match exp_val.as_u64() {
+            Some(v) => i64::try_from(v).ok()?,
+            None => {
+                // Non-integer JSON number (e.g. `1.5`). Fall back to the JS semantics (`number`)
+                // while still ensuring we can represent the value as an `i64`.
+                if exp < i64::MIN as f64 || exp > i64::MAX as f64 {
+                    return None;
+                }
+                exp as i64
+            }
+        },
+    };
     Some(VerifiedSession {
         sid: sid.to_owned(),
         exp_unix,
