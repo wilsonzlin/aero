@@ -215,8 +215,6 @@ export function decodeCmdHdr(view: DataView, byteOffset = 0): AerogpuCmdHdr {
   return { opcode, sizeBytes };
 }
 
-export const AEROGPU_MAX_RENDER_TARGETS = 8;
-
 export interface AerogpuVertexBufferBinding {
   buffer: AerogpuHandle;
   strideBytes: number;
