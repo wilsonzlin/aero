@@ -13,6 +13,9 @@ use crate::devices::aerogpu_ring::{
     AEROGPU_RING_HEADER_SIZE_BYTES,
 };
 
+#[cfg(feature = "aerogpu-trace")]
+use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceWriteError, TraceWriter};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AeroGpuFenceCompletionMode {
     /// Legacy bring-up behavior: submissions complete inside the executor (optionally paced by
@@ -118,13 +121,29 @@ pub enum AeroGpuCmdStreamDecodeError {
     StreamSizeTooLarge,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AeroGpuExecutor {
     cfg: AeroGpuExecutorConfig,
     pub last_submissions: VecDeque<AeroGpuSubmissionRecord>,
     pending_fences: VecDeque<PendingFenceCompletion>,
     in_flight: BTreeMap<u64, InFlightSubmission>,
     completed_before_submit: HashSet<u64>,
+    #[cfg(feature = "aerogpu-trace")]
+    trace: Option<AerogpuSubmissionTrace>,
+}
+
+impl Clone for AeroGpuExecutor {
+    fn clone(&self) -> Self {
+        Self {
+            cfg: self.cfg.clone(),
+            last_submissions: self.last_submissions.clone(),
+            pending_fences: self.pending_fences.clone(),
+            in_flight: self.in_flight.clone(),
+            completed_before_submit: self.completed_before_submit.clone(),
+            #[cfg(feature = "aerogpu-trace")]
+            trace: None,
+        }
+    }
 }
 
 impl AeroGpuExecutor {
@@ -135,6 +154,8 @@ impl AeroGpuExecutor {
             pending_fences: VecDeque::new(),
             in_flight: BTreeMap::new(),
             completed_before_submit: HashSet::new(),
+            #[cfg(feature = "aerogpu-trace")]
+            trace: None,
         }
     }
 
@@ -251,6 +272,23 @@ impl AeroGpuExecutor {
             self.write_fence_page(regs, mem);
             self.maybe_raise_fence_irq(regs, wants_irq);
         }
+    }
+
+    #[cfg(feature = "aerogpu-trace")]
+    pub fn start_trace_in_memory(
+        &mut self,
+        emulator_version: impl Into<String>,
+    ) -> Result<(), TraceWriteError> {
+        self.trace = Some(AerogpuSubmissionTrace::new_in_memory(emulator_version)?);
+        Ok(())
+    }
+
+    #[cfg(feature = "aerogpu-trace")]
+    pub fn finish_trace(&mut self) -> Result<Option<Vec<u8>>, TraceWriteError> {
+        let Some(trace) = self.trace.take() else {
+            return Ok(None);
+        };
+        Ok(Some(trace.finish()?))
     }
 
     pub fn process_doorbell(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
@@ -416,6 +454,14 @@ impl AeroGpuExecutor {
                     head, tail, desc.signal_fence, desc.flags, desc.cmd_gpa, desc.cmd_size_bytes
                     , alloc_count, cmd_header_size, decode_error_count,
                 );
+            }
+
+            #[cfg(feature = "aerogpu-trace")]
+            if let Some(trace) = self.trace.as_mut() {
+                if let Err(err) = trace.record_submission(mem, &desc) {
+                    eprintln!("aerogpu trace: disabling recorder due to error: {err:?}");
+                    self.trace = None;
+                }
             }
 
             head = head.wrapping_add(1);
@@ -868,5 +914,172 @@ mod tests {
         exec.complete_fence(&mut regs, &mut mem, 3);
         assert_eq!(regs.completed_fence, 3);
         assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
+    }
+}
+
+#[cfg(feature = "aerogpu-trace")]
+struct AerogpuSubmissionTrace {
+    writer: TraceWriter<Vec<u8>>,
+    frame_index: u32,
+    frame_open: bool,
+}
+
+#[cfg(feature = "aerogpu-trace")]
+impl core::fmt::Debug for AerogpuSubmissionTrace {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AerogpuSubmissionTrace")
+            .field("frame_index", &self.frame_index)
+            .field("frame_open", &self.frame_open)
+            .finish()
+    }
+}
+
+#[cfg(feature = "aerogpu-trace")]
+impl AerogpuSubmissionTrace {
+    fn new_in_memory(emulator_version: impl Into<String>) -> Result<Self, TraceWriteError> {
+        let mut meta = TraceMeta::new(emulator_version, crate::devices::aerogpu_regs::AEROGPU_ABI_VERSION_U32);
+        meta.notes = Some("raw aerogpu_ring submissions + aerogpu_cmd stream bytes".to_string());
+        let writer = TraceWriter::new_v2(Vec::<u8>::new(), &meta)?;
+        Ok(Self {
+            writer,
+            frame_index: 0,
+            frame_open: false,
+        })
+    }
+
+    fn ensure_frame_open(&mut self) -> Result<(), TraceWriteError> {
+        if !self.frame_open {
+            self.writer.begin_frame(self.frame_index)?;
+            self.frame_open = true;
+        }
+        Ok(())
+    }
+
+    fn record_submission(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        desc: &AeroGpuSubmitDesc,
+    ) -> Result<(), TraceWriteError> {
+        const MAX_CAPTURE_BYTES: u32 = 64 * 1024 * 1024;
+
+        self.ensure_frame_open()?;
+
+        if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
+            return Err(TraceWriteError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "aerogpu trace: cmd stream too large",
+            )));
+        }
+        let cmd_size = desc.cmd_size_bytes as usize;
+        let mut cmd_stream_bytes = vec![0u8; cmd_size];
+        if cmd_size > 0 && desc.cmd_gpa != 0 {
+            mem.read_physical(desc.cmd_gpa, &mut cmd_stream_bytes);
+        }
+
+        let alloc_table_bytes = if desc.alloc_table_gpa != 0 && desc.alloc_table_size_bytes != 0 {
+            if desc.alloc_table_size_bytes > MAX_CAPTURE_BYTES {
+                return Err(TraceWriteError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "aerogpu trace: alloc table too large",
+                )));
+            }
+            let alloc_size = desc.alloc_table_size_bytes as usize;
+            let mut bytes = vec![0u8; alloc_size];
+            mem.read_physical(desc.alloc_table_gpa, &mut bytes);
+            Some(bytes)
+        } else {
+            None
+        };
+
+        struct CapturedRange {
+            alloc_id: u32,
+            flags: u32,
+            gpa: u64,
+            size_bytes: u64,
+            bytes: Vec<u8>,
+        }
+
+        let mut ranges_owned = Vec::<CapturedRange>::new();
+
+        if let Some(table) = &alloc_table_bytes {
+            // Best-effort parse of the allocation table; invalid tables are still recorded as raw bytes.
+            if table.len() >= 24 {
+                let magic = u32::from_le_bytes(table[0..4].try_into().unwrap());
+                let size_bytes = u32::from_le_bytes(table[8..12].try_into().unwrap());
+                let entry_count = u32::from_le_bytes(table[12..16].try_into().unwrap());
+                let entry_stride = u32::from_le_bytes(table[16..20].try_into().unwrap());
+
+                if magic == AEROGPU_ALLOC_TABLE_MAGIC
+                    && size_bytes as usize <= table.len()
+                    && entry_stride == 32
+                {
+                    let count = entry_count as usize;
+                    let mut off = 24usize;
+                    for _ in 0..count {
+                        if off + 32 > table.len() {
+                            break;
+                        }
+                        let alloc_id = u32::from_le_bytes(table[off..off + 4].try_into().unwrap());
+                        let flags = u32::from_le_bytes(table[off + 4..off + 8].try_into().unwrap());
+                        let gpa = u64::from_le_bytes(table[off + 8..off + 16].try_into().unwrap());
+                        let size = u64::from_le_bytes(table[off + 16..off + 24].try_into().unwrap());
+
+                        if alloc_id != 0 && gpa != 0 && size != 0 {
+                            let size_u32 = u32::try_from(size).unwrap_or(u32::MAX);
+                            if size_u32 <= MAX_CAPTURE_BYTES {
+                                let mut bytes = vec![0u8; size as usize];
+                                mem.read_physical(gpa, &mut bytes);
+                                ranges_owned.push(CapturedRange {
+                                    alloc_id,
+                                    flags,
+                                    gpa,
+                                    size_bytes: size,
+                                    bytes,
+                                });
+                            }
+                        }
+
+                        off += 32;
+                    }
+                }
+            }
+        }
+
+        let mut ranges = Vec::with_capacity(ranges_owned.len());
+        for range in &ranges_owned {
+            ranges.push(AerogpuMemoryRangeCapture {
+                alloc_id: range.alloc_id,
+                flags: range.flags,
+                gpa: range.gpa,
+                size_bytes: range.size_bytes,
+                bytes: &range.bytes,
+            });
+        }
+
+        self.writer.write_aerogpu_submission(
+            desc.flags,
+            desc.context_id,
+            desc.engine_id,
+            desc.signal_fence,
+            &cmd_stream_bytes,
+            alloc_table_bytes.as_deref(),
+            &ranges,
+        )?;
+
+        if (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0 {
+            self.writer.present(self.frame_index)?;
+            self.frame_open = false;
+            self.frame_index = self.frame_index.wrapping_add(1);
+        }
+
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<Vec<u8>, TraceWriteError> {
+        if self.frame_open {
+            // Close the last frame even if the guest didn't submit a present.
+            self.writer.present(self.frame_index)?;
+        }
+        Ok(self.writer.finish()?)
     }
 }

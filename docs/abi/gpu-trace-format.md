@@ -4,8 +4,8 @@ The intent is to make **graphics bugs reproducible** by recording the guest→ho
 command stream (including shader blobs and resource uploads) and replaying it
 deterministically in isolation.
 
-> Status: **v1** (initial). Backwards-incompatible changes must bump
-> `container_version` in the file header.
+> Status: **v2** (adds raw `aerogpu_cmd.h` submission capture). Backwards-incompatible
+> changes must bump `container_version` in the file header.
 
 ---
 
@@ -51,7 +51,7 @@ All multi-byte integers are **little-endian**.
 |---------------------|-------|-----------------|
 | `magic`             | [u8;8]| `"AEROGPUT"` |
 | `header_size`       | u32   | Must be 32 for v1 |
-| `container_version` | u32   | Trace container version (v1 = 1) |
+| `container_version` | u32   | Trace container version (v1 = 1, v2 = 2) |
 | `command_abi_version` | u32 | Version of the **GPU command packet ABI** recorded in `RecordType::Packet` |
 | `flags`             | u32   | Reserved (0 for v1) |
 | `meta_len`          | u32   | Length in bytes of UTF-8 JSON metadata blob |
@@ -103,6 +103,7 @@ The record stream is a sequence of records:
 | 0x02 | Present     | `u32 frame_index` |
 | 0x03 | Packet      | Raw command packet bytes (length = `payload_len`) |
 | 0x04 | Blob        | `BlobHeader` + blob bytes |
+| 0x05 | AerogpuSubmission | Structured submission record referencing blobs (v2+) |
 
 ### Blob record
 
@@ -125,6 +126,36 @@ Blob bytes follow immediately after `BlobHeader` and run to the end of the recor
 | 0x03 | ShaderDxbc        | DXBC bytecode blob |
 | 0x04 | ShaderWgsl        | WGSL UTF-8 text |
 | 0x05 | ShaderGlslEs300   | GLSL ES 3.00 UTF-8 text (for WebGL2 fallback) |
+| 0x100 | AerogpuCmdStream | Raw `aerogpu_cmd_stream_header` + command packets |
+| 0x101 | AerogpuAllocTable | Raw `aerogpu_alloc_table_header` + entries (if present) |
+| 0x102 | AerogpuAllocMemory | Raw guest memory bytes for an allocation table entry |
+
+### `AerogpuSubmission` record (v2+)
+
+The payload is a little-endian struct:
+
+```
+u32 record_version;          // = 1
+u32 header_size;             // bytes of the fixed header (v1 = 56)
+u32 submit_flags;            // `aerogpu_submit_desc.flags`
+u32 context_id;              // `aerogpu_submit_desc.context_id`
+u32 engine_id;               // `aerogpu_submit_desc.engine_id`
+u32 reserved0;               // = 0
+u64 signal_fence;            // `aerogpu_submit_desc.signal_fence`
+u64 cmd_stream_blob_id;      // BlobKind::AerogpuCmdStream
+u64 alloc_table_blob_id;     // BlobKind::AerogpuAllocTable (0 if not present)
+u32 memory_range_count;
+u32 reserved1;               // = 0
+// followed by `memory_range_count` entries:
+u32 alloc_id;
+u32 flags;
+u64 gpa;
+u64 size_bytes;
+u64 blob_id;                 // BlobKind::AerogpuAllocMemory
+```
+
+The intent is to record the *exact* `aerogpu_cmd.h` byte stream submitted by the guest plus any
+required guest memory snapshots (allocation table entries) so traces can be replayed headlessly.
 
 ---
 

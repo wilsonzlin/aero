@@ -11,7 +11,19 @@ pub const TRACE_BLOB_HEADER_SIZE: u32 = 16;
 pub const TOC_HEADER_SIZE: u32 = 16;
 pub const TOC_ENTRY_SIZE: u32 = 32;
 
-pub const CONTAINER_VERSION: u32 = 1;
+/// Trace container format version.
+///
+/// Version history:
+/// - v1: Initial container format + toy packet stream (see docs/abi/gpu-trace-format.md).
+/// - v2: Adds `RecordType::AerogpuSubmission` for raw `aerogpu_cmd.h` submissions (Win7 guest ABI).
+///
+/// The reader must remain backwards compatible with older versions.
+pub const CONTAINER_VERSION_V1: u32 = 1;
+pub const CONTAINER_VERSION_V2: u32 = 2;
+pub const CONTAINER_VERSION_LATEST: u32 = CONTAINER_VERSION_V2;
+
+/// Latest supported container version.
+pub const CONTAINER_VERSION: u32 = CONTAINER_VERSION_LATEST;
 pub const TOC_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +33,8 @@ pub enum RecordType {
     Present = 0x02,
     Packet = 0x03,
     Blob = 0x04,
+    /// Raw AeroGPU submission (guest `aerogpu_cmd.h` stream) plus references to associated blobs.
+    AerogpuSubmission = 0x05,
 }
 
 impl RecordType {
@@ -30,6 +44,7 @@ impl RecordType {
             0x02 => Some(Self::Present),
             0x03 => Some(Self::Packet),
             0x04 => Some(Self::Blob),
+            0x05 => Some(Self::AerogpuSubmission),
             _ => None,
         }
     }
@@ -43,6 +58,13 @@ pub enum BlobKind {
     ShaderDxbc = 0x03,
     ShaderWgsl = 0x04,
     ShaderGlslEs300 = 0x05,
+
+    /// Raw `aerogpu_cmd.h` command stream bytes (includes the stream header).
+    AerogpuCmdStream = 0x100,
+    /// Raw `aerogpu_ring.h` allocation table bytes (includes header + entries).
+    AerogpuAllocTable = 0x101,
+    /// Raw guest memory bytes referenced by an allocation table entry.
+    AerogpuAllocMemory = 0x102,
 }
 
 impl BlobKind {
@@ -53,9 +75,25 @@ impl BlobKind {
             0x03 => Some(Self::ShaderDxbc),
             0x04 => Some(Self::ShaderWgsl),
             0x05 => Some(Self::ShaderGlslEs300),
+            0x100 => Some(Self::AerogpuCmdStream),
+            0x101 => Some(Self::AerogpuAllocTable),
+            0x102 => Some(Self::AerogpuAllocMemory),
             _ => None,
         }
     }
+}
+
+pub const AEROGPU_SUBMISSION_RECORD_VERSION: u32 = 1;
+pub const AEROGPU_SUBMISSION_RECORD_HEADER_SIZE: u32 = 56;
+pub const AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE: u32 = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AerogpuMemoryRangeRef {
+    pub alloc_id: u32,
+    pub flags: u32,
+    pub gpa: u64,
+    pub size_bytes: u64,
+    pub blob_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -8,8 +8,8 @@ mod reader;
 mod writer;
 
 pub use format::{
-    BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader, TraceMeta, TraceToc,
-    CONTAINER_VERSION, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE,
+    AerogpuMemoryRangeRef, BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader,
+    TraceMeta, TraceToc, CONTAINER_VERSION, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE,
 };
 pub use reader::{TraceReadError, TraceReader, TraceRecord};
-pub use writer::{Recorder, TraceWriteError, TraceWriter};
+pub use writer::{AerogpuMemoryRangeCapture, Recorder, TraceWriteError, TraceWriter};

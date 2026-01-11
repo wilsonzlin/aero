@@ -1,7 +1,9 @@
 use crate::format::{
-    BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader, TraceToc, CONTAINER_VERSION,
-    FOOTER_MAGIC, TOC_ENTRY_SIZE, TOC_HEADER_SIZE, TOC_MAGIC, TOC_VERSION, TRACE_BLOB_HEADER_SIZE,
-    TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE, TRACE_MAGIC, TRACE_RECORD_HEADER_SIZE,
+    AerogpuMemoryRangeRef, BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader, TraceToc,
+    AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE, AEROGPU_SUBMISSION_RECORD_HEADER_SIZE,
+    CONTAINER_VERSION, CONTAINER_VERSION_V1, FOOTER_MAGIC, TOC_ENTRY_SIZE, TOC_HEADER_SIZE,
+    TOC_MAGIC, TOC_VERSION, TRACE_BLOB_HEADER_SIZE, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE,
+    TRACE_MAGIC, TRACE_RECORD_HEADER_SIZE,
 };
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
@@ -42,6 +44,16 @@ pub enum TraceRecord {
         blob_id: u64,
         kind: BlobKind,
         bytes: Vec<u8>,
+    },
+    AerogpuSubmission {
+        record_version: u32,
+        submit_flags: u32,
+        context_id: u32,
+        engine_id: u32,
+        signal_fence: u64,
+        cmd_stream_blob_id: u64,
+        alloc_table_blob_id: u64,
+        memory_ranges: Vec<AerogpuMemoryRangeRef>,
     },
 }
 
@@ -122,7 +134,7 @@ fn read_header<R: Read>(reader: &mut R) -> Result<TraceHeader, TraceReadError> {
         return Err(TraceReadError::UnsupportedHeaderSize(header_size));
     }
     let container_version = read_u32(reader)?;
-    if container_version != CONTAINER_VERSION {
+    if !is_supported_container_version(container_version) {
         return Err(TraceReadError::UnsupportedContainerVersion(
             container_version,
         ));
@@ -151,7 +163,7 @@ fn read_footer<R: Read>(reader: &mut R) -> Result<TraceFooter, TraceReadError> {
         return Err(TraceReadError::UnsupportedFooterSize(footer_size));
     }
     let container_version = read_u32(reader)?;
-    if container_version != CONTAINER_VERSION {
+    if !is_supported_container_version(container_version) {
         return Err(TraceReadError::UnsupportedContainerVersion(
             container_version,
         ));
@@ -259,7 +271,72 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
                 bytes,
             })
         }
+        RecordType::AerogpuSubmission => {
+            if payload.len() < AEROGPU_SUBMISSION_RECORD_HEADER_SIZE as usize {
+                return Err(TraceReadError::RecordOutOfBounds);
+            }
+
+            let record_version = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+            let header_size = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
+            if header_size < AEROGPU_SUBMISSION_RECORD_HEADER_SIZE as usize
+                || header_size > payload.len()
+            {
+                return Err(TraceReadError::RecordOutOfBounds);
+            }
+
+            let submit_flags = u32::from_le_bytes(payload[8..12].try_into().unwrap());
+            let context_id = u32::from_le_bytes(payload[12..16].try_into().unwrap());
+            let engine_id = u32::from_le_bytes(payload[16..20].try_into().unwrap());
+            let _reserved0 = u32::from_le_bytes(payload[20..24].try_into().unwrap());
+            let signal_fence = u64::from_le_bytes(payload[24..32].try_into().unwrap());
+            let cmd_stream_blob_id = u64::from_le_bytes(payload[32..40].try_into().unwrap());
+            let alloc_table_blob_id = u64::from_le_bytes(payload[40..48].try_into().unwrap());
+            let memory_range_count = u32::from_le_bytes(payload[48..52].try_into().unwrap()) as usize;
+            let _reserved1 = u32::from_le_bytes(payload[52..56].try_into().unwrap());
+
+            let required_len = header_size
+                .checked_add(
+                    memory_range_count * (AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE as usize),
+                )
+                .ok_or(TraceReadError::RecordOutOfBounds)?;
+            if required_len > payload.len() {
+                return Err(TraceReadError::RecordOutOfBounds);
+            }
+
+            let mut memory_ranges = Vec::with_capacity(memory_range_count);
+            let mut off = header_size;
+            for _ in 0..memory_range_count {
+                let alloc_id = u32::from_le_bytes(payload[off..off + 4].try_into().unwrap());
+                let flags = u32::from_le_bytes(payload[off + 4..off + 8].try_into().unwrap());
+                let gpa = u64::from_le_bytes(payload[off + 8..off + 16].try_into().unwrap());
+                let size_bytes = u64::from_le_bytes(payload[off + 16..off + 24].try_into().unwrap());
+                let blob_id = u64::from_le_bytes(payload[off + 24..off + 32].try_into().unwrap());
+                memory_ranges.push(AerogpuMemoryRangeRef {
+                    alloc_id,
+                    flags,
+                    gpa,
+                    size_bytes,
+                    blob_id,
+                });
+                off += AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE as usize;
+            }
+
+            Ok(TraceRecord::AerogpuSubmission {
+                record_version,
+                submit_flags,
+                context_id,
+                engine_id,
+                signal_fence,
+                cmd_stream_blob_id,
+                alloc_table_blob_id,
+                memory_ranges,
+            })
+        }
     }
+}
+
+fn is_supported_container_version(v: u32) -> bool {
+    (CONTAINER_VERSION_V1..=CONTAINER_VERSION).contains(&v)
 }
 
 fn read_u8<R: Read>(reader: &mut R) -> Result<u8, TraceReadError> {

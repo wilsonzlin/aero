@@ -236,6 +236,14 @@ name = "aero-gpu-trace"
 version = "0.1.0"
 
 [[package]]
+name = "aero-gpu-trace-replay"
+version = "0.1.0"
+dependencies = [
+ "aero-gpu-trace",
+ "sha2",
+]
+
+[[package]]
 name = "aero-gpu-utils"
 version = "0.1.0"
 dependencies = [
@@ -1623,6 +1631,7 @@ name = "emulator"
 version = "0.1.0"
 dependencies = [
  "aero-devices",
+ "aero-gpu-trace",
  "aero-io-snapshot",
  "aero-net-e1000",
  "aero-net-stack",

@@ -1,6 +1,8 @@
 use crate::format::{
-    BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader, TraceMeta, TraceToc,
-    CONTAINER_VERSION, FOOTER_MAGIC, TOC_ENTRY_SIZE, TOC_HEADER_SIZE, TOC_MAGIC, TOC_VERSION,
+    AerogpuMemoryRangeRef, BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader,
+    TraceMeta, TraceToc, AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE,
+    AEROGPU_SUBMISSION_RECORD_HEADER_SIZE, AEROGPU_SUBMISSION_RECORD_VERSION, CONTAINER_VERSION_V1,
+    CONTAINER_VERSION_V2, FOOTER_MAGIC, TOC_ENTRY_SIZE, TOC_HEADER_SIZE, TOC_MAGIC, TOC_VERSION,
     TRACE_BLOB_HEADER_SIZE, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE, TRACE_MAGIC,
     TRACE_RECORD_HEADER_SIZE,
 };
@@ -15,6 +17,7 @@ pub enum TraceWriteError {
     PresentWithoutFrame,
     DuplicateFrameIndex { frame_index: u32 },
     FinishWithOpenFrame,
+    UnsupportedContainerVersion(u32),
 }
 
 impl From<io::Error> for TraceWriteError {
@@ -23,9 +26,23 @@ impl From<io::Error> for TraceWriteError {
     }
 }
 
+/// Sideband capture of a guest memory range referenced by an AeroGPU submission.
+///
+/// These are emitted as `BlobKind::AerogpuAllocMemory` blobs and referenced by
+/// `RecordType::AerogpuSubmission`.
+#[derive(Clone, Copy, Debug)]
+pub struct AerogpuMemoryRangeCapture<'a> {
+    pub alloc_id: u32,
+    pub flags: u32,
+    pub gpa: u64,
+    pub size_bytes: u64,
+    pub bytes: &'a [u8],
+}
+
 pub struct TraceWriter<W> {
     writer: W,
     pos: u64,
+    container_version: u32,
     toc: Vec<FrameTocEntry>,
     open_frame: Option<usize>,
     next_blob_id: u64,
@@ -33,9 +50,25 @@ pub struct TraceWriter<W> {
 
 impl<W: Write> TraceWriter<W> {
     pub fn new(writer: W, meta: &TraceMeta) -> Result<Self, TraceWriteError> {
+        Self::new_with_container_version(writer, meta, CONTAINER_VERSION_V1)
+    }
+
+    pub fn new_v2(writer: W, meta: &TraceMeta) -> Result<Self, TraceWriteError> {
+        Self::new_with_container_version(writer, meta, CONTAINER_VERSION_V2)
+    }
+
+    pub fn new_with_container_version(
+        writer: W,
+        meta: &TraceMeta,
+        container_version: u32,
+    ) -> Result<Self, TraceWriteError> {
+        if container_version != CONTAINER_VERSION_V1 && container_version != CONTAINER_VERSION_V2 {
+            return Err(TraceWriteError::UnsupportedContainerVersion(container_version));
+        }
+
         let meta_bytes = meta.to_json_bytes();
         let header = TraceHeader {
-            container_version: CONTAINER_VERSION,
+            container_version,
             command_abi_version: meta.command_abi_version,
             flags: 0,
             meta_len: meta_bytes
@@ -47,6 +80,7 @@ impl<W: Write> TraceWriter<W> {
         let mut this = Self {
             writer,
             pos: 0,
+            container_version,
             toc: Vec::new(),
             open_frame: None,
             next_blob_id: 1,
@@ -110,6 +144,83 @@ impl<W: Write> TraceWriter<W> {
         Ok(blob_id)
     }
 
+    pub fn write_aerogpu_submission(
+        &mut self,
+        submit_flags: u32,
+        context_id: u32,
+        engine_id: u32,
+        signal_fence: u64,
+        cmd_stream_bytes: &[u8],
+        alloc_table_bytes: Option<&[u8]>,
+        memory_ranges: &[AerogpuMemoryRangeCapture<'_>],
+    ) -> Result<(), TraceWriteError> {
+        if self.container_version < CONTAINER_VERSION_V2 {
+            return Err(TraceWriteError::UnsupportedContainerVersion(
+                self.container_version,
+            ));
+        }
+        if self.open_frame.is_none() {
+            return Err(TraceWriteError::NoOpenFrame);
+        }
+
+        let cmd_stream_blob_id = self.write_blob(BlobKind::AerogpuCmdStream, cmd_stream_bytes)?;
+        let alloc_table_blob_id = match alloc_table_bytes {
+            Some(bytes) => self.write_blob(BlobKind::AerogpuAllocTable, bytes)?,
+            None => 0,
+        };
+
+        let mut range_refs = Vec::with_capacity(memory_ranges.len());
+        for range in memory_ranges {
+            let blob_id = self.write_blob(BlobKind::AerogpuAllocMemory, range.bytes)?;
+            range_refs.push(AerogpuMemoryRangeRef {
+                alloc_id: range.alloc_id,
+                flags: range.flags,
+                gpa: range.gpa,
+                size_bytes: range.size_bytes,
+                blob_id,
+            });
+        }
+
+        let range_count: u32 = range_refs
+            .len()
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many memory ranges"))?;
+
+        let mut payload = Vec::with_capacity(
+            AEROGPU_SUBMISSION_RECORD_HEADER_SIZE as usize
+                + (range_refs.len() * AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE as usize),
+        );
+
+        payload.extend_from_slice(&AEROGPU_SUBMISSION_RECORD_VERSION.to_le_bytes());
+        payload.extend_from_slice(&AEROGPU_SUBMISSION_RECORD_HEADER_SIZE.to_le_bytes());
+        payload.extend_from_slice(&submit_flags.to_le_bytes());
+        payload.extend_from_slice(&context_id.to_le_bytes());
+        payload.extend_from_slice(&engine_id.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        payload.extend_from_slice(&signal_fence.to_le_bytes());
+        payload.extend_from_slice(&cmd_stream_blob_id.to_le_bytes());
+        payload.extend_from_slice(&alloc_table_blob_id.to_le_bytes());
+        payload.extend_from_slice(&range_count.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        for range in &range_refs {
+            payload.extend_from_slice(&range.alloc_id.to_le_bytes());
+            payload.extend_from_slice(&range.flags.to_le_bytes());
+            payload.extend_from_slice(&range.gpa.to_le_bytes());
+            payload.extend_from_slice(&range.size_bytes.to_le_bytes());
+            payload.extend_from_slice(&range.blob_id.to_le_bytes());
+        }
+
+        debug_assert_eq!(
+            payload.len(),
+            AEROGPU_SUBMISSION_RECORD_HEADER_SIZE as usize
+                + (range_refs.len() * AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE as usize)
+        );
+
+        self.write_record(RecordType::AerogpuSubmission, 0, &payload)?;
+        Ok(())
+    }
+
     pub fn present(&mut self, frame_index: u32) -> Result<(), TraceWriteError> {
         let Some(frame_slot) = self.open_frame else {
             return Err(TraceWriteError::PresentWithoutFrame);
@@ -140,7 +251,7 @@ impl<W: Write> TraceWriter<W> {
         let toc_len = toc.len_bytes();
 
         let footer = TraceFooter {
-            container_version: CONTAINER_VERSION,
+            container_version: self.container_version,
             toc_offset,
             toc_len,
         };
@@ -286,6 +397,30 @@ impl<W: Write> Recorder<W> {
         match self {
             Self::Disabled => Ok(()),
             Self::Enabled(writer) => writer.present(frame_index),
+        }
+    }
+
+    pub fn record_aerogpu_submission(
+        &mut self,
+        submit_flags: u32,
+        context_id: u32,
+        engine_id: u32,
+        signal_fence: u64,
+        cmd_stream_bytes: &[u8],
+        alloc_table_bytes: Option<&[u8]>,
+        memory_ranges: &[AerogpuMemoryRangeCapture<'_>],
+    ) -> Result<(), TraceWriteError> {
+        match self {
+            Self::Disabled => Ok(()),
+            Self::Enabled(writer) => writer.write_aerogpu_submission(
+                submit_flags,
+                context_id,
+                engine_id,
+                signal_fence,
+                cmd_stream_bytes,
+                alloc_table_bytes,
+                memory_ranges,
+            ),
         }
     }
 }

@@ -12,12 +12,14 @@ sinc-resampler = []
 # Legacy audio stack (AC97/HDA/DSP + the old virtio-snd model). This is not part of the
 # browser/WASM runtime path; it is retained for reference and for targeted tests.
 legacy-audio = []
+aerogpu-trace = ["dep:aero-gpu-trace"]
 
 [dependencies]
 aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
+aero-gpu-trace = { path = "../aero-gpu-trace", optional = true }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-storage = { path = "../aero-storage" }
 font8x8 = "0.3"
