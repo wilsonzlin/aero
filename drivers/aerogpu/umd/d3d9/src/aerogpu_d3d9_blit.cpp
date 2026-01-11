@@ -181,6 +181,138 @@ bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
   return dev->cmd.bytes_remaining() >= bytes_needed;
 }
 
+HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write) {
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+
+  // Only track allocations when running on the WDDM path. Portable builds do
+  // not use WDDM allocation handles or runtime-provided allocation lists.
+  if (dev->wddm_context.hContext == 0) {
+    return S_OK;
+  }
+
+  if (res->backing_alloc_id == 0) {
+    // backing_alloc_id==0 denotes a host-allocated resource (no guest allocation
+    // table entry required).
+    return S_OK;
+  }
+
+  if (res->wddm_hAllocation == 0) {
+    logf("aerogpu-d3d9: missing WDDM hAllocation for blit resource handle=%u alloc_id=%u\n",
+         res->handle,
+         res->backing_alloc_id);
+    return E_FAIL;
+  }
+
+  AllocRef ref{};
+  if (write) {
+    ref = dev->alloc_list_tracker.track_render_target_write(res->wddm_hAllocation, res->backing_alloc_id);
+  } else if (res->kind == ResourceKind::Buffer) {
+    ref = dev->alloc_list_tracker.track_buffer_read(res->wddm_hAllocation, res->backing_alloc_id);
+  } else {
+    ref = dev->alloc_list_tracker.track_texture_read(res->wddm_hAllocation, res->backing_alloc_id);
+  }
+
+  if (ref.status == AllocRefStatus::kNeedFlush) {
+    // Split the submission and retry.
+    (void)submit_locked(dev);
+
+    if (write) {
+      ref = dev->alloc_list_tracker.track_render_target_write(res->wddm_hAllocation, res->backing_alloc_id);
+    } else if (res->kind == ResourceKind::Buffer) {
+      ref = dev->alloc_list_tracker.track_buffer_read(res->wddm_hAllocation, res->backing_alloc_id);
+    } else {
+      ref = dev->alloc_list_tracker.track_texture_read(res->wddm_hAllocation, res->backing_alloc_id);
+    }
+  }
+
+  if (ref.status != AllocRefStatus::kOk) {
+    logf("aerogpu-d3d9: failed to track blit allocation (handle=%u alloc_id=%u status=%u)\n",
+         res->handle,
+         res->backing_alloc_id,
+         static_cast<uint32_t>(ref.status));
+    return E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT track_blit_draw_state_locked(Device* dev) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  if (dev->wddm_context.hContext == 0) {
+    return S_OK;
+  }
+
+  // Render targets + depth are treated as write destinations.
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (!dev->render_targets[i]) {
+      continue;
+    }
+    HRESULT hr = track_resource_allocation_locked(dev, dev->render_targets[i], /*write=*/true);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  if (dev->depth_stencil) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->depth_stencil, /*write=*/true);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  // For blits we only sample from stage 0 today.
+  if (dev->textures[0]) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->textures[0], /*write=*/false);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  // Vertex buffer (builtin quad) is read-only.
+  if (dev->streams[0].vb) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->streams[0].vb, /*write=*/false);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT track_blit_render_targets_locked(Device* dev) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  if (dev->wddm_context.hContext == 0) {
+    return S_OK;
+  }
+
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (!dev->render_targets[i]) {
+      continue;
+    }
+    HRESULT hr = track_resource_allocation_locked(dev, dev->render_targets[i], /*write=*/true);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  if (dev->depth_stencil) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->depth_stencil, /*write=*/true);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+
+  return S_OK;
+}
+
 template <typename T>
 T* append_fixed_locked(Device* dev, uint32_t opcode) {
   const size_t needed = align_up(sizeof(T), 4);
@@ -731,6 +863,16 @@ HRESULT blit_locked(Device* dev,
   }
 
   // Draw.
+  // Ensure the command buffer has space before we track allocations; tracking
+  // may force a submission split, and command-buffer splits must not occur
+  // after tracking or the allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
+    return E_OUTOFMEMORY;
+  }
+  hr = track_blit_draw_state_locked(dev);
+  if (FAILED(hr)) {
+    return hr;
+  }
   auto* draw = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!draw) {
     return E_OUTOFMEMORY;
@@ -865,6 +1007,16 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
   const float g = static_cast<float>((color_argb >> 8) & 0xFF) / 255.0f;
   const float b = static_cast<float>((color_argb >> 0) & 0xFF) / 255.0f;
 
+  // Ensure the command buffer has space before we track allocations; tracking
+  // may force a submission split, and command-buffer splits must not occur
+  // after tracking or the allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_clear), 4))) {
+    return E_OUTOFMEMORY;
+  }
+  HRESULT hr = track_blit_render_targets_locked(dev);
+  if (FAILED(hr)) {
+    return hr;
+  }
   auto* cmd = append_fixed_locked<aerogpu_cmd_clear>(dev, AEROGPU_CMD_CLEAR);
   if (!cmd) {
     return E_OUTOFMEMORY;
