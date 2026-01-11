@@ -188,6 +188,8 @@ The recommended scheme is:
 
 - `share_token = (uint64_t)alloc_id`
 
+See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-data structure used to persist `alloc_id`/`share_token` across `CreateAllocation`/`OpenAllocation`.
+
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
