@@ -53,10 +53,13 @@ if (!expected) {
   process.exit(1);
 }
 
-const current = parseVersion(process.versions.node);
+// For tests and hermetic tooling, allow overriding the detected Node.js version.
+// (Node itself doesn't provide a supported way to spoof `process.versions.node`.)
+const currentRaw = process.env.AERO_NODE_VERSION_OVERRIDE ?? process.versions.node;
+const current = parseVersion(currentRaw);
 if (!current) {
   console.error("error: Unable to parse the current Node.js version");
-  console.error(`node reports: ${JSON.stringify(process.versions.node)}`);
+  console.error(`node reports: ${JSON.stringify(currentRaw)}`);
   process.exit(1);
 }
 
@@ -93,6 +96,11 @@ if (tooOld) {
   console.warn(`- Detected: v${current.raw}`);
   console.warn(`- CI uses:  v${expected.raw} (from .nvmrc)`);
   console.warn(`- Recommended: ${recommendedRange}`);
+  if (current.major !== expected.major) {
+    console.warn(
+      `- This repo is CI-tested on Node ${expected.major}.x; newer majors may work but aren't covered.`,
+    );
+  }
   console.warn("If you see odd toolchain issues, align your local version:");
   console.warn("  nvm install && nvm use");
 }

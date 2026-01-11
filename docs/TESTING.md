@@ -8,7 +8,8 @@ This document is the practical companion to [`12-testing-strategy.md`](./12-test
 
 ## Node.js version
 
-CI and local developer tooling expect the Node.js version declared in the repo root [`.nvmrc`](../.nvmrc).
+CI uses the exact Node.js version declared in the repo root [`.nvmrc`](../.nvmrc). Local tooling requires
+**at least** that version and will warn if your local version differs (to help debug flaky toolchain issues).
 
 From the repo root:
 

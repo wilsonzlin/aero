@@ -1,59 +1,69 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const sourceScriptPath = fileURLToPath(new URL("../scripts/check-node-version.mjs", import.meta.url));
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "..");
+const scriptPath = path.join(repoRoot, "scripts", "check-node-version.mjs");
 
-function parseMajor(version) {
-  const major = Number.parseInt(String(version).split(".")[0], 10);
-  assert.ok(Number.isFinite(major), `failed to parse node major from: ${version}`);
-  return major;
+function parseVersion(raw) {
+  const match = raw.trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+  assert.ok(match, `unable to parse version: ${JSON.stringify(raw)}`);
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
 }
 
-function setupTempRepo({ nvmrc }) {
-  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-check-node-version-"));
-  const scriptDest = path.join(repoRoot, "scripts/check-node-version.mjs");
-  fs.mkdirSync(path.dirname(scriptDest), { recursive: true });
-  fs.copyFileSync(sourceScriptPath, scriptDest);
-  fs.writeFileSync(path.join(repoRoot, ".nvmrc"), `${nvmrc}\n`, "utf8");
-  return { repoRoot, scriptDest };
+function olderVersion(version) {
+  if (version.patch > 0) return `${version.major}.${version.minor}.${version.patch - 1}`;
+  if (version.minor > 0) return `${version.major}.${version.minor - 1}.0`;
+  if (version.major > 0) return `${version.major - 1}.0.0`;
+  return "0.0.0";
 }
 
-function runScript({ repoRoot, scriptDest }, { env = {} } = {}) {
-  return spawnSync(process.execPath, [scriptDest], {
+function runCheck(overriddenVersion, { env = {} } = {}) {
+  return spawnSync("node", [scriptPath], {
     cwd: repoRoot,
+    env: {
+      ...process.env,
+      AERO_NODE_VERSION_OVERRIDE: overriddenVersion,
+      ...env,
+    },
     encoding: "utf8",
-    env: { ...process.env, ...env },
   });
 }
 
-test("check-node-version rejects unsupported Node.js versions by default", () => {
-  const currentMajor = parseMajor(process.versions.node);
-  const expected = `${currentMajor + 1}.0.0`;
-  const temp = setupTempRepo({ nvmrc: expected });
-  try {
-    const res = runScript(temp);
-    assert.equal(res.status, 1, `expected exit=1, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.match(res.stderr, /Unsupported Node\.js version/i);
-  } finally {
-    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
-  }
+test("check-node-version: passes on the exact .nvmrc version", () => {
+  const expected = fs.readFileSync(path.join(repoRoot, ".nvmrc"), "utf8").trim();
+  const result = runCheck(expected);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
-test("check-node-version can be bypassed with AERO_ALLOW_UNSUPPORTED_NODE=1", () => {
-  const currentMajor = parseMajor(process.versions.node);
-  const expected = `${currentMajor + 1}.0.0`;
-  const temp = setupTempRepo({ nvmrc: expected });
-  try {
-    const res = runScript(temp, { env: { AERO_ALLOW_UNSUPPORTED_NODE: "1" } });
-    assert.equal(res.status, 0, `expected exit=0, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.match(res.stderr, /AERO_ALLOW_UNSUPPORTED_NODE/i);
-  } finally {
-    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
-  }
+test("check-node-version: fails on versions older than the CI baseline", () => {
+  const expected = parseVersion(fs.readFileSync(path.join(repoRoot, ".nvmrc"), "utf8"));
+  const old = olderVersion(expected);
+  const result = runCheck(old);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unsupported Node\.js version/i);
 });
 
+test("check-node-version: can be bypassed with AERO_ALLOW_UNSUPPORTED_NODE=1", () => {
+  const expected = parseVersion(fs.readFileSync(path.join(repoRoot, ".nvmrc"), "utf8"));
+  const old = olderVersion(expected);
+  const result = runCheck(old, { env: { AERO_ALLOW_UNSUPPORTED_NODE: "1" } });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stderr, /AERO_ALLOW_UNSUPPORTED_NODE/i);
+});
+
+test("check-node-version: warns but does not fail on newer major versions", () => {
+  const expected = parseVersion(fs.readFileSync(path.join(repoRoot, ".nvmrc"), "utf8"));
+  const newerMajor = `${expected.major + 3}.0.0`;
+  const result = runCheck(newerMajor);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stderr, /differs from CI baseline/i);
+});
