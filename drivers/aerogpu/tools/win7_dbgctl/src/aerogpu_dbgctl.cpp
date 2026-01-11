@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wchar.h>
 
 #include "aerogpu_pci.h"
@@ -30,6 +31,14 @@ typedef LONG NTSTATUS;
 
 #ifndef STATUS_INVALID_PARAMETER
 #define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
+#endif
+
+#ifndef STATUS_TIMEOUT
+#define STATUS_TIMEOUT ((NTSTATUS)0xC0000102L)
+#endif
+
+#ifndef STATUS_INSUFFICIENT_RESOURCES
+#define STATUS_INSUFFICIENT_RESOURCES ((NTSTATUS)0xC000009AL)
 #endif
 
 typedef UINT D3DKMT_HANDLE;
@@ -111,6 +120,9 @@ typedef struct D3DKMT_FUNCS {
   PFND3DKMTQueryAdapterInfo QueryAdapterInfo;
   PFNRtlNtStatusToDosError RtlNtStatusToDosError;
 } D3DKMT_FUNCS;
+
+static uint32_t g_escape_timeout_ms = 0;
+static volatile LONG g_skip_close_adapter = 0;
 
 static void PrintUsage() {
   fwprintf(stderr,
@@ -239,6 +251,39 @@ static int ListDisplays() {
   return 0;
 }
 
+typedef struct EscapeThreadCtx {
+  const D3DKMT_FUNCS *f;
+  D3DKMT_HANDLE hAdapter;
+  void *buf;
+  UINT bufSize;
+  NTSTATUS status;
+  HANDLE done_event;
+} EscapeThreadCtx;
+
+static DWORD WINAPI EscapeThreadProc(LPVOID param) {
+  EscapeThreadCtx *ctx = (EscapeThreadCtx *)param;
+  if (!ctx || !ctx->f || !ctx->f->Escape || !ctx->buf || ctx->bufSize == 0) {
+    if (ctx) {
+      ctx->status = STATUS_INVALID_PARAMETER;
+    }
+    return 0;
+  }
+
+  D3DKMT_ESCAPE e;
+  ZeroMemory(&e, sizeof(e));
+  e.hAdapter = ctx->hAdapter;
+  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+  e.Flags.Value = 0;
+  e.pPrivateDriverData = ctx->buf;
+  e.PrivateDriverDataSize = ctx->bufSize;
+  ctx->status = ctx->f->Escape(&e);
+
+  if (ctx->done_event) {
+    SetEvent(ctx->done_event);
+  }
+  return 0;
+}
+
 static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, void *buf, UINT bufSize) {
   D3DKMT_ESCAPE e;
   ZeroMemory(&e, sizeof(e));
@@ -247,7 +292,63 @@ static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter,
   e.Flags.Value = 0;
   e.pPrivateDriverData = buf;
   e.PrivateDriverDataSize = bufSize;
-  return f->Escape(&e);
+  if (g_escape_timeout_ms == 0) {
+    return f->Escape(&e);
+  }
+
+  // Like the vblank wait helper, run escapes on a worker thread so a buggy kernel driver cannot
+  // hang the dbgctl process forever. If the call times out, leak the context (the thread may be
+  // blocked inside the kernel thunk) and set a global so we avoid calling D3DKMTCloseAdapter.
+  EscapeThreadCtx *ctx = (EscapeThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
+  if (!ctx) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  void *bufCopy = HeapAlloc(GetProcessHeap(), 0, bufSize);
+  if (!bufCopy) {
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+  memcpy(bufCopy, buf, bufSize);
+
+  ctx->f = f;
+  ctx->hAdapter = hAdapter;
+  ctx->buf = bufCopy;
+  ctx->bufSize = bufSize;
+  ctx->status = 0;
+  ctx->done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!ctx->done_event) {
+    HeapFree(GetProcessHeap(), 0, bufCopy);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  HANDLE thread = CreateThread(NULL, 0, EscapeThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, bufCopy);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    // Thread completed; safe to copy results back and clean up.
+    const NTSTATUS st = ctx->status;
+    if (NT_SUCCESS(st)) {
+      memcpy(buf, ctx->buf, bufSize);
+    }
+    CloseHandle(thread);
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, ctx->buf);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return st;
+  }
+
+  // Timeout or failure; avoid deadlock-prone cleanup.
+  CloseHandle(thread);
+  InterlockedExchange(&g_skip_close_adapter, 1);
+  return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
 
 static const wchar_t *SelftestErrorToString(uint32_t code) {
@@ -1480,6 +1581,9 @@ int wmain(int argc, wchar_t **argv) {
     return 1;
   }
 
+  // Use the user-provided timeout for escapes as well (prevents hangs on buggy KMD escape paths).
+  g_escape_timeout_ms = timeoutMs;
+
   wchar_t displayName[CCHDEVICENAME];
   if (displayNameOpt) {
     wcsncpy(displayName, displayNameOpt, CCHDEVICENAME - 1);
@@ -1542,9 +1646,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   }
 
-  if (skipCloseAdapter) {
+  if (skipCloseAdapter || InterlockedCompareExchange(&g_skip_close_adapter, 0, 0) != 0) {
     // Avoid deadlock-prone cleanup when the vblank wait thread is potentially
-    // stuck inside a kernel thunk.
+    // stuck inside a kernel thunk (or when an escape call timed out).
     return rc;
   }
 
