@@ -4,15 +4,10 @@
 // delegate to the canonical TypeScript codec to avoid drift.
 
 import {
-  L2_TUNNEL_HEADER_LEN,
-  L2_TUNNEL_MAGIC,
-  L2_TUNNEL_SUBPROTOCOL,
   L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
-  L2_TUNNEL_VERSION,
-  decodeL2Message,
   encodeError,
   encodeL2Frame,
   encodePing,
@@ -47,19 +42,5 @@ function encodeL2Message(type, payload) {
   }
 }
 
-export {
-  L2_TUNNEL_HEADER_LEN,
-  L2_TUNNEL_MAGIC,
-  L2_TUNNEL_SUBPROTOCOL,
-  L2_TUNNEL_TYPE_ERROR,
-  L2_TUNNEL_TYPE_FRAME,
-  L2_TUNNEL_TYPE_PING,
-  L2_TUNNEL_TYPE_PONG,
-  L2_TUNNEL_VERSION,
-  decodeL2Message,
-  encodeError,
-  encodeL2Frame,
-  encodeL2Message,
-  encodePing,
-  encodePong,
-};
+export * from "../../web/src/shared/l2TunnelProtocol.ts";
+export { encodeL2Message };
