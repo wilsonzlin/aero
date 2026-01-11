@@ -198,6 +198,11 @@ services:
       #
       # Default: no authentication (`none`), only Origin allowlisting.
       #
+      # Note: `crates/aero-l2-proxy` will auto-select an auth mode when `AERO_L2_AUTH_MODE` is unset
+      # and a credential is present (e.g. `cookie_or_api_key` when a session secret is configured).
+      # This deploy stack always has a session secret via `aero-session-secret`, so we explicitly
+      # default `AERO_L2_AUTH_MODE` to `none` to keep `/l2` unauthenticated unless opted into.
+      #
       # Cookie session auth (recommended for same-origin browser clients) validates the
       # `aero_session` cookie minted by `backend/aero-gateway` at `POST /session`.
       #
