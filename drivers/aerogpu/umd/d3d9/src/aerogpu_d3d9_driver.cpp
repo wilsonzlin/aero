@@ -4507,11 +4507,54 @@ uint64_t submit(Device* dev, bool is_present) {
         if (!SUCCEEDED(submit_hr)) {
           if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnRenderCb) {
+              using RenderCbT = decltype(dev->wddm_callbacks.pfnRenderCb);
+              if constexpr (submit_callback_can_signal_present<RenderCbT>()) {
+                // Some callback-table variants expose only RenderCb for both render
+                // and present submissions (with an explicit Present flag in the
+                // args). Prefer that path over SubmitCommandCb so the KMD can
+                // attach a MetaHandle in DxgkDdiPresent.
+                submission_fence = 0;
+                submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
+                                                   &submission_fence);
+                if (SUCCEEDED(submit_hr)) {
+                  submit_kind = SubmitCbKind::kRenderCb;
+                }
+              }
+            }
+          }
+        }
+
+        if (!SUCCEEDED(submit_hr)) {
+          // Next preference: SubmitCommandCb. This can bypass DxgkDdiPresent, so
+          // the KMD may not have stamped MetaHandle, but it can still build the
+          // allocation-table metadata on-demand from the submit args.
+          if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnSubmitCommandCb) {
               submission_fence = 0;
-              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
+              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
                                                  &submission_fence);
               if (SUCCEEDED(submit_hr)) {
-                submit_kind = SubmitCbKind::kRenderCb;
+                submit_kind = SubmitCbKind::kSubmitCommandCb;
+              }
+            }
+          }
+        }
+
+        // Last resort: RenderCb even if it cannot explicitly signal "present".
+        // This may misclassify the submission, but is still preferable to
+        // failing outright in callback-table variants that lack PresentCb and
+        // SubmitCommandCb.
+        if (!SUCCEEDED(submit_hr)) {
+          if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
+            if (dev->wddm_callbacks.pfnRenderCb) {
+              using RenderCbT = decltype(dev->wddm_callbacks.pfnRenderCb);
+              if constexpr (!submit_callback_can_signal_present<RenderCbT>()) {
+                submission_fence = 0;
+                submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
+                                                   &submission_fence);
+                if (SUCCEEDED(submit_hr)) {
+                  submit_kind = SubmitCbKind::kRenderCb;
+                }
               }
             }
           }
@@ -4527,31 +4570,15 @@ uint64_t submit(Device* dev, bool is_present) {
             }
           }
         }
-      }
 
-      if (!SUCCEEDED(submit_hr)) {
-        // Some callback-table variants expose SubmitCommandCb. Only use it as a
-        // fallback when the Render/Present callbacks are unavailable: AeroGPU's
-        // Win7 KMD relies on DxgkDdiRender/DxgkDdiPresent to stamp AEROGPU_DMA_PRIV
-        // and attach per-submit metadata before DxgkDdiSubmitCommand.
-        bool render_present_available = false;
-        if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
-          render_present_available = render_present_available || (dev->wddm_callbacks.pfnRenderCb != nullptr);
-        }
-        if (is_present) {
-          if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
-            render_present_available = render_present_available || (dev->wddm_callbacks.pfnPresentCb != nullptr);
-          }
-        }
-
-        if (!render_present_available) {
+        if (!SUCCEEDED(submit_hr)) {
+          // Fallback: SubmitCommandCb (bypasses DxgkDdiRender). This is less
+          // desirable than RenderCb, but still allows the KMD to build per-submit
+          // allocation metadata on-demand.
           if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnSubmitCommandCb) {
               submission_fence = 0;
-              submit_hr = invoke_submit_callback(dev,
-                                                 dev->wddm_callbacks.pfnSubmitCommandCb,
-                                                 cmd_len,
-                                                 /*is_present=*/is_present,
+              submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/false,
                                                  &submission_fence);
               if (SUCCEEDED(submit_hr)) {
                 submit_kind = SubmitCbKind::kSubmitCommandCb;
