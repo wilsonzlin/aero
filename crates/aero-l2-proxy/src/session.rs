@@ -201,12 +201,12 @@ async fn run_session_inner(
     state.metrics.session_opened();
     let _session_guard = SessionGuard::new(state.metrics.clone());
 
-    tracing::info!("session opened");
+    tracing::info!(session_id, "session opened");
 
     let mut capture = match state.capture.open_session(session_id).await {
         Ok(capture) => capture,
         Err(err) => {
-            tracing::warn!("failed to initialise capture: {err}");
+            tracing::warn!(session_id, "failed to initialise capture: {err}");
             None
         }
     };
@@ -388,7 +388,7 @@ async fn run_session_inner(
                             }
                             Err(err) => {
                                 state.metrics.frame_dropped();
-                                tracing::debug!("dropping invalid l2 message: {err}");
+                                tracing::debug!(session_id, "dropping invalid l2 message: {err}");
                                 let msg = err.to_string();
                                 let payload = msg.as_bytes();
                                 let payload = if payload.len() > state.l2_limits.max_control_payload {
@@ -498,13 +498,13 @@ async fn run_session_inner(
     if let Some(capture) = capture {
         let path = capture.path().to_path_buf();
         if let Err(err) = capture.close().await {
-            tracing::warn!("failed to flush capture file: {err}");
+            tracing::warn!(session_id, "failed to flush capture file: {err}");
         } else {
-            tracing::info!(path = ?path, "wrote capture file");
+            tracing::info!(session_id, path = ?path, "wrote capture file");
         }
     }
 
-    tracing::info!("session closed");
+    tracing::info!(session_id, "session closed");
 
     match fatal_err {
         Some(err) => Err(err),
