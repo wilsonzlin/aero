@@ -11,7 +11,29 @@ drivers/aerogpu/kmd/
   makefile / sources       WDK 7.1 BUILD project
 ```
 
-The device ABI is defined in `drivers/aerogpu/protocol/aerogpu_protocol.h`.
+## ABI status (legacy vs versioned)
+
+The Win7 KMD in this directory currently speaks the **legacy bring-up ABI** defined in:
+
+- `drivers/aerogpu/protocol/aerogpu_protocol.h` (legacy BAR0 MMIO layout + ring entry format)
+
+This matches the emulator’s legacy device model implementation (see `crates/emulator/src/devices/pci/aerogpu_legacy.rs`).
+The versioned ABI is implemented by the emulator’s non-legacy AeroGPU device model (see `crates/emulator/src/devices/pci/aerogpu.rs`).
+
+Note that the legacy and versioned ABIs currently use **different PCI IDs**:
+
+- Legacy (`aerogpu_protocol.h`): `AEROGPU_PCI_VENDOR_ID=0x1AED`, `AEROGPU_PCI_DEVICE_ID=0x0001`
+- Versioned (`aerogpu_pci.h`): `AEROGPU_PCI_VENDOR_ID=0xA3A0`, `AEROGPU_PCI_DEVICE_ID=0x0001`
+
+Make sure your Win7 INF and your emulator device model agree on which VID/DID to expose.
+
+The repository also contains a newer **versioned ABI** (the long-term target) split across:
+
+- `drivers/aerogpu/protocol/aerogpu_pci.h`
+- `drivers/aerogpu/protocol/aerogpu_ring.h`
+- `drivers/aerogpu/protocol/aerogpu_cmd.h`
+
+See `drivers/aerogpu/protocol/README.md` for the versioned ABI specification and context on migrating away from the legacy header.
 
 > Note: `aerogpu_protocol.h` is the **legacy** “all-in-one” header used by the current bring-up KMD implementation.
 > The current protocol is split across:

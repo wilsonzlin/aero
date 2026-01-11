@@ -7,14 +7,21 @@ This directory defines the **stable ABI contract** between:
 
 The contract is expressed as C/C++ headers suitable for **WDK 7.1** builds and for host-side parsing.
 
+> Note: This directory contains both the **new versioned ABI** (the long-term contract) and a
+> **legacy bring-up ABI** (`aerogpu_protocol.h`). The legacy header is kept for compatibility with
+> the current Win7 KMD and the emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`);
+> it is **not** the source of truth for the versioned ABI described below (implemented by
+> `crates/emulator/src/devices/pci/aerogpu.rs`).
+
 ## Files
 
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
-- `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`).
 - `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
+- `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Currently layered on top of the legacy `aerogpu_protocol.h` Escape header.)
+- `aerogpu_protocol.h` – **legacy** (non-versioned) bring-up ABI (older MMIO + ring format, plus an older command stream). Kept only so the legacy Win7 KMD and legacy emulator device model can continue to function during migration.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
 ## Versioning model
