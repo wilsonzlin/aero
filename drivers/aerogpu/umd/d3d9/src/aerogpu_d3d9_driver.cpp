@@ -44,6 +44,15 @@ constexpr int32_t kMaxGpuThreadPriority = 7;
 // D3DERR_INVALIDCALL from d3d9.h (returned by UMD for invalid arguments).
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 
+// S_PRESENT_OCCLUDED (0x08760868) is returned by CheckDeviceState/PresentEx when
+// the target window is occluded/minimized. Prefer the SDK macro when available
+// but provide a fallback so repo builds don't need d3d9.h.
+#if defined(S_PRESENT_OCCLUDED)
+constexpr HRESULT kSPresentOccluded = S_PRESENT_OCCLUDED;
+#else
+constexpr HRESULT kSPresentOccluded = 0x08760868L;
+#endif
+
 // D3D9 API/UMD query constants (numeric values from d3d9types.h).
 constexpr uint32_t kD3DQueryTypeEvent = 8u;
 constexpr uint32_t kD3DIssueEnd = 0x1u;
@@ -1641,8 +1650,22 @@ HRESULT AEROGPU_D3D9_CALL device_reset_ex(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_check_device_state(
-    AEROGPU_D3D9DDI_HDEVICE,
-    HWND) {
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    HWND hWnd) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+#if defined(_WIN32)
+  if (hWnd) {
+    if (IsIconic(hWnd)) {
+      return kSPresentOccluded;
+    }
+    // IsWindowVisible is cheap; treat hidden windows the same as minimized.
+    if (!IsWindowVisible(hWnd)) {
+      return kSPresentOccluded;
+    }
+  }
+#endif
   return S_OK;
 }
 
