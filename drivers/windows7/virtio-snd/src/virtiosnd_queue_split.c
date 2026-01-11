@@ -107,6 +107,7 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
     VIRTIOSND_QUEUE_SPLIT* qs;
     VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
     volatile ULONG* addr;
+    BOOLEAN should_kick;
 
     qs = (VIRTIOSND_QUEUE_SPLIT*)ctx;
     if (qs == NULL || qs->Vq == NULL) {
@@ -115,26 +116,26 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
 
     VirtioSndQueueSplitLock(qs, &lock_state);
 
-    if (!VirtqSplitKickPrepare(qs->Vq)) {
-        VirtioSndQueueSplitUnlock(qs, &lock_state);
-        return;
+    should_kick = VirtqSplitKickPrepare(qs->Vq);
+
+    if (should_kick) {
+        /*
+         * Ensure all ring writes (including the avail->idx update performed by
+         * VirtqSplitPublish) are globally visible before issuing the MMIO notify.
+         */
+        KeMemoryBarrier();
+
+        addr = qs->NotifyAddr;
+        if (addr == NULL && qs->NotifyBase != NULL && qs->NotifyOffMultiplier != 0) {
+            addr = (volatile ULONG*)(qs->NotifyBase + (ULONG)qs->QueueNotifyOff * qs->NotifyOffMultiplier);
+        }
+
+        if (addr != NULL) {
+            WRITE_REGISTER_ULONG((volatile ULONG*)addr, (ULONG)qs->QueueIndex);
+        }
     }
 
-    /*
-     * Ensure all ring writes (including the avail->idx update performed by
-     * VirtqSplitPublish) are globally visible before issuing the MMIO notify.
-     */
-    KeMemoryBarrier();
-
-    addr = qs->NotifyAddr;
-    if (addr == NULL && qs->NotifyBase != NULL && qs->NotifyOffMultiplier != 0) {
-        addr = (volatile ULONG*)(qs->NotifyBase + (ULONG)qs->QueueNotifyOff * qs->NotifyOffMultiplier);
-    }
-
-    if (addr != NULL) {
-        WRITE_REGISTER_ULONG((volatile ULONG*)addr, (ULONG)qs->QueueIndex);
-    }
-
+    /* Reset batching bookkeeping even if notification is suppressed. */
     VirtqSplitKickCommit(qs->Vq);
 
     VirtioSndQueueSplitUnlock(qs, &lock_state);
@@ -313,4 +314,3 @@ VirtioSndQueueSplitDestroy(VIRTIOSND_QUEUE_SPLIT* qs)
 
     RtlZeroMemory(qs, sizeof(*qs));
 }
-
