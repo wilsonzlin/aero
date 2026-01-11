@@ -1,4 +1,6 @@
-use aero_cpu_core::state::{gpr, mask_bits, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
+use aero_cpu_core::state::{
+    gpr, mask_bits, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF,
+};
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
@@ -53,8 +55,7 @@ pub fn dispatch_interrupt(
     // Merge the flags the handler set into the saved FLAGS image so the stub's IRET
     // returns them to the caller, while preserving IF from the original interrupt frame.
     const RETURN_MASK: u16 = (FLAG_CF | FLAG_PF | FLAG_ZF | FLAG_SF | FLAG_DF | FLAG_OF) as u16;
-    let new_flags =
-        (saved_flags & !RETURN_MASK) | ((cpu.rflags() as u16) & RETURN_MASK) | 0x0002;
+    let new_flags = (saved_flags & !RETURN_MASK) | ((cpu.rflags() as u16) & RETURN_MASK) | 0x0002;
     bus.write_u16(flags_addr, new_flags);
 }
 
@@ -138,8 +139,7 @@ fn handle_int13(
             if sector == 0 || sector > spt as u16 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.gpr[gpr::RAX] =
-                    (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
                 return;
             }
 
@@ -174,9 +174,8 @@ fn handle_int13(
                         let status = disk_err_to_int13_status(e);
                         bios.last_int13_status = status;
                         // AH=status, AL=sectors transferred.
-                        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF)
-                            | (i & 0xFF)
-                            | ((status as u64) << 8);
+                        cpu.gpr[gpr::RAX] =
+                            (cpu.gpr[gpr::RAX] & !0xFFFF) | (i & 0xFF) | ((status as u64) << 8);
                         return;
                     }
                 }
@@ -201,11 +200,9 @@ fn handle_int13(
             let cl = (spt & 0x3F) | (((cyl_minus1 >> 2) as u8) & 0xC0);
             let dh = heads - 1;
 
-            cpu.gpr[gpr::RCX] =
-                (cpu.gpr[gpr::RCX] & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
+            cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
             // DL = number of drives; DH = max head.
-            cpu.gpr[gpr::RDX] =
-                (cpu.gpr[gpr::RDX] & !0xFFFF) | 1u64 | ((dh as u64) << 8);
+            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | 1u64 | ((dh as u64) << 8);
             cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
@@ -302,8 +299,7 @@ fn handle_int13(
                         cpu.rflags |= FLAG_CF;
                         let status = disk_err_to_int13_status(e);
                         bios.last_int13_status = status;
-                        cpu.gpr[gpr::RAX] =
-                            (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
+                        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
                         return;
                     }
                 }
@@ -556,10 +552,8 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             let ticks = bios.bda_time.tick_count();
             let midnight_flag = bios.bda_time.midnight_flag();
 
-            cpu.gpr[gpr::RCX] =
-                (cpu.gpr[gpr::RCX] & !0xFFFF) | ((ticks >> 16) as u64);
-            cpu.gpr[gpr::RDX] =
-                (cpu.gpr[gpr::RDX] & !0xFFFF) | ((ticks & 0xFFFF) as u64);
+            cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | ((ticks >> 16) as u64);
+            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | ((ticks & 0xFFFF) as u64);
             cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF) | (midnight_flag as u64);
             cpu.rflags &= !FLAG_CF;
 
@@ -777,7 +771,9 @@ fn build_e820_map(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{A20Gate, BiosConfig, InMemoryDisk, TestMemory, PCIE_ECAM_BASE, PCIE_ECAM_SIZE};
+    use super::super::{
+        A20Gate, BiosConfig, InMemoryDisk, TestMemory, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
+    };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF};
     use memory::MemoryBus as _;

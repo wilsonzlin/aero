@@ -559,7 +559,10 @@ mod tests {
 
         // The ROM is mirrored at the architectural reset-vector alias (0xFFFF_FFF0).
         assert_eq!(mem.read_u8(RESET_VECTOR_ALIAS_PHYS), 0xEA);
-        assert_eq!(mem.read_bytes(RESET_VECTOR_ALIAS_PHYS, 5), vec![0xEA, 0x00, 0xE0, 0x00, 0xF0]);
+        assert_eq!(
+            mem.read_bytes(RESET_VECTOR_ALIAS_PHYS, 5),
+            vec![0xEA, 0x00, 0xE0, 0x00, 0xF0]
+        );
     }
 
     #[test]

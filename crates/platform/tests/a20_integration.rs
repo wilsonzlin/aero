@@ -1,7 +1,7 @@
+use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, RFLAGS_IF};
 use aero_devices::a20_gate::A20Gate as Port92A20Gate;
 use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
 use aero_platform::{A20GateHandle, Platform};
-use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, RFLAGS_IF};
 use firmware::bios::{Bios, BiosBus, BiosConfig, FirmwareMemory, InMemoryDisk};
 use std::sync::Arc;
 
@@ -66,7 +66,7 @@ fn bios_int15(bios: &mut Bios, bus: &mut dyn BiosBus, cpu: &mut CpuState, ax: u1
 
     bus.write_u16(0x0100, 0); // return IP
     bus.write_u16(0x0102, 0); // return CS
-                               // Return FLAGS from the interrupt frame. Real-mode BIOS callers typically have IF=1, and the
+                              // Return FLAGS from the interrupt frame. Real-mode BIOS callers typically have IF=1, and the
                               // dispatcher should preserve IF from this saved image (the CPU clears IF before entering the
                               // handler stub).
     bus.write_u16(0x0104, 0x0202); // return FLAGS (IF=1, bit1 always set)

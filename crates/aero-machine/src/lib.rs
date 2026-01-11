@@ -156,13 +156,8 @@ impl BlockDevice for VecBlockDevice {
     fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
         let idx = usize::try_from(lba).map_err(|_| DiskError::OutOfRange)?;
         let start = idx.checked_mul(512).ok_or(DiskError::OutOfRange)?;
-        let end = start
-            .checked_add(512)
-            .ok_or(DiskError::OutOfRange)?;
-        let src = self
-            .data
-            .get(start..end)
-            .ok_or(DiskError::OutOfRange)?;
+        let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
+        let src = self.data.get(start..end).ok_or(DiskError::OutOfRange)?;
         buf.copy_from_slice(src);
         Ok(())
     }

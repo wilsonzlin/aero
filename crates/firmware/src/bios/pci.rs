@@ -103,8 +103,8 @@ fn assign_pci_irq(pirq_to_gsi: [u32; 4], device: u8, interrupt_pin: u8) -> u8 {
 mod tests {
     use super::*;
     use crate::bios::BiosConfig;
-    use aero_cpu_core::state::{CpuMode, CpuState};
     use crate::bios::{InMemoryDisk, TestMemory};
+    use aero_cpu_core::state::{CpuMode, CpuState};
 
     #[derive(Clone, Debug)]
     struct DevCfg {

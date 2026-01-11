@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use firmware::bios::{build_bios_rom, Bios, BiosConfig, FirmwareMemory, InMemoryDisk, BIOS_SIZE, EBDA_BASE};
+use firmware::bios::{
+    build_bios_rom, Bios, BiosConfig, FirmwareMemory, InMemoryDisk, BIOS_SIZE, EBDA_BASE,
+};
 use memory::{DenseMemory, MapError, PhysicalMemoryBus};
 
 struct TestMemory {
