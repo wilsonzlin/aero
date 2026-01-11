@@ -50,6 +50,11 @@ if defined EXPECT_TIMEOUT_VALUE (
   echo ERROR: --timeout-ms requires a value
   exit /b 1
 )
+if defined NO_TIMEOUT (
+  rem aerogpu_timeout_runner.exe treats 0xFFFFFFFF as INFINITE, allowing us to keep using the
+  rem wrapper (for consistent JSON behavior) while disabling timeout enforcement.
+  set "TIMEOUT_MS=4294967295"
+)
 
 set "ROOT=%~dp0"
 set "MANIFEST=%ROOT%tests_manifest.txt"
@@ -81,10 +86,10 @@ set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
 set /a FAILURES=0
 
 if exist "%RUNNER%" (
+  call :validate_timeout || exit /b 1
   if defined NO_TIMEOUT (
-    echo INFO: timeout runner found but disabled by --no-timeout
+    echo INFO: using timeout runner: %RUNNER% ^(timeout disabled^)
   ) else (
-    call :validate_timeout || exit /b 1
     echo INFO: using timeout runner: %RUNNER% ^(timeout=%TIMEOUT_MS% ms^)
   )
 ) else (
@@ -161,7 +166,7 @@ if not exist "%EXE%" (
   exit /b 0
 )
 
-if exist "%RUNNER%" if not defined NO_TIMEOUT (
+if exist "%RUNNER%" (
   "%RUNNER%" "!TIMEOUT_MS!" "%EXE%" %*
 ) else (
   "%EXE%" %*
