@@ -5,7 +5,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 ## Prereqs
 
 ```bash
-cargo install cargo-fuzz
+cargo install --locked cargo-fuzz
 nightly="$(node -p "require('./scripts/toolchains.json').rust.nightlyWasm")"
 rustup toolchain install "$nightly"
 ```

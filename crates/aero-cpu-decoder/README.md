@@ -38,6 +38,6 @@ The suite includes:
 Suggested tooling:
 
 ```bash
-# install once: cargo install cargo-llvm-cov
+# install once: cargo install --locked cargo-llvm-cov
 cargo llvm-cov -p aero-cpu-decoder --html
 ```

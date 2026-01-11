@@ -17,11 +17,11 @@ For a reproducible “clone → build → test” environment (including pinned 
 - Rust (via `rustup`)
 - Node.js + npm (version is pinned in [`.nvmrc`](./.nvmrc))
 - `wasm-pack` (to build the Rust→WASM packages)
-  - Install via `cargo install wasm-pack`
+  - Install via `cargo install --locked wasm-pack`
 - Optional: `just` (task runner; uses bash)
-  - Install via `cargo install just` or your OS package manager.
+  - Install via `cargo install --locked just` or your OS package manager.
 - Optional: `watchexec` (for `just wasm-watch`)
-  - Install via `cargo install watchexec-cli`
+  - Install via `cargo install --locked watchexec-cli`
 
 ### Reproducible Rust builds (`Cargo.lock`)
 
@@ -219,7 +219,7 @@ At runtime, `web/src/runtime/wasm_loader.ts` selects the best variant and return
 Prereqs:
 
 - Rust (managed by `rustup`). The repo pins stable via `rust-toolchain.toml`.
-- `wasm-pack` (`cargo install wasm-pack`)
+- `wasm-pack` (`cargo install --locked wasm-pack`)
 - For the **threaded/shared-memory** variant: the pinned nightly toolchain declared in `scripts/toolchains.json`
   (`rust.nightlyWasm`) + `rust-src` (used to rebuild `std` with atomics enabled). `just setup` installs this automatically.
 

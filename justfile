@@ -144,7 +144,7 @@ setup:
       echo "error: wasm-pack is required to build the wasm package." >&2
       echo "" >&2
       echo "Install it with:" >&2
-      echo "  cargo install wasm-pack" >&2
+      echo "  cargo install --locked wasm-pack" >&2
       exit 1
     fi
 
@@ -206,7 +206,7 @@ wasm:
   if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
     if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
         exit 1
       fi
       echo "==> Building WASM (single + threaded) via 'web' workspace npm scripts"
@@ -218,7 +218,7 @@ wasm:
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
         exit 1
       fi
       echo "==> Building WASM (single + threaded) via '{{WEB_DIR}}' npm scripts"
@@ -235,7 +235,7 @@ wasm:
     exit 0
   fi
   if ! command -v wasm-pack >/dev/null; then
-    echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+    echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
     exit 1
   fi
   out_dir="${WASM_PKG_DIR:-${wasm_dir}/pkg}"
@@ -252,7 +252,7 @@ wasm-single:
   if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
     if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
         exit 1
       fi
       echo "==> Building WASM (single) via 'web' workspace npm scripts"
@@ -264,7 +264,7 @@ wasm-single:
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
         exit 1
       fi
       echo "==> Building WASM (single) via '{{WEB_DIR}}' npm scripts"
@@ -286,7 +286,7 @@ wasm-threaded:
   if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
     if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
         exit 1
       fi
       echo "==> Building WASM (threaded/shared-memory) via 'web' workspace npm scripts"
@@ -298,7 +298,7 @@ wasm-threaded:
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
-        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install --locked wasm-pack')" >&2
         exit 1
       fi
       echo "==> Building WASM (threaded/shared-memory) via '{{WEB_DIR}}' npm scripts"
@@ -396,7 +396,7 @@ wasm-watch:
     echo "error: watchexec is required for wasm-watch." >&2
     echo "" >&2
     echo "Install it with:" >&2
-    echo "  cargo install watchexec-cli" >&2
+    echo "  cargo install --locked watchexec-cli" >&2
     exit 1
   fi
 
