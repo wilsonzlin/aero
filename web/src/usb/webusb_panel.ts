@@ -51,18 +51,44 @@ function describeUsbDevice(device: USBDevice): string {
   return parts.join(" ");
 }
 
-async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNote: string }> {
+function parseUsbId(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase().startsWith("0x") ? trimmed.slice(2) : trimmed;
+  const value = Number.parseInt(normalized, 16);
+  if (!Number.isFinite(value)) return null;
+  if (value < 0 || value > 0xffff) return null;
+  return value;
+}
+
+async function requestUsbDevice(
+  usb: USB,
+  opts: { vendorId: number | null; productId: number | null } = { vendorId: null, productId: null },
+): Promise<{ device: USBDevice; filterNote: string }> {
+  if (opts.productId !== null && opts.vendorId === null) {
+    throw new Error("productId filter requires vendorId.");
+  }
+
   // Chromium versions differ on whether `filters: []` and/or `filters: [{}]` are allowed.
   // Try a few reasonable fallbacks so the smoke test works in more environments.
-  const attempts: Array<{ note: string; options: USBDeviceRequestOptions }> = [
-    { note: "filters: [] (broadest, if allowed by this Chromium build)", options: { filters: [] } },
-    { note: "filters: [{}] (match-all, if allowed by this Chromium build)", options: { filters: [{}] } },
-    {
+  const attempts: Array<{ note: string; options: USBDeviceRequestOptions }> = [];
+
+  if (opts.vendorId !== null) {
+    const filter: USBDeviceFilter = { vendorId: opts.vendorId };
+    if (opts.productId !== null) filter.productId = opts.productId;
+    attempts.push({ note: `filters: [${JSON.stringify(filter)}] (user-specified)`, options: { filters: [filter] } });
+  } else {
+    attempts.push({ note: "filters: [] (broadest, if allowed by this Chromium build)", options: { filters: [] } });
+    attempts.push({ note: "filters: [{}] (match-all, if allowed by this Chromium build)", options: { filters: [{}] } });
+    attempts.push({
       note: "filters: [{classCode: 0x00}, {classCode: 0xff}] (fallback broad device-class match)",
       options: { filters: [{ classCode: 0x00 }, { classCode: 0xff }] },
-    },
-    { note: "filters: [{classCode: 0xff}] (vendor-specific only fallback)", options: { filters: [{ classCode: 0xff }] } },
-  ];
+    });
+    attempts.push({
+      note: "filters: [{classCode: 0xff}] (vendor-specific only fallback)",
+      options: { filters: [{ classCode: 0xff }] },
+    });
+  }
 
   let lastErr: unknown = null;
   for (const attempt of attempts) {
@@ -149,6 +175,26 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   requestButton.type = "button";
   requestButton.textContent = "Request USB device";
 
+  const vendorIdInput = document.createElement("input");
+  vendorIdInput.type = "text";
+  vendorIdInput.placeholder = "VID (0x1234)";
+  vendorIdInput.className = "mono";
+  vendorIdInput.style.width = "140px";
+
+  const productIdInput = document.createElement("input");
+  productIdInput.type = "text";
+  productIdInput.placeholder = "PID (0x5678)";
+  productIdInput.className = "mono";
+  productIdInput.style.width = "140px";
+
+  const vidLabel = document.createElement("span");
+  vidLabel.className = "mono";
+  vidLabel.textContent = "VID:";
+
+  const pidLabel = document.createElement("span");
+  pidLabel.className = "mono";
+  pidLabel.textContent = "PID:";
+
   const openButton = document.createElement("button");
   openButton.type = "button";
   openButton.textContent = "Open + read device descriptor";
@@ -168,7 +214,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
   const actions = document.createElement("div");
   actions.className = "row";
-  actions.append(requestButton, openButton, listButton);
+  actions.append(vidLabel, vendorIdInput, pidLabel, productIdInput, requestButton, openButton, listButton);
 
   const workerActions = document.createElement("div");
   workerActions.className = "row";
@@ -250,8 +296,13 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       openButton.disabled = true;
       listButton.disabled = true;
       cloneButton.disabled = true;
+      vendorIdInput.disabled = true;
+      productIdInput.disabled = true;
       return;
     }
+
+    vendorIdInput.disabled = false;
+    productIdInput.disabled = false;
 
     const userActivation = navigator.userActivation;
     const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
@@ -295,7 +346,18 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       const usb = navigator.usb;
       if (!usb) throw new Error("navigator.usb is unavailable");
 
-      const { device, filterNote } = await requestUsbDevice(usb);
+      const vendorIdText = vendorIdInput.value.trim();
+      const productIdText = productIdInput.value.trim();
+      const vendorId = parseUsbId(vendorIdText);
+      const productId = parseUsbId(productIdText);
+      if (vendorIdText && vendorId === null) {
+        throw new Error("Invalid vendorId. Expected hex like 0x1234.");
+      }
+      if (productIdText && productId === null) {
+        throw new Error("Invalid productId. Expected hex like 0x5678.");
+      }
+
+      const { device, filterNote } = await requestUsbDevice(usb, { vendorId, productId });
       selected = device;
       status.textContent = "Device selected.";
       output.textContent = JSON.stringify({ selected: summarizeUsbDevice(device), filterNote }, null, 2);
