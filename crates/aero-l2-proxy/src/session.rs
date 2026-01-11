@@ -167,12 +167,26 @@ fn ws_message_len(msg: &Message) -> u64 {
     }
 }
 
-fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
+async fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
     const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
-    let _ = ws_out_tx.try_send(Message::Close(Some(CloseFrame {
-        code: CLOSE_CODE_POLICY_VIOLATION,
-        reason: Cow::Borrowed(reason),
-    })));
+    const MAX_REASON_BYTES: usize = 123;
+    let reason = if reason.len() <= MAX_REASON_BYTES {
+        Cow::Borrowed(reason)
+    } else {
+        Cow::Owned(truncate_utf8(reason, MAX_REASON_BYTES))
+    };
+
+    // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
+    // is full. Close paths should not hang indefinitely, so apply a short timeout.
+    let send_timeout = Duration::from_millis(100);
+    let _ = timeout(
+        send_timeout,
+        ws_out_tx.send(Message::Close(Some(CloseFrame {
+            code: CLOSE_CODE_POLICY_VIOLATION,
+            reason,
+        }))),
+    )
+    .await;
 }
 
 fn error_wire(l2_limits: &aero_l2_protocol::Limits, code: u16, message: &str) -> Option<Vec<u8>> {
@@ -226,11 +240,17 @@ async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
         Cow::Owned(truncate_utf8(reason, MAX_REASON_BYTES))
     };
 
-    // Best-effort: if the sender/connection is already gone, ignore.
-    let _ = ws_out_tx.try_send(Message::Close(Some(CloseFrame {
-        code: CLOSE_CODE_GOING_AWAY,
-        reason,
-    })));
+    // Sending on `ws_out_tx` can block if the writer task is backpressured and the bounded channel
+    // is full. Close paths should not hang indefinitely, so apply a short timeout.
+    let send_timeout = Duration::from_millis(100);
+    let _ = timeout(
+        send_timeout,
+        ws_out_tx.send(Message::Close(Some(CloseFrame {
+            code: CLOSE_CODE_GOING_AWAY,
+            reason,
+        }))),
+    )
+    .await;
 }
 
 fn truncate_utf8(input: &str, max_bytes: usize) -> String {
@@ -522,7 +542,7 @@ async fn run_session_inner(
             _ = tokio::time::sleep_until(last_inbound_activity + idle_timeout_duration), if idle_timeout_enabled => {
                 state.metrics.idle_timeout_closed();
                 tracing::warn!(reason = "idle_timeout", "closing idle session");
-                close_policy_violation(&ws_out_tx, "idle timeout");
+                close_policy_violation(&ws_out_tx, "idle timeout").await;
                 break;
             }
             _ = ping_interval.tick(), if ping_enabled => {
@@ -1146,5 +1166,38 @@ mod tests {
         )
         .await
         .expect("close_with_error should not hang when the outbound channel is backpressured");
+    }
+
+    #[tokio::test]
+    async fn close_shutting_down_does_not_hang_when_ws_channel_full() {
+        let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
+        ws_out_tx
+            .send(Message::Text("block".to_string()))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), close_shutting_down(&ws_out_tx))
+            .await
+            .expect(
+                "close_shutting_down should not hang when the outbound channel is backpressured",
+            );
+    }
+
+    #[tokio::test]
+    async fn close_policy_violation_does_not_hang_when_ws_channel_full() {
+        let (ws_out_tx, _ws_out_rx) = mpsc::channel::<Message>(1);
+        ws_out_tx
+            .send(Message::Text("block".to_string()))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            close_policy_violation(&ws_out_tx, "idle timeout"),
+        )
+        .await
+        .expect(
+            "close_policy_violation should not hang when the outbound channel is backpressured",
+        );
     }
 }
