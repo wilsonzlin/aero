@@ -1536,7 +1536,7 @@ impl DemoVm {
     }
 
     pub fn serial_output(&mut self) -> Vec<u8> {
-        self.inner.take_serial_output()
+        self.inner.serial_output_bytes()
     }
 
     /// Return the current serial output length without copying the bytes into JS.

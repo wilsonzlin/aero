@@ -458,6 +458,15 @@ impl Machine {
         std::mem::take(&mut self.serial_log)
     }
 
+    /// Return a copy of the serial output accumulated so far without draining it.
+    ///
+    /// This is intentionally a cloning API: callers that only need a byte count should prefer
+    /// [`Machine::serial_output_len`].
+    pub fn serial_output_bytes(&mut self) -> Vec<u8> {
+        self.flush_serial();
+        self.serial_log.clone()
+    }
+
     /// Return the number of bytes currently buffered in the serial output log.
     ///
     /// This is a cheap alternative to [`Machine::take_serial_output`] for callers that only need a
