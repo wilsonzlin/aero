@@ -32,6 +32,18 @@ See also:
 
 ---
 
+## Packaging options (Guest Tools)
+
+Aero can ship Windows 7 virtio drivers inside `aero-guest-tools.iso` in two ways:
+
+1) **Upstream virtio-win** (`viostor`, `netkvm`, etc.)
+   - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
+   - Spec: `tools/packaging/specs/win7-virtio-win.json` (accepts both transitional + modern IDs)
+
+2) **In-tree Aero virtio** (`aerovblk`, `aerovnet`)
+   - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
+   - Spec: `tools/packaging/specs/win7-aero-virtio.json` (**modern-only** IDs; rejects `1000/1001` at packaging time)
+
 ## Chosen approach (short term): package upstream virtio-win drivers
 
 **Longer term:** Aero also has ongoing work toward clean-room, permissively licensed Windows 7 virtio drivers under `drivers/windows7/`. Until the storage (`virtio-blk`) and network (`virtio-net`) drivers are production-ready, the practical path for enabling virtio acceleration is to package the upstream virtio-win driver set.

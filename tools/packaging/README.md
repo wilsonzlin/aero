@@ -87,6 +87,33 @@ produce the Guest Tools ISO/zip from those artifacts using:
 - `ci/package-guest-tools.ps1`
 - `tools/packaging/specs/win7-aero-guest-tools.json`
 
+## Building Guest Tools from in-tree aero virtio drivers (Win7 aerovblk + aerovnet)
+
+If you want Guest Tools to include Aero's in-tree Windows 7 virtio drivers (`aerovblk`, `aerovnet`),
+build them and point the wrapper at the resulting driver package directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-aero-virtio.ps1 `
+  -DriverOutDir C:\path\to\driver-out `
+  -OutDir .\dist\guest-tools `
+  -Version 0.0.0 `
+  -BuildId local
+```
+
+`-DriverOutDir` must contain driver packages for both architectures:
+
+```
+<DriverOutDir>/
+  x86/aerovblk/*.{inf,sys,cat}
+  x86/aerovnet/*.{inf,sys,cat}
+  amd64/aerovblk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
+  amd64/aerovnet/*.{inf,sys,cat}
+```
+
+This uses the validation spec at:
+
+- `tools/packaging/specs/win7-aero-virtio.json`
+
 ## Determinism / reproducible builds
 
 The packager aims to be reproducible: **same inputs → bit-identical outputs**.

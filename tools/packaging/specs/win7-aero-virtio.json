@@ -1,0 +1,16 @@
+{
+  "required_drivers": [
+    {
+      "name": "aerovblk",
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_1042(?:&REV_01)?"
+      ]
+    },
+    {
+      "name": "aerovnet",
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_1041(?:&REV_01)?"
+      ]
+    }
+  ]
+}

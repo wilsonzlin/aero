@@ -38,6 +38,15 @@ Notes:
   (`PCI\\VEN_A3A0&DEV_0001` and `PCI\\VEN_1AED&DEV_0001`) so packaging fails if either HWID is
   accidentally dropped from the Win7 AeroGPU INFs.
 
+## `win7-aero-virtio.json`
+
+Intended for packaging Guest Tools using Aero's in-tree clean-room Windows 7 virtio drivers.
+
+- Requires: `aerovblk` (virtio-blk) + `aerovnet` (virtio-net)
+- Validates **modern-only** virtio PCI IDs (`DEV_1042` / `DEV_1041`); transitional IDs are not accepted by the spec.
+
+This spec is used by `drivers/scripts/make-guest-tools-from-aero-virtio.ps1` by default.
+
 ## Wrapper script defaults (`make-guest-tools-from-virtio-win.ps1`)
 
 `drivers/scripts/make-guest-tools-from-virtio-win.ps1` supports an explicit packaging profile:

@@ -206,6 +206,58 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
 }
 
 #[test]
+fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers-aero-virtio");
+    let guest_tools_dir = testdata.join("guest-tools");
+    let spec_path = repo_root
+        .join("..")
+        .join("specs")
+        .join("win7-aero-virtio.json");
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir,
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+
+    let outputs = aero_packager::package_guest_tools(&config)?;
+
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+    for required in [
+        "drivers/x86/aerovblk/aerovblk.inf",
+        "drivers/x86/aerovblk/aerovblk.sys",
+        "drivers/x86/aerovblk/aerovblk.cat",
+        "drivers/x86/aerovnet/aerovnet.inf",
+        "drivers/x86/aerovnet/aerovnet.sys",
+        "drivers/x86/aerovnet/aerovnet.cat",
+        "drivers/amd64/aerovblk/aerovblk.inf",
+        "drivers/amd64/aerovblk/aerovblk.sys",
+        "drivers/amd64/aerovblk/aerovblk.cat",
+        "drivers/amd64/aerovnet/aerovnet.inf",
+        "drivers/amd64/aerovnet/aerovnet.sys",
+        "drivers/amd64/aerovnet/aerovnet.cat",
+    ] {
+        assert!(
+            tree.contains(required),
+            "ISO is missing required file: {required}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn drivers_and_required_drivers_merge_case_insensitively() -> anyhow::Result<()> {
     let spec_dir = tempfile::tempdir()?;
     let spec_path = spec_dir.path().join("spec.json");

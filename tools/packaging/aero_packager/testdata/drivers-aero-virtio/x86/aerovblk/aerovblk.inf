@@ -1,0 +1,13 @@
+; Minimal aerovblk INF fixture (x86)
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg%=Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev%=Install, PCI\VEN_1AF4&DEV_1042&REV_01
+
+[Strings]
+Mfg="Aero"
+Dev="Aero virtio-blk (test fixture)"
