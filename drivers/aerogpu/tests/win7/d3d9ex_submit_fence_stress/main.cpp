@@ -407,7 +407,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
         kTestName);
     aerogpu_test::PrintfStdout(
         "Stresses D3D9Ex submits and validates per-submission fences via AeroGPU debug output. "
-        "On AGPU devices, also validates PRESENT flag + alloc table presence via ring dump v2.");
+        "Also validates PRESENT flag via ring dump v2; on AGPU rings, validates alloc table presence.");
     return 0;
   }
 
@@ -606,7 +606,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   unsigned long long last_fence = 0;
   bool saw_was_still_drawing = false;
   bool validated_ring_desc = false;
-  const bool enforce_agpu_ring_checks = require_umd || require_agpu;
+  const bool enforce_agpu_ring_checks = require_agpu;
 
   for (uint32_t i = 0; i < iterations; ++i) {
     MSG msg;
@@ -747,7 +747,6 @@ static int RunSubmitFenceStress(int argc, char** argv) {
         aerogpu_dbgctl_ring_desc_v2 present_desc;
         uint32_t present_desc_index = 0;
         bool found_present_desc = false;
-        bool skip_ring_asserts = false;
 
         // Retry for a short bounded window (best-effort). This avoids flakes if the device consumes
         // the ring entry quickly.
@@ -761,22 +760,12 @@ static int RunSubmitFenceStress(int argc, char** argv) {
             break;
           }
 
-          // On legacy devices, the ring dump doesn't provide alloc tables; treat as optional unless
-          // the caller explicitly requires AGPU.
-          if (dump.ring_format != AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-            if (enforce_agpu_ring_checks) {
-              DumpRingDumpV2(kTestName, dump);
-              aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
-              return reporter.Fail("expected AGPU ring format for ring dump v2, got %s (ring_format=%lu)",
-                                   RingFormatToString((uint32_t)dump.ring_format),
-                                   (unsigned long)dump.ring_format);
-            }
-            aerogpu_test::PrintfStdout(
-                "INFO: %s: ring format is %s; skipping ring descriptor assertions (pass --require-agpu to fail)",
-                kTestName,
-                RingFormatToString((uint32_t)dump.ring_format));
-            skip_ring_asserts = true;
-            break;
+          if (dump.ring_format != AEROGPU_DBGCTL_RING_FORMAT_AGPU && enforce_agpu_ring_checks) {
+            DumpRingDumpV2(kTestName, dump);
+            aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+            return reporter.Fail("expected AGPU ring format for ring dump v2, got %s (ring_format=%lu)",
+                                 RingFormatToString((uint32_t)dump.ring_format),
+                                 (unsigned long)dump.ring_format);
           }
 
           found_present_desc = aerogpu_test::kmt::FindRingDescByFence(dump,
@@ -807,9 +796,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
           Sleep(0);
         }
 
-        if (skip_ring_asserts) {
-          validated_ring_desc = true;
-        } else if (!have_dump) {
+        if (!have_dump) {
           if (!enforce_agpu_ring_checks && dump_status == aerogpu_test::kmt::kStatusNotSupported) {
             aerogpu_test::PrintfStdout(
                 "INFO: %s: ring dump v2 escape not supported (NTSTATUS=0x%08lX); skipping ring descriptor assertions",
@@ -844,16 +831,23 @@ static int RunSubmitFenceStress(int argc, char** argv) {
                 (unsigned long)present_desc.flags);
           }
 
-          if (present_desc.alloc_table_gpa == 0 ||
-              present_desc.alloc_table_size_bytes < sizeof(struct aerogpu_alloc_table_header)) {
-            DumpRingDumpV2(kTestName, dump);
-            aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
-            return reporter.Fail(
-                "present fence=%I64u has missing/invalid alloc table: alloc_table_gpa=0x%I64X alloc_table_size=%lu (expected >= %lu)",
-                present_fence,
-                (unsigned long long)present_desc.alloc_table_gpa,
-                (unsigned long)present_desc.alloc_table_size_bytes,
-                (unsigned long)sizeof(struct aerogpu_alloc_table_header));
+          if (dump.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+            if (present_desc.alloc_table_gpa == 0 ||
+                present_desc.alloc_table_size_bytes < sizeof(struct aerogpu_alloc_table_header)) {
+              DumpRingDumpV2(kTestName, dump);
+              aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+              return reporter.Fail(
+                  "present fence=%I64u has missing/invalid alloc table: alloc_table_gpa=0x%I64X alloc_table_size=%lu (expected >= %lu)",
+                  present_fence,
+                  (unsigned long long)present_desc.alloc_table_gpa,
+                  (unsigned long)present_desc.alloc_table_size_bytes,
+                  (unsigned long)sizeof(struct aerogpu_alloc_table_header));
+            }
+          } else {
+            aerogpu_test::PrintfStdout(
+                "INFO: %s: ring format is %s; skipping alloc table validation (pass --require-agpu to require AGPU ring)",
+                kTestName,
+                RingFormatToString((uint32_t)dump.ring_format));
           }
 
           // Best-effort sanity check: ensure a known non-present submission is NOT flagged as PRESENT.
