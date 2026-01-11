@@ -115,14 +115,20 @@ try {
     wsEl.textContent = "skipped (no session)";
     wsEl.className = "bad";
   } else {
-    const pageParams = new URLSearchParams(location.search);
-    const l2Token = pageParams.get("l2Token");
-    const l2TokenTransportRaw = pageParams.get("l2TokenTransport");
-    const l2TokenTransport = l2TokenTransportRaw === "subprotocol" || l2TokenTransportRaw === "both" ? l2TokenTransportRaw : "query";
+    // Prefer URL fragment params (`#l2Token=...`) over query params (`?l2Token=...`) so secrets
+    // don't end up in server logs by default.
+    const fragmentParams = new URLSearchParams(location.hash.slice(1));
+    const queryParams = new URLSearchParams(location.search);
+    const l2Token = fragmentParams.get("l2Token") ?? queryParams.get("l2Token");
+    const l2TokenTransportRaw = fragmentParams.get("l2TokenTransport") ?? queryParams.get("l2TokenTransport");
+    const l2TokenTransport =
+      l2TokenTransportRaw === "query" || l2TokenTransportRaw === "subprotocol" || l2TokenTransportRaw === "both"
+        ? l2TokenTransportRaw
+        : "subprotocol";
 
     // Optional: allow the smoke test page to validate token-authenticated `/l2`
     // deployments by visiting e.g.:
-    //   https://localhost/?l2Token=sekrit&l2TokenTransport=subprotocol
+    //   https://localhost/#l2Token=sekrit&l2TokenTransport=subprotocol
     //
     // If not set, the default compose stack still succeeds (no token required unless `/l2`
     // is configured with token/JWT auth).
