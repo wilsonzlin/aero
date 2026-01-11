@@ -20,6 +20,7 @@ fn run_to_halt<B: CpuBus>(state: &mut CpuState, bus: &mut B, max: u64) {
             }
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
         }
     }
     panic!("program did not halt");

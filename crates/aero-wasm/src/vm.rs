@@ -363,6 +363,17 @@ impl WasmVm {
                         detail: exception.to_string(),
                     };
                 }
+                BatchExit::CpuExit(exit) => {
+                    let kind = match exit {
+                        aero_cpu_core::interrupts::CpuExit::TripleFault => RunExitKind::ResetRequested,
+                        _ => RunExitKind::Exception,
+                    };
+                    return RunExit {
+                        kind,
+                        executed: executed.min(u64::from(u32::MAX)) as u32,
+                        detail: format!("{exit:?}"),
+                    };
+                }
             }
         }
 

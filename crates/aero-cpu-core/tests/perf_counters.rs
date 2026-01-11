@@ -131,6 +131,7 @@ fn exec_bytes_counted(
     match res.exit {
         BatchExit::Completed => {}
         BatchExit::Exception(e) => return Err(e),
+        BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
         other => panic!("unexpected tier0 exit: {other:?}"),
     }
 

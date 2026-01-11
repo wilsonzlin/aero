@@ -28,6 +28,7 @@ pub enum BatchExit {
     BiosInterrupt(u8),
     Assist(AssistReason),
     Exception(Exception),
+    CpuExit(interrupts::CpuExit),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,6 +218,9 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
 /// interrupt FIFO) at instruction boundaries, including waking the CPU from
 /// `HLT` when a maskable interrupt is delivered.
 ///
+/// If event delivery fails (e.g. triple fault), this helper returns
+/// [`BatchExit::CpuExit`].
+///
 /// Use [`run_batch_cpu_core_with_assists`] if you need Tier-0 to resolve
 /// interrupt assists.
 pub fn run_batch_with_assists<B: CpuBus>(
@@ -251,16 +255,30 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
     while executed < max_insts {
         // Give pending exceptions/interrupts a chance at instruction boundaries.
         if cpu.pending.has_pending_event() {
-            cpu.deliver_pending_event(bus)
-                .unwrap_or_else(|exit| panic!("pending event delivery failed: {exit:?}"));
-            continue;
+            match cpu.deliver_pending_event(bus) {
+                Ok(()) => continue,
+                Err(exit) => {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::CpuExit(exit),
+                    };
+                }
+            }
         }
         if !cpu.pending.external_interrupts.is_empty() {
             let before = cpu.pending.external_interrupts.len();
-            cpu.deliver_external_interrupt(bus)
-                .unwrap_or_else(|exit| panic!("external interrupt delivery failed: {exit:?}"));
-            if cpu.pending.external_interrupts.len() != before {
-                continue;
+            match cpu.deliver_external_interrupt(bus) {
+                Ok(()) => {
+                    if cpu.pending.external_interrupts.len() != before {
+                        continue;
+                    }
+                }
+                Err(exit) => {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::CpuExit(exit),
+                    };
+                }
             }
         }
         if cpu.state.halted {
@@ -445,6 +463,9 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 /// Like [`crate::exec::Vcpu::maybe_deliver_interrupt`], this helper also gives
 /// any already-queued exceptions/interrupts in [`interrupts::PendingEventState`]
 /// a chance at instruction boundaries.
+///
+/// If event delivery fails (e.g. triple fault), this helper returns
+/// [`BatchExit::CpuExit`].
 pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
     cfg: &Tier0Config,
     ctx: &mut AssistContext,
@@ -469,16 +490,30 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
     while executed < max_insts {
         // Give pending exceptions/interrupts a chance at instruction boundaries.
         if cpu.pending.has_pending_event() {
-            cpu.deliver_pending_event(bus)
-                .unwrap_or_else(|exit| panic!("pending event delivery failed: {exit:?}"));
-            continue;
+            match cpu.deliver_pending_event(bus) {
+                Ok(()) => continue,
+                Err(exit) => {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::CpuExit(exit),
+                    };
+                }
+            }
         }
         if !cpu.pending.external_interrupts.is_empty() {
             let before = cpu.pending.external_interrupts.len();
-            cpu.deliver_external_interrupt(bus)
-                .unwrap_or_else(|exit| panic!("external interrupt delivery failed: {exit:?}"));
-            if cpu.pending.external_interrupts.len() != before {
-                continue;
+            match cpu.deliver_external_interrupt(bus) {
+                Ok(()) => {
+                    if cpu.pending.external_interrupts.len() != before {
+                        continue;
+                    }
+                }
+                Err(exit) => {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::CpuExit(exit),
+                    };
+                }
             }
         }
         if cpu.state.halted {

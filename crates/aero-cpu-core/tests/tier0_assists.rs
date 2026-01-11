@@ -169,6 +169,7 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
             BatchExit::Exception(e) => {
                 panic!("unexpected exception after {executed_total} insts: {e:?}")
             }
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit after {executed_total} insts: {e:?}"),
         }
     }
 
@@ -340,6 +341,7 @@ fn tier0_assists_rdtscp_reads_ia32_tsc_aux_from_cpu_state() {
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
         }
     }
 

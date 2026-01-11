@@ -15,6 +15,7 @@ fn run_to_halt(state: &mut CpuState, bus: &mut FlatTestBus, max: u64) {
             BatchExit::BiosInterrupt(vector) => panic!("unexpected BIOS interrupt: {vector:#x}"),
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
         }
     }
     panic!("program did not halt");

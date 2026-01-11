@@ -141,6 +141,7 @@ fn tier0_assists_protected_int_iret_no_privilege_change() {
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception after {executed} insts: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit after {executed} insts: {e:?}"),
         }
     }
 
@@ -235,6 +236,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception after {executed} insts: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit after {executed} insts: {e:?}"),
         }
     }
 
@@ -306,6 +308,7 @@ fn tier0_cpu_core_runner_executes_int_iretq_in_long_mode() {
             }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception after {executed} insts: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit after {executed} insts: {e:?}"),
         }
     }
 

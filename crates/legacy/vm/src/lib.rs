@@ -484,6 +484,7 @@ impl<D: BlockDevice> Vm<D> {
             }
             BatchExit::Assist(reason) => panic!("unhandled CPU assist: {reason:?}"),
             BatchExit::Exception(e) => panic!("cpu exception: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("cpu exit: {e:?}"),
         }
     }
 

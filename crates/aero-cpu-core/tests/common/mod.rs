@@ -146,6 +146,7 @@ fn run_until_rip_batch(state: &mut CpuState, bus: &mut FlatTestBus, stop_rip: u6
             }
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+            BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
         }
     }
     panic!("program did not reach stop RIP");

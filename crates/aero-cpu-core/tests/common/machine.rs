@@ -133,6 +133,7 @@ impl Tier0Machine {
                     )
                 }
                 BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
+                BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
                 BatchExit::Assist(r) => {
                     self.handle_assist(r);
                     executed += 1;
