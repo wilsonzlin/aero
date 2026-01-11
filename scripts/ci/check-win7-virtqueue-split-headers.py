@@ -25,6 +25,7 @@ but they must not rely on include path ordering to "pick the right one".
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,16 +56,30 @@ def main() -> None:
     # Use a case-insensitive match because Windows checkouts are case-insensitive.
     # (Git also struggles with case-only renames on Windows, so catching this in
     # CI avoids confusing breakage.)
-    found: list[Path] = []
-    for path in (REPO_ROOT / "drivers").rglob("*"):
-        if path.is_file() and path.name.lower() == "virtqueue_split.h":
-            found.append(path)
-    found = sorted(found)
-    if found != [CANONICAL_HEADER]:
-        rels = [p.relative_to(REPO_ROOT).as_posix() for p in found]
+    #
+    # Prefer `git ls-files` so untracked local build artifacts can't trigger the
+    # guardrail. Fall back to a filesystem walk if git is unavailable.
+    found_rel: list[str] = []
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(REPO_ROOT), "ls-files"], text=True
+        )
+        for raw in out.splitlines():
+            rel = raw.strip()
+            if not rel:
+                continue
+            if Path(rel).name.lower() == "virtqueue_split.h":
+                found_rel.append(rel)
+    except (OSError, subprocess.CalledProcessError):
+        for path in REPO_ROOT.rglob("*"):
+            if path.is_file() and path.name.lower() == "virtqueue_split.h":
+                found_rel.append(path.relative_to(REPO_ROOT).as_posix())
+
+    found_rel = sorted(found_rel)
+    if found_rel != [CANONICAL_HEADER.relative_to(REPO_ROOT).as_posix()]:
         fail(
             "expected exactly one 'virtqueue_split.h' (the canonical modern header), found:\n  - "
-            + "\n  - ".join(rels)
+            + "\n  - ".join(found_rel)
         )
 
     # Ensure Win7 sources don't use explicit relative includes to virtqueue_split.h.
