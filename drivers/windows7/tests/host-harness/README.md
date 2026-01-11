@@ -203,8 +203,10 @@ On completion, the workflow uploads the serial log and harness output as the `wi
   - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
   - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (adds `disable-legacy=on` and `x-pci-revision=0x01` when supported)
 - Watches the serial log for:
-  - `AERO_VIRTIO_SELFTEST|RESULT|PASS`
-  - `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
+  - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
+  - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP`
 
 ### Why `x-pci-revision=0x01`?
 
