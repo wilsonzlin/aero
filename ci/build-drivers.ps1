@@ -301,6 +301,71 @@ function Get-SafeFileName {
   return $result
 }
 
+function Test-IsMakefileVcxproj {
+  param([Parameter(Mandatory = $true)][string]$VcxprojPath)
+
+  if (-not (Test-Path -LiteralPath $VcxprojPath -PathType Leaf)) {
+    return $false
+  }
+
+  $content = Get-Content -LiteralPath $VcxprojPath -Raw -ErrorAction SilentlyContinue
+  if ([string]::IsNullOrWhiteSpace($content)) {
+    return $false
+  }
+
+  return ($content -match '<Keyword>\s*MakeFileProj\s*</Keyword>' -or $content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>')
+}
+
+function Test-IsMakefileSolution {
+  param([Parameter(Mandatory = $true)][string]$SolutionPath)
+
+  if (-not (Test-Path -LiteralPath $SolutionPath -PathType Leaf)) {
+    return $false
+  }
+
+  $slnDir = Split-Path -Parent $SolutionPath
+  $lines = Get-Content -LiteralPath $SolutionPath -ErrorAction SilentlyContinue
+  if (-not $lines) {
+    return $false
+  }
+
+  $projectPaths = New-Object System.Collections.Generic.List[string]
+  foreach ($line in $lines) {
+    # Example:
+    # Project("{GUID}") = "name", "path\\to\\proj.vcxproj", "{GUID}"
+    if ($line -match '^\s*Project\(\".*?\"\)\s*=\s*\".*?\"\s*,\s*\"(.*?)\"\s*,') {
+      $rel = $Matches[1]
+      if ($rel -and $rel.ToLowerInvariant().EndsWith('.vcxproj')) {
+        $full = Join-Path -Path $slnDir -ChildPath $rel
+        [void]$projectPaths.Add($full)
+      }
+    }
+  }
+
+  if ($projectPaths.Count -eq 0) {
+    return $false
+  }
+
+  foreach ($proj in $projectPaths) {
+    if (Test-IsMakefileVcxproj -VcxprojPath $proj) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Test-HasInfInTree {
+  param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+  if (-not (Test-Path -LiteralPath $DirectoryPath -PathType Container)) {
+    return $false
+  }
+
+  $inf = Get-ChildItem -LiteralPath $DirectoryPath -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+  return ($null -ne $inf)
+}
+
 function Try-GetDriverBuildTargetFromDirectory {
   param(
     [Parameter(Mandatory = $true)][System.IO.DirectoryInfo]$Directory,
@@ -325,6 +390,19 @@ function Try-GetDriverBuildTargetFromDirectory {
     } else {
       throw "Directory '$($Directory.FullName)' has multiple '*.vcxproj' files but no '$name.sln'."
     }
+  }
+
+  # Skip classic WDK NMake wrapper projects/solutions (MakeFileProj / ConfigurationType=Makefile).
+  if ($kind -eq 'vcxproj' -and (Test-IsMakefileVcxproj -VcxprojPath $buildPath)) {
+    return $null
+  }
+  if ($kind -eq 'sln' -and (Test-IsMakefileSolution -SolutionPath $buildPath)) {
+    return $null
+  }
+
+  # Require an INF in the same directory tree so downstream catalog/sign/package steps can run.
+  if (-not (Test-HasInfInTree -DirectoryPath $Directory.FullName)) {
+    return $null
   }
 
   $sep = [IO.Path]::DirectorySeparatorChar
@@ -365,26 +443,35 @@ function Discover-DriverBuildTargets {
 
   $driversRootResolved = (Resolve-Path -LiteralPath $DriversRoot).Path
 
-  # Support both layouts:
-  #   - drivers/<name>/...
-  #   - drivers/<group>/<name>/...
-  $level1 = @(Get-ChildItem -LiteralPath $DriversRoot -Directory | Sort-Object -Property Name)
-
   $targets = New-Object System.Collections.Generic.List[object]
 
-  foreach ($dir1 in $level1) {
-    $target = Try-GetDriverBuildTargetFromDirectory -Directory $dir1 -DriversRootResolved $driversRootResolved
+  # Discover driver roots at any depth under drivers/. A directory is considered a
+  # build target if it contains:
+  #   - <dirName>.sln, OR
+  #   - exactly one *.vcxproj
+  #
+  # Additionally, we filter to "CI-buildable" driver projects:
+  #   - ignore WDK NMake wrapper projects (MakeFileProj / ConfigurationType=Makefile)
+  #   - require at least one INF in the directory tree (for catalog/sign/package)
+  $buildFiles = @()
+  $buildFiles += @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue)
+  $buildFiles += @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.sln' -ErrorAction SilentlyContinue)
+
+  $dirMap = @{}
+  foreach ($file in $buildFiles) {
+    if (-not $file.Directory) { continue }
+    $full = $file.Directory.FullName
+    if ([string]::IsNullOrWhiteSpace($full)) { continue }
+    $key = $full.ToLowerInvariant()
+    if (-not $dirMap.ContainsKey($key)) {
+      $dirMap[$key] = $file.Directory
+    }
+  }
+
+  foreach ($dir in ($dirMap.Values | Sort-Object -Property FullName)) {
+    $target = Try-GetDriverBuildTargetFromDirectory -Directory $dir -DriversRootResolved $driversRootResolved
     if ($null -ne $target) {
       [void]$targets.Add($target)
-      continue
-    }
-
-    $level2 = @(Get-ChildItem -LiteralPath $dir1.FullName -Directory | Sort-Object -Property Name)
-    foreach ($dir2 in $level2) {
-      $target2 = Try-GetDriverBuildTargetFromDirectory -Directory $dir2 -DriversRootResolved $driversRootResolved
-      if ($null -ne $target2) {
-        [void]$targets.Add($target2)
-      }
     }
   }
 
