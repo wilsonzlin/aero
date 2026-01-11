@@ -149,6 +149,17 @@ struct AeroGpuResource {
   aerogpu_handle_t handle = 0;
   ResourceKind kind = ResourceKind::Unknown;
 
+  // Host-visible backing allocation ID. Populated from KMD private data in a
+  // real WDDM build. 0 means "host allocated" (no allocation-table entry).
+  uint32_t backing_alloc_id = 0;
+
+  // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
+  // 0 if the resource is not shareable.
+  uint64_t share_token = 0;
+
+  bool is_shared = false;
+  bool is_shared_alias = false;
+
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
 
@@ -316,7 +327,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
     cmd->size_bytes = res->size_bytes;
-    cmd->backing_alloc_id = 0;
+    cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
 
@@ -395,7 +406,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->mip_levels = res->mip_levels;
     cmd->array_layers = 1;
     cmd->row_pitch_bytes = res->row_pitch_bytes;
-    cmd->backing_alloc_id = 0;
+    cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
 
@@ -426,6 +437,10 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (res->handle != kInvalidHandle) {
+    // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
+    // shared-surface aliases. The host command processor is expected to
+    // normalize alias lifetimes, but proper cross-process refcounting may be
+    // needed later.
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;

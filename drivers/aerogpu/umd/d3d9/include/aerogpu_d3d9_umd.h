@@ -138,6 +138,19 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
   uint32_t usage;    // driver-defined (e.g. render target, dynamic)
   uint32_t size;     // for buffers (bytes)
   AEROGPU_D3D9DDI_HRESOURCE hResource; // out
+
+  // Optional shared handle pointer.
+  //
+  // D3D9Ex semantics (mirrors CreateTexture/CreateRenderTarget, etc):
+  // - pSharedHandle == NULL: not a shared resource
+  // - pSharedHandle != NULL and *pSharedHandle == NULL: create a new shared resource
+  // - pSharedHandle != NULL and *pSharedHandle != NULL: open an existing shared resource
+  HANDLE* pSharedHandle;
+
+  // Optional KMD-written per-allocation private driver data.
+  // In real WDDM builds this comes from D3DDDI_ALLOCATIONINFO::pPrivateDriverData.
+  const void* pKmdAllocPrivateData;
+  uint32_t KmdAllocPrivateDataSize;
 } AEROGPU_D3D9DDIARG_CREATERESOURCE;
 
 typedef struct AEROGPU_D3D9DDIARG_LOCK {

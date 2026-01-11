@@ -6,6 +6,7 @@
 
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
+#include "aerogpu_wddm_alloc.h"
 
 namespace aerogpu {
 namespace {
@@ -198,7 +199,7 @@ void emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER | AEROGPU_RESOURCE_USAGE_INDEX_BUFFER;
     cmd->size_bytes = res->size_bytes;
-    cmd->backing_alloc_id = 0;
+    cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
     return;
@@ -214,7 +215,7 @@ void emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->mip_levels = res->mip_levels;
     cmd->array_layers = 1;
     cmd->row_pitch_bytes = res->row_pitch;
-    cmd->backing_alloc_id = 0;
+    cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
     return;
@@ -228,6 +229,26 @@ void emit_destroy_resource_locked(Device* dev, aerogpu_handle_t handle) {
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
   cmd->resource_handle = handle;
   cmd->reserved0 = 0;
+}
+
+void emit_export_shared_surface_locked(Device* dev, const Resource* res) {
+  if (!dev || !res || !res->handle || !res->share_token) {
+    return;
+  }
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
+  cmd->resource_handle = res->handle;
+  cmd->reserved0 = 0;
+  cmd->share_token = res->share_token;
+}
+
+void emit_import_shared_surface_locked(Device* dev, const Resource* res) {
+  if (!dev || !res || !res->handle || !res->share_token) {
+    return;
+  }
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_import_shared_surface>(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
+  cmd->out_resource_handle = res->handle;
+  cmd->reserved0 = 0;
+  cmd->share_token = res->share_token;
 }
 
 void emit_create_shader_locked(Device* dev, Shader* sh) {
@@ -377,6 +398,33 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   return S_OK;
 }
 
+void consume_kmd_alloc_priv(Resource* res,
+                            const void* priv_data,
+                            uint32_t priv_data_size,
+                            bool is_shared_resource) {
+  if (!res || !priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
+    return;
+  }
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memcpy(&priv, priv_data, sizeof(priv));
+
+  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+    return;
+  }
+
+  res->backing_alloc_id = priv.alloc_id;
+  res->share_token = priv.share_token;
+  if (priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) {
+    res->is_shared = true;
+  }
+
+  // Some KMDs may only populate alloc_id; derive a stable token in that case.
+  if (is_shared_resource && res->share_token == 0 && res->backing_alloc_id != 0) {
+    res->share_token = static_cast<uint64_t>(res->backing_alloc_id);
+  }
+}
+
 HRESULT AEROGPU_D3D9_CALL device_create_resource(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDIARG_CREATERESOURCE* pCreateResource) {
@@ -400,6 +448,16 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->depth = std::max(1u, pCreateResource->depth);
   res->mip_levels = std::max(1u, pCreateResource->mip_levels);
   res->usage = pCreateResource->usage;
+
+  const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
+  const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
+  res->is_shared = wants_shared;
+  res->is_shared_alias = open_existing_shared;
+
+  consume_kmd_alloc_priv(res.get(),
+                         pCreateResource->pKmdAllocPrivateData,
+                         pCreateResource->KmdAllocPrivateDataSize,
+                         res->is_shared);
 
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
   if (pCreateResource->size) {
@@ -439,7 +497,23 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return E_OUTOFMEMORY;
   }
 
-  emit_create_resource_locked(dev, res.get());
+  if (open_existing_shared) {
+    if (!res->share_token) {
+      logf("aerogpu-d3d9: Open shared resource missing share_token (alloc_id=%u)\n", res->backing_alloc_id);
+      return E_FAIL;
+    }
+    // Shared surface open (D3D9Ex): the host already has the original resource,
+    // so we only create a new alias handle and IMPORT it.
+    emit_import_shared_surface_locked(dev, res.get());
+  } else {
+    emit_create_resource_locked(dev, res.get());
+
+    if (wants_shared && res->share_token) {
+      // Shared surface create (D3D9Ex): export exactly once so other guest
+      // processes can IMPORT using the same stable share_token.
+      emit_export_shared_surface_locked(dev, res.get());
+    }
+  }
 
   pCreateResource->hResource = res.release();
   return S_OK;
@@ -456,6 +530,9 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
+  // shared-surface aliases. The host command processor is expected to normalize
+  // alias lifetimes, but proper cross-process refcounting may be needed later.
   emit_destroy_resource_locked(dev, res->handle);
   delete res;
   return S_OK;
