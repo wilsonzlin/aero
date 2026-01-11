@@ -549,8 +549,29 @@ bool TestEventQueryGetDataSemantics() {
     return false;
   }
 
+  const uint64_t fence_value1 = query->fence_value.load(std::memory_order_acquire);
+  if (!Check(fence_value1 >= fence_value0, "event query fence_value monotonic (END=1)")) {
+    return false;
+  }
+
+  // Some DDI paths use 0x2 to mean END. Cover that encoding as well.
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0x1u,
+                                     /*color_rgba8=*/0xFFFFFFFFu,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear (before IssueQuery(END=2))")) {
+    return false;
+  }
+
+  issue.flags = 0x2u;
+  hr = cleanup.device_funcs.pfnIssueQuery(create_dev.hDevice, &issue);
+  if (!Check(hr == S_OK, "IssueQuery(END=2)")) {
+    return false;
+  }
+
   const uint64_t fence_value = query->fence_value.load(std::memory_order_acquire);
-  if (!Check(fence_value >= fence_value0, "event query fence_value monotonic")) {
+  if (!Check(fence_value >= fence_value1, "event query fence_value monotonic (END=2)")) {
     return false;
   }
 

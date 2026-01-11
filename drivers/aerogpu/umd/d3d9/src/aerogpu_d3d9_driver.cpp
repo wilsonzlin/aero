@@ -122,7 +122,10 @@ constexpr HRESULT kSPresentOccluded = 0x08760868L;
 // D3D9 API/UMD query constants (numeric values from d3d9types.h).
 constexpr uint32_t kD3DQueryTypeEvent = 8u;
 constexpr uint32_t kD3DIssueEnd = 0x1u;
-constexpr uint32_t kD3DIssueBegin = 0x2u;
+// Some D3D9 runtimes/WDK header vintages appear to use 0x2 to signal END at the
+// DDI boundary (even though the public IDirect3DQuery9::Issue API uses 0x2 for
+// BEGIN). Be permissive and accept both encodings for EVENT queries.
+constexpr uint32_t kD3DIssueEndAlt = 0x2u;
 constexpr uint32_t kD3DGetDataFlush = 0x1u;
 
 uint32_t f32_bits(float v) {
@@ -6844,9 +6847,9 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
 
   const uint32_t flags = pIssueQuery->flags;
   // Some runtimes appear to pass 0 for END. Be permissive and treat both 0 and
-  // D3DISSUE_END (1) as an END marker. D3DISSUE_BEGIN (2) is ignored for EVENT
-  // queries.
-  const bool end = (flags == 0) || ((flags & kD3DIssueEnd) != 0);
+  // the common END bit encodings as an END marker (0x1 in the public D3D9 API,
+  // 0x2 in some DDI header vintages).
+  const bool end = (flags == 0) || ((flags & kD3DIssueEnd) != 0) || ((flags & kD3DIssueEndAlt) != 0);
   if (!end) {
     return trace.ret(S_OK);
   }
