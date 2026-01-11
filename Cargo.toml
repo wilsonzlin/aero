@@ -50,7 +50,6 @@ members = [
     "crates/aero-debug",
     "crates/aero-interrupts",
     "crates/aero-d3d11",
-    "crates/aero-tier0",
     "crates/devices",
     "crates/emulator",
     "crates/firmware",
