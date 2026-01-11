@@ -895,20 +895,53 @@ impl AerogpuD3d11Executor {
         });
 
         // Apply dynamic state once at pass start.
+        let rt_dims = state
+            .render_targets
+            .first()
+            .and_then(|rt| resources.textures.get(rt))
+            .map(|tex| (tex.desc.width, tex.desc.height));
+
         if let Some(vp) = state.viewport {
-            pass.set_viewport(vp.x, vp.y, vp.width, vp.height, vp.min_depth, vp.max_depth);
+            if vp.x.is_finite()
+                && vp.y.is_finite()
+                && vp.width.is_finite()
+                && vp.height.is_finite()
+                && vp.min_depth.is_finite()
+                && vp.max_depth.is_finite()
+            {
+                if let Some((rt_w, rt_h)) = rt_dims {
+                    let max_w = rt_w as f32;
+                    let max_h = rt_h as f32;
+
+                    let left = vp.x.max(0.0);
+                    let top = vp.y.max(0.0);
+                    let right = (vp.x + vp.width).max(0.0).min(max_w);
+                    let bottom = (vp.y + vp.height).max(0.0).min(max_h);
+                    let width = (right - left).max(0.0);
+                    let height = (bottom - top).max(0.0);
+
+                    if width > 0.0 && height > 0.0 {
+                        let mut min_depth = vp.min_depth.clamp(0.0, 1.0);
+                        let mut max_depth = vp.max_depth.clamp(0.0, 1.0);
+                        if min_depth > max_depth {
+                            std::mem::swap(&mut min_depth, &mut max_depth);
+                        }
+                        pass.set_viewport(left, top, width, height, min_depth, max_depth);
+                    }
+                } else {
+                    pass.set_viewport(vp.x, vp.y, vp.width, vp.height, vp.min_depth, vp.max_depth);
+                }
+            }
         }
         if state.scissor_enable {
             if let Some(sc) = state.scissor {
-                if let Some(rt) = state.render_targets.first() {
-                    if let Some(tex) = resources.textures.get(rt) {
-                        let x = sc.x.min(tex.desc.width);
-                        let y = sc.y.min(tex.desc.height);
-                        let width = sc.width.min(tex.desc.width.saturating_sub(x));
-                        let height = sc.height.min(tex.desc.height.saturating_sub(y));
-                        if width > 0 && height > 0 {
-                            pass.set_scissor_rect(x, y, width, height);
-                        }
+                if let Some((rt_w, rt_h)) = rt_dims {
+                    let x = sc.x.min(rt_w);
+                    let y = sc.y.min(rt_h);
+                    let width = sc.width.min(rt_w.saturating_sub(x));
+                    let height = sc.height.min(rt_h.saturating_sub(y));
+                    if width > 0 && height > 0 {
+                        pass.set_scissor_rect(x, y, width, height);
                     }
                 }
             }
