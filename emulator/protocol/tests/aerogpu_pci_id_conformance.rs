@@ -132,7 +132,8 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     // The legacy bring-up device model still exists behind the legacy emulator device model feature
     // (`emulator/aerogpu-legacy`) and uses the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
     //
-    // Guest Tools config/contract should accept both, since the emulator/device model may expose either.
+    // The Windows device contract + Guest Tools config intentionally target the canonical binding
+    // only; legacy bring-up installs are out of scope for Guest Tools.
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
@@ -151,11 +152,11 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         assert_file_not_contains(&path, &new_hwid);
     }
 
-    // Guest Tools config is generated from the Windows device contract and must accept both the
-    // canonical and legacy AeroGPU PCI HWIDs (the emulator/device model may expose either).
+    // Guest Tools config is generated from the Windows device contract and intentionally targets
+    // the canonical AeroGPU HWID only.
     let devices_cmd_path = repo_root.join("guest-tools/config/devices.cmd");
     assert_file_contains_noncomment_line(&devices_cmd_path, &new_hwid);
-    assert_file_contains_noncomment_line(&devices_cmd_path, &legacy_hwid);
+    assert_file_not_contains(&devices_cmd_path, &legacy_hwid);
 
     let contract_path = repo_root.join("docs/windows-device-contract.json");
     let contract_text = read_file(&contract_path);
@@ -244,8 +245,8 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         contract_path.display()
     );
     assert!(
-        patterns.contains(&legacy_hwid),
-        "{}: aero-gpu hardware_id_patterns missing `{legacy_hwid}`. Found: {patterns:?}",
+        !patterns.contains(&legacy_hwid),
+        "{}: aero-gpu hardware_id_patterns must not include legacy bring-up HWID `{legacy_hwid}`. Found: {patterns:?}",
         contract_path.display()
     );
 }
