@@ -475,6 +475,93 @@ static void test_reset(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_reset_queue_align4(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    vring_device_sim_t sim;
+    virtio_sg_entry_t sg[3];
+    uint16_t head;
+    void *cookie_in;
+    void *cookie_out;
+    uint32_t used_len;
+    uint32_t i;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    /* Modern split rings use 4-byte used-ring alignment; descriptor table still needs 16. */
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(((uintptr_t)ring.vaddr & 0xFu) == 0);
+    assert((ring.paddr & 0xFu) == 0);
+
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_TRUE,
+                                8) == VIRTIO_OK);
+
+    memset(&sim, 0, sizeof(sim));
+    sim.vq = &vq;
+    sim.notify_batch = 1;
+
+    for (i = 0; i < 3; i++) {
+        sg[i].addr = 0x900000u + (uint64_t)i * 0x1000u;
+        sg[i].len = 128u + i;
+        sg[i].device_writes = (i == 2) ? VIRTIO_TRUE : VIRTIO_FALSE;
+    }
+
+    cookie_in = (void *)(uintptr_t)0x1234u;
+    assert(virtqueue_split_add_sg(&vq, sg, 3, cookie_in, VIRTIO_TRUE, &head) == VIRTIO_OK);
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+
+    sim_process(&sim);
+    assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+    assert(cookie_out == cookie_in);
+    assert(used_len == sg[0].len + sg[1].len + sg[2].len);
+
+    /* Add one more in-flight request, then reset the queue (no device access). */
+    cookie_in = (void *)(uintptr_t)0x5678u;
+    assert(virtqueue_split_add_sg(&vq, sg, 3, cookie_in, VIRTIO_TRUE, &head) == VIRTIO_OK);
+    assert(vq.num_free == 7);
+
+    virtqueue_split_reset(&vq);
+    sim.last_avail_idx = 0;
+
+    assert(vq.avail_idx == 0);
+    assert(vq.last_used_idx == 0);
+    assert(vq.last_kick_avail == 0);
+    assert(vq.num_free == vq.queue_size);
+    assert(vq.free_head == 0);
+    assert(vq.avail->idx == 0);
+    assert(vq.used->idx == 0);
+
+    for (i = 0; i < vq.queue_size; i++) {
+        assert(vq.cookies[i] == NULL);
+    }
+
+    /* Ensure the queue remains usable after reset. */
+    cookie_in = (void *)(uintptr_t)0x9abcu;
+    assert(virtqueue_split_add_sg(&vq, sg, 3, cookie_in, VIRTIO_TRUE, &head) == VIRTIO_OK);
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+    sim_process(&sim);
+    assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+    assert(cookie_out == cookie_in);
+
+    assert(vq.num_free == vq.queue_size);
+    validate_queue(&vq);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_fuzz(void)
 {
     test_os_ctx_t os_ctx;
@@ -847,6 +934,7 @@ int main(void)
     test_small_queue_align();
     test_indirect_descriptors();
     test_reset();
+    test_reset_queue_align4();
     test_fuzz();
     test_pci_legacy_integration();
     test_pci_modern_integration();
