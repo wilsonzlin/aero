@@ -27,21 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        working-directory: net-proxy
-        run: npm ci --include-workspace-root --no-audit --no-fund
+      - name: Setup Node workspace
+        uses: ./.github/actions/setup-node-workspace
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NPM_CONFIG_AUDIT: "false"
+          NPM_CONFIG_FUND: "false"
 
       - name: Run tests
-        working-directory: net-proxy
-        run: npm test
+        run: npm -w net-proxy test
 
       - name: Upload artifacts (failure only)
         if: failure()
