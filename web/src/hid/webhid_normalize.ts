@@ -1,7 +1,17 @@
 // WebHID spec: https://wicg.github.io/webhid/
 //
+// WebHID exposes collections/reports/items as platform objects (with FrozenArray properties)
+// that are not stable to serialize or send across postMessage/WASM.
+//
 // TypeScript note: WebHID types are provided via `@types/w3c-web-hid` (referenced by
 // `web/src/vite-env.d.ts`).
+//
+// Normalize `HIDDevice.collections` into plain JSON-compatible objects:
+// - deep-copied (no retained references to platform objects)
+// - arrays are real JS arrays (via Array.from)
+// - shape matches the Rust `HidCollectionInfo`/`HidReportInfo`/`HidReportItem`
+//   structs in `crates/emulator/src/io/usb/hid/webhid.rs` and is locked down by
+//   fixtures under `tests/fixtures/hid/`.
 
 export type HidCollectionType =
   | "physical"
@@ -126,6 +136,11 @@ function isContiguousUsageRange(usages: readonly number[]): boolean {
 
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   const rawUsages = item.usages;
+  if (item.isRange && rawUsages.length < 2) {
+    throw new Error(
+      `Invalid HID report item: isRange=true requires usages.length>=2 (got ${rawUsages.length})`,
+    );
+  }
 
   // WebHID uses `isRange` + expanded `usages` lists. For normalized metadata we emit
   // compact ranges (`[min, max]`) to keep the JSON contract bounded and deterministic.
@@ -195,9 +210,14 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
 }
 
 function normalizeReportInfo(report: HidReportInfo): NormalizedHidReportInfo {
+  const reportId = report.reportId;
+  if (!Number.isInteger(reportId) || reportId < 0 || reportId > 0xff) {
+    throw new Error(`Invalid HID reportId: expected integer in [0,255], got ${String(reportId)}`);
+  }
+
   return {
-    reportId: report.reportId,
-    items: report.items.map(normalizeReportItem),
+    reportId,
+    items: Array.from(report.items, normalizeReportItem),
   };
 }
 
@@ -216,5 +236,5 @@ function normalizeCollection(collection: HidCollectionInfo): NormalizedHidCollec
 export function normalizeCollections(
   collections: readonly HidCollectionInfo[],
 ): NormalizedHidCollectionInfo[] {
-  return collections.map(normalizeCollection);
+  return Array.from(collections, normalizeCollection);
 }
