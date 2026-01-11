@@ -541,6 +541,12 @@ static int RunChild(int argc,
   if (!aerogpu_test::GetArgValue(argc, argv, "--shared-handle", &handle_str)) {
     return aerogpu_test::Fail(kTestName, "missing required --shared-handle in --child mode");
   }
+  std::string ready_event_str;
+  std::string opened_event_str;
+  std::string done_event_str;
+  aerogpu_test::GetArgValue(argc, argv, "--ready-event", &ready_event_str);
+  aerogpu_test::GetArgValue(argc, argv, "--opened-event", &opened_event_str);
+  aerogpu_test::GetArgValue(argc, argv, "--done-event", &done_event_str);
 
   SharedResourceKind kind = kSharedTexture;
   std::string kind_str;
@@ -565,6 +571,41 @@ static int RunChild(int argc,
   const HANDLE shared_handle = (HANDLE)handle_value;
   const bool shared_handle_is_nt = IsLikelyNtHandle(shared_handle);
   aerogpu_test::PrintfStdout("INFO: %s: shared handle=%p", kTestName, shared_handle);
+
+  HANDLE ready_event = NULL;
+  HANDLE opened_event = NULL;
+  HANDLE done_event = NULL;
+  if (!ready_event_str.empty() || !opened_event_str.empty() || !done_event_str.empty()) {
+    if (ready_event_str.empty() || opened_event_str.empty() || done_event_str.empty()) {
+      return aerogpu_test::Fail(kTestName,
+                                "internal: incomplete event args (ready/opened/done all required when any are used)");
+    }
+    std::wstring ready_name(ready_event_str.begin(), ready_event_str.end());
+    std::wstring opened_name(opened_event_str.begin(), opened_event_str.end());
+    std::wstring done_name(done_event_str.begin(), done_event_str.end());
+
+    ready_event = OpenEventW(SYNCHRONIZE, FALSE, ready_name.c_str());
+    if (!ready_event) {
+      return aerogpu_test::Fail(kTestName,
+                                "OpenEvent(ready) failed: %s",
+                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    }
+    opened_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, opened_name.c_str());
+    if (!opened_event) {
+      CloseHandle(ready_event);
+      return aerogpu_test::Fail(kTestName,
+                                "OpenEvent(opened) failed: %s",
+                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    }
+    done_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, done_name.c_str());
+    if (!done_event) {
+      CloseHandle(opened_event);
+      CloseHandle(ready_event);
+      return aerogpu_test::Fail(kTestName,
+                                "OpenEvent(done) failed: %s",
+                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    }
+  }
 
   const int kWidth = 64;
   const int kHeight = 64;
@@ -621,16 +662,61 @@ static int RunChild(int argc,
     }
   }
 
+  if (opened_event) {
+    SetEvent(opened_event);
+  }
+  if (ready_event) {
+    DWORD wait = WaitForSingleObject(ready_event, 10000);
+    if (wait != WAIT_OBJECT_0) {
+      if (done_event) {
+        SetEvent(done_event);
+      }
+      if (done_event) {
+        CloseHandle(done_event);
+      }
+      if (opened_event) {
+        CloseHandle(opened_event);
+      }
+      CloseHandle(ready_event);
+      return aerogpu_test::Fail(kTestName, "WaitForSingleObject(ready) failed: 0x%08lX",
+                                (unsigned long)wait);
+    }
+  }
+
   // Exercise a minimal GPU operation that references the opened resource without disturbing the
   // pixels we validate (corner + center). This helps validate the "open + submit" path without
   // needing full rendering.
   RECT touch = {kWidth - 4, kHeight - 4, kWidth, kHeight};
   hr = dev->ColorFill(surface.get(), &touch, D3DCOLOR_XRGB(0, 128, 255));
   if (FAILED(hr)) {
+    if (done_event) {
+      SetEvent(done_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ColorFill(opened surface)", hr);
   }
   hr = dev->Flush();
   if (FAILED(hr)) {
+    if (done_event) {
+      SetEvent(done_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush", hr);
   }
 
@@ -650,6 +736,16 @@ static int RunChild(int argc,
   }
   if (shared_handle_is_nt) {
     CloseHandle(shared_handle);
+  }
+  if (done_event) {
+    SetEvent(done_event);
+    CloseHandle(done_event);
+  }
+  if (opened_event) {
+    CloseHandle(opened_event);
+  }
+  if (ready_event) {
+    CloseHandle(ready_event);
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
@@ -733,40 +829,20 @@ static int RunParent(int argc,
     shared_handle_is_nt = IsLikelyNtHandle(shared_handle);
   }
 
-  if (validate_sharing) {
-    rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
-    if (rc != 0) {
-      if (shared_handle_is_nt) {
-        CloseHandle(shared_handle);
-      }
-      return rc;
+  // Always do a minimal GPU op so the resource is initialized before the child opens it.
+  hr = dev->ColorFill(surface.get(), NULL, D3DCOLOR_XRGB(0, 0, 255));
+  if (FAILED(hr)) {
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
     }
-
-    rc = ValidateSurfacePixels(
-        kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
-    if (rc != 0) {
-      if (shared_handle_is_nt) {
-        CloseHandle(shared_handle);
-      }
-      return rc;
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ColorFill(parent init)", hr);
+  }
+  hr = dev->Flush();
+  if (FAILED(hr)) {
+    if (shared_handle_is_nt) {
+      CloseHandle(shared_handle);
     }
-  } else {
-    // Minimal "use the resource" op in the parent. This intentionally does not validate pixels; the
-    // primary purpose of this test is cross-process open + submit, not correctness of data sharing.
-    hr = dev->ColorFill(surface.get(), NULL, D3DCOLOR_XRGB(255, 0, 0));
-    if (FAILED(hr)) {
-      if (shared_handle_is_nt) {
-        CloseHandle(shared_handle);
-      }
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ColorFill(parent)", hr);
-    }
-    hr = dev->Flush();
-    if (FAILED(hr)) {
-      if (shared_handle_is_nt) {
-        CloseHandle(shared_handle);
-      }
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush(parent)", hr);
-    }
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush(parent init)", hr);
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: parent shared handle=%s (%s)",
@@ -786,6 +862,56 @@ static int RunParent(int argc,
       CloseHandle(shared_handle);
     }
     return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
+  }
+
+  HANDLE ready_event = NULL;
+  HANDLE opened_event = NULL;
+  HANDLE done_event = NULL;
+  wchar_t ready_name[128];
+  wchar_t opened_name[128];
+  wchar_t done_name[128];
+  if (validate_sharing) {
+    const DWORD pid = GetCurrentProcessId();
+    const DWORD tick = GetTickCount();
+    _snwprintf(ready_name,
+               ARRAYSIZE(ready_name),
+               L"AeroGPU_%lu_%lu_d3d9ex_shared_ready",
+               (unsigned long)pid,
+               (unsigned long)tick);
+    ready_name[ARRAYSIZE(ready_name) - 1] = 0;
+    _snwprintf(opened_name,
+               ARRAYSIZE(opened_name),
+               L"AeroGPU_%lu_%lu_d3d9ex_shared_opened",
+               (unsigned long)pid,
+               (unsigned long)tick);
+    opened_name[ARRAYSIZE(opened_name) - 1] = 0;
+    _snwprintf(done_name,
+               ARRAYSIZE(done_name),
+               L"AeroGPU_%lu_%lu_d3d9ex_shared_done",
+               (unsigned long)pid,
+               (unsigned long)tick);
+    done_name[ARRAYSIZE(done_name) - 1] = 0;
+
+    ready_event = CreateEventW(NULL, TRUE, FALSE, ready_name);
+    opened_event = CreateEventW(NULL, TRUE, FALSE, opened_name);
+    done_event = CreateEventW(NULL, TRUE, FALSE, done_name);
+    if (!ready_event || !opened_event || !done_event) {
+      if (ready_event) {
+        CloseHandle(ready_event);
+      }
+      if (opened_event) {
+        CloseHandle(opened_event);
+      }
+      if (done_event) {
+        CloseHandle(done_event);
+      }
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
+      return aerogpu_test::Fail(kTestName,
+                                "CreateEvent failed: %s",
+                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    }
   }
 
   const std::string placeholder_hex = FormatHandleHex((HANDLE)0);
@@ -818,6 +944,14 @@ static int RunParent(int argc,
     cmdline += L" --require-did=";
     cmdline += std::wstring(v.begin(), v.end());
   }
+  if (validate_sharing) {
+    cmdline += L" --ready-event=";
+    cmdline += ready_name;
+    cmdline += L" --opened-event=";
+    cmdline += opened_name;
+    cmdline += L" --done-event=";
+    cmdline += done_name;
+  }
 
   std::vector<wchar_t> cmdline_buf(cmdline.begin(), cmdline.end());
   cmdline_buf.push_back(0);
@@ -841,6 +975,15 @@ static int RunParent(int argc,
                            &pi);
   if (!ok) {
     DWORD err = GetLastError();
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -884,6 +1027,15 @@ static int RunParent(int argc,
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -896,12 +1048,119 @@ static int RunParent(int argc,
   // hangs, we can still terminate it before aerogpu_timeout_runner.exe kills the parent, which
   // would otherwise leave an orphaned child process behind.
   const DWORD kChildTimeoutMs = 20000;
-  DWORD wait = WaitForSingleObject(pi.hProcess, kChildTimeoutMs);
+  const DWORD start_ticks = GetTickCount();
+  auto remaining_ms = [&]() -> DWORD {
+    const DWORD now = GetTickCount();
+    const DWORD elapsed = now - start_ticks;
+    if (elapsed >= kChildTimeoutMs) {
+      return 0;
+    }
+    return kChildTimeoutMs - elapsed;
+  };
+
+  if (validate_sharing) {
+    HANDLE wait_open[2] = {opened_event, pi.hProcess};
+    DWORD wait_budget = remaining_ms();
+    DWORD opened_timeout = 0;
+    if (wait_budget) {
+      opened_timeout = (wait_budget < 10000) ? wait_budget : 10000;
+    }
+    DWORD opened_wait = WaitForMultipleObjects(2, wait_open, FALSE, opened_timeout);
+    if (opened_wait != WAIT_OBJECT_0) {
+      DWORD exit_code = 1;
+      GetExitCodeProcess(pi.hProcess, &exit_code);
+      TerminateProcess(pi.hProcess, 124);
+      WaitForSingleObject(pi.hProcess, 5000);
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      CloseHandle(ready_event);
+      CloseHandle(opened_event);
+      CloseHandle(done_event);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
+      if (opened_wait == WAIT_OBJECT_0 + 1) {
+        return aerogpu_test::Fail(kTestName, "child exited early (exit_code=%lu)", (unsigned long)exit_code);
+      }
+      return aerogpu_test::Fail(kTestName, "timeout waiting for child to open shared resource");
+    }
+
+    rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
+    if (rc != 0) {
+      TerminateProcess(pi.hProcess, 1);
+      WaitForSingleObject(pi.hProcess, 5000);
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      CloseHandle(ready_event);
+      CloseHandle(opened_event);
+      CloseHandle(done_event);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
+      return rc;
+    }
+
+    rc = ValidateSurfacePixels(
+        kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
+    if (rc != 0) {
+      TerminateProcess(pi.hProcess, 1);
+      WaitForSingleObject(pi.hProcess, 5000);
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      CloseHandle(ready_event);
+      CloseHandle(opened_event);
+      CloseHandle(done_event);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
+      return rc;
+    }
+
+    SetEvent(ready_event);
+
+    HANDLE wait_done[2] = {done_event, pi.hProcess};
+    wait_budget = remaining_ms();
+    DWORD done_timeout = 0;
+    if (wait_budget) {
+      done_timeout = (wait_budget < 10000) ? wait_budget : 10000;
+    }
+    DWORD done_wait = WaitForMultipleObjects(2, wait_done, FALSE, done_timeout);
+    if (done_wait != WAIT_OBJECT_0) {
+      DWORD exit_code = 1;
+      GetExitCodeProcess(pi.hProcess, &exit_code);
+      TerminateProcess(pi.hProcess, 124);
+      WaitForSingleObject(pi.hProcess, 5000);
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      CloseHandle(ready_event);
+      CloseHandle(opened_event);
+      CloseHandle(done_event);
+      if (shared_handle_is_nt) {
+        CloseHandle(shared_handle);
+      }
+      if (done_wait == WAIT_OBJECT_0 + 1) {
+        return aerogpu_test::Fail(kTestName, "child exited early (exit_code=%lu)", (unsigned long)exit_code);
+      }
+      return aerogpu_test::Fail(kTestName, "timeout waiting for child completion");
+    }
+  }
+
+  DWORD wait_budget = remaining_ms();
+  DWORD wait = WaitForSingleObject(pi.hProcess, wait_budget);
   if (wait == WAIT_TIMEOUT) {
     TerminateProcess(pi.hProcess, 124);
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -913,6 +1172,15 @@ static int RunParent(int argc,
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -926,6 +1194,15 @@ static int RunParent(int argc,
     DWORD err = GetLastError();
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (ready_event) {
+      CloseHandle(ready_event);
+    }
+    if (opened_event) {
+      CloseHandle(opened_event);
+    }
+    if (done_event) {
+      CloseHandle(done_event);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -936,6 +1213,15 @@ static int RunParent(int argc,
 
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
+  if (ready_event) {
+    CloseHandle(ready_event);
+  }
+  if (opened_event) {
+    CloseHandle(opened_event);
+  }
+  if (done_event) {
+    CloseHandle(done_event);
+  }
   if (shared_handle_is_nt) {
     CloseHandle(shared_handle);
   }
