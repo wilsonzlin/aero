@@ -128,6 +128,7 @@ In practice, DWM and other Ex clients frequently touch a wider surface area than
 - `pfnSetGPUThreadPriority` / `pfnGetGPUThreadPriority` always succeed and clamp the stored priority to `[-7, 7]`.
 - `pfnCheckResourceResidency` / `pfnQueryResourceResidency` never fail for valid devices and conservatively report resources as resident.
 - `pfnComposeRects` is treated as a safe no-op (`S_OK`) for initial DWM bring-up.
+- Adapter `pfnGetCaps` / `pfnQueryAdapterInfo` are permissive: unknown query types return `S_OK` with zeroed output buffers (avoids unexpected capability probes breaking DWM bring-up).
 
 #### `ResetEx`, `GetDisplayModeEx`
 
