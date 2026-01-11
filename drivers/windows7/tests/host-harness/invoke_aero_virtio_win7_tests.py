@@ -523,10 +523,29 @@ def main() -> int:
     qmp_socket: Optional[Path] = None
     if use_qmp:
         qmp_socket = serial_log.with_name(serial_log.stem + ".qmp.sock")
-        try:
-            qmp_socket.unlink()
-        except FileNotFoundError:
-            pass
+        # UNIX domain sockets have a small path length limit (typically ~108 bytes). Avoid failing
+        # QEMU startup if the user provided an unusually long serial log path.
+        qmp_path_str = str(qmp_socket)
+        if len(qmp_path_str) >= 100 or "," in qmp_path_str:
+            print(
+                f"WARNING: disabling QMP shutdown due to unsupported socket path: {qmp_path_str}",
+                file=sys.stderr,
+            )
+            use_qmp = False
+            qmp_socket = None
+        elif len(qmp_path_str.encode("utf-8")) >= 100:
+            # Extremely defensive: QEMU/libc uses a byte length limit.
+            print(
+                f"WARNING: disabling QMP shutdown due to long socket path: {qmp_path_str}",
+                file=sys.stderr,
+            )
+            use_qmp = False
+            qmp_socket = None
+        else:
+            try:
+                qmp_socket.unlink()
+            except FileNotFoundError:
+                pass
 
     http_log_path: Optional[Path] = None
     if args.http_log:
