@@ -10,26 +10,31 @@ ENV AERO_GATEWAY_GIT_SHA=$GIT_SHA
 ENV AERO_GATEWAY_BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 
 WORKDIR /repo
-COPY . .
+
+# This Dockerfile expects the *repository root* as its build context so it can
+# use the monorepo `package-lock.json` and shared devDependencies (TypeScript, etc.).
+#
+# Example:
+#   docker build -f backend/aero-gateway/Dockerfile -t aero-gateway .
+#
+# Copy package manifests first to maximize layer caching.
+COPY package.json package-lock.json ./
+COPY backend/aero-gateway/package.json backend/aero-gateway/package.json
+
+RUN npm ci -w backend/aero-gateway --include-workspace-root --no-audit --no-fund
+
+COPY backend/aero-gateway backend/aero-gateway
+
+RUN npm -w backend/aero-gateway run build
 
 RUN set -eux; \
-    if [ -f package.json ] && grep -q '"name": "aero-gateway"' package.json; then \
-      SERVICE_DIR="."; \
-    elif [ -f backend/aero-gateway/package.json ] && grep -q '"name": "aero-gateway"' backend/aero-gateway/package.json; then \
-      SERVICE_DIR="backend/aero-gateway"; \
-    else \
-      echo "aero-gateway package.json not found in build context"; \
-      exit 1; \
-    fi; \
-    cd "$SERVICE_DIR"; \
-    npm ci; \
-    npm run build; \
-    mkdir -p /out; \
+    mkdir -p /out/backend/aero-gateway; \
     cp package.json package-lock.json /out/; \
-    cp -r dist /out/dist
+    cp backend/aero-gateway/package.json /out/backend/aero-gateway/package.json; \
+    cp -r backend/aero-gateway/dist /out/backend/aero-gateway/dist
 
 FROM node:${NODE_VERSION}-alpine AS runtime
-WORKDIR /app
+WORKDIR /repo
 
 ENV NODE_ENV=production
 
@@ -41,12 +46,16 @@ ENV AERO_GATEWAY_GIT_SHA=$GIT_SHA
 ENV AERO_GATEWAY_BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 
 COPY --from=build /out/package.json /out/package-lock.json ./
-RUN npm ci --omit=dev
+COPY --from=build /out/backend/aero-gateway/package.json backend/aero-gateway/package.json
 
-COPY --from=build /out/dist ./dist
+RUN npm ci -w backend/aero-gateway --include-workspace-root --omit=dev --no-audit --no-fund
+
+COPY --from=build /out/backend/aero-gateway/dist backend/aero-gateway/dist
 
 EXPOSE 8080
 
 USER node
+
+WORKDIR /repo/backend/aero-gateway
 
 CMD ["node", "dist/index.js"]

@@ -5,12 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/deploy/docker-compose.yml"
 
 PROJECT_NAME="aero-smoke-$RANDOM$RANDOM"
+SMOKE_FRONTEND_ROOT="$ROOT_DIR/deploy/static"
 SMOKE_WASM_NAME="__aero_smoke_${PROJECT_NAME}.wasm"
-SMOKE_WASM_PATH="$ROOT_DIR/deploy/static/assets/$SMOKE_WASM_NAME"
+SMOKE_WASM_PATH="$SMOKE_FRONTEND_ROOT/assets/$SMOKE_WASM_NAME"
 SMOKE_WASM_DIR="$(dirname "$SMOKE_WASM_PATH")"
 
 compose() {
-  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
+  AERO_DOMAIN=localhost \
+    AERO_HSTS_MAX_AGE=0 \
+    AERO_CSP_CONNECT_SRC_EXTRA= \
+    AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
+    docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
 }
 
 on_exit() {

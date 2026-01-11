@@ -301,10 +301,11 @@ npm -w web run build
 
 2) Replace the volume mount in `deploy/docker-compose.yml`:
 
-```yaml
-    volumes:
-      # - ./static:/srv:ro
-      - ../web/dist:/srv:ro
+Set `AERO_FRONTEND_ROOT` (recommended; no compose edits required):
+
+```bash
+# in deploy/.env (or export it in your shell)
+AERO_FRONTEND_ROOT=../web/dist
 ```
 
 3) Restart:

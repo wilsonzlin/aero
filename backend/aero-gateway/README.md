@@ -50,7 +50,7 @@ npm -w backend/aero-gateway test
 Build:
 
 ```bash
-docker build -t aero-gateway backend/aero-gateway \
+docker build -f backend/aero-gateway/Dockerfile -t aero-gateway . \
   --build-arg NODE_VERSION="$(cat .nvmrc)" \
   --build-arg VERSION="dev" \
   --build-arg GIT_SHA="$(git rev-parse HEAD)" \

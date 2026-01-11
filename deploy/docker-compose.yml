@@ -42,11 +42,13 @@ services:
       #
       # Recommended production setup:
       #   - Build the web app to ../web/dist
-      #   - Replace "./static" with "../web/dist"
+      #   - Set AERO_FRONTEND_ROOT=../web/dist (or edit this file)
       #
-      # Example:
-      #   - ../web/dist:/srv:ro
-      - ./static:/srv:ro
+      # Default: serve the deploy smoke-test frontend under deploy/static/.
+      - type: bind
+        source: ${AERO_FRONTEND_ROOT:-./static}
+        target: /srv
+        read_only: true
     depends_on:
       - aero-gateway
 
@@ -61,7 +63,8 @@ services:
     # or override it with your own compose file.
     image: ${AERO_GATEWAY_IMAGE:-aero-gateway:dev}
     build:
-      context: ../backend/aero-gateway
+      context: ..
+      dockerfile: backend/aero-gateway/Dockerfile
     restart: unless-stopped
     expose:
       - "8080"
