@@ -65,6 +65,11 @@ user-space NAT/TCP stack (slirp-style). That stack can acknowledge upstream TCP
 data before the guest has received it, so allowing tunnel message loss (partial
 reliability) can break TCP correctness.
 
+Ordering note: the current proxy-side TCP termination stack assumes in-order
+delivery of guest TCP segments and does not implement full TCP reassembly. A
+reliable-but-unordered DataChannel can deliver frames out of order under loss
+(including FIN before earlier payload), which breaks correctness.
+
 #### Backend dialing configuration
 
 These settings configure the relay's **server → server** WebSocket dial to the
