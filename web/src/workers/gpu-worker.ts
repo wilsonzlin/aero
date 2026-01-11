@@ -99,6 +99,11 @@ import {
   decodeCmdStreamHeader,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import {
+  AEROGPU_ALLOC_ENTRY_SIZE as AEROGPU_ALLOC_ENTRY_BYTES,
+  AEROGPU_ALLOC_TABLE_HEADER_SIZE as AEROGPU_ALLOC_TABLE_HEADER_BYTES,
+  AEROGPU_ALLOC_TABLE_MAGIC,
+} from "../../../emulator/protocol/aerogpu/aerogpu_ring.ts";
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
 
@@ -1194,10 +1199,6 @@ const checkedU64ToNumber = (value: bigint, label: string): number => {
   return Number(value);
 };
 
-const AEROGPU_ALLOC_TABLE_MAGIC = 0x434f_4c41; // "ALOC" little-endian
-const AEROGPU_ALLOC_TABLE_HEADER_BYTES = 24;
-const AEROGPU_ALLOC_ENTRY_BYTES = 32;
-
 type AeroGpuAllocTableEntry = { gpa: number; sizeBytes: number };
 type AeroGpuAllocTable = Map<number, AeroGpuAllocTableEntry>;
 
@@ -1466,7 +1467,11 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllo
         if (!alloc) throw new Error(`aerogpu: unknown alloc_id ${backing.allocId} for texture ${handle}`);
 
         const rowBytes = tex.width * 4;
-        const textureBytes = tex.rowPitchBytes * tex.height;
+        const textureBytesBig = BigInt(tex.rowPitchBytes) * BigInt(tex.height);
+        if (textureBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new Error(`aerogpu: texture backing too large for JS (${textureBytesBig} bytes)`);
+        }
+        const textureBytes = Number(textureBytesBig);
         if (dirtyOffsetBytes + dirtySizeBytes > textureBytes) {
           throw new Error(
             `aerogpu: RESOURCE_DIRTY_RANGE out of bounds for texture ${handle} (offset=${dirtyOffsetBytes}, size=${dirtySizeBytes}, texBytes=${textureBytes})`,
