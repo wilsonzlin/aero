@@ -57,7 +57,9 @@ def _sha256(path: Path) -> str:
 
 
 def _utc_now_iso() -> str:
-    return _dt.datetime.now(tz=_dt.UTC).isoformat().replace("+00:00", "Z")
+    # `datetime.UTC` was introduced in Python 3.11; use `timezone.utc` for compatibility
+    # with the Python versions commonly available on CI runners.
+    return _dt.datetime.now(tz=_dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _ensure_empty_dir(path: Path, *, clean: bool) -> None:
