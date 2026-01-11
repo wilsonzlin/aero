@@ -1116,6 +1116,14 @@ static std::optional<bool> WaveOutDevnodeTreeContainsVirtioSnd(Logger& log, HWAV
   return false;
 }
 
+enum class DevnodeVerifyMode {
+  kNone,
+  // Attempt verification if supported. If the devnode query is unavailable, proceed but log.
+  kBestEffort,
+  // Verification must succeed and the devnode must match virtio-snd.
+  kRequired,
+};
+
 static bool IsVirtioSndHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
     if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
@@ -1175,7 +1183,8 @@ static std::vector<VirtioSndDevice> DetectVirtioSndDevices(Logger& log) {
 
 static std::optional<UINT> FindWaveOutDeviceIdByNameHints(Logger& log,
                                                           const std::vector<std::wstring>& hints,
-                                                          std::wstring* pname_out) {
+                                                          std::wstring* pname_out,
+                                                          bool log_available_devices) {
   const UINT count = waveOutGetNumDevs();
   if (count == 0) return std::nullopt;
 
@@ -1197,19 +1206,51 @@ static std::optional<UINT> FindWaveOutDeviceIdByNameHints(Logger& log,
     }
   }
 
-  // No match - log the available devices to help diagnose name-matching issues.
+  if (log_available_devices) {
+    // No match - log the available devices to help diagnose name-matching issues.
+    for (UINT i = 0; i < count; i++) {
+      WAVEOUTCAPSW caps{};
+      const MMRESULT mm = waveOutGetDevCapsW(i, &caps, sizeof(caps));
+      if (mm != MMSYSERR_NOERROR) continue;
+      log.Logf("virtio-snd: available waveOut device id=%u name=%s", i,
+               WideToUtf8(caps.szPname).c_str());
+    }
+  }
+
+  return std::nullopt;
+}
+
+static std::optional<UINT> FindWaveOutDeviceIdByVirtioDevnode(Logger& log, const WAVEFORMATEX& fmt,
+                                                              std::wstring* pname_out) {
+  const UINT count = waveOutGetNumDevs();
+  if (count == 0) return std::nullopt;
+
   for (UINT i = 0; i < count; i++) {
-    WAVEOUTCAPSW caps{};
-    const MMRESULT mm = waveOutGetDevCapsW(i, &caps, sizeof(caps));
-    if (mm != MMSYSERR_NOERROR) continue;
-    log.Logf("virtio-snd: available waveOut device id=%u name=%s", i, WideToUtf8(caps.szPname).c_str());
+    HWAVEOUT hwo = nullptr;
+    const MMRESULT open_rc = waveOutOpen(&hwo, i, &fmt, 0, 0, CALLBACK_NULL);
+    if (open_rc != MMSYSERR_NOERROR || !hwo) continue;
+
+    const auto is_virtio = WaveOutDevnodeTreeContainsVirtioSnd(log, hwo);
+    (void)waveOutClose(hwo);
+
+    if (is_virtio.has_value() && *is_virtio) {
+      if (pname_out) {
+        WAVEOUTCAPSW caps{};
+        if (waveOutGetDevCapsW(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+          *pname_out = caps.szPname;
+        } else {
+          pname_out->clear();
+        }
+      }
+      return i;
+    }
   }
 
   return std::nullopt;
 }
 
 static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wstring& device_name_hint,
-                                     MMRESULT* open_rc_out, bool verify_virtio_snd_devnode) {
+                                     MMRESULT* open_rc_out, DevnodeVerifyMode verify_mode) {
   if (open_rc_out) *open_rc_out = MMSYSERR_NOERROR;
 
   HANDLE done_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -1249,15 +1290,18 @@ static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wst
     }
   }
 
-  if (verify_virtio_snd_devnode) {
+  if (verify_mode != DevnodeVerifyMode::kNone) {
     const auto is_virtio = WaveOutDevnodeTreeContainsVirtioSnd(log, hwo);
     if (!is_virtio.has_value()) {
-      log.LogLine("virtio-snd: unable to verify waveOut devnode maps to virtio-snd");
-      waveOutClose(hwo);
-      CloseHandle(done_event);
-      return false;
+      if (verify_mode == DevnodeVerifyMode::kRequired) {
+        log.LogLine("virtio-snd: unable to verify waveOut devnode maps to virtio-snd");
+        waveOutClose(hwo);
+        CloseHandle(done_event);
+        return false;
+      }
+      log.LogLine("virtio-snd: devnode verification unavailable; continuing without verification");
     }
-    if (!*is_virtio) {
+    if (is_virtio.has_value() && !*is_virtio) {
       log.LogLine("virtio-snd: waveOut device devnode does not appear to be virtio-snd");
       waveOutClose(hwo);
       CloseHandle(done_event);
@@ -1354,26 +1398,61 @@ static TestVerdict VirtioSndTest(Logger& log, const Options& opt) {
   }
   hints.push_back(L"virtio");
 
-  std::wstring chosen_name;
-  std::optional<UINT> chosen_id = FindWaveOutDeviceIdByNameHints(log, hints, &chosen_name);
-  UINT open_id = chosen_id.has_value() ? *chosen_id : WAVE_MAPPER;
-  if (!chosen_id.has_value()) {
-    chosen_name = L"WAVE_MAPPER";
-    log.LogLine("virtio-snd: no matching waveOut device name found; using WAVE_MAPPER");
-  }
+  WAVEFORMATEX fmt{};
+  fmt.wFormatTag = WAVE_FORMAT_PCM;
+  fmt.nChannels = 2;
+  fmt.nSamplesPerSec = 48000;
+  fmt.wBitsPerSample = 16;
+  fmt.nBlockAlign = static_cast<WORD>((fmt.nChannels * fmt.wBitsPerSample) / 8);
+  fmt.nAvgBytesPerSec = fmt.nBlockAlign * fmt.nSamplesPerSec;
 
   // At boot, the audio stack can be slow to come up (especially when running as SYSTEM).
   // Retry transient waveOutOpen failures for a short, bounded time to avoid false negatives.
   const DWORD open_timeout_ms = 15000;
   const DWORD deadline = GetTickCount() + open_timeout_ms;
-  const bool verify_devnode = !chosen_id.has_value();
+  bool logged_name_match_devices = false;
+  UINT last_open_id = UINT_MAX;
+  DevnodeVerifyMode last_verify_mode = DevnodeVerifyMode::kNone;
+  std::wstring last_name;
+
   while (static_cast<int32_t>(GetTickCount() - deadline) < 0) {
-    MMRESULT open_rc = MMSYSERR_NOERROR;
-    if (WaveOutPlaybackSmokeTest(log, open_id, chosen_name, &open_rc, verify_devnode)) {
-      return TestVerdict::kPass;
+    std::wstring chosen_name;
+    std::optional<UINT> chosen_id;
+    DevnodeVerifyMode verify_mode = DevnodeVerifyMode::kRequired;
+
+    // Prefer a deterministic mapping to the virtio-snd PCI device via DRV_QUERYDEVNODE.
+    chosen_id = FindWaveOutDeviceIdByVirtioDevnode(log, fmt, &chosen_name);
+    if (chosen_id.has_value()) {
+      verify_mode = DevnodeVerifyMode::kNone;
+      if (chosen_name.empty()) chosen_name = L"virtio-snd";
+    } else {
+      // Fall back to matching by name, which is less strict but works even when devnode query is unsupported.
+      chosen_id = FindWaveOutDeviceIdByNameHints(log, hints, &chosen_name, !logged_name_match_devices);
+      if (!logged_name_match_devices && waveOutGetNumDevs() != 0) {
+        logged_name_match_devices = true;
+      }
+
+      if (chosen_id.has_value()) {
+        verify_mode = DevnodeVerifyMode::kBestEffort;
+      } else {
+        chosen_name = L"WAVE_MAPPER";
+        verify_mode = DevnodeVerifyMode::kRequired;
+      }
     }
 
-    if (open_rc != MMSYSERR_NODRIVER && open_rc != MMSYSERR_BADDEVICEID) break;
+    const UINT open_id = chosen_id.value_or(WAVE_MAPPER);
+    if (open_id != last_open_id || verify_mode != last_verify_mode || chosen_name != last_name) {
+      log.Logf("virtio-snd: selected waveOut device_id=%u name=%s verify_mode=%d", open_id,
+               WideToUtf8(chosen_name).c_str(), static_cast<int>(verify_mode));
+      last_open_id = open_id;
+      last_verify_mode = verify_mode;
+      last_name = chosen_name;
+    }
+
+    MMRESULT open_rc = MMSYSERR_NOERROR;
+    if (WaveOutPlaybackSmokeTest(log, open_id, chosen_name, &open_rc, verify_mode)) {
+      return TestVerdict::kPass;
+    }
     Sleep(1000);
   }
 
