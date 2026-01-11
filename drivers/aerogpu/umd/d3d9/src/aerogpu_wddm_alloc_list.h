@@ -13,13 +13,13 @@
 //
 // AeroGPU intentionally uses a "no patch list" submission strategy:
 // - The UMD leaves the WDDM patch-location list empty.
-// - All GPU commands reference allocations by a stable 32-bit `alloc_id`.
-// - The UMD writes `alloc_id` into the WDDM allocation-list "slot id" field
-//   (D3DDDI_ALLOCATIONLIST::AllocationListSlotId on WDDM 1.1).
-// - dxgkrnl may reorder/deduplicate the allocation list before passing it to the
-//   KMD, but it preserves the slot id. The KMD can therefore build a sideband
-//   lookup table keyed by `AllocationListSlotId`, and the emulator can resolve
-//   alloc_id -> guest physical pages without any relocations.
+// - GPU commands reference guest-backed memory via a stable 32-bit `alloc_id`
+//   persisted in WDDM allocation private-driver-data (`aerogpu_wddm_alloc_priv`).
+// - The KMD builds a per-submit `aerogpu_alloc_table` from the kernel allocation
+//   list keyed by that `alloc_id`, allowing the emulator to resolve
+//   alloc_id -> (GPA, size) without relocations.
+// - Since the patch-location list is unused, the allocation-list slot-id field
+//   is assigned densely (0..N-1) and is not required to match `alloc_id`.
 //
 // This helper builds the per-submit D3DDDI_ALLOCATIONLIST array, deduplicating
 // allocations referenced by a submission, and tracking read/write intent via the
@@ -68,9 +68,17 @@ struct AllocRef {
 
 class AllocationListTracker {
  public:
+  AllocationListTracker() = default;
   AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
                         UINT list_capacity,
                         UINT max_allocation_list_slot_id = 0xFFFFu);
+
+  // Rebinds the tracker to a new runtime-provided allocation list for a fresh
+  // submission. Clears any tracked state and reserves internal maps to the new
+  // capacity.
+  void rebind(D3DDDI_ALLOCATIONLIST* list_base,
+              UINT list_capacity,
+              UINT max_allocation_list_slot_id = 0xFFFFu);
 
   void reset();
 
@@ -100,7 +108,7 @@ class AllocationListTracker {
   D3DDDI_ALLOCATIONLIST* list_base_ = nullptr;
   UINT list_capacity_ = 0;
   UINT list_len_ = 0;
-  UINT max_allocation_list_slot_id_ = 0;
+  UINT max_allocation_list_slot_id_ = 0xFFFFu;
 
   std::unordered_map<uint64_t, Entry> handle_to_entry_;
   std::unordered_map<UINT, uint64_t> alloc_id_to_handle_;

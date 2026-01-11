@@ -141,6 +141,12 @@ struct Adapter {
   UINT umd_version = 0;
 
   std::atomic<uint32_t> next_handle{1};
+  // UMD-owned allocation IDs used in WDDM allocation private driver data
+  // (aerogpu_wddm_alloc_priv.alloc_id).
+  std::atomic<uint32_t> next_alloc_id{1};
+  // KMD-advertised max allocation-list slot-id (DXGK_DRIVERCAPS::MaxAllocationListSlotId).
+  // AeroGPU's Win7 KMD currently reports 0xFFFF.
+  uint32_t max_allocation_list_slot_id = 0xFFFFu;
 
   // 64-bit token generator for shared-surface interop (EXPORT/IMPORT_SHARED_SURFACE).
   ShareTokenAllocator share_token_allocator;
@@ -239,6 +245,7 @@ struct Device {
   WddmContext wddm_context{};
 
   CmdWriter cmd;
+  AllocationListTracker alloc_list_tracker;
 
   // D3D9Ex throttling + present statistics.
   //

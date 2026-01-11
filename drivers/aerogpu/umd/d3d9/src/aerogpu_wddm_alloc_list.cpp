@@ -107,6 +107,19 @@ AllocationListTracker::AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
   alloc_id_to_handle_.reserve(list_capacity_);
 }
 
+void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
+                                   UINT list_capacity,
+                                   UINT max_allocation_list_slot_id) {
+  list_base_ = list_base;
+  list_capacity_ = list_capacity;
+  max_allocation_list_slot_id_ = max_allocation_list_slot_id;
+
+  reset();
+
+  handle_to_entry_.reserve(list_capacity_);
+  alloc_id_to_handle_.reserve(list_capacity_);
+}
+
 void AllocationListTracker::reset() {
   list_len_ = 0;
   handle_to_entry_.clear();
@@ -139,10 +152,6 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
   if (alloc_id == 0) {
     // Reserve alloc_id=0 as "null" for command-stream fields.
     out.status = AllocRefStatus::kInvalidArgument;
-    return out;
-  }
-  if (alloc_id > max_allocation_list_slot_id_) {
-    out.status = AllocRefStatus::kAllocIdOutOfRange;
     return out;
   }
 
@@ -202,6 +211,13 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
     return out;
   }
 
+  if (list_len_ > max_allocation_list_slot_id_) {
+    // Slot IDs are assigned densely (0..N-1) so exceeding the KMD-advertised
+    // max slot id just means the submission must be split.
+    out.status = AllocRefStatus::kNeedFlush;
+    return out;
+  }
+
   const UINT idx = list_len_++;
   D3DDDI_ALLOCATIONLIST& entry = list_base_[idx];
   std::memset(&entry, 0, sizeof(entry));
@@ -209,7 +225,7 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
 
   // Default: read-only.
   set_write_operation(entry, write);
-  set_allocation_list_slot_id(entry, alloc_id);
+  set_allocation_list_slot_id(entry, idx);
 
   handle_to_entry_.emplace(key, Entry{idx, alloc_id});
   alloc_id_to_handle_.emplace(alloc_id, key);

@@ -420,6 +420,12 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
     uint32_t KmdAllocPrivateDataSize;
     uint32_t PrivateDriverDataSize;
   };
+
+  // Optional WDDM allocation handle for this resource's backing store
+  // (per-process). This is required to build the WDDM allocation list for
+  // submissions when using `backing_alloc_id` references (no patch list).
+  // 0 if not provided / not applicable in compat builds.
+  uint32_t wddm_hAllocation;
 } AEROGPU_D3D9DDIARG_CREATERESOURCE;
 
 typedef struct AEROGPU_D3D9DDIARG_GETRENDERTARGETDATA {

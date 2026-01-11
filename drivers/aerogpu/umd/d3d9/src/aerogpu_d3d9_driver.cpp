@@ -316,6 +316,33 @@ enum class FenceWaitResult {
   Failed,
 };
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+template <typename Fn>
+struct fn_first_param;
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(__stdcall*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename T, typename = void>
+struct has_render_output_buffers : std::false_type {};
+
+template <typename T>
+struct has_render_output_buffers<T,
+                                 std::void_t<decltype(std::declval<T&>().pNewCommandBuffer),
+                                             decltype(std::declval<T&>().NewCommandBufferSize),
+                                             decltype(std::declval<T&>().pNewAllocationList),
+                                             decltype(std::declval<T&>().NewAllocationListSize),
+                                             decltype(std::declval<T&>().pNewPatchLocationList),
+                                             decltype(std::declval<T&>().NewPatchLocationListSize)>> : std::true_type {};
+#endif
+
 #if defined(_WIN32)
 using AerogpuNtStatus = LONG;
 
@@ -634,11 +661,13 @@ Query* as_query(AEROGPU_D3D9DDI_HQUERY hQuery) {
   return reinterpret_cast<Query*>(hQuery.pDrvPrivate);
 }
 
+// Forward-declared so helpers can opportunistically split submissions when the
+// runtime-provided DMA buffer / allocation list is full.
+uint64_t submit(Device* dev, bool is_present = false);
+
 // -----------------------------------------------------------------------------
 // Command emission helpers (protocol: drivers/aerogpu/protocol/aerogpu_cmd.h)
 // -----------------------------------------------------------------------------
-
-uint64_t submit(Device* dev, bool is_present = false);
 
 bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
   if (!dev) {
@@ -676,6 +705,143 @@ HeaderT* append_with_payload_locked(Device* dev, uint32_t opcode, const void* pa
     return nullptr;
   }
   return dev->cmd.append_with_payload<HeaderT>(opcode, payload, payload_size);
+}
+
+HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write) {
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+
+  // Only track allocations when running on the WDDM path. Repo/compat builds
+  // don't have WDDM allocation handles or runtime-provided allocation lists.
+  if (dev->wddm_context.hContext == 0) {
+    return S_OK;
+  }
+
+  if (res->backing_alloc_id == 0) {
+    // backing_alloc_id==0 denotes a host-allocated resource (no guest allocation
+    // table entry required).
+    return S_OK;
+  }
+
+  if (res->wddm_hAllocation == 0) {
+    logf("aerogpu-d3d9: missing WDDM hAllocation for resource handle=%u alloc_id=%u\n",
+         res->handle,
+         res->backing_alloc_id);
+    return E_FAIL;
+  }
+
+  AllocRef ref{};
+  if (write) {
+    ref = dev->alloc_list_tracker.track_render_target_write(res->wddm_hAllocation, res->backing_alloc_id);
+  } else if (res->kind == ResourceKind::Buffer) {
+    ref = dev->alloc_list_tracker.track_buffer_read(res->wddm_hAllocation, res->backing_alloc_id);
+  } else {
+    ref = dev->alloc_list_tracker.track_texture_read(res->wddm_hAllocation, res->backing_alloc_id);
+  }
+
+  if (ref.status == AllocRefStatus::kNeedFlush) {
+    // Split the submission and retry.
+    (void)submit(dev);
+
+    if (write) {
+      ref = dev->alloc_list_tracker.track_render_target_write(res->wddm_hAllocation, res->backing_alloc_id);
+    } else if (res->kind == ResourceKind::Buffer) {
+      ref = dev->alloc_list_tracker.track_buffer_read(res->wddm_hAllocation, res->backing_alloc_id);
+    } else {
+      ref = dev->alloc_list_tracker.track_texture_read(res->wddm_hAllocation, res->backing_alloc_id);
+    }
+  }
+
+  if (ref.status != AllocRefStatus::kOk) {
+    logf("aerogpu-d3d9: failed to track allocation (handle=%u alloc_id=%u status=%u)\n",
+         res->handle,
+         res->backing_alloc_id,
+         static_cast<uint32_t>(ref.status));
+    return E_FAIL;
+  }
+
+  return S_OK;
+}
+
+HRESULT track_draw_state_locked(Device* dev) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  if (dev->wddm_context.hContext == 0) {
+    return S_OK;
+  }
+
+  for (uint32_t i = 0; i < 4; i++) {
+    if (dev->render_targets[i]) {
+      HRESULT hr = track_resource_allocation_locked(dev, dev->render_targets[i], /*write=*/true);
+      if (hr < 0) {
+        return hr;
+      }
+    }
+  }
+
+  if (dev->depth_stencil) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->depth_stencil, /*write=*/true);
+    if (hr < 0) {
+      return hr;
+    }
+  }
+
+  for (uint32_t i = 0; i < 16; i++) {
+    if (dev->textures[i]) {
+      HRESULT hr = track_resource_allocation_locked(dev, dev->textures[i], /*write=*/false);
+      if (hr < 0) {
+        return hr;
+      }
+    }
+  }
+
+  for (uint32_t i = 0; i < 16; i++) {
+    if (dev->streams[i].vb) {
+      HRESULT hr = track_resource_allocation_locked(dev, dev->streams[i].vb, /*write=*/false);
+      if (hr < 0) {
+        return hr;
+      }
+    }
+  }
+
+  if (dev->index_buffer) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->index_buffer, /*write=*/false);
+    if (hr < 0) {
+      return hr;
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT track_render_targets_locked(Device* dev) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (dev->wddm_context.hContext == 0) {
+    return S_OK;
+  }
+
+  for (uint32_t i = 0; i < 4; i++) {
+    if (dev->render_targets[i]) {
+      HRESULT hr = track_resource_allocation_locked(dev, dev->render_targets[i], /*write=*/true);
+      if (hr < 0) {
+        return hr;
+      }
+    }
+  }
+
+  if (dev->depth_stencil) {
+    HRESULT hr = track_resource_allocation_locked(dev, dev->depth_stencil, /*write=*/true);
+    if (hr < 0) {
+      return hr;
+    }
+  }
+
+  return S_OK;
 }
 
 bool emit_set_render_targets_locked(Device* dev) {
@@ -727,6 +893,16 @@ bool emit_create_resource_locked(Device* dev, Resource* res) {
   }
 
   if (res->kind == ResourceKind::Buffer) {
+    // Ensure the command buffer has space before we track allocations; tracking
+    // may force a submission split, and command-buffer splits must not occur
+    // after tracking or the allocation list would be out of sync.
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_create_buffer), 4))) {
+      return false;
+    }
+    if (track_resource_allocation_locked(dev, res, /*write=*/false) < 0) {
+      return false;
+    }
+
     auto* cmd = append_fixed_locked<aerogpu_cmd_create_buffer>(dev, AEROGPU_CMD_CREATE_BUFFER);
     if (!cmd) {
       return false;
@@ -741,6 +917,13 @@ bool emit_create_resource_locked(Device* dev, Resource* res) {
   }
 
   if (res->kind == ResourceKind::Surface || res->kind == ResourceKind::Texture2D) {
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_create_texture2d), 4))) {
+      return false;
+    }
+    if (track_resource_allocation_locked(dev, res, /*write=*/false) < 0) {
+      return false;
+    }
+
     auto* cmd = append_fixed_locked<aerogpu_cmd_create_texture2d>(dev, AEROGPU_CMD_CREATE_TEXTURE2D);
     if (!cmd) {
       return false;
@@ -864,7 +1047,7 @@ bool emit_destroy_input_layout_locked(Device* dev, aerogpu_handle_t handle) {
 }
 
 // -----------------------------------------------------------------------------
-// KMD submission stub
+// Submission
 // -----------------------------------------------------------------------------
 
 uint64_t allocate_share_token(Adapter* adapter) {
@@ -990,6 +1173,11 @@ template <typename T>
 struct has_member_AllocationListSize<T, std::void_t<decltype(std::declval<T>().AllocationListSize)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_NumAllocations : std::false_type {};
+template <typename T>
+struct has_member_NumAllocations<T, std::void_t<decltype(std::declval<T>().NumAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pPatchLocationList : std::false_type {};
 template <typename T>
 struct has_member_pPatchLocationList<T, std::void_t<decltype(std::declval<T>().pPatchLocationList)>> : std::true_type {};
@@ -998,6 +1186,41 @@ template <typename T, typename = void>
 struct has_member_PatchLocationListSize : std::false_type {};
 template <typename T>
 struct has_member_PatchLocationListSize<T, std::void_t<decltype(std::declval<T>().PatchLocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NumPatchLocations : std::false_type {};
+template <typename T>
+struct has_member_NumPatchLocations<T, std::void_t<decltype(std::declval<T>().NumPatchLocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pNewCommandBuffer : std::false_type {};
+template <typename T>
+struct has_member_pNewCommandBuffer<T, std::void_t<decltype(std::declval<T>().pNewCommandBuffer)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewCommandBufferSize : std::false_type {};
+template <typename T>
+struct has_member_NewCommandBufferSize<T, std::void_t<decltype(std::declval<T>().NewCommandBufferSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pNewAllocationList : std::false_type {};
+template <typename T>
+struct has_member_pNewAllocationList<T, std::void_t<decltype(std::declval<T>().pNewAllocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewAllocationListSize : std::false_type {};
+template <typename T>
+struct has_member_NewAllocationListSize<T, std::void_t<decltype(std::declval<T>().NewAllocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pNewPatchLocationList : std::false_type {};
+template <typename T>
+struct has_member_pNewPatchLocationList<T, std::void_t<decltype(std::declval<T>().pNewPatchLocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewPatchLocationListSize : std::false_type {};
+template <typename T>
+struct has_member_NewPatchLocationListSize<T, std::void_t<decltype(std::declval<T>().NewPatchLocationListSize)>> : std::true_type {};
 
 template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
@@ -1019,27 +1242,51 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
   if constexpr (has_member_AllocationListSize<ArgsT>::value) {
     args.AllocationListSize = dev->wddm_context.allocation_list_entries_used;
   }
+  if constexpr (has_member_NumAllocations<ArgsT>::value) {
+    args.NumAllocations = dev->wddm_context.allocation_list_entries_used;
+  }
   if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
     args.pPatchLocationList = dev->wddm_context.pPatchLocationList;
   }
   if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
     args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
   }
+  if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
+    args.NumPatchLocations = dev->wddm_context.patch_location_entries_used;
+  }
 }
 
 template <typename ArgsT>
 void update_context_from_submit_args(Device* dev, const ArgsT& args) {
+  if constexpr (has_member_pNewCommandBuffer<ArgsT>::value && has_member_NewCommandBufferSize<ArgsT>::value) {
+    if (args.pNewCommandBuffer && args.NewCommandBufferSize) {
+      dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(args.pNewCommandBuffer);
+      dev->wddm_context.CommandBufferSize = args.NewCommandBufferSize;
+    }
+  }
   if constexpr (has_member_pCommandBuffer<ArgsT>::value) {
     dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(args.pCommandBuffer);
   }
   if constexpr (has_member_CommandBufferSize<ArgsT>::value) {
     dev->wddm_context.CommandBufferSize = args.CommandBufferSize;
   }
+  if constexpr (has_member_pNewAllocationList<ArgsT>::value && has_member_NewAllocationListSize<ArgsT>::value) {
+    if (args.pNewAllocationList && args.NewAllocationListSize) {
+      dev->wddm_context.pAllocationList = args.pNewAllocationList;
+      dev->wddm_context.AllocationListSize = args.NewAllocationListSize;
+    }
+  }
   if constexpr (has_member_pAllocationList<ArgsT>::value) {
     dev->wddm_context.pAllocationList = args.pAllocationList;
   }
   if constexpr (has_member_AllocationListSize<ArgsT>::value) {
     dev->wddm_context.AllocationListSize = args.AllocationListSize;
+  }
+  if constexpr (has_member_pNewPatchLocationList<ArgsT>::value && has_member_NewPatchLocationListSize<ArgsT>::value) {
+    if (args.pNewPatchLocationList && args.NewPatchLocationListSize) {
+      dev->wddm_context.pPatchLocationList = args.pNewPatchLocationList;
+      dev->wddm_context.PatchLocationListSize = args.NewPatchLocationListSize;
+    }
   }
   if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
     dev->wddm_context.pPatchLocationList = args.pPatchLocationList;
@@ -1096,43 +1343,50 @@ uint64_t submit(Device* dev, bool is_present) {
   }
 
   dev->cmd.finalize();
+  const uint64_t cmd_bytes = static_cast<uint64_t>(dev->cmd.size());
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  // When built against the real Win7 WDK, we can submit the command buffer to
-  // dxgkrnl via the runtime callbacks captured at CreateDevice time.
-  //
-  // This forwards the DMA buffer to the AeroGPU KMD, which will forward it to
-  // the emulator host. For now we still keep the UMD fence model conservative
-  // (fallback to synchronous fences if KMD fence query is unavailable).
   bool submitted_to_kmd = false;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  // WDDM submission path: hand the runtime-provided DMA/alloc list buffers back
+  // to dxgkrnl via the device callbacks captured at CreateDevice time.
+  //
+  // The patch-location list is intentionally kept empty; guest-backed memory is
+  // referenced via stable `alloc_id` values and resolved by the KMD's per-submit
+  // allocation table.
   if (dev->wddm_context.hContext != 0 && dev->wddm_context.pCommandBuffer && dev->wddm_context.CommandBufferSize) {
-    const size_t cmd_bytes = dev->cmd.size();
     if (cmd_bytes <= dev->wddm_context.CommandBufferSize) {
       // CmdStreamWriter can be span-backed and write directly into the runtime
       // DMA buffer. Avoid memcpy on identical ranges (overlap is UB for memcpy).
       if (dev->cmd.data() != dev->wddm_context.pCommandBuffer) {
-        std::memcpy(dev->wddm_context.pCommandBuffer, dev->cmd.data(), cmd_bytes);
+        std::memcpy(dev->wddm_context.pCommandBuffer, dev->cmd.data(), static_cast<size_t>(cmd_bytes));
       }
       dev->wddm_context.command_buffer_bytes_used = static_cast<uint32_t>(cmd_bytes);
-      dev->wddm_context.allocation_list_entries_used = 0;
+      dev->wddm_context.allocation_list_entries_used = dev->alloc_list_tracker.list_len();
       dev->wddm_context.patch_location_entries_used = 0;
 
       HRESULT submit_hr = E_NOTIMPL;
       if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
         if (is_present && dev->wddm_callbacks.pfnPresentCb) {
-          submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, static_cast<uint32_t>(cmd_bytes));
+          submit_hr = invoke_submit_callback(dev,
+                                             dev->wddm_callbacks.pfnPresentCb,
+                                             static_cast<uint32_t>(cmd_bytes));
         }
       }
       if (!SUCCEEDED(submit_hr)) {
         if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnRenderCb) {
-            submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, static_cast<uint32_t>(cmd_bytes));
+            submit_hr = invoke_submit_callback(dev,
+                                               dev->wddm_callbacks.pfnRenderCb,
+                                               static_cast<uint32_t>(cmd_bytes));
           }
         }
       }
 
       if (SUCCEEDED(submit_hr)) {
         submitted_to_kmd = true;
+        dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
+                                       dev->wddm_context.AllocationListSize,
+                                       adapter->max_allocation_list_slot_id);
       } else {
         logf("aerogpu-d3d9: submit callbacks failed hr=0x%08x\n", static_cast<unsigned>(submit_hr));
       }
@@ -1145,26 +1399,32 @@ uint64_t submit(Device* dev, bool is_present) {
 #endif
 
   uint64_t fence = 0;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  if (submitted_to_kmd) {
+#if defined(_WIN32)
+  if (submitted_to_kmd && adapter->kmd_query_available.load(std::memory_order_acquire)) {
     uint64_t submitted = 0;
     uint64_t completed = 0;
-    if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+    const bool ok = adapter->kmd_query.QueryFence(&submitted, &completed);
+    if (ok) {
+      bool updated = false;
       {
         std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-        adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, submitted);
-        adapter->completed_fence = std::max(adapter->completed_fence, completed);
+        const uint64_t prev_submitted = adapter->last_submitted_fence;
+        const uint64_t prev_completed = adapter->completed_fence;
+        adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, submitted);
+        adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, completed);
         fence = adapter->last_submitted_fence;
+        updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
       }
-      adapter->fence_cv.notify_all();
+      if (updated) {
+        adapter->fence_cv.notify_all();
+      }
+    } else {
+      adapter->kmd_query_available.store(false, std::memory_order_release);
     }
   }
 #endif
 
   if (fence == 0) {
-    // Fallback fence path: keep the UMD self-contained even when KMD fence query
-    // is unavailable. This is the portable-path behavior and is also used when
-    // running in early bring-up configurations.
     {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       fence = adapter->next_fence++;
@@ -1176,12 +1436,11 @@ uint64_t submit(Device* dev, bool is_present) {
 
   // Light logging so we can confirm command flow during integration.
   logf("aerogpu-d3d9: submit cmd_bytes=%llu fence=%llu\n",
-       static_cast<unsigned long long>(dev->cmd.size()),
+       static_cast<unsigned long long>(cmd_bytes),
        static_cast<unsigned long long>(fence));
 
   dev->cmd.reset();
-  // Keep the per-context WDDM bookkeeping in a clean "ready for next submit"
-  // state even when the current build still uses the in-process submission stub.
+  dev->alloc_list_tracker.reset();
   dev->wddm_context.reset_submission_buffers();
   return fence;
 }
@@ -1562,6 +1821,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->mip_levels = mip_levels;
   res->usage = pCreateResource->usage;
   res->pool = pCreateResource->pool;
+  res->wddm_hAllocation = static_cast<WddmAllocationHandle>(pCreateResource->wddm_hAllocation);
   res->is_shared = wants_shared;
   res->is_shared_alias = open_existing_shared;
 
@@ -3043,6 +3303,18 @@ HRESULT AEROGPU_D3D9_CALL device_clear(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  // Ensure the command buffer has space before we track allocations; tracking
+  // may force a submission split, and command-buffer splits must not occur
+  // after tracking or the allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_clear), 4))) {
+    return E_OUTOFMEMORY;
+  }
+
+  HRESULT hr = track_render_targets_locked(dev);
+  if (hr < 0) {
+    return hr;
+  }
+
   const float a = static_cast<float>((color_rgba8 >> 24) & 0xFF) / 255.0f;
   const float r = static_cast<float>((color_rgba8 >> 16) & 0xFF) / 255.0f;
   const float g = static_cast<float>((color_rgba8 >> 8) & 0xFF) / 255.0f;
@@ -3079,6 +3351,18 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return E_OUTOFMEMORY;
   }
 
+  // Ensure the command buffer has space before we track allocations; tracking
+  // may force a submission split, and command-buffer splits must not occur
+  // after tracking or the allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
+    return E_OUTOFMEMORY;
+  }
+
+  HRESULT hr = track_draw_state_locked(dev);
+  if (hr < 0) {
+    return hr;
+  }
+
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
     return E_OUTOFMEMORY;
@@ -3108,6 +3392,18 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
     return E_OUTOFMEMORY;
+  }
+
+  // Ensure the command buffer has space before we track allocations; tracking
+  // may force a submission split, and command-buffer splits must not occur
+  // after tracking or the allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
+    return E_OUTOFMEMORY;
+  }
+
+  HRESULT hr = track_draw_state_locked(dev);
+  if (hr < 0) {
+    return hr;
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
