@@ -3,16 +3,19 @@ use core::mem::offset_of;
 use aero_protocol::aerogpu::aerogpu_ring as protocol_ring;
 use memory::MemoryBus;
 
-pub use protocol_ring::{AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
+pub use protocol_ring::{
+    AEROGPU_ALLOC_TABLE_MAGIC,
+    AEROGPU_FENCE_PAGE_MAGIC,
+    AEROGPU_RING_MAGIC,
+    AEROGPU_SUBMIT_FLAG_NO_IRQ,
+    AEROGPU_SUBMIT_FLAG_PRESENT,
+};
 
 pub const AEROGPU_RING_HEADER_SIZE_BYTES: u64 = protocol_ring::AerogpuRingHeader::SIZE_BYTES as u64;
 pub const AEROGPU_FENCE_PAGE_SIZE_BYTES: u64 = protocol_ring::AerogpuFencePage::SIZE_BYTES as u64;
 
 pub const AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES: u32 =
     protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32;
-
-pub const AEROGPU_SUBMIT_FLAG_PRESENT: u32 = protocol_ring::AEROGPU_SUBMIT_FLAG_PRESENT;
-pub const AEROGPU_SUBMIT_FLAG_NO_IRQ: u32 = protocol_ring::AEROGPU_SUBMIT_FLAG_NO_IRQ;
 
 pub const RING_HEAD_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, head) as u64;
 pub const RING_TAIL_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, tail) as u64;
