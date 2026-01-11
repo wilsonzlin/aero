@@ -7,12 +7,12 @@ This directory defines the **stable, versioned ABI contract** between:
 
 The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK builds** (WDK10+ supported) and for host-side parsing.
 
-> Note: This directory contains both the **new versioned ABI** (the long-term contract) and a
-> **legacy bring-up ABI** (`aerogpu_protocol.h`). The legacy header is kept for compatibility with
-> the current Win7 KMD and the emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`,
-> behind the `emulator` crate feature `aerogpu-legacy`);
-> it is **not** the source of truth for the versioned ABI described below (implemented by
-> `crates/emulator/src/devices/pci/aerogpu.rs`).
+> Note: This directory contains both the **versioned ABI** (the canonical long-term contract) and a
+> **legacy bring-up ABI** (`aerogpu_protocol.h`). The legacy header is kept for reference and for the
+> emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`, feature
+> `emulator/aerogpu-legacy`). The in-tree Win7 KMD does **not** include `aerogpu_protocol.h` directly
+> (it uses a minimal internal shim in `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`), but it can
+> still speak the legacy transport for compatibility.
 >
 > Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`). The Win7 KMD supports both the versioned and legacy submission transports and auto-detects which ABI is active based on the device MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
@@ -27,9 +27,9 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
 - `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
-- `aerogpu_escape.h` – driver-private `DxgkDdiEscape` packet header + common ops (tooling/debug surfaces).
+- `aerogpu_escape.h` – stable `DxgkDdiEscape` packet header + base ops (UMD/tool ↔ KMD control channel).
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`; ring dumps report canonical submit fields like `cmd_gpa`/`cmd_size_bytes`/`signal_fence`.)
-- `aerogpu_protocol.h` – **legacy bring-up ABI** (monolithic header; PCI `1AED:0001`). Kept only so the KMD compatibility path and legacy emulator device model can continue to function during migration.
+- `aerogpu_protocol.h` – **legacy bring-up ABI** (monolithic header; PCI `1AED:0001`). Deprecated/legacy-only; kept for reference and for the emulator legacy device model.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
 ## ABI variants and PCI IDs
