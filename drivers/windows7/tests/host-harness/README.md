@@ -149,6 +149,7 @@ Required workflow inputs:
 - `timeout_seconds`: harness timeout (default `600`)
 - `snapshot`: run QEMU with `snapshot=on` so the base image is not modified (recommended)
 - `serial_log_path`: where to write COM1 output (default is under `out/win7-virtio-harness/` in the workspace)
+- `with_virtio_snd`: attach a virtio-snd device (default `false`)
 
 On completion, the workflow uploads the serial log and harness output as the `win7-virtio-harness` artifact.
 
