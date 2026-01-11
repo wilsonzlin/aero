@@ -342,10 +342,9 @@ static int RunD3D101Triangle(int argc, char** argv) {
   D3D10_TEXTURE2D_DESC bb_desc;
   backbuffer->GetDesc(&bb_desc);
   if (bb_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-    return aerogpu_test::Fail(kTestName,
-                              "unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
-                              (unsigned)bb_desc.Format,
-                              (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
+    return reporter.Fail("unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
+                         (unsigned)bb_desc.Format,
+                         (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
   }
 
   D3D10_TEXTURE2D_DESC st_desc = bb_desc;
@@ -371,15 +370,14 @@ static int RunD3D101Triangle(int argc, char** argv) {
   }
   if (!map.pData) {
     staging->Unmap(0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+    return reporter.Fail("Map(staging) returned NULL pData");
   }
   const UINT min_row_pitch = bb_desc.Width * 4;
   if (map.RowPitch < min_row_pitch) {
     staging->Unmap(0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
 
   const int cx = (int)bb_desc.Width / 2;
