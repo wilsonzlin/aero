@@ -351,6 +351,10 @@ impl Machine {
                 if self.cpu.bitness() != 16 {
                     return Err(Exception::Unimplemented("INT outside real mode"));
                 }
+                // Mirror Tier-0's BIOS hypercall bookkeeping: record the real-mode interrupt
+                // vector so a subsequent ROM-stub `HLT` can be surfaced as
+                // `StepExit::BiosInterrupt(n)` (see `CpuState::pending_bios_int`).
+                self.cpu.set_pending_bios_int(vector);
                 let flags = self.cpu.rflags() & 0xFFFF;
                 push(&mut self.cpu, &mut bus, flags, 2)?;
                 let cs = self.cpu.read_reg(Register::CS);
@@ -373,6 +377,9 @@ impl Machine {
                 self.cpu.write_reg(Register::CS, cs as u64);
                 self.cpu.set_rip(ip);
                 self.cpu.set_rflags(flags as u64);
+                // Any real-mode IRET cancels the pending BIOS interrupt marker (the hypercall
+                // path consumes the marker when the ROM stub executes `HLT`).
+                self.cpu.clear_pending_bios_int();
                 Ok(())
             }
             _ => Err(Exception::Unimplemented("assist handler missing mnemonic")),
