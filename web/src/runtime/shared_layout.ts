@@ -330,7 +330,10 @@ export function allocateSharedMemorySegments(options?: {
     );
   }
 
-  const guestBuffer = guestMemory.buffer as unknown as ArrayBuffer | SharedArrayBuffer;
+  // `WebAssembly.Memory.buffer` is typed as `ArrayBuffer` in lib.dom.d.ts even for
+  // `shared: true` memories. Cast to `ArrayBufferLike` so the runtime guard can
+  // narrow correctly without TypeScript concluding the branch is unreachable.
+  const guestBuffer = guestMemory.buffer as unknown as ArrayBufferLike;
   if (!(guestBuffer instanceof SharedArrayBuffer)) {
     throw new Error(
       "Shared WebAssembly.Memory is unavailable (memory.buffer is not a SharedArrayBuffer). " +
