@@ -39,8 +39,8 @@ The default packaging spec is:
 
 This spec currently:
 
-- requires: `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input`
-- includes if present: `virtio-snd`
+- requires: `aerogpu`, `virtio-blk`, `virtio-net`
+- includes if present: `virtio-input`, `virtio-snd`
 
 ## Inputs
 

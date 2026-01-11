@@ -28,8 +28,8 @@ Intended for packaging Guest Tools media from **Aero-built** (in-repo) Windows 7
 This spec is the default used by `ci/package-guest-tools.ps1` and aims to match what
 `guest-tools/setup.cmd` expects for a full "switch to virtio + Aero GPU" installation.
 
-- Requires: `aerogpu` + `virtio-blk` + `virtio-net` + `virtio-input`
-- Optional: `virtio-snd`
+- Requires: `aerogpu` + `virtio-blk` + `virtio-net`
+- Optional: `virtio-input`, `virtio-snd`
 
 Notes:
 
