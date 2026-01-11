@@ -994,7 +994,8 @@ impl VirtioPciDevice {
     pub fn debug_queue_used_idx(&self, mem: &dyn GuestMemory, queue: u16) -> Option<u16> {
         let q = self.queues.get(queue as usize)?;
         let used_addr = q.used_addr;
-        read_u16_le(mem, used_addr + 2).ok()
+        let used_idx_addr = used_addr.checked_add(2)?;
+        read_u16_le(mem, used_idx_addr).ok()
     }
 
     fn pci_device_id(&self) -> u16 {
