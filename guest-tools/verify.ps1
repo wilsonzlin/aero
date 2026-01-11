@@ -1666,7 +1666,7 @@ try {
     $devconDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $devconPath = Join-Path $devconDir "devcon.exe"
 
-    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput")
+    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput")
     if ($cfgVirtioBlkService) { $svcCandidates = @($cfgVirtioBlkService) + $svcCandidates }
     if ($cfgVirtioSndService) { $svcCandidates = @($cfgVirtioSndService) + $svcCandidates }
     $svcCandidates = Dedup-CaseInsensitive $svcCandidates
@@ -1674,10 +1674,9 @@ try {
     # Heuristic keywords used to identify Aero/virtio devices in WMI output.
     #
     # Includes AeroGPU PCI vendor IDs:
-    # - A3A0: new, versioned AeroGPU ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`)
+    # - A3A0: canonical / current AeroGPU ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`)
     # - 1AED: legacy bring-up ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
-    # - 1AE0: deprecated early prototype ID (kept here only to help identify very old images)
-    $kw = @("aero","virtio","1af4","a3a0","1aed","1ae0")
+    $kw = @("aero","virtio","1af4","a3a0","1aed")
 
     $signedDriverMap = @{}
     $signedDrivers = Try-GetWmi "Win32_PnPSignedDriver" ""

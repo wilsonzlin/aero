@@ -4,10 +4,9 @@
 ;
 ; IMPORTANT:
 ;   - The Hardware ID(s) below MUST match the AeroGPU PCI device model.
-;   - Canonical/new ABI HWID is from drivers/aerogpu/protocol/aerogpu_pci.h:
-;       PCI\VEN_A3A0&DEV_0001
-;   - Legacy bring-up ABI HWID is from drivers/aerogpu/protocol/aerogpu_protocol.h:
-;       PCI\VEN_1AED&DEV_0001
+;   - This Win7 package intentionally matches both AeroGPU HWIDs:
+;       PCI\VEN_A3A0&DEV_0001  (canonical / current; drivers/aerogpu/protocol/aerogpu_pci.h)
+;       PCI\VEN_1AED&DEV_0001  (legacy; drivers/aerogpu/protocol/aerogpu_protocol.h)
 ;     If your device model uses different IDs, update the INF accordingly.
 ;
 ; Expected package contents (same directory as this INF):

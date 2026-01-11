@@ -42,18 +42,18 @@ Only needed if you install using `aerogpu_dx11.inf`:
 | `aerogpu_d3d10.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
 | `aerogpu_d3d10_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
 
-## 2) Set the correct PCI Hardware ID (required)
+## 2) Confirm the PCI Hardware ID(s) (required)
 
-By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical AeroGPU PCI IDs:
+By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the AeroGPU PCI Hardware IDs:
 
 ```
-PCI\VEN_A3A0&DEV_0001
-PCI\VEN_1AED&DEV_0001
+PCI\VEN_A3A0&DEV_0001  (canonical / current)
+PCI\VEN_1AED&DEV_0001  (legacy)
 ```
 
 These correspond to the new (versioned) and legacy (bring-up) ABIs; see `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD supports both ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
-Before installing, confirm your VM's device model reports the same Hardware ID:
+Before installing, confirm your VM's device model reports one of the above Hardware IDs:
 
 1. In the Win7 VM: Device Manager → Display adapters (or unknown device) → Properties → Details → *Hardware Ids*
 2. Copy the `PCI\VEN_....&DEV_....` value.
@@ -228,7 +228,10 @@ Example:
 ```bat
 cd \path\to\repo\drivers\aerogpu\tests\win7
 build_all_vs2010.cmd
+:: Choose the VID/DID that matches your VM's Hardware Ids:
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
+:: (legacy)
+run_all.cmd --require-vid=0x1AED --require-did=0x0001
 ```
 
-Replace the VID/DID with the value shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids**, or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF.
+Use the VID/DID shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids** (or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF).
