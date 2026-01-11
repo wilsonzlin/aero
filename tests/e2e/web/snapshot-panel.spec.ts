@@ -35,7 +35,7 @@ test("demo VM snapshot panel saves/restores via OPFS streaming", async ({ page }
   const advanceButton = page.locator("#demo-vm-snapshot-advance");
   const importInput = page.locator("#demo-vm-snapshot-import");
 
-  if (!state?.streaming) {
+  if (!state?.ready) {
     await expect(saveButton).toBeDisabled();
     await expect(status).toContainText("unavailable");
     return;

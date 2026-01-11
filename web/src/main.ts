@@ -28,7 +28,7 @@ import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
-import { initWasm, type WasmVariant } from "./runtime/wasm_loader";
+import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import type { WorkerRole } from "./runtime/shared_layout";
 import { DiskManager } from "./storage/disk_manager";
@@ -450,6 +450,13 @@ async function getOpfsFileIfExists(path: string): Promise<File | null> {
   }
 }
 
+async function writeBytesToOpfs(path: string, bytes: Uint8Array): Promise<void> {
+  const handle = await openFileHandle(path, { create: true });
+  const writable = await handle.createWritable({ keepExistingData: false });
+  await writable.write(bytes);
+  await writable.close();
+}
+
 function downloadFile(file: Blob, filename: string): void {
   const url = URL.createObjectURL(file);
   const a = document.createElement("a");
@@ -576,6 +583,9 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   let workerClient: DemoVmWorkerClient | null = null;
   let workerReady = false;
   let autosaveInFlight = false;
+  let vm: InstanceType<WasmApi["DemoVm"]> | null = null;
+  let mainStepTimer: number | null = null;
+  let mainThreadStarted = false;
 
   let steps = 0;
   let serialBytes: number | null = 0;
@@ -623,6 +633,47 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     importInput.disabled = !enabled;
   }
 
+  function getSerialBytesFromVm(current: InstanceType<WasmApi["DemoVm"]>): number {
+    const fn = current.serial_output_len;
+    if (typeof fn === "function") return fn.call(current);
+    return current.serial_output().byteLength;
+  }
+
+  function stopMainStepLoop(): void {
+    if (mainStepTimer !== null) {
+      window.clearInterval(mainStepTimer);
+      mainStepTimer = null;
+    }
+  }
+
+  function updateOutputState(nextSteps: number, nextSerialBytes: number | null): void {
+    steps = nextSteps;
+    serialBytes = nextSerialBytes;
+    output.textContent =
+      `steps=${steps.toLocaleString()} ` +
+      `serial_bytes=${nextSerialBytes === null ? "unknown" : nextSerialBytes.toLocaleString()}`;
+  }
+
+  function startMainStepLoop(): void {
+    stopMainStepLoop();
+    if (!vm) return;
+    const STEPS_PER_TICK = 5_000;
+    const TICK_MS = 250;
+    mainStepTimer = window.setInterval(() => {
+      try {
+        const current = vm;
+        if (!current) return;
+        current.run_steps(STEPS_PER_TICK);
+        const serialLen = getSerialBytesFromVm(current);
+        // Demo VM writes one serial byte per step; treat serial length as a proxy for total steps.
+        updateOutputState(serialLen, serialLen);
+      } catch (err) {
+        setError(err);
+        stopMainStepLoop();
+      }
+    }, TICK_MS);
+  }
+
   function handleWorkerFatal(err: Error): void {
     clearAutosaveTimer();
     status.textContent = "Demo VM unavailable (worker crashed)";
@@ -653,26 +704,56 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   }
 
   async function restoreSnapshotFromOpfs(): Promise<{ sizeBytes: number; serialBytes: number | null } | null> {
-    const client = workerClient;
-    if (!workerReady || !client) throw new Error("Demo VM worker not ready");
     const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
     if (!file) return null;
-    const restore = await client.restoreFromOpfs(SNAPSHOT_PATH, { timeoutMs: 120_000 });
-    return { sizeBytes: file.size, serialBytes: restore.serialBytes };
+
+    if (workerReady && workerClient) {
+      const restore = await workerClient.restoreFromOpfs(SNAPSHOT_PATH, { timeoutMs: 120_000 });
+      return { sizeBytes: file.size, serialBytes: restore.serialBytes };
+    }
+
+    if (vm) {
+      stopMainStepLoop();
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        vm.restore_snapshot(bytes);
+        const restoredSerial = getSerialBytesFromVm(vm);
+        updateOutputState(restoredSerial, restoredSerial);
+        return { sizeBytes: file.size, serialBytes: restoredSerial };
+      } finally {
+        startMainStepLoop();
+      }
+    }
+
+    throw new Error("Demo VM not initialized");
   }
 
   async function saveSnapshot(): Promise<void> {
-    const client = workerClient;
-    if (!workerReady || !client) throw new Error("Demo VM worker not ready");
-    const snap = await client.snapshotFullToOpfs(SNAPSHOT_PATH, { timeoutMs: 120_000 });
-    const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
-    status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
-      snap.serialBytes,
-    )}`;
+    if (workerReady && workerClient) {
+      const snap = await workerClient.snapshotFullToOpfs(SNAPSHOT_PATH, { timeoutMs: 120_000 });
+      const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
+      status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
+        snap.serialBytes,
+      )}`;
+      return;
+    }
+
+    if (!vm) throw new Error("Demo VM not initialized");
+    stopMainStepLoop();
+    try {
+      const bytes = vm.snapshot_full();
+      await writeBytesToOpfs(SNAPSHOT_PATH, bytes);
+      const savedSerial = getSerialBytesFromVm(vm);
+      const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
+      status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
+        savedSerial,
+      )}`;
+    } finally {
+      startMainStepLoop();
+    }
   }
 
   async function loadSnapshot(): Promise<void> {
-    if (!workerReady) throw new Error("Demo VM worker not ready");
     const restored = await restoreSnapshotFromOpfs();
     if (!restored) {
       status.textContent = "No snapshot found in OPFS.";
@@ -719,14 +800,22 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   advanceButton.onclick = () => {
     clearError();
     const client = workerClient;
-    if (!workerReady || !client) return;
-    client.runSteps(50_000, { timeoutMs: 30_000 })
-      .then((state) => {
-        output.textContent =
-          `steps=${state.steps.toLocaleString()} ` +
-          `serial_bytes=${state.serialBytes === null ? "unknown" : state.serialBytes.toLocaleString()}`;
-      })
-      .catch((err) => setError(err));
+    if (workerReady && client) {
+      client
+        .runSteps(50_000, { timeoutMs: 30_000 })
+        .then((state) => updateOutputState(state.steps, state.serialBytes))
+        .catch((err) => setError(err));
+      return;
+    }
+
+    if (!vm) return;
+    try {
+      vm.run_steps(50_000);
+      const serialLen = getSerialBytesFromVm(vm);
+      updateOutputState(serialLen, serialLen);
+    } catch (err) {
+      setError(err);
+    }
   };
 
   exportButton.onclick = () => {
@@ -777,70 +866,19 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     testState.ready = false;
     testState.streaming = false;
   } else {
-    setButtonsEnabled(false);
-    status.textContent = "Initializing demo VM worker…";
+    function startMainThreadVm(reason: string): void {
+      if (mainThreadStarted) return;
+      mainThreadStarted = true;
+      status.textContent = "Initializing demo VM (main thread)…";
 
-    try {
-      ensureUnloadHandler();
-      workerClient = new DemoVmWorkerClient({
-        onStatus: (state) => {
-          steps = state.steps;
-          serialBytes = state.serialBytes;
-          output.textContent =
-            `steps=${steps.toLocaleString()} ` +
-            `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
-        },
-        onError: (err) => setError(err),
-        onFatalError: (err) => handleWorkerFatal(err),
-      });
-    } catch (err) {
-      clearAutosaveTimer();
-      status.textContent = "Demo VM unavailable (worker creation failed)";
-      setError(err);
-      workerClient = null;
-      testState.ready = false;
-      testState.streaming = false;
-    }
-
-    if (workerClient) {
-      void (async () => {
-        try {
-          const init = await workerClient!.init(256 * 1024, { timeoutMs: 60_000 });
-
-          if (!init.syncAccessHandles) {
-            clearAutosaveTimer();
-            status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}) but OPFS sync access handles are unavailable.`;
-            setButtonsEnabled(false);
-            setError(
-              "OPFS sync access handles are required for streaming snapshots, but createSyncAccessHandle is missing in this browser.",
-            );
-            testState.ready = true;
-            testState.streaming = false;
-            workerClient?.terminate();
-            workerClient = null;
-            return;
-          }
-
-          if (!init.streamingSnapshots || !init.streamingRestore) {
-            clearAutosaveTimer();
-            status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}) but snapshot streaming is unavailable.`;
-            setButtonsEnabled(false);
-            setError(
-              "This WASM build is missing DemoVm.snapshot_full_to_opfs / DemoVm.restore_snapshot_from_opfs " +
-                "(Task 99 not merged / wasm not rebuilt).",
-            );
-            testState.ready = true;
-            testState.streaming = false;
-            workerClient?.terminate();
-            workerClient = null;
-            return;
-          }
-
-          workerReady = true;
-          status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}). Running…`;
+      wasmInitPromise
+        .then(async ({ api, variant }) => {
+          vm = new api.DemoVm(256 * 1024);
+          status.textContent = `Demo VM ready (main thread, WASM ${variant}). ${reason}`;
           setButtonsEnabled(true);
           testState.ready = true;
-          testState.streaming = true;
+          testState.streaming = false;
+          startMainStepLoop();
 
           // Best-effort crash recovery: try to restore the last autosave snapshot.
           try {
@@ -851,21 +889,86 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
               )}`;
             }
           } catch (err) {
-            // If restore fails, keep running from a clean state.
             setError(err);
           }
-        } catch (err) {
-          clearAutosaveTimer();
-          status.textContent = "Demo VM unavailable (worker init failed)";
+        })
+        .catch((err) => {
+          status.textContent = "Demo VM unavailable (WASM init failed)";
           setButtonsEnabled(false);
           setError(err);
-          workerReady = false;
-          workerClient?.terminate();
-          workerClient = null;
           testState.ready = false;
           testState.streaming = false;
-        }
-      })();
+        });
+    }
+
+    // Prefer streaming snapshots (Dedicated Worker + sync access handles) when available.
+    // Otherwise, fall back to main-thread in-memory snapshots for compatibility.
+    if (!report.opfsSyncAccessHandle) {
+      startMainThreadVm("OPFS sync access handles unavailable; using in-memory snapshots.");
+    } else {
+      setButtonsEnabled(false);
+      status.textContent = "Initializing demo VM worker…";
+
+      try {
+        ensureUnloadHandler();
+        workerClient = new DemoVmWorkerClient({
+          onStatus: (state) => updateOutputState(state.steps, state.serialBytes),
+          onError: (err) => setError(err),
+          onFatalError: (err) => handleWorkerFatal(err),
+        });
+      } catch (err) {
+        clearAutosaveTimer();
+        status.textContent = "Demo VM unavailable (worker creation failed)";
+        setError(err);
+        workerClient = null;
+        testState.ready = false;
+        testState.streaming = false;
+        startMainThreadVm("Worker creation failed; using in-memory snapshots.");
+      }
+
+      if (workerClient) {
+        void (async () => {
+          try {
+            const init = await workerClient!.init(256 * 1024, { timeoutMs: 60_000 });
+
+            if (!init.syncAccessHandles) {
+              workerClient?.terminate();
+              workerClient = null;
+              startMainThreadVm("OPFS sync access handles unavailable; using in-memory snapshots.");
+              return;
+            }
+
+            if (!init.streamingSnapshots || !init.streamingRestore) {
+              workerClient?.terminate();
+              workerClient = null;
+              startMainThreadVm("Snapshot streaming APIs missing; using in-memory snapshots.");
+              return;
+            }
+
+            workerReady = true;
+            status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}). Running…`;
+            setButtonsEnabled(true);
+            testState.ready = true;
+            testState.streaming = true;
+
+            // Best-effort crash recovery: try to restore the last autosave snapshot.
+            try {
+              const restored = await restoreSnapshotFromOpfs();
+              if (restored) {
+                status.textContent = `Restored snapshot (${formatBytes(restored.sizeBytes)}) serial_bytes=${formatSerialBytes(
+                  restored.serialBytes,
+                )}`;
+              }
+            } catch (err) {
+              setError(err);
+            }
+          } catch (err) {
+            workerClient?.terminate();
+            workerClient = null;
+            startMainThreadVm("Worker init failed; using in-memory snapshots.");
+          }
+        })();
+      }
     }
   }
 
