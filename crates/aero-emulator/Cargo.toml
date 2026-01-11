@@ -5,9 +5,9 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+aero-protocol = { path = "../../emulator/protocol" }
 
 [dev-dependencies]
-aero-protocol = { path = "../../emulator/protocol" }
 
 [[test]]
 name = "vbe_smoke"
