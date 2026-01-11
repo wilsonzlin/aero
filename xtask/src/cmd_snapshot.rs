@@ -10,9 +10,10 @@ use crate::error::{Result, XtaskError};
 
 const MAX_DEVICE_COUNT: u32 = 4096;
 const MAX_DEVICE_ENTRY_LEN: u64 = 64 * 1024 * 1024;
+const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
 const MAX_CPU_COUNT: u32 = 4096;
 const MAX_VCPU_INTERNAL_LEN: u64 = 64 * 1024 * 1024;
-const MAX_DISK_REFS: u32 = 1024;
+const MAX_DISK_REFS: u32 = 256;
 
 pub fn print_help() {
     println!(
@@ -421,6 +422,9 @@ fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) 
         return Err(XtaskError::Message(
             "unsupported DEVICES section version".to_string(),
         ));
+    }
+    if section.len > MAX_DEVICES_SECTION_LEN {
+        return Err(XtaskError::Message("devices section too large".to_string()));
     }
 
     let section_end = section

@@ -362,6 +362,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                         .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
                     let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
                     let bitness = cpu.cpu.state.bitness();
+                    // Keep address-size override prefix state in sync with `assist::handle_assist`.
                     let addr_size_override = has_addr_size_override(&bytes, bitness);
                     let decoded =
                         aero_x86::decode(&bytes, ip, bitness).expect("decode tier0 assist");
