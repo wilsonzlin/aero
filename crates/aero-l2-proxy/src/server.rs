@@ -228,6 +228,16 @@ fn enforce_security(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
 ) -> Result<(), axum::response::Response> {
+    if let Some(expected) = state.cfg.security.token.as_deref() {
+        let query_token = token_from_query(uri);
+        let protocol_token = token_from_subprotocol(headers);
+        let token_ok =
+            query_token.as_deref() == Some(expected) || protocol_token.as_deref() == Some(expected);
+        if !token_ok {
+            return Err((StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response());
+        }
+    }
+
     if !state.cfg.security.open {
         let origin = headers
             .get(axum::http::header::ORIGIN)
@@ -236,9 +246,7 @@ fn enforce_security(
             .filter(|v| !v.is_empty());
 
         let Some(origin) = origin else {
-            return Err(
-                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response()
-            );
+            return Err((StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response());
         };
 
         match &state.cfg.security.allowed_origins {
@@ -252,16 +260,6 @@ fn enforce_security(
                         .into_response());
                 }
             }
-        }
-    }
-
-    if let Some(expected) = state.cfg.security.token.as_deref() {
-        let query_token = token_from_query(uri);
-        let protocol_token = token_from_subprotocol(headers);
-        let token_ok =
-            query_token.as_deref() == Some(expected) || protocol_token.as_deref() == Some(expected);
-        if !token_ok {
-            return Err((StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response());
         }
     }
 

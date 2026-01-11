@@ -207,6 +207,41 @@ async fn token_required_query_and_subprotocol() {
 }
 
 #[tokio::test]
+async fn token_errors_take_precedence_over_origin_errors() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
+    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // Missing token should return 401 even if Origin is missing.
+    let req = base_ws_request(addr);
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing token to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Valid token but missing Origin should return 403.
+    let ws_url = format!("ws://{addr}/l2?token=sekrit");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing origin to be rejected");
+    assert_http_status(err, StatusCode::FORBIDDEN);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn max_connections_enforced() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");

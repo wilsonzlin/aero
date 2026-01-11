@@ -88,7 +88,7 @@ async fn metrics_increment_after_frames() {
 
 #[tokio::test]
 async fn version_endpoint_returns_json() {
-    let server = TestServer::start(None).await;
+    let server = TestServer::start(None, None).await;
 
     let body = reqwest::get(server.http_url("/version"))
         .await
