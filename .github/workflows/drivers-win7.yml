@@ -7,8 +7,12 @@ on:
       - "guest-tools/**"
       - "tools/packaging/**"
       - "ci/**"
+      - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
       - ".github/actions/setup-rust/**"
       - ".github/workflows/drivers-win7.yml"
+      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
+      - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+      - "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
     paths-ignore:
       - "docs/**"
       # Do not ignore Guest Tools markdown: `guest-tools/THIRD_PARTY_NOTICES.md`
@@ -24,8 +28,12 @@ on:
       - "guest-tools/**"
       - "tools/packaging/**"
       - "ci/**"
+      - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
       - ".github/actions/setup-rust/**"
       - ".github/workflows/drivers-win7.yml"
+      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
+      - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+      - "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
     paths-ignore:
       - "docs/**"
       # Do not ignore Guest Tools markdown: `guest-tools/THIRD_PARTY_NOTICES.md`

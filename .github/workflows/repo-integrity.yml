@@ -5,16 +5,16 @@ on:
     paths:
       - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
       - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj.filters"
-      - "drivers/windows7/virtio-snd/inf/*.inf"
+      - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+      - "drivers/windows7/virtio-snd/inf/virtio-snd.inf"
       - "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
   push:
     branches: ["main"]
     paths:
       - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
       - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj.filters"
-      - "drivers/windows7/virtio-snd/inf/*.inf"
+      - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+      - "drivers/windows7/virtio-snd/inf/virtio-snd.inf"
       - "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
   workflow_dispatch:
 
