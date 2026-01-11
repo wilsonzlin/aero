@@ -599,7 +599,7 @@ fn parse_opcode(
         // valid XOP maps are 8..=10 (0b01000..0b01010), while POP encodings require ModRM.reg=0
         // and therefore can only have values 0..=7 in those low bits.
         let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
-        let is_extended = matches!(b1 & 0x1F, 0x08 | 0x09 | 0x0A);
+        let is_extended = matches!(b1 & 0x1F, 0x08..=0x0A);
         Ok((
             OpcodeBytes {
                 map: if is_extended {
@@ -618,24 +618,6 @@ fn parse_opcode(
         // which would make the legacy opcodes invalid (they require a memory operand).
         let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
         let is_extended = mode == DecodeMode::Bits64 || (b1 & 0xC0) == 0xC0;
-        Ok((
-            OpcodeBytes {
-                map: if is_extended {
-                    OpcodeMap::Extended
-                } else {
-                    OpcodeMap::Primary
-                },
-                opcode: b0,
-                opcode_ext: None,
-            },
-            1,
-        ))
-    } else if b0 == 0x8F {
-        // AMD XOP prefix shares its first byte with `POP r/m` (Group 1A, `/0`). Disambiguate it by
-        // inspecting the ModRM.reg bits: `POP` requires `/0`, while XOP encodings always use a
-        // non-zero value in those bits.
-        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
-        let is_extended = (b1 & 0x38) != 0;
         Ok((
             OpcodeBytes {
                 map: if is_extended {
