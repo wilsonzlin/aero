@@ -159,6 +159,10 @@ node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
 cat storage-perf-results/compare.md
 ```
 
+The compare script also gates on capability regressions (e.g. OPFS → IndexedDB fallback, or OPFS
+`sync_access_handle` → `async`) and includes any `warnings[]` from the benchmark output in the
+Markdown report.
+
 ## Scenario runner (PF-008 macrobench framework)
 
 The scenario runner provides an extensible plugin interface so we can evolve from microbenchmarks to full-system macrobenchmarks (boot time, desktop FPS, app launch time) once the emulator can boot OS images.
