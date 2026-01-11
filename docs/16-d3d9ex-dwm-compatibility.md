@@ -320,6 +320,9 @@ Define a single fence namespace per device:
 Guest-side rules:
 
 - Fence completion is tracked in a bitset/map.
+- For EVENT queries, be permissive about `IssueQuery` END flag encodings at the DDI boundary:
+  some runtimes have been observed to use `flags=0` or `flags=0x2` for END. Treat
+  `(flags == 0) || (flags & 0x1) || (flags & 0x2)` as END for EVENT queries.
 - Blocking calls:
   - `PresentEx` without `DONOTWAIT` may wait until `in_flight < MaxLatency`
   - `GetData` should be **non-blocking**: return `S_FALSE` until the query fence is complete. If `D3DGETDATA_FLUSH`
