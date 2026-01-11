@@ -276,6 +276,19 @@ function Wait-AeroSelftestResult {
           return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
         }
 
+        if ($RequireVirtioSndPass) {
+          if ($sawVirtioSndFail) {
+            return @{ Result = "FAIL"; Tail = $tail }
+          }
+          if ($sawVirtioSndPass) {
+            return @{ Result = "PASS"; Tail = $tail }
+          }
+          if ($sawVirtioSndSkip) {
+            return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
+          }
+          return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
+        }
+
         return @{ Result = "PASS"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
@@ -304,8 +317,10 @@ function Get-AeroVirtioSoundDeviceArg {
     [Parameter(Mandatory = $true)] [string]$QemuSystem
   )
 
-  # Determine if QEMU supports the modern virtio `disable-legacy` property for virtio-snd.
-  # If QEMU doesn't support virtio-snd at all, fail early with a clear error.
+  # Determine which QEMU virtio-snd PCI device name is available and probe for optional
+  # virtio-pci properties. The current Aero Win7 virtio-snd driver uses the legacy
+  # virtio-pci I/O-port transport, so we must keep legacy mode enabled (do not set
+  # disable-legacy=on).
   $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
   $help = & $QemuSystem -device "$deviceName,help" 2>&1
   $exitCode = $LASTEXITCODE
@@ -317,12 +332,10 @@ function Get-AeroVirtioSoundDeviceArg {
   $helpText = $help -join "`n"
   $device = "$deviceName,audiodev=snd0"
   if ($helpText -match "disable-legacy") {
-    $device += ",disable-legacy=on"
+    $device += ",disable-legacy=off"
   }
   if ($helpText -match "x-pci-revision") {
     $device += ",x-pci-revision=0x01"
-  } else {
-    throw "virtio-snd device '$deviceName' does not support x-pci-revision (required for Aero contract v1). Upgrade QEMU or omit -WithVirtioSnd."
   }
   return $device
 }
@@ -568,13 +581,49 @@ try {
     Remove-Item -LiteralPath $qemuStderrPath -Force
   }
   if ($VirtioTransitional) {
-    if ($WithVirtioSnd -or (-not [string]::IsNullOrEmpty($VirtioSndWavPath)) -or $VirtioSndAudioBackend -ne "none") {
-      throw "-VirtioTransitional is incompatible with virtio-snd options. Remove -VirtioTransitional or pass a custom device via -QemuExtraArgs."
-    }
-
     $nic = "virtio-net-pci,netdev=net0"
     $drive = "file=$DiskImagePath,if=virtio,cache=writeback"
     if ($Snapshot) { $drive += ",snapshot=on" }
+
+    $virtioSndArgs = @()
+    if ($WithVirtioSnd) {
+      $audiodev = ""
+      switch ($VirtioSndAudioBackend) {
+        "none" {
+          $audiodev = "none,id=snd0"
+        }
+        "wav" {
+          if ([string]::IsNullOrEmpty($VirtioSndWavPath)) {
+            throw "VirtioSndWavPath is required when VirtioSndAudioBackend is 'wav'."
+          }
+
+          $wavParent = Split-Path -Parent $VirtioSndWavPath
+          if ([string]::IsNullOrEmpty($wavParent)) { $wavParent = "." }
+          if (-not (Test-Path -LiteralPath $wavParent)) {
+            New-Item -ItemType Directory -Path $wavParent -Force | Out-Null
+          }
+          $VirtioSndWavPath = Join-Path (Resolve-Path -LiteralPath $wavParent).Path (Split-Path -Leaf $VirtioSndWavPath)
+
+          if (Test-Path -LiteralPath $VirtioSndWavPath) {
+            Remove-Item -LiteralPath $VirtioSndWavPath -Force
+          }
+
+          # Quote the path so Start-Process (PowerShell 5.1) doesn't split it on spaces.
+          $audiodev = 'wav,id=snd0,path="' + $VirtioSndWavPath + '"'
+        }
+        default {
+          throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
+        }
+      }
+
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem
+      $virtioSndArgs = @(
+        "-audiodev", $audiodev,
+        "-device", $virtioSndDevice
+      )
+    } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
+      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd."
+    }
 
     $qemuArgs = @(
       "-m", "$MemoryMB",
@@ -586,7 +635,7 @@ try {
       "-netdev", $netdev,
       "-device", $nic,
       "-drive", $drive
-    ) + $QemuExtraArgs
+    ) + $virtioSndArgs + $QemuExtraArgs
   } else {
     # Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
     Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem -WithVirtioInput

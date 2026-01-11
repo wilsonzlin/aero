@@ -15,7 +15,8 @@ There are currently **two virtio transport paths** in-tree:
 1. **Default build (PortCls endpoint driver):** uses the **legacy virtio-pci
    I/O-port** register layout via `drivers/windows7/virtio/common` for maximum
    compatibility with transitional virtio devices (for example stock QEMU). This
-   path only negotiates the **low 32 bits** of virtio feature flags.
+   path only negotiates the **low 32 bits** of virtio feature flags and therefore
+   does **not** negotiate `VIRTIO_F_VERSION_1`.
 2. **Modern virtio-pci bring-up (under development):** capability/MMIO-based
    virtio-pci modern + split-ring virtqueues + protocol engines. This path is
    intended to align with the definitive Aero contract (`AERO-W7-VIRTIO` v1),
@@ -54,7 +55,7 @@ the default PortCls build today.
 The implementation is intended to be layered so that most logic is reusable across
 other Windows 7 virtio drivers (blk/net/input).
 
-### 1) virtio-pci modern transport layer
+### 1) virtio-pci modern transport layer (not built by default)
 
 This section describes the modern virtio-pci architecture used by the
 non-default WDM bring-up path.
@@ -72,7 +73,7 @@ Responsibilities:
 - Serialize access to selector registers in `common_cfg` (feature selectors and
   `queue_select`) so DPC/power paths cannot interleave multi-step sequences.
 
-### 2) virtqueue split-ring layer
+### 2) virtqueue split-ring layer (modern path; not built by default)
 
 Responsibilities:
 
@@ -89,7 +90,7 @@ Responsibilities:
   event-index support, treat it as optional/negotiated rather than a hard
   requirement.
 
-### 3) virtio-snd protocol engine
+### 3) virtio-snd protocol engine (modern path; not built by default)
 
 Responsibilities:
 
@@ -153,7 +154,7 @@ Behavior:
   - Use a periodic timer to ensure the transmit pipeline stays filled and to
     re-check for progress if interrupts are lost or suppressed.
 
-### 6) PnP / power / reset lifecycle
+### 6) PnP / power / reset lifecycle (modern path; not built by default)
 
 PnP:
 
@@ -188,9 +189,10 @@ Contract v1 requirements include:
 
 Driver stance (for eventual strict contract-v1 support):
 
-- Negotiate only the features required for correctness. For contract v1 this means enabling
-  `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC` and leaving `VIRTIO_F_RING_EVENT_IDX`
-  disabled even if a device offers it (for example due to a buggy/emerging device model).
+- The modern virtio-pci path is expected to negotiate only the features required
+  for correctness. For contract v1 this means enabling `VIRTIO_F_VERSION_1` and
+  `VIRTIO_F_RING_INDIRECT_DESC` and leaving `VIRTIO_F_RING_EVENT_IDX` disabled
+  even if a device offers it (for example due to a buggy/emerging device model).
 - Always size ring allocations from the device-reported `common_cfg.queue_size` after selecting
   each queue. Treat unexpected values (for example smaller than required by the contract, or
   inconsistent `queue_notify_off`) as an incompatibility during bring-up.

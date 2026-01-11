@@ -65,6 +65,11 @@ means Windows will see `DEV_1018` unless you explicitly disable legacy mode:
 -device virtio-sound-pci,disable-legacy=on
 ```
 
+Note: The current Aero Windows 7 virtio-snd PortCls driver build uses the **legacy** virtio-pci
+I/O-port transport and therefore requires legacy mode to remain enabled (do **not** pass
+`disable-legacy=on`) when testing that driver. Use `disable-legacy=on` only when you explicitly
+want to validate the modern/non-transitional ID space.
+
 ### QEMU vs Aero contract v1 (REV_01)
 
 Many QEMU device models report `REV_00` by default. The Aero INF also includes short forms without

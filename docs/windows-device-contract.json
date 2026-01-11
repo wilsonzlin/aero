@@ -36,8 +36,14 @@
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1059",
       "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1059&REV_01",
         "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4",
-        "PCI\\VEN_1AF4&DEV_1059"
+        "PCI\\VEN_1AF4&DEV_1059",
+        "PCI\\VEN_1AF4&DEV_1018&SUBSYS_00191AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1018&REV_01",
+        "PCI\\VEN_1AF4&DEV_1018&SUBSYS_00191AF4",
+        "PCI\\VEN_1AF4&DEV_1018"
       ],
       "driver_service_name": "aeroviosnd",
       "inf_name": "aero-virtio-snd.inf",

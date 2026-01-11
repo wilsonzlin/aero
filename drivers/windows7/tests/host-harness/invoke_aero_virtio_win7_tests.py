@@ -6,11 +6,13 @@ Win7 virtio functional tests host harness (QEMU).
 This is a Python alternative to Invoke-AeroVirtioWin7Tests.ps1 for environments where
 PowerShell is inconvenient (e.g. Linux CI).
 
-Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable-legacy=on`).
-The Aero Windows 7 virtio driver contract (v1) ships INF files that match the modern PCI
-device IDs (e.g. DEV_1041/DEV_1042/DEV_1052). If QEMU is launched with transitional/legacy virtio
-devices (`-drive if=virtio` / `virtio-*-pci` without `disable-legacy=on`), Windows will
-enumerate different PCI IDs and the drivers will not bind.
+Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable-legacy=on`) for
+virtio-blk/virtio-net/virtio-input so the Win7 drivers bind to the Aero contract v1 IDs
+(DEV_1041/DEV_1042/DEV_1052).
+
+The current Aero Win7 virtio-snd driver build uses the **legacy** virtio-pci I/O-port transport.
+When `--with-virtio-snd` is enabled, the harness keeps legacy mode enabled for virtio-snd (it does
+not set `disable-legacy=on`), so virtio-snd may enumerate as the transitional ID `DEV_1018`.
 
 Use `--virtio-transitional` to opt back into QEMU's default transitional devices (legacy + modern)
 for older QEMU builds (or when intentionally testing legacy driver packages).
@@ -269,12 +271,6 @@ def main() -> int:
         if args.virtio_snd_audio_backend != "wav":
             parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
 
-    if args.virtio_transitional and args.enable_virtio_snd:
-        parser.error(
-            "--virtio-transitional is incompatible with --with-virtio-snd/--enable-virtio-snd "
-            "(virtio-snd testing requires Aero contract v1 properties)."
-        )
-
     if not args.virtio_transitional:
         try:
             _assert_qemu_supports_aero_w7_virtio_contract_v1(args.qemu_system)
@@ -301,6 +297,30 @@ def main() -> int:
             if args.snapshot:
                 drive += ",snapshot=on"
 
+            virtio_snd_args: list[str] = []
+            if args.enable_virtio_snd:
+                try:
+                    device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+                except RuntimeError as e:
+                    print(f"ERROR: {e}", file=sys.stderr)
+                    return 2
+
+                backend = args.virtio_snd_audio_backend
+                if backend == "none":
+                    audiodev_arg = "none,id=snd0"
+                elif backend == "wav":
+                    wav_path = Path(args.virtio_snd_wav_path).resolve()
+                    wav_path.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        wav_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    audiodev_arg = f"wav,id=snd0,path={wav_path}"
+                else:
+                    raise AssertionError(f"Unhandled backend: {backend}")
+
+                virtio_snd_args = ["-audiodev", audiodev_arg, "-device", device_arg]
+
             qemu_args = [
                 args.qemu_system,
                 "-m",
@@ -320,7 +340,7 @@ def main() -> int:
                 "virtio-net-pci,netdev=net0",
                 "-drive",
                 drive,
-            ] + qemu_extra
+            ] + virtio_snd_args + qemu_extra
         else:
             # Aero contract v1 encodes the major version in the PCI Revision ID (= 0x01).
             #
@@ -490,6 +510,34 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                        elif args.enable_virtio_snd:
+                            # Transitional mode: don't require virtio-input markers, but if the caller
+                            # explicitly attached virtio-snd, require the virtio-snd marker to avoid
+                            # false positives.
+                            if saw_virtio_snd_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_snd_pass:
+                                msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                if saw_virtio_snd_skip:
+                                    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
+                                        msg = (
+                                            "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
+                                            "but --with-virtio-snd was enabled"
+                                        )
+                                    elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
+                                        msg = "FAIL: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+                                    else:
+                                        msg = "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -572,6 +620,35 @@ def main() -> int:
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
+                            elif args.enable_virtio_snd:
+                                if saw_virtio_snd_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                                if not saw_virtio_snd_pass:
+                                    msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    if saw_virtio_snd_skip:
+                                        if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
+                                            msg = (
+                                                "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
+                                                "but --with-virtio-snd was enabled"
+                                            )
+                                        elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
+                                            msg = (
+                                                "FAIL: virtio-snd test was skipped (--disable-snd) "
+                                                "but --with-virtio-snd was enabled"
+                                            )
+                                        else:
+                                            msg = "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break
@@ -630,7 +707,10 @@ def _print_tail(path: Path) -> None:
 
 def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     """
-    Return the virtio-snd PCI device arg string, enabling modern virtio where supported.
+    Return the virtio-snd PCI device arg string.
+
+    The current Aero Win7 virtio-snd driver uses the legacy virtio-pci I/O-port transport, so we
+    keep legacy mode enabled (do not set disable-legacy=on).
     """
     device_name = _detect_virtio_snd_device(qemu_system)
     proc = subprocess.run(
@@ -649,14 +729,9 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     out = proc.stdout or ""
     device = f"{device_name},audiodev=snd0"
     if "disable-legacy" in out:
-        device += ",disable-legacy=on"
+        device += ",disable-legacy=off"
     if "x-pci-revision" in out:
         device += ",x-pci-revision=0x01"
-    else:
-        raise RuntimeError(
-            f"virtio-snd device '{device_name}' does not support x-pci-revision (required for Aero contract v1). "
-            "Upgrade QEMU or omit --with-virtio-snd/--enable-virtio-snd and pass custom QEMU args."
-        )
     return device
 
 
