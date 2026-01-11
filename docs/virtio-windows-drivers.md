@@ -53,11 +53,11 @@ Aero can build Guest Tools media (`aero-guest-tools.iso` / `.zip`) from a few di
      - `aero-guest-tools.manifest.json` (alias used by CI/release asset publishing)
 
 2) **Upstream virtio-win** (`viostor`, `netkvm`, etc.) *(optional / compatibility)*
-    - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
-    - Spec (via `-Profile`):
-       - Default (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
-       - Optional (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
-    - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
+     - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
+     - Spec (via `-Profile`):
+       - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
+       - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
+     - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
 3) **In-tree Aero virtio** (`aerovblk`, `aerovnet`) *(local/dev)*
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
@@ -409,7 +409,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-By default, the wrapper uses `-Profile minimal` (storage+network only).
+By default, the wrapper uses `-Profile full` (includes optional audio/input drivers when present).
 
 To include best-effort Win7 audio/input drivers when present in your virtio-win version, use:
 
@@ -453,11 +453,11 @@ This wrapper:
 
 1. Extracts a Win7 driver pack from `virtio-win.iso` (using `drivers/scripts/make-driver-pack.ps1`).
 2. Converts it into the input layout expected by the Rust Guest Tools packager.
-3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `minimal`):
-   - `-Profile minimal` (default): `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
-   - `-Profile full`: `tools/packaging/specs/win7-virtio-full.json`
+3. Runs `tools/packaging/aero_packager/` with the selected packaging profile (default: `full`):
+   - `-Profile full` (default): `tools/packaging/specs/win7-virtio-full.json`
      - required: `viostor` + `netkvm`
      - optional (included if present): `vioinput` + `viosnd`
+   - `-Profile minimal`: `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
 Advanced overrides:
 
