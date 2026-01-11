@@ -16,6 +16,7 @@
 
 typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PDEVICE_OBJECT Self;
+    PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT LowerDeviceObject;
 
     IO_REMOVE_LOCK RemoveLock;
@@ -45,6 +46,8 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     KIRQL InterruptIrql;
     KINTERRUPT_MODE InterruptMode;
     KAFFINITY InterruptAffinity;
+
+    VIRTIOSND_DMA_CONTEXT DmaCtx;
 
     BOOLEAN Started;
     BOOLEAN Removed;

@@ -169,6 +169,7 @@ VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT PhysicalDeviceObj
     dx = VIRTIOSND_GET_DX(deviceObject);
     RtlZeroMemory(dx, sizeof(*dx));
     dx->Self = deviceObject;
+    dx->Pdo = PhysicalDeviceObject;
     dx->LowerDeviceObject = IoAttachDeviceToDeviceStack(deviceObject, PhysicalDeviceObject);
 
     if (dx->LowerDeviceObject == NULL) {

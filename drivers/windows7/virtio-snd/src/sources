@@ -21,5 +21,6 @@ SOURCES= \
     virtiosnd_queue_split.c \
     virtiosnd_tx.c \
     virtiosnd_hw.c \
+    virtiosnd_dma.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c

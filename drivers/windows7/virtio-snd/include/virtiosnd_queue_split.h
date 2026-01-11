@@ -3,6 +3,7 @@
 #include <ntddk.h>
 
 #include "virtiosnd_queue.h"
+#include "virtiosnd_dma.h"
 
 #include "virtqueue_split.h"
 
@@ -29,18 +30,15 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT {
     volatile ULONG* NotifyAddr;
 
     /* Split ring (desc + avail + used) memory, physically contiguous. */
-    PVOID RingVa;
-    PHYSICAL_ADDRESS RingPa;
-    SIZE_T RingBytes;
+    VIRTIOSND_DMA_BUFFER Ring;
 
     /* Optional physically contiguous indirect descriptor table pool. */
-    PVOID IndirectPoolVa;
-    PHYSICAL_ADDRESS IndirectPoolPa;
-    SIZE_T IndirectPoolBytes;
+    VIRTIOSND_DMA_BUFFER IndirectPool;
 } VIRTIOSND_QUEUE_SPLIT, *PVIRTIOSND_QUEUE_SPLIT;
 
 _Must_inspect_result_ NTSTATUS
 VirtioSndQueueSplitCreate(
+    _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
     _Inout_ VIRTIOSND_QUEUE_SPLIT* qs,
     _In_ USHORT queue_index,
     _In_ USHORT queue_size,
@@ -55,5 +53,4 @@ VirtioSndQueueSplitCreate(
     /*out*/ _Out_ UINT64* out_used_pa);
 
 VOID
-VirtioSndQueueSplitDestroy(_Inout_ VIRTIOSND_QUEUE_SPLIT* qs);
-
+VirtioSndQueueSplitDestroy(_In_ PVIRTIOSND_DMA_CONTEXT DmaCtx, _Inout_ VIRTIOSND_QUEUE_SPLIT* qs);

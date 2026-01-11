@@ -150,6 +150,7 @@ static const VIRTIOSND_QUEUE_OPS g_VirtioSndQueueSplitOps = {
 _Use_decl_annotations_
 NTSTATUS
 VirtioSndQueueSplitCreate(
+    PVIRTIOSND_DMA_CONTEXT DmaCtx,
     VIRTIOSND_QUEUE_SPLIT* qs,
     USHORT queue_index,
     USHORT queue_size,
@@ -166,9 +167,6 @@ VirtioSndQueueSplitCreate(
     NTSTATUS status;
     SIZE_T state_bytes;
     SIZE_T ring_bytes;
-    PHYSICAL_ADDRESS low;
-    PHYSICAL_ADDRESS high;
-    PHYSICAL_ADDRESS skip;
     USHORT indirect_table_count;
     USHORT indirect_max_desc;
 
@@ -186,7 +184,7 @@ VirtioSndQueueSplitCreate(
         *out_used_pa = 0;
     }
 
-    if (qs == NULL || out_queue == NULL || out_desc_pa == NULL || out_avail_pa == NULL || out_used_pa == NULL) {
+    if (DmaCtx == NULL || qs == NULL || out_queue == NULL || out_desc_pa == NULL || out_avail_pa == NULL || out_used_pa == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -213,13 +211,12 @@ VirtioSndQueueSplitCreate(
         goto Fail;
     }
 
-    low.QuadPart = 0;
-    high.QuadPart = ~0ull;
-    skip.QuadPart = 0;
-
-    qs->RingVa = MmAllocateContiguousMemorySpecifyCache(ring_bytes, low, high, skip, MmNonCached);
-    if (qs->RingVa == NULL) {
-        status = STATUS_INSUFFICIENT_RESOURCES;
+    status = VirtIoSndAllocCommonBuffer(DmaCtx, ring_bytes, FALSE, &qs->Ring);
+    if (!NT_SUCCESS(status)) {
+        goto Fail;
+    }
+    if ((((ULONG_PTR)qs->Ring.Va) & (PAGE_SIZE - 1u)) != 0 || (qs->Ring.DmaAddr & (PAGE_SIZE - 1u)) != 0) {
+        status = STATUS_DATATYPE_MISALIGNMENT;
         goto Fail;
     }
 
@@ -227,10 +224,7 @@ VirtioSndQueueSplitCreate(
      * This DMA buffer is shared with the (potentially untrusted) device; clear it
      * to avoid leaking stale kernel memory.
      */
-    RtlZeroMemory(qs->RingVa, ring_bytes);
-
-    qs->RingPa = MmGetPhysicalAddress(qs->RingVa);
-    qs->RingBytes = ring_bytes;
+    RtlZeroMemory(qs->Ring.Va, ring_bytes);
 
     state_bytes = VirtqSplitStateSize(queue_size);
     qs->Vq = (VIRTQ_SPLIT*)ExAllocatePoolWithTag(NonPagedPool, state_bytes, VIRTIOSND_POOL_TAG);
@@ -249,11 +243,19 @@ VirtioSndQueueSplitCreate(
         if (indirect_table_count != 0 && indirect_max_desc != 0) {
             SIZE_T indirect_bytes = sizeof(VIRTQ_DESC) * (SIZE_T)indirect_table_count * (SIZE_T)indirect_max_desc;
 
-            qs->IndirectPoolVa = MmAllocateContiguousMemorySpecifyCache(indirect_bytes, low, high, skip, MmNonCached);
-            if (qs->IndirectPoolVa != NULL) {
-                RtlZeroMemory(qs->IndirectPoolVa, indirect_bytes);
-                qs->IndirectPoolPa = MmGetPhysicalAddress(qs->IndirectPoolVa);
-                qs->IndirectPoolBytes = indirect_bytes;
+            status = VirtIoSndAllocCommonBuffer(DmaCtx, indirect_bytes, FALSE, &qs->IndirectPool);
+            if (NT_SUCCESS(status)) {
+                if ((((ULONG_PTR)qs->IndirectPool.Va) & 0xFu) != 0 || (qs->IndirectPool.DmaAddr & 0xFu) != 0) {
+                    VirtIoSndFreeCommonBuffer(DmaCtx, &qs->IndirectPool);
+                    indirect_table_count = 0;
+                    indirect_max_desc = 0;
+                } else {
+                    /*
+                     * This DMA buffer is shared with the (potentially untrusted) device; clear it
+                     * to avoid leaking stale kernel memory.
+                     */
+                    RtlZeroMemory(qs->IndirectPool.Va, indirect_bytes);
+                }
             } else {
                 indirect_table_count = 0;
                 indirect_max_desc = 0;
@@ -266,11 +268,11 @@ VirtioSndQueueSplitCreate(
         queue_size,
         event_idx,
         indirect,
-        qs->RingVa,
-        (UINT64)qs->RingPa.QuadPart,
+        qs->Ring.Va,
+        qs->Ring.DmaAddr,
         PAGE_SIZE,
-        qs->IndirectPoolVa,
-        (UINT64)qs->IndirectPoolPa.QuadPart,
+        qs->IndirectPool.Va,
+        qs->IndirectPool.DmaAddr,
         indirect_table_count,
         indirect_max_desc);
     if (!NT_SUCCESS(status)) {
@@ -287,13 +289,13 @@ VirtioSndQueueSplitCreate(
     return STATUS_SUCCESS;
 
 Fail:
-    VirtioSndQueueSplitDestroy(qs);
+    VirtioSndQueueSplitDestroy(DmaCtx, qs);
     return status;
 }
 
 _Use_decl_annotations_
 VOID
-VirtioSndQueueSplitDestroy(VIRTIOSND_QUEUE_SPLIT* qs)
+VirtioSndQueueSplitDestroy(PVIRTIOSND_DMA_CONTEXT DmaCtx, VIRTIOSND_QUEUE_SPLIT* qs)
 {
     if (qs == NULL) {
         return;
@@ -304,15 +306,8 @@ VirtioSndQueueSplitDestroy(VIRTIOSND_QUEUE_SPLIT* qs)
         return;
     }
 
-    if (qs->IndirectPoolVa != NULL) {
-        MmFreeContiguousMemory(qs->IndirectPoolVa);
-        qs->IndirectPoolVa = NULL;
-    }
-
-    if (qs->RingVa != NULL) {
-        MmFreeContiguousMemory(qs->RingVa);
-        qs->RingVa = NULL;
-    }
+    VirtIoSndFreeCommonBuffer(DmaCtx, &qs->IndirectPool);
+    VirtIoSndFreeCommonBuffer(DmaCtx, &qs->Ring);
 
     if (qs->Vq != NULL) {
         ExFreePoolWithTag(qs->Vq, VIRTIOSND_POOL_TAG);

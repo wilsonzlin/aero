@@ -109,7 +109,7 @@ static VOID VirtIoSndDestroyQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     ULONG i;
     for (i = 0; i < VIRTIOSND_QUEUE_COUNT; ++i) {
-        VirtioSndQueueSplitDestroy(&Dx->QueueSplit[i]);
+        VirtioSndQueueSplitDestroy(&Dx->DmaCtx, &Dx->QueueSplit[i]);
         Dx->Queues[i].Ops = NULL;
         Dx->Queues[i].Ctx = NULL;
     }
@@ -145,6 +145,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         status = VirtioSndQueueSplitCreate(
+            &Dx->DmaCtx,
             &Dx->QueueSplit[q],
             (USHORT)q,
             size,
@@ -320,6 +321,8 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtIoSndDestroyQueues(Dx);
 
+    VirtIoSndDmaUninit(&Dx->DmaCtx);
+
     VirtIoSndTransportUninit(&Dx->Transport);
 
     Dx->NegotiatedFeatures = 0;
@@ -351,6 +354,12 @@ NTSTATUS VirtIoSndStartHardware(
     status = VirtIoSndTransportNegotiateFeatures(&Dx->Transport, &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", status);
+        goto fail;
+    }
+
+    status = VirtIoSndDmaInit(Dx->Pdo, &Dx->DmaCtx);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("VirtIoSndDmaInit failed: 0x%08X\n", status);
         goto fail;
     }
 
@@ -388,4 +397,3 @@ fail:
     VirtIoSndStopHardware(Dx);
     return status;
 }
-
