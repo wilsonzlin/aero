@@ -18,6 +18,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      # Prevent Playwright from downloading browser binaries during `npm ci` in jobs
+      # that don't run browser tests.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
