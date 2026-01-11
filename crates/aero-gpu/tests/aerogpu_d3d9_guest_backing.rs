@@ -728,9 +728,9 @@ fn d3d9_copy_buffer_writeback_flag_is_rejected() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-    const OPC_CREATE_BUFFER: u32 = 0x100;
-    const OPC_COPY_BUFFER: u32 = 0x105;
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
 
     const SRC_HANDLE: u32 = 1;
     const DST_HANDLE: u32 = 2;
