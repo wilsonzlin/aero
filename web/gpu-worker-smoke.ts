@@ -133,6 +133,12 @@ async function main() {
         if (!status) return;
         status.textContent += `gpu_error msg=${msg.message}${msg.code ? ` code=${msg.code}` : ""}\n`;
       },
+      onEvents: (msg) => {
+        if (!status) return;
+        for (const ev of msg.events) {
+          status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}\n`;
+        }
+      },
     });
 
     const ready = await gpu.ready;

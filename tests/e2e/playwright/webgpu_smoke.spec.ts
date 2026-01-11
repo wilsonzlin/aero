@@ -67,15 +67,19 @@ test('GPU worker: WebGPU path renders expected pattern when available @webgpu', 
   // behavior prefers WebGL2 to keep non-WebGPU CI runs deterministic.
   await page.goto('http://127.0.0.1:5173/web/gpu-worker-smoke.html?backend=webgpu', { waitUntil: 'load' });
   const samples = await getSamples(page);
+
+  const statusText = await page.evaluate(() => document.getElementById('status')?.textContent ?? '');
+  const statusPreview = statusText.length > 500 ? `${statusText.slice(0, 500)}…` : statusText;
+
   if (samples.backend !== 'webgpu') {
-    const message = `GPU worker did not use WebGPU backend (got=${samples.backend})`;
+    const message = `GPU worker did not use WebGPU backend (got=${samples.backend}); status=${statusPreview}`;
     if (isWebGPURequired()) {
       throw new Error(message);
     }
     test.skip(true, message);
   }
   if (samples.width < 16 || samples.height < 16) {
-    const message = `GPU worker WebGPU screenshot too small (${samples.width}x${samples.height}); error=${samples.error ?? 'none'}`;
+    const message = `GPU worker WebGPU screenshot too small (${samples.width}x${samples.height}); status=${statusPreview}`;
     if (isWebGPURequired()) {
       throw new Error(message);
     }

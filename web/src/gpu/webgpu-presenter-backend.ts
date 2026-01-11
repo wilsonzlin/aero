@@ -106,13 +106,13 @@ export class WebGpuPresenterBackend implements Presenter {
     }
     this.gpu = gpu;
 
-    const ctx = (canvas as any).getContext('webgpu') as any;
-    if (!ctx) {
-      throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
+    const isHeadless = /HeadlessChrome/.test((navigator as any).userAgent ?? '');
+    // Prefer the fallback adapter in headless/test runs for stability and deterministic output.
+    // (We still try the "high-performance" path as a backup so real browsers can use hardware.)
+    let adapter = await gpu.requestAdapter?.(isHeadless ? { forceFallbackAdapter: true } : { powerPreference: 'high-performance' });
+    if (!adapter) {
+      adapter = await gpu.requestAdapter?.(isHeadless ? { powerPreference: 'high-performance' } : { forceFallbackAdapter: true });
     }
-    this.ctx = ctx;
-
-    const adapter = await gpu.requestAdapter?.({ powerPreference: 'high-performance' });
     if (!adapter) {
       throw new PresenterError('webgpu_no_adapter', 'navigator.gpu.requestAdapter() returned null');
     }
@@ -126,6 +126,12 @@ export class WebGpuPresenterBackend implements Presenter {
     }
     this.device = device;
     this.queue = device.queue;
+
+    const ctx = (canvas as any).getContext('webgpu') as any;
+    if (!ctx) {
+      throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
+    }
+    this.ctx = ctx;
 
     // Report device loss asynchronously.
     (device.lost as Promise<any> | undefined)?.then((info) => {
@@ -305,6 +311,11 @@ export class WebGpuPresenterBackend implements Presenter {
   public destroy(): void {
     this.frameTexture?.destroy?.();
     this.cursorTexture?.destroy?.();
+    try {
+      this.ctx?.unconfigure?.();
+    } catch {
+      // Ignore.
+    }
     this.frameTexture = null;
     this.frameView = null;
     this.bindGroup = null;
@@ -329,6 +340,11 @@ export class WebGpuPresenterBackend implements Presenter {
 
   private configureContext(): void {
     if (!this.ctx || !this.device || !this.format) return;
+    try {
+      this.ctx.unconfigure?.();
+    } catch {
+      // Ignore.
+    }
     this.ctx.configure({
       device: this.device,
       format: this.format,

@@ -153,6 +153,12 @@ let presenting = false;
 
 let runtimeInit: GpuRuntimeInitMessage | null = null;
 let runtimeCanvas: OffscreenCanvas | null = null;
+// OffscreenCanvas only supports a single graphics context type. Once we have created a
+// WebGPU or WebGL2 context on the canvas, attempts to initialize a different backend
+// will inevitably fail (e.g. `getContext('webgl2')` returns null after `getContext('webgpu')`).
+//
+// Track which family has been created so recovery paths don't attempt impossible fallbacks.
+let runtimeCanvasContextKind: "webgpu" | "webgl2" | null = null;
 let runtimeOptions: GpuRuntimeInitOptions | null = null;
 let runtimeReadySent = false;
 
@@ -2043,6 +2049,20 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
     }
   }
 
+  if (runtimeCanvasContextKind) {
+    const filtered = backends.filter((backend) => {
+      if (runtimeCanvasContextKind === "webgpu") return backend === "webgpu";
+      return backend === "webgl2_raw" || backend === "webgl2_wgpu";
+    });
+    if (filtered.length === 0) {
+      throw new PresenterError(
+        "backend_incompatible",
+        `Canvas already has a ${runtimeCanvasContextKind} context; cannot init backends [${backends.join(", ")}]`,
+      );
+    }
+    backends = filtered;
+  }
+
   const firstBackend = backends[0];
   let firstError: unknown | null = null;
   let lastError: unknown | null = null;
@@ -2052,6 +2072,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
       presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts, generation);
       presenterSrcWidth = width;
       presenterSrcHeight = height;
+      runtimeCanvasContextKind = presenter.backend === "webgpu" ? "webgpu" : "webgl2";
       if (presenter.backend === "webgpu") surfaceReconfigures += 1;
       syncCursorToPresenter();
 
@@ -2232,7 +2253,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         recoveryPromise = null;
 
         runtimeInit = init;
-        runtimeCanvas = init.canvas ?? null;
+        const nextCanvas = init.canvas ?? null;
+        if (runtimeCanvas !== nextCanvas) {
+          runtimeCanvasContextKind = null;
+        }
+        runtimeCanvas = nextCanvas;
         runtimeOptions = init.options ?? null;
         runtimeReadySent = false;
 
@@ -2388,6 +2413,16 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
         try {
           await maybeSendReady();
+          if (isDeviceLost && recoveryPromise) {
+            // If a recovery attempt is already underway, wait briefly so the screenshot
+            // can capture real pixels instead of immediately returning the 1x1 stub.
+            // (Still bounded so the API cannot hang indefinitely.)
+            await Promise.race([
+              recoveryPromise,
+              new Promise((resolve) => setTimeout(resolve, 750)),
+            ]);
+            await maybeSendReady();
+          }
           const includeCursor = req.includeCursor === true;
 
           // Ensure the screenshot reflects the latest presented pixels. The shared
@@ -2395,7 +2430,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           // so relying on the header sequence alone can lead to mismatched
           // (seq, pixels) pairs in smoke tests and automation.
           if (frameState) {
-            if (!(await waitForNotPresenting(200))) {
+            if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
               postStub(typeof seqNow === "number" ? seqNow : undefined);
               return;
@@ -2405,7 +2440,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               await handleTick();
             }
 
-            if (!(await waitForNotPresenting(200))) {
+            if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
               postStub(typeof seqNow === "number" ? seqNow : undefined);
               return;
@@ -2414,7 +2449,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
-          if (presenter && !isDeviceLost) {
+          const tryPostPresenterScreenshot = async (forceUpload: boolean): Promise<boolean> => {
+            if (!presenter || isDeviceLost) return false;
+            const frame = forceUpload ? getCurrentFrameInfo() : null;
+            if (frame && presenter) {
+              presenter.present(frame.pixels, frame.strideBytes);
+            }
+
             const prevCursorRenderEnabled = cursorRenderEnabled;
             const needsCursorDisabledForScreenshot = !includeCursor && presenter.backend !== "webgpu";
             if (needsCursorDisabledForScreenshot) {
@@ -2461,6 +2502,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 },
                 [pixels],
               );
+              return true;
             } finally {
               if (needsCursorDisabledForScreenshot) {
                 cursorRenderEnabled = prevCursorRenderEnabled;
@@ -2468,7 +2510,45 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 getCursorPresenter()?.redraw?.();
               }
             }
-            return;
+          };
+
+          const tryScreenshot = async (forceUpload: boolean): Promise<boolean> => {
+            try {
+              return await tryPostPresenterScreenshot(forceUpload);
+            } catch (err) {
+              const deviceLostCode = getDeviceLostCode(err);
+              if (deviceLostCode) {
+                const startRecovery = deviceLostCode !== "webgl_context_lost";
+                handleDeviceLost(
+                  err instanceof Error ? err.message : String(err),
+                  { source: "screenshot", code: deviceLostCode, error: err },
+                  startRecovery,
+                );
+              } else {
+                emitGpuEvent({
+                  time_ms: performance.now(),
+                  backend_kind: backendKindForEvent(),
+                  severity: "error",
+                  category: "Screenshot",
+                  message: err instanceof Error ? err.message : String(err),
+                  details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+                });
+              }
+              return false;
+            }
+          };
+
+          // Fast path: capture immediately when the presenter is healthy.
+          if (await tryScreenshot(false)) return;
+
+          // If we raced with a device-loss + recovery cycle, wait for recovery and retry once.
+          if ((isDeviceLost || !presenter) && recoveryPromise) {
+            await Promise.race([
+              recoveryPromise,
+              new Promise((resolve) => setTimeout(resolve, 1500)),
+            ]);
+            await maybeSendReady();
+            if (await tryScreenshot(true)) return;
           }
 
           const last = aerogpuLastPresentedFrame;
