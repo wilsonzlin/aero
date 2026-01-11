@@ -79,16 +79,17 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
     <script type="module">
       import { fnv1a32Hex } from "/web/src/utils/fnv1a.ts";
       import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "/web/src/ipc/gpu-protocol.ts";
-      import {
-        AerogpuCmdWriter,
-        AerogpuPrimitiveTopology,
-        AerogpuShaderStage,
-        AEROGPU_CLEAR_COLOR,
-        AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-        AEROGPU_RESOURCE_USAGE_SCANOUT,
-        AEROGPU_RESOURCE_USAGE_TEXTURE,
-        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
-      } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
+        import {
+          AerogpuCmdWriter,
+          AerogpuPrimitiveTopology,
+          AerogpuShaderStage,
+          AEROGPU_CLEAR_COLOR,
+          AEROGPU_PRESENT_FLAG_VSYNC,
+          AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+          AEROGPU_RESOURCE_USAGE_SCANOUT,
+          AEROGPU_RESOURCE_USAGE_TEXTURE,
+          AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
       import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
 
       const FORCE_BACKEND = ${JSON.stringify(forceBackend)};
@@ -251,12 +252,12 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
         writer.setPrimitiveTopology(AerogpuPrimitiveTopology.TriangleList);
 
         // c0 = solid green.
-        writer.setShaderConstantsF(AerogpuShaderStage.Pixel, 0, [0, 1, 0, 1]);
-
-        writer.draw(3, 1, 0, 0);
-        writer.present(0, 0);
-        return writer.finish().buffer;
-      }
+         writer.setShaderConstantsF(AerogpuShaderStage.Pixel, 0, [0, 1, 0, 1]);
+ 
+         writer.draw(3, 1, 0, 0);
+         writer.presentEx(0, AEROGPU_PRESENT_FLAG_VSYNC, 0);
+         return writer.finish().buffer;
+       }
 
       (async () => {
         try {
@@ -341,20 +342,28 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
           const expected = solidRgba(W, H, 0, 255, 0, 255);
           const cmdStream = buildCmdStream(W, H);
 
-          const submitRequestId = nextRequestId++;
-          const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
-          worker.postMessage(
-            {
+           const submitRequestId = nextRequestId++;
+           const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
+           worker.postMessage(
+             {
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId,
               contextId: 0,
               signalFence: 1n,
-              cmdStream,
-            },
-            [cmdStream],
-          );
-          const submit = await submitPromise;
+                cmdStream,
+              },
+              [cmdStream],
+            );
+          const early = await Promise.race([
+            submitPromise.then((submit) => ({ kind: "submit", submit })),
+            new Promise((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
+          ]);
+          const completedBeforeTick = early.kind === "submit";
+          if (!completedBeforeTick) {
+            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+          }
+          const submit = completedBeforeTick ? early.submit : await submitPromise;
 
           const screenshotRequestId = nextRequestId++;
           const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
@@ -365,14 +374,15 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
           const hash = fnv1a32Hex(actual);
           const expectedHash = fnv1a32Hex(expected);
 
-          window.__AERO_D3D9_DRAW_RESULT__ = {
-            pass: hash === expectedHash,
-            hash,
-            expectedHash,
-            backendKind: readyMsg.backendKind ?? null,
-            presentCount: submit.presentCount?.toString?.() ?? null,
-            completedFence: submit.completedFence?.toString?.() ?? null,
-          };
+           window.__AERO_D3D9_DRAW_RESULT__ = {
+             pass: hash === expectedHash,
+             hash,
+             expectedHash,
+             backendKind: readyMsg.backendKind ?? null,
+             completedBeforeTick,
+             presentCount: submit.presentCount?.toString?.() ?? null,
+             completedFence: submit.completedFence?.toString?.() ?? null,
+           };
 
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
           worker.terminate();
@@ -388,4 +398,5 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
 
   expect(result.error ?? null).toBeNull();
   expect(result.pass).toBe(true);
+  expect(result.completedBeforeTick).toBe(false);
 });
