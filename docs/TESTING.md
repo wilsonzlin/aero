@@ -76,6 +76,28 @@ If your repo layout differs from the defaults, override directories:
 - `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json`
 - `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir`: the crate directory containing the WASM `Cargo.toml`
 
+---
+
+## Node workspaces: install once, run per-package scripts
+
+The repo uses **npm workspaces** (see [`docs/adr/0006-node-monorepo-tooling.md`](./adr/0006-node-monorepo-tooling.md)).
+
+Install all Node dependencies from the repo root:
+
+```bash
+npm ci
+```
+
+Run package-scoped scripts using `npm -w <path>`:
+
+```bash
+# Frontend dev server
+npm -w web run dev
+
+# Gateway unit tests
+npm -w backend/aero-gateway test
+```
+
 ### Manual (equivalent) commands
 
 From the repo root:

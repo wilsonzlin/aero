@@ -16,15 +16,15 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: backend/aero-gateway/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: backend/aero-gateway
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Run benchmark (smoke)
-        working-directory: backend/aero-gateway
-        run: npm run bench:smoke
+        run: npm -w backend/aero-gateway run bench:smoke
 
       - name: Upload benchmark results
         if: always()

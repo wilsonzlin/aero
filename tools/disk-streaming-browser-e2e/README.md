@@ -20,13 +20,11 @@ The Playwright suite spins up **two local HTTP origins** on separate ports:
 ## Running locally
 
 ```bash
-cd tools/disk-streaming-browser-e2e
-
-# Install deps
+# From the repo root (npm workspaces)
 npm ci
 
 # Run headless tests
-npm test
+npm -w tools/disk-streaming-browser-e2e test
 ```
 
 Prerequisites:

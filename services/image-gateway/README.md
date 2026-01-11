@@ -42,8 +42,8 @@ disk cache behavior, CloudFront may return a `Content-Encoding` other than `iden
 ## Setup
 
 ```bash
-cd services/image-gateway
-npm install
+# From the repo root (npm workspaces)
+npm ci
 ```
 
 Copy `.env.example` to `.env` and fill in values:
@@ -123,7 +123,7 @@ Then set:
 ### Run
 
 ```bash
-npm run dev
+npm -w services/image-gateway run dev
 ```
 
 Health endpoints:

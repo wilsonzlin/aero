@@ -15,8 +15,8 @@ Browsers cannot open raw TCP sockets. The only browser‑legal option is a WebSo
 
 ## Usage
 ```bash
-cd tools/net-proxy-server
-npm install
+# From the repo root (npm workspaces)
+npm ci
 
 # Required
 export AERO_PROXY_AUTH_TOKEN="dev-token"
@@ -26,7 +26,7 @@ export AERO_PROXY_PORT=8080
 export AERO_PROXY_HOST=127.0.0.1
 export AERO_PROXY_ALLOW_PRIVATE_IPS=0
 
-npm start
+npm -w tools/net-proxy-server start
 ```
 
 Connect from the browser to:
@@ -79,9 +79,7 @@ Payload:
 
 ## Testing
 ```bash
-cd tools/net-proxy-server
-npm install
-npm test
+npm -w tools/net-proxy-server test
 ```
 
 ## Docker

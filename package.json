@@ -2,7 +2,20 @@
   "name": "aero",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "backend/aero-gateway",
+    "bench",
+    "net-proxy",
+    "packages/*",
+    "proxy/webrtc-udp-relay/e2e",
+    "server",
+    "services/image-gateway",
+    "tools/disk-streaming-browser-e2e",
+    "tools/net-proxy-server",
+    "tools/perf",
+    "tools/range-harness",
+    "web"
+  ],
   "engines": {
     "node": ">=20.11.1 <21"
   },
@@ -19,6 +32,7 @@
     "gen:scancodes": "node tools/gen_scancodes/gen_scancodes.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "generate:mega-module": "node scripts/generate-mega-module.mjs",
+    "bench:run": "node bench/run",
     "bench:browser": "node bench/run --scenario all --iterations 7",
     "bench:node": "node bench/run.js --out bench/results.json",
     "bench:update-baseline": "node bench/update-baseline",
@@ -41,14 +55,14 @@
     "test:webgpu": "playwright test --project=chromium-webgpu",
     "generate:goldens": "node tests/golden/generate_goldens.cjs",
     "test:gpu": "playwright test -c playwright.gpu.config.ts tests/playwright/gpu_golden.spec.ts",
-    "wasm:build:dev": "npm --prefix web run wasm:build:dev",
-    "wasm:build:release": "npm --prefix web run wasm:build:release",
-    "wasm:size": "npm --prefix web run wasm:size"
+    "wasm:build:dev": "npm -w web run wasm:build:dev",
+    "wasm:build:release": "npm -w web run wasm:build:release",
+    "wasm:size": "npm -w web run wasm:size"
   },
   "devDependencies": {
     "@playwright/test": "^1.41.2",
     "@types/wicg-file-system-access": "^2023.10.7",
-    "@types/node": "^20.10.6",
+    "@types/node": "^20.11.30",
     "@webgpu/types": "^0.1.68",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
@@ -57,8 +71,9 @@
     "fake-indexeddb": "^6.2.5",
     "pixelmatch": "^5.3.0",
     "pngjs": "^7.0.0",
-    "typescript": "^5.3.3",
-    "vite": "^5.0.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.10",
     "vitest": "^1.6.0",
     "wabt": "^1.0.37",
     "ws": "^8.18.0"

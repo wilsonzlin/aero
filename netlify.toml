@@ -1,5 +1,4 @@
 [build]
-  base = "web"
-  command = "npm run build"
-  publish = "dist"
-
+  base = "."
+  command = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm -w web run build"
+  publish = "web/dist"

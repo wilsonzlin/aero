@@ -16,9 +16,8 @@ The benchmark harness is designed to be:
 From the repo root:
 
 ```bash
-cd backend/aero-gateway
 npm ci
-npm run bench
+npm -w backend/aero-gateway run bench
 ```
 
 `npm run bench` automatically builds the gateway (`npm run build`) so the benchmark exercises the same code paths as production.
@@ -30,7 +29,7 @@ npm run bench
 Runs a slightly longer benchmark to establish local baselines:
 
 ```bash
-npm run bench
+npm -w backend/aero-gateway run bench
 ```
 
 This writes a JSON report to `backend/aero-gateway/bench/results.json` and prints a human-readable summary to stdout.
@@ -40,7 +39,7 @@ This writes a JSON report to `backend/aero-gateway/bench/results.json` and print
 Runs a short, conservative benchmark and **asserts minimum thresholds**:
 
 ```bash
-npm run bench:smoke
+npm -w backend/aero-gateway run bench:smoke
 ```
 
 This is intended for GitHub Actions / perf regression smoke tests.

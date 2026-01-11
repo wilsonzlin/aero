@@ -24,7 +24,6 @@ jobs:
       PERF_ITERATIONS: "3"
       PERF_REGRESSION_THRESHOLD_PCT: "15"
       PERF_EXTREME_CV_THRESHOLD: "0.5"
-      AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
       AERO_REQUIRE_WEBGPU: "0"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
@@ -41,107 +40,36 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: Determine Node workspace directory (candidate)
-        id: node-dir-head
-        run: |
-          set -euo pipefail
-
-          detected="$(node head/scripts/ci/detect-node-dir.mjs --require-lockfile --github-output /dev/null)"
-          dir=""
-          lockfile=""
-          while IFS="=" read -r key value; do
-            case "$key" in
-              dir)
-                dir="$value"
-                ;;
-              lockfile)
-                lockfile="$value"
-                ;;
-            esac
-          done <<<"$detected"
-
-          if [[ -z "$dir" || -z "$lockfile" ]]; then
-            echo "detect-node-dir did not return expected outputs" >&2
-            echo "$detected" >&2
-            exit 1
-          fi
-
-          if [[ "$dir" == "." ]]; then
-            full_dir="head"
-          else
-            full_dir="head/$dir"
-          fi
-          full_lockfile="head/$lockfile"
-
-          echo "dir=$full_dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$full_lockfile" >> "$GITHUB_OUTPUT"
-
-      - name: Determine Node workspace directory (baseline)
-        id: node-dir-base
-        run: |
-          set -euo pipefail
-
-          detected="$(node base/scripts/ci/detect-node-dir.mjs --require-lockfile --github-output /dev/null)"
-          dir=""
-          lockfile=""
-          while IFS="=" read -r key value; do
-            case "$key" in
-              dir)
-                dir="$value"
-                ;;
-              lockfile)
-                lockfile="$value"
-                ;;
-            esac
-          done <<<"$detected"
-
-          if [[ -z "$dir" || -z "$lockfile" ]]; then
-            echo "detect-node-dir did not return expected outputs" >&2
-            echo "$detected" >&2
-            exit 1
-          fi
-
-          if [[ "$dir" == "." ]]; then
-            full_dir="base"
-          else
-            full_dir="base/$dir"
-          fi
-          full_lockfile="base/$lockfile"
-
-          echo "dir=$full_dir" >> "$GITHUB_OUTPUT"
-          echo "lockfile=$full_lockfile" >> "$GITHUB_OUTPUT"
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version-file: head/.nvmrc
           cache: npm
           cache-dependency-path: |
-            head/tools/perf/package-lock.json
-            ${{ steps.node-dir-head.outputs.lockfile }}
-            ${{ steps.node-dir-base.outputs.lockfile }}
-
-      - name: Install perf tool dependencies
-        run: npm ci
-        working-directory: head/tools/perf
-
-      - name: Setup Playwright (cached)
-        uses: ./.github/actions/setup-playwright
-        with:
-          browsers: chromium
-          working-directory: head/tools/perf
-          lockfile: head/tools/perf/package-lock.json
+            head/package-lock.json
+            base/package-lock.json
 
       - name: Install app dependencies (baseline)
         run: npm ci
-        working-directory: ${{ steps.node-dir-base.outputs.dir }}
+        working-directory: base
 
       - name: Build app (baseline)
         run: npm run build
-        working-directory: ${{ steps.node-dir-base.outputs.dir }}
+        working-directory: base
+
+      - name: Install app dependencies (candidate)
+        run: npm ci
+        working-directory: head
+
+      - name: Setup Playwright (cached)
+        uses: ./head/.github/actions/setup-playwright
+        with:
+          browsers: chromium
+          working-directory: head/tools/perf
+          lockfile: head/package-lock.json
 
       - name: Run perf smoke (baseline)
-        working-directory: ${{ steps.node-dir-base.outputs.dir }}
+        working-directory: base
         run: |
           set -euo pipefail
           PORT=4173
@@ -166,16 +94,12 @@ jobs:
             --out-dir "$GITHUB_WORKSPACE/head/perf-results/base" \
             --iterations ${{ env.PERF_ITERATIONS }}
 
-      - name: Install app dependencies (candidate)
-        run: npm ci
-        working-directory: ${{ steps.node-dir-head.outputs.dir }}
-
       - name: Build app (candidate)
         run: npm run build
-        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+        working-directory: head
 
       - name: Run perf smoke (candidate)
-        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+        working-directory: head
         run: |
           set -euo pipefail
           PORT=4174

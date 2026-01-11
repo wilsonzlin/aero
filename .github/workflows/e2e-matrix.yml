@@ -40,7 +40,6 @@ permissions:
 env:
   # Keep parity with `ci.yml` so cross-browser runs behave the same way as PR CI.
   AERO_REQUIRE_WEBGPU: "0"
-  AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
 
 jobs:
   e2e:
@@ -66,34 +65,24 @@ jobs:
         with:
           toolchain: stable
           locked: auto
-
-      - name: Determine Node workspace directory
-        id: node-dir
-        run: |
-          set -euo pipefail
-          node scripts/ci/detect-node-dir.mjs --require-lockfile --github-output "$GITHUB_OUTPUT"
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: ${{ steps.node-dir.outputs.dir }}
         run: npm ci
 
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
         with:
           browsers: ${{ matrix.project }}
-          working-directory: ${{ steps.node-dir.outputs.dir }}
-          lockfile: ${{ steps.node-dir.outputs.lockfile }}
+          working-directory: .
+          lockfile: package-lock.json
 
       - name: Run Playwright tests
-        env:
-          AERO_NODE_DIR: ${{ steps.node-dir.outputs.dir }}
         run: cargo xtask test-all --skip-rust --skip-wasm --skip-ts --pw-project ${{ matrix.project }} -- --reporter=dot,html --trace=retain-on-failure
 
       - name: Upload Playwright artifacts
@@ -102,8 +91,8 @@ jobs:
         with:
           name: playwright-artifacts-${{ matrix.project }}
           path: |
-            ${{ steps.node-dir.outputs.dir }}/playwright-report/
-            ${{ steps.node-dir.outputs.dir }}/test-results/
+            playwright-report/
+            test-results/
           if-no-files-found: ignore
           retention-days: 7
 

@@ -9,8 +9,5 @@
   "scripts": {
     "pretest": "playwright install chromium",
     "test": "playwright test"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.51.0"
   }
 }

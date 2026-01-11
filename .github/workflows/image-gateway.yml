@@ -27,9 +27,6 @@ jobs:
   image-gateway:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: services/image-gateway
     steps:
       - uses: actions/checkout@v4
 
@@ -38,25 +35,28 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: services/image-gateway/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Dependency audit (non-blocking)
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npm -w services/image-gateway run typecheck
 
       - name: Test
-        run: npm test
+        run: npm -w services/image-gateway test
 
       - name: Build
-        run: npm run build
+        run: npm -w services/image-gateway run build
 
       - name: Disk streaming conformance (MinIO)
+        working-directory: services/image-gateway
         env:
           AUTH_MODE: none
           CORS_ALLOW_ORIGIN: "*"
@@ -85,7 +85,7 @@ jobs:
             exit 1
           fi
 
-          npm start &
+          node dist/index.js &
           PID="$!"
           cleanup() {
             kill "$PID" 2>/dev/null || true

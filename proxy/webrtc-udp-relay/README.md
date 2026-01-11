@@ -139,9 +139,9 @@ default to same-host only).
 `e2e/` contains a Playwright test that launches headless Chromium and exercises the WebRTC `udp` DataChannel framing against a local UDP echo server.
 
 ```bash
-cd proxy/webrtc-udp-relay/e2e
+# From the repo root (npm workspaces)
 npm ci
-npm test
+npm -w proxy/webrtc-udp-relay/e2e test
 ```
 
 `npm test` runs `playwright install chromium` automatically (via `pretest`) to ensure the browser binary is available.

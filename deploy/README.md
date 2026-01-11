@@ -264,9 +264,8 @@ To serve your real frontend:
 1) Build it (example):
 
 ```bash
-cd web
 npm ci
-npm run build
+npm -w web run build
 ```
 
 2) Replace the volume mount in `deploy/docker-compose.yml`:

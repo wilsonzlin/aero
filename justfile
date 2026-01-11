@@ -131,15 +131,18 @@ setup:
     echo "==> Tooling: wasm crate not found yet; skipping wasm-pack checks"
   fi
 
-  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    echo "==> Web: installing JS dependencies (npm ci)"
+  if [[ -f "package.json" ]]; then
+    echo "==> Node: installing JS dependencies (npm ci, workspaces)"
     if ! command -v npm >/dev/null; then
-      echo "error: npm is required to install web deps" >&2
+      echo "error: npm is required to install JS deps" >&2
       exit 1
     fi
-    (cd "{{WEB_DIR}}" && npm ci)
+    # Keep `just setup` fast by skipping the Playwright browser download. Install
+    # browsers explicitly when you need to run E2E tests:
+    #   npx playwright install --with-deps chromium
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
   else
-    echo "==> Web: '{{WEB_DIR}}/package.json' not found; skipping npm ci"
+    echo "==> Node: package.json not found; skipping npm ci"
   fi
 
   echo "==> Setup complete"
@@ -160,7 +163,7 @@ wasm:
         exit 1
       fi
       echo "==> Building WASM (single + threaded) via '{{WEB_DIR}}' npm scripts"
-      (cd "{{WEB_DIR}}" && npm run wasm:build)
+      npm -w "{{WEB_DIR}}" run wasm:build
       exit 0
     fi
   fi
@@ -193,7 +196,7 @@ wasm-single:
         exit 1
       fi
       echo "==> Building WASM (single) via '{{WEB_DIR}}' npm scripts"
-      (cd "{{WEB_DIR}}" && npm run wasm:build:single)
+      npm -w "{{WEB_DIR}}" run wasm:build:single
       exit 0
     fi
   fi
@@ -214,7 +217,7 @@ wasm-threaded:
         exit 1
       fi
       echo "==> Building WASM (threaded/shared-memory) via '{{WEB_DIR}}' npm scripts"
-      (cd "{{WEB_DIR}}" && npm run wasm:build:threaded)
+      npm -w "{{WEB_DIR}}" run wasm:build:threaded
       exit 0
     fi
   fi
@@ -241,7 +244,7 @@ _maybe_run_web_script script:
 
   # Only run if the script exists, otherwise keep things green for partial checkouts.
   if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['{{script}}']) ? 0 : 1)" >/dev/null 2>&1); then
-    (cd "{{WEB_DIR}}" && npm run "{{script}}")
+    npm -w "{{WEB_DIR}}" run "{{script}}"
   else
     echo "==> Web: no npm script named '{{script}}' (skipping)"
   fi
@@ -251,8 +254,8 @@ dev:
   set -euo pipefail
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    if [[ ! -d "{{WEB_DIR}}/node_modules" ]]; then
-      echo "error: '{{WEB_DIR}}/node_modules' not found; run 'just setup' first" >&2
+    if [[ ! -d "node_modules" ]]; then
+      echo "error: 'node_modules' not found; run 'just setup' first" >&2
       exit 1
     fi
 
@@ -280,7 +283,7 @@ dev:
       echo "     just wasm-watch  # rebuilds the threaded/shared-memory WASM variant"
     fi
 
-    (cd "{{WEB_DIR}}" && npm run dev)
+    npm -w "{{WEB_DIR}}" run dev
   else
     echo '==> No `web/` app detected.'
     echo ""
@@ -322,13 +325,13 @@ build:
   just wasm
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    if [[ ! -d "{{WEB_DIR}}/node_modules" ]]; then
-      echo "error: '{{WEB_DIR}}/node_modules' not found; run 'just setup' first" >&2
+    if [[ ! -d "node_modules" ]]; then
+      echo "error: 'node_modules' not found; run 'just setup' first" >&2
       exit 1
     fi
 
     echo "==> Building web bundle (production)"
-    (cd "{{WEB_DIR}}" && npm run build)
+    npm -w "{{WEB_DIR}}" run build
   else
     echo "==> Web: '{{WEB_DIR}}/package.json' not found; skipping web build"
   fi
@@ -347,15 +350,15 @@ test:
   fi
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    if [[ ! -d "{{WEB_DIR}}/node_modules" ]]; then
-      echo "error: '{{WEB_DIR}}/node_modules' not found; run 'just setup' first" >&2
+    if [[ ! -d "node_modules" ]]; then
+      echo "error: 'node_modules' not found; run 'just setup' first" >&2
       exit 1
     fi
   fi
 
   # Prefer a dedicated unit-test script if available.
   if [[ -f "{{WEB_DIR}}/package.json" ]] && (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['test:unit']) ? 0 : 1)" >/dev/null 2>&1); then
-    (cd "{{WEB_DIR}}" && npm run test:unit)
+    npm -w "{{WEB_DIR}}" run test:unit
   else
     just _maybe_run_web_script test
   fi

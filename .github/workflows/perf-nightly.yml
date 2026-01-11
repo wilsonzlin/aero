@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 60
     env:
       PERF_ITERATIONS: ${{ github.event.inputs.iterations || '7' }}
-      AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
       AERO_REQUIRE_WEBGPU: "0"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
@@ -32,42 +31,27 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Determine Node workspace directory
-        id: node-dir
-        run: |
-          set -euo pipefail
-          node scripts/ci/detect-node-dir.mjs --require-lockfile --github-output "$GITHUB_OUTPUT"
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: |
-            tools/perf/package-lock.json
-            ${{ steps.node-dir.outputs.lockfile }}
+          cache-dependency-path: package-lock.json
 
-      - name: Install perf tool dependencies
+      - name: Install dependencies (npm ci)
         run: npm ci
-        working-directory: tools/perf
 
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
         with:
           browsers: chromium
           working-directory: tools/perf
-          lockfile: tools/perf/package-lock.json
-
-      - name: Install app dependencies (nightly)
-        run: npm ci
-        working-directory: ${{ steps.node-dir.outputs.dir }}
+          lockfile: package-lock.json
 
       - name: Build app (nightly)
         run: npm run build
-        working-directory: ${{ steps.node-dir.outputs.dir }}
 
       - name: Run browser perf (nightly)
-        working-directory: ${{ steps.node-dir.outputs.dir }}
         run: |
           set -euo pipefail
           PORT=4173

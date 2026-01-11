@@ -54,10 +54,9 @@ CI validates that Vite servers + deployment templates stay in sync via:
 - `scripts/ci/check-security-headers.mjs`
 
 ```bash
-cd web
-npm install
-npm run build
-npm run preview
+npm ci
+npm -w web run build
+npm -w web run preview
 ```
 
 Then open the printed URL (usually `http://localhost:4173`) and verify:
@@ -84,8 +83,7 @@ npm run test:security-headers
 The `web/` Vite dev server can be started with COOP/COEP disabled:
 
 ```bash
-cd web
-VITE_DISABLE_COOP_COEP=1 npm run dev
+VITE_DISABLE_COOP_COEP=1 npm -w web run dev
 ```
 
 In this mode `crossOriginIsolated` should be `false` and the runtime will load the
@@ -99,7 +97,7 @@ single-threaded/non-shared WASM variant.
 
 This repo provides:
 
-- `netlify.toml` (build/publish settings for the `web/` subproject)
+- `netlify.toml` (build/publish settings for `web/` via npm workspaces)
 - `web/public/_headers` (COOP/COEP + CSP + baseline security headers + caching defaults)
 
 Netlify will apply `dist/_headers` automatically (Vite copies `public/` → `dist/`).
@@ -118,19 +116,13 @@ Cloudflare Pages supports the same `_headers` file format.
 
 Configure the project with:
 
-Recommended (simplest):
+Recommended (npm workspaces / monorepo):
 
-- Root directory: `web`
-- Build command: `npm run build`
-- Build output directory: `dist`
-
-Alternative (build from repo root):
-
-- Build command: `npm run build --prefix web`
+- Root directory: `.`
+- Build command: `npm ci && npm -w web run build`
 - Build output directory: `web/dist`
 
-The generated `web/dist/_headers` file is deployed automatically and enables
-cross-origin isolation and baseline security headers.
+The generated `web/dist/_headers` file is deployed automatically and enables cross-origin isolation and baseline security headers.
 
 > Note: Some platforms apply only the *most specific* matching `_headers` rule.
 > The provided `_headers` file repeats COOP/COEP/CORP in the `/assets/*` and

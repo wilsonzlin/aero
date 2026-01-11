@@ -108,9 +108,8 @@ just dev
 Manual equivalent:
 
 ```sh
-cd web
 npm ci
-npm run dev
+npm -w web run dev
 ```
 
 ## Configuration
@@ -210,17 +209,17 @@ cargo xtask wasm both release  # builds both variants (single + threaded)
 just wasm
 ```
 
-Manual equivalent (from `web/`):
+Manual equivalent (repo root, npm workspaces):
 
 ```bash
-npm run wasm:build        # builds both variants
+npm -w web run wasm:build        # builds both variants
 ```
 
 Or individually:
 
 ```bash
-npm run wasm:build:threaded
-npm run wasm:build:single
+npm -w web run wasm:build:threaded
+npm -w web run wasm:build:single
 ```
 
 Generated output is written into `web/src/wasm/pkg-{threaded,single}/` and is gitignored.
@@ -230,7 +229,7 @@ Generated output is written into `web/src/wasm/pkg-{threaded,single}/` and is gi
 To test the **single** variant, start the dev server with the headers disabled:
 
 ```bash
-VITE_DISABLE_COOP_COEP=1 npm run dev
+VITE_DISABLE_COOP_COEP=1 npm -w web run dev
 ```
 
 In this mode the loader will select the non-shared-memory build automatically, and the UI will report which variant
@@ -247,20 +246,16 @@ This repo includes a standalone proxy service at [`net-proxy/`](./net-proxy/).
 Terminal 1 (network proxy):
 
 ```bash
-cd net-proxy
 npm ci
 
 # Trusted local development mode: allows localhost + private ranges.
-AERO_PROXY_OPEN=1 npm run dev
+AERO_PROXY_OPEN=1 npm -w net-proxy run dev
 ```
 
 Terminal 2 (frontend):
 
 ```bash
-cd web
-npm ci
-
-npm run dev
+npm -w web run dev
 ```
 
 The proxy exposes:

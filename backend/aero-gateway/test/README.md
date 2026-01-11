@@ -5,15 +5,15 @@ This folder contains **property-based (“fuzz-style”) tests** for security-cr
 ## Running
 
 ```bash
-cd backend/aero-gateway
-npm install
-npm test
+# From the repo root (npm workspaces)
+npm ci
+npm -w backend/aero-gateway test
 ```
 
 To run only the property tests:
 
 ```bash
-npm run test:property
+npm -w backend/aero-gateway run test:property
 ```
 
 ## What’s covered
@@ -29,5 +29,5 @@ The property tests are configured to run quickly in CI (limited runs and per-tes
 For deeper fuzzing locally, increase runs:
 
 ```bash
-FC_NUM_RUNS=5000 npm test
+FC_NUM_RUNS=5000 npm -w backend/aero-gateway test
 ```

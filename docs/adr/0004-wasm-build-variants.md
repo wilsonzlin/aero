@@ -33,8 +33,7 @@ This repo implements the two variants as **two wasm-pack packages** built from `
 Build commands:
 
 ```bash
-cd web
-npm run wasm:build        # builds both variants
+npm -w web run wasm:build        # builds both variants
 ```
 
 For the threaded build, `web/scripts/build_wasm.mjs` uses a **pinned nightly toolchain** (see
@@ -63,8 +62,7 @@ The build script that generates the two packages is:
 To simulate a non-cross-origin-isolated deployment locally, start Vite with COOP/COEP disabled:
 
 ```bash
-cd web
-VITE_DISABLE_COOP_COEP=1 npm run dev
+VITE_DISABLE_COOP_COEP=1 npm -w web run dev
 ```
 
 ## Alternatives considered

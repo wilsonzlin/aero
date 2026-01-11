@@ -233,19 +233,14 @@ The CI browser perf harness lives under `tools/perf/` and can be run locally.
 One-time setup:
 
 ```bash
-cd tools/perf
 npm ci
-npx --yes playwright@$(node -p "require('./package.json').dependencies['playwright-core']") install chromium
-cd ../..
+npx playwright install chromium
 ```
 
-If your shell doesn’t support `$(...)` command substitution (or you’re on Windows PowerShell), run:
+On minimal Linux environments, you may need system dependencies:
 
 ```bash
-cd tools/perf
-node -p "require('./package.json').dependencies['playwright-core']"
-# Then substitute the printed version into:
-#   npx --yes playwright@<version> install chromium
+npx playwright install --with-deps chromium
 ```
 
 ```bash
@@ -431,8 +426,8 @@ Capture a perf export:
 
 Run the microbench benchmark locally:
 
-1. `cd tools/perf && npm ci && npx --yes playwright@$(node -p "require('./package.json').dependencies['playwright-core']") install chromium && cd ../..` (one-time; see above if `$(...)` doesn’t work in your shell)
-2. `npm run bench:browser -- --scenario microbench --iterations 7`
+1. `npm ci && npx playwright install chromium` (one-time; use `--with-deps` on minimal Linux hosts)
+2. `npm run bench:run -- --scenario microbench --iterations 7`
 
 Alternative (run the underlying runner directly, without the wrapper):
 

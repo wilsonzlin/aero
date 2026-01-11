@@ -17,8 +17,8 @@ This package provides a small backend service required by early Aero prototypes:
 ## Quick start (local dev)
 
 ```bash
-cd server
-npm install
+# From the repo root (npm workspaces)
+npm ci
 
 # Required. Pick any random string in real deployments.
 export AERO_PROXY_TOKEN="dev-token"
@@ -28,7 +28,7 @@ export AERO_PROXY_TOKEN="dev-token"
 export AERO_PROXY_ALLOW_HOSTS="*"
 export AERO_PROXY_ALLOW_PORTS="80,443"
 
-npm run dev
+npm -w server run dev
 ```
 
 Open: `http://localhost:8080/`

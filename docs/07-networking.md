@@ -475,9 +475,8 @@ This repository includes a standalone WebSocket → TCP/UDP relay service in [`n
 To run in trusted local development mode (allows `127.0.0.1`, RFC1918, etc):
 
 ```bash
-cd net-proxy
 npm ci
-AERO_PROXY_OPEN=1 npm run dev
+AERO_PROXY_OPEN=1 npm -w net-proxy run dev
 ```
 
 Health check:

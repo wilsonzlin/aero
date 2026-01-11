@@ -7,11 +7,11 @@ The browser connects to this service via WebSocket, and the proxy opens real TCP
 ## Running locally
 
 ```bash
-cd net-proxy
+# From the repo root (npm workspaces)
 npm ci
 
 # Safe-by-default: only allows public/unicast targets.
-npm run dev
+npm -w net-proxy run dev
 ```
 
 Health check:
@@ -25,7 +25,7 @@ curl http://127.0.0.1:8081/healthz
 To allow connections to `127.0.0.1`, RFC1918, etc:
 
 ```bash
-AERO_PROXY_OPEN=1 npm run dev
+AERO_PROXY_OPEN=1 npm -w net-proxy run dev
 ```
 
 ## Configuration

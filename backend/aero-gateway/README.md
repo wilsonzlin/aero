@@ -16,37 +16,33 @@ This gateway can run either:
 ## Install
 
 ```bash
-cd backend/aero-gateway
-npm install
+# From the repo root (npm workspaces)
+npm ci
 ```
 
 ## Run (dev)
 
 ```bash
-cd backend/aero-gateway
-npm run dev
+npm -w backend/aero-gateway run dev
 ```
 
 ## Run (prod)
 
 ```bash
-cd backend/aero-gateway
-npm run build
-npm start
+npm -w backend/aero-gateway run build
+npm -w backend/aero-gateway start
 ```
 
 ## Lint
 
 ```bash
-cd backend/aero-gateway
-npm run lint
+npm -w backend/aero-gateway run lint
 ```
 
 ## Test
 
 ```bash
-cd backend/aero-gateway
-npm test
+npm -w backend/aero-gateway test
 ```
 
 ## Docker
@@ -189,13 +185,12 @@ Those files are gitignored.
 ### Running with TLS
 
 ```bash
-cd backend/aero-gateway
-npm run build
+npm -w backend/aero-gateway run build
 
 TLS_ENABLED=1 \
-TLS_CERT_PATH="$PWD/.certs/localhost.crt" \
-TLS_KEY_PATH="$PWD/.certs/localhost.key" \
-npm start
+TLS_CERT_PATH=".certs/localhost.crt" \
+TLS_KEY_PATH=".certs/localhost.key" \
+npm -w backend/aero-gateway start
 ```
 
 Then:

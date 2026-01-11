@@ -1,6 +1,6 @@
 {
-  "installCommand": "npm ci --prefix web",
-  "buildCommand": "npm run build --prefix web",
+  "installCommand": "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci",
+  "buildCommand": "npm -w web run build",
   "outputDirectory": "web/dist",
   "headers": [
     {
