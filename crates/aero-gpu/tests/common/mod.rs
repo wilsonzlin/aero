@@ -23,6 +23,7 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name}: {reason}");
 }
 
+#[allow(dead_code)]
 pub fn ensure_xdg_runtime_dir() {
     #[cfg(unix)]
     {
