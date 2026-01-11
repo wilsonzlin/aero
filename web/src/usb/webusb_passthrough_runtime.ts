@@ -164,37 +164,37 @@ export class WebUsbPassthroughRuntime {
 
       const awaiters: Array<Promise<UsbHostCompletion>> = [];
 
-        for (const raw of drained) {
-          if (!isUsbHostAction(raw)) {
-            // Avoid deadlocking the Rust-side queue: send an error completion back if we can find an id.
-            const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-            const id = record && Number.isFinite(record.id) ? (record.id as number) : null;
-            const kind =
-              record && typeof record.kind === "string" && ["controlIn", "controlOut", "bulkIn", "bulkOut"].includes(record.kind)
-                ? (record.kind as UsbHostAction["kind"])
-                : null;
-            if (id !== null && kind !== null) {
-              try {
-                this.#bridge.push_completion(usbErrorCompletion(kind, id, "Invalid UsbHostAction received from WASM."));
-                this.#completionsApplied++;
-              } catch (err) {
-                this.#lastError = formatError(err);
-              }
-            } else {
-              this.#lastError = "Invalid UsbHostAction received from WASM (missing id).";
-            }
-            continue;
-          }
-
-          const { id } = raw;
-          if (this.#pending.has(id)) {
-            this.#lastError = `Duplicate UsbHostAction id received from WASM: ${id}`;
+      for (const raw of drained) {
+        if (!isUsbHostAction(raw)) {
+          // Avoid deadlocking the Rust-side queue: send an error completion back if we can find an id.
+          const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+          const id = record && Number.isFinite(record.id) ? (record.id as number) : null;
+          const kind =
+            record && typeof record.kind === "string" && ["controlIn", "controlOut", "bulkIn", "bulkOut"].includes(record.kind)
+              ? (record.kind as UsbHostAction["kind"])
+              : null;
+          if (id !== null && kind !== null) {
             try {
-              this.#bridge.push_completion(usbErrorCompletion(raw.kind, id, `Duplicate UsbHostAction id received from WASM: ${id}`));
+              this.#bridge.push_completion(usbErrorCompletion(kind, id, "Invalid UsbHostAction received from WASM."));
               this.#completionsApplied++;
             } catch (err) {
               this.#lastError = formatError(err);
             }
+          } else {
+            this.#lastError = "Invalid UsbHostAction received from WASM (missing id).";
+          }
+          continue;
+        }
+
+        const { id } = raw;
+        if (this.#pending.has(id)) {
+          this.#lastError = `Duplicate UsbHostAction id received from WASM: ${id}`;
+          try {
+            this.#bridge.push_completion(usbErrorCompletion(raw.kind, id, `Duplicate UsbHostAction id received from WASM: ${id}`));
+            this.#completionsApplied++;
+          } catch (err) {
+            this.#lastError = formatError(err);
+          }
           continue;
         }
 
