@@ -5,8 +5,10 @@ For AeroGPU, the PCI **Vendor ID / Device ID pair is part of the ABI contract**:
 a Windows driver should only bind to a device model that implements the matching
 MMIO + ring protocol.
 
-This repo currently has **two canonical AeroGPU ABIs**, each with its own PCI
-identity.
+This repo currently has **two AeroGPU ABI generations**:
+
+- the **versioned ABI** (canonical / current), and
+- a **legacy bring-up ABI** (deprecated; retained for compatibility/bring-up).
 
 ## Canonical PCI IDs (source of truth)
 
