@@ -1005,6 +1005,16 @@ impl UsbHidGamepad {
         }
     }
 
+    /// Overwrite the current report state and enqueue exactly one report.
+    pub fn set_report(&mut self, mut report: GamepadReport) {
+        report.hat &= 0x0F;
+        if report.hat > 8 {
+            report.hat = 8;
+        }
+        self.report = report;
+        self.enqueue_report();
+    }
+
     /// Set or clear a gamepad button.
     ///
     /// `button_idx` is 1-based and maps directly to HID usages Button 1..16.

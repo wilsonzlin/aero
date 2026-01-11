@@ -473,7 +473,8 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         break;
       }
       case InputEventType.GamepadReport:
-        // HID gamepad report: a/b are packed 8 bytes.
+        // HID gamepad report: a/b are packed 8 bytes (little-endian).
+        usbHid?.gamepad_report(words[off + 2] >>> 0, words[off + 3] >>> 0);
         break;
       case InputEventType.KeyScancode:
         // Key payload is packed bytes + len. No-op for now.

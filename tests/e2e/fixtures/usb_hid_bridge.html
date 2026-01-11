@@ -83,6 +83,10 @@
                 bridge.mouse_wheel(words[off + 2] | 0);
                 break;
               }
+              case InputEventType.GamepadReport: {
+                bridge.gamepad_report(words[off + 2] >>> 0, words[off + 3] >>> 0);
+                break;
+              }
               default:
                 break;
             }
@@ -91,6 +95,7 @@
       };
 
       window.__usbHidBridge = bridge;
+      window.__inputTarget = inputTarget;
 
       window.__capture = new InputCapture(canvas, inputTarget, {
         flushHz: 1000,
@@ -104,4 +109,3 @@
     </script>
   </body>
 </html>
-

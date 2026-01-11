@@ -43,8 +43,10 @@ export interface WasmApi {
         mouse_move(dx: number, dy: number): void;
         mouse_buttons(buttons: number): void;
         mouse_wheel(delta: number): void;
+        gamepad_report(packedLo: number, packedHi: number): void;
         drain_next_keyboard_report(): Uint8Array | null;
         drain_next_mouse_report(): Uint8Array | null;
+        drain_next_gamepad_report(): Uint8Array | null;
         free(): void;
     };
     AeroApi: new () => { version(): string; free(): void };

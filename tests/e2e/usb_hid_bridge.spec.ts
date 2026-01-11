@@ -86,5 +86,27 @@ test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse repo
     return report ? Array.from(report) : null;
   });
   expect(wheel).toEqual([0x00, 0x00, 0x00, 0xff]);
-});
 
+  // Gamepad: send a packed report directly through the batch wire format.
+  await page.evaluate(() => {
+    const buffer = new ArrayBuffer((2 + 4) * 4);
+    const words = new Int32Array(buffer);
+    words[0] = 1; // count
+    words[1] = 0; // batchSendTimestampUs (unused in fixture)
+
+    const off = 2;
+    words[off] = 5; // InputEventType.GamepadReport
+    words[off + 1] = 0; // eventTimestampUs
+    words[off + 2] = 0x00080001; // buttons=1, hat=8 (neutral), x=0
+    words[off + 3] = 0; // y=0, rx=0, ry=0, padding=0
+
+    (globalThis as any).__inputTarget.postMessage({ type: "in:input-batch", buffer }, []);
+  });
+
+  const pad = await page.evaluate(() => {
+    const bridge = (globalThis as any).__usbHidBridge;
+    const report = bridge.drain_next_gamepad_report();
+    return report ? Array.from(report) : null;
+  });
+  expect(pad).toEqual([0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+});

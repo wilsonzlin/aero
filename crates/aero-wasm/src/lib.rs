@@ -22,7 +22,7 @@ use aero_audio::pcm::{LinearResampler, StreamFormat, decode_pcm_to_stereo_f32};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
-    hid::{UsbHidKeyboard, UsbHidMouse},
+    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     usb::{UsbDevice, UsbHandshake},
 };
 
@@ -246,6 +246,7 @@ pub fn demo_render_rgba8888(
 pub struct UsbHidBridge {
     keyboard: UsbHidKeyboard,
     mouse: UsbHidMouse,
+    gamepad: UsbHidGamepad,
     mouse_buttons: u8,
 }
 
@@ -257,6 +258,7 @@ impl UsbHidBridge {
         Self {
             keyboard: UsbHidKeyboard::new(),
             mouse: UsbHidMouse::new(),
+            gamepad: UsbHidGamepad::new(),
             mouse_buttons: 0,
         }
     }
@@ -293,6 +295,30 @@ impl UsbHidBridge {
         self.mouse.wheel(delta);
     }
 
+    /// Inject an 8-byte USB HID gamepad report (packed into two 32-bit words).
+    ///
+    /// The packed format matches `web/src/input/gamepad.ts`:
+    /// - `packed_lo`: bytes 0..3 (little-endian)
+    /// - `packed_hi`: bytes 4..7 (little-endian)
+    pub fn gamepad_report(&mut self, packed_lo: u32, packed_hi: u32) {
+        let b0 = (packed_lo & 0xff) as u8;
+        let b1 = ((packed_lo >> 8) & 0xff) as u8;
+        let b2 = ((packed_lo >> 16) & 0xff) as u8;
+        let b3 = ((packed_lo >> 24) & 0xff) as u8;
+        let b4 = (packed_hi & 0xff) as u8;
+        let b5 = ((packed_hi >> 8) & 0xff) as u8;
+        let b6 = ((packed_hi >> 16) & 0xff) as u8;
+
+        self.gamepad.set_report(GamepadReport {
+            buttons: u16::from_le_bytes([b0, b1]),
+            hat: b2,
+            x: b3 as i8,
+            y: b4 as i8,
+            rx: b5 as i8,
+            ry: b6 as i8,
+        });
+    }
+
     /// Drain the next 8-byte boot keyboard report (or return `null` if none).
     pub fn drain_next_keyboard_report(&mut self) -> JsValue {
         let mut buf = [0u8; 8];
@@ -308,6 +334,15 @@ impl UsbHidBridge {
     pub fn drain_next_mouse_report(&mut self) -> JsValue {
         let mut buf = [0u8; 4];
         match self.mouse.handle_in(1, &mut buf) {
+            UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
+            _ => JsValue::NULL,
+        }
+    }
+
+    /// Drain the next 8-byte gamepad report (or return `null` if none).
+    pub fn drain_next_gamepad_report(&mut self) -> JsValue {
+        let mut buf = [0u8; 8];
+        match self.gamepad.handle_in(1, &mut buf) {
             UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
             _ => JsValue::NULL,
         }
