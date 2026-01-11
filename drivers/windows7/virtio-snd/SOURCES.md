@@ -87,7 +87,7 @@ the build pulls these sources directly).
 
 Contract v1 (virtio-pci modern) references:
 
-- Canonical virtio-pci modern transport (BAR0 MMIO + PCI vendor capability parsing + feature/queue helpers):
+- Canonical WDF-free virtio-pci modern transport (PCI vendor capability parsing + BAR0 MMIO + feature/queue helpers):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
     (plus `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h`)
 - Aero contract identity validation (`AERO-W7-VIRTIO` v1 / PCI revision gating):
@@ -97,10 +97,12 @@ Contract v1 (virtio-pci modern) references:
     (plus `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h`)
 - Split virtqueue implementation:
   - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
-- Virtio PCI capability parsing:
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
+- Virtio PCI vendor capability parsing used by the canonical transport:
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
+    (plus `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h`)
 - INTx ISR/DPC helper:
-  - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`)
+  - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
+    (plus `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`)
 - Spec constants/layouts (headers):
   - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
 - Shared SG entry definition used by `virtiosnd_sg_*` helpers:
@@ -110,5 +112,3 @@ Legacy virtio-pci I/O-port support (out of contract; retained for compatibility 
 
 - `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`
 - `drivers/windows7/virtio/common/src/virtio_queue.c`
-- Headers under `drivers/windows7/virtio/common/include/` (notably:
-  `virtio_pci_legacy.h`, `virtio_queue.h`, `virtio_bits.h`, `virtio_os.h`)

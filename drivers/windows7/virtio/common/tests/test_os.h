@@ -24,8 +24,6 @@ typedef struct test_os_ctx {
 
 typedef enum test_io_region_kind {
     TEST_IO_REGION_LEGACY_PIO = 1,
-    TEST_IO_REGION_MODERN_PCI_CFG = 2,
-    TEST_IO_REGION_MODERN_BAR0_MMIO = 3,
 } test_io_region_kind_t;
 
 /*

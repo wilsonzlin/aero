@@ -2,641 +2,376 @@
 
 #include "../include/virtio_pci_modern_miniport.h"
 
-#include "../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h"
+/* -------------------------------------------------------------------------- */
+/* OS interface for the canonical VirtioPciModernTransport                     */
+/* -------------------------------------------------------------------------- */
 
-#define VIRTIO_PCI_RESET_TIMEOUT_US        1000000u
-#define VIRTIO_PCI_RESET_POLL_DELAY_US     1000u
-#define VIRTIO_PCI_CONFIG_MAX_READ_RETRIES 10u
-
-static __forceinline ULONG
-VirtioPciReadLe32(_In_reads_bytes_(Offset + sizeof(ULONG)) const UCHAR *Bytes, _In_ ULONG Offset)
+static __forceinline UINT16 VirtioPciMiniportReadLe16(_In_reads_bytes_(Offset + 2) const UCHAR *Bytes, _In_ UINT16 Offset)
 {
-    return (ULONG)Bytes[Offset + 0] | ((ULONG)Bytes[Offset + 1] << 8) | ((ULONG)Bytes[Offset + 2] << 16) |
-           ((ULONG)Bytes[Offset + 3] << 24);
+    return (UINT16)Bytes[Offset + 0] | ((UINT16)Bytes[Offset + 1] << 8);
 }
 
-static NTSTATUS
-VirtioPciParseBarsFromConfig(_In_reads_bytes_(CfgLen) const UCHAR *Cfg,
-                             _In_ ULONG CfgLen,
-                             _Out_writes_(VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT) UINT64 BarAddrs[])
+static __forceinline UINT32 VirtioPciMiniportReadLe32(_In_reads_bytes_(Offset + 4) const UCHAR *Bytes, _In_ UINT16 Offset)
 {
-    ULONG i;
+    return (UINT32)Bytes[Offset + 0] | ((UINT32)Bytes[Offset + 1] << 8) | ((UINT32)Bytes[Offset + 2] << 16) |
+           ((UINT32)Bytes[Offset + 3] << 24);
+}
 
-    if (Cfg == NULL || BarAddrs == NULL) {
-        return STATUS_INVALID_PARAMETER;
+static UINT8 VirtioPciMiniportPciRead8(_In_ void *Context, _In_ UINT16 Offset)
+{
+    VIRTIO_PCI_DEVICE *Dev;
+
+    Dev = (VIRTIO_PCI_DEVICE *)Context;
+    if (Dev == NULL || Offset >= (UINT16)sizeof(Dev->PciCfg)) {
+        return 0;
     }
 
-    if (CfgLen < 0x10 + (VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT * sizeof(ULONG))) {
+    return (UINT8)Dev->PciCfg[Offset];
+}
+
+static UINT16 VirtioPciMiniportPciRead16(_In_ void *Context, _In_ UINT16 Offset)
+{
+    VIRTIO_PCI_DEVICE *Dev;
+
+    Dev = (VIRTIO_PCI_DEVICE *)Context;
+    if (Dev == NULL || (UINT32)Offset + 2u > (UINT32)sizeof(Dev->PciCfg)) {
+        return 0;
+    }
+
+    return VirtioPciMiniportReadLe16(Dev->PciCfg, Offset);
+}
+
+static UINT32 VirtioPciMiniportPciRead32(_In_ void *Context, _In_ UINT16 Offset)
+{
+    VIRTIO_PCI_DEVICE *Dev;
+
+    Dev = (VIRTIO_PCI_DEVICE *)Context;
+    if (Dev == NULL || (UINT32)Offset + 4u > (UINT32)sizeof(Dev->PciCfg)) {
+        return 0;
+    }
+
+    return VirtioPciMiniportReadLe32(Dev->PciCfg, Offset);
+}
+
+static NTSTATUS VirtioPciMiniportMapMmio(_In_ void *Context,
+                                        _In_ UINT64 PhysicalAddress,
+                                        _In_ UINT32 Length,
+                                        _Out_ volatile void **MappedVaOut)
+{
+    VIRTIO_PCI_DEVICE *Dev;
+
+    UNREFERENCED_PARAMETER(PhysicalAddress);
+
+    Dev = (VIRTIO_PCI_DEVICE *)Context;
+    if (Dev == NULL || MappedVaOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *MappedVaOut = NULL;
+
+    if (Dev->Bar0Va == NULL || Dev->Bar0Length == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (Length == 0 || Length > Dev->Bar0Length) {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    RtlZeroMemory(BarAddrs, VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT * sizeof(BarAddrs[0]));
-
-    for (i = 0; i < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; i++) {
-        ULONG off;
-        ULONG val;
-
-        off = 0x10 + (i * sizeof(ULONG));
-        val = VirtioPciReadLe32(Cfg, off);
-        if (val == 0) {
-            continue;
-        }
-
-        if ((val & 0x1u) != 0) {
-            /* I/O BAR. Not expected for virtio modern but parse defensively. */
-            BarAddrs[i] = (UINT64)(val & ~0x3u);
-            continue;
-        }
-
-        /* Memory BAR. */
-        {
-            ULONG memType;
-            memType = (val >> 1) & 0x3u;
-
-            if (memType == 0x2u) {
-                ULONG high;
-                UINT64 base;
-
-                if (i == (VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT - 1)) {
-                    return STATUS_DEVICE_CONFIGURATION_ERROR;
-                }
-
-                high = VirtioPciReadLe32(Cfg, off + sizeof(ULONG));
-                base = ((UINT64)high << 32) | (UINT64)(val & ~0xFu);
-                BarAddrs[i] = base;
-
-                /* Skip the high dword slot (upper-half BAR entry). */
-                i++;
-            } else {
-                BarAddrs[i] = (UINT64)(val & ~0xFu);
-            }
-        }
-    }
-
+    *MappedVaOut = (volatile void *)Dev->Bar0Va;
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS
-VirtioPciValidateCapInBar0(_In_ const VIRTIO_PCI_DEVICE *Dev,
-                           _In_ const virtio_pci_cap_region_t *Cap,
-                           _In_ ULONG RequiredMinLength)
+static void VirtioPciMiniportUnmapMmio(_In_ void *Context, _In_ volatile void *MappedVa, _In_ UINT32 Length)
 {
-    ULONGLONG end;
-
-    if (Dev == NULL || Cap == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (Cap->bar != 0) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    if (Cap->length < RequiredMinLength) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    end = (ULONGLONG)Cap->offset + (ULONGLONG)Cap->length;
-    if (end < Cap->offset || end > Dev->Bar0Length) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    return STATUS_SUCCESS;
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(MappedVa);
+    UNREFERENCED_PARAMETER(Length);
 }
 
-static __forceinline VOID
-VirtioPciCommonCfgLock(_Inout_ VIRTIO_PCI_DEVICE *Dev, _Out_ KIRQL *OldIrql)
+static void VirtioPciMiniportStallUs(_In_ void *Context, _In_ UINT32 Microseconds)
 {
-    KeAcquireSpinLock(&Dev->CommonCfgLock, OldIrql);
+    UNREFERENCED_PARAMETER(Context);
+    KeStallExecutionProcessor(Microseconds);
 }
 
-static __forceinline VOID
-VirtioPciCommonCfgUnlock(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ KIRQL OldIrql)
+static void *VirtioPciMiniportSpinlockCreate(_In_ void *Context)
 {
-    KeReleaseSpinLock(&Dev->CommonCfgLock, OldIrql);
+    VIRTIO_PCI_DEVICE *Dev;
+
+    Dev = (VIRTIO_PCI_DEVICE *)Context;
+    if (Dev == NULL) {
+        return NULL;
+    }
+
+    /* Reuse the lock embedded in the device structure; no allocation. */
+    return &Dev->CommonCfgLock;
 }
 
-static __forceinline VOID
-VirtioPciSelectQueueLocked(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+static void VirtioPciMiniportSpinlockDestroy(_In_ void *Context, _In_ void *Lock)
 {
-    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_select, QueueIndex);
-    KeMemoryBarrier();
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(Lock);
 }
 
-NTSTATUS
-VirtioPciModernMiniportInit(_Out_ VIRTIO_PCI_DEVICE *Dev,
-                            _In_ PUCHAR Bar0Va,
-                            _In_ ULONG Bar0Length,
-                            _In_reads_bytes_(PciCfgLength) const UCHAR *PciCfg,
-                            _In_ ULONG PciCfgLength)
+static void VirtioPciMiniportSpinlockAcquire(_In_ void *Context,
+                                            _In_ void *Lock,
+                                            _Out_ VIRTIO_PCI_MODERN_SPINLOCK_STATE *StateOut)
 {
-    UINT64 barAddrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
-    virtio_pci_parsed_caps_t caps;
-    virtio_pci_cap_parse_result_t parseRes;
+    KIRQL oldIrql;
+
+    UNREFERENCED_PARAMETER(Context);
+
+    if (StateOut == NULL) {
+        return;
+    }
+
+    if (Lock == NULL) {
+        *StateOut = 0;
+        return;
+    }
+
+    KeAcquireSpinLock((KSPIN_LOCK *)Lock, &oldIrql);
+    *StateOut = (VIRTIO_PCI_MODERN_SPINLOCK_STATE)oldIrql;
+}
+
+static void VirtioPciMiniportSpinlockRelease(_In_ void *Context, _In_ void *Lock, _In_ VIRTIO_PCI_MODERN_SPINLOCK_STATE State)
+{
+    UNREFERENCED_PARAMETER(Context);
+
+    if (Lock == NULL) {
+        return;
+    }
+
+    KeReleaseSpinLock((KSPIN_LOCK *)Lock, (KIRQL)State);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Public miniport API                                                         */
+/* -------------------------------------------------------------------------- */
+
+NTSTATUS VirtioPciModernMiniportInit(_Out_ VIRTIO_PCI_DEVICE *Dev,
+                                    _In_ PUCHAR Bar0Va,
+                                    _In_ ULONG Bar0Length,
+                                    _In_ UINT64 Bar0Pa,
+                                    _In_reads_bytes_(PciCfgLength) const UCHAR *PciCfg,
+                                    _In_ ULONG PciCfgLength)
+{
     NTSTATUS status;
 
-    if (Dev == NULL || Bar0Va == NULL || Bar0Length == 0 || PciCfg == NULL || PciCfgLength == 0) {
+    if (Dev == NULL || Bar0Va == NULL || Bar0Length == 0 || Bar0Pa == 0 || PciCfg == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    /* The canonical transport reads the full 256-byte config header. */
+    if (PciCfgLength < sizeof(Dev->PciCfg)) {
+        return STATUS_BUFFER_TOO_SMALL;
     }
 
     RtlZeroMemory(Dev, sizeof(*Dev));
     Dev->Bar0Va = Bar0Va;
     Dev->Bar0Length = Bar0Length;
+
+    RtlCopyMemory(Dev->PciCfg, PciCfg, sizeof(Dev->PciCfg));
+
     KeInitializeSpinLock(&Dev->CommonCfgLock);
 
-    status = VirtioPciParseBarsFromConfig(PciCfg, PciCfgLength, barAddrs);
+    RtlZeroMemory(&Dev->Os, sizeof(Dev->Os));
+    Dev->Os.Context = Dev;
+    Dev->Os.PciRead8 = VirtioPciMiniportPciRead8;
+    Dev->Os.PciRead16 = VirtioPciMiniportPciRead16;
+    Dev->Os.PciRead32 = VirtioPciMiniportPciRead32;
+    Dev->Os.MapMmio = VirtioPciMiniportMapMmio;
+    Dev->Os.UnmapMmio = VirtioPciMiniportUnmapMmio;
+    Dev->Os.StallUs = VirtioPciMiniportStallUs;
+    Dev->Os.MemoryBarrier = NULL;
+    Dev->Os.SpinlockCreate = VirtioPciMiniportSpinlockCreate;
+    Dev->Os.SpinlockDestroy = VirtioPciMiniportSpinlockDestroy;
+    Dev->Os.SpinlockAcquire = VirtioPciMiniportSpinlockAcquire;
+    Dev->Os.SpinlockRelease = VirtioPciMiniportSpinlockRelease;
+    Dev->Os.Log = NULL;
+
+    status = VirtioPciModernTransportInit(&Dev->Transport, &Dev->Os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, Bar0Pa, (UINT32)Bar0Length);
     if (!NT_SUCCESS(status)) {
+        VirtioPciModernTransportUninit(&Dev->Transport);
         return status;
     }
 
-    RtlZeroMemory(&caps, sizeof(caps));
-    parseRes = virtio_pci_cap_parse((const uint8_t *)PciCfg, (size_t)PciCfgLength, barAddrs, &caps);
-    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
+    Dev->CommonCfg = Dev->Transport.CommonCfg;
+    Dev->NotifyBase = (volatile UCHAR *)Dev->Transport.NotifyBase;
+    Dev->IsrStatus = (volatile UCHAR *)Dev->Transport.IsrStatus;
+    Dev->DeviceCfg = (volatile UCHAR *)Dev->Transport.DeviceCfg;
 
-    Dev->NotifyOffMultiplier = (ULONG)caps.notify_off_multiplier;
-    if (Dev->NotifyOffMultiplier == 0) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
+    Dev->NotifyOffMultiplier = (ULONG)Dev->Transport.NotifyOffMultiplier;
 
-    status = VirtioPciValidateCapInBar0(Dev, &caps.common_cfg, sizeof(virtio_pci_common_cfg));
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
+    Dev->CommonCfgOffset = (ULONG)((ULONG_PTR)Dev->CommonCfg - (ULONG_PTR)Dev->Bar0Va);
+    Dev->NotifyOffset = (ULONG)((ULONG_PTR)Dev->NotifyBase - (ULONG_PTR)Dev->Bar0Va);
+    Dev->IsrOffset = (ULONG)((ULONG_PTR)Dev->IsrStatus - (ULONG_PTR)Dev->Bar0Va);
+    Dev->DeviceCfgOffset = (ULONG)((ULONG_PTR)Dev->DeviceCfg - (ULONG_PTR)Dev->Bar0Va);
 
-    status = VirtioPciValidateCapInBar0(Dev, &caps.notify_cfg, sizeof(UINT16));
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    status = VirtioPciValidateCapInBar0(Dev, &caps.isr_cfg, 1);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    status = VirtioPciValidateCapInBar0(Dev, &caps.device_cfg, 1);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    Dev->CommonCfgOffset = (ULONG)caps.common_cfg.offset;
-    Dev->CommonCfgLength = (ULONG)caps.common_cfg.length;
-    Dev->CommonCfg = (volatile virtio_pci_common_cfg *)(Dev->Bar0Va + Dev->CommonCfgOffset);
-
-    Dev->NotifyOffset = (ULONG)caps.notify_cfg.offset;
-    Dev->NotifyLength = (ULONG)caps.notify_cfg.length;
-    Dev->NotifyBase = (volatile UCHAR *)(Dev->Bar0Va + Dev->NotifyOffset);
-
-    Dev->IsrOffset = (ULONG)caps.isr_cfg.offset;
-    Dev->IsrLength = (ULONG)caps.isr_cfg.length;
-    Dev->IsrStatus = (volatile UCHAR *)(Dev->Bar0Va + Dev->IsrOffset);
-
-    Dev->DeviceCfgOffset = (ULONG)caps.device_cfg.offset;
-    Dev->DeviceCfgLength = (ULONG)caps.device_cfg.length;
-    Dev->DeviceCfg = (volatile UCHAR *)(Dev->Bar0Va + Dev->DeviceCfgOffset);
+    /* The canonical transport enforces these minimum lengths in STRICT mode. */
+    Dev->CommonCfgLength = 0x0100u;
+    Dev->NotifyLength = (ULONG)Dev->Transport.NotifyLength;
+    Dev->IsrLength = (ULONG)Dev->Transport.IsrLength;
+    Dev->DeviceCfgLength = (ULONG)Dev->Transport.DeviceCfgLength;
 
     return STATUS_SUCCESS;
 }
 
-static __forceinline UCHAR
-VirtioPciReadDeviceStatus(_In_ const VIRTIO_PCI_DEVICE *Dev)
+VOID VirtioPciResetDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 {
-    return READ_REGISTER_UCHAR((volatile UCHAR *)&Dev->CommonCfg->device_status);
-}
-
-static __forceinline VOID
-VirtioPciWriteDeviceStatus(_In_ const VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Status)
-{
-    WRITE_REGISTER_UCHAR((volatile UCHAR *)&Dev->CommonCfg->device_status, Status);
-}
-
-VOID
-VirtioPciResetDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
-{
-    ULONG waitedUs;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return;
     }
-
-    KeMemoryBarrier();
-    VirtioPciWriteDeviceStatus(Dev, 0);
-    KeMemoryBarrier();
-
-    for (waitedUs = 0; waitedUs < VIRTIO_PCI_RESET_TIMEOUT_US; waitedUs += VIRTIO_PCI_RESET_POLL_DELAY_US) {
-        if (VirtioPciReadDeviceStatus(Dev) == 0) {
-            KeMemoryBarrier();
-            return;
-        }
-
-        KeStallExecutionProcessor(VIRTIO_PCI_RESET_POLL_DELAY_US);
-    }
+    VirtioPciModernTransportResetDevice(&Dev->Transport);
 }
 
-VOID
-VirtioPciAddStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Bits)
+VOID VirtioPciAddStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Bits)
 {
-    UCHAR status;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return;
     }
-
-    KeMemoryBarrier();
-    status = VirtioPciReadDeviceStatus(Dev);
-    status |= Bits;
-    VirtioPciWriteDeviceStatus(Dev, status);
-    KeMemoryBarrier();
+    VirtioPciModernTransportAddStatus(&Dev->Transport, (UINT8)Bits);
 }
 
-UCHAR
-VirtioPciGetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev)
+UCHAR VirtioPciGetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 {
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return 0;
     }
-
-    KeMemoryBarrier();
-    return VirtioPciReadDeviceStatus(Dev);
+    return (UCHAR)VirtioPciModernTransportGetStatus(&Dev->Transport);
 }
 
-VOID
-VirtioPciSetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Status)
+VOID VirtioPciSetStatus(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UCHAR Status)
 {
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return;
     }
-
-    KeMemoryBarrier();
-    VirtioPciWriteDeviceStatus(Dev, Status);
-    KeMemoryBarrier();
+    VirtioPciModernTransportSetStatus(&Dev->Transport, (UINT8)Status);
 }
 
-VOID
-VirtioPciFailDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
+VOID VirtioPciFailDevice(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 {
     VirtioPciAddStatus(Dev, VIRTIO_STATUS_FAILED);
 }
 
-UINT64
-VirtioPciReadDeviceFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev)
+UINT64 VirtioPciReadDeviceFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 {
-    KIRQL oldIrql;
-    ULONG lo;
-    ULONG hi;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return 0;
     }
-
-    lo = 0;
-    hi = 0;
-
-    VirtioPciCommonCfgLock(Dev, &oldIrql);
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature_select, 0);
-    KeMemoryBarrier();
-    lo = READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature);
-    KeMemoryBarrier();
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature_select, 1);
-    KeMemoryBarrier();
-    hi = READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature);
-    KeMemoryBarrier();
-
-    VirtioPciCommonCfgUnlock(Dev, oldIrql);
-
-    return ((UINT64)hi << 32) | lo;
+    return VirtioPciModernTransportReadDeviceFeatures(&Dev->Transport);
 }
 
-VOID
-VirtioPciWriteDriverFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UINT64 Features)
+VOID VirtioPciWriteDriverFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UINT64 Features)
 {
-    KIRQL oldIrql;
-    ULONG lo;
-    ULONG hi;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return;
     }
-
-    lo = (ULONG)(Features & 0xFFFFFFFFui64);
-    hi = (ULONG)(Features >> 32);
-
-    VirtioPciCommonCfgLock(Dev, &oldIrql);
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature_select, 0);
-    KeMemoryBarrier();
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature, lo);
-    KeMemoryBarrier();
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature_select, 1);
-    KeMemoryBarrier();
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature, hi);
-    KeMemoryBarrier();
-
-    VirtioPciCommonCfgUnlock(Dev, oldIrql);
+    VirtioPciModernTransportWriteDriverFeatures(&Dev->Transport, Features);
 }
 
-NTSTATUS
-VirtioPciNegotiateFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev,
-                           _In_ UINT64 Required,
-                           _In_ UINT64 Wanted,
-                           _Out_ UINT64 *NegotiatedOut)
+NTSTATUS VirtioPciNegotiateFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                                   _In_ UINT64 Required,
+                                   _In_ UINT64 Wanted,
+                                   _Out_ UINT64 *NegotiatedOut)
 {
-    UINT64 deviceFeatures;
-    UINT64 negotiated;
-    UCHAR status;
-
-    if (NegotiatedOut == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-    *NegotiatedOut = 0;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    Required |= VIRTIO_F_VERSION_1;
-
-    VirtioPciResetDevice(Dev);
-
-    VirtioPciAddStatus(Dev, VIRTIO_STATUS_ACKNOWLEDGE);
-    VirtioPciAddStatus(Dev, VIRTIO_STATUS_DRIVER);
-
-    deviceFeatures = VirtioPciReadDeviceFeatures(Dev);
-    if ((deviceFeatures & Required) != Required) {
-        VirtioPciFailDevice(Dev);
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    negotiated = (deviceFeatures & Wanted) | Required;
-
-    VirtioPciWriteDriverFeatures(Dev, negotiated);
-    KeMemoryBarrier();
-
-    VirtioPciAddStatus(Dev, VIRTIO_STATUS_FEATURES_OK);
-
-    status = VirtioPciGetStatus(Dev);
-    if ((status & VIRTIO_STATUS_FEATURES_OK) == 0) {
-        VirtioPciFailDevice(Dev);
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    *NegotiatedOut = negotiated;
-    return STATUS_SUCCESS;
+    return VirtioPciModernTransportNegotiateFeatures(&Dev->Transport, Required, Wanted, NegotiatedOut);
 }
 
-static __forceinline UCHAR
-VirtioPciReadCfg8(_In_ volatile const VOID *Base, _In_ ULONG Offset)
+NTSTATUS VirtioPciReadDeviceConfig(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                                  _In_ ULONG Offset,
+                                  _Out_writes_bytes_(Length) VOID *Buffer,
+                                  _In_ ULONG Length)
 {
-    return READ_REGISTER_UCHAR((volatile UCHAR *)((ULONG_PTR)Base + Offset));
-}
-
-static __forceinline USHORT
-VirtioPciReadCfg16(_In_ volatile const VOID *Base, _In_ ULONG Offset)
-{
-    return READ_REGISTER_USHORT((volatile USHORT *)((ULONG_PTR)Base + Offset));
-}
-
-static __forceinline ULONG
-VirtioPciReadCfg32(_In_ volatile const VOID *Base, _In_ ULONG Offset)
-{
-    return READ_REGISTER_ULONG((volatile ULONG *)((ULONG_PTR)Base + Offset));
-}
-
-static VOID
-VirtioPciCopyFromDevice(_In_ volatile const UCHAR *Base,
-                        _In_ ULONG Offset,
-                        _Out_writes_bytes_(Length) UCHAR *OutBytes,
-                        _In_ ULONG Length)
-{
-    ULONG i;
-
-    i = 0;
-
-    while (i < Length && ((Offset + i) & 3u) != 0) {
-        OutBytes[i] = VirtioPciReadCfg8(Base, Offset + i);
-        i++;
-    }
-
-    while (Length - i >= sizeof(ULONG)) {
-        ULONG v32;
-        v32 = VirtioPciReadCfg32(Base, Offset + i);
-        RtlCopyMemory(OutBytes + i, &v32, sizeof(v32));
-        i += sizeof(ULONG);
-    }
-
-    while (Length - i >= sizeof(USHORT)) {
-        USHORT v16;
-        v16 = VirtioPciReadCfg16(Base, Offset + i);
-        RtlCopyMemory(OutBytes + i, &v16, sizeof(v16));
-        i += sizeof(USHORT);
-    }
-
-    while (i < Length) {
-        OutBytes[i] = VirtioPciReadCfg8(Base, Offset + i);
-        i++;
-    }
-}
-
-NTSTATUS
-VirtioPciReadDeviceConfig(_Inout_ VIRTIO_PCI_DEVICE *Dev,
-                          _In_ ULONG Offset,
-                          _Out_writes_bytes_(Length) VOID *Buffer,
-                          _In_ ULONG Length)
-{
-    ULONG attempt;
-    UCHAR gen0;
-    UCHAR gen1;
-    PUCHAR outBytes;
-    ULONGLONG end;
-
-    if (Length == 0) {
-        return STATUS_SUCCESS;
-    }
-
-    if (Dev == NULL || Dev->CommonCfg == NULL || Dev->DeviceCfg == NULL || Buffer == NULL) {
+    if (Dev == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    end = (ULONGLONG)Offset + (ULONGLONG)Length;
-    if (end < Offset) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (Dev->DeviceCfgLength != 0 && end > Dev->DeviceCfgLength) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    outBytes = (PUCHAR)Buffer;
-
-    for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; attempt++) {
-        gen0 = READ_REGISTER_UCHAR((volatile UCHAR *)&Dev->CommonCfg->config_generation);
-        KeMemoryBarrier();
-
-        VirtioPciCopyFromDevice(Dev->DeviceCfg, Offset, outBytes, Length);
-
-        KeMemoryBarrier();
-        gen1 = READ_REGISTER_UCHAR((volatile UCHAR *)&Dev->CommonCfg->config_generation);
-        KeMemoryBarrier();
-
-        if (gen0 == gen1) {
-            return STATUS_SUCCESS;
-        }
-    }
-
-    return STATUS_IO_TIMEOUT;
+    return VirtioPciModernTransportReadDeviceConfig(&Dev->Transport, (UINT32)Offset, Buffer, (UINT32)Length);
 }
 
-USHORT
-VirtioPciGetNumQueues(_In_ VIRTIO_PCI_DEVICE *Dev)
+USHORT VirtioPciGetNumQueues(_In_ VIRTIO_PCI_DEVICE *Dev)
 {
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return 0;
     }
 
-    return READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->num_queues);
+    return VirtioPciModernTransportGetNumQueues(&Dev->Transport);
 }
 
-USHORT
-VirtioPciGetQueueSize(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+USHORT VirtioPciGetQueueSize(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
 {
-    KIRQL oldIrql;
-    USHORT size;
+    UINT16 size;
 
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return 0;
     }
 
     size = 0;
+    if (!NT_SUCCESS(VirtioPciModernTransportGetQueueSize(&Dev->Transport, (UINT16)QueueIndex, &size))) {
+        return 0;
+    }
 
-    VirtioPciCommonCfgLock(Dev, &oldIrql);
-    VirtioPciSelectQueueLocked(Dev, QueueIndex);
-    size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
-    VirtioPciCommonCfgUnlock(Dev, oldIrql);
-
-    return size;
+    return (USHORT)size;
 }
 
-NTSTATUS
-VirtioPciSetupQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev,
-                    _In_ USHORT QueueIndex,
-                    _In_ UINT64 DescPa,
-                    _In_ UINT64 AvailPa,
-                    _In_ UINT64 UsedPa)
+NTSTATUS VirtioPciSetupQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                            _In_ USHORT QueueIndex,
+                            _In_ UINT64 DescPa,
+                            _In_ UINT64 AvailPa,
+                            _In_ UINT64 UsedPa)
 {
-    NTSTATUS status;
-    KIRQL oldIrql;
-    USHORT size;
-    USHORT enabled;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    status = STATUS_SUCCESS;
-    enabled = 0;
-
-    VirtioPciCommonCfgLock(Dev, &oldIrql);
-
-    VirtioPciSelectQueueLocked(Dev, QueueIndex);
-
-    size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
-    if (size == 0) {
-        status = STATUS_NOT_FOUND;
-        goto Exit;
-    }
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_lo, (ULONG)(DescPa & 0xFFFFFFFFui64));
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_desc_hi, (ULONG)(DescPa >> 32));
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_lo, (ULONG)(AvailPa & 0xFFFFFFFFui64));
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_avail_hi, (ULONG)(AvailPa >> 32));
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_lo, (ULONG)(UsedPa & 0xFFFFFFFFui64));
-    WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->queue_used_hi, (ULONG)(UsedPa >> 32));
-
-    /*
-     * The device must observe the ring addresses before queue_enable is set.
-     */
-    KeMemoryBarrier();
-
-    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable, 1);
-
-    /* Optional readback confirmation. */
-    enabled = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable);
-    if (enabled != 1) {
-        status = STATUS_IO_DEVICE_ERROR;
-        goto Exit;
-    }
-
-Exit:
-    VirtioPciCommonCfgUnlock(Dev, oldIrql);
-    return status;
+    return VirtioPciModernTransportSetupQueue(&Dev->Transport, (UINT16)QueueIndex, DescPa, AvailPa, UsedPa);
 }
 
-VOID
-VirtioPciDisableQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+VOID VirtioPciDisableQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
 {
-    KIRQL oldIrql;
-
-    if (Dev == NULL || Dev->CommonCfg == NULL) {
+    if (Dev == NULL) {
         return;
     }
 
-    VirtioPciCommonCfgLock(Dev, &oldIrql);
-
-    VirtioPciSelectQueueLocked(Dev, QueueIndex);
-    WRITE_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_enable, 0);
-    KeMemoryBarrier();
-
-    VirtioPciCommonCfgUnlock(Dev, oldIrql);
+    VirtioPciModernTransportDisableQueue(&Dev->Transport, (UINT16)QueueIndex);
 }
 
-NTSTATUS
-VirtioPciGetQueueNotifyAddress(_Inout_ VIRTIO_PCI_DEVICE *Dev,
-                               _In_ USHORT QueueIndex,
-                               _Out_ volatile UINT16 **NotifyAddrOut)
+NTSTATUS VirtioPciGetQueueNotifyAddress(_Inout_ VIRTIO_PCI_DEVICE *Dev,
+                                       _In_ USHORT QueueIndex,
+                                       _Out_ volatile UINT16 **NotifyAddrOut)
 {
-    KIRQL oldIrql;
-    USHORT size;
-    USHORT notifyOff;
-    ULONGLONG offset;
+    NTSTATUS status;
+    UINT16 notifyOff;
+    UINT64 offset;
 
     if (NotifyAddrOut == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
     *NotifyAddrOut = NULL;
 
-    if (Dev == NULL || Dev->CommonCfg == NULL || Dev->NotifyBase == NULL || Dev->NotifyOffMultiplier == 0 ||
-        Dev->NotifyLength < sizeof(UINT16)) {
+    if (Dev == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    VirtioPciCommonCfgLock(Dev, &oldIrql);
-
-    VirtioPciSelectQueueLocked(Dev, QueueIndex);
-    size = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_size);
-    notifyOff = READ_REGISTER_USHORT((volatile USHORT *)&Dev->CommonCfg->queue_notify_off);
-
-    VirtioPciCommonCfgUnlock(Dev, oldIrql);
-
-    if (size == 0) {
-        return STATUS_NOT_FOUND;
+    status = VirtioPciModernTransportGetQueueNotifyOff(&Dev->Transport, (UINT16)QueueIndex, &notifyOff);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
 
-    offset = (ULONGLONG)notifyOff * (ULONGLONG)Dev->NotifyOffMultiplier;
-    if (offset + sizeof(UINT16) > Dev->NotifyLength) {
+    offset = (UINT64)notifyOff * (UINT64)Dev->NotifyOffMultiplier;
+    if (offset + sizeof(UINT16) > (UINT64)Dev->NotifyLength) {
         return STATUS_IO_DEVICE_ERROR;
     }
 
-    *NotifyAddrOut = (volatile UINT16 *)((volatile UCHAR *)Dev->NotifyBase + offset);
+    *NotifyAddrOut = (volatile UINT16 *)((volatile UCHAR *)Dev->NotifyBase + (ULONG_PTR)offset);
     return STATUS_SUCCESS;
 }
 
-VOID
-VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
+VOID VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
 {
     volatile UINT16 *notifyAddr;
 
@@ -650,7 +385,7 @@ VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
     }
 
     if (notifyAddr == NULL) {
-        if (!NT_SUCCESS(VirtioPciGetQueueNotifyAddress(Dev, QueueIndex, &notifyAddr))) {
+        if (!NT_SUCCESS(VirtioPciGetQueueNotifyAddress(Dev, QueueIndex, &notifyAddr)) || notifyAddr == NULL) {
             return;
         }
 
@@ -659,21 +394,17 @@ VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
         }
     }
 
-    /*
-     * Ensure all prior ring writes are visible before writing the notify doorbell.
-     * See docs/virtio/virtqueue-split-ring-win7.md for the publish/notify ordering.
-     */
+    /* Publish ring writes before notifying. */
     KeMemoryBarrier();
     WRITE_REGISTER_USHORT((volatile USHORT *)notifyAddr, QueueIndex);
     KeMemoryBarrier();
 }
 
-UCHAR
-VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev)
+UCHAR VirtioPciReadIsr(_In_ const VIRTIO_PCI_DEVICE *Dev)
 {
-    if (Dev == NULL || Dev->IsrStatus == NULL) {
+    if (Dev == NULL) {
         return 0;
     }
 
-    return READ_REGISTER_UCHAR((volatile UCHAR *)Dev->IsrStatus);
+    return (UCHAR)VirtioPciModernTransportReadIsrStatus((VIRTIO_PCI_MODERN_TRANSPORT *)&Dev->Transport);
 }

@@ -1,44 +1,42 @@
-# Aero Windows 7 virtio common library
+# Aero Windows 7 virtio common helpers
 
 Permissive license: **MIT OR Apache-2.0** (see `LICENSE-MIT` and `LICENSE-APACHE`).
 
-This directory contains a small, reusable C library intended to be shared by all
-Windows 7 SP1 x86/x64 Aero guest drivers that speak virtio.
+This directory contains small reusable helpers shared by Aero's Windows 7 SP1
+x86/x64 virtio drivers.
 
-At a high level, Aero drivers use two virtio-pci transport styles:
+## Virtio-pci modern transport (AERO-W7-VIRTIO v1)
 
-- **Modern (Virtio 1.0+ / contract v1):** BAR MMIO + `COMMON/NOTIFY/ISR/DEVICE` capabilities
-- **Legacy/transitional (virtio 0.9):** I/O-port register set (PFN-based queue programming)
+All in-tree **non-KMDF** Windows 7 virtio drivers should use the canonical,
+WDF-free virtio-pci modern transport in:
 
-This directory contains implementations and helpers for both. For modern virtio-pci on Windows there are two main consumer models:
+- `drivers/windows/virtio/pci-modern/` (`VirtioPciModernTransport*`)
 
-- **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*`
-  - WDF-free helper used by Aero's Windows 7 miniport drivers (NDIS / StorPort).
-  - caller provides a BAR0 MMIO mapping and a PCI config snapshot
-  - parses virtio vendor-specific capabilities (COMMON/NOTIFY/ISR/DEVICE) and provides helpers
-    for `common_cfg` / notify / ISR / device config
-- **WDM stack drivers:** `virtio_pci_modern_wdm.*`
-  - queries the PCI bus interface and maps BARs from `CM_RESOURCE_LIST`
-  - also parses virtio capabilities and exposes the same high-level transport operations
+The canonical transport discovers devices via PCI vendor capabilities, maps BAR0
+MMIO via a small OS callback interface (`VIRTIO_PCI_MODERN_OS_INTERFACE`), and
+enforces the **AERO-W7-VIRTIO v1** contract in **STRICT** mode (REV_01, BAR0
+layout/length, `notify_off_multiplier`, required features, etc).
 
-Drivers still own device-specific protocol/state machines and virtqueue sizing/allocation policy.
+### Optional WDM wrapper (`virtio_pci_modern_wdm`)
 
-> Important: the miniport and WDM modern transports both implement a `VirtioPci*` API surface
-> (`VirtioPciResetDevice`, `VirtioPciNegotiateFeatures`, `VirtioPciSetupQueue`, etc) and therefore
-> **must not** be linked into the same driver binary (duplicate symbols). Pick exactly one.
+For WDM stack drivers, this directory provides a thin wrapper that wires up:
 
-And additional shared helpers:
+- `GUID_PCI_BUS_INTERFACE_STANDARD` config reads
+- BAR discovery via `CM_RESOURCE_LIST`
+- `MmMapIoSpace` mapping
 
-- **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
-- **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
-- **Split virtqueues (vring):** `virtqueue_split_legacy.*` (legacy/host-test split-ring implementation; name avoids `virtqueue_split.h` collisions)
-- **Legacy queue helper:** `virtio_queue.*` (alloc + PFN queue programming + notify)
+This wrapper then delegates to the canonical transport:
 
-For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
-[`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
+- `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
 
-For miniports (NDIS / StorPort) bring-up, see:
-[`docs/windows/win7-miniport-virtio-pci-modern.md`](../../../../docs/windows/win7-miniport-virtio-pci-modern.md).
+This wrapper intentionally contains **no independent modern transport
+implementation**; it only exposes a small `VirtioPci*` convenience API over the
+canonical `VirtioPciModernTransport*` implementation.
+
+Other shared helpers:
+
+- `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c` — WDM INTx ISR read-to-ack + DPC dispatch
+- `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c` — AERO-W7-VIRTIO v1 PCI identity validation helpers
 
 ## Aero contract v1 (AERO-W7-VIRTIO)
 
@@ -46,24 +44,19 @@ The binding device/driver contract lives at:
 
 - [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md)
 
-**Contract v1 requires the virtio-pci _modern_ transport.** In particular:
+Contract v1 requires the virtio-pci **modern** transport:
 
 - Contract major version is encoded in **PCI Revision ID**:
   - **Revision ID = `0x01`** for contract v1 devices.
 - Device discovery is via PCI vendor-specific capabilities:
   `COMMON_CFG`, `NOTIFY_CFG`, `ISR_CFG`, `DEVICE_CFG`.
 - Drivers map **BAR0 MMIO** and access the above regions as little-endian MMIO.
-- All required virtio vendor capabilities must reference **BAR0** and BAR0 must be
-  large enough to contain the fixed layout below (**>= 0x4000 bytes** per contract v1).
-- Feature negotiation is **64-bit** and drivers **MUST** accept `VIRTIO_F_VERSION_1`
-  (feature bit 32).
-- Queues are programmed via the common configuration registers:
-  `queue_desc` / `queue_avail` / `queue_used` and activated with `queue_enable`.
-- Interrupts must work with PCI **INTx** and the virtio ISR status byte
-  (read-to-ack).
+- BAR0 must be large enough for the fixed contract v1 layout (**>= 0x4000 bytes**).
+- Feature negotiation is **64-bit** and drivers MUST accept `VIRTIO_F_VERSION_1`
+  (feature bit 32). `VirtioPciModernTransportNegotiateFeatures` always enforces it.
+- Interrupts must work with PCI **INTx** and the virtio ISR status byte (read-to-ack).
 
-Contract v1 also fixes a single BAR0 layout so drivers can validate conformance
-without guessing:
+Contract v1 fixed BAR0 layout:
 
 | Capability | BAR | Offset | Length |
 |-----------|----:|-------:|-------:|
@@ -75,173 +68,64 @@ without guessing:
 Notify semantics:
 
 - `notify_off_multiplier = 4`
-- Drivers compute the doorbell address as:
+- Doorbell address:
   `notify_base + queue_notify_off(queue) * notify_off_multiplier`
 
-Queue programming (modern):
-
-- Drivers select a queue with `common_cfg.queue_select`, then:
-  - read `queue_size` (max ring size, in descriptors)
-  - read `queue_notify_off` (doorbell selector)
-  - write `queue_desc`, `queue_avail`, `queue_used` (64-bit guest physical addrs)
-  - write `queue_enable = 1` to activate
-- Unlike legacy/transitional devices, there is no PFN register and the descriptor
-  table, avail ring, and used ring do **not** need to live in a single 4 KiB-aligned
-  physically-contiguous allocation (each structure is programmed separately).
-  Contract v1 follows the standard virtio alignment rules:
-  - `queue_desc`: 16-byte aligned
-  - `queue_avail`: 2-byte aligned
-  - `queue_used`: 4-byte aligned
-- Each structure must still occupy a contiguous range in guest physical address
-  space (it is a linear array/ring in memory).
-- Windows 7 drivers should program the 64-bit queue address fields using two
-  32-bit MMIO accesses (`*_lo` then `*_hi`) rather than a single 64-bit MMIO write.
-
-Selector serialization:
-
-- `common_cfg` contains device-global selector registers (`*_feature_select`,
-  `queue_select`). Multi-step sequences that depend on selectors must be
-  serialized (for example, via a per-device spin lock).
-
-Feature negotiation (modern, 64-bit):
-
-- Device features are read via the selector pattern:
-  - write `device_feature_select = 0` then read `device_feature` (low 32 bits)
-  - write `device_feature_select = 1` then read `device_feature` (high 32 bits)
-- Driver features are written similarly via `driver_feature_select` /
-  `driver_feature`.
-- Aero contract v1 devices require `VIRTIO_F_VERSION_1` (bit 32) and the provided
-  `VirtioPciNegotiateFeatures` helpers always enforce it.
-
-Even though Aero contract v1 fixes the BAR0 offsets, drivers should still validate
-that the device exposes the required virtio vendor-specific PCI capabilities
-(cap ID `0x09`) and that they describe the expected BAR/offset/length. Miniports
-typically do this by parsing a 256-byte PCI config snapshot with
-`virtio_pci_cap_parser` (see `drivers/win7/virtio/virtio-core/portable/`).
+Queue programming uses `common_cfg.queue_desc/queue_avail/queue_used` + `queue_enable`.
+Because `common_cfg` contains selector registers (`*_feature_select`, `queue_select`),
+multi-step sequences must be serialized (for example via a per-device spin lock).
 
 The legacy/transitional I/O-port transport is **not** required by contract v1 and
 is retained only for compatibility/testing with transitional/QEMU devices.
 
-## File inventory
+## Docs
 
-### Modern transport (Virtio 1.0+)
+- [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md)
+- [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md)
+- [`docs/windows/win7-miniport-virtio-pci-modern.md`](../../../../docs/windows/win7-miniport-virtio-pci-modern.md)
 
-Canonical WDF-free virtio-pci modern transport (preferred for new drivers):
-
-- `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h` +
-  `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
-
-This directory provides:
-
-- a portable, OS-agnostic modern transport (`virtio_pci_modern.*`), and
-- two Windows-facing modern transports (`virtio_pci_modern_miniport.*` and `virtio_pci_modern_wdm.*`).
-
-The two Windows-facing transports both export a `VirtioPci*` API surface, so a driver
-must link **exactly one** of them.
-
-- `include/virtio_pci_modern_portable.h` + `src/virtio_pci_modern.c`
-  - OS-agnostic virtio-pci modern transport built on `virtio_os_ops_t`.
-  - Used by host-side unit tests (fake PCI config + BAR0 MMIO backends).
-  - Discovers `COMMON/NOTIFY/ISR/DEVICE` capability regions and performs 64-bit
-    feature negotiation (requires `VIRTIO_F_VERSION_1`).
-  - Programs split virtqueues via `common_cfg` (`queue_desc/queue_avail/queue_used`) and sets `queue_enable`.
-
-- `include/virtio_pci_modern_miniport.h` + `src/virtio_pci_modern_miniport.c`
-  - Modern virtio-pci transport for miniport-style drivers (NDIS / StorPort).
-  - Callers provide:
-    - a BAR0 MMIO mapping, and
-    - a PCI config snapshot (typically 256 bytes) used to parse virtio vendor capabilities.
-  - Exposes helpers for:
-    - device status/reset
-    - 64-bit feature negotiation (always requires `VIRTIO_F_VERSION_1`)
-    - device config reads with `config_generation` retry logic (`VirtioPciReadDeviceConfig`)
-    - queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`
-    - notify doorbells + ISR read-to-ack
-  - Designed to be used with `virtqueue_split.*` (or a driver-specific split-ring wrapper).
-
-- `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
-  - Parses PCI capability list and discovers the required virtio vendor caps
-    (`COMMON/NOTIFY/ISR/DEVICE`) using the portable parser from
-    `drivers/win7/virtio/virtio-core/portable/`.
-  - Maps BAR MMIO using `MmMapIoSpace(MmNonCached)`.
-  - Provides a per-device `KSPIN_LOCK` to serialize selector-based `common_cfg`
-    sequences (`*_feature_select`, `queue_select`).
-  - Queue programming uses `queue_desc/queue_avail/queue_used` + `queue_enable`
-    (i.e., **no legacy PFN programming**).
-  - Feature negotiation is 64-bit and `VirtioPciNegotiateFeatures()` always
-    requires `VIRTIO_F_VERSION_1`.
-  - Device config reads use `config_generation` retry logic (`VirtioPciReadDeviceConfig`).
-  - IRQL:
-    - init/map/unmap/uninit/negotiation helpers are **PASSIVE_LEVEL**
-    - queue/config/notify helpers are **<= DISPATCH_LEVEL** (DPC-safe)
-  - Not implemented (out of scope):
-    - MSI/MSI-X interrupt setup (contract v1 requires INTx)
-    - packed virtqueues
+## Contents of this directory
 
 - `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c`
-  - Reusable INTx ISR + DPC pair for virtio-pci modern devices.
-  - The ISR reads the ISR status byte (read-to-ack) as the INTx deassert/ack
-    operation, then schedules a DPC which dispatches queue/config work.
-
+  - Shared WDM INTx ISR + DPC helper for virtio-pci devices (ISR read-to-ack, then DPC dispatch).
 - `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c`
-  - Validates Aero contract v1 PCI identity (Revision ID = `0x01`, modern device
-    ID space `0x1040+<virtio device id>`).
-
-### Legacy/transitional transport (optional)
-
+  - Optional PCI identity validation helpers (AERO-W7-VIRTIO contract checks).
+- `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
+  - WDM wrapper over the canonical virtio-pci modern transport.
 - `include/virtio_pci_legacy.h` + `src/virtio_pci_legacy.c`
-  - Legacy/transitional virtio-pci transport (virtio 0.9 I/O-port register block).
-  - 32-bit feature negotiation (low 32 bits only).
-  - Queue programming via `QUEUE_PFN = (queue_paddr >> 12)`.
-
-### Virtqueues
-
+  - Legacy/transitional virtio-pci transport (virtio 0.9 I/O-port register set).
 - `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
   - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
   - Used by host-side unit tests and legacy/transitional experiments.
   - Shipped Aero Windows 7 drivers use the canonical WDF-free split virtqueue engine in
     `drivers/windows/virtio/common/virtqueue_split.{c,h}`; the `_legacy` suffix exists solely to
     avoid a repository-wide filename clash with `virtqueue_split.h`.
-
 - `include/virtio_sg.h`
-  - Shared scatter/gather entry type (`virtio_sg_entry_t`) used by legacy virtqueues and driver helpers.
-
+  - Shared scatter/gather entry type (`virtio_sg_entry_t`) used by virtqueues and driver helpers.
 - `include/virtio_queue.h` + `src/virtio_queue.c`
-  - Windows kernel convenience wrapper around **legacy/transitional** split rings:
-    - allocates descriptor/avail/used in a single physically-contiguous block and maintains a descriptor free list
-    - shares the ring with the device via `QUEUE_PFN = (ring_pa >> 12)` programming
-    - kicks the device via the legacy `QUEUE_NOTIFY` register
-
+  - Convenience wrapper around split rings for the legacy PFN programming model (`QUEUE_PFN = (ring_pa >> 12)`).
 - `include/virtio_os.h` + `os_shim/`
-  - OS abstraction used by the portable code and host-side unit tests.
-  - Reference shims exist for NDIS, StorPort, and WDF.
+  - OS abstraction used by some portable code and host-side unit tests.
 
 ## Using the modern transport
 
 At a high level, drivers using Aero contract v1 devices should:
 
-1. **Initialize the canonical transport** (`drivers/windows/virtio/pci-modern/`):
-   - Implement `VIRTIO_PCI_MODERN_OS_INTERFACE` callbacks for PCI config reads, BAR0 mapping,
-     stall/barrier, and selector serialization.
-   - Call `VirtioPciModernTransportInit(...)` (STRICT by default; drivers may optionally retry
-     with COMPAT on init errors like capability-layout mismatch).
-2. **Negotiate features** (64-bit; `VirtioPciModernTransportNegotiateFeatures(...)` always requires
-   `VIRTIO_F_VERSION_1`).
-3. **Program queues** using `common_cfg` and notify:
+1. Implement the `VIRTIO_PCI_MODERN_OS_INTERFACE` callbacks for PCI config reads,
+   BAR0 mapping, stall/barrier, and selector serialization.
+2. Call `VirtioPciModernTransportInit(...)` (**STRICT** by default; some drivers
+   optionally retry with **COMPAT** for bring-up).
+3. Negotiate features via `VirtioPciModernTransportNegotiateFeatures(...)`.
+4. Program queues via:
    - `VirtioPciModernTransportGetQueueSize(...)`
    - `VirtioPciModernTransportGetQueueNotifyOff(...)`
    - `VirtioPciModernTransportSetupQueue(...)`
    - `VirtioPciModernTransportNotifyQueue(...)`
- 4. **Handle INTx**:
-    - Read-to-ack via `VirtioPciModernTransportReadIsrStatus(...)`, then process queues in a DPC.
-    - WDM drivers may also reuse the INTx helper in this directory:
-      `virtio_pci_intx_wdm.*` (`VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`).
+5. Handle INTx by reading the ISR status byte (read-to-ack) and draining queues
+   at DPC level. WDM drivers may reuse `virtio_pci_intx_wdm.*`.
 
 Note: `virtio_queue.*` is built on the legacy/transitional virtio-pci PFN queue
-programming model and is not compatible with the modern transport. New drivers
-using `VirtioPciModernTransport*` typically pair it with
-`drivers/windows/virtio/common/virtqueue_split.*` or a driver-specific queue
-wrapper.
+programming model and is not compatible with the modern transport.
 
 ## virtio-pci legacy register offsets
 
@@ -276,7 +160,7 @@ QUEUE_PFN = (queue_physical_address >> 12)
 
 For Aero contract v1 devices this is obsolete; modern devices use the 64-bit
 `queue_desc/queue_avail/queue_used` registers in `common_cfg` and `queue_enable`
-instead.
+instead (handled by `VirtioPciModernTransport*`).
 
 ## Emulator/device-model contract (Aero + QEMU compatibility)
 
@@ -289,7 +173,7 @@ For the optional legacy/transitional transport, the device-model must:
 1. Expose a PCI function with a virtio-pci transitional compatible BAR that
    implements the register block above.
 2. Implement the **split ring** vring layout:
-    - descriptor table + avail ring + used ring in a single physically contiguous
+   - descriptor table + avail ring + used ring in a single physically contiguous
      region starting at `QUEUE_PFN << 12`
    - used ring aligned to **4096 bytes** (`VIRTIO_PCI_VRING_ALIGN`)
 3. Implement queue notifications via `QUEUE_NOTIFY`.
@@ -304,24 +188,10 @@ For the optional legacy/transitional transport, the device-model must:
 
 ## Host-side unit tests
 
-`drivers/windows7/virtio/common/tests/` contains a small user-mode test program
-that builds the portable core with fake I/O backends and validates:
+Host-buildable tests live in a few places:
 
-- descriptor chain allocation/free under u16 index wraparound
-- avail/used index handling
-- indirect descriptor table building
-- randomized fuzz sequences (invariants/no corruption)
-- virtio-pci legacy vs modern transport behavior (cap parsing, `VIRTIO_F_VERSION_1`
-  enforcement, queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`,
-  notify doorbells, ISR read-to-ack)
-
-The test CMake project also builds `virtio_pci_cap_parser_tests`, which exercises the
-portable virtio PCI capability parser used by the miniport and WDM transports.
-
-Build with CMake:
-
-```sh
-cmake -S tests -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
+- `drivers/windows7/virtio/common/tests/` covers split ring helpers + legacy
+  transport behaviour using fake I/O backends.
+- `drivers/windows/virtio/pci-modern/tests/` covers the canonical modern
+  transport (PCI cap parsing + MMIO contract validation).
+- `drivers/win7/virtio/tests/` covers the portable PCI capability parser.

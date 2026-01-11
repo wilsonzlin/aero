@@ -6,8 +6,8 @@
 #include <wdmguid.h>
 #undef INITGUID
 
-#ifndef PCI_BUS_INTERFACE_STANDARD_VERSION
-#define PCI_BUS_INTERFACE_STANDARD_VERSION 1
+#ifndef BUS_INTERFACE_STANDARD_VERSION
+#define BUS_INTERFACE_STANDARD_VERSION 1
 #endif
 
 #ifndef PCI_WHICHSPACE_CONFIG
@@ -31,9 +31,9 @@ VirtIoSndPciInterfaceSyncCompletionRoutine(
 
 _Use_decl_annotations_
 NTSTATUS
-VirtIoSndAcquirePciBusInterface(
+VirtIoSndAcquireBusInterface(
     PDEVICE_OBJECT LowerDevice,
-    PPCI_BUS_INTERFACE_STANDARD Out,
+    PBUS_INTERFACE_STANDARD Out,
     BOOLEAN* AcquiredOut
     )
 {
@@ -78,9 +78,9 @@ VirtIoSndAcquirePciBusInterface(
     stack = IoGetNextIrpStackLocation(irp);
     stack->MajorFunction = IRP_MJ_PNP;
     stack->MinorFunction = IRP_MN_QUERY_INTERFACE;
-    stack->Parameters.QueryInterface.InterfaceType = (LPGUID)&GUID_PCI_BUS_INTERFACE_STANDARD;
+    stack->Parameters.QueryInterface.InterfaceType = (LPGUID)&GUID_BUS_INTERFACE_STANDARD;
     stack->Parameters.QueryInterface.Size = sizeof(*Out);
-    stack->Parameters.QueryInterface.Version = PCI_BUS_INTERFACE_STANDARD_VERSION;
+    stack->Parameters.QueryInterface.Version = BUS_INTERFACE_STANDARD_VERSION;
     stack->Parameters.QueryInterface.Interface = (PINTERFACE)Out;
     stack->Parameters.QueryInterface.InterfaceSpecificData = NULL;
 
@@ -109,7 +109,7 @@ VirtIoSndAcquirePciBusInterface(
 
 _Use_decl_annotations_
 VOID
-VirtIoSndReleasePciBusInterface(PPCI_BUS_INTERFACE_STANDARD Iface, BOOLEAN* AcquiredInOut)
+VirtIoSndReleaseBusInterface(PBUS_INTERFACE_STANDARD Iface, BOOLEAN* AcquiredInOut)
 {
     if (Iface == NULL || AcquiredInOut == NULL) {
         return;
@@ -130,22 +130,22 @@ VirtIoSndReleasePciBusInterface(PPCI_BUS_INTERFACE_STANDARD Iface, BOOLEAN* Acqu
 
 _Use_decl_annotations_
 ULONG
-VirtIoSndPciReadConfig(PPCI_BUS_INTERFACE_STANDARD Iface, PVOID Buffer, ULONG Offset, ULONG Length)
+VirtIoSndBusReadConfig(PBUS_INTERFACE_STANDARD Iface, PVOID Buffer, ULONG Offset, ULONG Length)
 {
-    if (Iface == NULL || Iface->ReadConfig == NULL || Buffer == NULL || Length == 0) {
+    if (Iface == NULL || Iface->GetBusData == NULL || Buffer == NULL || Length == 0) {
         return 0;
     }
 
-    return Iface->ReadConfig(Iface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
+    return Iface->GetBusData(Iface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
 }
 
 _Use_decl_annotations_
 ULONG
-VirtIoSndPciWriteConfig(PPCI_BUS_INTERFACE_STANDARD Iface, PVOID Buffer, ULONG Offset, ULONG Length)
+VirtIoSndBusWriteConfig(PBUS_INTERFACE_STANDARD Iface, PVOID Buffer, ULONG Offset, ULONG Length)
 {
-    if (Iface == NULL || Iface->WriteConfig == NULL || Buffer == NULL || Length == 0) {
+    if (Iface == NULL || Iface->SetBusData == NULL || Buffer == NULL || Length == 0) {
         return 0;
     }
 
-    return Iface->WriteConfig(Iface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
+    return Iface->SetBusData(Iface->Context, PCI_WHICHSPACE_CONFIG, Buffer, Offset, Length);
 }

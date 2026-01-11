@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 /*
- * WDM helper for acquiring the PCI_BUS_INTERFACE_STANDARD interface from the
+ * WDM helper for acquiring the BUS_INTERFACE_STANDARD interface from the
  * PDO/lower stack via IRP_MN_QUERY_INTERFACE.
  *
  * Notes:
@@ -18,29 +18,29 @@ extern "C" {
  *   (and therefore whether InterfaceDereference must be invoked). The queried
  *   interface may still be usable even when the flag is FALSE (if the bus
  *   driver does not provide reference/dereference callbacks).
- * - VirtIoSndReleasePciBusInterface() always clears the interface struct and
+ * - VirtIoSndReleaseBusInterface() always clears the interface struct and
  *   sets the flag to FALSE; it is safe to call unconditionally during teardown.
  */
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
-VirtIoSndAcquirePciBusInterface(
+VirtIoSndAcquireBusInterface(
     _In_ PDEVICE_OBJECT LowerDevice,
-    _Out_ PPCI_BUS_INTERFACE_STANDARD Out,
+    _Out_ PBUS_INTERFACE_STANDARD Out,
     _Out_ BOOLEAN* AcquiredOut
     );
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
-VirtIoSndReleasePciBusInterface(
-    _Inout_ PPCI_BUS_INTERFACE_STANDARD Iface,
+VirtIoSndReleaseBusInterface(
+    _Inout_ PBUS_INTERFACE_STANDARD Iface,
     _Inout_ BOOLEAN* AcquiredInOut
     );
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 ULONG
-VirtIoSndPciReadConfig(
-    _In_ PPCI_BUS_INTERFACE_STANDARD Iface,
+VirtIoSndBusReadConfig(
+    _In_ PBUS_INTERFACE_STANDARD Iface,
     _Out_ PVOID Buffer,
     _In_ ULONG Offset,
     _In_ ULONG Length
@@ -48,8 +48,8 @@ VirtIoSndPciReadConfig(
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 ULONG
-VirtIoSndPciWriteConfig(
-    _In_ PPCI_BUS_INTERFACE_STANDARD Iface,
+VirtIoSndBusWriteConfig(
+    _In_ PBUS_INTERFACE_STANDARD Iface,
     _In_ PVOID Buffer,
     _In_ ULONG Offset,
     _In_ ULONG Length

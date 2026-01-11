@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 /*
- * WDM-only virtio-pci "modern" (Virtio 1.0+) transport helpers.
+ * WDM helper for virtio-pci modern (Virtio 1.0+) bring-up on Windows 7.
  *
- * This module is intended to satisfy the transport requirements described in:
- *   docs/windows7-virtio-driver-contract.md
+ * This module is intentionally a thin shim around the canonical, WDF-free
+ * virtio-pci modern transport implementation in:
+ *   drivers/windows/virtio/pci-modern/ (VirtioPciModernTransport*)
  *
- * Key properties:
- *  - Modern-only (PCI vendor capabilities + MMIO), no legacy I/O-port transport.
- *  - BAR mapping via MmMapIoSpace (MmNonCached).
- *  - INTx-friendly ISR region (read-to-ack).
- *  - Selector register serialization via a per-device spin lock.
+ * It wires up:
+ *   - GUID_PCI_BUS_INTERFACE_STANDARD config reads
+ *   - BAR0 discovery via CM_RESOURCE_LIST (raw + translated)
+ *   - MmMapIoSpace mapping
  *
  * This header intentionally does not include any KMDF/WDF headers.
  */
@@ -19,12 +19,8 @@
 #include <ntddk.h>
 #include <wdmguid.h>
 
-/*
- * Reuse the existing virtio-core headers for the common_cfg layout and PCI
- * capability structures. These headers have no WDF dependencies.
- */
-#include "../../../../win7/virtio/virtio-core/include/virtio_pci_caps.h"
-#include "../../../../win7/virtio/virtio-core/include/virtio_spec.h"
+/* Canonical modern transport. */
+#include "virtio_pci_modern_transport.h"
 
 /*
  * Compile-time diagnostics switch.
@@ -34,18 +30,6 @@
  */
 #ifndef VIRTIO_PCI_MODERN_WDM_ENABLE_DIAGNOSTICS
 #define VIRTIO_PCI_MODERN_WDM_ENABLE_DIAGNOSTICS 0
-#endif
-
-/*
- * Aero virtio-pci modern fixed MMIO layout enforcement.
- *
- * By default, the transport is permissive and accepts any valid virtio-pci modern
- * capability placement (e.g. QEMU's multi-BAR layout). Define
- * VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT=1 to require the Aero contract v1 fixed
- * BAR0 layout (docs/windows7-virtio-driver-contract.md §1.4).
- */
-#ifndef VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
-#define VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT 0
 #endif
 
 #if VIRTIO_PCI_MODERN_WDM_ENABLE_DIAGNOSTICS
@@ -78,9 +62,12 @@ typedef struct _VIRTIO_PCI_MODERN_WDM_DEVICE {
 
     UCHAR PciRevisionId;
 
-    VIRTIO_PCI_CAPS Caps;
-
     VIRTIO_PCI_MODERN_WDM_BAR Bars[VIRTIO_PCI_MAX_BARS];
+
+    /* Canonical transport + OS callback table. */
+    VIRTIO_PCI_MODERN_OS_INTERFACE Os;
+    VIRTIO_PCI_MODERN_TRANSPORT Transport;
+    KSPIN_LOCK TransportCommonCfgLock;
 
     /* Per-capability MMIO pointers (valid after VirtioPciModernWdmMapBars). */
     volatile virtio_pci_common_cfg *CommonCfg;
@@ -108,11 +95,6 @@ typedef struct _VIRTIO_PCI_MODERN_WDM_DEVICE {
      * global selectors for subsequent MMIO accesses. These sequences must be
      * serialized across threads/cores/DPCs to avoid corrupting device state.
      */
-    KSPIN_LOCK CommonCfgLock;
-
-#if DBG
-    PKTHREAD CommonCfgLockOwner;
-#endif
 } VIRTIO_PCI_MODERN_WDM_DEVICE, *PVIRTIO_PCI_MODERN_WDM_DEVICE;
 
 /* Initialization / teardown */

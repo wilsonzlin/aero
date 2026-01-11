@@ -7,7 +7,8 @@
  * This module implements discovery via PCI vendor capabilities and MMIO access
  * to CommonCfg/Notify/ISR/DeviceCfg regions.
  *
- * By default, it enforces the AERO-W7-VIRTIO v1 transport contract (docs/):
+ * In STRICT mode, this module enforces the AERO-W7-VIRTIO v1 transport contract
+ * (docs/):
  *   - PCI Vendor ID == 0x1AF4 (virtio vendor)
  *   - PCI Device ID in the modern-only ID space (>= 0x1040)
  *   - PCI Revision ID == 0x01
@@ -20,24 +21,33 @@
  *   - notify_off_multiplier == 4
  *   - Feature negotiation always requires VIRTIO_F_VERSION_1 and never
  *     negotiates VIRTIO_F_RING_EVENT_IDX.
- *
- * Additional STRICT-mode feature contract enforcement:
  *   - devices MUST offer VIRTIO_F_RING_INDIRECT_DESC
+ *
+ * In COMPAT mode, the transport still requires the BAR0-only MMIO transport
+ * shape (virtio vendor capabilities + BAR0 mapping) but relaxes some PCI identity
+ * checks to support bring-up/testing with transitional/QEMU builds:
  *
  * QEMU compatibility:
  *   - Some QEMU configurations expose virtio devices with transitional PCI IDs
  *     (0x1000..0x103f) and/or report Revision ID 0x00 by default.
- *   - Drivers can opt into a relaxed identity policy at build time by defining:
+ *   - Drivers can opt into accepting transitional device IDs by defining:
  *       - AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID=1
+ *   - Revision ID enforcement can be disabled by defining:
  *       - AERO_VIRTIO_PCI_ENFORCE_REVISION_ID=0
- *     In those builds, transitional device IDs (and non-v1 revision IDs) will be
- *     accepted and treated as COMPAT transport mode.
  */
 
 #include "../common/virtio_osdep.h"
 
 /* virtio_pci_common_cfg layout + virtio status bits */
 #include "../../../win7/virtio/virtio-core/include/virtio_spec.h"
+
+#ifndef AERO_VIRTIO_PCI_ENFORCE_REVISION_ID
+#define AERO_VIRTIO_PCI_ENFORCE_REVISION_ID 1
+#endif
+
+#ifndef AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID
+#define AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID 0
+#endif
 
 #ifdef __cplusplus
 extern "C" {

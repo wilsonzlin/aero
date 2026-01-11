@@ -7,7 +7,6 @@
 #include <string.h>
 
 #include "fake_pci_device.h"
-#include "fake_pci_device_modern.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -211,10 +210,6 @@ static uint8_t test_read_io8(void *ctx, uintptr_t base, uint32_t offset)
     switch (r->kind) {
     case TEST_IO_REGION_LEGACY_PIO:
         return fake_pci_read8((fake_pci_device_t *)r->dev, offset);
-    case TEST_IO_REGION_MODERN_PCI_CFG:
-        return fake_pci_modern_cfg_read8((fake_pci_device_modern_t *)r->dev, offset);
-    case TEST_IO_REGION_MODERN_BAR0_MMIO:
-        return fake_pci_modern_mmio_read8((fake_pci_device_modern_t *)r->dev, offset);
     default:
         return 0;
     }
@@ -232,10 +227,6 @@ static uint16_t test_read_io16(void *ctx, uintptr_t base, uint32_t offset)
     switch (r->kind) {
     case TEST_IO_REGION_LEGACY_PIO:
         return fake_pci_read16((fake_pci_device_t *)r->dev, offset);
-    case TEST_IO_REGION_MODERN_PCI_CFG:
-        return fake_pci_modern_cfg_read16((fake_pci_device_modern_t *)r->dev, offset);
-    case TEST_IO_REGION_MODERN_BAR0_MMIO:
-        return fake_pci_modern_mmio_read16((fake_pci_device_modern_t *)r->dev, offset);
     default:
         return 0;
     }
@@ -253,10 +244,6 @@ static uint32_t test_read_io32(void *ctx, uintptr_t base, uint32_t offset)
     switch (r->kind) {
     case TEST_IO_REGION_LEGACY_PIO:
         return fake_pci_read32((fake_pci_device_t *)r->dev, offset);
-    case TEST_IO_REGION_MODERN_PCI_CFG:
-        return fake_pci_modern_cfg_read32((fake_pci_device_modern_t *)r->dev, offset);
-    case TEST_IO_REGION_MODERN_BAR0_MMIO:
-        return fake_pci_modern_mmio_read32((fake_pci_device_modern_t *)r->dev, offset);
     default:
         return 0;
     }
@@ -274,12 +261,6 @@ static void test_write_io8(void *ctx, uintptr_t base, uint32_t offset, uint8_t v
     switch (r->kind) {
     case TEST_IO_REGION_LEGACY_PIO:
         fake_pci_write8((fake_pci_device_t *)r->dev, offset, value);
-        break;
-    case TEST_IO_REGION_MODERN_PCI_CFG:
-        fake_pci_modern_cfg_write8((fake_pci_device_modern_t *)r->dev, offset, value);
-        break;
-    case TEST_IO_REGION_MODERN_BAR0_MMIO:
-        fake_pci_modern_mmio_write8((fake_pci_device_modern_t *)r->dev, offset, value);
         break;
     default:
         break;
@@ -299,12 +280,6 @@ static void test_write_io16(void *ctx, uintptr_t base, uint32_t offset, uint16_t
     case TEST_IO_REGION_LEGACY_PIO:
         fake_pci_write16((fake_pci_device_t *)r->dev, offset, value);
         break;
-    case TEST_IO_REGION_MODERN_PCI_CFG:
-        fake_pci_modern_cfg_write16((fake_pci_device_modern_t *)r->dev, offset, value);
-        break;
-    case TEST_IO_REGION_MODERN_BAR0_MMIO:
-        fake_pci_modern_mmio_write16((fake_pci_device_modern_t *)r->dev, offset, value);
-        break;
     default:
         break;
     }
@@ -322,12 +297,6 @@ static void test_write_io32(void *ctx, uintptr_t base, uint32_t offset, uint32_t
     switch (r->kind) {
     case TEST_IO_REGION_LEGACY_PIO:
         fake_pci_write32((fake_pci_device_t *)r->dev, offset, value);
-        break;
-    case TEST_IO_REGION_MODERN_PCI_CFG:
-        fake_pci_modern_cfg_write32((fake_pci_device_modern_t *)r->dev, offset, value);
-        break;
-    case TEST_IO_REGION_MODERN_BAR0_MMIO:
-        fake_pci_modern_mmio_write32((fake_pci_device_modern_t *)r->dev, offset, value);
         break;
     default:
         break;
