@@ -44,6 +44,7 @@ try {
 }
 
 let sessionOk = false;
+let sessionJson = null;
 try {
   const res = await fetch("/session", {
     method: "POST",
@@ -51,8 +52,8 @@ try {
     headers: { "content-type": "application/json" },
     body: "{}",
   });
-  const json = await res.json().catch(() => null);
-  sessionOk = res.ok && typeof json?.session?.expiresAt === "string";
+  sessionJson = await res.json().catch(() => null);
+  sessionOk = res.ok && typeof sessionJson?.session?.expiresAt === "string";
   const el = document.querySelector("#session");
   el.textContent = sessionOk ? "ok" : `unexpected (${res.status})`;
   el.className = sessionOk ? "ok" : "bad";
@@ -64,7 +65,8 @@ try {
 
 try {
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = new URL("/tcp", `${wsProto}//${location.host}`);
+  const tcpPath = sessionJson?.endpoints?.tcp ?? "/tcp";
+  const wsUrl = new URL(tcpPath, `${wsProto}//${location.host}`);
   // aero-gateway requires a target host+port for /tcp (v=1 protocol).
   // We use the canonical `host` + `port` form here.
   //
@@ -106,27 +108,33 @@ try {
 
 try {
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = new URL("/l2", `${wsProto}//${location.host}`);
+  const l2Path = sessionJson?.endpoints?.l2 ?? "/l2";
+  const wsUrl = new URL(l2Path, `${wsProto}//${location.host}`);
   const wsEl = document.querySelector("#ws-l2");
-  const ws = new WebSocket(wsUrl.toString(), "aero-l2-tunnel-v1");
-  const timeout = setTimeout(() => {
-    wsEl.textContent = "timeout";
+  if (!sessionOk) {
+    wsEl.textContent = "skipped (no session)";
     wsEl.className = "bad";
-    ws.close();
-  }, 5000);
+  } else {
+    const ws = new WebSocket(wsUrl.toString(), "aero-l2-tunnel-v1");
+    const timeout = setTimeout(() => {
+      wsEl.textContent = "timeout";
+      wsEl.className = "bad";
+      ws.close();
+    }, 5000);
 
-  ws.onopen = () => {
-    clearTimeout(timeout);
-    wsEl.textContent = "ok";
-    wsEl.className = "ok";
-    ws.close();
-  };
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      wsEl.textContent = "ok";
+      wsEl.className = "ok";
+      ws.close();
+    };
 
-  ws.onerror = () => {
-    clearTimeout(timeout);
-    wsEl.textContent = "failed";
-    wsEl.className = "bad";
-  };
+    ws.onerror = () => {
+      clearTimeout(timeout);
+      wsEl.textContent = "failed";
+      wsEl.className = "bad";
+    };
+  }
 } catch (err) {
   const el = document.querySelector("#ws-l2");
   el.textContent = "failed";

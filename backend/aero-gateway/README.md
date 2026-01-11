@@ -69,7 +69,9 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /readyz` readiness
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
-- `POST /session` issues the `aero_session` cookie used by `/dns-query` and the `/tcp` WebSocket upgrade
+- `POST /session` issues the `aero_session` cookie used by `/dns-query`, `/tcp`, and `/tcp-mux` (and advertises same-origin endpoint paths for browser clients)
+  - `endpoints.l2` points at the Option C L2 tunnel endpoint (`/l2`, subprotocol `aero-l2-tunnel-v1`), which is served by `aero-l2-proxy` behind the reverse proxy (not by the Node gateway process itself).
+  - `limits.l2` provides protocol payload size caps (`FRAME` vs control messages) so clients can tune buffering.
   - When the gateway is configured with `UDP_RELAY_BASE_URL`, the JSON response also includes `udpRelay` metadata (base URL + endpoints + short-lived token) for `proxy/webrtc-udp-relay`.
 - `GET /session` (dev-only helper; not part of the backend contract) sets a session cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
 - `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`; requires `aero_session` cookie)
