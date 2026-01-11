@@ -12,11 +12,6 @@
 
 #include "virtqueue_split.h"
 
-/* User-mode tests on Linux don't have NTSTATUS codes from WDK headers. */
-#ifndef STATUS_BUFFER_TOO_SMALL
-#define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023L)
-#endif
-
 /*
  * WDK provides PAGE_SHIFT/PAGE_SIZE in kernel mode. Define a 4KiB default for
  * user-mode tests.
@@ -41,4 +36,3 @@ NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BO
 #endif /* VIRTIO_OSDEP_KERNEL_MODE */
 
 #endif /* VIRTIO_SG_PFN_H_ */
-
