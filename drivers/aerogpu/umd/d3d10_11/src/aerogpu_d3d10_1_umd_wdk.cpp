@@ -4323,6 +4323,17 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
                        pCaps ? static_cast<unsigned>(pCaps->Type) : 0u,
                        pCaps ? static_cast<unsigned>(pCaps->DataSize) : 0u,
                        pCaps ? pCaps->pData : nullptr);
+#if defined(AEROGPU_D3D10_11_CAPS_LOG)
+  if (pCaps) {
+    char buf[128] = {};
+    snprintf(buf,
+             sizeof(buf),
+             "aerogpu-d3d10_1: GetCaps10 type=%u size=%u\n",
+             (unsigned)pCaps->Type,
+             (unsigned)pCaps->DataSize);
+    OutputDebugStringA(buf);
+  }
+#endif
   if (!pCaps || !pCaps->pData) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
@@ -4413,6 +4424,17 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
                        pCaps ? static_cast<unsigned>(pCaps->Type) : 0u,
                        pCaps ? static_cast<unsigned>(pCaps->DataSize) : 0u,
                        pCaps ? pCaps->pData : nullptr);
+#if defined(AEROGPU_D3D10_11_CAPS_LOG)
+  if (pCaps) {
+    char buf[128] = {};
+    snprintf(buf,
+             sizeof(buf),
+             "aerogpu-d3d10_1: GetCaps type=%u size=%u\n",
+             (unsigned)pCaps->Type,
+             (unsigned)pCaps->DataSize);
+    OutputDebugStringA(buf);
+  }
+#endif
   if (!pCaps || !pCaps->pData) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
