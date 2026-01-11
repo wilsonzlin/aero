@@ -21,8 +21,7 @@ and avoids implementing a TCP/IP stack in WASM.
   - The proxy terminates Ethernet, provides DHCP/DNS on a synthetic LAN, and opens host sockets for
     outbound TCP/UDP.
 - **Transport:** **WebSocket first** (single reliable tunnel), **WebRTC optional** (DataChannel-based
-  tunnel). For WebRTC, the `l2` DataChannel MUST be reliable; `ordered = false` is recommended to
-  reduce head-of-line blocking.
+  tunnel). For WebRTC, the `l2` DataChannel MUST be reliable **and ordered** (`ordered = true`).
 
 ### End-to-end data path
 
@@ -842,9 +841,9 @@ impl UdpProxy {
         // Create data channel for UDP.
         //
         // Note: this DataChannel config is for the UDP relay, where best-effort/lossy semantics are
-        // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable
-        // (do NOT set `maxRetransmits`/`maxPacketLifeTime`). `ordered: false` is recommended to
-        // reduce head-of-line blocking. See ADR 0013 and `docs/l2-tunnel-protocol.md`.
+        // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable and
+        // ordered (do NOT set `maxRetransmits`/`maxPacketLifeTime`, and do not set `ordered: false`).
+        // See ADR 0013 and `docs/l2-tunnel-protocol.md`.
         let dc = pc.create_data_channel("udp", &RtcDataChannelInit {
             ordered: false,
             max_retransmits: Some(0),

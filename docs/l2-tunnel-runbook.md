@@ -72,8 +72,7 @@ evaluation under loss.
 If you carry the **L2 tunnel** over WebRTC, the DataChannel must be configured as:
 
 - **reliable** (no frame loss / no partial reliability)
-- Recommended: **unordered** (`ordered = false`) to reduce head-of-line blocking
-- `ordered = true` is allowed if a deployment prefers in-order delivery
+- **ordered** (`ordered = true`)
 - leave `maxRetransmits` / `maxPacketLifeTime` unset (default reliable)
 
 See ADR 0013 for the rationale.
