@@ -120,14 +120,14 @@ Common options:
 ```bash
 node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --baseline baseline.json \
-  --current gpu_bench.json \
-  --thresholdPct 5 \
-  --cvThreshold 0.5
+  --candidate gpu_bench.json \
+  --out-dir gpu-perf-results/compare \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 ```
 
-The compare script writes `compare.md` + `summary.json` (by default next to `--current`) and exits
-non-zero if the run is unstable (high coefficient-of-variation) or any metric regresses by more than
-the configured threshold.
+The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero if any
+metric regresses by more than the configured threshold (exit code 2 indicates extreme variance).
 
 ## Storage I/O benchmark suite (OPFS + IndexedDB)
 
@@ -151,10 +151,12 @@ npm run bench:storage -- --out-dir storage-perf-results/head
 ### Comparing two runs
 
 ```bash
-node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+node --experimental-strip-types bench/compare.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --current storage-perf-results/head/storage_bench.json \
-  --thresholdPct 15
+  --candidate storage-perf-results/head/storage_bench.json \
+  --out-dir storage-perf-results \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 
 cat storage-perf-results/compare.md
 ```

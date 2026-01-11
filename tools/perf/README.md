@@ -35,6 +35,17 @@ This is meant to make perf regressions easier to attribute (e.g. throughput drop
 
 `compare.mjs` will include these JIT metrics in `compare.md` when present so the GitHub Actions job summary shows them alongside benchmark deltas.
 
+## Threshold policy
+
+All perf regression thresholds live in a single file:
+
+- [`bench/perf_thresholds.json`](../../bench/perf_thresholds.json)
+
+The browser compare tool uses the `browser` suite section with either:
+
+- `--profile pr-smoke` (PR gating), or
+- `--profile nightly` (tighter thresholds for long-running builds / nightly jobs).
+
 ## Usage
 
 Run locally (requires a Playwright Chromium install):
@@ -65,6 +76,17 @@ To benchmark a specific URL instead of the built-in `data:` page:
 
 ```bash
 node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/
+```
+
+Compare two runs (baseline vs candidate):
+
+```bash
+node tools/perf/compare.mjs \
+  --baseline perf-results/base/summary.json \
+  --candidate perf-results/head/summary.json \
+  --out-dir perf-results/compare \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 ```
 
 ## Environment consistency

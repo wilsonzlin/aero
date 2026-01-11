@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "pr-smoke": {
+      "browser": {
+        "metrics": {
+          "chromium_startup_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "microbench_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          }
+        }
+      },
+      "gpu": {
+        "metrics": {
+          "frameTimeMsP95": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "shaderTranslationMsMean": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "shaderCompilationMsMean": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "presentLatencyMsP95": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "textureUploadMBpsAvg": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "informational": true
+          },
+          "pipelineCacheHitRate": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "informational": true
+          }
+        }
+      },
+      "storage": {
+        "metrics": {
+          "sequential_write_mb_per_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "sequential_read_mb_per_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "random_read_4k_p95_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "random_write_4k_p95_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "informational": true
+          }
+        }
+      }
+    },
+    "nightly": {
+      "browser": {
+        "metrics": {
+          "chromium_startup_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.1,
+            "extremeCvThreshold": 0.5
+          },
+          "microbench_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          }
+        }
+      },
+      "gpu": {
+        "metrics": {
+          "frameTimeMsP95": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "shaderTranslationMsMean": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "shaderCompilationMsMean": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "presentLatencyMsP95": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "textureUploadMBpsAvg": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "informational": true
+          },
+          "pipelineCacheHitRate": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "informational": true
+          }
+        }
+      },
+      "storage": {
+        "metrics": {
+          "sequential_write_mb_per_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "sequential_read_mb_per_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "random_read_4k_p95_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "random_write_4k_p95_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "informational": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -352,8 +352,8 @@ node tools/perf/compare.mjs \
   --baseline perf-results/base/summary.json \
   --candidate perf-results/head/summary.json \
   --out-dir perf-results/compare \
-  --regression-threshold-pct 15 \
-  --extreme-cv-threshold 0.5
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 ```
 
 ---
@@ -369,9 +369,9 @@ Baselines are used to detect regressions in CI. Update them when:
 In CI:
 
 - The **browser CI perf** workflow (`tools/perf`) compares **PR vs base commit** (no committed “golden baseline” file).
-- Thresholds for that workflow live in [`/.github/workflows/perf.yml`](../.github/workflows/perf.yml) as environment variables (and can also be passed to `tools/perf/compare.mjs`):
-  - `PERF_REGRESSION_THRESHOLD_PCT`
-  - `PERF_EXTREME_CV_THRESHOLD`
+- Thresholds live in [`bench/perf_thresholds.json`](../bench/perf_thresholds.json) (versioned, shared across browser/GPU/storage perf tooling).
+  - PR gating uses profile `pr-smoke`
+  - Nightly runs should use profile `nightly`
 
 Separately, PF-009 adds a **checked-in baseline** file (`bench/baseline.json`) and threshold policy (`bench/thresholds.json`)
 used by `node bench/compare`.
@@ -408,6 +408,8 @@ CI performance jobs are split by intent:
 
 - **PR perf (gating):** [`/.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs a small browser-only suite and compares PR vs base commit.
 - **Nightly perf (non-gating + data collection):** [`/.github/workflows/perf-nightly.yml`](../.github/workflows/perf-nightly.yml) runs more iterations and publishes history/dashboard artifacts.
+- **PR GPU perf (gating):** [`/.github/workflows/gpu-perf.yml`](../.github/workflows/gpu-perf.yml) runs a small GPU scenario set and compares PR vs base commit.
+- **PR storage perf (gating):** [`/.github/workflows/storage-perf.yml`](../.github/workflows/storage-perf.yml) runs the storage bench and compares PR vs base commit.
 
 Where to find artifacts:
 

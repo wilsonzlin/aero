@@ -1,6 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { buildCompareResult, exitCodeForStatus, renderCompareMarkdown } from "./lib/compare_core.mjs";
+import {
+  DEFAULT_PROFILE,
+  DEFAULT_THRESHOLDS_FILE,
+  getSuiteThresholds,
+  loadThresholdPolicy,
+  pickThresholdProfile,
+} from "./lib/thresholds.mjs";
 
 function usage(exitCode) {
   const msg = `
@@ -11,8 +19,8 @@ Options:
   --baseline <path>                  Baseline summary.json (required)
   --candidate <path>                 Candidate summary.json (required)
   --out-dir <dir>                    Output directory (required)
-  --regression-threshold-pct <n>     Fail if any benchmark regresses by >= n percent (default: 15)
-  --extreme-cv-threshold <n>         Fail if any benchmark has coefficient-of-variation >= n (default: 0.5)
+  --thresholds-file <path>           Threshold policy file (default: ${DEFAULT_THRESHOLDS_FILE})
+  --profile <pr-smoke|nightly>       Threshold profile (default: ${DEFAULT_PROFILE})
   --help                             Show this help
 `;
   console.log(msg.trim());
@@ -24,8 +32,8 @@ function parseArgs(argv) {
     baseline: undefined,
     candidate: undefined,
     outDir: undefined,
-    regressionThresholdPct: 15,
-    extremeCvThreshold: 0.5,
+    thresholdsFile: DEFAULT_THRESHOLDS_FILE,
+    profile: DEFAULT_PROFILE,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -40,11 +48,11 @@ function parseArgs(argv) {
       case "--out-dir":
         out.outDir = argv[++i];
         break;
-      case "--regression-threshold-pct":
-        out.regressionThresholdPct = Number.parseFloat(argv[++i]);
+      case "--thresholds-file":
+        out.thresholdsFile = argv[++i];
         break;
-      case "--extreme-cv-threshold":
-        out.extremeCvThreshold = Number.parseFloat(argv[++i]);
+      case "--profile":
+        out.profile = argv[++i];
         break;
       case "--help":
         usage(0);
@@ -64,16 +72,6 @@ function parseArgs(argv) {
   }
 
   return out;
-}
-
-function fmtPct(pct) {
-  const sign = pct > 0 ? "+" : "";
-  return `${sign}${(pct * 100).toFixed(2)}%`;
-}
-
-function fmtMs(ms) {
-  const sign = ms > 0 ? "+" : "";
-  return `${sign}${ms.toFixed(2)}ms`;
 }
 
 function mdEscape(s) {
@@ -116,6 +114,10 @@ async function readJson(file) {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
 
+function isFiniteNumber(n) {
+  return typeof n === "number" && Number.isFinite(n);
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const outDir = path.resolve(process.cwd(), opts.outDir);
@@ -137,78 +139,81 @@ async function main() {
     return captured ? "captured" : "not captured";
   };
 
+  const thresholdsPolicy = await loadThresholdPolicy(opts.thresholdsFile);
+  const { name: profileName, profile } = pickThresholdProfile(thresholdsPolicy, opts.profile);
+  const suiteThresholds = getSuiteThresholds(profile, "browser");
+
   const baselineMap = new Map((baseline.benchmarks ?? []).map((b) => [b.name, b]));
   const candidateMap = new Map((candidate.benchmarks ?? []).map((b) => [b.name, b]));
 
-  const names = [...baselineMap.keys()].filter((n) => candidateMap.has(n));
-  names.sort();
-
-  const rows = [];
-  let hasRegression = false;
-  let isExtremelyUnstable = false;
-
-  for (const name of names) {
-    const b = baselineMap.get(name);
-    const c = candidateMap.get(name);
-    const baseMedian = b?.stats?.median;
-    const candMedian = c?.stats?.median;
-
-    if (!Number.isFinite(baseMedian) || !Number.isFinite(candMedian) || baseMedian === 0) continue;
-
-    const deltaMs = candMedian - baseMedian;
-    const pct = deltaMs / baseMedian;
-    const status = pct >= opts.regressionThresholdPct / 100 ? "regression" : pct <= -0.01 ? "improvement" : "ok";
-
-    if (status === "regression") hasRegression = true;
-
-    const baseCv = b?.stats?.cv;
-    const candCv = c?.stats?.cv;
-    if ((Number.isFinite(baseCv) && baseCv >= opts.extremeCvThreshold) || (Number.isFinite(candCv) && candCv >= opts.extremeCvThreshold)) {
-      isExtremelyUnstable = true;
+  const cases = [];
+  for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
+    const better = threshold?.better;
+    if (better !== "lower" && better !== "higher") {
+      throw new Error(`thresholds: browser.metrics.${metricName}.better must be "lower" or "higher"`);
     }
 
-    rows.push({
-      name,
-      baselineMedianMs: baseMedian,
-      candidateMedianMs: candMedian,
-      deltaMs,
-      pct,
-      baseCv,
-      candCv,
-      status,
+    const b = baselineMap.get(metricName);
+    const c = candidateMap.get(metricName);
+    const unit = (b?.unit ?? c?.unit ?? "").toString();
+
+    const baselineStats = b?.stats
+      ? {
+          value: b.stats.median,
+          cv: b.stats.cv,
+          n: b.stats.n,
+        }
+      : null;
+    const candidateStats = c?.stats
+      ? {
+          value: c.stats.median,
+          cv: c.stats.cv,
+          n: c.stats.n,
+        }
+      : null;
+
+    cases.push({
+      scenario: "browser",
+      metric: metricName,
+      unit,
+      better,
+      threshold,
+      baseline: baselineStats,
+      candidate: candidateStats,
     });
   }
 
-  const regressions = [...rows].filter((r) => r.pct >= 0.01).sort((a, b) => b.pct - a.pct);
-  const improvements = [...rows].filter((r) => r.pct <= -0.01).sort((a, b) => a.pct - b.pct);
+  // Optional backdoor: allow overriding *all* browser thresholds via env vars.
+  // This keeps CI policy centralized in `bench/perf_thresholds.json`, while still
+  // allowing one-off local/CI debugging without editing policy.
+  const envMaxRegressionPct = process.env.PERF_REGRESSION_THRESHOLD_PCT
+    ? Number(process.env.PERF_REGRESSION_THRESHOLD_PCT) / 100
+    : null;
+  const envExtremeCv = process.env.PERF_EXTREME_CV_THRESHOLD ? Number(process.env.PERF_EXTREME_CV_THRESHOLD) : null;
 
-  const status = isExtremelyUnstable ? "unstable" : hasRegression ? "fail" : "pass";
-
-  const reportLines = [];
-  reportLines.push("# Perf comparison");
-  reportLines.push("");
-  reportLines.push(`- Baseline: \`${baseline.meta?.gitSha ?? "unknown"}\``);
-  reportLines.push(`- Candidate: \`${candidate.meta?.gitSha ?? "unknown"}\``);
-  reportLines.push(`- Threshold: ${opts.regressionThresholdPct}% regression`);
-  reportLines.push(`- Iterations: ${candidate.meta?.iterations ?? "?"} (median-of-N)`);
-  reportLines.push(`- Baseline trace: ${fmtTraceStatus(baseline.meta)} (\`${path.join(path.dirname(opts.baseline), "trace.json")}\`)`);
-  reportLines.push(`- Candidate trace: ${fmtTraceStatus(candidate.meta)} (\`${path.join(path.dirname(opts.candidate), "trace.json")}\`)`);
-  reportLines.push("");
-  reportLines.push("| Benchmark | Baseline (median) | Candidate (median) | Δ | Δ% | Baseline CV | Candidate CV |");
-  reportLines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
-  for (const r of rows) {
-    reportLines.push(
-      `| ${mdEscape(r.name)} | ${r.baselineMedianMs.toFixed(2)}ms | ${r.candidateMedianMs.toFixed(2)}ms | ${fmtMs(r.deltaMs)} | ${fmtPct(r.pct)} | ${Number.isFinite(r.baseCv) ? r.baseCv.toFixed(2) : "n/a"} | ${Number.isFinite(r.candCv) ? r.candCv.toFixed(2) : "n/a"} |`,
-    );
+  if (isFiniteNumber(envMaxRegressionPct) || isFiniteNumber(envExtremeCv)) {
+    for (const c of cases) {
+      if (isFiniteNumber(envMaxRegressionPct)) c.threshold = { ...c.threshold, maxRegressionPct: envMaxRegressionPct };
+      if (isFiniteNumber(envExtremeCv)) c.threshold = { ...c.threshold, extremeCvThreshold: envExtremeCv };
+    }
   }
 
-  reportLines.push("");
-  if (status === "unstable") {
-    reportLines.push("Result: **Unstable** (extreme variance detected; see raw samples in artifacts)");
-  } else if (status === "fail") {
-    reportLines.push("Result: **Regression detected**");
-  } else {
-    reportLines.push("Result: **No significant regressions**");
+  const result = buildCompareResult({
+    suite: "browser",
+    profile: profileName,
+    thresholdsFile: opts.thresholdsFile,
+    baselineMeta: baseline.meta ?? null,
+    candidateMeta: candidate.meta ?? null,
+    cases,
+  });
+
+  const reportLines = renderCompareMarkdown(result, { title: "Perf comparison" }).trimEnd().split("\n");
+  const summaryIdx = reportLines.findIndex((line) => line.startsWith("## Summary"));
+  if (summaryIdx !== -1) {
+    reportLines.splice(summaryIdx - 1, 0, [
+      `- Baseline trace: ${fmtTraceStatus(baseline.meta)} (\`${path.join(path.dirname(opts.baseline), "trace.json")}\`)`,
+      `- Candidate trace: ${fmtTraceStatus(candidate.meta)} (\`${path.join(path.dirname(opts.candidate), "trace.json")}\`)`,
+    ].join("\n"));
   }
 
   const baseJit = baseline.meta?.aeroPerf?.jit;
@@ -326,38 +331,12 @@ async function main() {
     addRow("guard fail count", base?.guardFail, cand?.guardFail, { fmt: fmtCount, fmtDelta: fmtSignedCount });
   }
 
-  const summary = {
-    status,
-    regressionThresholdPct: opts.regressionThresholdPct,
-    extremeCvThreshold: opts.extremeCvThreshold,
-    iterations: candidate.meta?.iterations,
-    baseline: { gitSha: baseline.meta?.gitSha },
-    candidate: { gitSha: candidate.meta?.gitSha },
-    benchmarks: rows.map((r) => ({
-      name: r.name,
-      deltaMs: r.deltaMs,
-      pct: r.pct,
-      baselineMedianMs: r.baselineMedianMs,
-      candidateMedianMs: r.candidateMedianMs,
-      baselineCv: r.baseCv,
-      candidateCv: r.candCv,
-    })),
-    topRegressions: regressions.slice(0, 5).map((r) => ({ name: r.name, deltaMs: r.deltaMs, pct: r.pct })),
-    topImprovements: improvements.slice(0, 5).map((r) => ({ name: r.name, deltaMs: r.deltaMs, pct: r.pct })),
-  };
-
   await Promise.all([
     fs.writeFile(path.join(outDir, "compare.md"), reportLines.join("\n")),
-    fs.writeFile(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2)),
+    fs.writeFile(path.join(outDir, "summary.json"), JSON.stringify(result, null, 2)),
   ]);
 
-  if (status === "unstable") {
-    process.exitCode = 2;
-  } else if (status === "fail") {
-    process.exitCode = 1;
-  } else {
-    process.exitCode = 0;
-  }
+  process.exitCode = exitCodeForStatus(result.status);
 }
 
 await main();

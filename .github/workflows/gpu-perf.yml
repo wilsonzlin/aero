@@ -20,8 +20,6 @@ jobs:
     timeout-minutes: 30
     env:
       GPU_PERF_ITERATIONS: "3"
-      GPU_PERF_REGRESSION_THRESHOLD_PCT: "15"
-      GPU_PERF_EXTREME_CV_THRESHOLD: "0.5"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout (candidate)
@@ -55,7 +53,7 @@ jobs:
         run: npm ci
 
       - name: Setup Playwright (cached)
-        uses: ./.github/actions/setup-playwright
+        uses: ./head/.github/actions/setup-playwright
         with:
           browsers: chromium
           working-directory: head
@@ -98,12 +96,16 @@ jobs:
           set +e
           node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
             --baseline gpu-perf-results/base/gpu_bench.json \
-            --current gpu-perf-results/head/gpu_bench.json \
-            --thresholdPct ${{ env.GPU_PERF_REGRESSION_THRESHOLD_PCT }} \
-            --cvThreshold ${{ env.GPU_PERF_EXTREME_CV_THRESHOLD }} \
-            --outDir gpu-perf-results/compare
+            --candidate gpu-perf-results/head/gpu_bench.json \
+            --out-dir gpu-perf-results/compare \
+            --thresholds-file bench/perf_thresholds.json \
+            --profile pr-smoke
           status=$?
-          cat gpu-perf-results/compare/compare.md >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f gpu-perf-results/compare/compare.md ]]; then
+            cat gpu-perf-results/compare/compare.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No GPU perf comparison produced (compare.md missing)." >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit $status
 
       - name: Upload GPU perf artifacts
