@@ -194,12 +194,12 @@ async fn run_dns_case(
 ) {
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
-    let _insecure_allow_no_auth = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
     let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    // Explicitly disable auth for this integration test so we don't rely on implicit defaults.
     let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
     let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
     let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
