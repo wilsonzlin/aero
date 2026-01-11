@@ -1755,6 +1755,8 @@ struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<
 
 template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
+  const bool patch_list_available =
+      dev->wddm_context.pPatchLocationList && dev->wddm_context.PatchLocationListSize != 0;
   if constexpr (has_member_hContext<ArgsT>::value) {
     args.hContext = dev->wddm_context.hContext;
   }
@@ -1785,17 +1787,21 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
     args.NumAllocations = dev->wddm_context.allocation_list_entries_used;
   }
   if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
-    args.pPatchLocationList = dev->wddm_context.pPatchLocationList;
+    args.pPatchLocationList = patch_list_available ? dev->wddm_context.pPatchLocationList : nullptr;
   }
   if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
-    if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
-      args.PatchLocationListSize = dev->wddm_context.PatchLocationListSize;
+    if (patch_list_available) {
+      if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
+        args.PatchLocationListSize = dev->wddm_context.PatchLocationListSize;
+      } else {
+        args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
+      }
     } else {
-      args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
+      args.PatchLocationListSize = 0;
     }
   }
   if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
-    args.NumPatchLocations = dev->wddm_context.patch_location_entries_used;
+    args.NumPatchLocations = patch_list_available ? dev->wddm_context.patch_location_entries_used : 0;
   }
   if constexpr (has_member_pDmaBufferPrivateData<ArgsT>::value) {
     args.pDmaBufferPrivateData = dev->wddm_context.pDmaBufferPrivateData;
@@ -6294,13 +6300,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   // DMA buffer construction.
   const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
       sizeof(aerogpu_cmd_stream_header) + align_up(sizeof(aerogpu_cmd_set_render_targets), 4));
+  const bool patch_list_consistent =
+      (dev->wddm_context.PatchLocationListSize == 0) || (dev->wddm_context.pPatchLocationList != nullptr);
   if (!dev->wddm_context.pCommandBuffer ||
       dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
       !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
-      !dev->wddm_context.pPatchLocationList || dev->wddm_context.PatchLocationListSize == 0 ||
+      !patch_list_consistent ||
       !dev->wddm_context.pDmaBufferPrivateData ||
-      dev->wddm_context.DmaBufferPrivateDataSize < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES ||
-      dev->wddm_context.hSyncObject == 0) {
+      dev->wddm_context.DmaBufferPrivateDataSize < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
     aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
                   "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u dma_priv=%p bytes=%u (need>=%u) sync=0x%08x\n",
                   dev->wddm_context.pCommandBuffer,
@@ -6319,6 +6326,33 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     dev->wddm_device = 0;
     pCreateDevice->hDevice.pDrvPrivate = nullptr;
     return trace.ret(E_FAIL);
+  }
+
+  {
+    static std::once_flag wddm_diag_once;
+    const bool patch_list_present =
+        dev->wddm_context.pPatchLocationList && dev->wddm_context.PatchLocationListSize != 0;
+
+    const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
+    const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
+    const WddmHandle kmt_adapter = static_cast<WddmHandle>(adapter->kmd_query.GetKmtAdapterHandle());
+    const bool has_wait_fn = (load_d3dkmt_wait_for_sync_object() != nullptr);
+
+    const char* wait_mode = "polling";
+    if (has_sync_object && kmt_adapter != 0 && has_wait_fn) {
+      wait_mode = "sync_object";
+    } else if (kmd_query_available) {
+      wait_mode = "kmd_query";
+    }
+
+    std::call_once(wddm_diag_once, [patch_list_present, wait_mode, has_sync_object, kmd_query_available] {
+      aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
+                    patch_list_present ? "present" : "absent");
+      aerogpu::logf("aerogpu-d3d9: fence_wait=%s (hSyncObject=%s kmd_query=%s)\n",
+                    wait_mode,
+                    has_sync_object ? "present" : "absent",
+                    kmd_query_available ? "available" : "unavailable");
+    });
   }
 
   aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x hSyncObject=0x%08x "
