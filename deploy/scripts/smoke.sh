@@ -43,8 +43,11 @@ compose() {
     SIGNALING_AUTH_TIMEOUT= \
     MAX_SIGNALING_MESSAGE_BYTES= \
     MAX_SIGNALING_MESSAGES_PER_SECOND= \
-    DESTINATION_POLICY_PRESET= \
-    ALLOW_PRIVATE_NETWORKS=false \
+    # The relay defaults to a deny-by-default destination policy (production).
+    # For the deploy smoke test we enable the dev preset so we can validate the
+    # /udp WebSocket data plane with a local UDP echo server.
+    DESTINATION_POLICY_PRESET=dev \
+    ALLOW_PRIVATE_NETWORKS=true \
     ALLOW_UDP_CIDRS= \
     DENY_UDP_CIDRS= \
     ALLOW_UDP_PORTS= \
@@ -256,16 +259,62 @@ assert_header_exact "Content-Type" "application/json" "$webrtc_headers"
 # external tools like `wscat`/`websocat`.
 if command -v node >/dev/null 2>&1; then
   echo "deploy smoke: verifying wss://localhost/tcp upgrade (session cookie)" >&2
-  node --input-type=commonjs - <<'NODE'
-const https = require("node:https");
-const tls = require("node:tls");
-const crypto = require("node:crypto");
+  # The /udp smoke test sends a UDP datagram to the host via the docker network
+  # gateway, so we need the gateway IP.
+  #
+  # Compose uses "${PROJECT_NAME}_default" as the network name.
+  SMOKE_DOCKER_GATEWAY_IP="$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "${PROJECT_NAME}_default" 2>/dev/null || true)"
+  if [[ -z "$SMOKE_DOCKER_GATEWAY_IP" ]]; then
+    echo "deploy smoke: failed to resolve docker gateway IP for ${PROJECT_NAME}_default" >&2
+    exit 1
+  fi
 
-const host = "localhost";
-const port = 443;
+  AERO_SMOKE_DOCKER_GATEWAY_IP="$SMOKE_DOCKER_GATEWAY_IP" node --input-type=commonjs - <<'NODE'
+ const https = require("node:https");
+ const tls = require("node:tls");
+ const crypto = require("node:crypto");
+ const dgram = require("node:dgram");
+ const { once } = require("node:events");
 
-function requestSessionInfo() {
-  return new Promise((resolve, reject) => {
+ const host = "localhost";
+ const port = 443;
+ const dockerGatewayIP = process.env.AERO_SMOKE_DOCKER_GATEWAY_IP;
+
+ function readSocketChunk(socket, timeoutMs, label) {
+   return new Promise((resolve, reject) => {
+     const onData = (chunk) => {
+       cleanup();
+       resolve(chunk);
+     };
+     const onError = (err) => {
+       cleanup();
+       reject(err);
+     };
+     const onClose = () => {
+       cleanup();
+       reject(new Error(`socket closed while waiting for ${label}`));
+     };
+ 
+     const timer = setTimeout(() => {
+       cleanup();
+       reject(new Error(`timeout waiting for ${label}`));
+     }, timeoutMs);
+ 
+     const cleanup = () => {
+       clearTimeout(timer);
+       socket.off("data", onData);
+       socket.off("error", onError);
+       socket.off("close", onClose);
+     };
+ 
+     socket.once("data", onData);
+     socket.once("error", onError);
+     socket.once("close", onClose);
+   });
+ }
+
+ function requestSessionInfo() {
+   return new Promise((resolve, reject) => {
     const body = Buffer.from("{}", "utf8");
     const req = https.request(
       {
@@ -364,11 +413,25 @@ function requestSessionInfo() {
     );
     req.on("error", reject);
     req.end(body);
-  });
-}
+   });
+ }
 
-function checkTcpUpgrade(cookiePair) {
-  return new Promise((resolve, reject) => {
+ function startUDPEchoServer() {
+   return new Promise((resolve, reject) => {
+     const socket = dgram.createSocket("udp4");
+     socket.on("error", reject);
+     socket.on("message", (msg, rinfo) => {
+       socket.send(msg, rinfo.port, rinfo.address);
+     });
+     socket.bind(0, "0.0.0.0", () => {
+       const addr = socket.address();
+       resolve({ socket, port: addr.port });
+     });
+   });
+ }
+
+ function checkTcpUpgrade(cookiePair) {
+   return new Promise((resolve, reject) => {
     const path = "/tcp?v=1&host=example.com&port=80";
     const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     const key = crypto.randomBytes(16).toString("base64");
@@ -438,8 +501,8 @@ function checkTcpUpgrade(cookiePair) {
       clearTimeout(timeout);
       reject(err);
     });
-  });
-}
+   });
+ }
 
 function checkUdpRelayToken(cookiePair) {
   return new Promise((resolve, reject) => {
@@ -489,11 +552,293 @@ function checkUdpRelayToken(cookiePair) {
     );
     req.on("error", reject);
     req.end();
-  });
-}
+   });
+ }
 
-function checkRelayWebSocketUpgrade(path, label) {
-  return new Promise((resolve, reject) => {
+ async function wsConnect(path, label) {
+   const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+   const key = crypto.randomBytes(16).toString("base64");
+   const expectedAccept = crypto.createHash("sha1").update(key + guid).digest("base64");
+
+   const req = [
+     `GET ${path} HTTP/1.1`,
+     `Host: ${host}`,
+     "Connection: Upgrade",
+     "Upgrade: websocket",
+     "Sec-WebSocket-Version: 13",
+     `Sec-WebSocket-Key: ${key}`,
+     `Origin: https://${host}`,
+     "",
+     "",
+   ].join("\r\n");
+
+   const socket = tls.connect({
+     host,
+     port,
+     servername: host,
+     rejectUnauthorized: false,
+   });
+
+   socket.setNoDelay(true);
+   await once(socket, "secureConnect");
+   socket.write(req);
+
+   let buf = Buffer.alloc(0);
+   const deadline = Date.now() + 5000;
+   while (buf.indexOf("\r\n\r\n") === -1) {
+     const remaining = deadline - Date.now();
+     if (remaining <= 0) {
+       socket.destroy();
+       throw new Error(`timeout waiting for ${label} upgrade response`);
+     }
+     const chunk = await readSocketChunk(socket, remaining, `${label} upgrade response`).catch((err) => {
+       socket.destroy();
+       throw err;
+     });
+     buf = Buffer.concat([buf, chunk]);
+   }
+
+   const idx = buf.indexOf("\r\n\r\n");
+   const headerBlock = buf.slice(0, idx).toString("utf8");
+   const rest = buf.slice(idx + 4);
+   const lines = headerBlock.split("\r\n");
+   const statusLine = lines[0] ?? "";
+   if (!statusLine.includes(" 101 ")) {
+     socket.destroy();
+     throw new Error(`unexpected status line from ${label}: ${statusLine}`);
+   }
+   const acceptLine = lines.find((line) => /^sec-websocket-accept:/i.test(line));
+   if (!acceptLine) {
+     socket.destroy();
+     throw new Error(`missing Sec-WebSocket-Accept in ${label} upgrade response`);
+   }
+   const accept = acceptLine.split(":", 2)[1]?.trim() ?? "";
+   if (accept !== expectedAccept) {
+     socket.destroy();
+     throw new Error(`unexpected Sec-WebSocket-Accept for ${label} (expected ${expectedAccept}, got ${accept})`);
+   }
+
+   return { socket, buffer: rest };
+ }
+
+ function wsWriteFrame(state, opcode, payload) {
+   const finOpcode = 0x80 | (opcode & 0x0f);
+   const len = payload.length;
+   const maskKey = crypto.randomBytes(4);
+
+   let header;
+   if (len <= 125) {
+     header = Buffer.alloc(2);
+     header[0] = finOpcode;
+     header[1] = 0x80 | len;
+   } else if (len < 65536) {
+     header = Buffer.alloc(4);
+     header[0] = finOpcode;
+     header[1] = 0x80 | 126;
+     header.writeUInt16BE(len, 2);
+   } else {
+     header = Buffer.alloc(10);
+     header[0] = finOpcode;
+     header[1] = 0x80 | 127;
+     // We never send payloads > 2^32 in smoke tests; keep it simple.
+     header.writeUInt32BE(0, 2);
+     header.writeUInt32BE(len >>> 0, 6);
+   }
+
+   const masked = Buffer.alloc(len);
+   for (let i = 0; i < len; i++) {
+     masked[i] = payload[i] ^ maskKey[i & 3];
+   }
+   state.socket.write(Buffer.concat([header, maskKey, masked]));
+ }
+
+ async function wsReadFrame(state, label, timeoutMs) {
+   const deadline = Date.now() + timeoutMs;
+   const needBytes = async (n) => {
+     while (state.buffer.length < n) {
+       const remaining = deadline - Date.now();
+       if (remaining <= 0) {
+         throw new Error(`timeout reading ${label} WebSocket frame`);
+       }
+       const chunk = await readSocketChunk(state.socket, remaining, `${label} WebSocket frame`);
+       state.buffer = Buffer.concat([state.buffer, chunk]);
+     }
+   };
+
+   for (;;) {
+     await needBytes(2);
+     const b0 = state.buffer[0];
+     const b1 = state.buffer[1];
+     const fin = (b0 & 0x80) !== 0;
+     const opcode = b0 & 0x0f;
+     const masked = (b1 & 0x80) !== 0;
+     let len = b1 & 0x7f;
+     let headerLen = 2;
+
+     if (len === 126) {
+       await needBytes(4);
+       len = state.buffer.readUInt16BE(2);
+       headerLen = 4;
+     } else if (len === 127) {
+       await needBytes(10);
+       const high = state.buffer.readUInt32BE(2);
+       const low = state.buffer.readUInt32BE(6);
+       if (high !== 0) {
+         throw new Error(`${label} WebSocket frame too large`);
+       }
+       len = low;
+       headerLen = 10;
+     }
+
+     let maskKey = null;
+     if (masked) {
+       await needBytes(headerLen + 4);
+       maskKey = state.buffer.slice(headerLen, headerLen + 4);
+       headerLen += 4;
+     }
+
+     await needBytes(headerLen + len);
+     let payload = state.buffer.slice(headerLen, headerLen + len);
+     state.buffer = state.buffer.slice(headerLen + len);
+
+     if (masked && maskKey) {
+       const out = Buffer.alloc(payload.length);
+       for (let i = 0; i < payload.length; i++) {
+         out[i] = payload[i] ^ maskKey[i & 3];
+       }
+       payload = out;
+     }
+
+     if (!fin) {
+       throw new Error(`${label} WebSocket frame fragmentation not supported in smoke test`);
+     }
+
+     if (opcode === 0x9) {
+       // ping -> pong
+       wsWriteFrame(state, 0xa, payload);
+       continue;
+     }
+     if (opcode === 0xa) {
+       // pong
+       continue;
+     }
+     if (opcode === 0x8) {
+       throw new Error(`${label} WebSocket closed by server`);
+     }
+
+     return { opcode, payload };
+   }
+ }
+
+ function encodeV1Datagram({ guestPort, remoteIP, remotePort, payload }) {
+   const ipParts = remoteIP.split(".").map((part) => Number(part));
+   if (ipParts.length !== 4 || ipParts.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
+     throw new Error(`invalid IPv4 address for UDP relay: ${remoteIP}`);
+   }
+   const buf = Buffer.alloc(8 + payload.length);
+   buf.writeUInt16BE(guestPort, 0);
+   for (let i = 0; i < 4; i++) buf[2 + i] = ipParts[i];
+   buf.writeUInt16BE(remotePort, 6);
+   payload.copy(buf, 8);
+   return buf;
+ }
+
+ function decodeDatagramFrame(frame) {
+   if (frame.length >= 2 && frame[0] === 0xa2 && frame[1] === 0x02) {
+     if (frame.length < 12) {
+       throw new Error(`malformed v2 UDP relay frame (len=${frame.length})`);
+     }
+     const af = frame[2];
+     const type = frame[3];
+     if (type !== 0x00) {
+       throw new Error(`unsupported v2 UDP relay frame type=${type}`);
+     }
+     const guestPort = frame.readUInt16BE(4);
+     let remoteIP;
+     let offset = 6;
+     if (af === 0x04) {
+       remoteIP = Array.from(frame.slice(offset, offset + 4)).join(".");
+       offset += 4;
+     } else if (af === 0x06) {
+       remoteIP = frame.slice(offset, offset + 16).toString("hex");
+       offset += 16;
+     } else {
+       throw new Error(`unsupported v2 UDP relay address family=${af}`);
+     }
+     const remotePort = frame.readUInt16BE(offset);
+     offset += 2;
+     return { version: 2, guestPort, remoteIP, remotePort, payload: frame.slice(offset) };
+   }
+
+   if (frame.length < 8) {
+     throw new Error(`malformed v1 UDP relay frame (len=${frame.length})`);
+   }
+   const guestPort = frame.readUInt16BE(0);
+   const remoteIP = Array.from(frame.slice(2, 6)).join(".");
+   const remotePort = frame.readUInt16BE(6);
+   return { version: 1, guestPort, remoteIP, remotePort, payload: frame.slice(8) };
+ }
+
+ async function checkUdpWebSocketRoundTrip(token) {
+   if (!dockerGatewayIP) {
+     throw new Error("missing AERO_SMOKE_DOCKER_GATEWAY_IP; cannot validate /udp data plane");
+   }
+
+   const echo = await startUDPEchoServer();
+   try {
+     const ws = await wsConnect(`/udp?token=${encodeURIComponent(token)}`, "/udp");
+     try {
+       const ready = await wsReadFrame(ws, "/udp", 5000);
+       if (ready.opcode !== 0x1) {
+         throw new Error(`expected text ready frame from /udp, got opcode=${ready.opcode}`);
+       }
+       let readyMsg;
+       try {
+         readyMsg = JSON.parse(ready.payload.toString("utf8"));
+       } catch (err) {
+         throw new Error(`invalid JSON ready message from /udp: ${err}`);
+       }
+       if (readyMsg?.type !== "ready") {
+         throw new Error(`unexpected /udp control message: ${JSON.stringify(readyMsg)}`);
+       }
+
+       const payload = Buffer.from("aero-udp-smoke");
+       const guestPort = 54321;
+       const pkt = encodeV1Datagram({
+         guestPort,
+         remoteIP: dockerGatewayIP,
+         remotePort: echo.port,
+         payload,
+       });
+       wsWriteFrame(ws, 0x2, pkt);
+
+       const reply = await wsReadFrame(ws, "/udp", 5000);
+       if (reply.opcode !== 0x2) {
+         throw new Error(`expected binary UDP relay reply frame, got opcode=${reply.opcode}`);
+       }
+       const decoded = decodeDatagramFrame(reply.payload);
+       if (decoded.guestPort !== guestPort) {
+         throw new Error(`unexpected guestPort in UDP reply: ${decoded.guestPort}`);
+       }
+       if (decoded.remotePort !== echo.port) {
+         throw new Error(`unexpected remotePort in UDP reply: ${decoded.remotePort}`);
+       }
+       if (decoded.remoteIP !== dockerGatewayIP) {
+         throw new Error(`unexpected remoteIP in UDP reply: ${decoded.remoteIP}`);
+       }
+       if (!decoded.payload.equals(payload)) {
+         throw new Error(`unexpected UDP payload in reply: ${decoded.payload.toString("utf8")}`);
+       }
+     } finally {
+       ws.socket.end();
+     }
+   } finally {
+     echo.socket.close();
+   }
+ }
+
+ function checkRelayWebSocketUpgrade(path, label) {
+   return new Promise((resolve, reject) => {
     const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     const key = crypto.randomBytes(16).toString("base64");
     const expectedAccept = crypto.createHash("sha1").update(key + guid).digest("base64");
@@ -592,19 +937,19 @@ function checkRelayWebSocketUpgrade(path, label) {
   });
 }
 
-(async () => {
-  const session = await requestSessionInfo();
-  await checkTcpUpgrade(session.cookiePair);
-  const token = await checkUdpRelayToken(session.cookiePair);
-  if (token !== session.udpRelayToken) {
-    throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
-  }
-  await checkRelayWebSocketUpgrade(`/webrtc/signal?token=${encodeURIComponent(token)}`, "/webrtc/signal");
-  await checkRelayWebSocketUpgrade(`/udp?token=${encodeURIComponent(token)}`, "/udp");
-})().catch((err) => {
-  console.error("tcp upgrade check failed:", err);
-  process.exit(1);
-});
+ (async () => {
+   const session = await requestSessionInfo();
+   await checkTcpUpgrade(session.cookiePair);
+   const token = await checkUdpRelayToken(session.cookiePair);
+   if (token !== session.udpRelayToken) {
+     throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
+   }
+   await checkRelayWebSocketUpgrade(`/webrtc/signal?token=${encodeURIComponent(token)}`, "/webrtc/signal");
+   await checkUdpWebSocketRoundTrip(token);
+ })().catch((err) => {
+   console.error("deploy smoke: node networking checks failed:", err);
+   process.exit(1);
+ });
 NODE
 else
   echo "deploy smoke: node not found; skipping /tcp WebSocket validation" >&2
