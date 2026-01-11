@@ -161,43 +161,6 @@ function unitForMetric(metric: string): string {
   return "";
 }
 
-/**
- * @param {any} histogram
- */
-function histogramCv(histogram: any): number | null {
-  const stats = histogram?.stats ?? null;
-  const buckets = histogram?.buckets ?? null;
-  const bucketSize = histogram?.bucketSize;
-  const min = histogram?.min;
-  const max = histogram?.max;
-  const underflow = histogram?.underflow ?? 0;
-  const overflow = histogram?.overflow ?? 0;
-
-  if (!stats || !Array.isArray(buckets) || !isFiniteNumber(bucketSize) || !isFiniteNumber(min) || !isFiniteNumber(max)) {
-    return null;
-  }
-
-  const count = stats.count;
-  const mean = stats.mean;
-  if (!isFiniteNumber(count) || count <= 0 || !isFiniteNumber(mean) || mean === 0) return null;
-
-  let sumSq = 0;
-  if (underflow > 0) sumSq += underflow * (min - mean) * (min - mean);
-  if (overflow > 0) sumSq += overflow * (max - mean) * (max - mean);
-
-  for (let i = 0; i < buckets.length; i += 1) {
-    const n = buckets[i];
-    if (!n) continue;
-    const x = min + (i + 0.5) * bucketSize;
-    const d = x - mean;
-    sumSq += n * d * d;
-  }
-
-  const variance = sumSq / count;
-  const stdev = Math.sqrt(variance);
-  return stdev / mean;
-}
-
 function extractPrimaryMetricsLegacy(scenario: any): Record<string, number | null> {
   const d = scenario?.derived ?? {};
   const t = scenario?.telemetry ?? {};
@@ -216,46 +179,6 @@ function extractPrimaryMetricsLegacy(scenario: any): Record<string, number | nul
     textureUploadMBpsAvg: d.textureUploadMBpsAvg ?? null,
     pipelineCacheHitRate: d.pipelineCacheHitRate ?? t.pipelineCache?.hitRate ?? null,
   };
-}
-
-function cvForMetricLegacy(scenario: any, metricName: string): number | null {
-  const t = scenario?.telemetry ?? {};
-  switch (metricName) {
-    case "frameTimeMsP95":
-    case "frameTimeMsP50":
-      return histogramCv(t.frameTimeMs);
-    case "presentLatencyMsP95":
-      return histogramCv(t.presentLatencyMs);
-    case "shaderTranslationMsMean":
-      return histogramCv(t.shaderTranslationMs);
-    case "shaderCompilationMsMean":
-      return histogramCv(t.shaderCompilationMs);
-    case "textureUploadMBpsAvg":
-      return histogramCv(t.textureUpload?.bytesPerFrame);
-    default:
-      return null;
-  }
-}
-
-function nForMetricLegacy(scenario: any, metricName: string): number | null {
-  const t = scenario?.telemetry ?? {};
-  const pickCount = (h: any) =>
-    typeof h?.stats?.count === "number" && Number.isFinite(h.stats.count) ? h.stats.count : null;
-  switch (metricName) {
-    case "frameTimeMsP95":
-    case "frameTimeMsP50":
-      return pickCount(t.frameTimeMs);
-    case "presentLatencyMsP95":
-      return pickCount(t.presentLatencyMs);
-    case "shaderTranslationMsMean":
-      return pickCount(t.shaderTranslationMs);
-    case "shaderCompilationMsMean":
-      return pickCount(t.shaderCompilationMs);
-    case "textureUploadMBpsAvg":
-      return pickCount(t.textureUpload?.bytesPerFrame);
-    default:
-      return null;
-  }
 }
 
 function statsFromScenario(scenario: any, metricName: string): { value: number; cv: number | null; n: number | null } | null {
