@@ -66,7 +66,9 @@ mod wasm {
     }
 
     pub struct OpfsByteStorage {
-        file: opfs_platform::FileHandle,
+        // Keep the `FileHandle` alive for the lifetime of the sync access handle.
+        // (The handle itself is the only thing we actively use for IO.)
+        _file: opfs_platform::FileHandle,
         handle: opfs_platform::SyncAccessHandle,
         at_key: JsValue,
         rw_opts: Object,
@@ -119,7 +121,7 @@ mod wasm {
             let handle = opfs_platform::create_sync_handle(&file).await?;
 
             Ok(Self {
-                file,
+                _file: file,
                 handle,
                 at_key,
                 rw_opts,
