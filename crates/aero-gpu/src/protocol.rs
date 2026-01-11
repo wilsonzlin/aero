@@ -14,16 +14,21 @@
 
 use core::fmt;
 
-pub const AEROGPU_CMD_STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD" little-endian
+pub use aero_protocol::aerogpu::aerogpu_cmd::{
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    AEROGPU_MAX_RENDER_TARGETS,
+};
 
-pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" little-endian
-pub const AEROGPU_INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuVertexBufferBinding as ProtocolVertexBufferBinding,
+};
+use aero_protocol::aerogpu::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError};
 
-pub const AEROGPU_MAX_RENDER_TARGETS: usize = 8;
-
-const STREAM_HEADER_SIZE: usize = 24;
-const CMD_HDR_SIZE: usize = 8;
-const VERTEX_BUFFER_BINDING_SIZE: usize = 16;
+const STREAM_HEADER_SIZE: usize = ProtocolCmdStreamHeader::SIZE_BYTES;
+const CMD_HDR_SIZE: usize = ProtocolCmdHdr::SIZE_BYTES;
+const VERTEX_BUFFER_BINDING_SIZE: usize = ProtocolVertexBufferBinding::SIZE_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AeroGpuCmdStreamHeader {
@@ -50,62 +55,62 @@ pub struct AeroGpuCmdHdr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AeroGpuOpcode {
-    Nop = 0,
-    DebugMarker = 1,
-
-    // Presentation
-    Present = 0x700,
-    PresentEx = 0x701,
-
-    // D3D9Ex/DWM shared surface interop.
-    ExportSharedSurface = 0x710,
-    ImportSharedSurface = 0x711,
-
-    // Explicit flush.
-    Flush = 0x720,
+    Nop = AerogpuCmdOpcode::Nop as u32,
+    DebugMarker = AerogpuCmdOpcode::DebugMarker as u32,
 
     // Resource / memory
-    CreateBuffer = 0x100,
-    CreateTexture2d = 0x101,
-    DestroyResource = 0x102,
-    ResourceDirtyRange = 0x103,
-    UploadResource = 0x104,
+    CreateBuffer = AerogpuCmdOpcode::CreateBuffer as u32,
+    CreateTexture2d = AerogpuCmdOpcode::CreateTexture2d as u32,
+    DestroyResource = AerogpuCmdOpcode::DestroyResource as u32,
+    ResourceDirtyRange = AerogpuCmdOpcode::ResourceDirtyRange as u32,
+    UploadResource = AerogpuCmdOpcode::UploadResource as u32,
 
     // Shaders
-    CreateShaderDxbc = 0x200,
-    DestroyShader = 0x201,
-    BindShaders = 0x202,
-    SetShaderConstantsF = 0x203,
+    CreateShaderDxbc = AerogpuCmdOpcode::CreateShaderDxbc as u32,
+    DestroyShader = AerogpuCmdOpcode::DestroyShader as u32,
+    BindShaders = AerogpuCmdOpcode::BindShaders as u32,
+    SetShaderConstantsF = AerogpuCmdOpcode::SetShaderConstantsF as u32,
 
     // Input layouts
-    CreateInputLayout = 0x204,
-    DestroyInputLayout = 0x205,
-    SetInputLayout = 0x206,
+    CreateInputLayout = AerogpuCmdOpcode::CreateInputLayout as u32,
+    DestroyInputLayout = AerogpuCmdOpcode::DestroyInputLayout as u32,
+    SetInputLayout = AerogpuCmdOpcode::SetInputLayout as u32,
 
     // Pipeline state
-    SetBlendState = 0x300,
-    SetDepthStencilState = 0x301,
-    SetRasterizerState = 0x302,
+    SetBlendState = AerogpuCmdOpcode::SetBlendState as u32,
+    SetDepthStencilState = AerogpuCmdOpcode::SetDepthStencilState as u32,
+    SetRasterizerState = AerogpuCmdOpcode::SetRasterizerState as u32,
 
     // Render targets + dynamic state
-    SetRenderTargets = 0x400,
-    SetViewport = 0x401,
-    SetScissor = 0x402,
+    SetRenderTargets = AerogpuCmdOpcode::SetRenderTargets as u32,
+    SetViewport = AerogpuCmdOpcode::SetViewport as u32,
+    SetScissor = AerogpuCmdOpcode::SetScissor as u32,
 
     // Input assembler
-    SetVertexBuffers = 0x500,
-    SetIndexBuffer = 0x501,
-    SetPrimitiveTopology = 0x502,
+    SetVertexBuffers = AerogpuCmdOpcode::SetVertexBuffers as u32,
+    SetIndexBuffer = AerogpuCmdOpcode::SetIndexBuffer as u32,
+    SetPrimitiveTopology = AerogpuCmdOpcode::SetPrimitiveTopology as u32,
 
     // Resource binding / state
-    SetTexture = 0x510,
-    SetSamplerState = 0x511,
-    SetRenderState = 0x512,
+    SetTexture = AerogpuCmdOpcode::SetTexture as u32,
+    SetSamplerState = AerogpuCmdOpcode::SetSamplerState as u32,
+    SetRenderState = AerogpuCmdOpcode::SetRenderState as u32,
 
     // Drawing
-    Clear = 0x600,
-    Draw = 0x601,
-    DrawIndexed = 0x602,
+    Clear = AerogpuCmdOpcode::Clear as u32,
+    Draw = AerogpuCmdOpcode::Draw as u32,
+    DrawIndexed = AerogpuCmdOpcode::DrawIndexed as u32,
+
+    // Presentation
+    Present = AerogpuCmdOpcode::Present as u32,
+    PresentEx = AerogpuCmdOpcode::PresentEx as u32,
+
+    // D3D9Ex/DWM shared surface interop.
+    ExportSharedSurface = AerogpuCmdOpcode::ExportSharedSurface as u32,
+    ImportSharedSurface = AerogpuCmdOpcode::ImportSharedSurface as u32,
+
+    // Explicit flush.
+    Flush = AerogpuCmdOpcode::Flush as u32,
 }
 
 impl AeroGpuOpcode {
@@ -433,6 +438,7 @@ pub enum AeroGpuCmd<'a> {
 pub enum AeroGpuCmdStreamParseError {
     BufferTooSmall,
     InvalidMagic(u32),
+    UnsupportedAbiMajor { found: u16 },
     InvalidSizeBytes { size_bytes: u32, buffer_len: usize },
     InvalidCmdSizeBytes(u32),
     MisalignedCmdSizeBytes(u32),
@@ -444,6 +450,9 @@ impl fmt::Display for AeroGpuCmdStreamParseError {
             AeroGpuCmdStreamParseError::BufferTooSmall => write!(f, "buffer too small"),
             AeroGpuCmdStreamParseError::InvalidMagic(magic) => {
                 write!(f, "invalid command stream magic 0x{magic:08X}")
+            }
+            AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found } => {
+                write!(f, "unsupported ABI major version {found}")
             }
             AeroGpuCmdStreamParseError::InvalidSizeBytes {
                 size_bytes,
@@ -539,6 +548,13 @@ pub fn parse_cmd_stream(
         reserved0,
         reserved1,
     };
+
+    match parse_and_validate_abi_version_u32(header.abi_version) {
+        Ok(_) => {}
+        Err(AerogpuAbiError::UnsupportedMajor { found }) => {
+            return Err(AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found });
+        }
+    }
 
     let size_bytes_usize = size_bytes as usize;
     if size_bytes_usize < STREAM_HEADER_SIZE || size_bytes_usize > bytes.len() {

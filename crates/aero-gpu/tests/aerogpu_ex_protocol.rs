@@ -1,4 +1,8 @@
 use aero_gpu::{parse_cmd_stream, AeroGpuCommandProcessor, AeroGpuEvent};
+use aero_protocol::aerogpu::{
+    aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC},
+    aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32},
+};
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -8,12 +12,12 @@ fn push_u64(out: &mut Vec<u8>, v: u64) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+fn build_stream_with_abi(abi_version: u32, packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
 
     // aerogpu_cmd_stream_header (24 bytes)
-    push_u32(&mut out, 0x444D_4341); // "ACMD"
-    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut out, abi_version);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
@@ -24,6 +28,10 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
     out
+}
+
+fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    build_stream_with_abi(AEROGPU_ABI_VERSION_U32, packets)
 }
 
 fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>)) {
@@ -39,7 +47,7 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
 }
 
 fn emit_create_texture_rgba8(out: &mut Vec<u8>, texture_handle: u32) {
-    emit_packet(out, 0x101, |out| {
+    emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
         push_u32(out, texture_handle); // texture_handle
         push_u32(out, 0x0); // usage_flags
         push_u32(out, 3); // format (AEROGPU_FORMAT_R8G8B8A8_UNORM)
@@ -68,21 +76,21 @@ fn present_ex_and_shared_surfaces_update_state_and_emit_events() {
         emit_create_texture_rgba8(out, 0x10);
 
         // Export an existing surface handle.
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10); // resource_handle
             push_u32(out, 0); // reserved0
             push_u64(out, TOKEN);
         });
 
         // Import the surface under a new handle.
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20); // out_resource_handle
             push_u32(out, 0); // reserved0
             push_u64(out, TOKEN);
         });
 
         // PresentEx on scanout 0.
-        emit_packet(out, 0x701, |out| {
+        emit_packet(out, AerogpuCmdOpcode::PresentEx as u32, |out| {
             push_u32(out, 0); // scanout_id
             push_u32(out, 1); // flags (AEROGPU_PRESENT_FLAG_VSYNC)
             push_u32(out, 0x1); // d3d9_present_flags (D3DPRESENT_DONOTWAIT)
@@ -119,7 +127,7 @@ fn present_ex_and_shared_surfaces_update_state_and_emit_events() {
 #[test]
 fn importing_unknown_token_is_an_error() {
     let stream = build_stream(|out| {
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20); // out_resource_handle
             push_u32(out, 0); // reserved0
             push_u64(out, 0x1234); // share_token
@@ -138,12 +146,12 @@ fn exporting_the_same_token_twice_is_idempotent() {
     let stream = build_stream(|out| {
         emit_create_texture_rgba8(out, 0x10);
 
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
             push_u64(out, TOKEN);
@@ -165,12 +173,12 @@ fn exporting_same_token_for_different_resources_is_an_error() {
         emit_create_texture_rgba8(out, 0x10);
         emit_create_texture_rgba8(out, 0x11);
 
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x11);
             push_u32(out, 0);
             push_u64(out, TOKEN);
@@ -189,17 +197,17 @@ fn importing_into_an_existing_alias_is_idempotent_for_the_same_original() {
     let stream = build_stream(|out| {
         emit_create_texture_rgba8(out, 0x10);
 
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20);
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20);
             push_u32(out, 0);
             push_u64(out, TOKEN);
@@ -222,22 +230,22 @@ fn importing_into_an_existing_alias_for_different_original_is_an_error() {
         emit_create_texture_rgba8(out, 0x10);
         emit_create_texture_rgba8(out, 0x11);
 
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10);
             push_u32(out, 0);
             push_u64(out, TOKEN_A);
         });
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x11);
             push_u32(out, 0);
             push_u64(out, TOKEN_B);
         });
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20);
             push_u32(out, 0);
             push_u64(out, TOKEN_A);
         });
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20);
             push_u32(out, 0);
             push_u64(out, TOKEN_B);
@@ -257,19 +265,19 @@ fn shared_surface_aliases_keep_resources_alive_until_last_handle_is_destroyed() 
     let submit1 = build_stream(|out| {
         emit_create_texture_rgba8(out, 0x10);
 
-        emit_packet(out, 0x710, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
             push_u32(out, 0x10); // resource_handle
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
 
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x20); // out_resource_handle
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
 
-        emit_packet(out, 0x102, |out| {
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
             push_u32(out, 0x10); // DestroyResource(original)
             push_u32(out, 0);
         });
@@ -285,18 +293,18 @@ fn shared_surface_aliases_keep_resources_alive_until_last_handle_is_destroyed() 
 
     // Submission 2: import another alias (should still work), then destroy both aliases.
     let submit2 = build_stream(|out| {
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x21); // out_resource_handle
             push_u32(out, 0);
             push_u64(out, TOKEN);
         });
 
-        emit_packet(out, 0x102, |out| {
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
             push_u32(out, 0x20); // DestroyResource(alias)
             push_u32(out, 0);
         });
 
-        emit_packet(out, 0x102, |out| {
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
             push_u32(out, 0x21); // DestroyResource(alias)
             push_u32(out, 0);
         });
@@ -311,7 +319,7 @@ fn shared_surface_aliases_keep_resources_alive_until_last_handle_is_destroyed() 
 
     // Submission 3: importing the token again should fail validation.
     let submit3 = build_stream(|out| {
-        emit_packet(out, 0x711, |out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
             push_u32(out, 0x22); // out_resource_handle
             push_u32(out, 0);
             push_u64(out, TOKEN);
@@ -320,4 +328,21 @@ fn shared_surface_aliases_keep_resources_alive_until_last_handle_is_destroyed() 
 
     let err = processor.process_submission(&submit3, 3).unwrap_err();
     assert!(err.to_string().contains("unknown shared surface token"));
+}
+
+#[test]
+fn rejects_unsupported_abi_major() {
+    let stream = build_stream_with_abi((AEROGPU_ABI_MAJOR + 1) << 16, |_| {});
+    let err = parse_cmd_stream(&stream).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_gpu::AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found }
+            if found == (AEROGPU_ABI_MAJOR as u16 + 1)
+    ));
+}
+
+#[test]
+fn accepts_unknown_abi_minor() {
+    let stream = build_stream_with_abi((AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1), |_| {});
+    parse_cmd_stream(&stream).expect("unknown minor versions should be accepted");
 }
