@@ -1,6 +1,8 @@
 import { openFileHandle, removeOpfsEntry } from "../platform/opfs";
 import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
+import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
+import { pickDefaultBackend, type DiskBackend } from "./metadata";
 
 export type ChunkedDiskManifestV1 = {
   schema: "aero.chunked-disk-image.v1";
@@ -69,6 +71,13 @@ export type RemoteChunkedDiskOptions = {
    * Override the cache store. Intended for tests.
    */
   store?: BinaryStore;
+  /**
+   * Cache backend selection (defaults to `pickDefaultBackend()`).
+   *
+   * When set to `"idb"`, cached chunks are stored in the DiskManager IndexedDB
+   * database (persistent even without OPFS).
+   */
+  cacheBackend?: DiskBackend;
 };
 
 /**
@@ -128,6 +137,57 @@ class OpfsStore implements BinaryStore {
 
   async remove(path: string, options: { recursive?: boolean } = {}): Promise<void> {
     await removeOpfsEntry(path, options);
+  }
+}
+
+type ChunkCache = {
+  getChunk(chunkIndex: number): Promise<Uint8Array | null>;
+  putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void>;
+  flush(): Promise<void>;
+  clear(): Promise<void>;
+  close?: () => void;
+};
+
+class IdbChunkCache implements ChunkCache {
+  constructor(
+    private readonly cache: IdbRemoteChunkCache,
+    private readonly manifest: ParsedChunkedDiskManifest,
+  ) {}
+
+  private expectedLen(chunkIndex: number): number {
+    return this.manifest.chunkSizes[chunkIndex] ?? 0;
+  }
+
+  async getChunk(chunkIndex: number): Promise<Uint8Array | null> {
+    const expectedLen = this.expectedLen(chunkIndex);
+    const bytes = await this.cache.get(chunkIndex);
+    if (!bytes) return null;
+    if (bytes.byteLength !== expectedLen) {
+      // Heal: cached but mismatched size (stale/corrupt record).
+      await this.cache.delete(chunkIndex);
+      return null;
+    }
+    return bytes;
+  }
+
+  async putChunk(chunkIndex: number, bytes: Uint8Array): Promise<void> {
+    const expectedLen = this.expectedLen(chunkIndex);
+    if (bytes.byteLength !== expectedLen) {
+      throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.byteLength}`);
+    }
+    await this.cache.put(chunkIndex, bytes);
+  }
+
+  async flush(): Promise<void> {
+    // All writes are durable per-transaction.
+  }
+
+  async clear(): Promise<void> {
+    await this.cache.clear();
+  }
+
+  close(): void {
+    this.cache.close();
   }
 }
 
@@ -195,6 +255,13 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
 
   if (obj.schema !== "aero.chunked-disk-image.v1") {
     throw new Error(`unsupported manifest schema: ${String(obj.schema)}`);
+  }
+
+  if (typeof obj.version !== "string" || !obj.version.trim()) {
+    throw new Error("manifest version must be a non-empty string");
+  }
+  if (typeof obj.mimeType !== "string" || !obj.mimeType.trim()) {
+    throw new Error("manifest mimeType must be a non-empty string");
   }
 
   const totalSize = asSafeInt(obj.totalSize, "totalSize");
@@ -317,7 +384,7 @@ async function retryWithBackoff<T>(
   throw new Error("retryWithBackoff exhausted");
 }
 
-class RemoteChunkCache {
+class RemoteChunkCache implements ChunkCache {
   private metaLoaded = false;
   private meta: RemoteChunkedDiskCacheMeta;
   private rangeSet = new RangeSet();
@@ -510,7 +577,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
   private readonly manifestUrl: string;
   private readonly manifest: ParsedChunkedDiskManifest;
-  private readonly chunkCache: RemoteChunkCache;
+  private readonly chunkCache: ChunkCache;
   private readonly credentials: RequestCredentials;
   private readonly prefetchSequentialChunks: number;
   private readonly semaphore: Semaphore;
@@ -541,7 +608,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private constructor(
     manifestUrl: string,
     manifest: ParsedChunkedDiskManifest,
-    chunkCache: RemoteChunkCache,
+    chunkCache: ChunkCache,
     options: Required<Pick<RemoteChunkedDiskOptions, "credentials" | "prefetchSequentialChunks" | "maxAttempts" | "retryBaseDelayMs">> & {
       maxConcurrentFetches: number;
     },
@@ -568,6 +635,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       maxAttempts: options.maxAttempts ?? 3,
       retryBaseDelayMs: options.retryBaseDelayMs ?? 200,
       store: options.store ?? (hasOpfsRoot() ? new OpfsStore() : new MemoryStore()),
+      cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
     };
 
     if (resolved.cacheLimitBytes !== null) {
@@ -594,8 +662,31 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const manifest = parseManifest(json);
 
     const cacheKey = await stableCacheKey(manifestUrl);
-    const cache = new RemoteChunkCache(resolved.store, cacheKey, manifestUrl, manifest, resolved.cacheLimitBytes);
-    await cache.loadMeta();
+    let cache: ChunkCache;
+    if (options.store) {
+      // Tests can inject an in-memory store to avoid depending on OPFS/IDB.
+      const opfsCache = new RemoteChunkCache(resolved.store, cacheKey, manifestUrl, manifest, resolved.cacheLimitBytes);
+      await opfsCache.loadMeta();
+      cache = opfsCache;
+    } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {
+      const idbCache = await IdbRemoteChunkCache.open({
+        cacheKey,
+        signature: {
+          imageId: (json as ChunkedDiskManifestV1).imageId ?? manifestUrl,
+          version: (json as ChunkedDiskManifestV1).version,
+          etag: resp.headers.get("etag"),
+          sizeBytes: manifest.totalSize,
+          chunkSize: manifest.chunkSize,
+        },
+        cacheLimitBytes: resolved.cacheLimitBytes,
+      });
+      cache = new IdbChunkCache(idbCache, manifest);
+    } else {
+      const store = hasOpfsRoot() ? new OpfsStore() : new MemoryStore();
+      const opfsCache = new RemoteChunkCache(store, cacheKey, manifestUrl, manifest, resolved.cacheLimitBytes);
+      await opfsCache.loadMeta();
+      cache = opfsCache;
+    }
 
     return new RemoteChunkedDisk(manifestUrl, manifest, cache, {
       credentials: resolved.credentials,
@@ -701,6 +792,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     await Promise.allSettled(Array.from(this.inflight.values()));
     this.inflight.clear();
     await this.flush().catch(() => {});
+    this.chunkCache.close?.();
   }
 
   private chunkUrl(chunkIndex: number): string {
