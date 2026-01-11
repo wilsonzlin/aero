@@ -115,3 +115,9 @@ fn truncate_then_write() {
     assert_eq!(read_to_end_seek_start(&mut file), b"abcdeXYZ");
 }
 
+#[test]
+fn seek_before_start_errors() {
+    let mut file = OpfsSyncFile::from_handle(MockHandle::default());
+    let err = file.seek(SeekFrom::Current(-1)).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}

@@ -351,17 +351,32 @@ where
     H: OpfsSyncFileHandle,
 {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let current = self.pos as i128;
-        let size = match pos {
-            SeekFrom::End(_) => self.handle_mut()?.get_size()? as i128,
-            _ => 0,
+        let current_pos = self.pos;
+
+        let base: i128 = match pos {
+            SeekFrom::Start(offset) => {
+                self.pos = offset;
+                return Ok(offset);
+            }
+            SeekFrom::Current(_) => i128::try_from(current_pos).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "stream position overflow")
+            })?,
+            SeekFrom::End(_) => {
+                let size = self.handle_mut()?.get_size()?;
+                i128::try_from(size).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "stream length overflow")
+                })?
+            }
         };
 
-        let next = match pos {
-            SeekFrom::Start(offset) => offset as i128,
-            SeekFrom::Current(delta) => current + delta as i128,
-            SeekFrom::End(delta) => size + delta as i128,
+        let delta: i128 = match pos {
+            SeekFrom::Current(delta) | SeekFrom::End(delta) => i128::from(delta),
+            SeekFrom::Start(_) => unreachable!("handled above"),
         };
+
+        let next = base
+            .checked_add(delta)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "seek position overflow"))?;
 
         if next < 0 {
             return Err(io::Error::new(
@@ -374,6 +389,6 @@ where
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "seek position overflow"))?;
         self.pos = next;
-        Ok(self.pos)
+        Ok(next)
     }
 }
