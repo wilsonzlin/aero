@@ -119,13 +119,16 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
     bridge.set_connected(true);
 
     bridge.io_write(REG_FRBASEADD, 4, fl_base);
-    bridge.io_write(REG_USBINTR, 2, USBINTR_IOC);
+    // Some UHCI drivers use 32-bit I/O to program paired 16-bit registers (USBINTR+FRNUM).
+    bridge.io_write(REG_USBINTR, 4, USBINTR_IOC);
 
     // Reset + enable port 1.
-    bridge.io_write(REG_PORTSC1, 2, PORTSC_PR);
+    // Similarly, allow 32-bit I/O at PORTSC1 to reach both PORTSC registers.
+    bridge.io_write(REG_PORTSC1, 4, PORTSC_PR);
     bridge.step_frames(50);
 
-    bridge.io_write(REG_USBCMD, 2, USBCMD_RUN);
+    // Some drivers use 32-bit I/O at 0x00 to update USBCMD+USBSTS simultaneously.
+    bridge.io_write(REG_USBCMD, 4, USBCMD_RUN);
     bridge.step_frames(1);
 
     let drained = bridge.drain_actions().expect("drain_actions ok");
