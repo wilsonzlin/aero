@@ -1,6 +1,12 @@
 mod images;
 
-use axum::{routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::{header, HeaderMap, HeaderName, HeaderValue},
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
 use serde::Serialize;
 
 use crate::AppState;
@@ -21,16 +27,36 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn health() -> &'static str {
-    "ok\n"
+fn insert_cors_headers(headers: &mut HeaderMap, state: &AppState) {
+    headers.insert(
+        HeaderName::from_static("access-control-allow-origin"),
+        state.cors_allow_origin.clone(),
+    );
+    if state.cors_allow_credentials && state.cors_allow_origin != HeaderValue::from_static("*") {
+        headers.insert(
+            HeaderName::from_static("access-control-allow-credentials"),
+            HeaderValue::from_static("true"),
+        );
+    }
+    headers.insert(header::VARY, HeaderValue::from_static("Origin"));
 }
 
-async fn healthz() -> Json<StatusResponse> {
-    Json(StatusResponse { status: "ok" })
+async fn health(State(state): State<AppState>) -> Response {
+    let mut resp = "ok\n".into_response();
+    insert_cors_headers(resp.headers_mut(), &state);
+    resp
 }
 
-async fn readyz() -> Json<StatusResponse> {
-    Json(StatusResponse { status: "ok" })
+async fn healthz(State(state): State<AppState>) -> Response {
+    let mut resp = Json(StatusResponse { status: "ok" }).into_response();
+    insert_cors_headers(resp.headers_mut(), &state);
+    resp
+}
+
+async fn readyz(State(state): State<AppState>) -> Response {
+    let mut resp = Json(StatusResponse { status: "ok" }).into_response();
+    insert_cors_headers(resp.headers_mut(), &state);
+    resp
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +68,7 @@ struct VersionResponse {
     built_at: String,
 }
 
-async fn version() -> Json<VersionResponse> {
+async fn version(State(state): State<AppState>) -> Response {
     let version = std::env::var("AERO_STORAGE_SERVER_VERSION")
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let git_sha = std::env::var("AERO_STORAGE_SERVER_GIT_SHA")
@@ -52,11 +78,14 @@ async fn version() -> Json<VersionResponse> {
         .or_else(|_| std::env::var("BUILD_TIMESTAMP"))
         .unwrap_or_default();
 
-    Json(VersionResponse {
+    let mut resp = Json(VersionResponse {
         version,
         git_sha,
         built_at,
     })
+    .into_response();
+    insert_cors_headers(resp.headers_mut(), &state);
+    resp
 }
 
 #[cfg(test)]
