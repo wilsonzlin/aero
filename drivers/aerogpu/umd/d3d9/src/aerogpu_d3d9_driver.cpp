@@ -4148,8 +4148,14 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
     // will fail or return a 0-sized list if it is left at 0. Request a generous
     // default so allocation tracking can work even when CreateContext did not
     // provide a persistent allocation list.
-    const uint32_t request_entries = std::max<uint32_t>(
+    uint32_t request_entries = std::max<uint32_t>(
         dev->wddm_context.AllocationListSize ? dev->wddm_context.AllocationListSize : 0u, 4096u);
+    // We assign allocation-list slot IDs densely as 0..N-1. Clamp the requested
+    // list size to the KMD-advertised max slot ID (+1) so we don't ask the
+    // runtime for more entries than we can legally reference.
+    if (dev->adapter && dev->adapter->max_allocation_list_slot_id != std::numeric_limits<uint32_t>::max()) {
+      request_entries = std::min<uint32_t>(request_entries, dev->adapter->max_allocation_list_slot_id + 1u);
+    }
     args.AllocationListSize = request_entries;
   }
   if constexpr (has_member_PatchLocationListSize<Arg>::value) {
