@@ -113,6 +113,45 @@ jobs:
           cmake --build build-virtio-host-tests-linux
           ctest --test-dir build-virtio-host-tests-linux --output-on-failure
 
+  aerogpu-host-tests-linux:
+    name: AeroGPU host tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run AeroGPU host tests (CMake)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Use Release to keep runtimes low and to exercise optimized builds.
+          # Disable unrelated driver test suites to keep this job focused and fast.
+          cmake -S . -B build-aerogpu-host-tests-linux -DAERO_AEROGPU_BUILD_TESTS=ON -DAERO_VIRTIO_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-aerogpu-host-tests-linux
+          ctest --test-dir build-aerogpu-host-tests-linux --output-on-failure --no-tests=error
+
+  aerogpu-host-tests-windows:
+    name: AeroGPU host tests (Windows, x86 + x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run AeroGPU host tests (CMake)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Validate both architectures (x86 + x64) to catch pointer-size/layout differences.
+          cmake -S . -B build-aerogpu-host-tests-x64 -A x64 -DAERO_AEROGPU_BUILD_TESTS=ON -DAERO_VIRTIO_BUILD_TESTS=OFF
+          cmake --build build-aerogpu-host-tests-x64 --config Release
+          ctest --test-dir build-aerogpu-host-tests-x64 --output-on-failure --no-tests=error -C Release
+
+          cmake -S . -B build-aerogpu-host-tests-x86 -A Win32 -DAERO_AEROGPU_BUILD_TESTS=ON -DAERO_VIRTIO_BUILD_TESTS=OFF
+          cmake --build build-aerogpu-host-tests-x86 --config Release
+          ctest --test-dir build-aerogpu-host-tests-x86 --output-on-failure --no-tests=error -C Release
+
   drivers-win7:
     runs-on: windows-latest
     needs: virtio-snd-vcxproj-guardrail
