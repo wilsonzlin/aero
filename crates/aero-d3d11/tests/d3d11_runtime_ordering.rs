@@ -46,4 +46,3 @@ fn d3d11_runtime_preserves_update_buffer_copy_ordering() {
         assert_eq!(got2, pattern_b, "dst2 should match second update");
     });
 }
-

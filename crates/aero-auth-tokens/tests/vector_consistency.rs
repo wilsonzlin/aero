@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
-const CONFORMANCE_VECTORS_JSON: &str = include_str!("../../conformance/test-vectors/aero-vectors-v1.json");
+const CONFORMANCE_VECTORS_JSON: &str =
+    include_str!("../../conformance/test-vectors/aero-vectors-v1.json");
 const PROTOCOL_VECTORS_JSON: &str = include_str!("../../../protocol-vectors/auth-tokens.json");
 
 #[derive(Debug, Deserialize)]
@@ -124,7 +125,10 @@ struct ProtocolJwtVector {
     _expect_error: bool,
 }
 
-fn find_protocol_session<'a>(vectors: &'a [ProtocolSessionVector], name: &str) -> &'a ProtocolSessionVector {
+fn find_protocol_session<'a>(
+    vectors: &'a [ProtocolSessionVector],
+    name: &str,
+) -> &'a ProtocolSessionVector {
     vectors
         .iter()
         .find(|v| v.name == name)
@@ -142,7 +146,10 @@ fn find_protocol_jwt<'a>(vectors: &'a [ProtocolJwtVector], name: &str) -> &'a Pr
 fn protocol_vectors_match_conformance_vectors_for_canonical_tokens() {
     let conformance: ConformanceRoot =
         serde_json::from_str(CONFORMANCE_VECTORS_JSON).expect("parse conformance vectors json");
-    assert_eq!(conformance.version, 1, "unexpected conformance vector version");
+    assert_eq!(
+        conformance.version, 1,
+        "unexpected conformance vector version"
+    );
 
     let protocol: ProtocolRoot =
         serde_json::from_str(PROTOCOL_VECTORS_JSON).expect("parse protocol vectors json");
@@ -165,11 +172,17 @@ fn protocol_vectors_match_conformance_vectors_for_canonical_tokens() {
         p_valid.sid.as_deref(),
         Some(conformance.aero_session.tokens.valid.claims.sid.as_str())
     );
-    assert_eq!(p_valid.exp, Some(conformance.aero_session.tokens.valid.claims.exp));
+    assert_eq!(
+        p_valid.exp,
+        Some(conformance.aero_session.tokens.valid.claims.exp)
+    );
     assert_eq!(p_valid.now_ms, conformance.aero_session.now_ms);
 
     let p_expired = find_protocol_session(&protocol.session_tokens.vectors, "expired");
-    assert_eq!(p_expired.token, conformance.aero_session.tokens.expired.token);
+    assert_eq!(
+        p_expired.token,
+        conformance.aero_session.tokens.expired.token
+    );
 
     let p_bad_sig = find_protocol_session(&protocol.session_tokens.vectors, "badSignature");
     assert_eq!(
@@ -185,11 +198,26 @@ fn protocol_vectors_match_conformance_vectors_for_canonical_tokens() {
         j_valid.sid.as_deref(),
         Some(conformance.relay_jwt.tokens.valid.claims.sid.as_str())
     );
-    assert_eq!(j_valid.exp, Some(conformance.relay_jwt.tokens.valid.claims.exp));
-    assert_eq!(j_valid.iat, Some(conformance.relay_jwt.tokens.valid.claims.iat));
-    assert_eq!(j_valid.origin.as_deref(), Some(conformance.relay_jwt.tokens.valid.claims.origin.as_str()));
-    assert_eq!(j_valid.aud.as_deref(), Some(conformance.relay_jwt.tokens.valid.claims.aud.as_str()));
-    assert_eq!(j_valid.iss.as_deref(), Some(conformance.relay_jwt.tokens.valid.claims.iss.as_str()));
+    assert_eq!(
+        j_valid.exp,
+        Some(conformance.relay_jwt.tokens.valid.claims.exp)
+    );
+    assert_eq!(
+        j_valid.iat,
+        Some(conformance.relay_jwt.tokens.valid.claims.iat)
+    );
+    assert_eq!(
+        j_valid.origin.as_deref(),
+        Some(conformance.relay_jwt.tokens.valid.claims.origin.as_str())
+    );
+    assert_eq!(
+        j_valid.aud.as_deref(),
+        Some(conformance.relay_jwt.tokens.valid.claims.aud.as_str())
+    );
+    assert_eq!(
+        j_valid.iss.as_deref(),
+        Some(conformance.relay_jwt.tokens.valid.claims.iss.as_str())
+    );
     assert_eq!(j_valid.now_sec, conformance.relay_jwt.now_unix);
 
     let j_expired = find_protocol_jwt(&protocol.jwt_tokens.vectors, "expired");
@@ -201,4 +229,3 @@ fn protocol_vectors_match_conformance_vectors_for_canonical_tokens() {
         conformance.relay_jwt.tokens.bad_signature.token
     );
 }
-
