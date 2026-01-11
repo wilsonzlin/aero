@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
-	xwebsocket "golang.org/x/net/websocket"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
@@ -754,34 +754,39 @@ func TestRequestLoggerMiddleware_AllowsWebSocketHijack(t *testing.T) {
 	}
 
 	baseURL := startTestServer(t, cfg, func(srv *Server) {
-		wsSrv := &xwebsocket.Server{
-			Handler: xwebsocket.Handler(func(conn *xwebsocket.Conn) {
-				defer conn.Close()
-
-				var msg string
-				if err := xwebsocket.Message.Receive(conn, &msg); err != nil {
-					return
-				}
-				_ = xwebsocket.Message.Send(conn, msg)
-			}),
+		upgrader := websocket.Upgrader{
+			CheckOrigin: func(*http.Request) bool { return true },
 		}
-		srv.Mux().Handle("GET /ws", wsSrv)
+		srv.Mux().HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			msgType, msg, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			_ = conn.WriteMessage(msgType, msg)
+		})
 	})
 
 	wsURL := "ws://" + strings.TrimPrefix(baseURL, "http://") + "/ws"
-	conn, err := xwebsocket.Dial(wsURL, "", baseURL)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
 	defer conn.Close()
 
-	if err := xwebsocket.Message.Send(conn, "hello"); err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("hello")); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	var got string
-	if err := xwebsocket.Message.Receive(conn, &got); err != nil {
+	_, gotBytes, err := conn.ReadMessage()
+	if err != nil {
 		t.Fatalf("receive: %v", err)
 	}
+	got := string(gotBytes)
 	if got != "hello" {
 		t.Fatalf("got=%q, want %q", got, "hello")
 	}

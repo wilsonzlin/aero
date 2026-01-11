@@ -242,23 +242,23 @@ func (s *Server) incMetric(name string) {
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if s.Sessions == nil {
-		http.Error(w, "session manager not configured", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "session manager not configured")
 		return
 	}
 
 	if err := s.authorizer().Authorize(r, nil); err != nil {
 		s.incMetric(metrics.AuthFailure)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 		return
 	}
 
 	session, err := s.Sessions.CreateSession()
 	if err == relay.ErrTooManySessions {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSONError(w, http.StatusServiceUnavailable, "too_many_sessions", "too many sessions")
 		return
 	}
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 
