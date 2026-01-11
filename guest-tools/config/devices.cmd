@@ -34,6 +34,7 @@ rem
 rem AeroGPU HWIDs:
 rem   - PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0
 rem   - PCI\VEN_A3A0&DEV_0001
+rem Legacy AeroGPU device models are intentionally out of scope for Guest Tools; use drivers/aerogpu/packaging/win7/legacy with emulator/aerogpu-legacy if needed.
 set "AERO_GPU_SERVICE=aerogpu"
 set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0" "PCI\VEN_A3A0&DEV_0001"
 

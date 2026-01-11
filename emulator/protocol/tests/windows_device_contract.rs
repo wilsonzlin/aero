@@ -640,6 +640,7 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     //   - drivers/aerogpu/protocol/legacy/
     //   - drivers/aerogpu/packaging/win7/README.md (install docs reference both HWIDs)
     //   - drivers/aerogpu/packaging/win7/legacy/
+    //   - drivers/aerogpu/legacy/ (packaged legacy INF bindings)
     //   - prototype/legacy-win7-aerogpu-1ae0/ (archived prototype tree)
     let root = repo_root();
 
@@ -663,6 +664,7 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
         b"drivers/aerogpu/protocol/legacy/",
         b"drivers/aerogpu/packaging/win7/README.md",
         b"drivers/aerogpu/packaging/win7/legacy/",
+        b"drivers/aerogpu/legacy/",
         b"prototype/legacy-win7-aerogpu-1ae0/",
     ];
 

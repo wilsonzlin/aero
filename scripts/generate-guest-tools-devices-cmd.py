@@ -158,6 +158,10 @@ def _render_devices_cmd(contract: dict[str, Any], devices: dict[str, dict[str, A
     lines.append("rem AeroGPU HWIDs:")
     for hwid in gpu_hwids:
         lines.append(f"rem   - {hwid}")
+    lines.append(
+        "rem Legacy AeroGPU device models are intentionally out of scope for Guest Tools; "
+        "use drivers/aerogpu/packaging/win7/legacy with emulator/aerogpu-legacy if needed."
+    )
     lines.append(f'set "AERO_GPU_SERVICE={gpu_service}"')
     lines.append(f"set AERO_GPU_HWIDS={' '.join(_cmd_quote(h) for h in gpu_hwids)}")
     lines.append("")
