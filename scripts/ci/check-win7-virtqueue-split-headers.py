@@ -18,9 +18,13 @@ To keep includes unambiguous:
     name in-tree, and
   - the Win7 common split-ring header is named `virtqueue_split_legacy.h`.
 
-Shipped drivers are expected to include the canonical `virtqueue_split.h`; the
-legacy header is retained for host-side unit tests and experiments. Regardless,
-drivers must not rely on include path ordering to "pick the right one".
+Shipped drivers may use either header, depending on which split-ring engine they
+link:
+
+  - `virtio-input` / `virtio-snd`: `#include "virtqueue_split.h"` (canonical engine).
+  - `virtio-blk` / `virtio-net`: `#include "virtqueue_split_legacy.h"` (Win7 miniport stack).
+
+Regardless, drivers must not rely on include path ordering to "pick the right one".
 """
 
 from __future__ import annotations

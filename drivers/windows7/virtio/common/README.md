@@ -98,7 +98,7 @@ is retained only for compatibility/testing with transitional/QEMU devices.
   - Legacy/transitional virtio-pci transport (virtio 0.9 I/O-port register set).
 - `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
   - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
-  - Used by Aero's Windows 7 miniport drivers (`aerovnet`/`aerovblk`) and by host-side unit tests.
+  - Used by Aero's Windows 7 virtio miniport drivers (`aero_virtio_net` / `aero_virtio_blk`) and by host-side unit tests.
   - The `_legacy` suffix exists solely to avoid a repository-wide filename clash with
     `drivers/windows/virtio/common/virtqueue_split.h`.
 - `include/virtio_sg.h`

@@ -6,7 +6,7 @@
  * the standard virtio 1.0 split ring format.
  *
  * This implementation is used by Aero's Windows 7 miniport drivers
- * (`aerovnet`/`aerovblk`) and by host-side unit tests.
+ * (`aero_virtio_net` / `aero_virtio_blk`) and by host-side unit tests.
  *
  * The `_legacy` suffix exists solely to avoid a repository-wide filename clash
  * with `drivers/windows/virtio/common/virtqueue_split.h`.
