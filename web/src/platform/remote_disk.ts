@@ -105,7 +105,10 @@ export type RemoteDiskProbeResult = {
   contentRange: string;
 };
 
-export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResult> {
+export async function probeRemoteDisk(
+  url: string,
+  opts: { credentials?: RequestCredentials } = {},
+): Promise<RemoteDiskProbeResult> {
   let acceptRanges = "";
   let size: number | null = null;
   let etag: string | null = null;
@@ -114,7 +117,7 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
   // Prefer HEAD for a cheap size probe, but fall back to a Range GET for servers that
   // disallow HEAD (or omit Content-Length from HEAD).
   try {
-    const head = await fetch(url, { method: "HEAD" });
+    const head = await fetch(url, { method: "HEAD", credentials: opts.credentials });
     if (head.ok) {
       const headSize = Number(head.headers.get("content-length") ?? "NaN");
       if (Number.isFinite(headSize) && headSize > 0) {
@@ -128,7 +131,7 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
     // ignore; fall back to GET probe
   }
 
-  const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
+  const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, credentials: opts.credentials });
   const contentRange = probe.headers.get("content-range") ?? "";
   const partialOk = probe.status === 206;
   if (!etag) etag = probe.headers.get("etag");
@@ -208,7 +211,63 @@ export type RemoteDiskOptions = {
   cacheLimitBytes?: number | null;
   prefetchSequentialBlocks?: number;
   cacheBackend?: DiskBackend;
+  /**
+   * Fetch credential mode for Range requests.
+   *
+   * Defaults to `same-origin` so cookies are sent for same-origin endpoints but not for
+   * cross-origin requests (avoids credentialed CORS unless explicitly requested).
+   */
+  credentials?: RequestCredentials;
+  /**
+   * Stable cache identity for the remote disk (used as `imageId` in cache key derivation).
+   *
+   * This should be a control-plane identifier (e.g. database ID), not a signed URL.
+   * Defaults to a normalized URL without query/hash components.
+   */
+  cacheImageId?: string;
+  /**
+   * Stable version identifier for the remote disk (used as `version` in cache key derivation).
+   *
+   * Defaults to `"1"` and should be set when the control plane can provide an immutable version
+   * (generation number, snapshot ID, etc).
+   */
+  cacheVersion?: string;
+  /**
+   * Override validator used for cache binding when response headers are not readable
+   * (e.g. cross-origin without `Access-Control-Expose-Headers: ETag`).
+   *
+   * If omitted, we bind to the probed response `ETag` when available.
+   */
+  cacheEtag?: string | null;
+  /**
+   * Optional expected size for the remote disk image. When provided, a mismatch becomes an error.
+   */
+  expectedSizeBytes?: number;
 };
+
+type ResolvedRemoteDiskOptions = {
+  blockSize: number;
+  cacheLimitBytes: number | null;
+  prefetchSequentialBlocks: number;
+  cacheBackend: DiskBackend;
+  credentials: RequestCredentials;
+};
+
+function normalizeCredentials(credentials: RequestCredentials | undefined): RequestCredentials {
+  const resolved = credentials ?? "same-origin";
+  if (resolved !== "same-origin" && resolved !== "include" && resolved !== "omit") {
+    throw new Error(`Invalid credentials mode: ${String(credentials)}`);
+  }
+  return resolved;
+}
+
+function normalizeCacheVersion(version: string | undefined): string {
+  const resolved = (version ?? "1").trim();
+  if (!resolved) {
+    throw new Error("cacheVersion must not be empty");
+  }
+  return resolved;
+}
 
 export type RemoteDiskTelemetrySnapshot = {
   url: string;
@@ -262,12 +321,16 @@ function stableImageIdFromUrl(url: string): string {
   }
 }
 
-function cacheKeyPartsFromUrl(url: string): RemoteCacheKeyParts {
+function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions): RemoteCacheKeyParts {
+  const imageId = (options.cacheImageId ?? stableImageIdFromUrl(url)).trim();
+  if (!imageId) {
+    throw new Error("cacheImageId must not be empty");
+  }
   return {
-    imageId: stableImageIdFromUrl(url),
+    imageId,
     // Without an explicit control-plane version, treat this as a single logical stream
     // and rely on validators (ETag/Last-Modified/size) for safe invalidation.
-    version: "1",
+    version: normalizeCacheVersion(options.cacheVersion),
     deliveryType: "range",
   };
 }
@@ -309,6 +372,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private readonly cacheBackend: DiskBackend;
   private readonly cacheKeyParts: RemoteCacheKeyParts;
   private readonly cacheValidators: { sizeBytes: number; etag: string | null; lastModified: string | null };
+  private readonly credentials: RequestCredentials;
 
   private readonly cacheManager: RemoteCacheManager | null;
   private cacheDir: RemoteCacheDirectoryHandle | null = null;
@@ -340,7 +404,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     cacheKey: string,
     parts: RemoteCacheKeyParts,
     validators: { sizeBytes: number; etag: string | null; lastModified: string | null },
-    options: Required<RemoteDiskOptions>,
+    options: ResolvedRemoteDiskOptions,
     opfsCache?: { manager: RemoteCacheManager; dir: RemoteCacheDirectoryHandle; blocksDir: RemoteCacheDirectoryHandle; meta: CacheMeta },
   ) {
     this.url = url;
@@ -350,6 +414,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     this.cacheLimitBytes = options.cacheLimitBytes;
     this.prefetchSequentialBlocks = options.prefetchSequentialBlocks;
     this.cacheBackend = options.cacheBackend;
+    this.credentials = options.credentials;
 
     this.cacheKeyParts = parts;
     this.cacheValidators = validators;
@@ -369,7 +434,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   static async open(url: string, options: RemoteDiskOptions = {}): Promise<RemoteStreamingDisk> {
-    const probe = await probeRemoteDisk(url);
+    const credentials = normalizeCredentials(options.credentials);
+    const probe = await probeRemoteDisk(url, { credentials });
     if (!probe.partialOk) {
       throw new Error(
         "Remote server does not appear to support HTTP Range requests (required). " +
@@ -377,11 +443,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       );
     }
 
-    const resolved: Required<RemoteDiskOptions> = {
+    const resolved: ResolvedRemoteDiskOptions = {
       blockSize: options.blockSize ?? 1024 * 1024,
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
       cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
+      credentials,
     };
 
     if (!Number.isSafeInteger(resolved.blockSize) || resolved.blockSize <= 0) {
@@ -399,9 +466,20 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       throw new Error(`Invalid prefetchSequentialBlocks=${resolved.prefetchSequentialBlocks}`);
     }
 
-    const parts = cacheKeyPartsFromUrl(url);
+    const expectedSizeBytes = options.expectedSizeBytes;
+    if (expectedSizeBytes !== undefined) {
+      if (!Number.isSafeInteger(expectedSizeBytes) || expectedSizeBytes <= 0) {
+        throw new Error(`Invalid expectedSizeBytes=${expectedSizeBytes}`);
+      }
+      if (expectedSizeBytes !== probe.size) {
+        throw new Error(`Remote disk size mismatch: expected=${expectedSizeBytes} actual=${probe.size}`);
+      }
+    }
+
+    const parts = cacheKeyPartsFromUrl(url, options);
     const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
-    const validators = { sizeBytes: probe.size, etag: probe.etag, lastModified: probe.lastModified };
+    const resolvedEtag = options.cacheEtag !== undefined ? options.cacheEtag : probe.etag;
+    const validators = { sizeBytes: probe.size, etag: resolvedEtag, lastModified: probe.lastModified };
 
     if (resolved.cacheBackend === "idb") {
       const disk = new RemoteStreamingDisk(url, probe.size, cacheKey, parts, validators, resolved);
@@ -410,7 +488,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         signature: {
           imageId: parts.imageId,
           version: parts.version,
-          etag: probe.etag,
+          etag: resolvedEtag,
           sizeBytes: probe.size,
           chunkSize: resolved.blockSize,
         },
@@ -671,7 +749,10 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       this.telemetry.requests++;
       this.telemetry.lastFetchRange = { ...r };
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-      const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
+      const resp = await fetch(this.url, {
+        headers: { Range: `bytes=${r.start}-${r.end - 1}` },
+        credentials: this.credentials,
+      });
       if (resp.status !== 206) {
         throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
       }
@@ -750,7 +831,10 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         this.telemetry.lastFetchRange = { ...r };
       }
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-      const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
+      const resp = await fetch(this.url, {
+        headers: { Range: `bytes=${r.start}-${r.end - 1}` },
+        credentials: this.credentials,
+      });
       if (resp.status !== 206) {
         throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
       }

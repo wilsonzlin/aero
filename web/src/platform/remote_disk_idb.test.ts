@@ -157,5 +157,57 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     disk2.close();
     mock2.restore();
   });
-});
 
+  it("reuses the IDB cache across refreshed URLs when cache identity is stable", async () => {
+    const blockSize = 1024 * 1024;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const opts = {
+      blockSize,
+      cacheBackend: "idb" as const,
+      cacheLimitBytes: null,
+      prefetchSequentialBlocks: 0,
+      cacheImageId: "img-1",
+      cacheVersion: "v1",
+    };
+
+    const disk1 = await RemoteStreamingDisk.open("https://example.test/disk.img?token=a", opts);
+    await disk1.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(1);
+    disk1.close();
+
+    const disk2 = await RemoteStreamingDisk.open("https://example.test/disk.img?token=b", opts);
+    await disk2.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(1);
+    disk2.close();
+
+    mock.restore();
+  });
+
+  it("invalidates the IDB cache when cacheVersion changes", async () => {
+    const blockSize = 1024 * 1024;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const common = {
+      blockSize,
+      cacheBackend: "idb" as const,
+      cacheLimitBytes: null,
+      prefetchSequentialBlocks: 0,
+      cacheImageId: "img-1",
+    };
+
+    const disk1 = await RemoteStreamingDisk.open("https://example.test/disk.img?token=a", { ...common, cacheVersion: "v1" });
+    await disk1.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(1);
+    disk1.close();
+
+    const disk2 = await RemoteStreamingDisk.open("https://example.test/disk.img?token=b", { ...common, cacheVersion: "v2" });
+    await disk2.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(2);
+    disk2.close();
+
+    mock.restore();
+  });
+});
