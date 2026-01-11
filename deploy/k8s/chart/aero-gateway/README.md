@@ -49,9 +49,15 @@ When `l2Proxy.enabled=true` and `ingress.enabled=true`, the chart's Ingress will
 Because the same Ingress resource is used, the existing COOP/COEP/CSP (or Traefik Middleware)
 header injection strategy applies to `/l2` as well.
 
-### Origin allowlist (`AERO_L2_ALLOWED_ORIGINS`)
+### Origin allowlist (`AERO_L2_ALLOWED_ORIGINS` / `ALLOWED_ORIGINS`)
 
 `aero-l2-proxy` enforces an Origin allowlist for WebSocket upgrades.
+
+The proxy accepts the allowlist via:
+
+- `AERO_L2_ALLOWED_ORIGINS` (preferred/explicit; takes precedence when set), or
+- `ALLOWED_ORIGINS` (shared with `aero-gateway` and `proxy/webrtc-udp-relay`) when
+  `AERO_L2_ALLOWED_ORIGINS` is unset.
 
 This chart sets `AERO_L2_ALLOWED_ORIGINS` automatically to match the derived Ingress origin
 (`http(s)://<ingress.host>`), and you can add additional exact origins via:
