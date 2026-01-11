@@ -1,4 +1,4 @@
-# Win7 (WDDM 1.1) D3D10/D3D11 UMD allocation contract (WDK 7.1 / Win7-era WDK reference)
+# Win7 (WDDM 1.1) D3D10/D3D11 UMD allocation contract (Win7-era headers reference)
 
 This document is the **single authoritative, implementation-oriented spec** for how a **Windows 7** (**WDDM 1.1**) **D3D10/D3D11 user-mode display driver (UMD)** allocates and frees memory through the Win7-era D3D UMD contracts.
 
@@ -9,7 +9,7 @@ This document is the **single authoritative, implementation-oriented spec** for 
 >
 > This doc focuses on (1) for `CreateResource`, but also lists (2) because the callback names (`AllocateCb`/`DeallocateCb`) are otherwise confusing.
 
-It is written against Win7-era user-mode DDI headers (the canonical set is WDK 7.1 / WinDDK 7600.16385.1, but newer Windows Kits often ship compatible headers with extra fields):
+It is written against Win7-era user-mode DDI headers (the canonical set is WinDDK 7600.16385.1, but newer Windows Kits often ship compatible headers with extra fields):
 
 * `d3d10umddi.h`
 * `d3d11umddi.h`
@@ -225,8 +225,8 @@ Notes:
 
 ## 4) Allocation data structures (field lists)
 
-> Naming: Win7-capable header sets are not perfectly uniform (WDK 7.1 vs later Windows Kits often add fields or rename members).
-> This doc uses **WDK 7.1-style spellings where possible**, and calls out common **header-dependent** member names explicitly.
+> Naming: Win7-capable header sets are not perfectly uniform (WinDDK 7600 vs later Windows Kits often add fields or rename members).
+> This doc uses **WinDDK 7600-style spellings where possible**, and calls out common **header-dependent** member names explicitly.
 > If in doubt, build and run `drivers/aerogpu/tools/win7_wdk_probe` against *your* headers and follow the identifiers it reports.
 
 ### 4.1 `D3DDDICB_ALLOCATE` (from `d3dumddi.h`)
