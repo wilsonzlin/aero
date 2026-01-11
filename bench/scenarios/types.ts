@@ -49,7 +49,7 @@ export interface EmulatorDriver {
   sendInput?(payload: unknown): Promise<void>;
 }
 
-export type MetricUnit = 'ms' | 'fps' | 'count';
+export type MetricUnit = 'ms' | 'fps' | 'count' | 'MB/s';
 
 export interface Metric {
   id: string;
@@ -163,4 +163,3 @@ export class ScenarioSkippedError extends Error {
     this.reason = reason;
   }
 }
-

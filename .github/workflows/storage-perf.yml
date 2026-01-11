@@ -1,0 +1,113 @@
+name: Storage Perf (smoke)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-perf-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  storage-perf-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      NODE_VERSION: "20.11.1"
+      STORAGE_PERF_REGRESSION_THRESHOLD_PCT: "15"
+    steps:
+      - name: Checkout (candidate)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: head
+
+      - name: Checkout (baseline)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            head/package-lock.json
+            base/package-lock.json
+
+      - name: Install dependencies (baseline)
+        working-directory: base
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Install dependencies (candidate)
+        working-directory: head
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('head/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-chromium-
+
+      - name: Install Chromium (Playwright)
+        working-directory: head
+        run: npx playwright install --with-deps chromium
+
+      - name: Run storage perf (baseline)
+        working-directory: base
+        run: |
+          mkdir -p ../head/storage-perf-results
+          node --experimental-strip-types bench/runner.ts storage_io \
+            --out-dir ../head/storage-perf-results/base
+
+      - name: Run storage perf (candidate)
+        working-directory: head
+        run: |
+          mkdir -p storage-perf-results
+          node --experimental-strip-types bench/runner.ts storage_io \
+            --out-dir storage-perf-results/head
+
+          cp storage-perf-results/base/storage_bench.json storage-perf-results/base.json
+          cp storage-perf-results/head/storage_bench.json storage-perf-results/head.json
+
+      - name: Compare (fail on regression)
+        working-directory: head
+        run: |
+          node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+            --baseline storage-perf-results/base/storage_bench.json \
+            --current storage-perf-results/head/storage_bench.json \
+            --thresholdPct ${{ env.STORAGE_PERF_REGRESSION_THRESHOLD_PCT }}
+
+      - name: Job summary
+        if: always()
+        working-directory: head
+        run: |
+          if [[ -f storage-perf-results/compare.md ]]; then
+            cat storage-perf-results/compare.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "compare.md not produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload storage perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-perf-smoke-${{ github.run_id }}
+          path: head/storage-perf-results
+          if-no-files-found: error
+

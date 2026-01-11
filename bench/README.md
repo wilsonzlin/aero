@@ -126,6 +126,36 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
 The compare script exits non-zero if any primary metric regresses by more than the configured
 threshold.
 
+## Storage I/O benchmark suite (OPFS + IndexedDB)
+
+The `storage_io` scenario loads `web/storage_bench.html` in Chromium via Playwright and records:
+
+- `storage_bench.json` — raw storage benchmark report (OPFS preferred; falls back to IndexedDB)
+- `report.json` — scenario runner report containing a small set of key metrics (seq read/write MB/s, random read p50/p95)
+
+The benchmark uses a fixed `random_seed` so random I/O patterns are repeatable across runs.
+
+### Running locally (CI parity)
+
+```bash
+npm ci
+npx playwright install --with-deps chromium
+
+# Write artifacts to storage-perf-results/head/
+npm run bench:storage -- --out-dir storage-perf-results/head
+```
+
+### Comparing two runs
+
+```bash
+node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+  --baseline storage-perf-results/base/storage_bench.json \
+  --current storage-perf-results/head/storage_bench.json \
+  --thresholdPct 15
+
+cat storage-perf-results/compare.md
+```
+
 ## Scenario runner (PF-008 macrobench framework)
 
 The scenario runner provides an extensible plugin interface so we can evolve from microbenchmarks to full-system macrobenchmarks (boot time, desktop FPS, app launch time) once the emulator can boot OS images.

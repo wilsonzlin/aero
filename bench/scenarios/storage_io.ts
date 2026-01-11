@@ -53,6 +53,7 @@ export const storageIoScenario: Scenario = {
 
       const storage = await page.evaluate(async () => {
         return await window.aero.bench.runStorageBench({
+          random_seed: 1337,
           seq_total_mb: 32,
           seq_chunk_mb: 4,
           seq_runs: 2,
@@ -73,16 +74,34 @@ export const storageIoScenario: Scenario = {
       await ctx.artifacts.writeJson("storage_bench.json", storage, "other");
       await ctx.artifacts.writeJson("perf_export.json", perfExport, "perf_export");
 
-      const p95 = storage?.random_read_4k?.mean_p95_ms;
-      if (typeof p95 === "number" && Number.isFinite(p95)) {
-        ctx.metrics.setMs("storage_random_read_p95_ms", p95);
+      const seqWrite = storage?.sequential_write?.mean_mb_per_s;
+      const seqRead = storage?.sequential_read?.mean_mb_per_s;
+      const randReadP50 = storage?.random_read_4k?.mean_p50_ms;
+      const randReadP95 = storage?.random_read_4k?.mean_p95_ms;
+      const randWriteP95 = storage?.random_write_4k?.mean_p95_ms;
+
+      if (typeof seqWrite === "number" && Number.isFinite(seqWrite)) {
+        ctx.metrics.set({ id: "storage_seq_write_mb_per_s", unit: "MB/s", value: seqWrite });
+      }
+      if (typeof seqRead === "number" && Number.isFinite(seqRead)) {
+        ctx.metrics.set({ id: "storage_seq_read_mb_per_s", unit: "MB/s", value: seqRead });
+      }
+      if (typeof randReadP50 === "number" && Number.isFinite(randReadP50)) {
+        ctx.metrics.setMs("storage_random_read_p50_ms", randReadP50);
+      }
+      if (typeof randReadP95 === "number" && Number.isFinite(randReadP95)) {
+        ctx.metrics.setMs("storage_random_read_p95_ms", randReadP95);
+      }
+      if (typeof randWriteP95 === "number" && Number.isFinite(randWriteP95)) {
+        ctx.metrics.setMs("storage_random_write_p95_ms", randWriteP95);
       }
 
       ctx.log(
         `storage_io: backend=${storage?.backend ?? "unknown"} api_mode=${storage?.api_mode ?? "unknown"} ` +
-          `seq_write=${storage?.sequential_write?.mean_mb_per_s?.toFixed?.(2) ?? "n/a"}MB/s ` +
-          `seq_read=${storage?.sequential_read?.mean_mb_per_s?.toFixed?.(2) ?? "n/a"}MB/s ` +
-          `rand_read_p95=${p95?.toFixed?.(2) ?? "n/a"}ms`,
+          `seq_write=${seqWrite?.toFixed?.(2) ?? "n/a"}MB/s ` +
+          `seq_read=${seqRead?.toFixed?.(2) ?? "n/a"}MB/s ` +
+          `rand_read_p50=${randReadP50?.toFixed?.(2) ?? "n/a"}ms ` +
+          `rand_read_p95=${randReadP95?.toFixed?.(2) ?? "n/a"}ms`,
       );
     } finally {
       try {

@@ -8,6 +8,7 @@ import type {
   StorageBenchThroughputRun,
   StorageBenchThroughputSummary,
 } from "./storage_types";
+import { createRandomSource, randomAlignedOffset, randomInt } from "./seeded_rng";
 
 type WorkerRequest = { type: "run"; id: string; opts?: StorageBenchOpts };
 type WorkerResponse =
@@ -99,13 +100,6 @@ function createBlockBuffer(bytes: number): Uint8Array {
   return buf;
 }
 
-function randomAlignedOffset(maxBytes: number, blockBytes: number): number {
-  if (maxBytes <= blockBytes) return 0;
-  const blocks = Math.floor((maxBytes - blockBytes) / blockBytes) + 1;
-  const idx = Math.floor(Math.random() * blocks);
-  return idx * blockBytes;
-}
-
 function resolveOpts(opts?: StorageBenchOpts): {
   runId: string;
   config: StorageBenchResult["config"];
@@ -113,6 +107,10 @@ function resolveOpts(opts?: StorageBenchOpts): {
   const runId = opts?.run_id ?? createRunId();
 
   const backend = opts?.backend ?? "auto";
+  const random_seed =
+    typeof opts?.random_seed === "number" && Number.isFinite(opts.random_seed)
+      ? clampInt(opts.random_seed, 0, 0xffffffff)
+      : undefined;
   const seq_total_mb = clampInt(opts?.seq_total_mb ?? 64, 4, 512);
   const seq_chunk_mb = clampInt(opts?.seq_chunk_mb ?? 4, 1, 8);
   const seq_runs = clampInt(opts?.seq_runs ?? 3, 1, 10);
@@ -126,6 +124,7 @@ function resolveOpts(opts?: StorageBenchOpts): {
     runId,
     config: {
       backend,
+      random_seed,
       seq_total_mb,
       seq_chunk_mb,
       seq_runs,
@@ -228,11 +227,12 @@ async function runOpfsBench(params: {
 
       const randomReadRuns: StorageBenchLatencyRun[] = [];
       for (let run = 0; run < params.config.random_runs; run++) {
+        const rand = createRandomSource(params.config.random_seed, 1000 + run);
         const latencies: number[] = [];
         let min = Number.POSITIVE_INFINITY;
         let max = 0;
         for (let op = 0; op < params.config.random_ops; op++) {
-          const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K);
+          const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K, rand);
           const t0 = performance.now();
           accessHandle.read(blockReadBuf, { at: offset });
           const dt = performance.now() - t0;
@@ -258,11 +258,12 @@ async function runOpfsBench(params: {
       if (params.config.include_random_write) {
         const randomWriteRuns: StorageBenchLatencyRun[] = [];
         for (let run = 0; run < params.config.random_runs; run++) {
+          const rand = createRandomSource(params.config.random_seed, 2000 + run);
           const latencies: number[] = [];
           let min = Number.POSITIVE_INFINITY;
           let max = 0;
           for (let op = 0; op < params.config.random_ops; op++) {
-            const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K);
+            const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K, rand);
             const t0 = performance.now();
             accessHandle.write(block, { at: offset });
             const dt = performance.now() - t0;
@@ -354,11 +355,12 @@ async function runOpfsBench(params: {
     const randomReadRuns: StorageBenchLatencyRun[] = [];
     for (let run = 0; run < params.config.random_runs; run++) {
       const file = await fileHandle.getFile();
+      const rand = createRandomSource(params.config.random_seed, 3000 + run);
       const latencies: number[] = [];
       let min = Number.POSITIVE_INFINITY;
       let max = 0;
       for (let op = 0; op < params.config.random_ops; op++) {
-        const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K);
+        const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K, rand);
         const blob = file.slice(offset, offset + BLOCK_4K);
         const t0 = performance.now();
         await blob.arrayBuffer();
@@ -386,11 +388,12 @@ async function runOpfsBench(params: {
       const randomWriteRuns: StorageBenchLatencyRun[] = [];
       for (let run = 0; run < params.config.random_runs; run++) {
         const writer = await (fileHandle as any).createWritable({ keepExistingData: true });
+        const rand = createRandomSource(params.config.random_seed, 4000 + run);
         const latencies: number[] = [];
         let min = Number.POSITIVE_INFINITY;
         let max = 0;
         for (let op = 0; op < params.config.random_ops; op++) {
-          const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K);
+          const offset = randomAlignedOffset(randomSpaceBytes, BLOCK_4K, rand);
           const t0 = performance.now();
           await writer.write({ type: "write", position: offset, data: block });
           const dt = performance.now() - t0;
@@ -558,11 +561,12 @@ async function runIndexedDbBench(params: {
 
     const randomReadRuns: StorageBenchLatencyRun[] = [];
     for (let run = 0; run < params.config.random_runs; run++) {
+      const rand = createRandomSource(params.config.random_seed, 5000 + run);
       const latencies: number[] = [];
       let min = Number.POSITIVE_INFINITY;
       let max = 0;
       for (let op = 0; op < params.config.random_ops; op++) {
-        const key = Math.floor(Math.random() * Math.max(1, randomBlocks));
+        const key = randomInt(Math.max(1, randomBlocks), rand);
         const t0 = performance.now();
         const tx = db.transaction(["blocks4k"], "readonly");
         const req = tx.objectStore("blocks4k").get(key);
@@ -594,11 +598,12 @@ async function runIndexedDbBench(params: {
     if (params.config.include_random_write) {
       const randomWriteRuns: StorageBenchLatencyRun[] = [];
       for (let run = 0; run < params.config.random_runs; run++) {
+        const rand = createRandomSource(params.config.random_seed, 6000 + run);
         const latencies: number[] = [];
         let min = Number.POSITIVE_INFINITY;
         let max = 0;
         for (let op = 0; op < params.config.random_ops; op++) {
-          const key = Math.floor(Math.random() * Math.max(1, randomBlocks));
+          const key = randomInt(Math.max(1, randomBlocks), rand);
           const t0 = performance.now();
           const tx = db.transaction(["blocks4k"], "readwrite");
           const req = tx.objectStore("blocks4k").put(block, key);

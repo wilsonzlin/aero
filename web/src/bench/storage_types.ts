@@ -4,6 +4,8 @@ export type StorageBenchApiMode = "sync_access_handle" | "async";
 
 export interface StorageBenchOpts {
   backend?: StorageBenchBackend | "auto";
+  /** Seed for deterministic random I/O patterns (when provided). */
+  random_seed?: number;
   seq_total_mb?: number;
   seq_chunk_mb?: number;
   seq_runs?: number;
@@ -55,6 +57,7 @@ export interface StorageBenchResult {
     Pick<
       StorageBenchOpts,
       | "backend"
+      | "random_seed"
       | "seq_total_mb"
       | "seq_chunk_mb"
       | "seq_runs"
@@ -71,4 +74,3 @@ export interface StorageBenchResult {
   random_write_4k?: StorageBenchLatencySummary;
   warnings?: string[];
 }
-

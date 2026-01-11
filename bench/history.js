@@ -233,6 +233,8 @@ function inferBetter(name, unit) {
     return "lower";
   }
   if (unit === "fps" || name.includes("fps")) return "higher";
+  // Generic throughput/rate units.
+  if (unit.includes("/s") || unit.includes("per_s") || name.includes("per_s")) return "higher";
   if (unit.includes("ops") || unit.includes("op") || name.includes("ops") || name.includes("ips")) return "higher";
   return "lower";
 }
