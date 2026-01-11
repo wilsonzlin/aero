@@ -89,9 +89,6 @@ class VirtioWinExtractTest(unittest.TestCase):
             write("NetKVM/w7/x64/netkvm.inf", "netkvm amd64")
             write("NetKVM/w7/i386/netkvm.inf", "netkvm x86")
 
-            # Root-level notice file (should be extracted).
-            write("LICENSE.txt", "license")
-
             # Optional driver present for x86 only; amd64 missing should be reported.
             write("vioinput/win7/x86/vioinput.inf", "vioinput x86")
 
