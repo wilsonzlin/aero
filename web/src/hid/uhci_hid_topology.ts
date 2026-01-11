@@ -67,13 +67,13 @@ export class UhciHidTopologyManager {
     // Root port 0 is reserved for an emulated external hub used for WebHID passthrough.
     // Attach it eagerly so the guest OS can enumerate the hub even before any devices are
     // attached behind it.
-    this.#maybeAttachHub(0, { minPortCount: this.#maxRequestedHubPort(0) });
+    this.#maybeAttachHub(0);
 
     // Other hubs are still generally attached lazily as devices demand them, but if the host
     // configured a hub explicitly (via `setHubConfig`) before UHCI was initialized, attach it now.
     for (const rootPort of this.#hubPortCountByRoot.keys()) {
       if (rootPort === 0) continue;
-      this.#maybeAttachHub(rootPort, { minPortCount: this.#maxRequestedHubPort(rootPort) });
+      this.#maybeAttachHub(rootPort);
     }
 
     this.#flush();
@@ -97,17 +97,6 @@ export class UhciHidTopologyManager {
     this.#devices.delete(deviceId);
     if (!rec) return;
     this.#maybeDetachPath(rec.path);
-  }
-
-  #maxRequestedHubPort(rootPort: number): number {
-    let maxPort = 0;
-    for (const rec of this.#devices.values()) {
-      if ((rec.path[0] ?? 0) !== rootPort) continue;
-      if (rec.path.length <= 1) continue;
-      const port = rec.path[1] ?? 0;
-      if (port > maxPort) maxPort = port;
-    }
-    return maxPort;
   }
 
   #flush(): void {
