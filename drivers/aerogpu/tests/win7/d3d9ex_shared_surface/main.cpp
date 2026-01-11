@@ -707,15 +707,24 @@ static int RunChild(int argc,
   aerogpu_test::GetArgValue(argc, argv, "--opened-event", &opened_event_str);
   aerogpu_test::GetArgValue(argc, argv, "--done-event", &done_event_str);
 
-  uint32_t expected_token = 0;
-  bool has_expected_token = false;
+  uint32_t expected_debug_token = 0;
+  bool has_expected_debug_token = false;
   std::string expected_token_str;
-  if (aerogpu_test::GetArgValue(argc, argv, "--expected-share-token", &expected_token_str)) {
+  bool has_expected_token_arg =
+      aerogpu_test::GetArgValue(argc, argv, "--expected-debug-token", &expected_token_str);
+  if (!has_expected_token_arg) {
+    // Backwards compat: older test binaries used the name "expected-share-token" even though this is
+    // a debug-only token returned by AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE (not the protocol share_token).
+    has_expected_token_arg =
+        aerogpu_test::GetArgValue(argc, argv, "--expected-share-token", &expected_token_str);
+  }
+  if (has_expected_token_arg) {
     std::string parse_err;
-    if (!aerogpu_test::ParseUint32(expected_token_str, &expected_token, &parse_err) || expected_token == 0) {
-      return aerogpu_test::Fail(kTestName, "invalid --expected-share-token: %s", parse_err.c_str());
+    if (!aerogpu_test::ParseUint32(expected_token_str, &expected_debug_token, &parse_err) ||
+        expected_debug_token == 0) {
+      return aerogpu_test::Fail(kTestName, "invalid --expected-debug-token: %s", parse_err.c_str());
     }
-    has_expected_token = true;
+    has_expected_debug_token = true;
   }
 
   SharedResourceKind kind = kSharedTexture;
@@ -790,7 +799,7 @@ static int RunChild(int argc,
     return aerogpu_test::Fail(kTestName, "CreateBasicWindow(child) failed");
   }
 
-  if (has_expected_token) {
+  if (has_expected_debug_token) {
     uint32_t token = 0;
     std::string map_err;
     if (!MapSharedHandleToken(hwnd, shared_handle, &token, &map_err)) {
@@ -799,12 +808,12 @@ static int RunChild(int argc,
     aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE debug_token=%lu (expected=%lu)",
                                kTestName,
                                (unsigned long)token,
-                               (unsigned long)expected_token);
-    if (token != expected_token) {
+                               (unsigned long)expected_debug_token);
+    if (token != expected_debug_token) {
       return aerogpu_test::Fail(kTestName,
                                 "MAP_SHARED_HANDLE token mismatch: got=%lu expected=%lu",
                                 (unsigned long)token,
-                                (unsigned long)expected_token);
+                                (unsigned long)expected_debug_token);
     }
   }
 
@@ -1074,11 +1083,11 @@ static int RunParent(int argc,
   }
 
   uint32_t debug_token = 0;
-  bool have_share_token = false;
+  bool have_debug_token = false;
   std::string map_err;
   if (shared_handle_is_nt) {
-    have_share_token = MapSharedHandleToken(hwnd, shared_handle, &debug_token, &map_err);
-    if (have_share_token) {
+    have_debug_token = MapSharedHandleToken(hwnd, shared_handle, &debug_token, &map_err);
+    if (have_debug_token) {
       aerogpu_test::PrintfStdout(
           "INFO: %s: MAP_SHARED_HANDLE debug_token=%lu", kTestName, (unsigned long)debug_token);
     } else {
@@ -1157,11 +1166,11 @@ static int RunParent(int argc,
   cmdline += (kind == kSharedTexture) ? L"texture" : L"rendertarget";
   cmdline += L" --shared-handle=";
   cmdline += std::wstring(placeholder_hex.begin(), placeholder_hex.end());
-  if (have_share_token) {
+  if (have_debug_token) {
     wchar_t token_buf[32];
     _snwprintf(token_buf, ARRAYSIZE(token_buf), L"0x%08lX", (unsigned long)debug_token);
     token_buf[ARRAYSIZE(token_buf) - 1] = 0;
-    cmdline += L" --expected-share-token=";
+    cmdline += L" --expected-debug-token=";
     cmdline += token_buf;
   }
   cmdline += L" --hidden";
@@ -1526,7 +1535,7 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
     aerogpu_test::PrintfStdout("Note: window is shown by default; pass --hidden to hide it.");
     aerogpu_test::PrintfStdout(
         "Internal: %s.exe --child --resource=texture|rendertarget --shared-handle=0x... "
-        "[--expected-share-token=0x...] [--ready-event=NAME --opened-event=NAME --done-event=NAME] [--require-umd] (used by parent)",
+        "[--expected-debug-token=0x...] [--ready-event=NAME --opened-event=NAME --done-event=NAME] [--require-umd] (used by parent)",
         kTestName);
     return 0;
   }
