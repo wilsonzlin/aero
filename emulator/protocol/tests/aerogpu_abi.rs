@@ -14,9 +14,10 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
     AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
     AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuDepthStencilState,
-    AerogpuFillMode, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology,
-    AerogpuRasterizerState, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
+    AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuShaderStage, AerogpuVertexBufferBinding,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
     AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS, AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC,
     AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
@@ -817,6 +818,28 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_VERSION"),
         AEROGPU_INPUT_LAYOUT_BLOB_VERSION as u64
+    );
+
+    assert_eq!(
+        abi.konst("AEROGPU_SHADER_STAGE_VERTEX"),
+        AerogpuShaderStage::Vertex as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_SHADER_STAGE_PIXEL"),
+        AerogpuShaderStage::Pixel as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_SHADER_STAGE_COMPUTE"),
+        AerogpuShaderStage::Compute as u64
+    );
+
+    assert_eq!(
+        abi.konst("AEROGPU_INDEX_FORMAT_UINT16"),
+        AerogpuIndexFormat::Uint16 as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_INDEX_FORMAT_UINT32"),
+        AerogpuIndexFormat::Uint32 as u64
     );
 
     assert_eq!(

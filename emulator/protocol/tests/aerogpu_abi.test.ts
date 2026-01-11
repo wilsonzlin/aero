@@ -88,7 +88,9 @@ import {
   AerogpuCullMode,
   AerogpuFillMode,
   AerogpuCmdOpcode,
+  AerogpuIndexFormat,
   AerogpuPrimitiveTopology,
+  AerogpuShaderStage,
   decodeCmdHdr,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -566,6 +568,13 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"), BigInt(AEROGPU_INPUT_LAYOUT_BLOB_MAGIC));
   assert.equal(konst("AEROGPU_INPUT_LAYOUT_BLOB_VERSION"), BigInt(AEROGPU_INPUT_LAYOUT_BLOB_VERSION));
+
+  assert.equal(konst("AEROGPU_SHADER_STAGE_VERTEX"), BigInt(AerogpuShaderStage.Vertex));
+  assert.equal(konst("AEROGPU_SHADER_STAGE_PIXEL"), BigInt(AerogpuShaderStage.Pixel));
+  assert.equal(konst("AEROGPU_SHADER_STAGE_COMPUTE"), BigInt(AerogpuShaderStage.Compute));
+
+  assert.equal(konst("AEROGPU_INDEX_FORMAT_UINT16"), BigInt(AerogpuIndexFormat.Uint16));
+  assert.equal(konst("AEROGPU_INDEX_FORMAT_UINT32"), BigInt(AerogpuIndexFormat.Uint32));
 
   assert.equal(konst("AEROGPU_TOPOLOGY_POINTLIST"), BigInt(AerogpuPrimitiveTopology.PointList));
   assert.equal(konst("AEROGPU_TOPOLOGY_LINELIST"), BigInt(AerogpuPrimitiveTopology.LineList));
