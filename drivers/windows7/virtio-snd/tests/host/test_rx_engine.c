@@ -101,6 +101,31 @@ static void test_rx_submit_sg_validates_segments(void)
     VirtIoSndRxUninit(&rx);
 }
 
+static void test_rx_submit_sg_rejects_payload_overflow(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT segs[2];
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    /* payloadBytes + len overflow should be caught before alignment checks. */
+    segs[0].addr = 0x1000;
+    segs[0].len = 0xFFFFFFFFu;
+    segs[1].addr = 0x2000;
+    segs[1].len = 2u;
+
+    status = VirtIoSndRxSubmitSg(&rx, segs, 2, NULL);
+    TEST_ASSERT(status == STATUS_INTEGER_OVERFLOW);
+
+    VirtIoSndRxUninit(&rx);
+}
+
 static void test_rx_submit_sg_builds_descriptor_chain(void)
 {
     VIRTIOSND_RX_ENGINE rx;
@@ -152,6 +177,49 @@ static void test_rx_submit_sg_builds_descriptor_chain(void)
 
     TEST_ASSERT(rx.FreeCount == 0u);
     TEST_ASSERT(rx.InflightCount == 1u);
+
+    VirtIoSndRxUninit(&rx);
+}
+
+static void test_rx_on_used_uses_registered_callback(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT seg;
+    RX_COMPLETION_CAPTURE cap;
+    VIRTIOSND_RX_REQUEST* req;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    RtlZeroMemory(&cap, sizeof(cap));
+    VirtIoSndRxSetCompletionCallback(&rx, RxCompletionCb, &cap);
+
+    seg.addr = 0x1000;
+    seg.len = 4;
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0xABCDu);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+
+    req->StatusVa->status = VIRTIO_SND_S_OK;
+    req->StatusVa->latency_bytes = 77u;
+
+    VirtIoSndRxOnUsed(&rx, req, (UINT32)(sizeof(VIRTIO_SND_PCM_STATUS) + 4u));
+
+    TEST_ASSERT(cap.Called == 1);
+    TEST_ASSERT(cap.Cookie == (void*)0xABCDu);
+    TEST_ASSERT(cap.CompletionStatus == STATUS_SUCCESS);
+    TEST_ASSERT(cap.VirtioStatus == VIRTIO_SND_S_OK);
+    TEST_ASSERT(cap.LatencyBytes == 77u);
+    TEST_ASSERT(cap.PayloadBytes == 4u);
+    TEST_ASSERT(cap.UsedLen == (UINT32)(sizeof(VIRTIO_SND_PCM_STATUS) + 4u));
+    TEST_ASSERT(rx.FreeCount == 1u);
 
     VirtIoSndRxUninit(&rx);
 }
@@ -265,7 +333,9 @@ int main(void)
 {
     test_rx_init_sets_fixed_stream_id();
     test_rx_submit_sg_validates_segments();
+    test_rx_submit_sg_rejects_payload_overflow();
     test_rx_submit_sg_builds_descriptor_chain();
+    test_rx_on_used_uses_registered_callback();
     test_rx_used_len_clamps_payload_and_io_err_is_not_fatal();
     test_rx_used_len_too_small_sets_bad_msg_and_fatal();
 

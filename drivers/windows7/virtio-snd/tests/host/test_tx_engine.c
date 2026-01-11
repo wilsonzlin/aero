@@ -139,6 +139,79 @@ static void test_tx_queue_full_returns_buffer_to_pool(void)
     VirtioSndTxUninit(&tx);
 }
 
+static void test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_TX_SEGMENT segs[VIRTIOSND_TX_MAX_SEGMENTS];
+    ULONG i;
+    VIRTIOSND_TX_BUFFER* buf;
+
+    /* Happy path: max segment count builds [hdr][segments...][status]. */
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 64u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    RtlZeroMemory(segs, sizeof(segs));
+    for (i = 0; i < VIRTIOSND_TX_MAX_SEGMENTS; i++) {
+        segs[i].Address.QuadPart = (LONGLONG)(0x1000u + (i * 0x100u));
+        segs[i].Length = 4u; /* 1 frame */
+    }
+
+    status = VirtioSndTxSubmitSg(&tx, segs, VIRTIOSND_TX_MAX_SEGMENTS);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(q.LastSgCount == (USHORT)(VIRTIOSND_TX_MAX_SEGMENTS + 2u));
+
+    buf = (VIRTIOSND_TX_BUFFER*)q.LastCookie;
+    TEST_ASSERT(buf != NULL);
+
+    TEST_ASSERT(q.LastSg[0].addr == buf->DataDma);
+    TEST_ASSERT(q.LastSg[0].len == (UINT32)sizeof(VIRTIO_SND_TX_HDR));
+    TEST_ASSERT(q.LastSg[0].write == FALSE);
+
+    for (i = 0; i < VIRTIOSND_TX_MAX_SEGMENTS; i++) {
+        TEST_ASSERT(q.LastSg[1u + i].addr == (UINT64)segs[i].Address.QuadPart);
+        TEST_ASSERT(q.LastSg[1u + i].len == segs[i].Length);
+        TEST_ASSERT(q.LastSg[1u + i].write == FALSE);
+    }
+
+    TEST_ASSERT(q.LastSg[1u + VIRTIOSND_TX_MAX_SEGMENTS].addr == buf->StatusDma);
+    TEST_ASSERT(q.LastSg[1u + VIRTIOSND_TX_MAX_SEGMENTS].len == (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    TEST_ASSERT(q.LastSg[1u + VIRTIOSND_TX_MAX_SEGMENTS].write == TRUE);
+
+    /* Complete it to recycle the buffer before uninit. */
+    buf->StatusVa->status = VIRTIO_SND_S_OK;
+    VirtioSndHostQueuePushUsed(&q, buf, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    TEST_ASSERT(VirtioSndTxDrainCompletions(&tx) == 1u);
+    TEST_ASSERT(tx.FreeCount == 1u);
+
+    VirtioSndTxUninit(&tx);
+
+    /* SegmentCount > max => invalid parameter. */
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 64u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    status = VirtioSndTxSubmitSg(&tx, segs, (ULONG)(VIRTIOSND_TX_MAX_SEGMENTS + 1u));
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* Too large total bytes => invalid buffer size. */
+    segs[0].Length = 68u;
+    status = VirtioSndTxSubmitSg(&tx, segs, 1u);
+    TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
+
+    /* Total not frame-aligned => invalid parameter. */
+    segs[0].Length = 2u;
+    status = VirtioSndTxSubmitSg(&tx, segs, 1u);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    VirtioSndTxUninit(&tx);
+}
+
 static void test_tx_max_period_enforcement(void)
 {
     VIRTIOSND_TX_ENGINE tx;
@@ -215,6 +288,7 @@ int main(void)
     test_tx_submit_period_wrap_copies_both_segments_and_builds_sg();
     test_tx_no_free_buffers_drops_period();
     test_tx_queue_full_returns_buffer_to_pool();
+    test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits();
     test_tx_max_period_enforcement();
     test_tx_status_parsing_sets_fatal_on_bad_msg();
 

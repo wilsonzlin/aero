@@ -96,6 +96,16 @@ static void test_pcm_simple_req_packing(void)
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
 
+    status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_STOP);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(req.code == VIRTIO_SND_R_PCM_STOP);
+    TEST_ASSERT(req.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+
+    status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_RELEASE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(req.code == VIRTIO_SND_R_PCM_RELEASE);
+    TEST_ASSERT(req.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, 0xDEADu);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 }
@@ -171,4 +181,3 @@ int main(void)
     printf("virtiosnd_control_proto_tests: PASS\n");
     return 0;
 }
-
