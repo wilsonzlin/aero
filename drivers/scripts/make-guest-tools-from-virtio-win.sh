@@ -16,9 +16,9 @@ Options:
   --out-dir <dir>              Output directory (default: dist/guest-tools)
   --version <ver>              Package version (default: 0.0.0)
   --build-id <id>              Build ID (default: local)
-  --profile <minimal|full>     Packaging profile (default: minimal)
+  --profile <minimal|full>     Packaging profile (default: full)
   --signing-policy <policy>    Signing policy (test|production|none) (default: none)
-                               (legacy aliases: testsigning/test-signing -> test; nointegritychecks -> none; whql/prod -> production)
+                                (legacy aliases: testsigning/test-signing -> test; nointegritychecks -> none; whql/prod -> production)
   --keep-extracted             Do not delete the temporary extracted virtio-win root
   -h, --help                   Show this help
 
@@ -37,7 +37,7 @@ virtio_iso=""
 out_dir="${repo_root}/dist/guest-tools"
 version="0.0.0"
 build_id="local"
-profile="minimal"
+profile="full"
 signing_policy="none"
 keep_extracted=0
 passthru_args=()

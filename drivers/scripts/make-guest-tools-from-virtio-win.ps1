@@ -10,8 +10,8 @@ This script wraps:
 
 Use `-Profile` to choose a predictable driver set:
 
-- `minimal` (default): storage+network only (aligned with the "minimal" packaging spec)
-- `full`: includes optional audio/input drivers when present (best-effort)
+- `full` (default): includes optional audio/input drivers when present (best-effort)
+- `minimal`: storage+network only (aligned with the "minimal" packaging spec)
 
 Precedence:
 
@@ -65,10 +65,10 @@ param(
   [string]$CertPath,
 
   # Packaging profile:
-  # - minimal: storage+network only (default)
-  # - full: includes optional virtio audio/input drivers if present
+  # - full: includes optional virtio audio/input drivers if present (default)
+  # - minimal: storage+network only
   [ValidateSet("minimal", "full")]
-  [string]$Profile = "minimal",
+  [string]$Profile = "full",
 
   # Optional: override which driver packages are extracted from virtio-win.
   [string[]]$Drivers,

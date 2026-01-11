@@ -329,19 +329,19 @@ the generated `config/devices.cmd` matches upstream virtio-win driver service na
 
 Profiles (defaults):
 
-- `minimal` (default):
-  - `-Drivers @('viostor','netkvm')`
-  - `-SpecPath tools/packaging/specs/win7-virtio-win.json`
-- `full`:
+- `full` (default):
   - `-Drivers @('viostor','netkvm','viosnd','vioinput')`
   - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `minimal`:
+  - `-Drivers @('viostor','netkvm')`
+  - `-SpecPath tools/packaging/specs/win7-virtio-win.json`
 
-To include best-effort Win7 audio/input drivers when present in your virtio-win version, use `-Profile full`:
+To build storage+network-only Guest Tools media (no optional audio/input drivers), use `-Profile minimal`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile full `
+  -Profile minimal `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local

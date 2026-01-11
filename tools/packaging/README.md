@@ -61,8 +61,8 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-By default this wrapper uses `-Profile minimal` (storage + network only).
-To include best-effort Win7 audio/input drivers when present in your virtio-win version, use `-Profile full`.
+By default this wrapper uses `-Profile full` (includes best-effort Win7 audio/input drivers when present in your virtio-win version).
+To build storage+network-only Guest Tools media (no optional audio/input drivers), use `-Profile minimal`.
 
 On Linux/macOS you can run the same wrapper under PowerShell 7 (`pwsh`). When `Mount-DiskImage`
 is unavailable (or fails to mount), it automatically falls back to the cross-platform extractor:
@@ -79,8 +79,8 @@ Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio
 
 Profiles (defaults):
 
-- `-Profile minimal` (default): uses `tools/packaging/specs/win7-virtio-win.json`
-- `-Profile full`: uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json`
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 `-Drivers` also overrides the profile’s driver extraction list.
