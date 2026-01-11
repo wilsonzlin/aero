@@ -361,7 +361,7 @@ The interpreter can call `Mmu::translate()` (and then `MemoryBus::{read,write}_p
 
 To make RAM accesses cheap in JITed WASM, we expose a **small, fixed-layout TLB** in linear memory that the JIT can read directly, and we define a slow-path translation import and (for Tier-1) an MMIO exit helper:
 
-1. `mmu_translate(cpu_ptr: i32, jit_ctx_ptr: i32, vaddr: i64, access: i32) -> i64` — page table walk + permission checks, fills the JIT-visible TLB entry, and returns the packed translation word (`phys_page_base | flags`). The `access` code currently matches `aero_jit::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE}`. On a page fault, the runtime must exit the JIT and deliver `#PF`.
+1. `mmu_translate(cpu_ptr: i32, jit_ctx_ptr: i32, vaddr: i64, access: i32) -> i64` — page table walk + permission checks, fills the JIT-visible TLB entry, and returns the packed translation word (`phys_page_base | flags`). The `access` code currently matches `aero_jit_x86::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE}`. On a page fault, the runtime must exit the JIT and deliver `#PF`.
 2. `jit_exit_mmio(...)` — return to the runtime when the translated access resolves to MMIO/ROM/unmapped, so the normal device/memory routing code runs. (Tier-2 currently falls back to the imported `mem_read_*` / `mem_write_*` helpers instead of using a dedicated MMIO-exit import.)
 
 ### Current WASM ABI (`cpu_ptr` + `jit_ctx_ptr`)
@@ -386,7 +386,7 @@ Both Tier-1 blocks and Tier-2 traces use a 2-pointer ABI:
 
 The JIT-visible TLB is **not embedded in `CpuState`**. Instead it lives in a dedicated linear-memory region at `jit_ctx_ptr`.
 
-See: `crates/aero_jit/src/jit_ctx.rs`
+See: `crates/aero-jit-x86/src/jit_ctx.rs`
 
 ```rust
 pub const JIT_TLB_ENTRIES: usize = 256; // power-of-two for masking
@@ -450,7 +450,7 @@ flags:
   bits 5..11: reserved (page size, PAT/MTRR classification, etc.)
 ```
 
-In the current implementation these correspond to `aero_jit::{TLB_FLAG_READ, TLB_FLAG_WRITE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM}`; higher bits are reserved.
+In the current implementation these correspond to `aero_jit_x86::{TLB_FLAG_READ, TLB_FLAG_WRITE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM}`; higher bits are reserved.
 
 `IS_RAM` should only be set when the resolved physical range is backed by the emulator’s guest RAM buffer (not MMIO/ROM holes), i.e. when a direct `load/store` from WASM memory is semantically correct.
 
