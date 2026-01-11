@@ -65,6 +65,7 @@
   #include <d3d10umddi.h>
   #include <d3d10_1umddi.h>
   #include <d3d11umddi.h>
+  #include <d3dumddi.h>
 #else
 
 // "Runtime" handle types (opaque to the driver).
