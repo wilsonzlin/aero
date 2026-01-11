@@ -18,10 +18,13 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - HTTP GET to a configurable URL (WinHTTP)
 - **virtio-input**
   - Enumerate HID devices (SetupAPI via `GUID_DEVINTERFACE_HID`).
-  - Detect virtio-input devices by hardware ID containing `VEN_1AF4&DEV_1052`.
+  - Detect virtio-input devices by matching virtio-input PCI/HID IDs:
+    - `VEN_1AF4&DEV_1052` (modern) and `VEN_1AF4&DEV_1011` (transitional)
+    - or HID-style `VID_1AF4&PID_1052` / `VID_1AF4&PID_1011`
   - Read the HID report descriptor (`IOCTL_HID_GET_REPORT_DESCRIPTOR`) and sanity-check that:
-    - at least one HID keyboard application collection exists
-    - at least one HID mouse application collection exists
+    - at least one **keyboard-only** HID device exists
+    - at least one **mouse-only** HID device exists
+    - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
 - **virtio-snd**
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs (`PCI\VEN_1AF4&DEV_1059`).
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
