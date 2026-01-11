@@ -730,7 +730,6 @@ if (-not $Drivers -or $Drivers.Count -eq 0) {
   }
 
   $legacyToCanonical = @{
-    'win7/virtio-blk' = 'windows7/virtio/blk'
     'win7/virtio-net' = 'windows7/virtio/net'
   }
 
