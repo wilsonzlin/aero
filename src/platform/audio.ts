@@ -1,3 +1,5 @@
+import audioWorkletProcessorUrl from './audio-worklet-processor.js?worker&url';
+
 export type CreateAudioOutputOptions = {
   sampleRate?: number;
   latencyHint?: AudioContextLatencyCategory | number;
@@ -384,7 +386,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   }
 
   try {
-    await context.audioWorklet.addModule(new URL('./audio-worklet-processor.js', import.meta.url));
+    await context.audioWorklet.addModule(audioWorkletProcessorUrl);
   } catch (err) {
     await context.close();
     return {

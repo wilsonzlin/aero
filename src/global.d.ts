@@ -5,5 +5,8 @@ declare global {
   // Keep it `any`-typed so UI + worker code can attach helpers without fighting TS.
   // eslint-disable-next-line no-var
   var aero: any;
-}
 
+  interface Window {
+    aero?: any;
+  }
+}

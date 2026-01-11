@@ -31,7 +31,7 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     const channelCount = options?.processorOptions?.channelCount;
     const capacityFrames = options?.processorOptions?.capacityFrames;
 
-    if (ringBuffer instanceof SharedArrayBuffer) {
+    if (typeof SharedArrayBuffer !== 'undefined' && ringBuffer instanceof SharedArrayBuffer) {
       // Layout is described in `src/platform/audio.ts`.
       this._header = new Uint32Array(ringBuffer, 0, 4);
       this._samples = new Float32Array(ringBuffer, 16);

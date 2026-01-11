@@ -6,6 +6,7 @@ import {
   type MicRingBuffer,
   WRITE_POS_INDEX,
 } from "./mic_ring.js";
+import micWorkletProcessorUrl from "./mic-worklet-processor.js?worker&url";
 
 export { createMicRingBuffer, micRingBufferReadInto, type MicRingBuffer } from "./mic_ring.js";
 
@@ -136,9 +137,7 @@ export class MicCapture extends EventTarget {
 
       const useWorklet = this.options.preferWorklet && isAudioWorkletSupported();
       if (useWorklet) {
-        await audioContext.audioWorklet.addModule(
-          new URL("./mic-worklet-processor.js", import.meta.url).toString(),
-        );
+        await audioContext.audioWorklet.addModule(micWorkletProcessorUrl);
         const node = new AudioWorkletNode(audioContext, "aero-mic-capture", {
           numberOfInputs: 1,
           numberOfOutputs: 1,
