@@ -27,7 +27,11 @@ def check_wrapper_defaults() -> list[str]:
         return errors
 
     ps1_text = ps1_path.read_text(encoding="utf-8")
-    m = re.search(r"\[string\]\$Profile\s*=\s*['\"]([^'\"]+)['\"]", ps1_text)
+    m = re.search(
+        r"\[\s*string\s*\]\s*\$Profile\s*=\s*['\"]([^'\"]+)['\"]",
+        ps1_text,
+        flags=re.IGNORECASE,
+    )
     if not m:
         errors.append(f"Could not find default Profile parameter in {ps1_path}")
     else:
@@ -38,7 +42,7 @@ def check_wrapper_defaults() -> list[str]:
             )
 
     sh_text = sh_path.read_text(encoding="utf-8")
-    m = re.search(r"(?m)^\s*profile=['\"]([^'\"]+)['\"]\s*$", sh_text)
+    m = re.search(r"(?m)^\s*profile=['\"]([^'\"]+)['\"]\s*(?:#.*)?$", sh_text)
     if not m:
         errors.append(f"Could not find default profile=... assignment in {sh_path}")
     else:
