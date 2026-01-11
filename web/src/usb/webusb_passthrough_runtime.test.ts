@@ -391,6 +391,32 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(completion.status).toBe("error");
   });
 
+  it("pushes an error completion when WASM emits an action with an invalid byte array payload", async () => {
+    const port = new FakePort();
+    const rawAction = { kind: "bulkOut", id: 3, endpoint: 0x02, data: [1, 256] };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [rawAction]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
+    expect(reset).not.toHaveBeenCalled();
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    const completion = push_completion.mock.calls[0]?.[0] as UsbHostCompletion;
+    expect(completion.kind).toBe("bulkOut");
+    expect(completion.id).toBe(3);
+    expect(completion.status).toBe("error");
+  });
+
   it("resets the bridge when WASM emits an invalid action without id/kind", async () => {
     const port = new FakePort();
     const rawAction = { endpoint: 1, length: 8 };

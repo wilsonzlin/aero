@@ -95,7 +95,7 @@ function normalizeBytes(value: unknown): Uint8Array | null {
     return ensureTransferableBytes(new Uint8Array(value));
   }
   if (Array.isArray(value)) {
-    if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+    if (!value.every((v) => typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && v >= 0 && v <= 0xff)) return null;
     return Uint8Array.from(value as number[]);
   }
   return null;
