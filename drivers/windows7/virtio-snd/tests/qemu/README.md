@@ -227,14 +227,14 @@ Use either Device Manager or PnPUtil.
     - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
    - When prompted, pick the INF that matches your QEMU device configuration:
       - `aero-virtio-snd.inf` (recommended; modern `PCI\VEN_1AF4&DEV_1059&REV_01`)
-      - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional virtio-snd PCI ID)
+      - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional `PCI\VEN_1AF4&DEV_1018`)
 
 **PnPUtil (scriptable, elevated CMD):**
 
 ```bat
 pnputil -i -a X:\path\to\aero-virtio-snd.inf
 
-REM Stock QEMU (transitional virtio-snd device):
+REM Stock QEMU (transitional PCI\VEN_1AF4&DEV_1018):
 pnputil -i -a X:\path\to\aero-virtio-snd-legacy.inf
 ```
 
@@ -369,7 +369,7 @@ Then review:
   - For the contract-v1 package (`inf/aero-virtio-snd.inf`), the device must expose the revision-gated HWID
     `PCI\VEN_1AF4&DEV_1059&REV_01` and QEMU must be configured with `disable-legacy=on,x-pci-revision=0x01` (when supported).
   - For the QEMU compatibility package (`inf/aero-virtio-snd-legacy.inf`), do **not** set `disable-legacy=on` (it
-    removes the transitional PCI ID that the legacy INF matches).
+    removes the transitional HWID `PCI\VEN_1AF4&DEV_1018` that the legacy INF matches).
 - If your QEMU build cannot override revision IDs, the contract package will not bind; use the legacy package or
   upgrade/patch QEMU to expose `REV_01`.
 
@@ -383,8 +383,8 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 - Re-check the INF:
   - `inf/aero-virtio-snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01` (an optional
     `...&SUBSYS_00191AF4&REV_01` match is present but commented out).
-  - `inf/aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI
-    ID and does not require `REV_01`).
+  - `inf/aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd HWID
+    `PCI\VEN_1AF4&DEV_1018` and does not require `REV_01`).
   - The INF must register the correct audio/KS interfaces for render (e.g. `KSCATEGORY_AUDIO`, `KSCATEGORY_RENDER`).
 
 If you are iterating on INF/miniport registration, remove the device from Device Manager (and delete the driver package if requested) before reinstalling so updated INF state is applied.
