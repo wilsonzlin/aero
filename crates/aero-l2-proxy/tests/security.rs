@@ -1123,6 +1123,27 @@ async fn trust_proxy_host_allows_forwarded_host_to_satisfy_allowlist() {
 
         proxy.shutdown().await;
     }
+
+    // When trusting proxy host headers, accept the RFC7239 Forwarded header as well.
+    {
+        let _trust_proxy_host = EnvVarGuard::set("AERO_L2_TRUST_PROXY_HOST", "1");
+
+        let cfg = ProxyConfig::from_env().unwrap();
+        let proxy = start_server(cfg).await.unwrap();
+        let addr = proxy.local_addr();
+
+        let mut req = base_ws_request(addr);
+        req.headers_mut()
+            .insert("host", HeaderValue::from_static("blocked.test"));
+        req.headers_mut().insert(
+            "forwarded",
+            HeaderValue::from_static("for=203.0.113.1;host=\"allowed.test:443\";proto=\"https\""),
+        );
+        let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+        let _ = ws.send(Message::Close(None)).await;
+
+        proxy.shutdown().await;
+    }
 }
 
 #[tokio::test]
