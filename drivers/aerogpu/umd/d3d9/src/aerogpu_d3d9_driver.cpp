@@ -729,6 +729,11 @@ AEROGPU_D3D9_DEFINE_HAS_MEMBER(resource_count);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(NumResources);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(data_size);
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(DataSize);
+// Per-allocation private driver data blob fields (shared resources/OpenResource).
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(pPrivateDriverData);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(pKmdAllocPrivateData);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(PrivateDriverDataSize);
+AEROGPU_D3D9_DEFINE_HAS_MEMBER(private_driver_data_size);
 
 // Blt/ColorFill/Update* fields.
 AEROGPU_D3D9_DEFINE_HAS_MEMBER(hDst);
@@ -757,6 +762,17 @@ uint32_t d3d9_resource_type(const ArgsT& args) {
 }
 
 template <typename ArgsT>
+uint32_t d3d9_optional_resource_type(const ArgsT& args) {
+  if constexpr (aerogpu_d3d9_has_member_Type<ArgsT>::value) {
+    return static_cast<uint32_t>(args.Type);
+  } else if constexpr (aerogpu_d3d9_has_member_type<ArgsT>::value) {
+    return static_cast<uint32_t>(args.type);
+  } else {
+    return 0u;
+  }
+}
+
+template <typename ArgsT>
 uint32_t d3d9_resource_format(const ArgsT& args) {
   if constexpr (aerogpu_d3d9_has_member_Format<ArgsT>::value) {
     return static_cast<uint32_t>(args.Format);
@@ -764,6 +780,17 @@ uint32_t d3d9_resource_format(const ArgsT& args) {
     return static_cast<uint32_t>(args.format);
   } else {
     static_assert(aerogpu_d3d9_always_false<ArgsT>::value, "D3D9 resource args missing Format/format member");
+  }
+}
+
+template <typename ArgsT>
+uint32_t d3d9_optional_resource_format(const ArgsT& args) {
+  if constexpr (aerogpu_d3d9_has_member_Format<ArgsT>::value) {
+    return static_cast<uint32_t>(args.Format);
+  } else if constexpr (aerogpu_d3d9_has_member_format<ArgsT>::value) {
+    return static_cast<uint32_t>(args.format);
+  } else {
+    return 0u;
   }
 }
 
@@ -779,6 +806,17 @@ uint32_t d3d9_resource_width(const ArgsT& args) {
 }
 
 template <typename ArgsT>
+uint32_t d3d9_optional_resource_width(const ArgsT& args) {
+  if constexpr (aerogpu_d3d9_has_member_Width<ArgsT>::value) {
+    return static_cast<uint32_t>(args.Width);
+  } else if constexpr (aerogpu_d3d9_has_member_width<ArgsT>::value) {
+    return static_cast<uint32_t>(args.width);
+  } else {
+    return 0u;
+  }
+}
+
+template <typename ArgsT>
 uint32_t d3d9_resource_height(const ArgsT& args) {
   if constexpr (aerogpu_d3d9_has_member_Height<ArgsT>::value) {
     return static_cast<uint32_t>(args.Height);
@@ -786,6 +824,17 @@ uint32_t d3d9_resource_height(const ArgsT& args) {
     return static_cast<uint32_t>(args.height);
   } else {
     static_assert(aerogpu_d3d9_always_false<ArgsT>::value, "D3D9 resource args missing Height/height member");
+  }
+}
+
+template <typename ArgsT>
+uint32_t d3d9_optional_resource_height(const ArgsT& args) {
+  if constexpr (aerogpu_d3d9_has_member_Height<ArgsT>::value) {
+    return static_cast<uint32_t>(args.Height);
+  } else if constexpr (aerogpu_d3d9_has_member_height<ArgsT>::value) {
+    return static_cast<uint32_t>(args.height);
+  } else {
+    return 0u;
   }
 }
 
@@ -1148,6 +1197,28 @@ uint32_t d3d9_query_data_size(const QueryDataT& args) {
     return static_cast<uint32_t>(args.DataSize);
   } else if constexpr (aerogpu_d3d9_has_member_data_size<QueryDataT>::value) {
     return static_cast<uint32_t>(args.data_size);
+  } else {
+    return 0u;
+  }
+}
+
+template <typename ArgsT>
+const void* d3d9_private_driver_data_ptr(const ArgsT& args) {
+  if constexpr (aerogpu_d3d9_has_member_pPrivateDriverData<ArgsT>::value) {
+    return args.pPrivateDriverData;
+  } else if constexpr (aerogpu_d3d9_has_member_pKmdAllocPrivateData<ArgsT>::value) {
+    return args.pKmdAllocPrivateData;
+  } else {
+    return nullptr;
+  }
+}
+
+template <typename ArgsT>
+uint32_t d3d9_private_driver_data_size(const ArgsT& args) {
+  if constexpr (aerogpu_d3d9_has_member_PrivateDriverDataSize<ArgsT>::value) {
+    return static_cast<uint32_t>(args.PrivateDriverDataSize);
+  } else if constexpr (aerogpu_d3d9_has_member_private_driver_data_size<ArgsT>::value) {
+    return static_cast<uint32_t>(args.private_driver_data_size);
   } else {
     return 0u;
   }
@@ -4752,13 +4823,8 @@ static HRESULT device_open_resource_impl(
     return E_FAIL;
   }
 
-  const void* priv_data = pOpenResource->pPrivateDriverData;
-  const uint32_t priv_data_size =
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-      pOpenResource->PrivateDriverDataSize;
-#else
-      pOpenResource->private_driver_data_size;
-#endif
+  const void* priv_data = d3d9_private_driver_data_ptr(*pOpenResource);
+  const uint32_t priv_data_size = d3d9_private_driver_data_size(*pOpenResource);
 
   if (!priv_data || priv_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
     return E_INVALIDARG;
@@ -4798,24 +4864,15 @@ static HRESULT device_open_resource_impl(
   // not include a full resource description, so treat all description fields as
   // optional and fall back to the encoded `priv.reserved0` description when
   // available.
-  res->type = 0;
-  res->format = 0;
-  res->width = 0;
-  res->height = 0;
-  res->depth = 1;
-  res->mip_levels = 1;
-  res->usage = 0;
-  uint32_t open_size_bytes = 0;
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
-  res->type = pOpenResource->type;
-  res->format = pOpenResource->format;
-  res->width = pOpenResource->width;
-  res->height = pOpenResource->height;
-  res->depth = std::max(1u, pOpenResource->depth);
-  res->mip_levels = std::max(1u, pOpenResource->mip_levels);
-  res->usage = pOpenResource->usage;
-  open_size_bytes = pOpenResource->size;
-#endif
+  res->type = d3d9_optional_resource_type(*pOpenResource);
+  res->format = static_cast<D3DDDIFORMAT>(d3d9_optional_resource_format(*pOpenResource));
+  res->width = d3d9_optional_resource_width(*pOpenResource);
+  res->height = d3d9_optional_resource_height(*pOpenResource);
+  res->depth = std::max(1u, d3d9_resource_depth(*pOpenResource));
+  res->mip_levels = std::max(1u, d3d9_resource_mip_levels(*pOpenResource));
+  res->usage = d3d9_resource_usage(*pOpenResource);
+  res->pool = d3d9_resource_pool(*pOpenResource);
+  const uint32_t open_size_bytes = d3d9_resource_size(*pOpenResource);
 
   uint32_t desc_format = 0;
   uint32_t desc_width = 0;
@@ -4906,11 +4963,17 @@ HRESULT AEROGPU_D3D9_CALL device_open_resource(
   uint64_t arg1 = d3d9_trace_arg_ptr(pOpenResource);
   uint64_t arg2 = 0;
   uint64_t arg3 = 0;
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
-  arg1 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
-  arg2 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
-  arg3 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->usage, pOpenResource->private_driver_data_size) : 0;
-#endif
+  if constexpr (aerogpu_d3d9_has_member_Type<D3D9DDIARG_OPENRESOURCE>::value || aerogpu_d3d9_has_member_type<D3D9DDIARG_OPENRESOURCE>::value ||
+                aerogpu_d3d9_has_member_Width<D3D9DDIARG_OPENRESOURCE>::value || aerogpu_d3d9_has_member_width<D3D9DDIARG_OPENRESOURCE>::value ||
+                aerogpu_d3d9_has_member_Height<D3D9DDIARG_OPENRESOURCE>::value || aerogpu_d3d9_has_member_height<D3D9DDIARG_OPENRESOURCE>::value) {
+    arg1 = pOpenResource
+               ? d3d9_trace_pack_u32_u32(d3d9_optional_resource_type(*pOpenResource), d3d9_optional_resource_format(*pOpenResource))
+               : 0;
+    arg2 = pOpenResource
+               ? d3d9_trace_pack_u32_u32(d3d9_optional_resource_width(*pOpenResource), d3d9_optional_resource_height(*pOpenResource))
+               : 0;
+    arg3 = pOpenResource ? d3d9_trace_pack_u32_u32(d3d9_resource_usage(*pOpenResource), d3d9_private_driver_data_size(*pOpenResource)) : 0;
+  }
   D3d9TraceCall trace(D3d9TraceFunc::DeviceOpenResource, arg0, arg1, arg2, arg3);
   return trace.ret(device_open_resource_impl(hDevice, pOpenResource));
 }
@@ -4922,11 +4985,17 @@ HRESULT AEROGPU_D3D9_CALL device_open_resource2(
   uint64_t arg1 = d3d9_trace_arg_ptr(pOpenResource);
   uint64_t arg2 = 0;
   uint64_t arg3 = 0;
-#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
-  arg1 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
-  arg2 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
-  arg3 = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->usage, pOpenResource->private_driver_data_size) : 0;
-#endif
+  if constexpr (aerogpu_d3d9_has_member_Type<D3D9DDIARG_OPENRESOURCE>::value || aerogpu_d3d9_has_member_type<D3D9DDIARG_OPENRESOURCE>::value ||
+                aerogpu_d3d9_has_member_Width<D3D9DDIARG_OPENRESOURCE>::value || aerogpu_d3d9_has_member_width<D3D9DDIARG_OPENRESOURCE>::value ||
+                aerogpu_d3d9_has_member_Height<D3D9DDIARG_OPENRESOURCE>::value || aerogpu_d3d9_has_member_height<D3D9DDIARG_OPENRESOURCE>::value) {
+    arg1 = pOpenResource
+               ? d3d9_trace_pack_u32_u32(d3d9_optional_resource_type(*pOpenResource), d3d9_optional_resource_format(*pOpenResource))
+               : 0;
+    arg2 = pOpenResource
+               ? d3d9_trace_pack_u32_u32(d3d9_optional_resource_width(*pOpenResource), d3d9_optional_resource_height(*pOpenResource))
+               : 0;
+    arg3 = pOpenResource ? d3d9_trace_pack_u32_u32(d3d9_resource_usage(*pOpenResource), d3d9_private_driver_data_size(*pOpenResource)) : 0;
+  }
   D3d9TraceCall trace(D3d9TraceFunc::DeviceOpenResource2, arg0, arg1, arg2, arg3);
   return trace.ret(device_open_resource_impl(hDevice, pOpenResource));
 }
