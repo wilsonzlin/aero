@@ -288,27 +288,33 @@ impl Tier1WasmCodegen {
         func.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
         if options.inline_tlb {
-            // Cache the code-version table pointer and length in locals so the RAM write fast-path
-            // can bump code page versions without repeated loads from `cpu_ptr`.
-            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-            func.instruction(&Instruction::I32Load(memarg(
-                jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
-                2,
-            )));
-            func.instruction(&Instruction::I64ExtendI32U);
-            func.instruction(&Instruction::LocalSet(
-                layout.code_version_table_ptr_local(),
-            ));
+            let has_store_mem = block
+                .insts
+                .iter()
+                .any(|inst| matches!(inst, IrInst::Store { .. }));
+            if has_store_mem {
+                // Cache the code-version table pointer and length in locals so the RAM write
+                // fast-path can bump code page versions without repeated loads from `cpu_ptr`.
+                func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+                func.instruction(&Instruction::I32Load(memarg(
+                    jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
+                    2,
+                )));
+                func.instruction(&Instruction::I64ExtendI32U);
+                func.instruction(&Instruction::LocalSet(
+                    layout.code_version_table_ptr_local(),
+                ));
 
-            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-            func.instruction(&Instruction::I32Load(memarg(
-                jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
-                2,
-            )));
-            func.instruction(&Instruction::I64ExtendI32U);
-            func.instruction(&Instruction::LocalSet(
-                layout.code_version_table_len_local(),
-            ));
+                func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+                func.instruction(&Instruction::I32Load(memarg(
+                    jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+                    2,
+                )));
+                func.instruction(&Instruction::I64ExtendI32U);
+                func.instruction(&Instruction::LocalSet(
+                    layout.code_version_table_len_local(),
+                ));
+            }
 
             // Load JIT metadata (guest RAM base and TLB salt).
             func.instruction(&Instruction::LocalGet(layout.jit_ctx_ptr_local()));

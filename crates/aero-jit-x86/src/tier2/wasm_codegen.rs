@@ -96,8 +96,11 @@ impl Tier2WasmCodegen {
             .any(|inst| matches!(inst, Instr::GuardCodeVersion { .. }));
         let needs_code_page_version_import =
             options.code_version_guard_import && has_code_version_guards;
-        let needs_code_version_table =
-            options.inline_tlb || (!options.code_version_guard_import && has_code_version_guards);
+        let has_store_mem = trace
+            .iter_instrs()
+            .any(|inst| matches!(inst, Instr::StoreMem { .. }));
+        let needs_code_version_table = (options.inline_tlb && has_store_mem)
+            || (!options.code_version_guard_import && has_code_version_guards);
 
         let value_count = max_value_id(trace).max(1);
         let code_version_locals: u32 = if needs_code_version_table { 2 } else { 0 };
