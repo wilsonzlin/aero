@@ -94,6 +94,10 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
   is clamped to a small constant range (currently 20–40 lines).
 
 ## Stable `alloc_id` / `share_token` (shared allocations)
+If vblank timing registers are not available, the driver falls back to a synthetic cadence based on
+`KeQueryInterruptTime()` (to avoid apps busy-waiting forever).
+
+## Stable `alloc_id` / `share_token` (shared allocations)
 
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
 
