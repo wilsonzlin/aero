@@ -132,8 +132,8 @@ To add a new driver to CI packaging:
 
 1. Copy `drivers/_template/ci-package.json` into your driver root as `ci-package.json`
 2. Update the `$schema` relative path as needed
-3. Optionally set `infFiles` to an explicit allowlist (recommended if the driver directory contains multiple INFs).
-   - If omitted, CI auto-discovers all `*.inf` files under the driver directory.
+3. Replace the `infFiles` placeholder (or remove the `infFiles` key to enable CI auto-discovery of all `*.inf` files under the driver directory).
+   - If the driver directory contains multiple INFs, an explicit `infFiles` allowlist is recommended to avoid packaging unrelated variants together.
 4. Optionally set `wow64Files` if the x64 package needs specific 32-bit user-mode payload DLLs copied in from the x86 build output (WOW64 components).
    - Ensure WOW64 DLL names do not collide with 64-bit build output names, since WOW64 payloads are copied into the x64 package root.
 
@@ -145,7 +145,7 @@ See also the examples under `drivers/_template/`:
 
 > Note: CI only builds/stages drivers with `ci-package.json`; drivers without it are treated as dev/test and skipped.
 >
-> `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and **is CI-packaged** (it contains `ci-package.json`). Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if multiple driver packages are staged or you bulk-install from a driver bundle.
+> `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
 >
 > `drivers/windows/virtio-input/` is CI-packaged and binds to the Aero Win7 virtio contract v1 HWIDs (`PCI\VEN_1AF4&DEV_1052&REV_01`, plus the more specific `...&SUBSYS_...&REV_01` keyboard/mouse variants). Keep its INF/HWID matches unique (avoid duplicate INFs that bind the same IDs) so Guest Tools packaging and the Win7 host harness remain deterministic.
 
@@ -235,7 +235,7 @@ The packaged artifacts include:
 - `aero-test.cer`
 - `INSTALL.txt` with the exact commands for test signing + certificate import + `pnputil`
 
-These driver bundle artifacts include **all** staged CI-packaged drivers under `out/packages/`. Some CI-packaged drivers may be dev/test-oriented (for example `virtio-transport-test`) but are safe to ship in the bundle as long as their INF does not bind production HWIDs.
+These driver bundle artifacts include **all** staged CI-packaged drivers under `out/packages/`. If you opt a dev/test driver into CI packaging, it will appear in the bundle artifacts; ensure its INF does not bind production HWIDs so it cannot steal device binding when multiple driver packages are present.
 
 ### 6) Package Guest Tools media (ISO/ZIP) (optional)
 
@@ -244,7 +244,7 @@ These driver bundle artifacts include **all** staged CI-packaged drivers under `
 - **CI/release workflows:** `tools/packaging/specs/win7-signed.json`
 - **Local default (when `-SpecPath` is omitted):** `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
 
-This means a driver can be CI-packaged (built + cataloged + signed) and appear in the driver bundle artifacts, but still be omitted from Guest Tools if it is not selected by the spec (for example `virtio-transport-test`).
+This means a driver can be CI-packaged (built + cataloged + signed) and appear in the driver bundle artifacts, but still be omitted from Guest Tools if it is not selected by the spec.
 
 ```powershell
 .\ci\package-guest-tools.ps1 -InputRoot .\out\packages -CertPath .\out\certs\aero-test.cer -OutDir .\out\artifacts -SpecPath .\tools\packaging\specs\win7-signed.json
