@@ -80,10 +80,10 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireNonSilence,
 
-  # If set, accept the transitional virtio-snd PCI ID (`DEV_1018`) in the guest selftest.
+  # If set, accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest.
   # This adds `--allow-virtio-snd-transitional` to the scheduled task.
   #
-  # Note: The host harness's virtio-snd test path expects a modern-only virtio-snd device (DEV_1059&REV_01).
+  # Note: The host harness's virtio-snd test path expects a modern-only virtio-snd device (PCI\VEN_1AF4&DEV_1059&REV_01).
   # This flag is intended for debugging/backcompat when running the guest selftest outside the strict harness setup.
   [Parameter(Mandatory = $false)]
   [switch]$AllowVirtioSndTransitional
@@ -180,12 +180,12 @@ $defaultInfAllowList = @(
   "virtio-input.inf",
   "aero-virtio-snd.inf"
 )
-if ($AllowVirtioSndTransitional) {
-  # When we allow the transitional virtio-snd PCI ID in the guest selftest, also stage the optional
-  # transitional driver package by default (if present in the provided drivers directory).
-  # This is a no-op in strict contract-v1 setups since the legacy INF matches only DEV_1018.
-  $defaultInfAllowList += "aero-virtio-snd-legacy.inf"
-}
+  if ($AllowVirtioSndTransitional) {
+    # When we allow the transitional virtio-snd PCI ID in the guest selftest, also stage the optional
+    # transitional driver package by default (if present in the provided drivers directory).
+    # This is a no-op in strict contract-v1 setups since the legacy INF matches only PCI\VEN_1AF4&DEV_1018.
+    $defaultInfAllowList += "aero-virtio-snd-legacy.inf"
+  }
 
 $installDriversCmd = ""
 $readmeDriverInstallDesc = ""
@@ -456,7 +456,7 @@ Notes:
  - To run the virtio-snd capture smoke test (if a capture endpoint exists), generate this media with `-TestSndCapture` (adds `--test-snd-capture`).
    - Use `-RequireSndCapture` to fail if no capture endpoint exists.
    - Use `-RequireNonSilence` to fail if only silence is captured.
- - To accept the transitional virtio-snd PCI ID (`DEV_1018`) in the guest selftest, generate this media with
+ - To accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest, generate this media with
    `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
  - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@

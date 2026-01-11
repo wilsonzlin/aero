@@ -13,7 +13,7 @@ virtio-blk/virtio-net/virtio-input so the Win7 drivers bind to the Aero contract
 
 When `--with-virtio-snd` is enabled, the harness also configures virtio-snd as a modern-only
 virtio-pci device and forces the Aero contract v1 revision (`disable-legacy=on,x-pci-revision=0x01`)
-so the canonical Win7 INF (`aero-virtio-snd.inf`) can bind to `DEV_1059&REV_01` under QEMU.
+so the canonical Win7 INF (`aero-virtio-snd.inf`) can bind to `PCI\\VEN_1AF4&DEV_1059&REV_01` under QEMU.
 
 Use `--virtio-transitional` to opt back into QEMU's default transitional devices (legacy + modern)
 for older QEMU builds (or when intentionally testing legacy driver packages).
@@ -1079,7 +1079,7 @@ def _get_qemu_virtio_sound_device_arg(
 
     The Aero Win7 virtio-snd contract v1 expects the modern virtio-pci ID space (`DEV_1059`) and
     PCI Revision ID 0x01 (`REV_01`). The canonical Win7 INF (`aero-virtio-snd.inf`) is intentionally
-    strict and matches only `DEV_1059&REV_01`, so we force `disable-legacy=on,x-pci-revision=0x01`.
+    strict and matches only `PCI\\VEN_1AF4&DEV_1059&REV_01`, so we force `disable-legacy=on,x-pci-revision=0x01`.
     """
     device_name = _detect_virtio_snd_device(qemu_system)
     help_text = _qemu_device_help_text(qemu_system, device_name)

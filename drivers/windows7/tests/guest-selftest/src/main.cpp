@@ -59,7 +59,7 @@ struct Options {
   bool require_snd_capture = false;
   // If set, run a capture smoke test when a virtio-snd capture endpoint is present.
   bool test_snd_capture = false;
-  // Allow matching virtio-snd transitional PCI IDs (DEV_1018). Aero contract v1 is modern-only.
+  // Allow matching virtio-snd transitional PCI IDs (PCI\VEN_1AF4&DEV_1018). Aero contract v1 is modern-only.
   bool allow_virtio_snd_transitional = false;
   // When running a capture smoke test, require at least one non-silent capture buffer.
   bool require_non_silence = false;
@@ -469,8 +469,8 @@ static VirtioSndPciIdInfo GetVirtioSndPciIdInfoFromString(const std::wstring& s)
   VirtioSndPciIdInfo out{};
   if (StartsWithInsensitive(s, L"PCI\\VEN_1AF4&DEV_1059")) {
     out.modern = true;
-    // The Aero contract v1 in-tree INF matches DEV_1059&REV_01, but some callers may only surface
-    // the device+subsystem IDs. Treat REV_01 as a "nice to have" signal for logging/scoring.
+    // The Aero contract v1 in-tree INF matches PCI\VEN_1AF4&DEV_1059&REV_01, but some callers may only surface the
+    // device+subsystem IDs. Treat REV_01 as a "nice to have" signal for logging/scoring.
     if (ContainsInsensitive(s, L"&REV_01")) out.modern_rev01 = true;
   }
   if (StartsWithInsensitive(s, L"PCI\\VEN_1AF4&DEV_1018")) {
@@ -3684,7 +3684,7 @@ int wmain(int argc, wchar_t** argv) {
 
     if (snd_pci.empty()) {
       if (opt.allow_virtio_snd_transitional) {
-        log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 (or legacy DEV_1018) device not detected");
+        log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 (or legacy PCI\\VEN_1AF4&DEV_1018) device not detected");
       } else {
         log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected (contract v1 modern-only)");
       }
