@@ -255,6 +255,27 @@ For `aerogpu_dx11.inf`, the expected install on x64 is:
 - Native x64 processes load: `C:\Windows\System32\aerogpu_d3d10_x64.dll` (`UserModeDriverName`)
 - WOW64 (32-bit) processes load: `C:\Windows\SysWOW64\aerogpu_d3d10.dll` (`UserModeDriverNameWow`)
 
+### 6.1.1) Quick registry check (no extra tools)
+
+You can sanity-check the **UMD registry values** written by the INF using `reg query`:
+
+```bat
+:: D3D9 (x64 key + WOW64 key)
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v InstalledDisplayDrivers
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v InstalledDisplayDriversWow
+
+:: D3D10/11 (x64 key + WOW64 key; requires aerogpu_dx11.inf)
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v UserModeDriverName
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v UserModeDriverNameWow
+```
+
+Expected values (from `aerogpu_dx11.inf`):
+
+- `UserModeDriverName = aerogpu_d3d10_x64.dll` (x64 only)
+- `UserModeDriverNameWow = aerogpu_d3d10.dll` (x64 only)
+
+### 6.1.2) Confirm the real DLL loaded in-process
+
 To confirm the **real** AeroGPU UMD loaded for a given process bitness:
 
 1. Run the relevant test executable:
@@ -264,12 +285,12 @@ To confirm the **real** AeroGPU UMD loaded for a given process bitness:
    - **Process Explorer**: select the process → View → *Lower Pane View* → *DLLs*, then look for:
      - D3D9: `aerogpu_d3d9.dll` (x86) or `aerogpu_d3d9_x64.dll` (x64)
      - D3D10/11: `aerogpu_d3d10.dll` (x86) or `aerogpu_d3d10_x64.dll` (x64)
-   - **DebugView**: capture `OutputDebugString` output from the UMDs.
-     - D3D9 logs `aerogpu-d3d9: module_path=...` and `aerogpu-d3d9: OpenAdapter...`
-     - D3D10/11 logs `aerogpu-d3d10_11: module_path=...` and `aerogpu-d3d10_11: OpenAdapter.. ...`
-       - Optional: set `AEROGPU_D3D10_11_LOG=1` before launching the app to enable verbose `AEROGPU_D3D11DDI:` call traces.
+    - **DebugView**: capture `OutputDebugString` output from the UMDs.
+      - D3D9 logs `aerogpu-d3d9: module_path=...` and `aerogpu-d3d9: OpenAdapter...`
+      - D3D10/11 logs `aerogpu-d3d10_11: module_path=...` and `aerogpu-d3d10_11: OpenAdapter.. ...`
+        - Note: on Release builds, set `AEROGPU_D3D10_11_LOG=1` before launching the app to enable `AEROGPU_D3D11DDI:` call traces (and the `module_path=...` line).
 3. (Optional) After each run, confirm fences advance:
-   - `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --query-fence`
+    - `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --query-fence`
 
 ## 6.2) Optional: run the AeroGPU debug/control tool (dbgctl)
 
