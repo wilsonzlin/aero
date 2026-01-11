@@ -5,6 +5,9 @@ This document defines the **wire protocol** for tunneling **raw Ethernet frames 
 - a browser client (emulated NIC), and
 - an Aero proxy (user-space network stack / NAT / policy enforcement).
 
+**Final decision:** [ADR 0005: Networking via L2 tunnel (Option C) to an unprivileged proxy](./adr/0005-networking-l2-tunnel.md).  
+For background and tradeoffs, see [`networking-architecture-rfc.md`](./networking-architecture-rfc.md).
+
 The protocol is designed to be used over:
 
 - **WebSocket** (browser ↔ proxy)
@@ -38,7 +41,11 @@ fall back to a different framing).
   streaming framing / reassembly beyond what SCTP provides for a single message).
 
 Reliability/ordering are transport-level policy decisions; the protocol itself is message-oriented.
-If in doubt, use reliable/ordered (WebSocket-like) semantics.
+
+For Aero production deployments (ADR 0005):
+
+- WebRTC DataChannels that carry the L2 tunnel MUST be **reliable** (no partial reliability),
+- unordered delivery is permitted.
 
 ---
 
