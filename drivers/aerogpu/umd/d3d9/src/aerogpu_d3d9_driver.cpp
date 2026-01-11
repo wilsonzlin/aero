@@ -6527,21 +6527,34 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
     const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
     const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
-    const WddmHandle kmt_adapter = static_cast<WddmHandle>(adapter->kmd_query.GetKmtAdapterHandle());
     const bool has_wait_fn = (load_d3dkmt_wait_for_sync_object() != nullptr);
 
-    const char* wait_mode = "polling";
-    if (has_sync_object && kmt_adapter != 0 && has_wait_fn) {
-      wait_mode = "sync_object";
+    const bool sync_object_wait_available = has_sync_object && has_wait_fn;
+
+    // `wait_for_fence()` uses different mechanisms depending on whether the caller
+    // is doing a bounded wait (PresentEx throttling) or a non-blocking poll (EVENT
+    // queries / GetData). Log both to make bring-up debugging on Win7 clearer.
+    const char* bounded_wait_mode = "polling";
+    if (sync_object_wait_available) {
+      bounded_wait_mode = "sync_object";
     } else if (kmd_query_available) {
-      wait_mode = "kmd_query";
+      bounded_wait_mode = "kmd_query";
     }
 
-    std::call_once(wddm_diag_once, [patch_list_present, wait_mode, has_sync_object, kmd_query_available] {
+    const char* poll_wait_mode = "polling";
+    if (kmd_query_available) {
+      poll_wait_mode = "kmd_query";
+    } else if (sync_object_wait_available) {
+      poll_wait_mode = "sync_object";
+    }
+
+    std::call_once(wddm_diag_once,
+                   [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
       aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
                     patch_list_present ? "present" : "absent");
-      aerogpu::logf("aerogpu-d3d9: fence_wait=%s (hSyncObject=%s kmd_query=%s)\n",
-                    wait_mode,
+      aerogpu::logf("aerogpu-d3d9: fence_wait bounded=%s poll=%s (hSyncObject=%s kmd_query=%s)\n",
+                    bounded_wait_mode,
+                    poll_wait_mode,
                     has_sync_object ? "present" : "absent",
                     kmd_query_available ? "available" : "unavailable");
     });
