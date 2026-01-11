@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeCollections } from '../web/src/hid/webhid_normalize.ts';
+import { MAX_RANGE_CONTIGUITY_CHECK_LEN, normalizeCollections } from '../web/src/hid/webhid_normalize.ts';
 
 function makeItem(overrides = {}) {
   return {
@@ -63,4 +63,27 @@ test('webhid_normalize: downgrades non-contiguous ranges', () => {
   const out = normalizeSingleItem(makeItem({ isRange: true, usages: [1, 3, 4], usageMinimum: 1, usageMaximum: 4 }));
   assert.equal(out.isRange, false);
   assert.deepEqual(out.usages, [1, 3, 4]);
+});
+
+test('webhid_normalize: does not iterate huge usages lists for isRange items', () => {
+  const hugeUsages = {
+    length: MAX_RANGE_CONTIGUITY_CHECK_LEN + 1,
+    [Symbol.iterator]() {
+      throw new Error('should not iterate huge usages');
+    },
+  };
+
+  const out = normalizeSingleItem(
+    makeItem({
+      isRange: true,
+      usages: hugeUsages,
+      usageMinimum: 1,
+      usageMaximum: 12345,
+    }),
+  );
+
+  assert.equal(out.isRange, true);
+  assert.ok(Array.isArray(out.usages));
+  assert.ok(out.usages.length <= 2);
+  assert.deepEqual(out.usages, [1, 12345]);
 });

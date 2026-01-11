@@ -80,7 +80,7 @@ export interface NormalizedHidCollectionInfo {
 export type NormalizedHidReportInfo = HidReportInfo;
 export type NormalizedHidReportItem = HidReportItem;
 
-const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
+export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
 
 function normalizeCollectionType(type: HidCollectionType): HidCollectionTypeCode {
   switch (type) {
