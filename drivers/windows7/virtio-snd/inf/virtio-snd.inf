@@ -23,22 +23,21 @@ CatalogFile = virtio-snd.cat
 ; 0x1059, Revision ID 0x01 (see `docs/windows7-virtio-driver-contract.md`).
 ;
 ; This driver uses the virtio-pci **modern** transport (MMIO + vendor-specific
-; capabilities). It prefers the modern/non-transitional virtio-snd ID
-; (`DEV_1059`). The transitional ID (`DEV_1018`) is also matched for
-; compatibility with hypervisors that expose legacy+modern virtio frontends by
-; default; the driver still uses the modern interface.
+; capabilities) and binds to the modern/non-transitional virtio-snd ID
+; (`DEV_1059`).
+;
+; If the device enumerates as the transitional ID (`DEV_1018`), the Aero INF /
+; contract v1 is intentionally **modern-only**; configure the hypervisor for
+; modern enumeration (e.g. QEMU `disable-legacy=on`) so Windows sees `DEV_1059`.
 ;
 ; The REV_01 match is listed first to prefer contract v1 devices; the driver still
 ; validates Revision ID at runtime.
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
-; Transitional (legacy+modern) virtio-snd device ID (optional).
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 
 [DestinationDirs]
 VirtioSnd.CopyFiles = 12

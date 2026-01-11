@@ -33,6 +33,8 @@ drivers/windows7/tests/
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled with `--test-snd`
   (or `--require-snd`).
   - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059`).
+    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID `DEV_1018`,
+      which is intentionally **not** supported by the Aero INF/contract v1 (and the test will fail to find the device).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`

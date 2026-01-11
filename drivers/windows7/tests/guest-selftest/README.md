@@ -28,6 +28,9 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
 - **virtio-snd** (optional; enable with `--test-snd` / `--require-snd`)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
+    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
+      `PCI\VEN_1AF4&DEV_1018`. The Aero INF/contract v1 is **modern-only**, so the device will not bind and
+      the selftest will treat the device as missing.
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
