@@ -284,9 +284,13 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_resource) == 16);
 
 /*
  * RESOURCE_DIRTY_RANGE:
- * Notifies the host that a CPU write has modified the backing memory for a
- * resource. The host should re-upload the dirty range before the resource is
- * consumed by subsequent commands.
+ * Notifies the host that a CPU write has modified the guest backing memory for
+ * a resource. The host should re-upload the dirty range from guest memory
+ * before the resource is consumed by subsequent commands.
+ *
+ * This is only meaningful for guest-backed resources (`backing_alloc_id != 0`).
+ * Host-owned resources (`backing_alloc_id == 0`) should be updated via
+ * `UPLOAD_RESOURCE` instead.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_resource_dirty_range {
