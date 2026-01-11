@@ -4,11 +4,10 @@
 ;
 ; IMPORTANT:
 ;   - The Hardware ID(s) below MUST match the AeroGPU PCI device model.
-;   - Default HWID is from drivers/aerogpu/protocol/aerogpu_pci.h:
-;       PCI\VEN_A3A0&DEV_0001
-;     The legacy HWID (PCI\VEN_1AED&DEV_0001) is supported by the KMD for
-;     bring-up/compatibility but is intentionally not matched by this INF.
-;     Use a custom INF if you need to install against the legacy device model.
+;   - This Win7 package intentionally matches both AeroGPU HWIDs:
+;       PCI\VEN_A3A0&DEV_0001  (canonical / current; drivers/aerogpu/protocol/aerogpu_pci.h)
+;       PCI\VEN_1AED&DEV_0001  (legacy bring-up ABI; drivers/aerogpu/protocol/aerogpu_protocol.h)
+;     If your device model uses different IDs, update the INF accordingly.
 ;
 ; Expected package contents (same directory as this INF):
 ;   - aerogpu.sys                 (kernel-mode miniport)
@@ -33,9 +32,11 @@ CatalogFile = aerogpu.cat
 
 [AeroGPU_Models.NTx86.6.1]
 %AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 [AeroGPU_Models.NTamd64.6.1]
 %AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 ; -------------------------------
 ; Install (x86)
