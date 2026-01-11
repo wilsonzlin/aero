@@ -1562,10 +1562,13 @@ impl AerogpuD3d11Executor {
             match opcode {
                 OPCODE_DRAW
                 | OPCODE_DRAW_INDEXED
+                | OPCODE_BIND_SHADERS
+                | OPCODE_SET_INPUT_LAYOUT
                 | OPCODE_SET_VIEWPORT
                 | OPCODE_SET_SCISSOR
                 | OPCODE_SET_VERTEX_BUFFERS
                 | OPCODE_SET_INDEX_BUFFER
+                | OPCODE_SET_PRIMITIVE_TOPOLOGY
                 | OPCODE_SET_TEXTURE
                 | OPCODE_SET_SAMPLER_STATE
                 | OPCODE_SET_SAMPLERS
@@ -1591,6 +1594,58 @@ impl AerogpuD3d11Executor {
 
             // Some binding/state updates can be applied inside a render pass only when they do not
             // require any implicit resource uploads (which must be encoded outside the pass).
+            //
+            // Pipeline-affecting state is only safe when the update is a no-op for the current
+            // pipeline. If the update would change the pipeline, we must end the pass so the outer
+            // loop can rebuild it.
+            if opcode == OPCODE_BIND_SHADERS {
+                // `struct aerogpu_cmd_bind_shaders` (24 bytes)
+                if cmd_bytes.len() >= 20 {
+                    let vs = read_u32_le(cmd_bytes, 8)?;
+                    let ps = read_u32_le(cmd_bytes, 12)?;
+                    let next_vs = if vs == 0 { None } else { Some(vs) };
+                    let next_ps = if ps == 0 { None } else { Some(ps) };
+                    if next_vs != self.state.vs || next_ps != self.state.ps {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_INPUT_LAYOUT {
+                // `struct aerogpu_cmd_set_input_layout` (16 bytes)
+                if cmd_bytes.len() >= 12 {
+                    let handle = read_u32_le(cmd_bytes, 8)?;
+                    let next = if handle == 0 { None } else { Some(handle) };
+                    if next != self.state.input_layout {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_PRIMITIVE_TOPOLOGY {
+                // `struct aerogpu_cmd_set_primitive_topology` (16 bytes)
+                if cmd_bytes.len() >= 12 {
+                    let topology_u32 = read_u32_le(cmd_bytes, 8)?;
+                    let next = match topology_u32 {
+                        1 => wgpu::PrimitiveTopology::PointList,
+                        2 => wgpu::PrimitiveTopology::LineList,
+                        3 => wgpu::PrimitiveTopology::LineStrip,
+                        4 => wgpu::PrimitiveTopology::TriangleList,
+                        5 => wgpu::PrimitiveTopology::TriangleStrip,
+                        6 => wgpu::PrimitiveTopology::TriangleList, // TriangleFan fallback
+                        _ => break,
+                    };
+                    if next != self.state.primitive_topology {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
             //
             // In particular, allocation-backed textures start life `dirty=true` and are uploaded
             // lazily on first use. If a dirty texture is bound via SET_TEXTURE between draws, we
@@ -1933,6 +1988,8 @@ impl AerogpuD3d11Executor {
                         }
                     }
                 }
+                OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
+                OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
                 OPCODE_SET_VERTEX_BUFFERS => {
                     let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
                     else {
@@ -2002,6 +2059,7 @@ impl AerogpuD3d11Executor {
                         pass.set_index_buffer(buf.slice(ib.offset_bytes..), ib.format);
                     }
                 }
+                OPCODE_SET_PRIMITIVE_TOPOLOGY => self.exec_set_primitive_topology(cmd_bytes)?,
                 OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes)?,
                 OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes)?,
                 OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes)?,
