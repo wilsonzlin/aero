@@ -34,6 +34,11 @@ class FakeWebSocket {
     FakeWebSocket.instances.push(this);
   }
 
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.onopen?.();
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   send(_data: string | ArrayBuffer | ArrayBufferView | Blob): void {
     // Intentionally empty; tests inspect creation details only.
@@ -206,6 +211,51 @@ describe("net/connectL2Tunnel", () => {
       // Unexpected transport close should trigger a reconnect attempt after the configured delay.
       first.close(1006, "abnormal");
       await vi.advanceTimersByTimeAsync(10);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(FakeWebSocket.instances.length).toBe(2);
+      expect(FakeWebSocket.instances[1]!.url).toBe("wss://gateway.example.com/base/l2");
+      expect(events.some((e) => e.type === "close")).toBe(true);
+    } finally {
+      tunnel.close();
+      vi.useRealTimers();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+    }
+  });
+
+  it("reconnects when the tunnel is idle (no inbound frame/pong)", async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+
+    const fetchMock = vi.fn(async () => {
+      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("https://gateway.example.com/base", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+      idleTimeoutMs: 10,
+      reconnectBaseDelayMs: 10,
+      reconnectMaxDelayMs: 10,
+      reconnectJitterFraction: 0,
+      // Ensure keepalive doesn't create incidental traffic during the test.
+      tunnelOptions: { keepaliveMinMs: 60_000, keepaliveMaxMs: 60_000 },
+    });
+
+    try {
+      expect(FakeWebSocket.instances.length).toBe(1);
+      FakeWebSocket.instances[0]!.open();
+
+      // Idle timeout fires at t=10ms, then reconnect backoff fires at t=20ms.
+      await vi.advanceTimersByTimeAsync(20);
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(FakeWebSocket.instances.length).toBe(2);

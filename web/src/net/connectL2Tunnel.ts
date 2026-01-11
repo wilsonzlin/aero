@@ -63,6 +63,16 @@ export type ConnectL2TunnelOptions = Readonly<{
    * Default: 0.2
    */
   reconnectJitterFraction?: number;
+
+  /**
+   * Reconnect if the tunnel goes "silent" for this long (no inbound FRAME/PONG).
+   *
+   * This is primarily a defense against half-open connections where the browser
+   * transport never fires `close`/`error` but the peer is no longer reachable.
+   *
+   * Default: `2 * keepaliveMaxMs` (or disabled when keepaliveMaxMs=0).
+   */
+  idleTimeoutMs?: number;
 }>;
 
 export type ConnectedL2Tunnel = Readonly<{
@@ -85,6 +95,8 @@ type GatewaySessionResponse = Readonly<{
     token?: string;
   }>;
 }>;
+
+const DEFAULT_KEEPALIVE_MAX_MS = 15_000;
 
 function buildSessionUrl(gatewayBaseUrl: string): string {
   const url = new URL(gatewayBaseUrl);
@@ -207,6 +219,11 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
   const errorIntervalMs = opts.tunnelOptions?.errorIntervalMs ?? 1000;
   validateNonNegativeInt("errorIntervalMs", errorIntervalMs);
 
+  const keepaliveMaxMs = opts.tunnelOptions?.keepaliveMaxMs ?? DEFAULT_KEEPALIVE_MAX_MS;
+  validateNonNegativeInt("keepaliveMaxMs", keepaliveMaxMs);
+  const idleTimeoutMs = opts.idleTimeoutMs ?? (keepaliveMaxMs > 0 ? keepaliveMaxMs * 2 : 0);
+  validateNonNegativeInt("idleTimeoutMs", idleTimeoutMs);
+
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
@@ -214,6 +231,27 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
   let currentSendFrame: ((frame: Uint8Array) => void) | null = null;
   let currentClose: (() => void) | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearIdleTimer(): void {
+    if (idleTimer === null) return;
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+
+  function armIdleTimer(gen: number): void {
+    clearIdleTimer();
+    if (idleTimeoutMs <= 0) return;
+    idleTimer = setTimeout(() => {
+      if (closed) return;
+      if (gen !== generation) return;
+      emitErrorThrottled(new Error(`L2 tunnel idle timeout (${idleTimeoutMs}ms)`));
+      // Force-close the current transport; the resulting `close` event will also
+      // go through the normal reconnect path.
+      teardownTunnel();
+      scheduleReconnect();
+    }, idleTimeoutMs);
+  }
 
   function installTunnel(sendFrame: (frame: Uint8Array) => void, close: () => void): void {
     currentSendFrame = sendFrame;
@@ -221,6 +259,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
   }
 
   function teardownTunnel(): void {
+    clearIdleTimer();
     const close = currentClose;
     currentSendFrame = null;
     currentClose = null;
@@ -284,6 +323,9 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
       if (ev.type === "open") {
         reconnectAttempts = 0;
+        armIdleTimer(gen);
+      } else if (ev.type === "frame" || ev.type === "pong") {
+        armIdleTimer(gen);
       } else if (ev.type === "close") {
         // Drop references immediately so `sendFrame()` starts behaving like a
         // disconnected tunnel (rather than silently calling into a closed client).
@@ -442,11 +484,10 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
   const tunnel: ConnectedL2Tunnel = {
     sendFrame(frame: Uint8Array): void {
-      if (!currentSendFrame) {
-        emitErrorThrottled(new Error("L2 tunnel is not connected"));
-        return;
-      }
-      currentSendFrame(frame);
+      // Mirror the underlying clients: drop outbound frames silently when the
+      // tunnel is disconnected/reconnecting. Callers should treat `close`/`open`
+      // events as the authoritative connection state signal.
+      currentSendFrame?.(frame);
     },
     close(): void {
       if (closed) return;
