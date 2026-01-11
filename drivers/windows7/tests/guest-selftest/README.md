@@ -53,6 +53,8 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - Missing capture is reported as **SKIP** by default; use `--require-snd-capture` to make it **FAIL**.
     - Use `--test-snd-capture` to run a shared-mode WASAPI capture smoke test when a capture endpoint exists
       (otherwise only endpoint detection is performed).
+      - The smoke test attempts to initialize a capture stream at the contract fixed format:
+        **48kHz / 16-bit / mono PCM** (with a `WAVE_FORMAT_EXTENSIBLE` fallback if required by the endpoint).
       - By default, the smoke test **PASS**es even if the captured audio is only silence.
       - Use `--require-non-silence` to fail the capture smoke test if no non-silent buffers are observed.
       - `--test-snd-capture` can also be enabled via env var: `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`.
