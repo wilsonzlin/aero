@@ -203,6 +203,23 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     }
   }
 
+  // --- ResetEx: should succeed and remain non-blocking (some D3D9Ex clients use this for mode changes) ---
+  {
+    D3DPRESENT_PARAMETERS pp_reset = pp;
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = dev->ResetEx(&pp_reset, NULL);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "ResetEx appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ResetEx", hr);
+    }
+  }
+
   // --- PresentEx throttling (max frame latency) ---
   // DWM typically presents without D3DPRESENT_DONOTWAIT; the UMD must throttle by
   // waiting/polling internally, but never hang.
@@ -310,6 +327,94 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   }
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetDisplayModeEx", hr);
+  }
+
+  // --- ComposeRects: should succeed and not block (some DWM/video paths use this) ---
+  {
+    const UINT kComposeSize = 64;
+    ComPtr<IDirect3DSurface9> src;
+    hr = dev->CreateRenderTarget(kComposeSize,
+                                 kComposeSize,
+                                 D3DFMT_A8R8G8B8,
+                                 D3DMULTISAMPLE_NONE,
+                                 0,
+                                 FALSE,
+                                 src.put(),
+                                 NULL);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateRenderTarget(src)", hr);
+    }
+
+    ComPtr<IDirect3DSurface9> dst;
+    hr = dev->CreateRenderTarget(kComposeSize,
+                                 kComposeSize,
+                                 D3DFMT_A8R8G8B8,
+                                 D3DMULTISAMPLE_NONE,
+                                 0,
+                                 FALSE,
+                                 dst.put(),
+                                 NULL);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateRenderTarget(dst)", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> src_descs;
+    hr = dev->CreateVertexBuffer(sizeof(D3DCOMPOSERECTDESC),
+                                 D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                                 0,
+                                 D3DPOOL_DEFAULT,
+                                 src_descs.put(),
+                                 NULL);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateVertexBuffer(src_descs)", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> dst_descs;
+    hr = dev->CreateVertexBuffer(sizeof(D3DCOMPOSERECTDEST),
+                                 D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                                 0,
+                                 D3DPOOL_DEFAULT,
+                                 dst_descs.put(),
+                                 NULL);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateVertexBuffer(dst_descs)", hr);
+    }
+
+    void* vb_data = NULL;
+    hr = src_descs->Lock(0, 0, &vb_data, 0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "src_descs->Lock", hr);
+    }
+    ZeroMemory(vb_data, sizeof(D3DCOMPOSERECTDESC));
+    src_descs->Unlock();
+
+    vb_data = NULL;
+    hr = dst_descs->Lock(0, 0, &vb_data, 0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "dst_descs->Lock", hr);
+    }
+    ZeroMemory(vb_data, sizeof(D3DCOMPOSERECTDEST));
+    dst_descs->Unlock();
+
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = dev->ComposeRects(src.get(),
+                           dst.get(),
+                           src_descs.get(),
+                           1,
+                           dst_descs.get(),
+                           D3DCOMPOSERECTS_COPY,
+                           0,
+                           0);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "ComposeRects appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ComposeRects", hr);
+    }
   }
 
   // --- WaitForVBlank: must always be bounded (and not hang in remote/non-vblank setups) ---

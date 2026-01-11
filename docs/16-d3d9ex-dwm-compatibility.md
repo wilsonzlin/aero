@@ -418,9 +418,11 @@ At minimum, validate that:
 This test exists specifically to catch “DWM hang” failure modes caused by Ex-only device probes. It calls:
 
 - `IDirect3DDevice9Ex::CheckDeviceState`
+- `::ResetEx` (non-blocking)
 - `::SetMaximumFrameLatency` + `::PresentEx` (without `D3DPRESENT_DONOTWAIT`) to validate throttling is bounded
 - `::GetPresentStats` / `::GetLastPresentCount` (monotonic + non-blocking)
 - `::GetDisplayModeEx` (non-blocking)
+- `::ComposeRects` (non-blocking)
 - `::WaitForVBlank`
 - `::SetGPUThreadPriority` / `::GetGPUThreadPriority`
 - `::CheckResourceResidency` / `::QueryResourceResidency`
