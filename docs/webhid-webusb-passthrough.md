@@ -49,6 +49,9 @@ Implementation status note:
     `UsbPassthroughBridge` (`crates/aero-wasm/src/lib.rs`)
   - host-side WebUSB broker/executor + RPC (`web/src/usb/*`)
   - descriptor fixups (where possible)
+  - a small end-to-end demo driver (`UsbPassthroughDemo` + `usb.demoResult`) that queues a
+    GET_DESCRIPTOR(Device) request via the broker to validate the action↔completion wiring
+    (`crates/aero-wasm/src/lib.rs`, `web/src/usb/usb_passthrough_demo_runtime.ts`, `web/src/main.ts`)
   - …but it is not yet treated as the MVP path compared to WebHID.
 
 The intended end-state is to use the same “main-thread owns the handle, worker
