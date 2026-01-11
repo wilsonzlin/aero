@@ -2976,10 +2976,20 @@ impl AerogpuD3d11Executor {
             let mut row_buf = vec![0u8; unpadded_bpr as usize];
             for y0 in (0..height_usize).step_by(rows_per_chunk) {
                 let rows = (height_usize - y0).min(rows_per_chunk);
-                let mut repacked = vec![0u8; padded_bpr_usize * rows];
+                let repacked_len = padded_bpr_usize
+                    .checked_mul(rows)
+                    .ok_or_else(|| anyhow!("texture upload chunk overflows usize"))?;
+                let mut repacked = vec![0u8; repacked_len];
                 for row in 0..rows {
+                    let row_index = y0
+                        .checked_add(row)
+                        .ok_or_else(|| anyhow!("texture upload row index overflows usize"))?;
+                    let row_offset = u64::try_from(row_index)
+                        .ok()
+                        .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
+                        .ok_or_else(|| anyhow!("texture upload row offset overflows u64"))?;
                     let src_addr = gpa
-                        .checked_add(((y0 + row) * src_row_pitch) as u64)
+                        .checked_add(row_offset)
                         .ok_or_else(|| anyhow!("texture upload address overflows u64"))?;
                     guest_mem
                         .read(src_addr, &mut row_buf)
@@ -3023,8 +3033,12 @@ impl AerogpuD3d11Executor {
                     .checked_mul(rows)
                     .ok_or_else(|| anyhow!("texture upload chunk overflows usize"))?;
                 let tmp_slice = &mut tmp[..byte_len];
+                let row_offset = u64::try_from(y0)
+                    .ok()
+                    .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
+                    .ok_or_else(|| anyhow!("texture upload row offset overflows u64"))?;
                 let src_addr = gpa
-                    .checked_add((y0 * src_row_pitch) as u64)
+                    .checked_add(row_offset)
                     .ok_or_else(|| anyhow!("texture upload address overflows u64"))?;
                 guest_mem
                     .read(src_addr, tmp_slice)
