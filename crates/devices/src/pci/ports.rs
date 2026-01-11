@@ -1,4 +1,5 @@
-use super::{PciBus, PciConfigMechanism1, PciPlatform};
+use super::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciPlatform};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,6 +37,44 @@ impl PciConfigPorts {
 impl Default for PciConfigPorts {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for PciConfigPorts {
+    const DEVICE_ID: [u8; 4] = *b"PCPT";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_CFG: u16 = 1;
+        const TAG_BUS: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_bytes(TAG_CFG, self.cfg.save_state());
+
+        let bus_snapshot = PciBusSnapshot::save_from(&self.bus);
+        w.field_bytes(TAG_BUS, bus_snapshot.save_state());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_CFG: u16 = 1;
+        const TAG_BUS: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_CFG) {
+            self.cfg.load_state(buf)?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_BUS) {
+            let mut snapshot = PciBusSnapshot::default();
+            snapshot.load_state(buf)?;
+            snapshot.restore_into(&mut self.bus)?;
+        }
+
+        Ok(())
     }
 }
 
