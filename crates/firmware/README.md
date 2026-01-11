@@ -28,8 +28,10 @@ The BIOS is dispatched without trapping `INT xx` in the CPU core:
    IRET
    ```
 
-4. The CPU core treats `HLT` as a VM-exit **only when** it is reached from an `INT`
-   stub (i.e. the CPU sets `pending_bios_int` when it executes `INT imm8`).
+4. The canonical CPU core (`aero_cpu_core`) treats `HLT` as a VM-exit **only when**
+   it is reached from an `INT` stub. Tier-0 surfaces this as a `BiosInterrupt`
+   exit that includes the vector number (recorded by the core when `INT imm8` is
+   executed).
 5. On that exit the host calls [`Bios::dispatch_interrupt`] with the vector number,
    then resumes the CPU. The next instruction is `IRET`, which returns to the
    original caller.
@@ -47,4 +49,8 @@ allowing BIOS services to live in Rust.
 - Keyboard input:
   - Push keys into the BIOS buffer via [`Bios::push_key`] (`(scan_code << 8) | ascii`).
 
-See `crates/vm/` for a minimal reference wiring that exercises the contract.
+In the canonical full-system VM stack, [`aero_machine::Machine`](../aero-machine/src/lib.rs)
+handles this automatically by dispatching BIOS interrupts when Tier-0 reports a `BiosInterrupt`
+exit.
+
+For a minimal, older reference wiring, see `crates/legacy/vm` (formerly `crates/vm`).
