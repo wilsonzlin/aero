@@ -321,6 +321,9 @@ function checkViteConfig(fileLabel, filePath) {
   const content = readText(filePath);
   const errors = [];
 
+  // Detect copy/pasted header strings or drift by ensuring the Vite configs
+  // are wired to the canonical header exports. This is intentionally a
+  // dependency-free static check (no TS parser).
   if (!content.includes('security_headers.mjs')) {
     errors.push(`${fileLabel}: missing import from scripts/security_headers.mjs`);
   }
@@ -329,6 +332,14 @@ function checkViteConfig(fileLabel, filePath) {
     if (!content.includes(symbol)) {
       errors.push(`${fileLabel}: expected to reference ${symbol} (from scripts/security_headers.mjs)`);
     }
+  }
+
+  // Ensure cross-origin isolation headers are actually *applied*, not just imported.
+  // Otherwise the "import present" checks above can be satisfied while the Vite
+  // server silently stops being crossOriginIsolated (breaking WASM threads).
+  const withoutStaticImports = content.replace(/^\s*import(?!\s*\()[\s\S]*?;\s*/gm, '');
+  if (!withoutStaticImports.includes('crossOriginIsolationHeaders')) {
+    errors.push(`${fileLabel}: expected to apply crossOriginIsolationHeaders in Vite headers`);
   }
 
   if (!content.includes('...baselineSecurityHeaders')) {
