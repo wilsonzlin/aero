@@ -13,12 +13,11 @@ import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
-  IO_IPC_NET_RX_QUEUE_KIND,
-  IO_IPC_NET_TX_QUEUE_KIND,
   StatusIndex,
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
+  type WorkerRole,
 } from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
@@ -33,11 +32,8 @@ import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UhciPciDevice } from "../io/devices/uhci";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
-import { WebSocketL2TunnelClient } from "../net/l2Tunnel";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
-import { L2TunnelForwarder } from "../net/l2TunnelForwarder";
-import { L2TunnelTelemetry } from "../net/l2TunnelTelemetry";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
@@ -78,7 +74,7 @@ void installWorkerPerfHandlers();
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
 type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayBuffer };
 
-let role: "cpu" | "gpu" | "io" | "jit" = "io";
+let role: WorkerRole = "io";
 let status!: Int32Array;
 let guestU8!: Uint8Array;
 let guestBase = 0;
@@ -88,12 +84,6 @@ let eventRing: RingBuffer | null = null;
 
 let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
-let netTxRing: RingBuffer | null = null;
-let netRxRing: RingBuffer | null = null;
-let l2TunnelForwarder: L2TunnelForwarder | null = null;
-let l2TunnelClient: WebSocketL2TunnelClient | null = null;
-let l2TunnelProxyUrl: string | null = null;
-let l2TunnelTelemetry: L2TunnelTelemetry | null = null;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -564,13 +554,6 @@ function handleHidPassthroughInputReport(msg: HidPassthroughInputReportMessage):
     );
   }
 }
-
-// -----------------------------------------------------------------------------
-// L2 tunnel forwarder telemetry (best-effort observability)
-// -----------------------------------------------------------------------------
-
-const L2_STATS_LOG_INTERVAL_MS = 1000;
-
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
@@ -578,42 +561,6 @@ let started = false;
 let shuttingDown = false;
 let ioServerAbort: AbortController | null = null;
 let ioServerTask: Promise<void> | null = null;
-
-function applyL2TunnelConfig(config: AeroConfig | null): void {
-  const proxyUrl = config?.proxyUrl ?? null;
-  const forwarder = l2TunnelForwarder;
-  const telemetry = l2TunnelTelemetry;
-  if (!forwarder) return;
-
-  // Ensure we stop/close the previous tunnel when the proxy URL changes.
-  if (proxyUrl !== l2TunnelProxyUrl) {
-    telemetry?.onStopped();
-    forwarder.stop();
-    l2TunnelClient = null;
-    l2TunnelProxyUrl = proxyUrl;
-  }
-
-  if (proxyUrl === null) {
-    telemetry?.onStopped();
-    return;
-  }
-
-  if (!l2TunnelClient) {
-    const client = new WebSocketL2TunnelClient(proxyUrl, (ev) => {
-      // Avoid stale events from previously replaced tunnels clobbering telemetry state.
-      if (l2TunnelClient !== client) return;
-      forwarder.sink(ev);
-    });
-    l2TunnelClient = client;
-    forwarder.setTunnel(client);
-  }
-
-  if (telemetry && telemetry.connectionState !== "open") {
-    telemetry.onConnectInitiated();
-  }
-  forwarder.start();
-}
-
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
@@ -892,19 +839,6 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
-      netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
-      netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
-      const forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
-        onTunnelEvent: (ev) => l2TunnelTelemetry?.onTunnelEvent(ev),
-      });
-      l2TunnelForwarder = forwarder;
-      l2TunnelTelemetry = new L2TunnelTelemetry({
-        intervalMs: L2_STATS_LOG_INTERVAL_MS,
-        getStats: () => forwarder.stats(),
-        emitLog: (level, message) => pushEvent({ kind: "log", level, message }),
-      });
-      // Apply any config already received before the init handshake completed.
-      applyL2TunnelConfig(currentConfig);
 
       const irqSink: IrqSink = {
         raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
@@ -1005,12 +939,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       currentConfig = update.config;
       currentConfigVersion = update.version;
       ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
-      try {
-        applyL2TunnelConfig(currentConfig);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn("[io.worker] Failed to apply L2 tunnel config:", message);
-      }
       return;
     }
 
@@ -1268,10 +1196,6 @@ function startIoIpcServer(): void {
       drainRuntimeCommands();
       drainHidInputRing();
       mgr.tick(nowMs);
-      l2TunnelForwarder?.pump();
-      if (l2TunnelProxyUrl !== null) {
-        l2TunnelTelemetry?.tick(nowMs);
-      }
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();
@@ -1544,11 +1468,6 @@ function shutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
   ioServerAbort?.abort();
-  l2TunnelForwarder?.stop();
-  l2TunnelForwarder = null;
-  l2TunnelClient = null;
-  l2TunnelProxyUrl = null;
-  l2TunnelTelemetry = null;
   if (usbPassthroughDebugTimer !== undefined) {
     clearInterval(usbPassthroughDebugTimer);
     usbPassthroughDebugTimer = undefined;
@@ -1619,11 +1538,6 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
 
 function fatal(err: unknown): void {
   ioServerAbort?.abort();
-  l2TunnelForwarder?.stop();
-  l2TunnelForwarder = null;
-  l2TunnelClient = null;
-  l2TunnelProxyUrl = null;
-  l2TunnelTelemetry = null;
   const message = err instanceof Error ? err.message : String(err);
   pushEventBlocking({ kind: "panic", message });
   try {

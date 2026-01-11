@@ -43,6 +43,7 @@ import {
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
+  type WorkerRole,
 } from "../runtime/shared_layout";
 import {
   CAPACITY_SAMPLES_INDEX,
@@ -113,7 +114,7 @@ type CursorDemoStopMessage = {
   type: "cursorDemo.stop";
 };
 
-let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
+let role: WorkerRole = "cpu";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
 let eventRing!: RingBuffer;

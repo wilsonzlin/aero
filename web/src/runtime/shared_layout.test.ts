@@ -17,10 +17,12 @@ import {
   IO_IPC_RING_CAPACITY_BYTES,
   RUNTIME_RESERVED_BYTES,
   STATUS_BYTES,
+  StatusIndex,
   WORKER_ROLES,
   allocateSharedMemorySegments,
   createSharedMemoryViews,
   ringRegionsForWorker,
+  setReadyFlag,
 } from "./shared_layout";
 
 describe("runtime/shared_layout", () => {
@@ -163,5 +165,35 @@ describe("runtime/shared_layout", () => {
     expect(caps.get(IO_IPC_EVT_QUEUE_KIND)).toBe(IO_IPC_RING_CAPACITY_BYTES);
     expect(caps.get(IO_IPC_NET_TX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
     expect(caps.get(IO_IPC_NET_RX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
+  });
+
+  it("sets worker ready flags without overlapping status indices", () => {
+    // Keep existing indices stable: changing these breaks the runtime ABI and
+    // can corrupt shared status reads across workers.
+    expect(StatusIndex.CpuReady).toBe(8);
+    expect(StatusIndex.GpuReady).toBe(9);
+    expect(StatusIndex.IoReady).toBe(10);
+    expect(StatusIndex.JitReady).toBe(11);
+    expect(StatusIndex.NetReady).toBe(15);
+
+    const status = new Int32Array(new SharedArrayBuffer(STATUS_BYTES));
+    for (const role of WORKER_ROLES) {
+      setReadyFlag(status, role, true);
+    }
+
+    expect(Atomics.load(status, StatusIndex.CpuReady)).toBe(1);
+    expect(Atomics.load(status, StatusIndex.GpuReady)).toBe(1);
+    expect(Atomics.load(status, StatusIndex.IoReady)).toBe(1);
+    expect(Atomics.load(status, StatusIndex.JitReady)).toBe(1);
+    expect(Atomics.load(status, StatusIndex.NetReady)).toBe(1);
+
+    for (const role of WORKER_ROLES) {
+      setReadyFlag(status, role, false);
+    }
+    expect(Atomics.load(status, StatusIndex.CpuReady)).toBe(0);
+    expect(Atomics.load(status, StatusIndex.GpuReady)).toBe(0);
+    expect(Atomics.load(status, StatusIndex.IoReady)).toBe(0);
+    expect(Atomics.load(status, StatusIndex.JitReady)).toBe(0);
+    expect(Atomics.load(status, StatusIndex.NetReady)).toBe(0);
   });
 });

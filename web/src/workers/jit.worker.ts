@@ -7,7 +7,7 @@ import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
-import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag } from "../runtime/shared_layout";
+import { StatusIndex, createSharedMemoryViews, ringRegionsForWorker, setReadyFlag, type WorkerRole } from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -22,7 +22,7 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
 
-let role: "cpu" | "gpu" | "io" | "jit" = "jit";
+let role: WorkerRole = "jit";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
 let eventRing: RingBuffer | null = null;

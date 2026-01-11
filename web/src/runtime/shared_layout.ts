@@ -10,7 +10,7 @@ import {
   SharedFramebufferHeaderIndex,
 } from "../ipc/shared-layout";
 
-export const WORKER_ROLES = ["cpu", "gpu", "io", "jit"] as const;
+export const WORKER_ROLES = ["cpu", "gpu", "io", "jit", "net"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
 
 /**
@@ -42,6 +42,7 @@ export enum StatusIndex {
   GpuReady = 9,
   IoReady = 10,
   JitReady = 11,
+  NetReady = 15,
 
   // I/O worker HID passthrough telemetry.
   IoHidAttachCounter = 12,
@@ -314,6 +315,7 @@ const CONTROL_LAYOUT = (() => {
     gpu: { command: { byteOffset: 0, byteLength: 0 }, event: { byteOffset: 0, byteLength: 0 } },
     io: { command: { byteOffset: 0, byteLength: 0 }, event: { byteOffset: 0, byteLength: 0 } },
     jit: { command: { byteOffset: 0, byteLength: 0 }, event: { byteOffset: 0, byteLength: 0 } },
+    net: { command: { byteOffset: 0, byteLength: 0 }, event: { byteOffset: 0, byteLength: 0 } },
   };
 
   for (const role of WORKER_ROLES) {
@@ -528,13 +530,27 @@ export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {
 }
 
 export function setReadyFlag(status: Int32Array, role: WorkerRole, ready: boolean): void {
-  const idx =
-    role === "cpu"
-      ? StatusIndex.CpuReady
-      : role === "gpu"
-        ? StatusIndex.GpuReady
-        : role === "io"
-          ? StatusIndex.IoReady
-          : StatusIndex.JitReady;
+  let idx: StatusIndex;
+  switch (role) {
+    case "cpu":
+      idx = StatusIndex.CpuReady;
+      break;
+    case "gpu":
+      idx = StatusIndex.GpuReady;
+      break;
+    case "io":
+      idx = StatusIndex.IoReady;
+      break;
+    case "jit":
+      idx = StatusIndex.JitReady;
+      break;
+    case "net":
+      idx = StatusIndex.NetReady;
+      break;
+    default: {
+      const neverRole: never = role;
+      throw new Error(`Unknown worker role: ${String(neverRole)}`);
+    }
+  }
   Atomics.store(status, idx, ready ? 1 : 0);
 }

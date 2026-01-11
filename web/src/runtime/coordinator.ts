@@ -141,6 +141,11 @@ function workerRoleToPerfWorkerKind(role: WorkerRole): number {
       return WorkerKind.IO;
     case "jit":
       return WorkerKind.JIT;
+    case "net":
+      // Perf HUD uses per-worker-kind SPSC ring buffers. Until we have a dedicated
+      // NET buffer, return an unused kind so the net worker simply doesn't get a
+      // perf channel attached (avoids sharing IO/JIT buffers across producers).
+      return 5;
     default: {
       const neverRole: never = role;
       throw new Error(`Unknown worker role: ${String(neverRole)}`);
@@ -249,6 +254,7 @@ export class WorkerCoordinator {
     gpu: new RestartBackoff(250, 10_000),
     io: new RestartBackoff(250, 10_000),
     jit: new RestartBackoff(250, 10_000),
+    net: new RestartBackoff(250, 10_000),
   };
 
   private pendingFullRestartTimer: number | null = null;
@@ -511,6 +517,7 @@ export class WorkerCoordinator {
       gpu: this.workerConfigAckVersions.gpu ?? 0,
       io: this.workerConfigAckVersions.io ?? 0,
       jit: this.workerConfigAckVersions.jit ?? 0,
+      net: this.workerConfigAckVersions.net ?? 0,
     };
   }
 
@@ -520,6 +527,7 @@ export class WorkerCoordinator {
       gpu: this.workers.gpu?.status ?? { state: "stopped" },
       io: this.workers.io?.status ?? { state: "stopped" },
       jit: this.workers.jit?.status ?? { state: "stopped" },
+      net: this.workers.net?.status ?? { state: "stopped" },
     };
   }
 
@@ -900,6 +908,9 @@ export class WorkerCoordinator {
         break;
       case "jit":
         worker = new Worker(new URL("../workers/jit.worker.ts", import.meta.url), { type: "module" });
+        break;
+      case "net":
+        worker = new Worker(new URL("../workers/net.worker.ts", import.meta.url), { type: "module" });
         break;
       default: {
         const neverRole: never = role;
