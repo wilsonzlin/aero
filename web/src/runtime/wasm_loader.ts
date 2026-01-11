@@ -282,6 +282,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_load_u32: mod.mem_load_u32,
         demo_render_rgba8888: mod.demo_render_rgba8888,
         UsbHidBridge: mod.UsbHidBridge,
+        WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
