@@ -127,10 +127,11 @@ Note:
 
 - For **Aero** driver builds (in-tree virtio + AeroGPU), the contract’s `driver_service_name` values
   are expected to match the packaged INF `AddService` names (e.g. `aerovblk`).
-- For **virtio-win** builds, the PCI IDs are still sourced from the Aero contract (so boot-critical
-  `CriticalDeviceDatabase` seeding targets Aero’s modern-only IDs + `REV_01`), but the packager
-  overrides `AERO_VIRTIO_*_SERVICE` values in the packaged `devices.cmd` to match virtio-win
-  service names (e.g. `viostor`, `netkvm`). Do **not** edit the contract to virtio-win names.
+- For **virtio-win** builds, pass the dedicated contract override
+  `docs/windows-device-contract-virtio-win.json` to `ci/package-guest-tools.ps1 -WindowsDeviceContractPath`
+  so the generated `devices.cmd` uses virtio-win service names (e.g. `viostor`, `netkvm`), while keeping
+  Aero’s virtio PCI IDs/HWID patterns for boot-critical `CriticalDeviceDatabase` seeding.
+  Do **not** edit the canonical `docs/windows-device-contract.json` to virtio-win names.
 
 ## Outputs
 
