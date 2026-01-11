@@ -2000,29 +2000,30 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   if (SUCCEEDED(hr)) {
     used_desired_format = true;
   } else {
-    log.Logf("virtio-snd: Initialize(shared desired 48kHz S16 stereo) failed hr=0x%08lx; trying mix format",
-             static_cast<unsigned long>(hr));
+    log.Logf(
+        "virtio-snd: Initialize(shared desired 48kHz S16 stereo) failed hr=0x%08lx; trying WAVE_FORMAT_EXTENSIBLE",
+        static_cast<unsigned long>(hr));
 
-    WAVEFORMATEX* mix_raw = nullptr;
-    const HRESULT mix_hr = client->GetMixFormat(&mix_raw);
-    if (FAILED(mix_hr) || !mix_raw) {
-      out.fail_reason = "get_mix_format_failed";
-      out.hr = FAILED(mix_hr) ? mix_hr : E_FAIL;
-      log.Logf("virtio-snd: GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
-      return out;
-    }
-
-    const size_t mix_size = sizeof(WAVEFORMATEX) + mix_raw->cbSize;
-    fmt_bytes.assign(reinterpret_cast<const BYTE*>(mix_raw),
-                     reinterpret_cast<const BYTE*>(mix_raw) + mix_size);
-    CoTaskMemFree(mix_raw);
-    desired = reinterpret_cast<WAVEFORMATEX*>(fmt_bytes.data());
+    fmt_bytes.resize(sizeof(WAVEFORMATEXTENSIBLE));
+    auto* ext = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(fmt_bytes.data());
+    *ext = {};
+    ext->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    ext->Format.nChannels = 2;
+    ext->Format.nSamplesPerSec = 48000;
+    ext->Format.wBitsPerSample = 16;
+    ext->Format.nBlockAlign = static_cast<WORD>((ext->Format.nChannels * ext->Format.wBitsPerSample) / 8);
+    ext->Format.nAvgBytesPerSec = ext->Format.nSamplesPerSec * ext->Format.nBlockAlign;
+    ext->Format.cbSize = static_cast<WORD>(sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX));
+    ext->Samples.wValidBitsPerSample = 16;
+    ext->dwChannelMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
+    ext->SubFormat = kWaveSubFormatPcm;
+    desired = &ext->Format;
 
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, desired, nullptr);
     if (FAILED(hr)) {
       out.fail_reason = "initialize_shared_failed";
       out.hr = hr;
-      log.Logf("virtio-snd: Initialize(shared mix format) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      log.Logf("virtio-snd: Initialize(shared desired extensible) failed hr=0x%08lx", static_cast<unsigned long>(hr));
       return out;
     }
   }
@@ -3152,16 +3153,16 @@ int wmain(int argc, wchar_t** argv) {
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
   } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture && !opt.require_non_silence) {
     log.LogLine("virtio-snd: skipped (enable with --test-snd)");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
   } else {
     if (!want_snd_playback) {
       log.LogLine("virtio-snd: skipped (enable with --test-snd)");
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
     }
 
     const auto snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
@@ -3173,7 +3174,7 @@ int wmain(int argc, wchar_t** argv) {
       }
 
       if (want_snd_playback) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
         all_ok = false;
       }
 
@@ -3188,7 +3189,7 @@ int wmain(int argc, wchar_t** argv) {
       log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
 
       if (want_snd_playback) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
         all_ok = false;
       }
 

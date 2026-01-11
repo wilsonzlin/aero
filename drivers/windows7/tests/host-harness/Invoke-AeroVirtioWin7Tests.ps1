@@ -818,11 +818,11 @@ try {
     }
     "VIRTIO_SND_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|flag_not_set") {
+      if ($result.Tail -match "virtio-snd: skipped \\(enable with --test-snd\\)") {
         $reason = "guest_not_configured_with_--test-snd"
-      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|device_missing") {
+      } elseif ($result.Tail -match "virtio-snd: .*device not detected") {
         $reason = "device_missing"
-      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|disabled") {
+      } elseif ($result.Tail -match "virtio-snd: disabled by --disable-snd") {
         $reason = "--disable-snd"
       }
 

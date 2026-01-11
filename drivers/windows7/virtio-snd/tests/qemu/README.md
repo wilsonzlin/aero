@@ -261,18 +261,20 @@ The selftest logs to:
    ```
 2. Run it (elevated CMD recommended):
    ```bat
-   C:\AeroTests\aero-virtio-selftest.exe
+   C:\AeroTests\aero-virtio-selftest.exe --test-snd
    ```
-   Notes:
-   - The selftest runs the virtio-snd playback check by default (skip with `--disable-snd`).
-   - Use `--require-snd` (or alias `--test-snd`) to make a missing virtio-snd device a failure instead of SKIP.
+   (Alias: `--require-snd`.)
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed)
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected; only when `--require-snd` / `--test-snd` is set)
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing` (virtio-snd PCI function not detected; default behavior)
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing` (driver bound but Topology KS interface missing)
-     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
+       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
+       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`
+       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
+
+   Notes:
+   - `--test-snd` / `--require-snd` enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
+   - When the virtio-snd PCI function is not detected, the tool logs a line like:
+     `virtio-snd: ... device not detected`.
+   - When the virtio-snd test is disabled via `--disable-snd`, the tool logs:
+     `virtio-snd: disabled by --disable-snd` and emits `...|SKIP`.
 
 If WASAPI fails, the tool logs a line like:
 
