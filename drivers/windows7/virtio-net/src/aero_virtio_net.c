@@ -866,7 +866,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   MaxPairs = 0;
   NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, 0x08, &MaxPairs, sizeof(MaxPairs));
   if (NT_SUCCESS(NtStatus) && MaxPairs != 1) {
-    DbgPrint("aerovnet: max_virtqueue_pairs=%hu (expected 1)\n", MaxPairs);
+    DbgPrint("aero_virtio_net: max_virtqueue_pairs=%hu (expected 1)\n", MaxPairs);
   }
   RxIndirectMaxDesc = (Adapter->GuestFeatures & AEROVNET_FEATURE_RING_INDIRECT_DESC) ? 2 : 0;
   TxIndirectMaxDesc = (Adapter->GuestFeatures & AEROVNET_FEATURE_RING_INDIRECT_DESC) ? (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1) : 0;

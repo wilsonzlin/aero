@@ -10,7 +10,7 @@
 #include "virtio_os_storport.h"
 
 #if DBG
-#define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)
+#define AEROVBLK_LOG(fmt, ...) DbgPrint("aero_virtio_blk: " fmt "\n", __VA_ARGS__)
 #else
 #define AEROVBLK_LOG(fmt, ...) \
     do {                       \
