@@ -526,18 +526,23 @@ def _check_profiles_against_contract(
 
     # Validate the shared virtio BAR + caps match the contract v1 fixed layout.
     virtio_bars_re = re.compile(
-        r"pub const VIRTIO_BARS:\s*\[PciBarProfile;\s*\d+\]\s*=\s*\[\s*PciBarProfile::mem32\(\s*(?P<index>\d+)\s*,\s*(?P<size>0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<pref>true|false)\s*\)\s*\];"
+        r"pub const VIRTIO_BARS:\s*\[PciBarProfile;\s*\d+\]\s*=\s*\[\s*PciBarProfile::mem(?P<bits>32|64)\(\s*(?P<index>\d+)\s*,\s*(?P<size>0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<pref>true|false)\s*\)\s*\];"
     )
     m = virtio_bars_re.search(text)
     if not m:
         errors.append(f"profile.rs: missing/unsupported VIRTIO_BARS definition in {profile_path.as_posix()}")
     else:
+        bar_bits = int(m.group("bits"))
         bar_index = int(m.group("index"))
         bar_size = int(m.group("size").replace("_", ""), 0)
         prefetch = m.group("pref") == "true"
+        if bar_bits != 64:
+            errors.append(
+                f"profile.rs: VIRTIO_BARS expected mem64 BAR0 size 0x4000 prefetchable=false, got mem{bar_bits}"
+            )
         if bar_index != 0 or bar_size != 0x4000 or prefetch:
             errors.append(
-                f"profile.rs: VIRTIO_BARS expected mem32 BAR0 size 0x4000 prefetchable=false, got index={bar_index} size=0x{bar_size:X} prefetchable={prefetch}"
+                f"profile.rs: VIRTIO_BARS expected BAR0 size 0x4000 prefetchable=false, got index={bar_index} size=0x{bar_size:X} prefetchable={prefetch}"
             )
 
     try:
