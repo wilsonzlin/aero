@@ -196,10 +196,17 @@ impl AllocTable {
         table_gpa: u64,
         table_size_bytes: u32,
     ) -> Result<Self, ExecutorError> {
+        const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 16 * 1024 * 1024;
+
         if table_gpa == 0 || table_size_bytes == 0 {
             return Err(ExecutorError::Validation(
                 "alloc table gpa/size must be non-zero".into(),
             ));
+        }
+        if table_size_bytes > MAX_ALLOC_TABLE_SIZE_BYTES {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table size_bytes too large (got {table_size_bytes}, max {MAX_ALLOC_TABLE_SIZE_BYTES})"
+            )));
         }
         if table_gpa.checked_add(u64::from(table_size_bytes)).is_none() {
             return Err(ExecutorError::Validation(
@@ -245,7 +252,16 @@ impl AllocTable {
         let entry_count = header.entry_count;
         let entry_stride_bytes = header.entry_stride_bytes;
 
-        let mut entries = Vec::<(u32, AllocEntry)>::with_capacity(entry_count as usize);
+        let entry_count_usize =
+            usize::try_from(entry_count).map_err(|_| ExecutorError::Validation(
+                "alloc table entry_count is out of range for host usize".into(),
+            ))?;
+        let mut entries = Vec::<(u32, AllocEntry)>::new();
+        if entries.try_reserve_exact(entry_count_usize).is_err() {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table too large to allocate (entry_count={entry_count})"
+            )));
+        }
         for i in 0..entry_count {
             let entry_offset = (i as u64)
                 .checked_mul(entry_stride_bytes as u64)
