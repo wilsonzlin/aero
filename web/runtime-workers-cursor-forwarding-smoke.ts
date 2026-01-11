@@ -1,5 +1,6 @@
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
+import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 
 declare global {
@@ -166,7 +167,13 @@ async function main() {
 
     const requestScreenshot = (includeCursor: boolean): Promise<{ width: number; height: number; pixels: ArrayBuffer }> => {
       const requestId = nextRequestId++;
-      gpuWorker.postMessage({ type: "screenshot", requestId, includeCursor });
+      gpuWorker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "screenshot",
+        requestId,
+        includeCursor,
+      });
       return new Promise((resolve, reject) => {
         pendingScreenshots.set(requestId, { resolve, reject });
         setTimeout(() => {

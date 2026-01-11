@@ -46,6 +46,8 @@ import {
   type GpuRuntimeCursorSetStateMessage,
 } from "../ipc/gpu-protocol";
 
+const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
 export interface WorkerStatus {
@@ -1340,8 +1342,7 @@ export class WorkerCoordinator {
     const img = this.cursorImage;
     if (img) {
       const msg: GpuRuntimeCursorSetImageMessage = {
-        protocol: GPU_PROTOCOL_NAME,
-        protocolVersion: GPU_PROTOCOL_VERSION,
+        ...GPU_MESSAGE_BASE,
         type: "cursor_set_image",
         width: img.width,
         height: img.height,
@@ -1353,8 +1354,7 @@ export class WorkerCoordinator {
     const state = this.cursorState;
     if (state) {
       const msg: GpuRuntimeCursorSetStateMessage = {
-        protocol: GPU_PROTOCOL_NAME,
-        protocolVersion: GPU_PROTOCOL_VERSION,
+        ...GPU_MESSAGE_BASE,
         type: "cursor_set_state",
         enabled: state.enabled,
         x: state.x,
