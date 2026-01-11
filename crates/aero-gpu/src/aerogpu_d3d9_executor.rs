@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
@@ -51,8 +52,9 @@ pub struct AerogpuD3d9Executor {
     pipeline_layout: wgpu::PipelineLayout,
     bind_group: Option<wgpu::BindGroup>,
     bind_group_dirty: bool,
-    samplers_ps: [wgpu::Sampler; MAX_SAMPLERS],
+    samplers_ps: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_ps: [D3d9SamplerState; MAX_SAMPLERS],
+    sampler_cache: HashMap<D3d9SamplerState, Arc<wgpu::Sampler>>,
 
     pipelines: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
 
@@ -82,7 +84,7 @@ struct ContextState {
     constants_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
     bind_group_dirty: bool,
-    samplers_ps: [wgpu::Sampler; MAX_SAMPLERS],
+    samplers_ps: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_ps: [D3d9SamplerState; MAX_SAMPLERS],
     state: State,
 }
@@ -397,22 +399,21 @@ fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     })
 }
 
-fn create_default_samplers(device: &wgpu::Device) -> [wgpu::Sampler; MAX_SAMPLERS] {
-    std::array::from_fn(|_| {
-        device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("aerogpu-d3d9.sampler_ps_default"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        })
-    })
+fn create_default_samplers(device: &wgpu::Device) -> [Arc<wgpu::Sampler>; MAX_SAMPLERS] {
+    let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("aerogpu-d3d9.sampler_ps_default"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    }));
+    std::array::from_fn(|_| sampler.clone())
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 struct D3d9SamplerState {
     address_u: u32,
     address_v: u32,
@@ -444,18 +445,49 @@ struct RasterizerPipelineKey {
 impl AerogpuD3d9Executor {
     /// Create a headless executor suitable for tests.
     pub async fn new_headless() -> Result<Self, AerogpuD3d9Error> {
+        // Ensure `wgpu` has somewhere to put its runtime files on Unix CI.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+
+            if needs_runtime_dir {
+                let dir = std::env::temp_dir().join(format!(
+                    "aero-gpu-xdg-runtime-{}-d3d9-exec",
+                    std::process::id()
+                ));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &dir);
+            }
+        }
+
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::all(),
             ..Default::default()
         });
-        let adapter = instance
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
-                force_fallback_adapter: false,
+                force_fallback_adapter: true,
             })
             .await
-            .ok_or(AerogpuD3d9Error::AdapterNotFound)?;
+        {
+            Some(adapter) => adapter,
+            None => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+                .ok_or(AerogpuD3d9Error::AdapterNotFound)?,
+        };
 
         let (device, queue) = adapter
             .request_device(
@@ -582,6 +614,7 @@ impl AerogpuD3d9Executor {
             bind_group_dirty: true,
             samplers_ps,
             sampler_state_ps,
+            sampler_cache: HashMap::new(),
             pipelines: HashMap::new(),
             clear_shader,
             clear_bind_group,
@@ -615,6 +648,7 @@ impl AerogpuD3d9Executor {
         self.bind_group = None;
         self.bind_group_dirty = true;
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
+        self.sampler_cache.clear();
         self.samplers_ps = create_default_samplers(&self.device);
         self.state = State {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -3496,7 +3530,7 @@ impl AerogpuD3d9Executor {
             });
             entries.push(wgpu::BindGroupEntry {
                 binding: samp_binding,
-                resource: wgpu::BindingResource::Sampler(&self.samplers_ps[slot]),
+                resource: wgpu::BindingResource::Sampler(self.samplers_ps[slot].as_ref()),
             });
         }
 
@@ -3614,6 +3648,16 @@ impl AerogpuD3d9Executor {
         self.state.rasterizer_state.cull_mode = mapped;
     }
 
+    fn sampler_for_state(&mut self, state: D3d9SamplerState) -> Arc<wgpu::Sampler> {
+        if let Some(sampler) = self.sampler_cache.get(&state) {
+            return sampler.clone();
+        }
+
+        let sampler = Arc::new(create_wgpu_sampler(&self.device, &state));
+        self.sampler_cache.insert(state, sampler.clone());
+        sampler
+    }
+
     fn set_sampler_state_u32(&mut self, shader_stage: u32, slot: u32, state_id: u32, value: u32) {
         if shader_stage != cmd::AerogpuShaderStage::Pixel as u32 {
             // Only pixel-stage sampler state is currently needed for DWM/D3D9Ex bring-up.
@@ -3660,8 +3704,8 @@ impl AerogpuD3d9Executor {
         }
 
         if affects_sampler {
-            self.samplers_ps[slot] =
-                create_wgpu_sampler(&self.device, &self.sampler_state_ps[slot]);
+            let state = self.sampler_state_ps[slot];
+            self.samplers_ps[slot] = self.sampler_for_state(state);
             self.bind_group_dirty = true;
         }
     }
