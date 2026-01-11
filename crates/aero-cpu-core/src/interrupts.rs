@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 
 use aero_x86::Register;
 
+use crate::exception::Exception as CpuException;
 use crate::exceptions::{Exception, InterruptSource, PendingEvent};
 use crate::linear_mem::{
     read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped,
@@ -26,7 +27,7 @@ use crate::time::TimeSource;
 pub enum CpuExit {
     /// Failure to deliver an exception (including #DF) that results in a reset.
     TripleFault,
-    /// Non-architectural failure to access memory (e.g. unmapped physical memory).
+    /// Non-architectural memory/bus fault (e.g. unmapped physical memory / MMIO failure).
     MemoryFault,
     /// The interpreter decoded an instruction but has no implementation for it.
     UnimplementedInstruction(&'static str),
@@ -73,6 +74,82 @@ fn should_double_fault(first: Exception, second: Exception) -> bool {
         (C::Contributory, C::Contributory | C::PageFault) => true,
         (C::PageFault, C::Contributory | C::PageFault) => true,
         _ => false,
+    }
+}
+
+fn deliver_cpu_exception<B: CpuBus>(
+    bus: &mut B,
+    state: &mut state::CpuState,
+    pending: &mut PendingEventState,
+    exception: CpuException,
+    saved_rip: u64,
+) -> Result<(), CpuExit> {
+    // Keep architecturally visible side effects (CR2) in sync with the actual fault.
+    state.apply_exception_side_effects(&exception);
+
+    match exception {
+        CpuException::PageFault { error_code, .. } => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::PageFault,
+            saved_rip,
+            Some(error_code),
+        ),
+        CpuException::GeneralProtection(code) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            saved_rip,
+            Some(code as u32),
+        ),
+        CpuException::SegmentNotPresent(code) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::SegmentNotPresent,
+            saved_rip,
+            Some(code as u32),
+        ),
+        CpuException::StackSegment(code) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::StackFault,
+            saved_rip,
+            Some(code as u32),
+        ),
+        CpuException::InvalidTss(code) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::InvalidTss,
+            saved_rip,
+            Some(code as u32),
+        ),
+        CpuException::DivideError => deliver_exception(bus, state, pending, Exception::DivideError, saved_rip, None),
+        CpuException::InvalidOpcode | CpuException::Unimplemented(_) => {
+            deliver_exception(bus, state, pending, Exception::InvalidOpcode, saved_rip, None)
+        }
+        CpuException::DeviceNotAvailable => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::DeviceNotAvailable,
+            saved_rip,
+            None,
+        ),
+        CpuException::X87Fpu => deliver_exception(bus, state, pending, Exception::X87Fpu, saved_rip, None),
+        CpuException::SimdFloatingPointException => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::SimdFloatingPoint,
+            saved_rip,
+            None,
+        ),
+        CpuException::MemoryFault => Err(CpuExit::MemoryFault),
     }
 }
 
@@ -345,30 +422,33 @@ pub fn iret<B: CpuBus>(
     pending: &mut PendingEventState,
 ) -> Result<(), CpuExit> {
     bus.sync(state);
-    let Some(frame) = pending.interrupt_frames.pop() else {
+    let saved_rip = state.rip();
+    let Some(frame) = pending.interrupt_frames.last().copied() else {
         // No pending frame; on real hardware this would be #GP(0).
         return deliver_exception(
             bus,
             state,
             pending,
             Exception::GeneralProtection,
-            state.rip(),
+            saved_rip,
             Some(0),
         );
     };
 
-    let res = match frame {
-        InterruptFrame::Real16 => iret_real(state, bus),
+    let outcome = match frame {
+        InterruptFrame::Real16 => iret_real(state, bus, pending, saved_rip)?,
         InterruptFrame::Protected32 { stack_switched } => {
-            iret_protected(state, bus, pending, stack_switched)
+            iret_protected(state, bus, pending, saved_rip, stack_switched)?
         }
-        InterruptFrame::Long64 { stack_switched } => iret_long(state, bus, pending, stack_switched),
+        InterruptFrame::Long64 { stack_switched } => iret_long(state, bus, pending, saved_rip, stack_switched)?,
     };
 
-    if res.is_ok() {
+    if outcome == IretOutcome::Completed {
+        pending.interrupt_frames.pop();
         bus.sync(state);
     }
-    res
+
+    Ok(())
 }
 
 fn deliver_event<B: CpuBus>(
@@ -496,29 +576,11 @@ fn deliver_real_mode<B: CpuBus>(
     let ivt_addr = (vector as u64) * 4;
     let offset = match read_u16_wrapped(state, bus, ivt_addr) {
         Ok(v) => v as u64,
-        Err(_) => {
-            return deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::GeneralProtection,
-                saved_rip,
-                Some(0),
-            )
-        }
+        Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
     };
     let segment = match read_u16_wrapped(state, bus, ivt_addr.wrapping_add(2)) {
         Ok(v) => v,
-        Err(_) => {
-            return deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::GeneralProtection,
-                saved_rip,
-                Some(0),
-            )
-        }
+        Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
     };
 
     // Push FLAGS, CS, IP (in that order).
@@ -562,16 +624,7 @@ fn deliver_protected_mode<B: CpuBus>(
         read_idt_gate32(bus, state, vector)
     }) {
         Ok(gate) => gate,
-        Err(()) => {
-            return deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::GeneralProtection,
-                saved_rip,
-                Some(0),
-            )
-        }
+        Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
     };
     if !gate.present {
         return deliver_exception(
@@ -621,16 +674,7 @@ fn deliver_protected_mode<B: CpuBus>(
             tss32_stack_for_cpl(bus, state, new_cpl)
         }) {
             Ok(stack) => stack,
-            Err(()) => {
-                return deliver_exception(
-                    bus,
-                    state,
-                    pending,
-                    Exception::InvalidTss,
-                    saved_rip,
-                    Some(0),
-                )
-            }
+            Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
         };
         // Hardware forces SS.RPL == CPL for the new stack segment.
         let new_ss = (new_ss_raw & !0b11) | (new_cpl as u16);
@@ -710,16 +754,7 @@ fn deliver_long_mode<B: CpuBus>(
         read_idt_gate64(bus, state, vector)
     }) {
         Ok(gate) => gate,
-        Err(()) => {
-            return deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::GeneralProtection,
-                saved_rip,
-                Some(0),
-            )
-        }
+        Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
     };
     if !gate.present {
         return deliver_exception(
@@ -780,34 +815,42 @@ fn deliver_long_mode<B: CpuBus>(
         let new_rsp = match with_supervisor_access(bus, state, |bus, state| {
             tss64_ist_stack(bus, state, gate.ist)
         }) {
-            Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
-            _ => {
-                return deliver_exception(
-                    bus,
-                    state,
-                    pending,
-                    Exception::InvalidTss,
-                    saved_rip,
-                    Some(0),
-                )
+            Ok(rsp) => {
+                if rsp != 0 && is_canonical(rsp) {
+                    rsp
+                } else {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
+                }
             }
+            Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
         let new_rsp = match with_supervisor_access(bus, state, |bus, state| {
             tss64_rsp_for_cpl(bus, state, new_cpl)
         }) {
-            Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
-            _ => {
-                return deliver_exception(
-                    bus,
-                    state,
-                    pending,
-                    Exception::InvalidTss,
-                    saved_rip,
-                    Some(0),
-                )
+            Ok(rsp) => {
+                if rsp != 0 && is_canonical(rsp) {
+                    rsp
+                } else {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    );
+                }
             }
+            Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     }
@@ -879,47 +922,108 @@ fn deliver_long_mode<B: CpuBus>(
     Ok(())
 }
 
-fn iret_real<B: CpuBus>(state: &mut state::CpuState, bus: &mut B) -> Result<(), CpuExit> {
-    let ip = pop16(bus, state)? as u64;
-    let cs = pop16(bus, state)?;
-    let flags = pop16(bus, state)? as u64;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IretOutcome {
+    Completed,
+    ExceptionDelivered,
+}
+
+fn iret_real<B: CpuBus>(
+    state: &mut state::CpuState,
+    bus: &mut B,
+    pending: &mut PendingEventState,
+    saved_rip: u64,
+) -> Result<IretOutcome, CpuExit> {
+    let ip = match pop16(bus, state) {
+        Ok(v) => v as u64,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
+    let cs = match pop16(bus, state) {
+        Ok(v) => v,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
+    let flags = match pop16(bus, state) {
+        Ok(v) => v as u64,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
 
     state.write_reg(Register::CS, cs as u64);
     state.set_ip(ip);
 
     let new_flags = (state.rflags() & !0xFFFF) | (flags & 0xFFFF) | RFLAGS_RESERVED1;
     state.set_rflags(new_flags);
-    Ok(())
+    Ok(IretOutcome::Completed)
 }
 
 fn iret_protected<B: CpuBus>(
     state: &mut state::CpuState,
     bus: &mut B,
     pending: &mut PendingEventState,
+    saved_rip: u64,
     stack_switched: bool,
-) -> Result<(), CpuExit> {
-    let new_eip = pop32(bus, state)? as u64;
-    let new_cs = pop32(bus, state)? as u16;
-    let new_eflags = pop32(bus, state)? as u64;
+) -> Result<IretOutcome, CpuExit> {
+    let new_eip = match pop32(bus, state) {
+        Ok(v) => v as u64,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
+    let new_cs = match pop32(bus, state) {
+        Ok(v) => v as u16,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
+    let new_eflags = match pop32(bus, state) {
+        Ok(v) => v as u64,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
 
     let current_cpl = state.cpl();
     let return_cpl = (new_cs & 0x3) as u8;
 
     if return_cpl < current_cpl {
         // IRET cannot transfer control to a more privileged CPL.
-        return deliver_exception(
+        deliver_exception(
             bus,
             state,
             pending,
             Exception::GeneralProtection,
-            state.rip(),
+            saved_rip,
             Some(0),
-        );
+        )?;
+        return Ok(IretOutcome::ExceptionDelivered);
     }
 
     let (new_esp, new_ss) = if stack_switched || return_cpl > current_cpl {
-        let esp = pop32(bus, state)? as u64;
-        let ss = pop32(bus, state)? as u16;
+        let esp = match pop32(bus, state) {
+            Ok(v) => v as u64,
+            Err(e) => {
+                deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+                return Ok(IretOutcome::ExceptionDelivered);
+            }
+        };
+        let ss = match pop32(bus, state) {
+            Ok(v) => v as u16,
+            Err(e) => {
+                deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+                return Ok(IretOutcome::ExceptionDelivered);
+            }
+        };
         (Some(esp), Some(ss))
     } else {
         (None, None)
@@ -951,29 +1055,49 @@ fn iret_protected<B: CpuBus>(
         state.segments.ss.selector = ss;
     }
 
-    Ok(())
+    Ok(IretOutcome::Completed)
 }
 
 fn iret_long<B: CpuBus>(
     state: &mut state::CpuState,
     bus: &mut B,
     pending: &mut PendingEventState,
+    saved_rip: u64,
     stack_switched: bool,
-) -> Result<(), CpuExit> {
-    let new_rip = pop64(bus, state)?;
-    let new_cs = pop64(bus, state)? as u16;
-    let new_rflags = pop64(bus, state)?;
+) -> Result<IretOutcome, CpuExit> {
+    let new_rip = match pop64(bus, state) {
+        Ok(v) => v,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
+    let new_cs = match pop64(bus, state) {
+        Ok(v) => v as u16,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
+    let new_rflags = match pop64(bus, state) {
+        Ok(v) => v,
+        Err(e) => {
+            deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+            return Ok(IretOutcome::ExceptionDelivered);
+        }
+    };
 
     if !is_canonical(new_rip) {
         // Non-canonical return RIP faults with #GP(0).
-        return deliver_exception(
+        deliver_exception(
             bus,
             state,
             pending,
             Exception::GeneralProtection,
-            state.rip(),
+            saved_rip,
             Some(0),
-        );
+        )?;
+        return Ok(IretOutcome::ExceptionDelivered);
     }
 
     let current_cpl = state.cpl();
@@ -981,19 +1105,32 @@ fn iret_long<B: CpuBus>(
 
     if return_cpl < current_cpl {
         // IRETQ cannot transfer control to a more privileged CPL.
-        return deliver_exception(
+        deliver_exception(
             bus,
             state,
             pending,
             Exception::GeneralProtection,
-            state.rip(),
+            saved_rip,
             Some(0),
-        );
+        )?;
+        return Ok(IretOutcome::ExceptionDelivered);
     }
 
     let (new_rsp, new_ss) = if stack_switched || return_cpl > current_cpl {
-        let rsp = pop64(bus, state)?;
-        let ss = pop64(bus, state)? as u16;
+        let rsp = match pop64(bus, state) {
+            Ok(v) => v,
+            Err(e) => {
+                deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+                return Ok(IretOutcome::ExceptionDelivered);
+            }
+        };
+        let ss = match pop64(bus, state) {
+            Ok(v) => v as u16,
+            Err(e) => {
+                deliver_cpu_exception(bus, state, pending, e, saved_rip)?;
+                return Ok(IretOutcome::ExceptionDelivered);
+            }
+        };
         (Some(rsp), Some(ss))
     } else {
         (None, None)
@@ -1002,14 +1139,15 @@ fn iret_long<B: CpuBus>(
     if let Some(rsp) = new_rsp {
         if !is_canonical(rsp) {
             // Non-canonical return RSP faults with #GP(0).
-            return deliver_exception(
+            deliver_exception(
                 bus,
                 state,
                 pending,
                 Exception::GeneralProtection,
-                state.rip(),
+                saved_rip,
                 Some(0),
-            );
+            )?;
+            return Ok(IretOutcome::ExceptionDelivered);
         }
     }
 
@@ -1038,27 +1176,25 @@ fn iret_long<B: CpuBus>(
         state.segments.ss.selector = ss;
     }
 
-    Ok(())
+    Ok(IretOutcome::Completed)
 }
 
 fn read_idt_gate32<B: CpuBus>(
     bus: &mut B,
     state: &state::CpuState,
     vector: u8,
-) -> Result<IdtGate32, ()> {
+) -> Result<IdtGate32, CpuException> {
     let entry_size = 8u64;
     let offset = (vector as u64) * entry_size;
     if offset + (entry_size - 1) > state.tables.idtr.limit as u64 {
-        return Err(());
+        return Err(CpuException::gp0());
     }
 
     let addr = state.tables.idtr.base + offset;
-    let offset_low = read_u16_wrapped(state, bus, addr).map_err(|_| ())? as u32;
-    let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2)).map_err(|_| ())?;
-    let type_attr = bus
-        .read_u8(state.apply_a20(addr.wrapping_add(5)))
-        .map_err(|_| ())?;
-    let offset_high = read_u16_wrapped(state, bus, addr.wrapping_add(6)).map_err(|_| ())? as u32;
+    let offset_low = read_u16_wrapped(state, bus, addr)? as u32;
+    let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2))?;
+    let type_attr = bus.read_u8(state.apply_a20(addr.wrapping_add(5)))?;
+    let offset_high = read_u16_wrapped(state, bus, addr.wrapping_add(6))? as u32;
     let offset = offset_low | (offset_high << 16);
 
     let present = (type_attr & 0x80) != 0;
@@ -1067,7 +1203,7 @@ fn read_idt_gate32<B: CpuBus>(
         0xE => GateType::Interrupt,
         0xF => GateType::Trap,
         0x5 => GateType::Task,
-        _ => return Err(()),
+        _ => return Err(CpuException::gp0()),
     };
 
     Ok(IdtGate32 {
@@ -1083,25 +1219,20 @@ fn read_idt_gate64<B: CpuBus>(
     bus: &mut B,
     state: &state::CpuState,
     vector: u8,
-) -> Result<IdtGate64, ()> {
+) -> Result<IdtGate64, CpuException> {
     let entry_size = 16u64;
     let offset = (vector as u64) * entry_size;
     if offset + (entry_size - 1) > state.tables.idtr.limit as u64 {
-        return Err(());
+        return Err(CpuException::gp0());
     }
 
     let addr = state.tables.idtr.base + offset;
-    let offset_low = read_u16_wrapped(state, bus, addr).map_err(|_| ())? as u64;
-    let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2)).map_err(|_| ())?;
-    let ist = bus
-        .read_u8(state.apply_a20(addr.wrapping_add(4)))
-        .map_err(|_| ())?
-        & 0x7;
-    let type_attr = bus
-        .read_u8(state.apply_a20(addr.wrapping_add(5)))
-        .map_err(|_| ())?;
-    let offset_mid = read_u16_wrapped(state, bus, addr.wrapping_add(6)).map_err(|_| ())? as u64;
-    let offset_high = read_u32_wrapped(state, bus, addr.wrapping_add(8)).map_err(|_| ())? as u64;
+    let offset_low = read_u16_wrapped(state, bus, addr)? as u64;
+    let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2))?;
+    let ist = bus.read_u8(state.apply_a20(addr.wrapping_add(4)))? & 0x7;
+    let type_attr = bus.read_u8(state.apply_a20(addr.wrapping_add(5)))?;
+    let offset_mid = read_u16_wrapped(state, bus, addr.wrapping_add(6))? as u64;
+    let offset_high = read_u32_wrapped(state, bus, addr.wrapping_add(8))? as u64;
     let offset = offset_low | (offset_mid << 16) | (offset_high << 32);
 
     let present = (type_attr & 0x80) != 0;
@@ -1110,7 +1241,7 @@ fn read_idt_gate64<B: CpuBus>(
         0xE => GateType::Interrupt,
         0xF => GateType::Trap,
         0x5 => GateType::Task,
-        _ => return Err(()),
+        _ => return Err(CpuException::gp0()),
     };
 
     Ok(IdtGate64 {
@@ -1135,27 +1266,8 @@ fn push16<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
     match write_u16_wrapped(state, bus, addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
-        Err(crate::exception::Exception::PageFault { addr, error_code }) => {
-            state.control.cr2 = addr;
-            deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::PageFault,
-                saved_rip,
-                Some(error_code),
-            )
-            .map(|()| PushOutcome::NestedExceptionDelivered)
-        }
-        Err(_) => deliver_exception(
-            bus,
-            state,
-            pending,
-            Exception::StackFault,
-            saved_rip,
-            Some(0),
-        )
-        .map(|()| PushOutcome::NestedExceptionDelivered),
+        Err(e) => deliver_cpu_exception(bus, state, pending, e, saved_rip)
+            .map(|()| PushOutcome::NestedExceptionDelivered),
     }
 }
 
@@ -1171,27 +1283,8 @@ fn push32<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
     match write_u32_wrapped(state, bus, addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
-        Err(crate::exception::Exception::PageFault { addr, error_code }) => {
-            state.control.cr2 = addr;
-            deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::PageFault,
-                saved_rip,
-                Some(error_code),
-            )
-            .map(|()| PushOutcome::NestedExceptionDelivered)
-        }
-        Err(_) => deliver_exception(
-            bus,
-            state,
-            pending,
-            Exception::StackFault,
-            saved_rip,
-            Some(0),
-        )
-        .map(|()| PushOutcome::NestedExceptionDelivered),
+        Err(e) => deliver_cpu_exception(bus, state, pending, e, saved_rip)
+            .map(|()| PushOutcome::NestedExceptionDelivered),
     }
 }
 
@@ -1207,50 +1300,31 @@ fn push64<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
     match write_u64_wrapped(state, bus, addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
-        Err(crate::exception::Exception::PageFault { addr, error_code }) => {
-            state.control.cr2 = addr;
-            deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::PageFault,
-                saved_rip,
-                Some(error_code),
-            )
-            .map(|()| PushOutcome::NestedExceptionDelivered)
-        }
-        Err(_) => deliver_exception(
-            bus,
-            state,
-            pending,
-            Exception::StackFault,
-            saved_rip,
-            Some(0),
-        )
-        .map(|()| PushOutcome::NestedExceptionDelivered),
+        Err(e) => deliver_cpu_exception(bus, state, pending, e, saved_rip)
+            .map(|()| PushOutcome::NestedExceptionDelivered),
     }
 }
 
-fn pop16<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u16, CpuExit> {
+fn pop16<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u16, CpuException> {
     let sp = state.read_gpr16(gpr::RSP);
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
-    let value = read_u16_wrapped(state, bus, addr).map_err(|_| CpuExit::TripleFault)?;
+    let value = read_u16_wrapped(state, bus, addr)?;
     state.write_gpr16(gpr::RSP, sp.wrapping_add(2));
     Ok(value)
 }
 
-fn pop32<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u32, CpuExit> {
+fn pop32<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u32, CpuException> {
     let esp = state.read_gpr32(gpr::RSP);
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
-    let value = read_u32_wrapped(state, bus, addr).map_err(|_| CpuExit::TripleFault)?;
+    let value = read_u32_wrapped(state, bus, addr)?;
     state.write_gpr32(gpr::RSP, esp.wrapping_add(4));
     Ok(value)
 }
 
-fn pop64<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u64, CpuExit> {
+fn pop64<B: CpuBus>(bus: &mut B, state: &mut state::CpuState) -> Result<u64, CpuException> {
     let rsp = state.read_gpr64(gpr::RSP);
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
-    let value = read_u64_wrapped(state, bus, addr).map_err(|_| CpuExit::TripleFault)?;
+    let value = read_u64_wrapped(state, bus, addr)?;
     state.write_gpr64(gpr::RSP, rsp.wrapping_add(8));
     Ok(value)
 }
@@ -1274,17 +1348,17 @@ fn tss32_stack_for_cpl<B: CpuBus>(
     bus: &mut B,
     state: &state::CpuState,
     cpl: u8,
-) -> Result<(u16, u32), ()> {
+) -> Result<(u16, u32), CpuException> {
     if state.tables.tr.is_unusable()
         || !state.tables.tr.is_present()
         || (state.tables.tr.selector >> 3) == 0
         || state.tables.tr.s()
         || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
     {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     if cpl > 2 {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     let base = state.tables.tr.base;
     let ring_off = (cpl as u64) * 8;
@@ -1294,58 +1368,66 @@ fn tss32_stack_for_cpl<B: CpuBus>(
     if esp_off.checked_add(3).map_or(true, |end| end > limit)
         || ss_off.checked_add(1).map_or(true, |end| end > limit)
     {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
-    let esp_addr = base.checked_add(esp_off).ok_or(())?;
-    let ss_addr = base.checked_add(ss_off).ok_or(())?;
-    let esp = read_u32_wrapped(state, bus, esp_addr).map_err(|_| ())?;
-    let ss = read_u16_wrapped(state, bus, ss_addr).map_err(|_| ())?;
+    let esp_addr = base.checked_add(esp_off).ok_or(CpuException::ts(0))?;
+    let ss_addr = base.checked_add(ss_off).ok_or(CpuException::ts(0))?;
+    let esp = read_u32_wrapped(state, bus, esp_addr)?;
+    let ss = read_u16_wrapped(state, bus, ss_addr)?;
     if (ss >> 3) == 0 {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     Ok((ss, esp))
 }
 
-fn tss64_rsp_for_cpl<B: CpuBus>(bus: &mut B, state: &state::CpuState, cpl: u8) -> Result<u64, ()> {
+fn tss64_rsp_for_cpl<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    cpl: u8,
+) -> Result<u64, CpuException> {
     if state.tables.tr.is_unusable()
         || !state.tables.tr.is_present()
         || (state.tables.tr.selector >> 3) == 0
         || state.tables.tr.s()
         || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
     {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     if cpl > 2 {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     let base = state.tables.tr.base;
     let off = 4u64 + (cpl as u64) * 8;
     let limit = state.tables.tr.limit as u64;
     if off.checked_add(7).map_or(true, |end| end > limit) {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
-    let addr = base.checked_add(off).ok_or(())?;
-    read_u64_wrapped(state, bus, addr).map_err(|_| ())
+    let addr = base.checked_add(off).ok_or(CpuException::ts(0))?;
+    read_u64_wrapped(state, bus, addr)
 }
 
-fn tss64_ist_stack<B: CpuBus>(bus: &mut B, state: &state::CpuState, ist: u8) -> Result<u64, ()> {
+fn tss64_ist_stack<B: CpuBus>(
+    bus: &mut B,
+    state: &state::CpuState,
+    ist: u8,
+) -> Result<u64, CpuException> {
     if state.tables.tr.is_unusable()
         || !state.tables.tr.is_present()
         || (state.tables.tr.selector >> 3) == 0
         || state.tables.tr.s()
         || !matches!(state.tables.tr.typ(), 0x9 | 0xB)
     {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     if !(1..=7).contains(&ist) {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
     let base = state.tables.tr.base;
     let off = 0x24u64 + (ist as u64 - 1) * 8;
     let limit = state.tables.tr.limit as u64;
     if off.checked_add(7).map_or(true, |end| end > limit) {
-        return Err(());
+        return Err(CpuException::ts(0));
     }
-    let addr = base.checked_add(off).ok_or(())?;
-    read_u64_wrapped(state, bus, addr).map_err(|_| ())
+    let addr = base.checked_add(off).ok_or(CpuException::ts(0))?;
+    read_u64_wrapped(state, bus, addr)
 }

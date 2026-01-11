@@ -261,7 +261,11 @@ impl CpuBus for FailingWriteU32Bus {
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), aero_cpu_core::Exception> {
         if self.remaining_write_u32_failures > 0 {
             self.remaining_write_u32_failures -= 1;
-            return Err(aero_cpu_core::Exception::MemoryFault);
+            // Simulate a write-intent page fault at the destination address.
+            return Err(aero_cpu_core::Exception::PageFault {
+                addr: vaddr,
+                error_code: 0x2,
+            });
         }
         self.inner.write_u32(vaddr, val)
     }
@@ -289,7 +293,7 @@ impl CpuBus for FailingWriteU32Bus {
 
 #[test]
 fn page_fault_delivery_failure_escalates_to_double_fault() -> Result<(), CpuExit> {
-    // Fail the first 32-bit stack push while delivering #PF to force a nested #SS,
+    // Fail the first 32-bit stack push while delivering #PF to force a nested #PF,
     // which should escalate to #DF.
     let mut mem = FailingWriteU32Bus::new(0x20000, 1);
 
@@ -314,7 +318,8 @@ fn page_fault_delivery_failure_escalates_to_double_fault() -> Result<(), CpuExit
     );
     cpu.deliver_pending_event(&mut mem)?;
 
-    assert_eq!(cpu.state.control.cr2, 0xCAFE_BABE);
+    // CR2 should contain the faulting address of the nested #PF raised during delivery.
+    assert_eq!(cpu.state.control.cr2, 0x1FFC);
     assert_eq!(cpu.state.rip(), 0x5000);
 
     // Stack frame for #DF: error_code, eip, cs, eflags.

@@ -530,3 +530,247 @@ fn protected_mode_iret_syncs_bus_before_popping_supervisor_stack() -> Result<(),
 
     Ok(())
 }
+
+#[test]
+fn push_during_interrupt_delivery_page_faults() -> Result<(), CpuExit> {
+    // Arrange paging so the user stack page is not-present. Deliver a user-mode software INT
+    // to a ring-3 handler (no stack switch); the first stack push should raise #PF.
+    //
+    // The resulting #PF should then be delivered via a ring-0 handler, switching to the kernel
+    // stack via the TSS.
+    let mut phys = TestMemory::new(0x30000);
+
+    let pd_base = 0x10000u64;
+    let pt_base = 0x11000u64;
+
+    phys.write_u32(
+        pd_base + 0 * 4,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
+
+    // Identity-map the pages we need. Leave 0x7000 (user stack) not-present.
+    set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT (supervisor)
+    set_pte32(&mut phys, pt_base, 0x2, PTE_P32 | PTE_RW32 | PTE_US32); // INT handler (user)
+    set_pte32(&mut phys, pt_base, 0x3, PTE_P32 | PTE_RW32); // #PF handler (supervisor)
+    set_pte32(&mut phys, pt_base, 0x4, PTE_P32 | PTE_RW32); // TSS (supervisor)
+    // 0x7: user stack page intentionally not present.
+    set_pte32(&mut phys, pt_base, 0x9, PTE_P32 | PTE_RW32); // kernel stack (supervisor)
+    set_pte32(&mut phys, pt_base, 0x5, PTE_P32 | PTE_RW32); // #SS handler
+    set_pte32(&mut phys, pt_base, 0x6, PTE_P32 | PTE_RW32); // #GP handler
+
+    let mut bus = PagingBus::new(phys);
+
+    let idt_base = 0x1000u64;
+    let int_handler = 0x2000u32;
+    let pf_handler = 0x3000u32;
+    let ss_handler = 0x5000u32;
+    let gp_handler = 0x6000u32;
+    let tss_base = 0x4000u64;
+    let user_stack_top = 0x8000u32;
+    let kernel_stack_top = 0xA000u32;
+
+    // INT 0x80 gate (ring-3 handler, DPL3 so CPL3 can invoke it).
+    write_idt_gate32(bus.inner_mut(), idt_base, 0x80, 0x1B, int_handler, 0xEE);
+    // Provide handlers for the relevant exceptions.
+    write_idt_gate32(bus.inner_mut(), idt_base, 14, 0x08, pf_handler, 0x8E);
+    write_idt_gate32(bus.inner_mut(), idt_base, 12, 0x08, ss_handler, 0x8E);
+    write_idt_gate32(bus.inner_mut(), idt_base, 13, 0x08, gp_handler, 0x8E);
+
+    // 32-bit TSS: ESP0 and SS0.
+    bus.inner_mut().write_u32(tss_base + 4, kernel_stack_top);
+    bus.inner_mut().write_u16(tss_base + 8, 0x10);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+
+    cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.state.segments.ss.selector = 0x23;
+    cpu.state.write_gpr32(gpr::RSP, user_stack_top);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    let return_rip = 0x5555u64;
+    cpu.pending.raise_software_interrupt(0x80, return_rip);
+    cpu.deliver_pending_event(&mut bus)?;
+
+    // The interrupt delivery should have faulted and delivered #PF instead.
+    assert_eq!(cpu.state.rip(), pf_handler as u64);
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0x10);
+
+    // The faulting address should be the first attempted push (EFLAGS) to the user stack.
+    let expected_cr2 = (user_stack_top - 4) as u64;
+    assert_eq!(cpu.state.control.cr2, expected_cr2);
+
+    // Ensure the delivered #PF error code reflects a user-mode write to a not-present page.
+    bus.sync(&cpu.state);
+    let frame_base = cpu.state.read_gpr32(gpr::RSP) as u64;
+    let error_code = bus.read_u32(frame_base).unwrap();
+    assert_eq!(error_code & 0x1, 0); // P=0 (not present)
+    assert_ne!(error_code & 0x2, 0); // W/R=1 (write)
+    assert_ne!(error_code & 0x4, 0); // U/S=1 (user)
+
+    Ok(())
+}
+
+#[test]
+fn idt_read_page_faults() -> Result<(), CpuExit> {
+    // Arrange an IDT that spans two pages and unmap the page that contains the target vector's
+    // entry. Reading the gate should raise #PF (not #GP), and CR2 should point at the IDT entry.
+    let mut phys = TestMemory::new(0x30000);
+
+    let pd_base = 0x10000u64;
+    let pt_base = 0x11000u64;
+    phys.write_u32(
+        pd_base + 0 * 4,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
+
+    // IDT base chosen so vector 0xFF lives in the next page.
+    let idt_base = 0x1900u64;
+    let faulting_entry_addr = idt_base + (0xFFu64 * 8);
+
+    // Map page containing low vectors (including #PF/#GP handlers).
+    set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // 0x1000
+    // Leave 0x2000 (page 0x2) not present so IDT[0xFF] gate read faults.
+
+    // Map handlers + stack.
+    set_pte32(&mut phys, pt_base, 0x3, PTE_P32 | PTE_RW32); // vector 0xFF handler (unused)
+    set_pte32(&mut phys, pt_base, 0x4, PTE_P32 | PTE_RW32); // #GP handler
+    set_pte32(&mut phys, pt_base, 0x5, PTE_P32 | PTE_RW32); // #PF handler
+    set_pte32(&mut phys, pt_base, 0x7, PTE_P32 | PTE_RW32); // stack
+
+    let mut bus = PagingBus::new(phys);
+
+    let test_handler = 0x3000u32;
+    let gp_handler = 0x4000u32;
+    let pf_handler = 0x5000u32;
+
+    write_idt_gate32(bus.inner_mut(), idt_base, 0xFF, 0x08, test_handler, 0x8E);
+    write_idt_gate32(bus.inner_mut(), idt_base, 13, 0x08, gp_handler, 0x8E);
+    write_idt_gate32(bus.inner_mut(), idt_base, 14, 0x08, pf_handler, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.segments.cs.selector = 0x08; // CPL0
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.write_gpr32(gpr::RSP, 0x8000);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    cpu.pending.raise_software_interrupt(0xFF, 0x1234);
+    cpu.deliver_pending_event(&mut bus)?;
+
+    assert_eq!(cpu.state.rip(), pf_handler as u64);
+    assert_eq!(cpu.state.control.cr2, faulting_entry_addr);
+
+    // Not-present supervisor read => error_code == 0.
+    bus.sync(&cpu.state);
+    let frame_base = cpu.state.read_gpr32(gpr::RSP) as u64;
+    assert_eq!(bus.read_u32(frame_base).unwrap(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn nested_pf_during_pf_delivery_escalates_to_df() -> Result<(), CpuExit> {
+    // Trigger a #PF delivery from CPL3 with a ring-3 page fault handler so the delivery uses the
+    // current (user) stack. Leave the user stack not-present so pushing the #PF frame triggers a
+    // nested #PF. The nested #PF should escalate to #DF, and CR2 must be updated to the nested
+    // faulting address even though #DF is delivered.
+    let mut phys = TestMemory::new(0x30000);
+
+    let pd_base = 0x10000u64;
+    let pt_base = 0x11000u64;
+    phys.write_u32(
+        pd_base + 0 * 4,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
+
+    // Identity-map required pages. Leave 0x7000 (user stack) not-present.
+    set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT
+    set_pte32(&mut phys, pt_base, 0x2, PTE_P32 | PTE_RW32 | PTE_US32); // #PF handler
+    set_pte32(&mut phys, pt_base, 0x4, PTE_P32 | PTE_RW32); // TSS
+    set_pte32(&mut phys, pt_base, 0x5, PTE_P32 | PTE_RW32); // #DF handler
+    set_pte32(&mut phys, pt_base, 0x9, PTE_P32 | PTE_RW32); // kernel stack
+
+    let mut bus = PagingBus::new(phys);
+
+    let idt_base = 0x1000u64;
+    let pf_handler = 0x2000u32;
+    let df_handler = 0x5000u32;
+    let tss_base = 0x4000u64;
+    let user_stack_top = 0x8000u32;
+    let kernel_stack_top = 0xA000u32;
+
+    // #PF handler deliberately uses a ring-3 code selector so delivery does not stack-switch.
+    write_idt_gate32(bus.inner_mut(), idt_base, 14, 0x1B, pf_handler, 0x8E);
+    // #DF handler is ring-0 so it can be delivered via a TSS stack switch.
+    write_idt_gate32(bus.inner_mut(), idt_base, 8, 0x08, df_handler, 0x8E);
+
+    // 32-bit TSS: ESP0 and SS0.
+    bus.inner_mut().write_u32(tss_base + 4, kernel_stack_top);
+    bus.inner_mut().write_u16(tss_base + 8, 0x10);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pd_base;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+
+    cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.state.segments.ss.selector = 0x23;
+    cpu.state.write_gpr32(gpr::RSP, user_stack_top);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    let initial_cr2 = 0xCAFE_BABEu64;
+    let fault_rip = 0x1234u64;
+    cpu.pending.raise_exception_fault(
+        &mut cpu.state,
+        aero_cpu_core::exceptions::Exception::PageFault,
+        fault_rip,
+        Some(0),
+        Some(initial_cr2),
+    );
+    cpu.deliver_pending_event(&mut bus)?;
+
+    assert_eq!(cpu.state.rip(), df_handler as u64);
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0x10);
+
+    // CR2 should reflect the nested #PF from attempting to push to the user stack.
+    let expected_cr2 = (user_stack_top - 4) as u64;
+    assert_eq!(cpu.state.control.cr2, expected_cr2);
+
+    // Validate the #DF stack frame (top -> bottom): error_code, EIP, CS, EFLAGS, old ESP, old SS.
+    bus.sync(&cpu.state);
+    let frame_base = cpu.state.read_gpr32(gpr::RSP) as u64;
+    assert_eq!(bus.read_u32(frame_base).unwrap(), 0);
+    assert_eq!(bus.read_u32(frame_base + 4).unwrap(), fault_rip as u32);
+
+    Ok(())
+}
