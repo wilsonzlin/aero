@@ -76,13 +76,15 @@ If/when a WebRTC transport is used for L2 tunneling:
 
 - The DataChannel **MUST be reliable** (no frame loss).
    - (I.e. do **not** use `maxRetransmits`/`maxPacketLifeTime` / “partial reliability”.)
-- The DataChannel **MUST be ordered** (`ordered: true`).
+- The DataChannel **MUST be ordered**.
+   - `ordered: true`
 
 Rationale: an L2 tunnel carries TCP/UDP/IP/ARP/DHCP frames; dropping frames breaks correctness (and
-can create hard-to-debug “random” guest networking failures). Additionally, the current proxy-side
-stack (`crates/aero-net-stack`) terminates guest TCP and does not implement full TCP segment
-reassembly; allowing reordering at the tunnel layer can break assumptions and cause spurious
-retransmits or stalls. Ordered delivery is therefore required for the current implementation.
+can create hard-to-debug “random” guest networking failures). Today, the proxy-side TCP termination
+code (`crates/aero-net-stack`) intentionally does not implement full TCP reassembly; it assumes
+in-order delivery of TCP segments. A reliable-but-unordered WebRTC DataChannel can deliver Ethernet
+frames out of order under loss (including FIN before earlier payload), which breaks correctness.
+Requiring `ordered: true` preserves correctness with the current stack.
 
 ### Security posture (auth, origin, egress policy)
 

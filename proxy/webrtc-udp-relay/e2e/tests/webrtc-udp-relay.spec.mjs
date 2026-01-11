@@ -855,8 +855,8 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
         const pc = new RTCPeerConnection({ iceServers });
         const pendingCandidates = [];
         let remoteDescriptionSet = false;
-        // L2 tunnel MUST be reliable (no partial reliability). Do not set maxRetransmits/maxPacketLifeTime.
-        const dc = pc.createDataChannel("l2", { ordered: false });
+        // L2 tunnel MUST be reliable (no partial reliability) and ordered. Do not set maxRetransmits/maxPacketLifeTime.
+        const dc = pc.createDataChannel("l2", { ordered: true });
         dc.binaryType = "arraybuffer";
 
         const answerPromise = new Promise((resolve, reject) => {

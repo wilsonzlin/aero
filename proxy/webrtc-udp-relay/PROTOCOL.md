@@ -38,9 +38,9 @@ DataChannel.
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
   - The relay will close `l2` DataChannels that request partial reliability.
-- **Ordering:** optional.
-  - Recommended: `ordered = false` (reduces head-of-line blocking).
-  - `ordered = true` is allowed if a deployment prefers in-order delivery.
+- **Ordering:** **MUST be ordered.**
+  - `ordered = true`
+  - The relay will close `l2` DataChannels that request unordered delivery (`ordered = false`).
 
 Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
 it acts as a transport bridge:

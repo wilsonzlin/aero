@@ -20,7 +20,7 @@ function microtask(): Promise<void> {
 
 class FakeRtcDataChannel {
   label = "l2";
-  ordered = false;
+  ordered = true;
   maxRetransmits: number | null = null;
   maxPacketLifeTime: number | null = null;
   binaryType: BinaryType = "arraybuffer";
@@ -111,14 +111,10 @@ function resetFakeWebSocket(): void {
 }
 
 describe("net/l2Tunnel", () => {
-  it("accepts unordered RTCDataChannels (ordering is optional)", () => {
+  it("rejects unordered RTCDataChannels", () => {
     const channel = new FakeRtcDataChannel();
     channel.ordered = false;
-    const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {}, {
-      keepaliveMinMs: 60_000,
-      keepaliveMaxMs: 60_000,
-    });
-    client.close();
+    expect(() => new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {})).toThrow(/ordered/);
   });
 
   it("rejects partially reliable RTCDataChannels", () => {
@@ -350,7 +346,7 @@ describe("net/l2Tunnel", () => {
     }
   });
 
-  it("drops outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
+  it("queues outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -380,10 +376,8 @@ describe("net/l2Tunnel", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       await microtask();
 
-      // Frame should be dropped (not queued), even after the socket drains.
-      expect(FakeWebSocket.last!.sent.length).toBe(0);
-      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
-      expect(errEv?.error).toBeInstanceOf(Error);
+      // Frame should flush once the socket drains.
+      expect(FakeWebSocket.last!.sent.length).toBe(1);
     } finally {
       client.close();
       if (original === undefined) {

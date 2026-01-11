@@ -21,9 +21,12 @@ export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): voi
   if (channel.label !== L2_TUNNEL_DATA_CHANNEL_LABEL) {
     throw new Error(`expected DataChannel label=${L2_TUNNEL_DATA_CHANNEL_LABEL} (got ${channel.label})`);
   }
-  // Ordering is optional. For L2 tunneling over WebRTC, reliable delivery is the
-  // key requirement; we generally recommend `ordered=false` to reduce
-  // head-of-line blocking.
+  // The proxy-side stack assumes guest TCP segments arrive in order. A reliable
+  // but unordered DataChannel can deliver messages out of order under loss, so
+  // we require `ordered=true` for correctness.
+  if (!channel.ordered) {
+    throw new Error(`l2 DataChannel must be ordered (ordered=true)`);
+  }
   if (channel.maxRetransmits != null) {
     throw new Error(`l2 DataChannel must be fully reliable (maxRetransmits must be unset)`);
   }
@@ -33,10 +36,9 @@ export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): voi
 }
 
 export function createL2TunnelDataChannel(pc: RTCPeerConnection): RTCDataChannel {
-  // L2 tunnel MUST be reliable. `ordered=false` is recommended to reduce
-  // head-of-line blocking; the proxy-side tunnel/stack must tolerate
-  // out-of-order delivery.
-  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: false });
+  // L2 tunnel MUST be reliable and ordered. Do not set maxRetransmits /
+  // maxPacketLifeTime (partial reliability).
+  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: true });
   assertL2TunnelDataChannelSemantics(channel);
   return channel;
 }
@@ -238,18 +240,9 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     if (frame.byteLength > this.opts.maxFrameSize) {
-      this.emitSessionErrorThrottled(
-        new Error(`dropping outbound frame: size ${frame.byteLength} > maxFrameSize ${this.opts.maxFrameSize}`),
-      );
-      return;
-    }
-
-    if (this.isTransportOpen() && this.getTransportBufferedAmount() > this.opts.maxBufferedAmount) {
-      this.emitSessionErrorThrottled(
-        new Error(
-          `dropping outbound frame: transport backpressure (bufferedAmount ${this.getTransportBufferedAmount()} > maxBufferedAmount ${this.opts.maxBufferedAmount})`,
-        ),
-      );
+      const err = new Error(`dropping outbound frame: size ${frame.byteLength} > maxFrameSize ${this.opts.maxFrameSize}`);
+      this.emitSessionErrorThrottled(err);
+      this.close();
       return;
     }
 
@@ -355,9 +348,10 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     if (this.sendQueueBytes + msg.byteLength > this.opts.maxQueuedBytes) {
       this.emitSessionErrorThrottled(
         new Error(
-          `dropping outbound message: send queue overflow (${this.sendQueueBytes} + ${msg.byteLength} > ${this.opts.maxQueuedBytes})`,
+          `closing L2 tunnel: send queue overflow (${this.sendQueueBytes} + ${msg.byteLength} > ${this.opts.maxQueuedBytes})`,
         ),
       );
+      this.close();
       return;
     }
 
@@ -399,6 +393,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
         this.transportSend(msg);
       } catch (err) {
         this.emitSessionErrorThrottled(err);
+        this.close();
         return;
       }
     }
@@ -607,8 +602,8 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * The caller is responsible for signaling / ICE negotiation and should pass an
  * already-created data channel.
  *
- * Recommended channel options for low-latency forwarding:
- * - `ordered: false` (reduces head-of-line blocking)
+ * Required channel options:
+ * - `ordered: true`
  * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
  *
  * See `docs/adr/0013-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.

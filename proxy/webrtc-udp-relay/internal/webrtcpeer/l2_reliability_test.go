@@ -106,8 +106,8 @@ func TestL2DataChannel_ReliableDeliveryUnderLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create l2 datachannel: %v", err)
 	}
-	if localDC.Ordered() {
-		t.Fatalf("l2 datachannel should default to unordered (ordered=false)")
+	if !localDC.Ordered() {
+		t.Fatalf("l2 datachannel must be ordered (ordered=true)")
 	}
 	if localDC.MaxRetransmits() != nil || localDC.MaxPacketLifeTime() != nil {
 		t.Fatalf("l2 datachannel must be reliable (maxRetransmits/maxPacketLifeTime must be unset)")
@@ -145,8 +145,8 @@ func TestL2DataChannel_ReliableDeliveryUnderLoss(t *testing.T) {
 		t.Fatalf("timed out waiting for remote l2 datachannel")
 	}
 
-	if remoteDC.Ordered() {
-		t.Fatalf("remote l2 datachannel should default to unordered (ordered=false)")
+	if !remoteDC.Ordered() {
+		t.Fatalf("remote l2 datachannel must be ordered (ordered=true)")
 	}
 	if remoteDC.MaxRetransmits() != nil || remoteDC.MaxPacketLifeTime() != nil {
 		t.Fatalf("remote l2 datachannel must be reliable (maxRetransmits/maxPacketLifeTime must be unset)")

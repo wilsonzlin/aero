@@ -21,7 +21,7 @@ and avoids implementing a TCP/IP stack in WASM.
   - The proxy terminates Ethernet, provides DHCP/DNS on a synthetic LAN, and opens host sockets for
     outbound TCP/UDP.
 - **Transport:** **WebSocket first** (single reliable tunnel), **WebRTC optional** (DataChannel-based
-  tunnel). For WebRTC, the `l2` DataChannel MUST be reliable **and ordered** (`ordered = true`).
+  tunnel). For WebRTC, the `l2` DataChannel MUST be reliable and ordered (`ordered = true`).
 
 ### End-to-end data path
 

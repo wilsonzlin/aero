@@ -1079,10 +1079,10 @@ impl NetworkStack {
         // Payload.
         if !payload.is_empty() {
             // We intentionally do not implement full TCP reassembly: accept only in-order payload.
-            // Out-of-order segments are dropped and must be retransmitted by the guest. Ordered
-            // transports (WebSocket, or an ordered WebRTC DataChannel) avoid spurious retransmits;
-            // unordered reliable transports can reduce head-of-line blocking at the cost of extra
-            // retransmissions when packets are lost.
+            // Out-of-order segments are dropped and must be retransmitted by the guest. This stack
+            // also assumes FIN arrives in-order; if the transport can reorder segments (e.g. a
+            // reliable-but-unordered WebRTC DataChannel), it can close the upstream connection
+            // prematurely. Therefore, production L2 tunneling requires an ordered transport.
             let seg_seq = tcp.seq_number();
             let seg_end = seg_seq.wrapping_add(payload.len() as u32);
             if seg_seq == conn.guest_next_seq {
