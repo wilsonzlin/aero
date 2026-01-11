@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -82,7 +84,7 @@ fn d3d9_cmd_stream_clear_respects_scissor_rect() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping D3D9 scissored clear test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
