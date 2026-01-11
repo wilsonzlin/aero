@@ -187,10 +187,12 @@ impl SecurityConfig {
                     })
                 })
                 .or_else(|| {
-                    std::env::var("AERO_GATEWAY_SESSION_SECRET").ok().and_then(|v| {
-                        let trimmed = v.trim();
-                        (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
-                    })
+                    std::env::var("AERO_GATEWAY_SESSION_SECRET")
+                        .ok()
+                        .and_then(|v| {
+                            let trimmed = v.trim();
+                            (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+                        })
                 });
             if secret.is_none() {
                 return Err(anyhow!(

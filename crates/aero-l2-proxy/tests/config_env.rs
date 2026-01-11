@@ -91,4 +91,3 @@ fn cookie_session_secret_falls_back_to_gateway_alias() {
     assert_eq!(cfg.auth_mode, AuthMode::Cookie);
     assert_eq!(cfg.session_secret.as_deref(), Some(b"gateway".as_slice()));
 }
-

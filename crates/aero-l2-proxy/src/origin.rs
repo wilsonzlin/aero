@@ -185,7 +185,11 @@ pub fn normalize_origin(input: &str) -> Option<String> {
 ///
 /// When `allowed_origins` is empty, the default policy is same-host only, based
 /// on the request's Host header. Default ports are treated as equivalent.
-pub fn is_origin_allowed(raw_origin_header: &str, request_host: &str, allowed_origins: &[String]) -> bool {
+pub fn is_origin_allowed(
+    raw_origin_header: &str,
+    request_host: &str,
+    allowed_origins: &[String],
+) -> bool {
     let normalized = match normalize_origin(raw_origin_header) {
         Some(v) => v,
         None => return false,

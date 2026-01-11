@@ -2695,7 +2695,8 @@ impl AerogpuD3d11Executor {
                 bail!("buffer upload overruns wgpu buffer allocation");
             }
 
-            self.queue.write_buffer(&buf.buffer, offset, &tmp[..write_len]);
+            self.queue
+                .write_buffer(&buf.buffer, offset, &tmp[..write_len]);
             offset += n as u64;
         }
 

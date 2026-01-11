@@ -604,7 +604,10 @@ fn aerogpu_cmd_replays_cmd_triangle_sm4_fixture() {
         let (width, height) = exec.texture_size(RT).expect("texture size should be known");
         assert_eq!((width, height), (64, 64));
 
-        let pixels = exec.read_texture_rgba8(RT).await.expect("readback should succeed");
+        let pixels = exec
+            .read_texture_rgba8(RT)
+            .await
+            .expect("readback should succeed");
         assert_eq!(pixels.len(), width as usize * height as usize * 4);
 
         // Corner pixel is outside the triangle; should match the clear color (0.1, 0.2, 0.3, 1.0).
