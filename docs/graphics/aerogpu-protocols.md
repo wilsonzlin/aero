@@ -50,8 +50,8 @@ The protocol is still documented for reference in `docs/abi/gpu-command-protocol
 
 - Commands are things like `CREATE_SURFACE`, `UPDATE_SURFACE`, `CLEAR_RGBA`, `PRESENT`.
 - The code is intentionally simple and does not model WDDM concepts.
-- It used stale placeholder PCI IDs (`VEN_1AE0` / `DEV_E001`) and must not be used as a driver
-  contract (see `docs/abi/aerogpu-pci-identity.md`).
+- It used stale placeholder PCI IDs (deprecated vendor `VEN_1AE0`) and must not be used as a
+  driver contract (see `docs/abi/aerogpu-pci-identity.md`).
 
 It is **not** compatible with the Win7/WDDM AeroGPU protocol.
 
