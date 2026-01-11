@@ -46,6 +46,9 @@ struct Options {
   std::wstring blk_root;
   // If set, the virtio-snd test will FAIL (instead of SKIP) when no virtio-snd device is present.
   bool require_snd = false;
+  // If set, the virtio-snd test will be skipped even when a virtio-snd device is present.
+  // Useful for keeping existing blk/net automation stable when virtio-snd is experimental.
+  bool disable_snd = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -91,6 +94,15 @@ static bool EnvVarTruthy(const wchar_t* name) {
   if (s.empty()) return true;
   if (s == L"0" || s == L"false" || s == L"no" || s == L"off") return false;
   return true;
+}
+
+static bool EnvVarFalsy(const wchar_t* name) {
+  const auto v = GetEnvVarW(name);
+  if (!v.has_value()) return false;
+  std::wstring s = ToLower(*v);
+  s.erase(std::remove_if(s.begin(), s.end(), [](wchar_t c) { return iswspace(c) != 0; }), s.end());
+  if (s.empty()) return false;
+  return s == L"0" || s == L"false" || s == L"no" || s == L"off";
 }
 
 static bool ContainsInsensitive(const std::wstring& haystack, const std::wstring& needle) {
@@ -1659,6 +1671,11 @@ static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wst
 static TestVerdict VirtioSndTest(Logger& log, const Options& opt) {
   log.LogLine("virtio-snd: starting WaveOut smoke test");
 
+  if (opt.disable_snd) {
+    log.LogLine("virtio-snd: disabled by configuration");
+    return TestVerdict::kSkip;
+  }
+
   const auto devs = DetectVirtioSndDevices(log);
   if (devs.empty()) {
     log.LogLine("virtio-snd: no PCI\\VEN_1AF4&DEV_1059 device detected");
@@ -1757,6 +1774,8 @@ static void PrintUsage() {
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "                           (or set env AERO_VIRTIO_SELFTEST_REQUIRE_SND=1)\n"
+      "  --disable-snd             Skip virtio-snd test even if device is present\n"
+      "                           (or set env AERO_VIRTIO_SELFTEST_DISABLE_SND=1)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -1779,6 +1798,8 @@ int wmain(int argc, wchar_t** argv) {
 
   Options opt;
   opt.require_snd = EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_REQUIRE_SND");
+  opt.disable_snd = EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_DISABLE_SND");
+  if (EnvVarFalsy(L"AERO_VIRTIO_SELFTEST_DISABLE_SND")) opt.disable_snd = false;
 
   for (int i = 1; i < argc; i++) {
     const std::wstring arg = argv[i];
@@ -1820,6 +1841,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.log_file = v;
     } else if (arg == L"--require-snd") {
       opt.require_snd = true;
+    } else if (arg == L"--disable-snd") {
+      opt.disable_snd = true;
     } else if (arg == L"--net-timeout-sec") {
       const wchar_t* v = next();
       const auto parsed = ParseU32(v);
@@ -1854,9 +1877,9 @@ int wmain(int argc, wchar_t** argv) {
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
-  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s|blk_root=%s|require_snd=%d",
+  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s|blk_root=%s|require_snd=%d|disable_snd=%d",
            WideToUtf8(opt.http_url).c_str(), WideToUtf8(opt.dns_host).c_str(),
-           WideToUtf8(opt.blk_root).c_str(), opt.require_snd ? 1 : 0);
+           WideToUtf8(opt.blk_root).c_str(), opt.require_snd ? 1 : 0, opt.disable_snd ? 1 : 0);
 
   bool all_ok = true;
 

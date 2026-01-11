@@ -102,6 +102,8 @@ The guest tool is structured so adding more tests is straightforward:
 - Run a minimal WaveOut playback smoke test (48kHz, 16-bit, stereo PCM).
 - If absent, report `SKIP` by default (use `--require-snd` / `AERO_VIRTIO_SELFTEST_REQUIRE_SND=1`
   to make this a hard failure).
+- To disable the audio test entirely (even if a device is present), use `--disable-snd` /
+  `AERO_VIRTIO_SELFTEST_DISABLE_SND=1`.
 
 ### virtio-input (planned)
 Implemented:

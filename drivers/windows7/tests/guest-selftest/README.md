@@ -27,6 +27,8 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - If present, run a WaveOut playback smoke test (48kHz, 16-bit, stereo PCM).
   - If absent, report `SKIP` by default (use `--require-snd` or env
     `AERO_VIRTIO_SELFTEST_REQUIRE_SND=1` to make this a hard failure).
+  - To disable the audio test entirely, use `--disable-snd` (or env
+    `AERO_VIRTIO_SELFTEST_DISABLE_SND=1`).
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
