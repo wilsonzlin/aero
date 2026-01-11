@@ -284,6 +284,11 @@ export class WebHidBroker {
   }
 
   async #handleSendReportRequest(msg: HidSendReportMessage): Promise<void> {
+    if (!this.#attachedToWorker.has(msg.deviceId)) {
+      console.warn(`[webhid] sendReport for detached deviceId=${msg.deviceId}`);
+      return;
+    }
+
     const device = this.#deviceById.get(msg.deviceId);
     if (!device) {
       console.warn(`[webhid] sendReport for unknown deviceId=${msg.deviceId}`);

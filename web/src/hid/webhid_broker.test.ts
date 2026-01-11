@@ -168,6 +168,12 @@ describe("hid/WebHidBroker", () => {
     device.dispatchInputReport(2, Uint8Array.of(2));
     expect(port2.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.inputReport")).toBe(false);
 
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    port2.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(3) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).not.toHaveBeenCalled();
+    warn.mockRestore();
+
     await broker.attachDevice(device as unknown as HIDDevice);
     expect(port2.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.attach" && (p.msg as any).deviceId === id)).toBe(true);
   });
