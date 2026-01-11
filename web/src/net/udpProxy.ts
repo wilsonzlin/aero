@@ -1,4 +1,5 @@
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
+import { parseSignalMessageJSON } from "../shared/udpRelaySignaling";
 
 export type UdpProxyEvent = {
   srcIp: string;
@@ -122,45 +123,149 @@ function encodeDatagram(srcPort: number, dstIp: string, dstPort: number, payload
  */
 export class WebSocketUdpProxyClient {
   private ws: WebSocket | null = null;
+  private connectPromise: Promise<void> | null = null;
+  private authAccepted = false;
 
   constructor(
     private readonly proxyBaseUrl: string,
     private readonly sink: UdpProxyEventSink,
+    private readonly authToken?: string,
   ) {}
 
-  connect(): void {
-    if (this.ws) return;
+  connect(): Promise<void> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && (!this.authToken || this.authAccepted)) {
+      return Promise.resolve();
+    }
+    if (this.connectPromise) return this.connectPromise;
+
+    this.connectPromise = this.connectWithAuth({ sendAuthMessage: false })
+      .catch(async (err) => {
+        if (!this.authToken) throw err;
+        // Retry with explicit first-message auth for hardened relay builds.
+        return await this.connectWithAuth({ sendAuthMessage: true });
+      })
+      .finally(() => {
+        this.connectPromise = null;
+      });
+
+    return this.connectPromise;
+  }
+
+  private connectWithAuth(opts: { sendAuthMessage: boolean }): Promise<void> {
+    this.close();
+    this.authAccepted = false;
 
     const url = new URL(this.proxyBaseUrl);
     url.pathname = `${url.pathname.replace(/\/$/, "")}/udp`;
+    if (this.authToken) {
+      // Forward/compat: support both jwt token and api_key query param names.
+      url.searchParams.set("token", this.authToken);
+      url.searchParams.set("apiKey", this.authToken);
+    }
 
     const ws = new WebSocket(url.toString());
     ws.binaryType = "arraybuffer";
-    ws.onmessage = (evt) => {
-      if (!(evt.data instanceof ArrayBuffer)) return;
-      const buf = new Uint8Array(evt.data);
-      try {
-        const frame = decodeUdpRelayFrame(buf);
-        if (frame.version === 1) {
-          this.sink({
-            srcIp: formatIpv4(frame.remoteIpv4),
-            srcPort: frame.remotePort,
-            dstPort: frame.guestPort,
-            data: frame.payload,
-          });
-        } else {
-          this.sink({
-            srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
-            srcPort: frame.remotePort,
-            dstPort: frame.guestPort,
-            data: frame.payload,
-          });
-        }
-      } catch {
-        // Drop malformed frames.
-      }
-    };
     this.ws = ws;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const settle = (err?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (graceTimer) clearTimeout(graceTimer);
+        graceTimer = null;
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      ws.onopen = () => {
+        if (!this.authToken) {
+          this.authAccepted = true;
+          settle();
+          return;
+        }
+
+        if (opts.sendAuthMessage) {
+          try {
+            ws.send(JSON.stringify({ type: "auth", token: this.authToken }));
+          } catch {
+            // Ignore; we'll fail if the socket closes.
+          }
+        }
+
+        // Some relay builds do not send an explicit auth acknowledgement for the
+        // UDP WebSocket. Give the connection a small grace period to fail fast
+        // on invalid credentials, then treat it as connected.
+        graceTimer = setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            this.authAccepted = true;
+            settle();
+          }
+        }, 100);
+      };
+
+      ws.onerror = () => {
+        if (!this.authAccepted) settle(new Error("udp websocket error"));
+      };
+
+      ws.onclose = (evt) => {
+        if (!this.authAccepted) {
+          settle(new Error(`udp websocket closed (${evt.code}): ${evt.reason}`));
+        }
+      };
+
+      ws.onmessage = (evt) => {
+        if (evt.data instanceof ArrayBuffer) {
+          if (!this.authAccepted) {
+            this.authAccepted = true;
+            settle();
+          }
+
+          const buf = new Uint8Array(evt.data);
+          try {
+            const frame = decodeUdpRelayFrame(buf);
+            if (frame.version === 1) {
+              this.sink({
+                srcIp: formatIpv4(frame.remoteIpv4),
+                srcPort: frame.remotePort,
+                dstPort: frame.guestPort,
+                data: frame.payload,
+              });
+            } else {
+              this.sink({
+                srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
+                srcPort: frame.remotePort,
+                dstPort: frame.guestPort,
+                data: frame.payload,
+              });
+            }
+          } catch {
+            // Drop malformed frames.
+          }
+          return;
+        }
+
+        if (typeof evt.data === "string") {
+          // Control plane messages (auth / errors) are text frames.
+          try {
+            const msg = parseSignalMessageJSON(evt.data);
+            if (msg.type === "error") {
+              settle(new Error(`udp websocket error (${msg.code}): ${msg.message}`));
+            } else if (msg.type === "auth") {
+              this.authAccepted = true;
+              settle();
+            }
+          } catch {
+            // Ignore unknown text messages.
+          }
+        }
+      };
+    });
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
@@ -175,6 +280,7 @@ export class WebSocketUdpProxyClient {
   close(): void {
     this.ws?.close();
     this.ws = null;
+    this.authAccepted = false;
   }
 }
 
