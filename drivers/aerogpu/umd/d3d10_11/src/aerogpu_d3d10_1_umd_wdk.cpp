@@ -2464,13 +2464,25 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                                                 const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                                 D3D10DDI_HRENDERTARGETVIEW hRtv,
                                                 D3D10DDI_HRTRENDERTARGETVIEW) {
+  D3D10DDI_HRESOURCE hResource{};
+  void* res_private = nullptr;
+  if (pDesc) {
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::hDrvResource) {
+      hResource = pDesc->hDrvResource;
+      res_private = pDesc->hDrvResource.pDrvPrivate;
+    }
+    __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::hDrvResource) {
+      hResource = pDesc->hResource;
+      res_private = pDesc->hResource.pDrvPrivate;
+    }
+  }
   AEROGPU_D3D10_TRACEF("CreateRenderTargetView hDevice=%p hResource=%p",
                        hDevice.pDrvPrivate,
-                       pDesc ? pDesc->hDrvResource.pDrvPrivate : nullptr);
-  if (!hDevice.pDrvPrivate || !pDesc || !hRtv.pDrvPrivate || !pDesc->hDrvResource.pDrvPrivate) {
+                       res_private);
+  if (!hDevice.pDrvPrivate || !pDesc || !hRtv.pDrvPrivate || !hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hDrvResource);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   auto* rtv = new (hRtv.pDrvPrivate) AeroGpuRenderTargetView();
   rtv->texture = res ? res->handle : 0;
   rtv->resource = res;
@@ -2495,13 +2507,25 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
                                                 const D3D10DDIARG_CREATEDEPTHSTENCILVIEW* pDesc,
                                                 D3D10DDI_HDEPTHSTENCILVIEW hDsv,
                                                 D3D10DDI_HRTDEPTHSTENCILVIEW) {
+  D3D10DDI_HRESOURCE hResource{};
+  void* res_private = nullptr;
+  if (pDesc) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
+      hResource = pDesc->hDrvResource;
+      res_private = pDesc->hDrvResource.pDrvPrivate;
+    }
+    __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
+      hResource = pDesc->hResource;
+      res_private = pDesc->hResource.pDrvPrivate;
+    }
+  }
   AEROGPU_D3D10_TRACEF("CreateDepthStencilView hDevice=%p hResource=%p",
                        hDevice.pDrvPrivate,
-                       pDesc ? pDesc->hDrvResource.pDrvPrivate : nullptr);
-  if (!hDevice.pDrvPrivate || !pDesc || !hDsv.pDrvPrivate || !pDesc->hDrvResource.pDrvPrivate) {
+                       res_private);
+  if (!hDevice.pDrvPrivate || !pDesc || !hDsv.pDrvPrivate || !hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hDrvResource);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   auto* dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->texture = res ? res->handle : 0;
   dsv->resource = res;
