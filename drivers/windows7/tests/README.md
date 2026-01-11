@@ -53,10 +53,12 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
-The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line.
+The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test
+markers (virtio-input + virtio-snd) were emitted so older selftest binaries can’t accidentally pass.
 
 Note: The virtio-snd test emits `SKIP` by default unless enabled via `--test-snd` / `--require-snd`.
-When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL.
+When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL. Use `--disable-snd`
+to force `SKIP` even if `--test-snd` is set.
 
 ### Building (Windows)
 
@@ -77,7 +79,8 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`; **modern-only** virtio-pci: `disable-legacy=on`)
   - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`)
   - COM1 redirected to a host log file
-- Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL`.
+- Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires the virtio-input + virtio-snd
+  per-test markers when RESULT=PASS is seen.
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
 
 The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match the
