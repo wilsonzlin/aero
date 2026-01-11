@@ -34,8 +34,8 @@ drivers/windows7/tests/
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 requires `PCI\VEN_1AF4&DEV_1059&REV_01` for strict INF binding)
-    - If the device enumerates as a transitional virtio-snd PCI ID (stock QEMU defaults), the selftest only accepts it
-      when `--allow-virtio-snd-transitional` is set. In that mode, install the opt-in legacy package
+    - If the device enumerates as transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`; stock QEMU defaults), the selftest
+      only accepts it when `--allow-virtio-snd-transitional` is set. In that mode, install the opt-in legacy package
       (`drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
