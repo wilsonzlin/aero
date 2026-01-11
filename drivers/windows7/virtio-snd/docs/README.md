@@ -192,7 +192,8 @@ negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRT
 contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
 stock QEMU defaults).
 
-CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `ci/check-win7-virtio-snd-modern-build.ps1`.
+CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
+`scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 
 ## Design notes
 
