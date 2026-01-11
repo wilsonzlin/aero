@@ -81,6 +81,7 @@ version = "0.1.0"
 dependencies = [
  "aero-dxbc",
  "aero-gpu",
+ "aero-protocol",
  "anyhow",
  "bytemuck",
  "futures-intrusive",
