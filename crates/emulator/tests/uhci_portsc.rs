@@ -380,3 +380,34 @@ fn uhci_portsc_suspend_and_resume_detect_bits_roundtrip() {
     assert_ne!(st & PORTSC_PED, 0);
     assert_eq!(st & PORTSC_RD, 0);
 }
+
+#[test]
+fn uhci_portsc_suspend_ignored_when_disconnected() {
+    const PORTSC_SUSP: u16 = 1 << 12;
+
+    let mut hub = RootHub::new();
+
+    // With no device present, attempting to suspend should have no effect.
+    hub.write_portsc(0, PORTSC_SUSP);
+    assert_eq!(hub.read_portsc(0) & PORTSC_SUSP, 0);
+}
+
+#[test]
+fn uhci_portsc_line_status_shows_k_while_resuming() {
+    const PORTSC_LS_MASK: u16 = 0b11 << 4;
+    const PORTSC_LS_J_FS: u16 = 0b01 << 4;
+    const PORTSC_LS_K_FS: u16 = 0b10 << 4;
+    const PORTSC_RESUME: u16 = 1 << 13;
+
+    let mut hub = RootHub::new();
+    hub.attach(0, Box::new(TestUsbDevice));
+
+    // Default idle line state for a full-speed device is J.
+    assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_J_FS);
+
+    hub.write_portsc(0, PORTSC_RESUME);
+    assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_K_FS);
+
+    hub.write_portsc(0, 0);
+    assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_J_FS);
+}

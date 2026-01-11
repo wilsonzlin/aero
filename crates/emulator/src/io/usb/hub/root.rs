@@ -38,6 +38,7 @@ impl Port {
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
         const LS_J_FS: u16 = 0b01 << 4;
+        const LS_K_FS: u16 = 0b10 << 4;
         const RD: u16 = 1 << 6;
         const LSDA: u16 = 1 << 8;
         const PR: u16 = 1 << 9;
@@ -48,7 +49,11 @@ impl Port {
         if self.connected {
             v |= CCS;
             if !self.reset {
-                v |= LS_J_FS;
+                if self.resuming {
+                    v |= LS_K_FS;
+                } else {
+                    v |= LS_J_FS;
+                }
             }
         }
         if self.connect_change {
@@ -130,8 +135,13 @@ impl Port {
                 self.enable_change = true;
             }
 
-            self.suspended = value & SUSP != 0;
-            self.resuming = value & RESUME != 0;
+            if self.connected {
+                self.suspended = value & SUSP != 0;
+                self.resuming = value & RESUME != 0;
+            } else {
+                self.suspended = false;
+                self.resuming = false;
+            }
         }
     }
 
