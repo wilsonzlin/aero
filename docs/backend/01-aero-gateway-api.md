@@ -111,6 +111,19 @@ Notes:
 - `endpoints.udpRelayToken` may return `404` when the gateway is not configured with `UDP_RELAY_BASE_URL`.
 - `limits.l2` describes protocol-level payload limits for the L2 tunnel (`FRAME` vs control messages).
 
+Example `limits.l2`:
+
+```json
+{
+  "limits": {
+    "l2": {
+      "maxFramePayloadBytes": 2048,
+      "maxControlPayloadBytes": 256
+    }
+  }
+}
+```
+
 #### Optional: UDP relay configuration (`udpRelay`)
 
 If the gateway is configured with a UDP relay base URL (`UDP_RELAY_BASE_URL`), the session response includes an additional top-level field:
