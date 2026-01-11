@@ -116,3 +116,38 @@ fn aerogpu_cmd_set_constant_buffers_rejects_slot_out_of_range() {
         );
     });
 }
+#[test]
+fn aerogpu_cmd_set_texture_rejects_slot_out_of_range() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetTexture as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
+        stream.extend_from_slice(&16u32.to_le_bytes()); // slot (0..15 supported)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // texture handle (unbind)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        let stream = finish_stream(stream);
+        let guest_mem = VecGuestMemory::new(0x1000);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &guest_mem)
+            .expect_err("expected SET_TEXTURE to reject out-of-range slot");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("SET_TEXTURE: slot out of supported range"), "{msg}");
+    });
+}
