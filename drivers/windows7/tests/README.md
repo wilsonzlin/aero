@@ -71,7 +71,7 @@ Note:
     install the legacy virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
-  detection is performed).
+  detection is performed). Use `--disable-snd-capture` to skip capture-only checks while still exercising playback.
 
 ### Building (Windows)
 
