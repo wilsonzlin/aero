@@ -216,7 +216,7 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
     // Contract JSON specifies the canonical INF filename; it must exist in-tree and match the same HWID.
     let inf_name = require_str(virtio_input, "inf_name");
     let inf_path = root
-        .join("drivers/windows7/virtio-input/inf")
+        .join("drivers/windows/virtio-input")
         .join(inf_name);
     assert!(
         inf_path.is_file(),
@@ -225,7 +225,18 @@ fn virtio_input_pci_ids_match_windows_device_contract() {
         inf_path.display()
     );
     assert_file_contains_case_insensitive(&inf_path, &expected_hwid_short);
-    assert_file_contains_case_insensitive(&inf_path, &format!("AddService = {service_name}"));
+    // Some INFs omit spaces around `=`, so accept both spellings.
+    let addservice_with_space = format!("AddService = {service_name}");
+    let addservice_no_space = format!("AddService={service_name}");
+    let inf_text = fs::read_to_string(&inf_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", inf_path.display()));
+    let inf_upper = inf_text.to_ascii_uppercase();
+    assert!(
+        inf_upper.contains(&addservice_with_space.to_ascii_uppercase())
+            || inf_upper.contains(&addservice_no_space.to_ascii_uppercase()),
+        "{} is out of sync: expected to contain AddService directive for {service_name:?} ({addservice_with_space:?} or {addservice_no_space:?})",
+        inf_path.display()
+    );
 }
 
 const VIRTIO_DEVICE_TYPE_INPUT: u16 = 18;
