@@ -145,6 +145,17 @@ def _stop_process(proc: subprocess.Popen[bytes]) -> None:
             pass
 
 
+def _qemu_quote_keyval_value(value: str) -> str:
+    """
+    Quote a QEMU keyval value (for args like `-drive file=...`, `-chardev ...,path=...`).
+
+    This is primarily to keep file paths containing spaces or commas robust across host platforms.
+    QEMU keyval parsing supports `"..."` quoting and backslash-escaped quotes.
+    """
+
+    return '"' + value.replace('"', '\\"') + '"'
+
+
 def _virtio_snd_skip_failure_message(tail: bytes) -> str:
     # The guest selftest's virtio-snd marker is intentionally strict and machine-friendly:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS/FAIL/SKIP
@@ -492,7 +503,7 @@ def main() -> int:
 
         wav_path: Optional[Path] = None
         if args.virtio_transitional:
-            drive = f"file={disk_image},if=virtio,cache=writeback"
+            drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=virtio,cache=writeback"
             if args.snapshot:
                 drive += ",snapshot=on"
 
@@ -533,15 +544,13 @@ def main() -> int:
                         wav_path.unlink()
                     except FileNotFoundError:
                         pass
-                    # Quote the path inside the audiodev keyval string so QEMU builds on Windows
-                    # (or any environment where the output path contains spaces) do not misparse it.
-                    escaped = str(wav_path).replace('"', '\\"')
-                    audiodev_arg = f'wav,id=snd0,path="{escaped}"'
+                    audiodev_arg = f"wav,id=snd0,path={_qemu_quote_keyval_value(str(wav_path))}"
                 else:
                     raise AssertionError(f"Unhandled backend: {backend}")
 
                 virtio_snd_args = ["-audiodev", audiodev_arg, "-device", device_arg]
 
+            serial_chardev = f"file,id=charserial0,path={_qemu_quote_keyval_value(str(serial_log))}"
             qemu_args = [
                 args.qemu_system,
                 "-m",
@@ -552,7 +561,7 @@ def main() -> int:
                 "none",
                 "-no-reboot",
                 "-chardev",
-                f"file,id=charserial0,path={serial_log}",
+                serial_chardev,
                 "-serial",
                 "chardev:charserial0",
                 "-netdev",
@@ -573,7 +582,7 @@ def main() -> int:
             # QEMU supports overriding PCI revision via the x-pci-revision property.
             aero_pci_rev = "0x01"
             drive_id = "drive0"
-            drive = f"file={disk_image},if=none,id={drive_id},cache=writeback"
+            drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=none,id={drive_id},cache=writeback"
             if args.snapshot:
                 drive += ",snapshot=on"
 
@@ -602,13 +611,13 @@ def main() -> int:
                         wav_path.unlink()
                     except FileNotFoundError:
                         pass
-                    escaped = str(wav_path).replace('"', '\\"')
-                    audiodev_arg = f'wav,id=snd0,path="{escaped}"'
+                    audiodev_arg = f"wav,id=snd0,path={_qemu_quote_keyval_value(str(wav_path))}"
                 else:
                     raise AssertionError(f"Unhandled backend: {backend}")
 
                 virtio_snd_args = ["-audiodev", audiodev_arg, "-device", device_arg]
 
+            serial_chardev = f"file,id=charserial0,path={_qemu_quote_keyval_value(str(serial_log))}"
             qemu_args = [
                 args.qemu_system,
                 "-m",
@@ -619,7 +628,7 @@ def main() -> int:
                 "none",
                 "-no-reboot",
                 "-chardev",
-                f"file,id=charserial0,path={serial_log}",
+                serial_chardev,
                 "-serial",
                 "chardev:charserial0",
                 "-netdev",
