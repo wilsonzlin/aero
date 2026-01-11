@@ -21,6 +21,8 @@ pub enum AerogpuRingDecodeError {
     BadMagic { found: u32 },
     Abi(AerogpuAbiError),
     BadSizeField { found: u32 },
+    BadEntryCount { found: u32 },
+    BadStrideField { found: u32 },
 }
 
 impl From<AerogpuAbiError> for AerogpuRingDecodeError {
@@ -166,7 +168,24 @@ impl AerogpuRingHeader {
 
         let _ = parse_and_validate_abi_version_u32(self.abi_version)?;
 
-        if self.size_bytes < Self::SIZE_BYTES as u32 {
+        if self.entry_count == 0 || !self.entry_count.is_power_of_two() {
+            return Err(AerogpuRingDecodeError::BadEntryCount {
+                found: self.entry_count,
+            });
+        }
+
+        if self.entry_stride_bytes < AerogpuSubmitDesc::SIZE_BYTES as u32 {
+            return Err(AerogpuRingDecodeError::BadStrideField {
+                found: self.entry_stride_bytes,
+            });
+        }
+
+        let required = match (self.entry_count as u64).checked_mul(self.entry_stride_bytes as u64) {
+            Some(bytes) => (Self::SIZE_BYTES as u64).checked_add(bytes).unwrap_or(u64::MAX),
+            None => u64::MAX,
+        };
+
+        if required > self.size_bytes as u64 {
             return Err(AerogpuRingDecodeError::BadSizeField {
                 found: self.size_bytes,
             });
