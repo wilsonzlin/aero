@@ -2632,21 +2632,21 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         /* Push directly to the ring under RingLock for determinism. */
         ULONG headBefore = 0;
         NTSTATUS pushStatus = STATUS_SUCCESS;
+        /* Require an idle GPU to avoid perturbing dxgkrnl's fence tracking. */
         {
+            KIRQL pendingIrql;
+            KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+            BOOLEAN busy = !IsListEmpty(&adapter->PendingSubmissions) ||
+                           (adapter->LastSubmittedFence != completedFence);
+            KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+            if (busy) {
+                pushStatus = STATUS_DEVICE_BUSY;
+            }
+        }
+
+        if (NT_SUCCESS(pushStatus)) {
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
-
-            /* Require an idle GPU to avoid perturbing dxgkrnl's fence tracking. */
-            {
-                KIRQL pendingIrql;
-                KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
-                BOOLEAN busy = !IsListEmpty(&adapter->PendingSubmissions) ||
-                               (adapter->LastSubmittedFence != completedFence);
-                KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
-                if (busy) {
-                    pushStatus = STATUS_DEVICE_BUSY;
-                }
-            }
 
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
                 ULONG head = adapter->RingHeader->head;
