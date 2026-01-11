@@ -29,7 +29,7 @@ drivers/windows7/tests/
 - Detects virtio devices via SetupAPI (hardware IDs like `VEN_1AF4` / `VIRTIO`).
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
-- Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate keyboard/mouse collections).
+- Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Runs a virtio-snd test (enumerate render endpoints via MMDevice API and start a short WASAPI render stream).
 - Logs to:
   - stdout
@@ -41,7 +41,7 @@ The selftest emits machine-parseable markers:
 ```
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...    # or SKIP if virtio-snd is disabled/absent
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
@@ -110,7 +110,7 @@ The guest tool is structured so adding more tests is straightforward:
 
 ### virtio-input
 - Enumerate HID devices via SetupAPI/HIDClass.
-- Validate virtio-input HID report descriptors contain keyboard/mouse collections.
+- Validate virtio-input HID report descriptors correspond to separate keyboard and mouse devices.
 
 When adding tests:
 - Emit `AERO_VIRTIO_SELFTEST|TEST|<name>|PASS/FAIL|...` lines.
