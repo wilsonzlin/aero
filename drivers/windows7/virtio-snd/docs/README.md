@@ -418,8 +418,10 @@ CI builds the driver using:
 
 Configuration notes:
 
-- `Release` builds define `DBG=0` (free build; debug logging compiled out).
-- `Debug` builds define `DBG=1` (enables `VIRTIOSND_TRACE*` `DbgPrintEx` logging).
+- The MSBuild project ships only `Release` and `Legacy` configurations, and both define `DBG=0`
+  (free build; debug logging compiled out).
+- To enable `VIRTIOSND_TRACE*` `DbgPrintEx` logging, use a WDK 7.1 checked build or create a local
+  MSBuild configuration that sets `DBG=1`.
 
 Build outputs are staged under:
 
