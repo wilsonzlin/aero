@@ -16,6 +16,9 @@ mod guest_layout;
 #[cfg(target_arch = "wasm32")]
 mod runtime_alloc;
 
+#[cfg(target_arch = "wasm32")]
+mod vm;
+
 #[cfg(any(target_arch = "wasm32", test))]
 mod demo_renderer;
 

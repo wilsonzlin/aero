@@ -14,6 +14,7 @@ wasm-threaded = ["aero-shared"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+aero-cpu-core = { path = "../aero-cpu-core" }
 aero-machine = { path = "../aero-machine" }
 aero-vm = { path = "../aero-vm" }
 aero-usb = { path = "../aero-usb" }

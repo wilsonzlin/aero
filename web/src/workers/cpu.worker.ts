@@ -343,6 +343,19 @@ type CpuWorkerDemoCtor = NonNullable<WasmApi["CpuWorkerDemo"]>;
 type CpuWorkerDemoInstance = InstanceType<CpuWorkerDemoCtor>;
 let cpuDemo: CpuWorkerDemoInstance | null = null;
 
+type WasmVmCtor = NonNullable<WasmApi["WasmVm"]>;
+type WasmVmInstance = InstanceType<WasmVmCtor>;
+let wasmVm: WasmVmInstance | null = null;
+let vmBooted = false;
+let vmBootSectorLoaded = false;
+let vmLastVgaTextBytes: Uint8Array | null = null;
+let vmNextBootSectorLoadAttemptMs = 0;
+
+let perfIoWaitMs = 0;
+let perfDeviceExits = 0;
+let perfDeviceIoReadBytes = 0;
+let perfDeviceIoWriteBytes = 0;
+
 // Demo framebuffer region inside guest RAM. The worker drives a tiny JS→WASM→SAB
 // render path by asking WASM to fill pixels here and then bulk-copying them into the VGA SAB.
 // NOTE: Keep this disjoint from the shared framebuffer demo region starting at
@@ -1076,6 +1089,37 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           pushEventBlocking({ kind: "resetRequest" }, 250);
         },
       });
+
+      // WASM-side port I/O glue: the `crates/aero-wasm` Tier-0 VM imports these
+      // globals and uses them for `IN`/`OUT` assists.
+      //
+      // The CPU worker tracks some basic perf counters here so we can attribute
+      // time spent stalled on the IO worker separately from time spent executing
+      // guest instructions.
+      (globalThis as any).__aero_io_port_read = (port: number, size: number) => {
+        const client = io;
+        if (!client) return 0;
+        const t0 = performance.now();
+        try {
+          perfDeviceExits += 1;
+          perfDeviceIoReadBytes += size >>> 0;
+          return client.portRead(port >>> 0, size >>> 0) >>> 0;
+        } finally {
+          perfIoWaitMs += performance.now() - t0;
+        }
+      };
+      (globalThis as any).__aero_io_port_write = (port: number, size: number, value: number) => {
+        const client = io;
+        if (!client) return;
+        const t0 = performance.now();
+        try {
+          perfDeviceExits += 1;
+          perfDeviceIoWriteBytes += size >>> 0;
+          client.portWrite(port >>> 0, size >>> 0, value >>> 0);
+        } finally {
+          perfIoWaitMs += performance.now() - t0;
+        }
+      };
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
       if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
@@ -1142,6 +1186,11 @@ async function initWasmInBackground(
 
     wasmApi = api;
     cpuDemo = null;
+    wasmVm = null;
+    vmBooted = false;
+    vmBootSectorLoaded = false;
+    vmLastVgaTextBytes = null;
+    vmNextBootSectorLoadAttemptMs = 0;
     const CpuWorkerDemo = api.CpuWorkerDemo;
     if (CpuWorkerDemo) {
       try {
@@ -1162,6 +1211,16 @@ async function initWasmInBackground(
       } catch (err) {
         console.warn("Failed to init CpuWorkerDemo wasm export:", err);
         cpuDemo = null;
+      }
+    }
+
+    const WasmVm = api.WasmVm;
+    if (WasmVm) {
+      try {
+        wasmVm = new WasmVm(guestU8.byteOffset >>> 0, guestU8.byteLength >>> 0);
+      } catch (err) {
+        console.warn("Failed to init WasmVm wasm export:", err);
+        wasmVm = null;
       }
     }
 
@@ -1227,6 +1286,10 @@ async function runLoopInner(): Promise<void> {
       perfLastFrameId = frameId;
       perfCpuMs = 0;
       perfInstructions = 0n;
+      perfIoWaitMs = 0;
+      perfDeviceExits = 0;
+      perfDeviceIoReadBytes = 0;
+      perfDeviceIoWriteBytes = 0;
       return;
     }
     if (frameId === 0) {
@@ -1248,12 +1311,23 @@ async function runLoopInner(): Promise<void> {
     perfLastFrameId = frameId;
 
     perfWriter.frameSample(frameId, {
-      durations: { cpu_ms: perfCpuMs },
-      counters: { instructions: perfInstructions },
+      durations: { cpu_ms: perfCpuMs, io_ms: perfIoWaitMs },
+      counters: {
+        instructions: perfInstructions,
+        // Reuse draw_calls as a generic "device exits" counter for now; the CPU
+        // worker does not emit graphics samples yet.
+        draw_calls: perfDeviceExits,
+        io_read_bytes: perfDeviceIoReadBytes,
+        io_write_bytes: perfDeviceIoWriteBytes,
+      },
     });
 
     perfCpuMs = 0;
     perfInstructions = 0n;
+    perfIoWaitMs = 0;
+    perfDeviceExits = 0;
+    perfDeviceIoReadBytes = 0;
+    perfDeviceIoWriteBytes = 0;
   };
 
   while (true) {
@@ -1272,11 +1346,17 @@ async function runLoopInner(): Promise<void> {
         running = true;
         perfCpuMs = 0;
         perfInstructions = 0n;
+        perfIoWaitMs = 0;
+        perfDeviceExits = 0;
+        perfDeviceIoReadBytes = 0;
+        perfDeviceIoWriteBytes = 0;
         perfLastFrameId = 0;
         nextHeartbeatMs = performance.now();
         nextFrameMs = performance.now();
         nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
-        if (!diskDemoStarted) {
+        // Keep the legacy disk demo behind the "no active disk image" path so it
+        // doesn't interfere with real VM boot fixtures.
+        if (!diskDemoStarted && !currentConfig?.activeDiskImage) {
           diskDemoStarted = true;
           void runDiskReadDemo();
         }
@@ -1340,7 +1420,7 @@ async function runLoopInner(): Promise<void> {
         Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
       }
 
-      if (!didIoDemo && io && Atomics.load(status, StatusIndex.IoReady) === 1) {
+      if (!didIoDemo && io && Atomics.load(status, StatusIndex.IoReady) === 1 && !currentConfig?.activeDiskImage) {
         didIoDemo = true;
         try {
           perf.spanBegin("cpu:io:demo");
@@ -1425,50 +1505,169 @@ async function runLoopInner(): Promise<void> {
         const perfActive =
           !!perfWriter && !!header && Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
         const t0 = perfActive ? performance.now() : 0;
+        const ioWaitBefore = perfIoWaitMs;
 
-        if (vgaFramebuffer) {
-          if (now >= nextModeSwitchMs) {
-            modeIndex = (modeIndex + 1) % modes.length;
-            mode = modes[modeIndex];
+        const vmRequested = !!currentConfig?.activeDiskImage;
+        const vmReady = vmRequested && !!wasmVm;
 
-            const strideBytes = mode.width * 4;
-            storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
-            storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
-            storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
-            addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
-
-            demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
-            nextModeSwitchMs = now + modeSwitchIntervalMs;
+        if (vmReady && wasmVm && io && Atomics.load(status, StatusIndex.IoReady) === 1) {
+          // Bootstrap: load LBA0 into guest RAM at 0x7C00 and jump into it.
+          if (!vmBootSectorLoaded && now >= vmNextBootSectorLoadAttemptMs) {
+            vmNextBootSectorLoadAttemptMs = now + 50;
+            try {
+              const diskT0 = performance.now();
+              const evt = io.diskRead(0n, 512, 0x7c00n, 2000);
+              perfIoWaitMs += performance.now() - diskT0;
+              perfDeviceExits += 1;
+              perfDeviceIoReadBytes += evt.bytes >>> 0;
+              if (evt.ok) {
+                vmBootSectorLoaded = true;
+              }
+            } catch (err) {
+              // Best-effort: keep retrying until the harness opens a disk.
+              if (import.meta.env.DEV) {
+                console.warn("[cpu] vm boot: diskRead failed:", err);
+              }
+            }
           }
 
-          const strideBytes = mode.width * 4;
-          const wasmRender = wasmApi?.demo_render_rgba8888;
-          if (typeof wasmRender === "function") {
-            const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
-            vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
-            if (perfActive) perfInstructions += BigInt(instructions);
+          if (vmBootSectorLoaded && !vmBooted) {
+            try {
+              wasmVm.reset_real_mode(0x7c00);
+              vmBooted = true;
+              vmLastVgaTextBytes = null;
+            } catch (err) {
+              console.error("[cpu] vm boot: reset_real_mode failed:", err);
+            }
+          }
+
+          if (vmBooted) {
+            try {
+              const exit = wasmVm.run_slice(10_000);
+              try {
+                const executed = readDemoNumber(exit, "executed") ?? 0;
+                if (perfActive) perfInstructions += BigInt(executed >>> 0);
+              } finally {
+                try {
+                  (exit as { free?: () => void }).free?.();
+                } catch {
+                  // ignore
+                }
+              }
+
+              // Translate VGA text memory writes into a tiny shared-framebuffer
+              // signature so GPU worker paths can present something deterministic.
+              const vga = guestU8.subarray(0xb8000, 0xb8000 + 10);
+              let changed = vmLastVgaTextBytes === null;
+              if (!changed && vmLastVgaTextBytes) {
+                for (let i = 0; i < vga.length; i++) {
+                  if (vga[i] !== vmLastVgaTextBytes[i]) {
+                    changed = true;
+                    break;
+                  }
+                }
+              }
+              if (changed) {
+                publishSharedFramebufferVgaText(vga);
+                vmLastVgaTextBytes = new Uint8Array(vga);
+              }
+            } catch (err) {
+              console.error("[cpu] vm run_slice failed:", err);
+            }
           } else {
-            // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
-            renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
-            if (perfActive) perfInstructions += BigInt(mode.width * mode.height);
-          }
+            // VM requested but not ready yet: keep the demo render loop alive so
+            // the UI stays responsive while we wait for a disk to be opened.
+            if (vgaFramebuffer) {
+              if (now >= nextModeSwitchMs) {
+                modeIndex = (modeIndex + 1) % modes.length;
+                mode = modes[modeIndex];
 
-          addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
-        }
+                const strideBytes = mode.width * 4;
+                storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
+                storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
+                storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
+                addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
 
-        // Shared framebuffer demo: prefer the WASM-side publisher, fall back to the JS implementation.
-        if (cpuDemo) {
-          const seq = cpuDemo.render_frame(0, now);
-          if (perfActive) perfInstructions += instructionsPerSharedFrame;
-          if (frameState) {
-            Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
-            Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+                demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
+                nextModeSwitchMs = now + modeSwitchIntervalMs;
+              }
+
+              const strideBytes = mode.width * 4;
+              const wasmRender = wasmApi?.demo_render_rgba8888;
+              if (typeof wasmRender === "function") {
+                const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
+                vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
+                if (perfActive) perfInstructions += BigInt(instructions);
+              } else {
+                // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
+                renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+                if (perfActive) perfInstructions += BigInt(mode.width * mode.height);
+              }
+
+              addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
+            }
+
+            if (cpuDemo) {
+              const seq = cpuDemo.render_frame(0, now);
+              if (perfActive) perfInstructions += instructionsPerSharedFrame;
+              if (frameState) {
+                Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
+                Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+              }
+            } else {
+              publishSharedFramebufferFrame();
+            }
           }
         } else {
-          publishSharedFramebufferFrame();
+          // Legacy demo loop: render a moving gradient into the VGA scratch buffer
+          // and publish a shared-framebuffer tile toggle for GPU smoke tests.
+          if (vgaFramebuffer) {
+            if (now >= nextModeSwitchMs) {
+              modeIndex = (modeIndex + 1) % modes.length;
+              mode = modes[modeIndex];
+
+              const strideBytes = mode.width * 4;
+              storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
+              storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
+              storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
+              addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
+
+              demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
+              nextModeSwitchMs = now + modeSwitchIntervalMs;
+            }
+
+            const strideBytes = mode.width * 4;
+            const wasmRender = wasmApi?.demo_render_rgba8888;
+            if (typeof wasmRender === "function") {
+              const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
+              vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
+              if (perfActive) perfInstructions += BigInt(instructions);
+            } else {
+              // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
+              renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+              if (perfActive) perfInstructions += BigInt(mode.width * mode.height);
+            }
+
+            addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
+          }
+
+          if (cpuDemo) {
+            const seq = cpuDemo.render_frame(0, now);
+            if (perfActive) perfInstructions += instructionsPerSharedFrame;
+            if (frameState) {
+              Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
+              Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+            }
+          } else {
+            publishSharedFramebufferFrame();
+          }
         }
 
-        if (perfActive) perfCpuMs += performance.now() - t0;
+        if (perfActive) {
+          const elapsed = performance.now() - t0;
+          const ioWaitDelta = perfIoWaitMs - ioWaitBefore;
+          perfCpuMs += Math.max(0, elapsed - ioWaitDelta);
+        }
         nextFrameMs = now + frameIntervalMs;
       }
 
@@ -1496,6 +1695,14 @@ async function runLoopInner(): Promise<void> {
   if (cpuDemo) {
     cpuDemo.free();
     cpuDemo = null;
+  }
+  if (wasmVm) {
+    try {
+      wasmVm.free();
+    } catch {
+      // ignore
+    }
+    wasmVm = null;
   }
   ctx.close();
 }
@@ -1625,6 +1832,65 @@ function publishSharedFramebufferFrame(): void {
     } else {
       backDirty.fill(0);
       backDirty[0] = 1; // mark tile 0 (top-left)
+    }
+  }
+
+  Atomics.store(
+    sharedHeader,
+    back === 0 ? SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ : SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ,
+    newSeq,
+  );
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX, back);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, newSeq);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
+  Atomics.notify(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);
+
+  if (frameState) {
+    Atomics.store(frameState, FRAME_SEQ_INDEX, newSeq);
+    Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+    Atomics.notify(frameState, FRAME_STATUS_INDEX);
+  }
+}
+
+function publishSharedFramebufferVgaText(vgaTextBytes: Uint8Array): void {
+  if (!sharedHeader || !sharedLayout || !sharedSlot0 || !sharedSlot1) return;
+
+  const active = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
+  const back = active ^ 1;
+
+  const backPixels = back === 0 ? sharedSlot0 : sharedSlot1;
+  const backDirty = back === 0 ? sharedDirty0 : sharedDirty1;
+
+  const base = 0xff00ff00; // RGBA green
+
+  const backSlotSeq = Atomics.load(
+    sharedHeader,
+    back === 0 ? SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ : SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ,
+  );
+  const backSlotInitialized = backSlotSeq !== 0;
+
+  if (!backSlotInitialized) {
+    backPixels.fill(base);
+  }
+
+  // Encode the first 5 VGA text cells (10 bytes) into the first row of pixels:
+  // pixel[i] = RGBA(char, attr, 0, 255).
+  const cells = Math.min(5, Math.floor(vgaTextBytes.length / 2));
+  for (let i = 0; i < cells; i++) {
+    const ch = vgaTextBytes[i * 2] ?? 0;
+    const attr = vgaTextBytes[i * 2 + 1] ?? 0;
+    backPixels[i] = ((0xff << 24) | (attr << 8) | ch) >>> 0;
+  }
+
+  const prevSeq = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ);
+  const newSeq = (prevSeq + 1) | 0;
+
+  if (backDirty) {
+    if (!backSlotInitialized) {
+      backDirty.fill(0xffffffff);
+    } else {
+      backDirty.fill(0);
+      backDirty[0] = 1;
     }
   }
 

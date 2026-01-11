@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero VM boot (VGA + serial) smoke</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+      #status {
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+      }
+      #frame {
+        image-rendering: pixelated;
+        border: 1px solid #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="frame"></canvas>
+    <pre id="status"></pre>
+    <script type="module" src="./vm-boot-vga-serial-smoke.ts"></script>
+  </body>
+</html>
+

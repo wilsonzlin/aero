@@ -209,6 +209,17 @@ export interface WasmApi {
         free(): void;
     };
 
+    /**
+     * Minimal browser VM loop (Tier-0 interpreter) wired to injected shared guest RAM.
+     *
+     * Intended for the CPU worker runtime (`web/src/workers/cpu.worker.ts`).
+     */
+    WasmVm?: new (guestBase: number, guestSize: number) => {
+        reset_real_mode(entryIp: number): void;
+        run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
+        free(): void;
+    };
+
     // Optional audio exports (present when the WASM build includes the audio worklet bridge).
     WorkletBridge?: new (capacityFrames: number, channelCount: number) => {
         readonly shared_buffer: SharedArrayBuffer;
@@ -379,6 +390,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
         Machine: mod.Machine,
+        WasmVm: mod.WasmVm,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,
         attach_worklet_bridge: mod.attach_worklet_bridge,
