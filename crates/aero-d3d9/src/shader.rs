@@ -763,8 +763,11 @@ pub struct BindGroupLayout {
 pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
     let mut wgsl = String::new();
 
-    // Constants: fixed sized array to keep indexing simple.
-    wgsl.push_str("struct Constants { c: array<vec4<f32>, 256>, };\n");
+    // Constants: D3D9 has separate `c#` register files for each shader stage. The minimal D3D9
+    // token-stream translator models those by packing both stages into a single uniform buffer:
+    // - constants.c[0..255]   = vertex shader constants
+    // - constants.c[256..511] = pixel shader constants
+    wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n\n");
 
     let mut sampler_bindings = HashMap::new();
@@ -793,6 +796,11 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
     if !ir.used_samplers.is_empty() {
         wgsl.push('\n');
     }
+
+    let const_base = match ir.version.stage {
+        ShaderStage::Vertex => 0u32,
+        ShaderStage::Pixel => 256u32,
+    };
 
     match ir.version.stage {
         ShaderStage::Vertex => {
@@ -862,7 +870,7 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             // Instruction emission.
             let mut indent = 1usize;
             for inst in &ir.ops {
-                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32);
+                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32, const_base);
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
 
@@ -949,7 +957,7 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
 
             let mut indent = 1usize;
             for inst in &ir.ops {
-                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32);
+                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32, const_base);
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
             wgsl.push_str("  return oC0;\n}\n");
@@ -974,6 +982,7 @@ fn emit_inst(
     indent: &mut usize,
     inst: &Instruction,
     const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
 ) {
     match inst.op {
         Op::Nop => {}
@@ -982,7 +991,7 @@ fn emit_inst(
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
             let dst_name = reg_var_name(dst.reg);
-            let mut expr = src_expr(&src0, const_defs_f32);
+            let mut expr = src_expr(&src0, const_defs_f32, const_base);
             expr = apply_result_modifier(expr, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -1005,9 +1014,9 @@ fn emit_inst(
             };
             let mut expr = format!(
                 "({} {} {})",
-                src_expr(&src0, const_defs_f32),
+                src_expr(&src0, const_defs_f32, const_base),
                 op,
-                src_expr(&src1, const_defs_f32)
+                src_expr(&src1, const_defs_f32, const_base)
             );
             expr = apply_result_modifier(expr, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
@@ -1027,8 +1036,8 @@ fn emit_inst(
             let mut expr = format!(
                 "{}({}, {})",
                 func,
-                src_expr(&src0, const_defs_f32),
-                src_expr(&src1, const_defs_f32)
+                src_expr(&src0, const_defs_f32, const_base),
+                src_expr(&src1, const_defs_f32, const_base)
             );
             expr = apply_result_modifier(expr, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
@@ -1041,9 +1050,9 @@ fn emit_inst(
         }
         Op::Mad => {
             let dst = inst.dst.unwrap();
-            let a = src_expr(&inst.src[0], const_defs_f32);
-            let b = src_expr(&inst.src[1], const_defs_f32);
-            let c = src_expr(&inst.src[2], const_defs_f32);
+            let a = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[1], const_defs_f32, const_base);
+            let c = src_expr(&inst.src[2], const_defs_f32, const_base);
             let mut expr = format!("fma({}, {}, {})", a, b, c);
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
@@ -1057,9 +1066,9 @@ fn emit_inst(
         }
         Op::Cmp => {
             let dst = inst.dst.unwrap();
-            let cond = src_expr(&inst.src[0], const_defs_f32);
-            let a = src_expr(&inst.src[1], const_defs_f32);
-            let b = src_expr(&inst.src[2], const_defs_f32);
+            let cond = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let a = src_expr(&inst.src[1], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[2], const_defs_f32, const_base);
             // Per-component compare: if cond >= 0 then a else b.
             let mut expr = format!("select({}, {}, ({} >= vec4<f32>(0.0)))", b, a, cond);
             expr = apply_result_modifier(expr, inst.result_modifier);
@@ -1074,8 +1083,8 @@ fn emit_inst(
         }
         Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
             let dst = inst.dst.unwrap();
-            let a = src_expr(&inst.src[0], const_defs_f32);
-            let b = src_expr(&inst.src[1], const_defs_f32);
+            let a = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[1], const_defs_f32, const_base);
             let op = match inst.op {
                 Op::Slt => "<",
                 Op::Sge => ">=",
@@ -1099,8 +1108,8 @@ fn emit_inst(
         }
         Op::Dp3 | Op::Dp4 => {
             let dst = inst.dst.unwrap();
-            let a = src_expr(&inst.src[0], const_defs_f32);
-            let b = src_expr(&inst.src[1], const_defs_f32);
+            let a = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[1], const_defs_f32, const_base);
             let mut expr = if inst.op == Op::Dp3 {
                 format!("vec4<f32>(dot(({}).xyz, ({}).xyz))", a, b)
             } else {
@@ -1121,7 +1130,7 @@ fn emit_inst(
             let coord = inst.src[0];
             let s = inst.sampler.unwrap();
             let dst_name = reg_var_name(dst.reg);
-            let coord_expr = src_expr(&coord, const_defs_f32);
+            let coord_expr = src_expr(&coord, const_defs_f32, const_base);
             let project = inst.imm.unwrap_or(0) != 0;
             let uv = if project {
                 format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
@@ -1140,7 +1149,7 @@ fn emit_inst(
         }
         Op::Rcp => {
             let dst = inst.dst.unwrap();
-            let src0 = src_expr(&inst.src[0], const_defs_f32);
+            let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("(vec4<f32>(1.0) / {})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
@@ -1154,7 +1163,7 @@ fn emit_inst(
         }
         Op::Rsq => {
             let dst = inst.dst.unwrap();
-            let src0 = src_expr(&inst.src[0], const_defs_f32);
+            let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("inverseSqrt({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
@@ -1168,7 +1177,7 @@ fn emit_inst(
         }
         Op::Frc => {
             let dst = inst.dst.unwrap();
-            let src0 = src_expr(&inst.src[0], const_defs_f32);
+            let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("fract({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
@@ -1181,14 +1190,14 @@ fn emit_inst(
             }
         }
         Op::If => {
-            let cond = src_expr(&inst.src[0], const_defs_f32);
+            let cond = src_expr(&inst.src[0], const_defs_f32, const_base);
             push_indent(wgsl, *indent);
             wgsl.push_str(&format!("if (({}).x != 0.0) {{\n", cond));
             *indent += 1;
         }
         Op::Ifc => {
-            let a = src_expr(&inst.src[0], const_defs_f32);
-            let b = src_expr(&inst.src[1], const_defs_f32);
+            let a = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[1], const_defs_f32, const_base);
             let op = match inst.imm.unwrap_or(0) {
                 0 => ">",
                 1 => "==",
@@ -1234,7 +1243,7 @@ fn apply_result_modifier(expr: String, modifier: ResultModifier) -> String {
     out
 }
 
-fn src_expr(src: &Src, const_defs_f32: &BTreeMap<u16, [f32; 4]>) -> String {
+fn src_expr(src: &Src, const_defs_f32: &BTreeMap<u16, [f32; 4]>, const_base: u32) -> String {
     let base = match src.reg.file {
         RegisterFile::Const => {
             if const_defs_f32.contains_key(&src.reg.index) {
@@ -1242,7 +1251,7 @@ fn src_expr(src: &Src, const_defs_f32: &BTreeMap<u16, [f32; 4]>) -> String {
             } else {
                 format!(
                     "constants.c[{}u]{}",
-                    src.reg.index,
+                    u32::from(src.reg.index) + const_base,
                     swizzle_suffix(src.swizzle)
                 )
             }

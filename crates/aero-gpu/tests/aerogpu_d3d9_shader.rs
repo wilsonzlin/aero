@@ -137,15 +137,17 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     let vs = cache.get(1).unwrap();
     let ps = cache.get(2).unwrap();
 
-    // Constants buffer: `array<vec4<f32>, 256>` => 4096 bytes.
+    // Constants buffer: vertex `c#` registers followed by pixel `c#` registers.
+    // `array<vec4<f32>, 512>` => 8192 bytes.
     let constants = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("d3d9 constants"),
-        size: 4096,
+        size: 8192,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     // Initialize c0 to 0 so `mad r0, r0, v0, c0` becomes a pure multiply.
-    queue.write_buffer(&constants, 0, &[0u8; 16]);
+    let ps_c0_offset = 256u64 * 16;
+    queue.write_buffer(&constants, ps_c0_offset, &[0u8; 16]);
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("sample tex"),
@@ -201,7 +203,7 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: wgpu::BufferSize::new(512 * 16),
                 },
                 count: None,
             },

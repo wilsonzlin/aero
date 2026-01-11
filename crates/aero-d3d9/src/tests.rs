@@ -636,7 +636,8 @@ fn translates_src_and_result_modifiers_to_wgsl() {
     .expect("wgsl validate");
 
     assert!(wgsl.wgsl.contains("clamp("));
-    assert!(wgsl.wgsl.contains("constants.c[0u]"));
+    // Pixel shader constants are packed after the vertex constant register file.
+    assert!(wgsl.wgsl.contains("constants.c[256u]"));
 }
 
 #[test]

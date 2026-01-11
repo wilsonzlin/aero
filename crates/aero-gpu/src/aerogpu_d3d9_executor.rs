@@ -156,6 +156,8 @@ enum Resource {
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        mip_level_count: u32,
+        array_layers: u32,
         row_pitch_bytes: u32,
         backing: Option<GuestTextureBacking>,
         dirty_ranges: Vec<Range<u64>>,
@@ -339,7 +341,11 @@ impl AerogpuD3d9Executor {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu-d3d9.constants"),
-            size: 256 * 16,
+            // The D3D9 token-stream translator packs vertex + pixel constant registers into a
+            // single uniform buffer:
+            // - c[0..255]   = vertex constants
+            // - c[256..511] = pixel constants
+            size: 512 * 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -429,7 +435,7 @@ impl AerogpuD3d9Executor {
 
         // Avoid leaking constants across resets; the next draw will rewrite what it needs.
         self.queue
-            .write_buffer(&self.constants_buffer, 0, &[0u8; 256 * 16]);
+            .write_buffer(&self.constants_buffer, 0, &[0u8; 512 * 16]);
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -660,10 +666,12 @@ impl AerogpuD3d9Executor {
                 ..
             } => {
                 let format = map_aerogpu_format(format)?;
+                let mip_level_count = mip_levels.max(1);
+                let array_layers = array_layers.max(1);
                 let backing = if backing_alloc_id == 0 {
                     None
                 } else {
-                    if mip_levels > 1 || array_layers > 1 {
+                    if mip_level_count > 1 || array_layers > 1 {
                         return Err(AerogpuD3d9Error::Validation(
                             "guest-backed textures with mip_levels/array_layers > 1 are not supported".into(),
                         ));
@@ -708,9 +716,9 @@ impl AerogpuD3d9Executor {
                     size: wgpu::Extent3d {
                         width,
                         height,
-                        depth_or_array_layers: array_layers.max(1),
+                        depth_or_array_layers: array_layers,
                     },
-                    mip_level_count: mip_levels.max(1),
+                    mip_level_count,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format,
@@ -729,6 +737,8 @@ impl AerogpuD3d9Executor {
                         format,
                         width,
                         height,
+                        mip_level_count,
+                        array_layers,
                         row_pitch_bytes,
                         backing,
                         dirty_ranges: Vec::new(),
@@ -832,7 +842,11 @@ impl AerogpuD3d9Executor {
             } => {
                 self.ensure_encoder();
                 let mut encoder = self.encoder.take().unwrap();
-                {
+                let result = (|| -> Result<(), AerogpuD3d9Error> {
+                    if size_bytes == 0 {
+                        return Ok(());
+                    }
+
                     let src_underlying = self.resolve_resource_handle(src_buffer)?;
                     let dst_underlying = self.resolve_resource_handle(dst_buffer)?;
                     let src = self
@@ -879,9 +893,10 @@ impl AerogpuD3d9Executor {
                         dst_offset_bytes,
                         size_bytes,
                     );
-                }
+                    Ok(())
+                })();
                 self.encoder = Some(encoder);
-                Ok(())
+                result
             }
             AeroGpuCmd::CopyTexture2d {
                 dst_texture,
@@ -900,7 +915,11 @@ impl AerogpuD3d9Executor {
             } => {
                 self.ensure_encoder();
                 let mut encoder = self.encoder.take().unwrap();
-                {
+                let result = (|| -> Result<(), AerogpuD3d9Error> {
+                    if width == 0 || height == 0 {
+                        return Ok(());
+                    }
+
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
                     let dst_underlying = self.resolve_resource_handle(dst_texture)?;
                     let src = self
@@ -912,15 +931,16 @@ impl AerogpuD3d9Executor {
                         .get(&dst_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?;
 
-                    let (src_tex, dst_tex) = match (src, dst) {
-                        (
-                            Resource::Texture2d {
-                                texture: src_tex, ..
-                            },
-                            Resource::Texture2d {
-                                texture: dst_tex, ..
-                            },
-                        ) => (src_tex, dst_tex),
+                    let (src_tex, src_format, src_w, src_h, src_mips, src_layers) = match src {
+                        Resource::Texture2d {
+                            texture,
+                            format,
+                            width,
+                            height,
+                            mip_level_count,
+                            array_layers,
+                            ..
+                        } => (texture, *format, *width, *height, *mip_level_count, *array_layers),
                         _ => {
                             return Err(AerogpuD3d9Error::CopyNotSupported {
                                 src: src_texture,
@@ -928,6 +948,76 @@ impl AerogpuD3d9Executor {
                             })
                         }
                     };
+                    let (dst_tex, dst_format, dst_w, dst_h, dst_mips, dst_layers) = match dst {
+                        Resource::Texture2d {
+                            texture,
+                            format,
+                            width,
+                            height,
+                            mip_level_count,
+                            array_layers,
+                            ..
+                        } => (texture, *format, *width, *height, *mip_level_count, *array_layers),
+                        _ => {
+                            return Err(AerogpuD3d9Error::CopyNotSupported {
+                                src: src_texture,
+                                dst: dst_texture,
+                            })
+                        }
+                    };
+
+                    if src_format != dst_format {
+                        return Err(AerogpuD3d9Error::CopyNotSupported {
+                            src: src_texture,
+                            dst: dst_texture,
+                        });
+                    }
+
+                    if dst_mip_level >= dst_mips
+                        || dst_array_layer >= dst_layers
+                        || src_mip_level >= src_mips
+                        || src_array_layer >= src_layers
+                    {
+                        return Err(AerogpuD3d9Error::CopyOutOfBounds {
+                            src: src_texture,
+                            dst: dst_texture,
+                        });
+                    }
+
+                    let mip_dim = |base: u32, mip: u32| base.checked_shr(mip).unwrap_or(0).max(1);
+
+                    let dst_mip_w = mip_dim(dst_w, dst_mip_level);
+                    let dst_mip_h = mip_dim(dst_h, dst_mip_level);
+                    let src_mip_w = mip_dim(src_w, src_mip_level);
+                    let src_mip_h = mip_dim(src_h, src_mip_level);
+
+                    let dst_x_end = dst_x.checked_add(width).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                        src: src_texture,
+                        dst: dst_texture,
+                    })?;
+                    let dst_y_end = dst_y.checked_add(height).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                        src: src_texture,
+                        dst: dst_texture,
+                    })?;
+                    let src_x_end = src_x.checked_add(width).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                        src: src_texture,
+                        dst: dst_texture,
+                    })?;
+                    let src_y_end = src_y.checked_add(height).ok_or(AerogpuD3d9Error::CopyOutOfBounds {
+                        src: src_texture,
+                        dst: dst_texture,
+                    })?;
+
+                    if dst_x_end > dst_mip_w
+                        || dst_y_end > dst_mip_h
+                        || src_x_end > src_mip_w
+                        || src_y_end > src_mip_h
+                    {
+                        return Err(AerogpuD3d9Error::CopyOutOfBounds {
+                            src: src_texture,
+                            dst: dst_texture,
+                        });
+                    }
 
                     encoder.copy_texture_to_texture(
                         wgpu::ImageCopyTexture {
@@ -956,9 +1046,10 @@ impl AerogpuD3d9Executor {
                             depth_or_array_layers: 1,
                         },
                     );
-                }
+                    Ok(())
+                })();
                 self.encoder = Some(encoder);
-                Ok(())
+                result
             }
             AeroGpuCmd::CreateShaderDxbc {
                 shader_handle,
@@ -1013,11 +1104,19 @@ impl AerogpuD3d9Executor {
                 Ok(())
             }
             AeroGpuCmd::SetShaderConstantsF {
+                stage,
                 start_register,
                 data,
                 ..
             } => {
-                let offset = start_register as u64 * 16;
+                // D3D9 keeps separate constant register files per stage; match the shader
+                // translation layout (vertex constants first, then pixel constants).
+                let stage_base = match stage {
+                    0 => 0u64,
+                    1 => 256u64 * 16,
+                    _ => 0u64,
+                };
+                let offset = stage_base + start_register as u64 * 16;
                 self.queue
                     .write_buffer(&self.constants_buffer, offset, data);
                 Ok(())
@@ -1812,7 +1911,7 @@ impl AerogpuD3d9Executor {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(256 * 16),
+                min_binding_size: wgpu::BufferSize::new(512 * 16),
             },
             count: None,
         });
