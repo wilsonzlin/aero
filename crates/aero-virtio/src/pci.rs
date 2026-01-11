@@ -1,6 +1,6 @@
 use crate::devices::VirtioDevice;
 use crate::memory::{read_u16_le, GuestMemory};
-use crate::queue::{VirtQueue, VirtQueueConfig};
+use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig};
 use core::any::Any;
 
 pub const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
@@ -831,7 +831,6 @@ impl VirtioPciDevice {
 
     fn device_cfg_write(&mut self, offset: u64, data: &[u8]) {
         self.device.write_config(offset, data);
-        self.signal_config_interrupt();
     }
 
     fn notify_cfg_write(&mut self, offset: u64, _data: &[u8], mem: &mut dyn GuestMemory) {
@@ -861,22 +860,40 @@ impl VirtioPciDevice {
                 return;
             };
 
-            while let Ok(Some(chain)) = queue.pop_descriptor_chain(mem) {
-                let head_index = chain.head_index();
-                need_irq |= match self.device.process_queue(queue_index, chain, queue, mem) {
-                    Ok(irq) => irq,
-                    Err(_) => {
-                        // VirtioDevice implementations are expected to add a used entry for every
-                        // descriptor chain they pop. Historically, some devices returned an error
-                        // for malformed chains without completing them; because the transport
-                        // ignores device errors, that behaviour wedges the virtqueue (the driver
-                        // waits forever for used->idx to advance).
-                        //
-                        // As a safety net, complete the chain with `used.len = 0` on any device
-                        // error so the guest can recover and continue issuing requests.
-                        queue.add_used(mem, head_index, 0).unwrap_or(false)
-                    }
+            loop {
+                let popped = match queue.pop_descriptor_chain(mem) {
+                    Ok(Some(popped)) => popped,
+                    Ok(None) => break,
+                    Err(_) => break,
                 };
+
+                match popped {
+                    PoppedDescriptorChain::Chain(chain) => {
+                        let head_index = chain.head_index();
+                        need_irq |= match self.device.process_queue(queue_index, chain, queue, mem)
+                        {
+                            Ok(irq) => irq,
+                            Err(_) => {
+                                // VirtioDevice implementations are expected to add a used entry for
+                                // every descriptor chain they pop. Historically, some devices returned
+                                // an error for malformed chains without completing them; because the
+                                // transport ignores device errors, that behaviour wedges the virtqueue
+                                // (the driver waits forever for used->idx to advance).
+                                //
+                                // As a safety net, complete the chain with `used.len = 0` on any device
+                                // error so the guest can recover and continue issuing requests.
+                                queue.add_used(mem, head_index, 0).unwrap_or(false)
+                            }
+                        };
+                    }
+                    PoppedDescriptorChain::Invalid { head_index, .. } => {
+                        // The guest posted an avail entry, but we could not parse the descriptor
+                        // chain (e.g. loop, out-of-range index, invalid indirect table). Complete
+                        // the chain with `used.len = 0` so the driver can recover instead of
+                        // wedging the queue.
+                        need_irq |= queue.add_used(mem, head_index, 0).unwrap_or(false);
+                    }
+                }
             }
             need_irq |= self
                 .device
@@ -901,16 +918,6 @@ impl VirtioPciDevice {
             .unwrap_or(0xffff);
         if vec != 0xffff {
             self.interrupts.signal_msix(vec);
-        } else if !self.legacy_irq_asserted {
-            self.interrupts.raise_legacy_irq();
-            self.legacy_irq_asserted = true;
-        }
-    }
-
-    fn signal_config_interrupt(&mut self) {
-        self.isr_status |= VIRTIO_PCI_LEGACY_ISR_CONFIG;
-        if self.msix_config_vector != 0xffff {
-            self.interrupts.signal_msix(self.msix_config_vector);
         } else if !self.legacy_irq_asserted {
             self.interrupts.raise_legacy_irq();
             self.legacy_irq_asserted = true;

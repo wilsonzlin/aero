@@ -1,7 +1,7 @@
 use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
 use aero_virtio::queue::{
-    VirtQueue, VirtQueueConfig, VirtQueueError, VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT,
-    VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    DescriptorChain, PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VirtQueueError,
+    VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 
 fn write_desc(
@@ -18,6 +18,15 @@ fn write_desc(
     write_u32_le(mem, base + 8, len).unwrap();
     write_u16_le(mem, base + 12, flags).unwrap();
     write_u16_le(mem, base + 14, next).unwrap();
+}
+
+fn pop_chain(q: &mut VirtQueue, mem: &GuestRam) -> DescriptorChain {
+    match q.pop_descriptor_chain(mem).unwrap().unwrap() {
+        PoppedDescriptorChain::Chain(chain) => chain,
+        PoppedDescriptorChain::Invalid { error, .. } => {
+            panic!("expected valid descriptor chain, got parse error {error:?}")
+        }
+    }
 }
 
 #[test]
@@ -48,7 +57,7 @@ fn descriptor_chaining_is_parsed() {
     )
     .unwrap();
 
-    let chain = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    let chain = pop_chain(&mut q, &mem);
     assert_eq!(chain.head_index(), 0);
     assert_eq!(chain.descriptors().len(), 2);
     assert_eq!(chain.descriptors()[0].addr, 0x4000);
@@ -87,7 +96,7 @@ fn indirect_descriptors_are_expanded() {
     )
     .unwrap();
 
-    let chain = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    let chain = pop_chain(&mut q, &mem);
     assert_eq!(chain.head_index(), 0);
     assert_eq!(chain.descriptors().len(), 2);
     assert_eq!(chain.descriptors()[0].addr, 0x4000);
@@ -124,8 +133,14 @@ fn nested_indirect_descriptors_are_rejected() {
     )
     .unwrap();
 
-    let err = q.pop_descriptor_chain(&mem).unwrap_err();
-    assert_eq!(err, VirtQueueError::NestedIndirectDescriptor);
+    let popped = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    match popped {
+        PoppedDescriptorChain::Invalid { head_index, error } => {
+            assert_eq!(head_index, 0);
+            assert_eq!(error, VirtQueueError::NestedIndirectDescriptor);
+        }
+        PoppedDescriptorChain::Chain(_) => panic!("expected invalid chain"),
+    }
 }
 
 #[test]
@@ -161,13 +176,13 @@ fn ring_index_wraparound_uses_modulo_queue_size() {
         write_u16_le(&mut mem, avail + 4 + u64::from(i) * 2, i).unwrap();
     }
     for _ in 0..4 {
-        q.pop_descriptor_chain(&mem).unwrap().unwrap();
+        pop_chain(&mut q, &mem);
     }
 
     // Reuse descriptor 0, which should be read from ring index 0 after wrap.
     write_u16_le(&mut mem, avail + 4, 0).unwrap();
     write_u16_le(&mut mem, avail + 2, 5).unwrap();
-    let chain = q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    let chain = pop_chain(&mut q, &mem);
     assert_eq!(chain.head_index(), 0);
 }
 
@@ -255,7 +270,7 @@ fn event_idx_avail_event_is_updated_for_driver_notifications() {
     )
     .unwrap();
 
-    q.pop_descriptor_chain(&mem).unwrap().unwrap();
+    pop_chain(&mut q, &mem);
     q.update_avail_event(&mut mem).unwrap();
 
     let avail_event_addr = used + 4 + 4 * 8;

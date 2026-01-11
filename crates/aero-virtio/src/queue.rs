@@ -169,6 +169,20 @@ impl DescriptorChain {
     }
 }
 
+/// Result of popping the next available descriptor chain.
+///
+/// `Invalid` indicates that the avail ring entry was consumed (the queue's `next_avail` advanced),
+/// but the descriptor chain could not be parsed. Transports should still complete the chain with a
+/// used entry (typically `used.len = 0`) so the guest can reclaim the descriptor.
+#[derive(Debug, Clone)]
+pub enum PoppedDescriptorChain {
+    Chain(DescriptorChain),
+    Invalid {
+        head_index: u16,
+        error: VirtQueueError,
+    },
+}
+
 /// A split virtqueue implementation operating over guest memory.
 #[derive(Debug, Clone)]
 pub struct VirtQueue {
@@ -202,7 +216,7 @@ impl VirtQueue {
     pub fn pop_descriptor_chain<M: GuestMemory + ?Sized>(
         &mut self,
         mem: &M,
-    ) -> Result<Option<DescriptorChain>, VirtQueueError> {
+    ) -> Result<Option<PoppedDescriptorChain>, VirtQueueError> {
         let avail_idx = read_u16_le(mem, self.config.avail_addr + 2)?;
         if avail_idx == self.next_avail {
             return Ok(None);
@@ -213,12 +227,17 @@ impl VirtQueue {
         let head = read_u16_le(mem, elem_addr)?;
         self.next_avail = self.next_avail.wrapping_add(1);
 
-        let descriptors =
-            DescriptorChain::read_chain(mem, self.config.desc_addr, self.config.size, head, true)?;
-        Ok(Some(DescriptorChain {
-            head_index: head,
-            descriptors,
-        }))
+        match DescriptorChain::read_chain(mem, self.config.desc_addr, self.config.size, head, true)
+        {
+            Ok(descriptors) => Ok(Some(PoppedDescriptorChain::Chain(DescriptorChain {
+                head_index: head,
+                descriptors,
+            }))),
+            Err(err) => Ok(Some(PoppedDescriptorChain::Invalid {
+                head_index: head,
+                error: err,
+            })),
+        }
     }
 
     pub fn add_used<M: GuestMemory + ?Sized>(

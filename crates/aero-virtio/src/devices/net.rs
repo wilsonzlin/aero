@@ -340,7 +340,7 @@ impl<B: NetBackend> VirtioNet<B> {
 mod tests {
     use super::*;
     use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
-    use crate::queue::{VirtQueueConfig, VIRTQ_DESC_F_NEXT};
+    use crate::queue::{PoppedDescriptorChain, VirtQueueConfig, VIRTQ_DESC_F_NEXT};
 
     fn write_desc(
         mem: &mut GuestRam,
@@ -487,7 +487,12 @@ mod tests {
         )
         .unwrap();
 
-        let chain = queue.pop_descriptor_chain(&mem).unwrap().unwrap();
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
         let irq = dev.process_queue(1, chain, &mut queue, &mut mem).unwrap();
         assert!(irq);
         assert!(dev.backend_mut().tx_packets.is_empty());
@@ -558,7 +563,12 @@ mod tests {
         )
         .unwrap();
 
-        let chain = queue.pop_descriptor_chain(&mem).unwrap().unwrap();
+        let chain = match queue.pop_descriptor_chain(&mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        };
         dev.process_queue(1, chain, &mut queue, &mut mem).unwrap();
 
         assert_eq!(dev.backend_mut().tx_packets.len(), 3);

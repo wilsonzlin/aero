@@ -11,7 +11,7 @@ use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_virtio::queue::VIRTQ_DESC_F_WRITE;
+use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
 #[derive(Default)]
 struct Caps {
@@ -407,4 +407,45 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let rel_bits = bar_read(&mut dev, caps.device + 8, size);
     assert_ne!(rel_bits[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
+}
+
+#[test]
+fn virtio_input_malformed_descriptor_chain_does_not_wedge_queue() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x10000);
+
+    // Configure event queue 0.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Descriptor 0 loops back to itself (NEXT=1, next=0). The queue parser should treat this as a
+    // malformed chain, but still advance used->idx so the guest doesn't wedge waiting forever.
+    write_desc(&mut mem, desc, 0, 0x4000, 8, VIRTQ_DESC_F_NEXT, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + 0 * u64::from(caps.notify_mult),
+        &0u16.to_le_bytes(),
+        &mut mem,
+    );
+
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    let used_id = read_u32_le(&mem, used + 4).unwrap();
+    let used_len = read_u32_le(&mem, used + 8).unwrap();
+    assert_eq!(used_id, 0);
+    assert_eq!(used_len, 0);
 }
