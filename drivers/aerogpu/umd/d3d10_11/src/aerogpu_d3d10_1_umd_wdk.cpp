@@ -2379,9 +2379,19 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
         UINT support = 0;
         switch (format) {
           case kDxgiFormatB8G8R8A8Unorm:
+          case kDxgiFormatB8G8R8X8Unorm:
           case kDxgiFormatR8G8B8A8Unorm:
             support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY;
+            break;
+          case kDxgiFormatR32G32B32A32Float:
+          case kDxgiFormatR32G32B32Float:
+          case kDxgiFormatR32G32Float:
+            support = D3D10_FORMAT_SUPPORT_BUFFER | D3D10_FORMAT_SUPPORT_IA_VERTEX_BUFFER;
+            break;
+          case kDxgiFormatR16Uint:
+          case kDxgiFormatR32Uint:
+            support = D3D10_FORMAT_SUPPORT_BUFFER | D3D10_FORMAT_SUPPORT_IA_INDEX_BUFFER;
             break;
           case kDxgiFormatD24UnormS8Uint:
           case kDxgiFormatD32Float:
@@ -2393,6 +2403,9 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
         }
 
         fmt->FormatSupport = support;
+        __if_exists(D3D10DDIARG_FORMAT_SUPPORT::FormatSupport2) {
+          fmt->FormatSupport2 = 0;
+        }
       }
       break;
 
@@ -2468,7 +2481,17 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
   }
 
   if (pOpenData->Interface == D3D10DDI_INTERFACE_VERSION) {
-    pOpenData->Version = D3D10DDI_SUPPORTED;
+    // `Version` is treated as an in/out negotiation field by some runtimes. If
+    // the runtime doesn't initialize it, accept 0 and return the supported
+    // D3D10 DDI version.
+    if (pOpenData->Version == 0) {
+      pOpenData->Version = D3D10DDI_SUPPORTED;
+    } else if (pOpenData->Version < D3D10DDI_SUPPORTED) {
+      return E_INVALIDARG;
+    } else if (pOpenData->Version > D3D10DDI_SUPPORTED) {
+      pOpenData->Version = D3D10DDI_SUPPORTED;
+    }
+
     auto* adapter = new AeroGpuAdapter();
     InitKmtAdapterHandle(adapter);
     InitUmdPrivate(adapter);
