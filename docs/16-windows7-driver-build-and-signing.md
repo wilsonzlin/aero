@@ -254,7 +254,8 @@ Outputs:
 
 - `out/artifacts/aero-guest-tools.iso`
 - `out/artifacts/aero-guest-tools.zip`
-- `out/artifacts/aero-guest-tools.manifest.json`
+- `out/artifacts/manifest.json`
+- `out/artifacts/aero-guest-tools.manifest.json` (copy of `manifest.json`, used by CI/release asset publishing)
 
 ---
 

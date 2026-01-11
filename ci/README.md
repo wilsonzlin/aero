@@ -161,7 +161,7 @@ This script is intended to be run after `ci/package-drivers.ps1` in CI so that t
 contains both:
 
 - standalone driver bundles (`AeroVirtIO-Win7-*.zip` / `.iso` / optional `.vhd`)
-- Guest Tools media (`aero-guest-tools.iso` / `aero-guest-tools.zip`)
+- Guest Tools media (`aero-guest-tools.iso` / `aero-guest-tools.zip` / `manifest.json` + `aero-guest-tools.manifest.json`)
 
 By default (`-SigningPolicy test`), it injects the public signing certificate
 (`out/certs/aero-test.cer`) into the staged Guest Tools tree so the packaged installer media
@@ -184,7 +184,7 @@ Guest Tools from a different driver stack (for example, upstream virtio-win serv
 and how strictly hardware IDs are validated.
 
 - Local default (when `-SpecPath` is omitted): `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
-- CI/release workflows: `tools/packaging/specs/win7-signed.json` (HWID regex lists intentionally empty; expected HWIDs are derived from `guest-tools/config/devices.cmd`)
+- CI/release workflows: `tools/packaging/specs/win7-signed.json` (derives expected HWIDs from `guest-tools/config/devices.cmd`; no hardcoded regex list)
 
 To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
 
