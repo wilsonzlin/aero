@@ -250,6 +250,28 @@ static void test_rx_used_len_clamps_payload_and_io_err_is_not_fatal(void)
     req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
     TEST_ASSERT(req != NULL);
 
+    /* Device returns fewer bytes than requested. */
+    req->StatusVa->status = VIRTIO_SND_S_OK;
+    req->StatusVa->latency_bytes = 12u;
+    VirtioSndHostQueuePushUsed(&q, req, (UINT32)(sizeof(VIRTIO_SND_PCM_STATUS) + 4u));
+    drained = VirtIoSndRxDrainCompletions(&rx, RxCompletionCb, &cap);
+    TEST_ASSERT(drained == 1u);
+    TEST_ASSERT(cap.Called == 1);
+    TEST_ASSERT(cap.Cookie == (void*)0x1111u);
+    TEST_ASSERT(cap.CompletionStatus == STATUS_SUCCESS);
+    TEST_ASSERT(cap.VirtioStatus == VIRTIO_SND_S_OK);
+    TEST_ASSERT(cap.LatencyBytes == 12u);
+    TEST_ASSERT(cap.PayloadBytes == 4u);
+    TEST_ASSERT(rx.FreeCount == 1u);
+    TEST_ASSERT(rx.InflightCount == 0u);
+
+    /* Re-submit a 12-byte capture buffer for the remaining cases. */
+    RtlZeroMemory(&cap, sizeof(cap));
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x1111u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+
     /* Device returns more bytes than requested -> clamp to requested payload size. */
     req->StatusVa->status = VIRTIO_SND_S_OK;
     req->StatusVa->latency_bytes = 55u;
@@ -285,6 +307,25 @@ static void test_rx_used_len_clamps_payload_and_io_err_is_not_fatal(void)
     TEST_ASSERT(cap.PayloadBytes == 0u);
     TEST_ASSERT(rx.FatalError == FALSE);
     TEST_ASSERT(rx.CompletedByStatus[VIRTIO_SND_S_IO_ERR] == 1u);
+
+    /* Unknown status should not set FatalError. */
+    RtlZeroMemory(&cap, sizeof(cap));
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0x3333u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+    req->StatusVa->status = 0x1234u;
+    req->StatusVa->latency_bytes = 0u;
+    VirtioSndHostQueuePushUsed(&q, req, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    drained = VirtIoSndRxDrainCompletions(&rx, RxCompletionCb, &cap);
+    TEST_ASSERT(drained == 1u);
+    TEST_ASSERT(cap.Called == 1);
+    TEST_ASSERT(cap.Cookie == (void*)0x3333u);
+    TEST_ASSERT(cap.CompletionStatus == STATUS_DEVICE_PROTOCOL_ERROR);
+    TEST_ASSERT(cap.VirtioStatus == 0x1234u);
+    TEST_ASSERT(rx.FatalError == FALSE);
+    TEST_ASSERT(rx.CompletedUnknownStatus == 1u);
 
     VirtIoSndRxUninit(&rx);
 }

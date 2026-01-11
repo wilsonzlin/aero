@@ -282,6 +282,82 @@ static void test_tx_status_parsing_sets_fatal_on_bad_msg(void)
     VirtioSndTxUninit(&tx);
 }
 
+static void test_tx_used_len_too_small_sets_bad_msg_and_fatal(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    uint8_t pcm[4] = {1, 2, 3, 4};
+    VIRTIOSND_TX_BUFFER* buf;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    buf = (VIRTIOSND_TX_BUFFER*)q.LastCookie;
+    TEST_ASSERT(buf != NULL);
+
+    /* UsedLen < sizeof(VIRTIO_SND_PCM_STATUS) => treated as BAD_MSG. */
+    VirtioSndHostQueuePushUsed(&q, buf, 4u);
+    TEST_ASSERT(VirtioSndTxDrainCompletions(&tx) == 1u);
+
+    TEST_ASSERT(tx.LastVirtioStatus == VIRTIO_SND_S_BAD_MSG);
+    TEST_ASSERT(tx.FatalError == TRUE);
+    TEST_ASSERT(tx.Stats.StatusBadMsg == 1);
+
+    VirtioSndTxUninit(&tx);
+}
+
+static void test_tx_not_supp_sets_fatal_but_io_err_does_not(void)
+{
+    VIRTIOSND_TX_ENGINE tx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    uint8_t pcm[4] = {1, 2, 3, 4};
+    VIRTIOSND_TX_BUFFER* buf;
+
+    /* NOT_SUPP => fatal */
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    buf = (VIRTIOSND_TX_BUFFER*)q.LastCookie;
+    TEST_ASSERT(buf != NULL);
+
+    buf->StatusVa->status = VIRTIO_SND_S_NOT_SUPP;
+    VirtioSndHostQueuePushUsed(&q, buf, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    TEST_ASSERT(VirtioSndTxDrainCompletions(&tx) == 1u);
+    TEST_ASSERT(tx.FatalError == TRUE);
+    TEST_ASSERT(tx.Stats.StatusNotSupp == 1);
+    VirtioSndTxUninit(&tx);
+
+    /* IO_ERR => not fatal */
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    buf = (VIRTIOSND_TX_BUFFER*)q.LastCookie;
+    TEST_ASSERT(buf != NULL);
+
+    buf->StatusVa->status = VIRTIO_SND_S_IO_ERR;
+    VirtioSndHostQueuePushUsed(&q, buf, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    TEST_ASSERT(VirtioSndTxDrainCompletions(&tx) == 1u);
+    TEST_ASSERT(tx.FatalError == FALSE);
+    TEST_ASSERT(tx.Stats.StatusIoErr == 1);
+    VirtioSndTxUninit(&tx);
+}
+
 int main(void)
 {
     test_tx_init_sets_fixed_stream_id_and_can_suppress_interrupts();
@@ -291,6 +367,8 @@ int main(void)
     test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits();
     test_tx_max_period_enforcement();
     test_tx_status_parsing_sets_fatal_on_bad_msg();
+    test_tx_used_len_too_small_sets_bad_msg_and_fatal();
+    test_tx_not_supp_sets_fatal_but_io_err_does_not();
 
     printf("virtiosnd_tx_tests: PASS\n");
     return 0;

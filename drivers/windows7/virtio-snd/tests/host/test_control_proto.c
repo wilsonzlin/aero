@@ -10,6 +10,9 @@ static void test_pcm_info_req_packing(void)
     VIRTIO_SND_PCM_INFO_REQ req;
     NTSTATUS status;
 
+    status = VirtioSndCtrlBuildPcmInfoReq(NULL);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
     status = VirtioSndCtrlBuildPcmInfoReq(&req);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(sizeof(req) == 12);
@@ -29,6 +32,9 @@ static void test_pcm_set_params_req_packing_and_validation(void)
 {
     VIRTIO_SND_PCM_SET_PARAMS_REQ req;
     NTSTATUS status;
+
+    status = VirtioSndCtrlBuildPcmSetParamsReq(NULL, VIRTIO_SND_PLAYBACK_STREAM_ID, 4096u, 1024u);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 
     status = VirtioSndCtrlBuildPcmSetParamsReq(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, 4096u, 1024u);
     TEST_ASSERT(status == STATUS_SUCCESS);
@@ -78,6 +84,9 @@ static void test_pcm_simple_req_packing(void)
     VIRTIO_SND_PCM_SIMPLE_REQ req;
     NTSTATUS status;
 
+    status = VirtioSndCtrlBuildPcmSimpleReq(NULL, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_PREPARE);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_PREPARE);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.code == VIRTIO_SND_R_PCM_PREPARE);
@@ -122,6 +131,11 @@ static void test_pcm_info_resp_parsing(void)
 
     RtlZeroMemory(resp, sizeof(resp));
 
+    status = VirtioSndCtrlParsePcmInfoResp(NULL, 0, &out0, &out1);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), NULL, &out1);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
     hdr.status = VIRTIO_SND_S_OK;
 
     RtlZeroMemory(&info0, sizeof(info0));
@@ -154,6 +168,16 @@ static void test_pcm_info_resp_parsing(void)
     RtlCopyMemory(resp, &hdr, sizeof(hdr));
     status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
     TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+
+    hdr.status = VIRTIO_SND_S_BAD_MSG;
+    RtlCopyMemory(resp, &hdr, sizeof(hdr));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    hdr.status = VIRTIO_SND_S_IO_ERR;
+    RtlCopyMemory(resp, &hdr, sizeof(hdr));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_INVALID_DEVICE_STATE);
 
     /* Short response is rejected as protocol error. */
     hdr.status = VIRTIO_SND_S_OK;
