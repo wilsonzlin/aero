@@ -11,7 +11,10 @@ use aero_usb::GuestMemory;
 use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
+use aero_usb::passthrough::{
+    SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+    UsbHostCompletionOut,
+};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::{UsbDevice, UsbSpeed};
 
@@ -136,6 +139,23 @@ fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) ->
     }
 
     collections.iter().any(walk)
+}
+
+fn parse_webhid_collections(
+    collections_json: &JsValue,
+) -> Result<Vec<webhid::HidCollectionInfo>, JsValue> {
+    let collections_json_str = js_sys::JSON::stringify(collections_json)
+        .map_err(|err| {
+            js_error(&format!(
+                "Invalid WebHID collection schema (stringify failed): {err:?}"
+            ))
+        })?
+        .as_string()
+        .ok_or_else(|| js_error("Invalid WebHID collection schema (stringify returned non-string)"))?;
+
+    let mut deserializer = serde_json::Deserializer::from_str(&collections_json_str);
+    serde_path_to_error::deserialize(&mut deserializer)
+        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
 }
 
 #[derive(Clone)]
@@ -321,10 +341,7 @@ impl UhciRuntime {
 
         let port = self.alloc_port(preferred_port)?;
 
-        let collections: Vec<webhid::HidCollectionInfo> = serde_path_to_error::deserialize(
-            serde_wasm_bindgen::Deserializer::from(collections_json),
-        )
-        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+        let collections = parse_webhid_collections(&collections_json)?;
 
         let report_descriptor =
             webhid::synthesize_report_descriptor(&collections).map_err(|err| {
@@ -398,10 +415,7 @@ impl UhciRuntime {
 
         self.webhid_detach(device_id);
 
-        let collections: Vec<webhid::HidCollectionInfo> = serde_path_to_error::deserialize(
-            serde_wasm_bindgen::Deserializer::from(collections_json),
-        )
-        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+        let collections = parse_webhid_collections(&collections_json)?;
 
         let report_descriptor =
             webhid::synthesize_report_descriptor(&collections).map_err(|err| {
@@ -569,15 +583,18 @@ impl UhciRuntime {
         } else {
             Vec::new()
         };
-        serde_wasm_bindgen::to_value(&actions).map_err(|e| js_error(&e.to_string()))
+        let out = Array::new();
+        for action in actions {
+            out.push(&webusb_action_to_js(action));
+        }
+        Ok(out.into())
     }
 
     pub fn webusb_push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
         let Some(state) = self.webusb.as_ref() else {
             return Ok(());
         };
-        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
-            .map_err(|e| js_error(&format!("Invalid UsbHostCompletion: {e}")))?;
+        let completion = parse_usb_host_completion(completion)?;
         state.dev.borrow_mut().push_completion(completion);
         Ok(())
     }
@@ -1217,17 +1234,222 @@ fn webhid_output_report_to_js(device_id: u32, report: UsbHidPassthroughOutputRep
     let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
     obj.into()
 }
+
+fn webusb_setup_packet_to_js(setup: PassthroughSetupPacket) -> JsValue {
+    let obj = Object::new();
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("bmRequestType"),
+        &JsValue::from_f64(f64::from(setup.bm_request_type)),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("bRequest"),
+        &JsValue::from_f64(f64::from(setup.b_request)),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("wValue"),
+        &JsValue::from_f64(f64::from(setup.w_value)),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("wIndex"),
+        &JsValue::from_f64(f64::from(setup.w_index)),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("wLength"),
+        &JsValue::from_f64(f64::from(setup.w_length)),
+    );
+    obj.into()
+}
+
+fn webusb_action_to_js(action: UsbHostAction) -> JsValue {
+    let obj = Object::new();
+    match action {
+        UsbHostAction::ControlIn { id, setup } => {
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("kind"),
+                &JsValue::from_str("controlIn"),
+            );
+            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
+            let _ = Reflect::set(&obj, &JsValue::from_str("setup"), &webusb_setup_packet_to_js(setup));
+        }
+        UsbHostAction::ControlOut { id, setup, data } => {
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("kind"),
+                &JsValue::from_str("controlOut"),
+            );
+            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
+            let _ = Reflect::set(&obj, &JsValue::from_str("setup"), &webusb_setup_packet_to_js(setup));
+            let data = Uint8Array::from(data.as_slice());
+            let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
+        }
+        UsbHostAction::BulkIn { id, endpoint, length } => {
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("kind"),
+                &JsValue::from_str("bulkIn"),
+            );
+            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("endpoint"),
+                &JsValue::from_f64(f64::from(endpoint)),
+            );
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("length"),
+                &JsValue::from_f64(f64::from(length)),
+            );
+        }
+        UsbHostAction::BulkOut { id, endpoint, data } => {
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("kind"),
+                &JsValue::from_str("bulkOut"),
+            );
+            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(f64::from(id)));
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("endpoint"),
+                &JsValue::from_f64(f64::from(endpoint)),
+            );
+            let data = Uint8Array::from(data.as_slice());
+            let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
+        }
+    };
+    obj.into()
+}
+
+fn get_u32_field(obj: &Object, field: &'static str) -> Result<u32, JsValue> {
+    let value = Reflect::get(obj, &JsValue::from_str(field))
+        .map_err(|_| js_error(&format!("UsbHostCompletion.{field} missing")))?;
+    value
+        .as_f64()
+        .and_then(|v| {
+            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= u32::MAX as f64 {
+                Some(v as u32)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| js_error(&format!("UsbHostCompletion.{field} must be a u32 number")))
+}
+
+fn get_string_field(obj: &Object, field: &'static str) -> Result<String, JsValue> {
+    Reflect::get(obj, &JsValue::from_str(field))
+        .ok()
+        .and_then(|v| v.as_string())
+        .ok_or_else(|| js_error(&format!("UsbHostCompletion.{field} must be a string")))
+}
+
+fn get_bytes_field(obj: &Object, field: &'static str) -> Result<Vec<u8>, JsValue> {
+    let value = Reflect::get(obj, &JsValue::from_str(field))
+        .map_err(|_| js_error(&format!("UsbHostCompletion.{field} missing")))?;
+    if value.is_instance_of::<Uint8Array>() {
+        Ok(Uint8Array::new(&value).to_vec())
+    } else {
+        Err(js_error(&format!(
+            "UsbHostCompletion.{field} must be a Uint8Array"
+        )))
+    }
+}
+
+fn parse_usb_host_completion(value: JsValue) -> Result<UsbHostCompletion, JsValue> {
+    if !value.is_object() {
+        return Err(js_error("UsbHostCompletion must be an object"));
+    }
+    let obj: Object = value.unchecked_into();
+    let kind = get_string_field(&obj, "kind")?;
+    let id = get_u32_field(&obj, "id")?;
+    let status = get_string_field(&obj, "status")?;
+
+    match kind.as_str() {
+        "controlIn" => {
+            let result = parse_completion_in(&obj, &status)?;
+            Ok(UsbHostCompletion::ControlIn { id, result })
+        }
+        "bulkIn" => {
+            let result = parse_completion_in(&obj, &status)?;
+            Ok(UsbHostCompletion::BulkIn { id, result })
+        }
+        "controlOut" => {
+            let result = parse_completion_out(&obj, &status)?;
+            Ok(UsbHostCompletion::ControlOut { id, result })
+        }
+        "bulkOut" => {
+            let result = parse_completion_out(&obj, &status)?;
+            Ok(UsbHostCompletion::BulkOut { id, result })
+        }
+        _ => Err(js_error(&format!(
+            "UsbHostCompletion.kind must be one of controlIn/controlOut/bulkIn/bulkOut (got {kind})"
+        ))),
+    }
+}
+
+fn parse_completion_in(obj: &Object, status: &str) -> Result<UsbHostCompletionIn, JsValue> {
+    match status {
+        "success" => {
+            let data = get_bytes_field(obj, "data")?;
+            Ok(UsbHostCompletionIn::Success { data })
+        }
+        "stall" => Ok(UsbHostCompletionIn::Stall),
+        "error" => {
+            let message = get_string_field(obj, "message")?;
+            Ok(UsbHostCompletionIn::Error { message })
+        }
+        _ => Err(js_error(&format!(
+            "UsbHostCompletion.status must be one of success/stall/error (got {status})"
+        ))),
+    }
+}
+
+fn parse_completion_out(obj: &Object, status: &str) -> Result<UsbHostCompletionOut, JsValue> {
+    match status {
+        "success" => {
+            let bytes_written = get_u32_field(obj, "bytesWritten")?;
+            Ok(UsbHostCompletionOut::Success { bytes_written })
+        }
+        "stall" => Ok(UsbHostCompletionOut::Stall),
+        "error" => {
+            let message = get_string_field(obj, "message")?;
+            Ok(UsbHostCompletionOut::Error { message })
+        }
+        _ => Err(js_error(&format!(
+            "UsbHostCompletion.status must be one of success/stall/error (got {status})"
+        ))),
+    }
+}
+
 fn clamp_hub_port_count(value: u32) -> u8 {
     let value = value.clamp(1, u32::from(u8::MAX));
     value as u8
 }
 
 fn parse_root_port_guest_path(path: JsValue) -> Result<usize, JsValue> {
-    let path: Vec<u32> = serde_wasm_bindgen::from_value(path)
-        .map_err(|err| js_error(&format!("Invalid guestPath: {err}")))?;
-    let Some(&root_port) = path.first() else {
+    if !Array::is_array(&path) {
+        return Err(js_error("Invalid guestPath: expected an array"));
+    }
+    let path = Array::from(&path);
+    if path.length() == 0 {
         return Err(js_error("guestPath must not be empty"));
-    };
+    }
+    let root_port = path
+        .get(0)
+        .as_f64()
+        .and_then(|v| {
+            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= u32::MAX as f64 {
+                Some(v as u32)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| js_error("guestPath root port must be a u32 number"))?;
+
     if root_port > u32::from(u8::MAX) {
         return Err(js_error(&format!(
             "guestPath root port {root_port} is out of range"
@@ -1237,20 +1459,45 @@ fn parse_root_port_guest_path(path: JsValue) -> Result<usize, JsValue> {
 }
 
 fn parse_external_hub_guest_path(path: JsValue) -> Result<(usize, u8), JsValue> {
-    let path: Vec<u32> = serde_wasm_bindgen::from_value(path)
-        .map_err(|err| js_error(&format!("Invalid guestPath: {err}")))?;
-    if path.len() < 2 {
+    if !Array::is_array(&path) {
+        return Err(js_error("Invalid guestPath: expected an array"));
+    }
+    let path = Array::from(&path);
+    if path.length() < 2 {
         return Err(js_error(
             "guestPath must include a downstream hub port (expected [rootPort, hubPort])",
         ));
     }
-    if path.len() > 2 {
+    if path.length() > 2 {
         return Err(js_error(
             "Nested hub guestPath segments are not supported by UhciRuntime yet",
         ));
     }
-    let root = path[0] as usize;
-    let hub_port = path[1];
+
+    let root = path
+        .get(0)
+        .as_f64()
+        .and_then(|v| {
+            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= u32::MAX as f64 {
+                Some(v as u32)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| js_error("guestPath root port must be a u32 number"))?;
+    let hub_port = path
+        .get(1)
+        .as_f64()
+        .and_then(|v| {
+            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= u32::MAX as f64 {
+                Some(v as u32)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| js_error("guestPath hub port must be a u32 number"))?;
+
+    let root = root as usize;
     let hub_port_u8 = u8::try_from(hub_port)
         .map_err(|_| js_error("guestPath hub port is out of range (expected 1..=255)"))?;
     if hub_port_u8 == 0 {

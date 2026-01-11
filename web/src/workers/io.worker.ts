@@ -206,32 +206,39 @@ function rewriteUsbHostCompletionId(completion: UsbHostCompletion, id: number): 
 class UhciRuntimeWebUsbBridge {
   readonly #uhci: UhciRuntimeInstance;
   readonly #rootPort: number;
+  readonly #onStateChange?: () => void;
 
   #connected = false;
+  #desiredConnected: boolean | null = null;
+  #applyScheduled = false;
+  #resetScheduled = false;
+  #lastError: string | null = null;
   #nextBrokerId = UHCI_RUNTIME_WEBUSB_ID_BASE;
   readonly #pendingByBrokerId = new Map<number, { wasmId: number; kind: UsbHostAction["kind"] }>();
 
-  constructor(opts: { uhci: UhciRuntimeInstance; rootPort: number }) {
+  constructor(opts: { uhci: UhciRuntimeInstance; rootPort: number; onStateChange?: () => void }) {
     this.#uhci = opts.uhci;
     this.#rootPort = opts.rootPort >>> 0;
+    this.#onStateChange = opts.onStateChange;
   }
 
   set_connected(connected: boolean): void {
-    const desired = Boolean(connected);
-    if (desired === this.#connected) return;
-    this.#connected = desired;
-    if (!desired) {
-      this.#uhci.webusb_detach();
-      return;
-    }
+    this.#desiredConnected = Boolean(connected);
+    this.#scheduleApply();
+  }
 
-    const assigned = this.#uhci.webusb_attach(this.#rootPort);
-    if (assigned !== this.#rootPort) {
-      console.warn(`[io.worker] UhciRuntime.webusb_attach assigned unexpected port=${assigned} (wanted ${this.#rootPort})`);
-    }
+  is_connected(): boolean {
+    return this.#connected;
+  }
+
+  last_error(): string | null {
+    return this.#lastError;
   }
 
   drain_actions(): UsbHostAction[] | null {
+    // If hotplug is requested, attempt to apply it opportunistically during the normal polling
+    // path. This avoids relying solely on timers/microtasks to run the attach/detach operation.
+    this.#applyDesired();
     if (!this.#connected) return null;
     const actions = this.#uhci.webusb_drain_actions();
     if (!Array.isArray(actions) || actions.length === 0) return null;
@@ -268,10 +275,46 @@ class UhciRuntimeWebUsbBridge {
   reset(): void {
     this.#pendingByBrokerId.clear();
     if (!this.#connected) return;
+    // If we're in the process of disconnecting, do not reattach.
+    if (this.#desiredConnected === false) {
+      this.#scheduleApply();
+      return;
+    }
+
     // `UsbWebUsbPassthroughDevice` doesn't currently expose a "soft reset" hook.
     // Detach+reattach clears in-flight control transfers so the guest isn't stuck NAKing forever.
-    this.#uhci.webusb_detach();
-    this.#uhci.webusb_attach(this.#rootPort);
+    try {
+      this.#uhci.webusb_detach();
+      this.#connected = false;
+    } catch (err) {
+      if (this.#isRecursiveBorrowError(err)) {
+        this.#scheduleReset();
+        return;
+      }
+      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#onStateChange?.();
+      return;
+    }
+
+    try {
+      const assigned = this.#uhci.webusb_attach(this.#rootPort);
+      this.#connected = true;
+      this.#lastError = null;
+      if (assigned !== this.#rootPort) {
+        console.warn(`[io.worker] UhciRuntime.webusb_attach assigned unexpected port=${assigned} (wanted ${this.#rootPort})`);
+      }
+      this.#onStateChange?.();
+    } catch (err) {
+      if (this.#isRecursiveBorrowError(err)) {
+        // We are detached at this point. Request reconnection and let the normal apply/retry
+        // loop handle it on the next turn.
+        this.#desiredConnected = true;
+        this.#scheduleApply();
+        return;
+      }
+      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#onStateChange?.();
+    }
   }
 
   pending_summary(): unknown {
@@ -294,6 +337,74 @@ class UhciRuntimeWebUsbBridge {
       throw new Error(`UhciRuntimeWebUsbBridge ran out of valid broker action IDs (next=${this.#nextBrokerId})`);
     }
     return id;
+  }
+
+  #isRecursiveBorrowError(err: unknown): boolean {
+    const message = err instanceof Error ? err.message : String(err);
+    return message.includes("recursive use of an object detected") || message.includes("UHCI runtime is busy");
+  }
+
+  #scheduleApply(): void {
+    if (this.#applyScheduled) return;
+    this.#applyScheduled = true;
+    setTimeout(() => {
+      this.#applyScheduled = false;
+      this.#applyDesired();
+    }, 0);
+  }
+
+  #scheduleReset(): void {
+    if (this.#resetScheduled) return;
+    this.#resetScheduled = true;
+    setTimeout(() => {
+      this.#resetScheduled = false;
+      this.reset();
+    }, 0);
+  }
+
+  #applyDesired(): void {
+    const desired = this.#desiredConnected;
+    if (desired === null || desired === this.#connected) return;
+
+    try {
+      if (!desired) {
+        this.#uhci.webusb_detach();
+        this.#connected = false;
+        this.#desiredConnected = null;
+        this.#lastError = null;
+        this.#onStateChange?.();
+        return;
+      }
+
+      const assigned = this.#uhci.webusb_attach(this.#rootPort);
+      this.#connected = true;
+      this.#desiredConnected = null;
+      this.#lastError = null;
+
+      if (assigned !== this.#rootPort) {
+        console.warn(`[io.worker] UhciRuntime.webusb_attach assigned unexpected port=${assigned} (wanted ${this.#rootPort})`);
+      }
+      this.#onStateChange?.();
+    } catch (err) {
+      if (this.#isRecursiveBorrowError(err)) {
+        // wasm-bindgen guards &mut self methods against reentrancy by throwing
+        // "recursive use of an object..." when the object is already borrowed.
+        // This can happen when WebUSB hotplug races other UHCI calls (ticks, HID polling).
+        // Retry on the next turn rather than failing the guest attachment permanently.
+        //
+        // Surface a more user-friendly status message so callers (and tests) can distinguish
+        // "still retrying" from "never attempted".
+        if (this.#lastError === null) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.#lastError = `UHCI runtime is busy; retrying WebUSB hotplug. (${message})`;
+          this.#onStateChange?.();
+        }
+        setTimeout(() => this.#scheduleApply(), 0);
+        return;
+      }
+      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#onStateChange?.();
+    }
   }
 }
 
@@ -457,7 +568,16 @@ function maybeInitUhciDevice(): void {
 
   if (!webUsbGuestBridge) {
     if (uhciRuntime) {
-      const runtimeBridge = new UhciRuntimeWebUsbBridge({ uhci: uhciRuntime, rootPort: WEBUSB_GUEST_ROOT_PORT });
+      let runtimeBridge: UhciRuntimeWebUsbBridge;
+      runtimeBridge = new UhciRuntimeWebUsbBridge({
+        uhci: uhciRuntime,
+        rootPort: WEBUSB_GUEST_ROOT_PORT,
+        onStateChange: () => {
+          webUsbGuestAttached = runtimeBridge.is_connected();
+          webUsbGuestLastError = runtimeBridge.last_error();
+          emitWebUsbGuestStatus();
+        },
+      });
       webUsbGuestBridge = runtimeBridge;
       uhciRuntimeWebUsbBridge = runtimeBridge;
 
@@ -479,21 +599,18 @@ function maybeInitUhciDevice(): void {
          }
        }
 
+      let applyError: string | null = null;
       if (lastUsbSelected) {
         try {
           applyUsbSelectedToWebUsbUhciBridge(runtimeBridge, lastUsbSelected);
-          webUsbGuestAttached = lastUsbSelected.ok;
-          webUsbGuestLastError = null;
         } catch (err) {
           console.warn("[io.worker] Failed to apply usb.selected to UHCI runtime WebUSB bridge", err);
-          webUsbGuestAttached = false;
-          webUsbGuestLastError = `Failed to apply usb.selected to UHCI runtime: ${formatWebUsbGuestError(err)}`;
+          applyError = `Failed to apply usb.selected to UHCI runtime: ${formatWebUsbGuestError(err)}`;
         }
-      } else {
-        webUsbGuestAttached = false;
-        webUsbGuestLastError = null;
       }
 
+      webUsbGuestAttached = runtimeBridge.is_connected();
+      webUsbGuestLastError = applyError ?? runtimeBridge.last_error();
       emitWebUsbGuestStatus();
       return;
     }
@@ -1517,8 +1634,13 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       if (webUsbGuestBridge) {
         try {
           applyUsbSelectedToWebUsbUhciBridge(webUsbGuestBridge, msg);
-          webUsbGuestAttached = msg.ok;
-          webUsbGuestLastError = null;
+          if (uhciRuntimeWebUsbBridge && webUsbGuestBridge === uhciRuntimeWebUsbBridge) {
+            webUsbGuestAttached = uhciRuntimeWebUsbBridge.is_connected();
+            webUsbGuestLastError = uhciRuntimeWebUsbBridge.last_error();
+          } else {
+            webUsbGuestAttached = msg.ok;
+            webUsbGuestLastError = null;
+          }
         } catch (err) {
           console.warn("[io.worker] Failed to apply usb.selected to guest WebUSB bridge", err);
           webUsbGuestAttached = false;

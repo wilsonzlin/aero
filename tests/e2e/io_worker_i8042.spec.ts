@@ -17,9 +17,9 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
     ]);
 
     const cpuWorkerCode = `
-      import { openRingByKind } from "/web/src/ipc/ipc.ts";
-      import { queueKind } from "/web/src/ipc/layout.ts";
-      import { AeroIpcIoClient } from "/web/src/io/ipc/aero_ipc_io.ts";
+      import { openRingByKind } from "${location.origin}/web/src/ipc/ipc.ts";
+      import { queueKind } from "${location.origin}/web/src/ipc/layout.ts";
+      import { AeroIpcIoClient } from "${location.origin}/web/src/io/ipc/aero_ipc_io.ts";
 
       self.onmessage = (ev) => {
         const { ipcBuffer } = ev.data;
@@ -104,9 +104,9 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
     ]);
 
     const cpuWorkerCode = `
-      import { openRingByKind } from "/web/src/ipc/ipc.ts";
-      import { queueKind } from "/web/src/ipc/layout.ts";
-      import { AeroIpcIoClient } from "/web/src/io/ipc/aero_ipc_io.ts";
+      import { openRingByKind } from "${location.origin}/web/src/ipc/ipc.ts";
+      import { queueKind } from "${location.origin}/web/src/ipc/layout.ts";
+      import { AeroIpcIoClient } from "${location.origin}/web/src/io/ipc/aero_ipc_io.ts";
 
       self.onmessage = (ev) => {
         const { ipcBuffer } = ev.data;

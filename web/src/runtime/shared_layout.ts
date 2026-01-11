@@ -149,7 +149,7 @@ const MAX_WASM32_PAGES = 65536;
  * NOTE: Keep this in sync with the WASM-exported `guest_ram_layout` contract
  * in `crates/aero-wasm/src/lib.rs`.
  */
-export const RUNTIME_RESERVED_BYTES = 64 * 1024 * 1024; // 64 MiB
+export const RUNTIME_RESERVED_BYTES = 128 * 1024 * 1024; // 128 MiB
 
 export interface GuestRamLayout {
   /**

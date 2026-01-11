@@ -16,7 +16,7 @@ pub const MAX_WASM32_PAGES: u64 = 65536;
 /// Guest physical address 0 maps to `guest_base = align_up(RUNTIME_RESERVED_BYTES, 64KiB)`.
 ///
 /// NOTE: Keep this in sync with `web/src/runtime/shared_layout.ts` (`RUNTIME_RESERVED_BYTES`).
-pub const RUNTIME_RESERVED_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
+pub const RUNTIME_RESERVED_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 
 pub const fn align_up(value: u64, alignment: u64) -> u64 {
     if alignment == 0 {
