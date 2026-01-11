@@ -39,6 +39,7 @@ import type { RemoteDiskTelemetrySnapshot } from "./platform/remote_disk";
 import { IoWorkerClient } from "./workers/io_worker_client";
 import { type JitWorkerResponse } from "./workers/jit_protocol";
 import { JitWorkerClient } from "./workers/jit_worker_client";
+import { DemoVmWorkerClient } from "./workers/demo_vm_worker_client";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
@@ -549,7 +550,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   const SNAPSHOT_PATH = "state/demo-vm-autosave.snap";
 
   let autosaveTimer: number | null = null;
-  let worker: Worker | null = null;
+  let workerClient: DemoVmWorkerClient | null = null;
   let workerReady = false;
   let autosaveInFlight = false;
 
@@ -587,30 +588,6 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     return value === null ? "unknown" : value.toLocaleString();
   }
 
-  type SnapshotWorkerRequest =
-    | { id: number; type: "init"; ramBytes: number }
-    | { id: number; type: "runSteps"; steps: number }
-    | { id: number; type: "snapshotFullToOpfs"; path: string }
-    | { id: number; type: "restoreFromOpfs"; path: string }
-    | { id: number; type: "getSerialOutputLen" }
-    | { id: number; type: "shutdown" };
-
-  type SnapshotWorkerMessage =
-    | { type: "rpcResult"; id: number; ok: true; result: unknown }
-    | { type: "rpcResult"; id: number; ok: false; error: string }
-    | { type: "status"; steps: number; serialBytes: number | null }
-    | { type: "error"; message: string };
-
-  let nextRpcId = 1;
-  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
-
-  function rejectPending(err: Error): void {
-    for (const entry of pending.values()) {
-      entry.reject(err);
-    }
-    pending.clear();
-  }
-
   function setButtonsEnabled(enabled: boolean): void {
     saveButton.disabled = !enabled;
     loadButton.disabled = !enabled;
@@ -621,36 +598,31 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     importInput.disabled = !enabled;
   }
 
-  type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-  type SnapshotWorkerRpcRequest = DistributiveOmit<SnapshotWorkerRequest, "id">;
-
-  async function rpc<T>(msg: SnapshotWorkerRpcRequest): Promise<T> {
-    const activeWorker = worker;
-    if (!activeWorker) throw new Error("Snapshot worker is not available.");
-    const id = nextRpcId++;
-    const req = { ...msg, id } as SnapshotWorkerRequest;
-    return await new Promise<T>((resolve, reject) => {
-      pending.set(id, { resolve: (v) => resolve(v as T), reject });
-      try {
-        activeWorker.postMessage(req);
-      } catch (err) {
-        pending.delete(id);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
+  function handleWorkerFatal(err: Error): void {
+    clearAutosaveTimer();
+    status.textContent = "Demo VM unavailable (worker crashed)";
+    setError(err.message);
+    setButtonsEnabled(false);
+    workerReady = false;
+    workerClient?.terminate();
+    workerClient = null;
+    testState.ready = false;
+    testState.streaming = false;
   }
 
   async function restoreSnapshotFromOpfs(): Promise<{ sizeBytes: number; serialBytes: number | null } | null> {
-    if (!workerReady) throw new Error("Demo VM worker not ready");
+    const client = workerClient;
+    if (!workerReady || !client) throw new Error("Demo VM worker not ready");
     const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
     if (!file) return null;
-    const restore = await rpc<{ serialBytes: number | null }>({ type: "restoreFromOpfs", path: SNAPSHOT_PATH });
+    const restore = await client.restoreFromOpfs(SNAPSHOT_PATH);
     return { sizeBytes: file.size, serialBytes: restore.serialBytes };
   }
 
   async function saveSnapshot(): Promise<void> {
-    if (!workerReady) throw new Error("Demo VM worker not ready");
-    const snap = await rpc<{ serialBytes: number | null }>({ type: "snapshotFullToOpfs", path: SNAPSHOT_PATH });
+    const client = workerClient;
+    if (!workerReady || !client) throw new Error("Demo VM worker not ready");
+    const snap = await client.snapshotFullToOpfs(SNAPSHOT_PATH);
     const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
     status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
       snap.serialBytes,
@@ -704,8 +676,9 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
 
   advanceButton.onclick = () => {
     clearError();
-    if (!workerReady) return;
-    rpc<{ steps: number; serialBytes: number | null }>({ type: "runSteps", steps: 50_000 })
+    const client = workerClient;
+    if (!workerReady || !client) return;
+    client.runSteps(50_000)
       .then((state) => {
         output.textContent =
           `steps=${state.steps.toLocaleString()} ` +
@@ -766,67 +739,31 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     status.textContent = "Initializing demo VM worker…";
 
     try {
-      worker = new Worker(new URL("./workers/demo_vm_snapshot.worker.ts", import.meta.url), { type: "module" });
+      workerClient = new DemoVmWorkerClient({
+        onStatus: (state) => {
+          steps = state.steps;
+          serialBytes = state.serialBytes;
+          output.textContent =
+            `steps=${steps.toLocaleString()} ` +
+            `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
+        },
+        onError: (message) => setError(message),
+        onFatalError: (err) => handleWorkerFatal(err),
+      });
     } catch (err) {
       clearAutosaveTimer();
       const message = err instanceof Error ? err.message : String(err);
       status.textContent = "Demo VM unavailable (worker creation failed)";
       setError(message);
-      worker = null;
+      workerClient = null;
       testState.ready = false;
       testState.streaming = false;
     }
 
-    if (worker) {
-      worker.addEventListener("message", (event: MessageEvent<SnapshotWorkerMessage>) => {
-        const msg = event.data;
-
-        if (msg.type === "rpcResult") {
-          const pendingReq = pending.get(msg.id);
-          if (!pendingReq) return;
-          pending.delete(msg.id);
-          if (msg.ok) pendingReq.resolve(msg.result);
-          else pendingReq.reject(new Error(msg.error));
-          return;
-        }
-
-        if (msg.type === "status") {
-          steps = msg.steps;
-          serialBytes = msg.serialBytes;
-          output.textContent =
-            `steps=${steps.toLocaleString()} ` +
-            `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
-          return;
-        }
-
-        if (msg.type === "error") {
-          setError(msg.message);
-        }
-      });
-
-      worker.addEventListener("error", (event: ErrorEvent) => {
-        clearAutosaveTimer();
-        status.textContent = "Demo VM unavailable (worker crashed)";
-        setError(event.message);
-        setButtonsEnabled(false);
-        workerReady = false;
-        rejectPending(new Error(event.message));
-        worker = null;
-        testState.ready = false;
-        testState.streaming = false;
-      });
-
+    if (workerClient) {
       void (async () => {
         try {
-          const init = await rpc<{
-            wasmVariant: string;
-            syncAccessHandles: boolean;
-            streamingSnapshots: boolean;
-            streamingRestore: boolean;
-          }>({
-            type: "init",
-            ramBytes: 256 * 1024,
-          });
+          const init = await workerClient!.init(256 * 1024);
 
           if (!init.syncAccessHandles) {
             clearAutosaveTimer();
@@ -837,6 +774,8 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
             );
             testState.ready = true;
             testState.streaming = false;
+            workerClient?.terminate();
+            workerClient = null;
             return;
           }
 
@@ -850,6 +789,8 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
             );
             testState.ready = true;
             testState.streaming = false;
+            workerClient?.terminate();
+            workerClient = null;
             return;
           }
 
@@ -877,6 +818,9 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
           status.textContent = "Demo VM unavailable (worker init failed)";
           setButtonsEnabled(false);
           setError(message);
+          workerReady = false;
+          workerClient?.terminate();
+          workerClient = null;
           testState.ready = false;
           testState.streaming = false;
         }
