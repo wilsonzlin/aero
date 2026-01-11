@@ -1479,7 +1479,8 @@ HRESULT update_surface_locked(Device* dev,
                                                        src->wddm_hAllocation,
                                                        0,
                                                        src_bytes,
-                                                       &src_ptr);
+                                                       &src_ptr,
+                                                       dev->wddm_context.hContext);
       if (FAILED(src_lock_hr) || !src_ptr) {
         return FAILED(src_lock_hr) ? src_lock_hr : E_FAIL;
       }
@@ -1491,10 +1492,16 @@ HRESULT update_surface_locked(Device* dev,
     bool dst_locked = false;
     auto unlock = make_scope_exit([&]() {
       if (dst_locked) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+        (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                     dev->wddm_device,
+                                     dst->wddm_hAllocation,
+                                     dev->wddm_context.hContext);
       }
       if (src_locked) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+        (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                     dev->wddm_device,
+                                     src->wddm_hAllocation,
+                                     dev->wddm_context.hContext);
       }
     });
 
@@ -1503,7 +1510,8 @@ HRESULT update_surface_locked(Device* dev,
                                                  dst->wddm_hAllocation,
                                                  0,
                                                  dst_bytes,
-                                                 &dst_ptr);
+                                                 &dst_ptr,
+                                                 dev->wddm_context.hContext);
     if (FAILED(lock_hr) || !dst_ptr) {
       return FAILED(lock_hr) ? lock_hr : E_FAIL;
     }
@@ -1536,10 +1544,16 @@ HRESULT update_surface_locked(Device* dev,
 
     // Unlock allocations before any call that can trigger a command-buffer split
     // (ensure_cmd_space / allocation tracking).
-    (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+    (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                 dev->wddm_device,
+                                 dst->wddm_hAllocation,
+                                 dev->wddm_context.hContext);
     dst_locked = false;
     if (src_locked) {
-      (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+      (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                   dev->wddm_device,
+                                   src->wddm_hAllocation,
+                                   dev->wddm_context.hContext);
       src_locked = false;
     }
 
@@ -1667,10 +1681,16 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
 
     auto unlock = make_scope_exit([&]() {
       if (dst_locked) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+        (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                     dev->wddm_device,
+                                     dst->wddm_hAllocation,
+                                     dev->wddm_context.hContext);
       }
       if (src_locked) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+        (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                     dev->wddm_device,
+                                     src->wddm_hAllocation,
+                                     dev->wddm_context.hContext);
       }
     });
 
@@ -1692,7 +1712,8 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
                                                        src->wddm_hAllocation,
                                                        0,
                                                        dst->size_bytes,
-                                                       &src_ptr);
+                                                       &src_ptr,
+                                                       dev->wddm_context.hContext);
       if (FAILED(src_lock_hr) || !src_ptr) {
         return FAILED(src_lock_hr) ? src_lock_hr : E_FAIL;
       }
@@ -1705,7 +1726,8 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
                                                  dst->wddm_hAllocation,
                                                  0,
                                                  dst->size_bytes,
-                                                 &dst_ptr);
+                                                 &dst_ptr,
+                                                 dev->wddm_context.hContext);
     if (FAILED(lock_hr) || !dst_ptr) {
       return FAILED(lock_hr) ? lock_hr : E_FAIL;
     }
@@ -1727,10 +1749,16 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
 
     // Unlock allocations before any call that can trigger a command-buffer split
     // (ensure_cmd_space / allocation tracking).
-    (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+    (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                 dev->wddm_device,
+                                 dst->wddm_hAllocation,
+                                 dev->wddm_context.hContext);
     dst_locked = false;
     if (src_locked) {
-      (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+      (void)wddm_unlock_allocation(dev->wddm_callbacks,
+                                   dev->wddm_device,
+                                   src->wddm_hAllocation,
+                                   dev->wddm_context.hContext);
       src_locked = false;
     }
 
@@ -1770,7 +1798,10 @@ void destroy_blit_objects_locked(Device* dev) {
     }
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     if (dev->builtin_copy_vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-      (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, dev->builtin_copy_vb->wddm_hAllocation);
+      (void)wddm_destroy_allocation(dev->wddm_callbacks,
+                                    dev->wddm_device,
+                                    dev->builtin_copy_vb->wddm_hAllocation,
+                                    dev->wddm_context.hContext);
       dev->builtin_copy_vb->wddm_hAllocation = 0;
     }
 #endif

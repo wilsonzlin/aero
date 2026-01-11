@@ -76,6 +76,12 @@ template <typename T>
 struct has_member_hDevice<T, std::void_t<decltype(std::declval<T&>().hDevice)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_hContext : std::false_type {};
+
+template <typename T>
+struct has_member_hContext<T, std::void_t<decltype(std::declval<T&>().hContext)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_NumAllocations : std::false_type {};
 
 template <typename T>
@@ -380,6 +386,7 @@ void set_allocation_info_flags(FlagsT& flags) {
 template <typename CallbackFn>
 HRESULT invoke_create_allocation_cb(CallbackFn cb,
                                     WddmHandle hDevice,
+                                    WddmHandle hContext,
                                     uint64_t size_bytes,
                                     const aerogpu_wddm_alloc_priv* priv,
                                     uint32_t priv_size,
@@ -392,6 +399,9 @@ HRESULT invoke_create_allocation_cb(CallbackFn cb,
 
   if constexpr (has_member_hDevice<Args>::value) {
     data.hDevice = hDevice;
+  }
+  if constexpr (has_member_hContext<Args>::value) {
+    data.hContext = hContext;
   }
   if constexpr (has_member_hResource<Args>::value) {
     data.hResource = 0;
@@ -480,7 +490,8 @@ HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
                                uint64_t size_bytes,
                                const aerogpu_wddm_alloc_priv* priv,
                                uint32_t priv_size,
-                               WddmAllocationHandle* hAllocationOut) {
+                               WddmAllocationHandle* hAllocationOut,
+                               WddmHandle hContext) {
   if (!hAllocationOut) {
     return E_INVALIDARG;
   }
@@ -495,13 +506,25 @@ HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
 
   if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value) {
     if (callbacks.pfnAllocateCb) {
-      return invoke_create_allocation_cb(callbacks.pfnAllocateCb, hDevice, size_bytes, priv, priv_size, hAllocationOut);
+      return invoke_create_allocation_cb(callbacks.pfnAllocateCb,
+                                         hDevice,
+                                         hContext,
+                                         size_bytes,
+                                         priv,
+                                         priv_size,
+                                         hAllocationOut);
     }
   }
 
   if constexpr (has_pfnCreateAllocationCb<WddmDeviceCallbacks>::value) {
     if (callbacks.pfnCreateAllocationCb) {
-      return invoke_create_allocation_cb(callbacks.pfnCreateAllocationCb, hDevice, size_bytes, priv, priv_size, hAllocationOut);
+      return invoke_create_allocation_cb(callbacks.pfnCreateAllocationCb,
+                                         hDevice,
+                                         hContext,
+                                         size_bytes,
+                                         priv,
+                                         priv_size,
+                                         hAllocationOut);
     }
   }
 
@@ -511,6 +534,7 @@ HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
 template <typename CallbackFn>
 HRESULT invoke_destroy_allocation_cb(CallbackFn cb,
                                      WddmHandle hDevice,
+                                     WddmHandle hContext,
                                      WddmAllocationHandle hAllocation) {
   using Fn = CallbackFn;
   using ArgPtr = typename fn_first_param<Fn>::type;
@@ -520,6 +544,9 @@ HRESULT invoke_destroy_allocation_cb(CallbackFn cb,
 
   if constexpr (has_member_hDevice<Args>::value) {
     data.hDevice = hDevice;
+  }
+  if constexpr (has_member_hContext<Args>::value) {
+    data.hContext = hContext;
   }
   if constexpr (has_member_hResource<Args>::value) {
     data.hResource = 0;
@@ -554,21 +581,22 @@ HRESULT invoke_destroy_allocation_cb(CallbackFn cb,
 }
 
 HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks& callbacks,
-                                 WddmHandle hDevice,
-                                 WddmAllocationHandle hAllocation) {
+                                  WddmHandle hDevice,
+                                  WddmAllocationHandle hAllocation,
+                                  WddmHandle hContext) {
   if (!hDevice || !hAllocation) {
     return E_INVALIDARG;
   }
 
   if constexpr (has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
     if (callbacks.pfnDeallocateCb) {
-      return invoke_destroy_allocation_cb(callbacks.pfnDeallocateCb, hDevice, hAllocation);
+      return invoke_destroy_allocation_cb(callbacks.pfnDeallocateCb, hDevice, hContext, hAllocation);
     }
   }
 
   if constexpr (has_pfnDestroyAllocationCb<WddmDeviceCallbacks>::value) {
     if (callbacks.pfnDestroyAllocationCb) {
-      return invoke_destroy_allocation_cb(callbacks.pfnDestroyAllocationCb, hDevice, hAllocation);
+      return invoke_destroy_allocation_cb(callbacks.pfnDestroyAllocationCb, hDevice, hContext, hAllocation);
     }
   }
 
@@ -581,7 +609,8 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
                              uint64_t offset_bytes,
                              uint64_t size_bytes,
                              uint32_t lock_flags,
-                             void** out_ptr) {
+                             void** out_ptr,
+                             WddmHandle hContext) {
   if (!out_ptr) {
     return E_INVALIDARG;
   }
@@ -605,6 +634,9 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
 
     if constexpr (has_member_hDevice<Args>::value) {
       data.hDevice = hDevice;
+    }
+    if constexpr (has_member_hContext<Args>::value) {
+      data.hContext = hContext;
     }
     if constexpr (has_member_hAllocation<Args>::value) {
       data.hAllocation = hAllocation;
@@ -644,7 +676,8 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
 
 HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks& callbacks,
                                WddmHandle hDevice,
-                               WddmAllocationHandle hAllocation) {
+                               WddmAllocationHandle hAllocation,
+                               WddmHandle hContext) {
   if (!hDevice || !hAllocation) {
     return E_INVALIDARG;
   }
@@ -665,6 +698,9 @@ HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks& callbacks,
     if constexpr (has_member_hDevice<Args>::value) {
       data.hDevice = hDevice;
     }
+    if constexpr (has_member_hContext<Args>::value) {
+      data.hContext = hContext;
+    }
     if constexpr (has_member_hAllocation<Args>::value) {
       data.hAllocation = hAllocation;
     }
@@ -680,11 +716,12 @@ HRESULT wddm_create_allocation(const WddmDeviceCallbacks&,
                                uint64_t,
                                const aerogpu_wddm_alloc_priv*,
                                uint32_t,
-                               WddmAllocationHandle*) {
+                               WddmAllocationHandle*,
+                               WddmHandle) {
   return E_NOTIMPL;
 }
 
-HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAllocationHandle) {
+HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAllocationHandle, WddmHandle) {
   return E_NOTIMPL;
 }
 
@@ -694,11 +731,12 @@ HRESULT wddm_lock_allocation(const WddmDeviceCallbacks&,
                              uint64_t,
                              uint64_t,
                              uint32_t,
-                             void**) {
+                             void**,
+                             WddmHandle) {
   return E_NOTIMPL;
 }
 
-HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAllocationHandle) {
+HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAllocationHandle, WddmHandle) {
   return E_NOTIMPL;
 }
 
