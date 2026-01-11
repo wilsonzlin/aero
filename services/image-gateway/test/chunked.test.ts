@@ -343,7 +343,8 @@ describe("chunked delivery", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { chunked?: { delivery: string; manifestUrl: string } };
     expect(body.chunked?.delivery).toBe("chunked");
-    expect(body.chunked?.manifestUrl).toContain("Key-Pair-Id=KTESTKEYPAIR");
-    expect(body.chunked?.manifestUrl).toContain("Signature=");
+    expect(body.chunked?.manifestUrl).toMatch(
+      new RegExp(`/v1/images/${imageId}/chunked/manifest$`)
+    );
   });
 });

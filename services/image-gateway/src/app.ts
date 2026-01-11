@@ -555,21 +555,21 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
        }
 
       if (chunkedManifestKey) {
-        const manifestPath = `/${chunkedManifestKey}`;
-        const stableManifestUrl = buildCloudFrontUrl({
-          cloudfrontDomain: deps.config.cloudfrontDomain,
-          path: manifestPath,
-        });
-        const manifestUrl =
-          deps.config.cloudfrontAuthMode === "url"
-            ? createSignedUrl({
-                url: stableManifestUrl,
-                keyPairId: deps.config.cloudfrontKeyPairId,
-                privateKeyPem: deps.config.cloudfrontPrivateKeyPem,
-                expiresAt,
-              })
-            : stableManifestUrl;
-        chunked = { delivery: "chunked", manifestUrl };
+        if (deps.config.cloudfrontAuthMode === "cookie") {
+          const stableManifestUrl = buildCloudFrontUrl({
+            cloudfrontDomain: deps.config.cloudfrontDomain,
+            path: `/${chunkedManifestKey}`,
+          });
+          chunked = { delivery: "chunked", manifestUrl: stableManifestUrl };
+        } else {
+          // CloudFront signed URLs embed auth in the query string, but relative URL resolution does not
+          // propagate query params to chunk URLs. Use the gateway chunk endpoints (which redirect
+          // to signed CloudFront URLs) so clients can fetch chunks with plain GETs.
+          chunked = {
+            delivery: "chunked",
+            manifestUrl: buildSelfUrl(req, `/v1/images/${imageId}/chunked/manifest`),
+          };
+        }
       }
     } else {
       // Local/dev fallback: stream via the range proxy endpoint on the same host.
