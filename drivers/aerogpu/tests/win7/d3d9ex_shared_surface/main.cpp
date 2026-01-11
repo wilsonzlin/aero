@@ -137,6 +137,15 @@ static bool IsLikelyNtHandle(HANDLE h) {
   return true;
 }
 
+static DWORD RemainingTimeoutMs(DWORD start_ticks, DWORD timeout_ms) {
+  const DWORD now = GetTickCount();
+  const DWORD elapsed = now - start_ticks;
+  if (elapsed >= timeout_ms) {
+    return 0;
+  }
+  return timeout_ms - elapsed;
+}
+
 static int CheckD3D9Adapter(const char* test_name, IDirect3D9Ex* d3d, const AdapterRequirements& req) {
   D3DADAPTER_IDENTIFIER9 ident;
   ZeroMemory(&ident, sizeof(ident));
@@ -1049,18 +1058,10 @@ static int RunParent(int argc,
   // would otherwise leave an orphaned child process behind.
   const DWORD kChildTimeoutMs = 20000;
   const DWORD start_ticks = GetTickCount();
-  auto remaining_ms = [&]() -> DWORD {
-    const DWORD now = GetTickCount();
-    const DWORD elapsed = now - start_ticks;
-    if (elapsed >= kChildTimeoutMs) {
-      return 0;
-    }
-    return kChildTimeoutMs - elapsed;
-  };
 
   if (validate_sharing) {
     HANDLE wait_open[2] = {opened_event, pi.hProcess};
-    DWORD wait_budget = remaining_ms();
+    DWORD wait_budget = RemainingTimeoutMs(start_ticks, kChildTimeoutMs);
     DWORD opened_timeout = 0;
     if (wait_budget) {
       opened_timeout = (wait_budget < 10000) ? wait_budget : 10000;
@@ -1119,7 +1120,7 @@ static int RunParent(int argc,
     SetEvent(ready_event);
 
     HANDLE wait_done[2] = {done_event, pi.hProcess};
-    wait_budget = remaining_ms();
+    wait_budget = RemainingTimeoutMs(start_ticks, kChildTimeoutMs);
     DWORD done_timeout = 0;
     if (wait_budget) {
       done_timeout = (wait_budget < 10000) ? wait_budget : 10000;
@@ -1145,7 +1146,7 @@ static int RunParent(int argc,
     }
   }
 
-  DWORD wait_budget = remaining_ms();
+  DWORD wait_budget = RemainingTimeoutMs(start_ticks, kChildTimeoutMs);
   DWORD wait = WaitForSingleObject(pi.hProcess, wait_budget);
   if (wait == WAIT_TIMEOUT) {
     TerminateProcess(pi.hProcess, 124);
