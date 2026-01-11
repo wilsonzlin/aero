@@ -161,3 +161,43 @@ impl AeroGpuCommandBackend for AerogpuWgpuBackend {
         self.presented_scanouts.get(&scanout_id).cloned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+    use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC};
+
+    #[test]
+    fn decode_alloc_table_bytes_recovers_from_misaligned_buffers() {
+        let header_size = AerogpuAllocTableHeader::SIZE_BYTES;
+        let entry_size = AerogpuAllocEntry::SIZE_BYTES;
+        let size_bytes = u32::try_from(header_size + entry_size).unwrap();
+
+        let mut table = Vec::new();
+        table.extend_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+        table.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        table.extend_from_slice(&size_bytes.to_le_bytes());
+        table.extend_from_slice(&1u32.to_le_bytes()); // entry_count
+        table.extend_from_slice(&(entry_size as u32).to_le_bytes()); // entry_stride_bytes
+        table.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+
+        // One entry.
+        table.extend_from_slice(&1u32.to_le_bytes()); // alloc_id
+        table.extend_from_slice(&0u32.to_le_bytes()); // flags
+        table.extend_from_slice(&0x1000u64.to_le_bytes()); // gpa
+        table.extend_from_slice(&0x2000u64.to_le_bytes()); // size_bytes
+        table.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+
+        // Force misalignment by offsetting the slice by one byte.
+        let mut storage = vec![0u8; table.len() + 1];
+        storage[1..].copy_from_slice(&table);
+
+        let entries = decode_alloc_table_bytes(&storage[1..]).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].alloc_id, 1);
+        assert_eq!(entries[0].gpa, 0x1000);
+        assert_eq!(entries[0].size_bytes, 0x2000);
+    }
+}
