@@ -94,7 +94,7 @@ These values live in **WDDM allocation private driver data** (`aerogpu_wddm_allo
 - The blob is treated as **UMD → KMD input**: the UMD generates `alloc_id` and `share_token` and attaches them to each allocation.
 - For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe identical IDs.
 - The KMD validates and stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table for the emulator.
-- To avoid silent corruption, the KMD rejects submissions where the allocation list contains the same `alloc_id` for different backing ranges (`gpa/size_bytes`).
+- To avoid silent corruption, the KMD rejects submissions where the allocation list contains the same `alloc_id` for different backing base addresses (`gpa`). (Size may vary due to alignment; the allocation table uses the maximum observed size for a given `alloc_id`.)
 - For standard allocations where the runtime does not provide an AeroGPU private-data blob, the KMD synthesizes an `alloc_id` from a reserved namespace (high bit set) and sets `share_token = 0`.
 
 The shared layout is defined in:
