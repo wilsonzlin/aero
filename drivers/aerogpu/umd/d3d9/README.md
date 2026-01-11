@@ -126,3 +126,25 @@ The initial implementation focuses on the minimum D3D9Ex feature set needed for:
 - a basic triangle app (VB/IB, shaders, textures, alpha blend, present)
 
 Unsupported states are handled defensively; unknown state enums are accepted and forwarded as generic “set render/sampler state” commands so the emulator can decide how to interpret them.
+
+## Crash-proof D3D9UMDDI vtables (Win7 runtime)
+
+The Win7 D3D9 runtime (and `dwm.exe`) can call a wider set of DDIs than the initial AeroGPU bring-up implementation provides. The UMD **must never** return a partially-populated `D3D9DDI_DEVICEFUNCS` / `D3D9DDI_ADAPTERFUNCS` table where the runtime can call a **NULL** function pointer (that would crash the process before we can even trace the call).
+
+In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI`), the UMD populates every *known* function-table member with either a real implementation or a safe stub:
+
+- Stubs log once (`aerogpu-d3d9: stub <name>`)
+- Stubs emit a `D3d9TraceCall` record so trace dumps show which missing DDI was exercised
+- Stubs return a stable HRESULT so callers fail cleanly instead of AV'ing
+
+### Currently stubbed DDIs
+
+These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet:
+
+- `pfnSetTextureStageState` (no-op, returns `S_OK`)
+- `pfnSetTransform` / `pfnMultiplyTransform` / `pfnSetClipPlane` (no-op, returns `S_OK`)
+- `pfnSetShaderConstI` / `pfnSetShaderConstB` (no-op, returns `S_OK`)
+
+### Caps/feature gating
+
+The stubbed entrypoints above correspond primarily to **fixed-function** and legacy code paths. Until real implementations exist, keep the reported D3D9 caps conservative so the runtime and apps prefer the shader/VB/IB paths that the UMD does implement.

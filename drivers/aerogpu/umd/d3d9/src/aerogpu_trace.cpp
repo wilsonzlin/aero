@@ -282,6 +282,18 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::WaitForIdle";
     case D3d9TraceFunc::DeviceSetFVF:
       return "Device::SetFVF";
+    case D3d9TraceFunc::DeviceSetTextureStageState:
+      return "Device::SetTextureStageState (stub)";
+    case D3d9TraceFunc::DeviceSetTransform:
+      return "Device::SetTransform (stub)";
+    case D3d9TraceFunc::DeviceMultiplyTransform:
+      return "Device::MultiplyTransform (stub)";
+    case D3d9TraceFunc::DeviceSetClipPlane:
+      return "Device::SetClipPlane (stub)";
+    case D3d9TraceFunc::DeviceSetShaderConstI:
+      return "Device::SetShaderConstI (stub)";
+    case D3d9TraceFunc::DeviceSetShaderConstB:
+      return "Device::SetShaderConstB (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

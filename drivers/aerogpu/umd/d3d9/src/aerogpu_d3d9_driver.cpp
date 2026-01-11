@@ -1,10 +1,12 @@
 #include "../include/aerogpu_d3d9_umd.h"
 
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <cwchar>
+#include <initializer_list>
 #include <memory>
 #include <thread>
 #include <type_traits>
@@ -179,7 +181,100 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnGetDisplayModeEx);
 AEROGPU_DEFINE_HAS_MEMBER(pfnComposeRects);
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawPrimitiveUP);
 
+// Fixed function / legacy state paths (commonly hit by DWM + simple D3D9 apps).
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetTextureStageState);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetTransform);
+AEROGPU_DEFINE_HAS_MEMBER(pfnMultiplyTransform);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetClipPlane);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetShaderConstI);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetShaderConstB);
+
 #undef AEROGPU_DEFINE_HAS_MEMBER
+#endif
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+template <typename T, typename = void>
+struct aerogpu_has_member_pDrvPrivate : std::false_type {};
+
+template <typename T>
+struct aerogpu_has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
+
+template <typename T>
+uint64_t d3d9_stub_trace_arg(const T& v) {
+  if constexpr (aerogpu_has_member_pDrvPrivate<T>::value) {
+    return d3d9_trace_arg_ptr(v.pDrvPrivate);
+  } else if constexpr (std::is_pointer_v<T>) {
+    return d3d9_trace_arg_ptr(v);
+  } else if constexpr (std::is_enum_v<T>) {
+    using Under = std::underlying_type_t<T>;
+    return static_cast<uint64_t>(static_cast<Under>(v));
+  } else if constexpr (std::is_integral_v<T>) {
+    return static_cast<uint64_t>(v);
+  } else {
+    return 0;
+  }
+}
+
+template <typename... Args>
+std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
+  std::array<uint64_t, 4> out{};
+  size_t i = 0;
+  (void)std::initializer_list<int>{
+      (i < out.size() ? (out[i++] = d3d9_stub_trace_arg(args), 0) : 0)...};
+  return out;
+}
+
+#define AEROGPU_D3D9_DEFINE_DDI_STUB(member, trace_func, stub_hr)                                \
+  template <typename Fn>                                                                         \
+  struct aerogpu_d3d9_stub_##member;                                                             \
+  template <typename Ret, typename... Args>                                                      \
+  struct aerogpu_d3d9_stub_##member<Ret(__stdcall*)(Args...)> {                                  \
+    static Ret __stdcall member(Args... args) {                                                   \
+      AEROGPU_D3D9_STUB_LOG_ONCE();                                                              \
+      const auto packed = d3d9_stub_trace_args(args...);                                         \
+      D3d9TraceCall trace(trace_func, packed[0], packed[1], packed[2], packed[3]);               \
+      if constexpr (std::is_same_v<Ret, void>) {                                                  \
+        (void)trace.ret(stub_hr);                                                                 \
+        return;                                                                                   \
+      }                                                                                           \
+      if constexpr (std::is_same_v<Ret, HRESULT>) {                                               \
+        return trace.ret(stub_hr);                                                                \
+      }                                                                                           \
+      (void)trace.ret(stub_hr);                                                                   \
+      return Ret{};                                                                               \
+    }                                                                                             \
+  };                                                                                              \
+  template <typename Ret, typename... Args>                                                      \
+  struct aerogpu_d3d9_stub_##member<Ret(*)(Args...)> {                                            \
+    static Ret member(Args... args) {                                                             \
+      AEROGPU_D3D9_STUB_LOG_ONCE();                                                              \
+      const auto packed = d3d9_stub_trace_args(args...);                                         \
+      D3d9TraceCall trace(trace_func, packed[0], packed[1], packed[2], packed[3]);               \
+      if constexpr (std::is_same_v<Ret, void>) {                                                  \
+        (void)trace.ret(stub_hr);                                                                 \
+        return;                                                                                   \
+      }                                                                                           \
+      if constexpr (std::is_same_v<Ret, HRESULT>) {                                               \
+        return trace.ret(stub_hr);                                                                \
+      }                                                                                           \
+      (void)trace.ret(stub_hr);                                                                   \
+      return Ret{};                                                                               \
+    }                                                                                             \
+  }
+
+// Stubbed entrypoints: keep these non-NULL so the Win7 runtime can call into the
+// UMD without crashing. See `drivers/aerogpu/umd/d3d9/README.md`.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetTextureStageState, D3d9TraceFunc::DeviceSetTextureStageState, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetTransform, D3d9TraceFunc::DeviceSetTransform, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnMultiplyTransform, D3d9TraceFunc::DeviceMultiplyTransform, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetClipPlane, D3d9TraceFunc::DeviceSetClipPlane, S_OK);
+
+// Shader constant paths (int/bool) are not implemented yet; treat as a no-op to
+// keep DWM alive while we bring up shader translation.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstI, D3d9TraceFunc::DeviceSetShaderConstI, S_OK);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetShaderConstB, D3d9TraceFunc::DeviceSetShaderConstB, S_OK);
+
+#undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
 
 uint64_t monotonic_ms() {
@@ -6493,8 +6588,28 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnSetViewport, device_set_viewport);
   AEROGPU_SET_D3D9DDI_FN(pfnSetScissorRect, device_set_scissor);
   AEROGPU_SET_D3D9DDI_FN(pfnSetTexture, device_set_texture);
+  if constexpr (aerogpu_has_member_pfnSetTextureStageState<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetTextureStageState,
+        aerogpu_d3d9_stub_pfnSetTextureStageState<decltype(pDeviceFuncs->pfnSetTextureStageState)>::pfnSetTextureStageState);
+  }
   AEROGPU_SET_D3D9DDI_FN(pfnSetSamplerState, device_set_sampler_state);
   AEROGPU_SET_D3D9DDI_FN(pfnSetRenderState, device_set_render_state);
+  if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetTransform,
+        aerogpu_d3d9_stub_pfnSetTransform<decltype(pDeviceFuncs->pfnSetTransform)>::pfnSetTransform);
+  }
+  if constexpr (aerogpu_has_member_pfnMultiplyTransform<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnMultiplyTransform,
+        aerogpu_d3d9_stub_pfnMultiplyTransform<decltype(pDeviceFuncs->pfnMultiplyTransform)>::pfnMultiplyTransform);
+  }
+  if constexpr (aerogpu_has_member_pfnSetClipPlane<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetClipPlane,
+        aerogpu_d3d9_stub_pfnSetClipPlane<decltype(pDeviceFuncs->pfnSetClipPlane)>::pfnSetClipPlane);
+  }
 
   AEROGPU_SET_D3D9DDI_FN(pfnCreateVertexDecl, device_create_vertex_decl);
   AEROGPU_SET_D3D9DDI_FN(pfnSetVertexDecl, device_set_vertex_decl);
@@ -6507,6 +6622,16 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnSetShader, device_set_shader);
   AEROGPU_SET_D3D9DDI_FN(pfnDestroyShader, device_destroy_shader);
   AEROGPU_SET_D3D9DDI_FN(pfnSetShaderConstF, device_set_shader_const_f);
+  if constexpr (aerogpu_has_member_pfnSetShaderConstI<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetShaderConstI,
+        aerogpu_d3d9_stub_pfnSetShaderConstI<decltype(pDeviceFuncs->pfnSetShaderConstI)>::pfnSetShaderConstI);
+  }
+  if constexpr (aerogpu_has_member_pfnSetShaderConstB<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetShaderConstB,
+        aerogpu_d3d9_stub_pfnSetShaderConstB<decltype(pDeviceFuncs->pfnSetShaderConstB)>::pfnSetShaderConstB);
+  }
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);
   AEROGPU_SET_D3D9DDI_FN(pfnSetIndices, device_set_indices);
