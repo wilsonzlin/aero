@@ -214,3 +214,56 @@ fn snapshot_restore_rejects_dirty_snapshot_with_wrong_parent() {
     // Full snapshots ignore expected-parent validation and must still restore fine.
     restored.restore_snapshot(&base).unwrap();
 }
+
+#[test]
+fn snapshot_restore_requires_full_dirty_parent_chain() {
+    let cfg = BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0x80,
+        ..BiosConfig::default()
+    };
+    let bios = Bios::new(cfg.clone());
+    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
+    vm.reset();
+
+    // Base full snapshot A.
+    let base = vm.save_snapshot(SnapshotOptions::default()).unwrap();
+
+    // Dirty diff snapshot B (parent A).
+    vm.mem.write_physical(0x1111, &[0xAA]);
+    let diff1 = vm
+        .save_snapshot(SnapshotOptions {
+            ram_mode: RamMode::Dirty,
+        })
+        .unwrap();
+
+    // Dirty diff snapshot C (parent B).
+    vm.mem.write_physical(0x2222, &[0xBB]);
+    let diff2 = vm
+        .save_snapshot(SnapshotOptions {
+            ram_mode: RamMode::Dirty,
+        })
+        .unwrap();
+
+    let bios2 = Bios::new(cfg);
+    let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+    let mut restored = Vm::new(16 * 1024 * 1024, bios2, disk2);
+    restored.reset();
+
+    // Cannot apply C onto a fresh VM (no parent restored).
+    let err = restored.restore_snapshot(&diff2).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+
+    // Restoring A then skipping B and applying C must also fail (wrong parent id).
+    restored.restore_snapshot(&base).unwrap();
+    let err = restored.restore_snapshot(&diff2).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+
+    // Restoring the full chain A -> B -> C should succeed.
+    restored.restore_snapshot(&diff1).unwrap();
+    restored.restore_snapshot(&diff2).unwrap();
+    assert_eq!(restored.mem.read_u8(0x1111), 0xAA);
+    assert_eq!(restored.mem.read_u8(0x2222), 0xBB);
+}
