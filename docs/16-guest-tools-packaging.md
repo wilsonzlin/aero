@@ -19,14 +19,30 @@ drivers/
       *.inf
       *.sys
       *.cat
-      *.dll   (optional: e.g. AeroGPU UMDs or WdfCoInstaller*.dll)
+      # Any auxiliary files referenced by the INF (e.g. WdfCoInstaller*.dll,
+      # helper DLL/EXEs, manifests, etc) are preserved, with exclusions below.
   amd64/   (or `x64/` on input; the packaged output uses `amd64/`)
     <driver-name>/
       *.inf
       *.sys
       *.cat
-      *.dll   (optional: e.g. AeroGPU UMDs or WdfCoInstaller*.dll)
+      # Same as above.
 ```
+
+#### Driver file inclusion / exclusions
+
+When copying each `drivers/<arch>/<driver-name>/...` directory into the Guest Tools ISO/zip, the packager includes **all files** by default to keep Windows PnP driver packages installable (especially KMDF-based ones that require `WdfCoInstaller*.dll`).
+
+It applies a small exclusion policy:
+
+- Skipped by default (to avoid bloating artifacts with build outputs):
+  - debug symbols: `*.pdb`, `*.ipdb`, `*.iobj`
+  - build metadata: `*.obj`, `*.lib`
+  - source / project files: `*.c`, `*.cpp`, `*.h`, `*.sln`, `*.vcxproj`, etc
+- **Refused (hard error)** to avoid leaking secrets:
+  - private key material: `*.pfx`, `*.pvk`, `*.snk`
+
+Per-driver overrides can be configured in the packaging spec via `allow_extensions` and `allow_path_regexes`.
 
 ### Guest Tools scripts / certs
 
@@ -36,8 +52,8 @@ The packager expects:
 guest-tools/
   setup.cmd
   uninstall.cmd
-  verify.cmd (optional)
-  verify.ps1 (optional, but required if verify.cmd is present)
+  verify.cmd
+  verify.ps1
   README.md
   THIRD_PARTY_NOTICES.md
   licenses/ (optional)
@@ -157,9 +173,8 @@ Before producing any output, the packager verifies that:
 - the output includes **only** driver directories listed in the packaging spec (prevents accidentally shipping stray/incomplete driver folders),
 - each **required** driver is present for both `x86` and `amd64` (missing required drivers are fatal),
 - each included driver (required + optional that are present) contains at least one `.inf`, `.sys`, and `.cat`,
-- each included driver's `.inf` files contain the expected hardware IDs (regex match, case-insensitive) if provided.
-
-Driver `.dll` files (if present) are included in the ISO/zip, but are not required by validation.
+- each included driver's `.inf` files contain the expected hardware IDs (regex match, case-insensitive) if provided,
+- each included driver's `.inf` files reference only files that exist in the packaged driver directory (best-effort; includes KMDF `WdfCoInstaller*.dll` checks).
 
 These checks are driven by a small JSON spec passed via `--spec`.
 

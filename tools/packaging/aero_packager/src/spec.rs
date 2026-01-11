@@ -26,6 +26,19 @@ pub struct DriverSpec {
     /// file for this driver (per-architecture).
     #[serde(default)]
     pub expected_hardware_ids: Vec<String>,
+    /// By default, the packager skips common non-distributable build artifacts
+    /// (PDBs, objs, source files, etc). If a driver needs one of these files to
+    /// be present in the packaged directory, extensions can be explicitly
+    /// allowlisted here (case-insensitive, with or without leading dots).
+    #[serde(default)]
+    pub allow_extensions: Vec<String>,
+    /// Similar to `allow_extensions`, but matched against the driver-relative
+    /// path (using `/` separators) as a case-insensitive regex.
+    ///
+    /// This is intended for rare cases where the driver layout needs an
+    /// allowlist exception for a specific file name/path.
+    #[serde(default)]
+    pub allow_path_regexes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +93,8 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                 name: legacy.name,
                 required: true,
                 expected_hardware_ids: legacy.expected_hardware_ids,
+                allow_extensions: Vec::new(),
+                allow_path_regexes: Vec::new(),
             });
         }
 

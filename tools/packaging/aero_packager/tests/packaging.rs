@@ -113,10 +113,12 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         "drivers/x86/testdrv/test.sys",
         "drivers/x86/testdrv/test.cat",
         "drivers/x86/testdrv/test.dll",
+        "drivers/x86/testdrv/WdfCoInstaller01009.dll",
         "drivers/amd64/testdrv/test.inf",
         "drivers/amd64/testdrv/test.sys",
         "drivers/amd64/testdrv/test.cat",
         "drivers/amd64/testdrv/test.dll",
+        "drivers/amd64/testdrv/WdfCoInstaller01009.dll",
     ] {
         assert!(
             tree.contains(required),
@@ -377,6 +379,44 @@ fn optional_drivers_are_validated_when_present() -> anyhow::Result<()> {
             "ISO is missing expected optional driver file: {required}"
         );
     }
+
+    Ok(())
+}
+
+#[test]
+fn package_rejects_private_key_materials() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+    let spec_path = testdata.join("spec.json");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+    fs::write(
+        drivers_tmp.path().join("x86/testdrv/test.pfx"),
+        b"dummy pfx",
+    )?;
+
+    let out_dir = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir,
+        out_dir: out_dir.path().to_path_buf(),
+        spec_path,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("refusing to package private key material"),
+        "unexpected error: {msg}"
+    );
 
     Ok(())
 }

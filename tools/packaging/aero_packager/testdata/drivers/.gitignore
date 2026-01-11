@@ -1,0 +1,4 @@
+# The repository root ignores Windows driver binaries globally, but the
+# aero_packager integration tests need small deterministic placeholder fixtures.
+!**/*.dll
+!**/*.sys

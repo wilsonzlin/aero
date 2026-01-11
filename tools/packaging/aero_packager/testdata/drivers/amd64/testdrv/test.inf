@@ -1,4 +1,4 @@
-; Minimal INF fixture
+; Minimal INF fixture with auxiliary payloads (e.g. KMDF coinstallers)
 [Version]
 Signature="$Windows NT$"
 
@@ -7,6 +7,19 @@ Signature="$Windows NT$"
 
 [Mfg.NTamd64]
 %Dev%=Install, PCI\VEN_1234&DEV_5678
+
+[Install]
+CopyFiles=DriverCopyFiles,CoInstaller_CopyFiles
+
+[DriverCopyFiles]
+test.sys
+
+[CoInstaller_CopyFiles]
+WdfCoInstaller01009.dll
+
+[SourceDisksFiles]
+test.sys=1
+WdfCoInstaller01009.dll=1
 
 [Strings]
 Mfg="Aero"

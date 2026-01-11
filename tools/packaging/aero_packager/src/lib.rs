@@ -5,6 +5,7 @@ mod zip_util;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -107,7 +108,7 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
 #[derive(Debug, Clone)]
 struct DriverToInclude {
-    name: String,
+    spec: DriverSpec,
     dir: PathBuf,
 }
 
@@ -288,6 +289,14 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
     // Drivers.
     for (arch_out, drivers) in [("x86", &driver_plan.x86), ("amd64", &driver_plan.amd64)] {
         for driver in drivers {
+            let allowlist =
+                DriverFileAllowlist::from_driver_spec(&driver.spec).with_context(|| {
+                    format!(
+                        "load file allowlist overrides for driver {}",
+                        &driver.spec.name
+                    )
+                })?;
+
             for entry in walkdir::WalkDir::new(&driver.dir)
                 .follow_links(false)
                 .sort_by_file_name()
@@ -301,17 +310,14 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
                     .strip_prefix(&driver.dir)
                     .expect("walkdir under driver dir");
                 let rel_str = path_to_slash(rel);
-                let rel_str_lower = rel_str.to_ascii_lowercase();
-                if !(rel_str_lower.ends_with(".inf")
-                    || rel_str_lower.ends_with(".sys")
-                    || rel_str_lower.ends_with(".cat")
-                    || rel_str_lower.ends_with(".dll"))
+                if !should_include_driver_file(entry.path(), &rel_str, &allowlist)
+                    .with_context(|| format!("filter driver file {}", entry.path().display()))?
                 {
                     continue;
                 }
 
                 out.push(FileToPackage {
-                    rel_path: format!("drivers/{}/{}/{}", arch_out, driver.name, rel_str),
+                    rel_path: format!("drivers/{}/{}/{}", arch_out, &driver.spec.name, rel_str),
                     bytes: fs::read(entry.path())
                         .with_context(|| format!("read {}", entry.path().display()))?,
                 });
@@ -355,7 +361,7 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPl
 
             validate_driver_dir(drv, arch, &driver_dir)?;
             out.push(DriverToInclude {
-                name: drv.name.clone(),
+                spec: drv.clone(),
                 dir: driver_dir,
             });
         }
@@ -365,10 +371,18 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPl
 }
 
 fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Result<()> {
+    let allowlist = DriverFileAllowlist::from_driver_spec(driver)
+        .with_context(|| format!("load file allowlist overrides for driver {}", driver.name))?;
+
     let mut found_inf = false;
     let mut found_sys = false;
     let mut found_cat = false;
     let mut inf_texts = Vec::new();
+
+    // Collect a view of the files that would be packaged for this driver, so we can
+    // validate that any INF-referenced payloads are actually present.
+    let mut packaged_rel_paths = HashSet::<String>::new();
+    let mut packaged_base_names = HashSet::<String>::new();
 
     for entry in walkdir::WalkDir::new(driver_dir)
         .follow_links(false)
@@ -379,6 +393,20 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
             continue;
         }
         let path = entry.path();
+        let rel = path
+            .strip_prefix(driver_dir)
+            .expect("walkdir under driver_dir");
+        let rel_str = path_to_slash(rel);
+        let include = should_include_driver_file(path, &rel_str, &allowlist)
+            .with_context(|| format!("filter driver file {}", path.display()))?;
+
+        if include {
+            packaged_rel_paths.insert(rel_str.to_ascii_lowercase());
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                packaged_base_names.insert(name.to_ascii_lowercase());
+            }
+        }
+
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".inf") {
@@ -416,7 +444,308 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
         }
     }
 
+    for (inf_idx, inf_text) in inf_texts.iter().enumerate() {
+        validate_inf_references(
+            &driver.name,
+            arch,
+            inf_idx,
+            inf_text,
+            &packaged_rel_paths,
+            &packaged_base_names,
+        )
+        .with_context(|| {
+            format!(
+                "validate INF referenced files for {} ({})",
+                driver.name, arch
+            )
+        })?;
+    }
+
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct DriverFileAllowlist {
+    allowed_exts: HashSet<String>,
+    allowed_path_res: Vec<regex::Regex>,
+}
+
+impl DriverFileAllowlist {
+    fn from_driver_spec(driver: &DriverSpec) -> Result<Self> {
+        let mut out = DriverFileAllowlist::default();
+
+        for ext in &driver.allow_extensions {
+            let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+            if ext.is_empty() {
+                continue;
+            }
+            out.allowed_exts.insert(ext);
+        }
+
+        for pat in &driver.allow_path_regexes {
+            let re = regex::RegexBuilder::new(pat)
+                .case_insensitive(true)
+                .build()
+                .with_context(|| {
+                    format!(
+                        "compile allow_path_regexes pattern for driver {}: {}",
+                        driver.name, pat
+                    )
+                })?;
+            out.allowed_path_res.push(re);
+        }
+
+        Ok(out)
+    }
+
+    fn is_allowed(&self, rel_path: &str, ext: Option<&str>) -> bool {
+        if let Some(ext) = ext {
+            if self.allowed_exts.contains(ext) {
+                return true;
+            }
+        }
+        self.allowed_path_res.iter().any(|re| re.is_match(rel_path))
+    }
+}
+
+fn should_include_driver_file(
+    path: &Path,
+    rel_path: &str,
+    allowlist: &DriverFileAllowlist,
+) -> Result<bool> {
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    // Keep outputs stable across hosts (e.g. ignore `.DS_Store`).
+    if file_name.starts_with('.') {
+        return Ok(false);
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let ext_opt = if ext.is_empty() {
+        None
+    } else {
+        Some(ext.as_str())
+    };
+
+    if let Some(ext) = ext_opt {
+        if is_private_key_extension(ext) {
+            bail!(
+                "refusing to package private key material: {}",
+                path.display()
+            );
+        }
+
+        if is_default_excluded_driver_extension(ext) && !allowlist.is_allowed(rel_path, Some(ext)) {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn is_private_key_extension(ext: &str) -> bool {
+    matches!(ext, "pfx" | "pvk" | "snk")
+}
+
+fn is_default_excluded_driver_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        // Debug symbols.
+        "pdb" | "ipdb" | "iobj"
+        // Build metadata.
+        | "obj" | "lib"
+        // Source / project files.
+        | "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx" | "idl" | "inl" | "rc" | "s" | "asm"
+        | "sln" | "vcxproj" | "props" | "targets"
+    )
+}
+
+fn validate_inf_references(
+    driver_name: &str,
+    arch: &str,
+    inf_index: usize,
+    inf_text: &str,
+    packaged_rel_paths: &HashSet<String>,
+    packaged_base_names: &HashSet<String>,
+) -> Result<()> {
+    let sections = parse_inf_sections(inf_text);
+    let mut referenced = BTreeSet::<String>::new();
+
+    // Validate `SourceDisksFiles*` entries if present; these are intended to list every
+    // payload file that ships in the driver package.
+    for (name, lines) in &sections {
+        if !name.starts_with("sourcedisksfiles") {
+            continue;
+        }
+        for line in lines {
+            let Some((lhs, _rhs)) = line.split_once('=') else {
+                continue;
+            };
+            let token = normalize_inf_path_token(lhs);
+            if !token.is_empty() {
+                referenced.insert(token);
+            }
+        }
+    }
+
+    // Best-effort: follow CopyFiles directives into any file list sections they reference.
+    let mut copyfile_sections = BTreeSet::<String>::new();
+    for lines in sections.values() {
+        for line in lines {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !key.trim().eq_ignore_ascii_case("copyfiles") {
+                continue;
+            }
+            for token in value.split(',') {
+                let token = token.trim();
+                if token.is_empty() {
+                    continue;
+                }
+                let token = normalize_inf_path_token(token);
+                if token.is_empty() {
+                    continue;
+                }
+                let token = token.trim_start_matches('@').to_string();
+                if token.contains('.') || token.contains('/') {
+                    referenced.insert(token);
+                } else {
+                    copyfile_sections.insert(token.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+
+    for section_name in copyfile_sections {
+        let Some(lines) = sections.get(&section_name) else {
+            continue;
+        };
+        for line in lines {
+            // File list entries are `file[,subdir][,flags][,rename]...`.
+            let first = line.split(',').next().unwrap_or("").trim();
+            let token = normalize_inf_path_token(first)
+                .trim_start_matches('@')
+                .to_string();
+            if token.contains('.') || token.contains('/') {
+                referenced.insert(token);
+            }
+        }
+    }
+
+    // Minimum coinstaller sanity: if the INF mentions WdfCoInstaller, ensure the referenced
+    // DLL(s) actually exist in the packaged driver directory.
+    let inf_lower = inf_text.to_ascii_lowercase();
+    if inf_lower.contains("wdfcoinstaller") {
+        let re = regex::RegexBuilder::new(r"wdfcoinstaller[0-9a-z]*\.dll")
+            .case_insensitive(true)
+            .build()
+            .expect("valid regex");
+        let mut found = false;
+        for m in re.find_iter(inf_text) {
+            found = true;
+            referenced.insert(m.as_str().to_string());
+        }
+
+        if !found {
+            // If we couldn't find a specific DLL name, still require that some WDF coinstaller
+            // DLL exists in the directory.
+            let any = packaged_base_names
+                .iter()
+                .any(|n| n.starts_with("wdfcoinstaller") && n.ends_with(".dll"));
+            if !any {
+                bail!(
+                    "driver {} ({}) INF #{} mentions WdfCoInstaller but no WdfCoInstaller*.dll was packaged",
+                    driver_name,
+                    arch,
+                    inf_index
+                );
+            }
+        }
+    }
+
+    for token in referenced {
+        let token = normalize_inf_path_token(&token);
+        if token.is_empty() {
+            continue;
+        }
+        let token_lower = token.to_ascii_lowercase().replace('\\', "/");
+        if token_lower.contains('/') {
+            if !packaged_rel_paths.contains(&token_lower) {
+                bail!(
+                    "driver {} ({}) INF #{} references missing file: {}",
+                    driver_name,
+                    arch,
+                    inf_index,
+                    token
+                );
+            }
+        } else if !packaged_base_names.contains(&token_lower) {
+            bail!(
+                "driver {} ({}) INF #{} references missing file: {}",
+                driver_name,
+                arch,
+                inf_index,
+                token
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_inf_sections(text: &str) -> HashMap<String, Vec<String>> {
+    let mut sections: HashMap<String, Vec<String>> = HashMap::new();
+    let mut current = None::<String>;
+    for raw_line in text.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((before, _comment)) = line.split_once(';') {
+            line = before.trim();
+        }
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(section_name) = line
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .map(|s| s.trim())
+        {
+            if section_name.is_empty() {
+                current = None;
+            } else {
+                current = Some(section_name.to_ascii_lowercase());
+            }
+            continue;
+        }
+
+        let Some(section) = current.as_ref() else {
+            continue;
+        };
+        sections
+            .entry(section.clone())
+            .or_default()
+            .push(line.to_string());
+    }
+    sections
+}
+
+fn normalize_inf_path_token(token: &str) -> String {
+    let mut s = token
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string();
+    while s.starts_with(".\\") || s.starts_with("./") {
+        s = s[2..].to_string();
+    }
+    s = s.replace('\\', "/");
+    s.trim().to_string()
 }
 
 fn resolve_input_arch_dir(drivers_dir: &Path, arch_out: &str) -> Result<PathBuf> {
