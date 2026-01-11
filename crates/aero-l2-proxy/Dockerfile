@@ -5,10 +5,12 @@ FROM rust:1-bookworm AS builder
 WORKDIR /workspace
 
 COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 COPY crates ./crates
 COPY tools ./tools
 COPY emulator ./emulator
 COPY drivers ./drivers
+COPY xtask ./xtask
 
 RUN cargo build --release --locked -p aero-l2-proxy
 
