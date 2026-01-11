@@ -98,6 +98,7 @@ exclude = [
 aero-d3d9 = { path = "crates/aero-d3d9" }
 aero-d3d11 = { path = "crates/aero-d3d11" }
 aero-gpu = { path = "crates/aero-gpu" }
+aero-protocol = { path = "emulator/protocol" }
 anyhow = "1.0"
 bytemuck = { version = "1.14", features = ["derive"] }
 image = { version = "0.25.5", default-features = false, features = ["png", "pnm"] }

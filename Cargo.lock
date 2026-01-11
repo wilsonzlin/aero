@@ -24,6 +24,7 @@ dependencies = [
  "aero-d3d11",
  "aero-d3d9",
  "aero-gpu",
+ "aero-protocol",
  "anyhow",
  "bytemuck",
  "image",
