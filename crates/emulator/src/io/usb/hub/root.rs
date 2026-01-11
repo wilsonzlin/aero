@@ -89,11 +89,7 @@ impl Port {
         // While in reset, the port enable bit reads as 0 and writes are ignored until
         // the reset sequence completes.
         if !self.reset {
-            let new_enabled = value & PED != 0;
-            if new_enabled != self.enabled {
-                self.enabled = new_enabled;
-                self.enable_change = true;
-            }
+            self.enabled = value & PED != 0;
         }
     }
 

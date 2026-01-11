@@ -93,12 +93,26 @@ impl UhciController {
                     self.reset();
                     return;
                 }
-                self.regs.usbcmd = value & (USBCMD_RS | USBCMD_CF | USBCMD_MAXP);
+                let prev = self.regs.usbcmd;
+                let mut cmd = value & USBCMD_WRITE_MASK;
+
+                // Global reset is latched in USBCMD (software clears it), but the act of *setting*
+                // the bit resets controller state.
+                if cmd & USBCMD_GRESET != 0 && prev & USBCMD_GRESET == 0 {
+                    self.reset();
+                }
+
+                // While global reset is asserted the controller shouldn't be running.
+                if cmd & USBCMD_GRESET != 0 {
+                    cmd &= !USBCMD_RS;
+                }
+
+                self.regs.usbcmd = cmd;
                 self.regs.update_halted();
             }
             (REG_USBSTS, 2) => {
-                // Write-1-to-clear (bits 0..2).
-                let w1c = value as u16 & (USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_RESUMEDETECT);
+                // Write-1-to-clear status bits.
+                let w1c = value as u16 & USBSTS_W1C_MASK;
                 self.regs.usbsts &= !w1c;
             }
             (REG_USBINTR, 2) => self.regs.usbintr = value as u16 & 0x0f,
@@ -115,7 +129,7 @@ impl UhciController {
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
         self.hub.tick_1ms();
 
-        if self.regs.usbcmd & USBCMD_RS == 0 {
+        if self.regs.usbcmd & (USBCMD_RS | USBCMD_EGSM) != USBCMD_RS {
             self.regs.update_halted();
             self.update_irq();
             return;
