@@ -595,6 +595,68 @@ fn cpu_core_bus_translates_pae_paging_via_mmu() {
 }
 
 #[test]
+fn cpu_core_bus_translates_pae_2mb_page_via_mmu() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    // Exercise 2MB pages (CR4.PSE + PDE.PS) in IA-32 PAE paging mode.
+    //
+    // Map linear 0x0000_0000..0x0020_0000 (PDE index 0) to physical 0x0000_0000..0x0020_0000.
+    let vaddr = 0x0000_5000u64;
+    let pdpt_phys = 0x1000u64;
+    let pd_phys = 0x2000u64;
+    let phys_addr = 0x5000u64;
+
+    const CR4_PSE: u64 = 1 << 4;
+    const PTE_PS: u64 = 1 << 7;
+
+    let pdpte_addr = pdpt_phys; // index 0
+    let pde_addr = pd_phys; // index 0
+
+    // PDPTE: present -> points at PD (PDPT entries have no accessed bit in IA-32 PAE).
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pdpte_addr, pd_phys | PTE_P);
+    // PDE: present + writable + PS -> maps a 2MB page with base 0.
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pde_addr,
+        PTE_P | PTE_RW | PTE_US | PTE_PS,
+    );
+
+    bus.platform.memory.write_u8(phys_addr, 0xAA);
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.control.cr0 |= CR0_PE | CR0_PG;
+    cpu.control.cr3 = pdpt_phys;
+    cpu.control.cr4 = CR4_PAE | CR4_PSE;
+    cpu.segments.cs.selector = 3;
+    cpu.segments.cs.base = 0;
+    cpu.segments.ss.selector = 3;
+    cpu.segments.ss.base = 0;
+    cpu.update_mode();
+
+    bus.sync(&cpu);
+
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+
+    let pdpte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pdpte_addr);
+    assert_eq!(
+        pdpte_after_read & (1 << 5),
+        0,
+        "PDPT entries do not have an accessed bit in IA-32 PAE paging"
+    );
+
+    let pde_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
+    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
+    assert_eq!(pde_after_read & (1 << 6), 0, "PDE dirty bit should not be set on read");
+
+    // Write should set dirty even on a TLB hit.
+    bus.write_u8(vaddr, 0xBB).unwrap();
+    assert_eq!(bus.platform.memory.read_u8(phys_addr), 0xBB);
+    let pde_after_write = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
+    assert_ne!(pde_after_write & (1 << 6), 0, "PDE dirty bit should be set");
+}
+
+#[test]
 fn cpu_core_bus_translates_long4_paging_via_mmu() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);
