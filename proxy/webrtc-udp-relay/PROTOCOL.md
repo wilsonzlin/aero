@@ -37,6 +37,7 @@ DataChannel.
 - **Reliability:** **MUST be reliable.**
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
+  - The relay will close `l2` DataChannels that request partial reliability.
 - **Ordering:** optional.
   - Recommended: `ordered = false` (reduces head-of-line blocking).
   - `ordered = true` is allowed if a deployment prefers in-order delivery.

@@ -38,8 +38,8 @@ type l2Bridge struct {
 	wsMu sync.Mutex
 	ws   *websocket.Conn
 
-	// toBackend buffers client -> backend messages so pion callbacks don't block
-	// on WebSocket I/O.
+	// toBackend buffers client -> backend messages. When full,
+	// HandleDataChannelMessage blocks (backpressure) rather than dropping frames.
 	toBackend chan []byte
 
 	sendMu sync.Mutex

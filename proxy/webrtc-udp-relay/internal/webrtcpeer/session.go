@@ -1,6 +1,7 @@
 package webrtcpeer
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
@@ -80,6 +81,35 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			})
 		case DataChannelLabelL2:
 			if err := validateL2DataChannel(dc); err != nil {
+				reason := "invalid_datachannel"
+
+				maxRetransmits := dc.MaxRetransmits()
+				maxPacketLifeTime := dc.MaxPacketLifeTime()
+				if maxRetransmits != nil || maxPacketLifeTime != nil {
+					reason = "partial_reliability"
+				}
+
+				var maxRetransmitsValue any
+				if maxRetransmits != nil {
+					maxRetransmitsValue = int(*maxRetransmits)
+				}
+				var maxPacketLifeTimeValue any
+				if maxPacketLifeTime != nil {
+					maxPacketLifeTimeValue = int(*maxPacketLifeTime)
+				}
+				var sessionID any
+				if s.quota != nil {
+					sessionID = s.quota.ID()
+				}
+				slog.Warn("rejecting l2 datachannel",
+					"reason", reason,
+					"session_id", sessionID,
+					"label", dc.Label(),
+					"ordered", dc.Ordered(),
+					"max_retransmits", maxRetransmitsValue,
+					"max_packet_life_time", maxPacketLifeTimeValue,
+					"err", err,
+				)
 				_ = dc.Close()
 				return
 			}

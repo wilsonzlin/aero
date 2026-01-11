@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -41,6 +42,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	slog.SetDefault(logger)
 
 	// Construct the WebRTC API early so misconfigurations are caught on startup.
 	// This does not start any networking; ICE sockets are only created once we
