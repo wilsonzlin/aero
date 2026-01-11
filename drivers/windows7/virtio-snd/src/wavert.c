@@ -1582,8 +1582,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         while (VirtIoSndWaveRtStateRank(current) < VirtIoSndWaveRtStateRank(State)) {
             if (current == KSSTATE_STOP) {
-                BOOLEAN prepared;
-
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
                 bufferSize = stream->BufferSize;
                 periodBytes = stream->PeriodBytes;
@@ -1721,6 +1719,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 #else
         while (VirtIoSndWaveRtStateRank(current) < VirtIoSndWaveRtStateRank(State)) {
             if (current == KSSTATE_STOP) {
+                BOOLEAN prepared;
+
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
                 bufferSize = stream->BufferSize;
                 periodBytes = stream->PeriodBytes;
