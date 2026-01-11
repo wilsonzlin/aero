@@ -32,6 +32,32 @@ struct unknown_cmd_fixed {
   uint32_t value;
 };
 
+struct CmdLoc {
+  const aerogpu_cmd_hdr* hdr = nullptr;
+  size_t offset = 0;
+};
+
+CmdLoc FindLastOpcode(const uint8_t* buf, size_t size, uint32_t opcode) {
+  CmdLoc loc{};
+  if (!buf || size < sizeof(aerogpu_cmd_stream_header)) {
+    return loc;
+  }
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= size) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == opcode) {
+      loc.hdr = hdr;
+      loc.offset = offset;
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > size - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return loc;
+}
+
 bool ValidateStream(const uint8_t* buf, size_t capacity) {
   if (!Check(buf != nullptr, "buffer must be non-null")) {
     return false;
@@ -603,6 +629,343 @@ bool TestInvalidPayloadArgs() {
   return Check(w.error() == CmdStreamError::kSizeTooLarge, "oversized payload sets kSizeTooLarge");
 }
 
+bool TestDestroyBoundShaderUnbinds() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HSHADER hShader{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_shader = false;
+
+    ~Cleanup() {
+      if (has_shader && device_funcs.pfnDestroyShader) {
+        device_funcs.pfnDestroyShader(hDevice, hShader);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x00, 0x01, 0x02, 0x03};
+  AEROGPU_D3D9DDI_HSHADER hShader{};
+  hr = cleanup.device_funcs.pfnCreateShader(create_dev.hDevice,
+                                            AEROGPU_D3D9DDI_SHADER_STAGE_VS,
+                                            dxbc,
+                                            static_cast<uint32_t>(sizeof(dxbc)),
+                                            &hShader);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hShader.pDrvPrivate != nullptr, "CreateShader returned shader handle")) {
+    return false;
+  }
+  cleanup.hShader = hShader;
+  cleanup.has_shader = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* sh = reinterpret_cast<Shader*>(hShader.pDrvPrivate);
+
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, AEROGPU_D3D9DDI_SHADER_STAGE_VS, hShader);
+  if (!Check(hr == S_OK, "SetShader(VS)")) {
+    return false;
+  }
+  if (!Check(dev->vs == sh, "SetShader updates cached vs pointer")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDestroyShader(create_dev.hDevice, hShader);
+  if (!Check(hr == S_OK, "DestroyShader")) {
+    return false;
+  }
+  cleanup.has_shader = false;
+
+  if (!Check(dev->vs == nullptr, "DestroyShader clears cached vs pointer")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+    return false;
+  }
+
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs == 0, "bind_shaders clears vs handle")) {
+    return false;
+  }
+
+  const CmdLoc destroy = FindLastOpcode(buf, len, AEROGPU_CMD_DESTROY_SHADER);
+  if (!Check(destroy.hdr != nullptr, "destroy_shader emitted")) {
+    return false;
+  }
+  return Check(bind.offset < destroy.offset, "unbind occurs before destroy");
+}
+
+bool TestDestroyBoundVertexDeclUnbinds() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HVERTEXDECL hDecl{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_decl = false;
+
+    ~Cleanup() {
+      if (has_decl && device_funcs.pfnDestroyVertexDecl) {
+        device_funcs.pfnDestroyVertexDecl(hDevice, hDecl);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  const uint8_t blob[] = {0x01, 0x02, 0x03, 0x04};
+  AEROGPU_D3D9DDI_HVERTEXDECL hDecl{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(create_dev.hDevice,
+                                                blob,
+                                                static_cast<uint32_t>(sizeof(blob)),
+                                                &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl")) {
+    return false;
+  }
+  if (!Check(hDecl.pDrvPrivate != nullptr, "CreateVertexDecl returned handle")) {
+    return false;
+  }
+  cleanup.hDecl = hDecl;
+  cleanup.has_decl = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl")) {
+    return false;
+  }
+  if (!Check(dev->vertex_decl == decl, "SetVertexDecl updates cached decl pointer")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDestroyVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "DestroyVertexDecl")) {
+    return false;
+  }
+  cleanup.has_decl = false;
+
+  if (!Check(dev->vertex_decl == nullptr, "DestroyVertexDecl clears cached decl pointer")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted")) {
+    return false;
+  }
+  const auto* set_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
+  if (!Check(set_cmd->input_layout_handle == 0, "set_input_layout clears handle")) {
+    return false;
+  }
+
+  const CmdLoc destroy = FindLastOpcode(buf, len, AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
+  if (!Check(destroy.hdr != nullptr, "destroy_input_layout emitted")) {
+    return false;
+  }
+  return Check(set_layout.offset < destroy.offset, "unbind occurs before destroy");
+}
+
+bool TestResetShrinkUnbindsBackbuffer() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+
+    ~Cleanup() {
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = 64;
+  create_sc.present_params.backbuffer_height = 64;
+  create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
+  create_sc.present_params.backbuffer_count = 2;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 1;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain")) {
+    return false;
+  }
+  if (!Check(create_sc.hSwapChain.pDrvPrivate != nullptr, "CreateSwapChain returned swapchain handle")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* sc = reinterpret_cast<SwapChain*>(create_sc.hSwapChain.pDrvPrivate);
+  if (!Check(sc->backbuffers.size() == 2, "swapchain has 2 backbuffers")) {
+    return false;
+  }
+
+  Resource* bb0 = sc->backbuffers[0];
+  Resource* bb1 = sc->backbuffers[1];
+
+  AEROGPU_D3D9DDI_HRESOURCE hRt{};
+  hRt.pDrvPrivate = bb1;
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, 0, hRt);
+  if (!Check(hr == S_OK, "SetRenderTarget(backbuffer1)")) {
+    return false;
+  }
+  if (!Check(dev->render_targets[0] == bb1, "render target points at backbuffer1")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDIARG_RESET reset{};
+  reset.present_params = create_sc.present_params;
+  reset.present_params.backbuffer_count = 1;
+
+  hr = cleanup.device_funcs.pfnReset(create_dev.hDevice, &reset);
+  if (!Check(hr == S_OK, "Reset shrink")) {
+    return false;
+  }
+
+  if (!Check(sc->backbuffers.size() == 1, "swapchain shrink to 1 backbuffer")) {
+    return false;
+  }
+  if (!Check(dev->render_targets[0] == bb0, "render target rebounds to backbuffer0")) {
+    return false;
+  }
+  return Check(dev->render_targets[0] != bb1, "render target no longer points at removed backbuffer");
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -617,5 +980,8 @@ int main() {
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();
   failures += !aerogpu::TestInvalidPayloadArgs();
+  failures += !aerogpu::TestDestroyBoundShaderUnbinds();
+  failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
+  failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   return failures ? 1 : 0;
 }

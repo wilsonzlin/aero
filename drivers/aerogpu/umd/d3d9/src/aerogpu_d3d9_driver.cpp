@@ -2468,13 +2468,84 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
   sc->flags = pp.flags;
 
   // Grow/shrink backbuffer array if needed.
+  std::vector<Resource*> removed_backbuffers;
   while (sc->backbuffers.size() > new_count) {
-    Resource* bb = sc->backbuffers.back();
+    removed_backbuffers.push_back(sc->backbuffers.back());
     sc->backbuffers.pop_back();
-    if (bb) {
-      emit_destroy_resource_locked(dev, bb->handle);
-      delete bb;
+  }
+
+  bool rt_changed = false;
+  for (Resource* bb : removed_backbuffers) {
+    if (!bb) {
+      continue;
     }
+    for (uint32_t i = 0; i < 4; ++i) {
+      if (dev->render_targets[i] == bb) {
+        dev->render_targets[i] = nullptr;
+        rt_changed = true;
+      }
+    }
+    if (dev->depth_stencil == bb) {
+      dev->depth_stencil = nullptr;
+      rt_changed = true;
+    }
+
+    for (uint32_t stage = 0; stage < 16; ++stage) {
+      if (dev->textures[stage] != bb) {
+        continue;
+      }
+      dev->textures[stage] = nullptr;
+      if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE)) {
+        cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+        cmd->slot = stage;
+        cmd->texture = 0;
+        cmd->reserved0 = 0;
+      }
+    }
+
+    for (uint32_t stream = 0; stream < 16; ++stream) {
+      if (dev->streams[stream].vb != bb) {
+        continue;
+      }
+      dev->streams[stream] = {};
+
+      aerogpu_vertex_buffer_binding binding{};
+      binding.buffer = 0;
+      binding.stride_bytes = 0;
+      binding.offset_bytes = 0;
+      binding.reserved0 = 0;
+
+      if (auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+              dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding))) {
+        cmd->start_slot = stream;
+        cmd->buffer_count = 1;
+      }
+    }
+
+    if (dev->index_buffer == bb) {
+      dev->index_buffer = nullptr;
+      dev->index_offset_bytes = 0;
+      dev->index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+
+      if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER)) {
+        cmd->buffer = 0;
+        cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
+        cmd->offset_bytes = 0;
+        cmd->reserved0 = 0;
+      }
+    }
+  }
+
+  if (rt_changed) {
+    (void)emit_set_render_targets_locked(dev);
+  }
+
+  for (Resource* bb : removed_backbuffers) {
+    if (!bb) {
+      continue;
+    }
+    emit_destroy_resource_locked(dev, bb->handle);
+    delete bb;
   }
   while (sc->backbuffers.size() < new_count) {
     auto bb = std::make_unique<Resource>();
@@ -2497,6 +2568,9 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
     }
   }
 
+  if (!dev->render_targets[0] && !sc->backbuffers.empty()) {
+    dev->render_targets[0] = sc->backbuffers[0];
+  }
   emit_set_render_targets_locked(dev);
   return S_OK;
 }
@@ -3046,6 +3120,13 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (dev->vertex_decl == decl) {
+    dev->vertex_decl = nullptr;
+    if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_input_layout>(dev, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+      cmd->input_layout_handle = 0;
+      cmd->reserved0 = 0;
+    }
+  }
   (void)emit_destroy_input_layout_locked(dev, decl->handle);
   delete decl;
   return S_OK;
@@ -3118,6 +3199,18 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  bool bindings_changed = false;
+  if (dev->vs == sh) {
+    dev->vs = nullptr;
+    bindings_changed = true;
+  }
+  if (dev->ps == sh) {
+    dev->ps = nullptr;
+    bindings_changed = true;
+  }
+  if (bindings_changed) {
+    (void)emit_bind_shaders_locked(dev);
+  }
   (void)emit_destroy_shader_locked(dev, sh->handle);
   delete sh;
   return S_OK;
