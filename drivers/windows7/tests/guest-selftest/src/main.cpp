@@ -816,6 +816,7 @@ struct VirtioSndPciDevice {
   std::wstring provider_name;
   std::wstring driver_version;
   std::wstring driver_date;
+  std::wstring matching_device_id;
   DWORD cm_problem = 0;
   ULONG cm_status = 0;
   bool is_modern = false;
@@ -890,6 +891,9 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (auto date = QueryDeviceDriverRegString(devinfo, &dev, L"DriverDate")) {
       snd.driver_date = *date;
     }
+    if (auto match = QueryDeviceDriverRegString(devinfo, &dev, L"MatchingDeviceId")) {
+      snd.matching_device_id = *match;
+    }
 
     ULONG status = 0;
     ULONG problem = 0;
@@ -921,10 +925,12 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
              WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
              WideToUtf8(snd.inf_section).c_str(), WideToUtf8(expected_service).c_str());
-    if (!snd.driver_desc.empty() || !snd.provider_name.empty() || !snd.driver_version.empty() || !snd.driver_date.empty()) {
-      log.Logf("virtio-snd: pci driver desc=%s provider=%s version=%s date=%s",
+    if (!snd.driver_desc.empty() || !snd.provider_name.empty() || !snd.driver_version.empty() ||
+        !snd.driver_date.empty() || !snd.matching_device_id.empty()) {
+      log.Logf("virtio-snd: pci driver desc=%s provider=%s version=%s date=%s match_id=%s",
                WideToUtf8(snd.driver_desc).c_str(), WideToUtf8(snd.provider_name).c_str(),
-               WideToUtf8(snd.driver_version).c_str(), WideToUtf8(snd.driver_date).c_str());
+               WideToUtf8(snd.driver_version).c_str(), WideToUtf8(snd.driver_date).c_str(),
+               WideToUtf8(snd.matching_device_id).c_str());
     }
     log.Logf("virtio-snd: pci cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
              static_cast<unsigned long>(snd.cm_status), CmStatusFlagsToString(snd.cm_status).c_str(),
