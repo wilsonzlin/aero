@@ -62,6 +62,29 @@ async fn get_without_range_returns_full_body() {
 }
 
 #[tokio::test]
+async fn request_with_cookie_is_not_publicly_cacheable() {
+    let (app, _dir) = setup_app(1024).await;
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img")
+                .header(header::COOKIE, "aero_session=deadbeef")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "private, no-store, no-transform"
+    );
+}
+
+#[tokio::test]
 async fn head_without_range_returns_headers_only() {
     let (app, _dir) = setup_app(1024).await;
 

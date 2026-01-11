@@ -427,7 +427,10 @@ fn insert_data_cache_headers(
 }
 
 fn data_cache_control_value(state: &ImagesState, req_headers: &HeaderMap) -> HeaderValue {
-    if req_headers.contains_key(header::AUTHORIZATION) {
+    // Treat any request that includes credentials (Authorization header or cookies) as private.
+    // This is a conservative default: public disk bytes responses should be cacheable, but
+    // authenticated responses must not be cached by shared intermediaries.
+    if req_headers.contains_key(header::AUTHORIZATION) || req_headers.contains_key(header::COOKIE) {
         HeaderValue::from_static("private, no-store, no-transform")
     } else {
         let secs = state.public_cache_max_age.as_secs();
