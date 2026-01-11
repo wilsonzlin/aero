@@ -53,7 +53,11 @@ describe("bridgeHarnessDrainActions", () => {
       drain_actions: () => [{ kind: "controlIn", id: -1, setup }],
       push_completion: (_completion: UsbHostCompletion) => {},
     };
-    const backend = { execute: vi.fn(async (_action: UsbHostAction) => ({ kind: "controlIn", id: 0, status: "stall" })) };
+    const backend = {
+      execute: vi.fn(async (_action: UsbHostAction): Promise<UsbHostCompletion> => {
+        return { kind: "controlIn", id: 0, status: "stall" } satisfies UsbHostCompletion;
+      }),
+    };
 
     await expect(bridgeHarnessDrainActions(harness, backend)).rejects.toThrow(/uint32/i);
     expect(backend.execute).not.toHaveBeenCalled();
@@ -65,7 +69,11 @@ describe("bridgeHarnessDrainActions", () => {
       drain_actions: () => [{ kind: "controlOut", id: 1, setup, data: [1, 256] }],
       push_completion: (_completion: UsbHostCompletion) => {},
     };
-    const backend = { execute: vi.fn(async (_action: UsbHostAction) => ({ kind: "controlOut", id: 0, status: "stall" })) };
+    const backend = {
+      execute: vi.fn(async (_action: UsbHostAction): Promise<UsbHostCompletion> => {
+        return { kind: "controlOut", id: 0, status: "stall" } satisfies UsbHostCompletion;
+      }),
+    };
 
     await expect(bridgeHarnessDrainActions(harness, backend)).rejects.toThrow(/uint8/i);
     expect(backend.execute).not.toHaveBeenCalled();
@@ -76,7 +84,11 @@ describe("bridgeHarnessDrainActions", () => {
       drain_actions: () => [{ kind: "bulkIn", id: 1, endpoint: 1, length: 8 }],
       push_completion: (_completion: UsbHostCompletion) => {},
     };
-    const backend = { execute: vi.fn(async (_action: UsbHostAction) => ({ kind: "bulkIn", id: 0, status: "stall" })) };
+    const backend = {
+      execute: vi.fn(async (_action: UsbHostAction): Promise<UsbHostCompletion> => {
+        return { kind: "bulkIn", id: 0, status: "stall" } satisfies UsbHostCompletion;
+      }),
+    };
 
     await expect(bridgeHarnessDrainActions(harness, backend)).rejects.toThrow(/endpoint address/i);
     expect(backend.execute).not.toHaveBeenCalled();
