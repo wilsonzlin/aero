@@ -15,6 +15,7 @@
 #include "../../../win7/virtio/virtio-core/include/virtio_pci_modern.h"
 
 #include "../../virtio/common/include/virtqueue_split.h"
+#include "../../virtio/common/include/virtio_pci_intx_wdm.h"
 
 #define VIRTIOSND_BACKEND_POOL_TAG 'BkSV'
 
@@ -125,10 +126,9 @@ struct _VIRTIOSND_BACKEND {
 
     BOOLEAN StreamRunning;
 
-    PKINTERRUPT InterruptObject;
-    KDPC Dpc;
-    volatile LONG DpcInFlight;
-    volatile LONG PendingIsrStatus;
+    VIRTIO_INTX Intx;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDesc;
+    BOOLEAN InterruptDescPresent;
 
     volatile UINT16** NotifyAddrCache;
     USHORT NotifyAddrCacheCount;
@@ -374,26 +374,21 @@ VirtioSndBackendDrainTxLocked(_Inout_ PVIRTIOSND_BACKEND Backend)
 }
 
 static VOID
-VirtioSndBackendDpc(_In_ PKDPC Dpc, _In_opt_ PVOID DeferredContext, _In_opt_ PVOID SystemArgument1, _In_opt_ PVOID SystemArgument2)
+VirtioSndBackendIntxQueueWork(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
 {
-    PVIRTIOSND_BACKEND backend;
     KIRQL oldIrql;
-    LONG remaining;
+    PVIRTIOSND_BACKEND backend;
 
-    UNREFERENCED_PARAMETER(Dpc);
-    UNREFERENCED_PARAMETER(SystemArgument1);
-    UNREFERENCED_PARAMETER(SystemArgument2);
+    UNREFERENCED_PARAMETER(Intx);
 
-    backend = (PVIRTIOSND_BACKEND)DeferredContext;
+    backend = (PVIRTIOSND_BACKEND)Cookie;
     if (backend == NULL) {
         return;
     }
 
     if (InterlockedCompareExchange(&backend->ShuttingDown, 0, 0) != 0) {
-        goto Exit;
+        return;
     }
-
-    (VOID)InterlockedExchange(&backend->PendingIsrStatus, 0);
 
     KeAcquireSpinLock(&backend->ControlLock, &oldIrql);
     VirtioSndBackendDrainControlLocked(backend);
@@ -402,60 +397,30 @@ VirtioSndBackendDpc(_In_ PKDPC Dpc, _In_opt_ PVOID DeferredContext, _In_opt_ PVO
     KeAcquireSpinLock(&backend->TxLock, &oldIrql);
     VirtioSndBackendDrainTxLocked(backend);
     KeReleaseSpinLock(&backend->TxLock, oldIrql);
-
- Exit:
-    remaining = InterlockedDecrement(&backend->DpcInFlight);
-    if (remaining < 0) {
-        (VOID)InterlockedExchange(&backend->DpcInFlight, 0);
-    }
-}
-
-static BOOLEAN
-VirtioSndBackendIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
-{
-    PVIRTIOSND_BACKEND backend;
-    UCHAR isr;
-
-    UNREFERENCED_PARAMETER(Interrupt);
-
-    backend = (PVIRTIOSND_BACKEND)ServiceContext;
-    if (backend == NULL) {
-        return FALSE;
-    }
-
-    if (backend->Virtio.IsrStatus == NULL) {
-        return FALSE;
-    }
-
-    isr = READ_REGISTER_UCHAR(backend->Virtio.IsrStatus);
-    if (isr == 0) {
-        return FALSE;
-    }
-
-    /*
-     * Always read-to-ack the ISR status register to deassert the INTx line,
-     * even during teardown. Otherwise a level-triggered line could remain
-     * asserted and cause an interrupt storm on a shared vector.
-     */
-    if (InterlockedCompareExchange(&backend->ShuttingDown, 0, 0) != 0) {
-        return TRUE;
-    }
-
-    InterlockedOr(&backend->PendingIsrStatus, (LONG)isr);
-    if (KeInsertQueueDpc(&backend->Dpc, NULL, NULL)) {
-        (VOID)InterlockedIncrement(&backend->DpcInFlight);
-    }
-    return TRUE;
 }
 
 static NTSTATUS
 VirtioSndBackendConnectInterrupt(_Inout_ PVIRTIOSND_BACKEND Backend, _In_opt_ PCM_RESOURCE_LIST TranslatedResources)
 {
     ULONG listIndex;
+    BOOLEAN sawMessageInterrupt;
+
+    if (Backend == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    Backend->InterruptDescPresent = FALSE;
+    RtlZeroMemory(&Backend->InterruptDesc, sizeof(Backend->InterruptDesc));
+
+    if (Backend->Virtio.IsrStatus == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     if (TranslatedResources == NULL || TranslatedResources->Count == 0) {
         return STATUS_NOT_FOUND;
     }
+
+    sawMessageInterrupt = FALSE;
 
     for (listIndex = 0; listIndex < TranslatedResources->Count; listIndex++) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR desc;
@@ -475,28 +440,33 @@ VirtioSndBackendConnectInterrupt(_Inout_ PVIRTIOSND_BACKEND Backend, _In_opt_ PC
             }
 
             if (desc[i].Flags & CM_RESOURCE_INTERRUPT_MESSAGE) {
+                sawMessageInterrupt = TRUE;
                 continue;
             }
 
-            irql = (KIRQL)desc[i].u.Interrupt.Level;
-            affinity = (KAFFINITY)desc[i].u.Interrupt.Affinity;
-            mode = (desc[i].Flags & CM_RESOURCE_INTERRUPT_LATCHED) ? Latched : LevelSensitive;
+            Backend->InterruptDesc = desc[i];
+            Backend->InterruptDescPresent = TRUE;
 
-            return IoConnectInterrupt(&Backend->InterruptObject,
-                                      VirtioSndBackendIsr,
-                                      Backend,
-                                      NULL,
-                                      desc[i].u.Interrupt.Vector,
-                                      irql,
-                                      irql,
-                                      mode,
-                                      TRUE,
-                                      affinity,
-                                      FALSE);
+            irql = (KIRQL)Backend->InterruptDesc.u.Interrupt.Level;
+            affinity = (KAFFINITY)Backend->InterruptDesc.u.Interrupt.Affinity;
+            mode = (Backend->InterruptDesc.Flags & CM_RESOURCE_INTERRUPT_LATCHED) ? Latched : LevelSensitive;
+
+            UNREFERENCED_PARAMETER(irql);
+            UNREFERENCED_PARAMETER(affinity);
+            UNREFERENCED_PARAMETER(mode);
+
+            return VirtioIntxConnect(Backend->DeviceObject,
+                                     &Backend->InterruptDesc,
+                                     Backend->Virtio.IsrStatus,
+                                     NULL,
+                                     VirtioSndBackendIntxQueueWork,
+                                     NULL,
+                                     Backend,
+                                     &Backend->Intx);
         }
     }
 
-    return STATUS_NOT_FOUND;
+    return sawMessageInterrupt ? STATUS_NOT_SUPPORTED : STATUS_NOT_FOUND;
 }
 
 static NTSTATUS
@@ -801,8 +771,9 @@ VirtioSndBackend_Create(PDEVICE_OBJECT DeviceObject,
     backend->DeviceObject = DeviceObject;
     backend->LowerDeviceObject = LowerDeviceObject;
     backend->ShuttingDown = 0;
-    backend->InterruptObject = NULL;
-    backend->PendingIsrStatus = 0;
+    RtlZeroMemory(&backend->Intx, sizeof(backend->Intx));
+    RtlZeroMemory(&backend->InterruptDesc, sizeof(backend->InterruptDesc));
+    backend->InterruptDescPresent = FALSE;
     backend->NotifyAddrCache = NULL;
     backend->NotifyAddrCacheCount = 0;
     backend->TxContexts = NULL;
@@ -812,9 +783,6 @@ VirtioSndBackend_Create(PDEVICE_OBJECT DeviceObject,
 
     KeInitializeSpinLock(&backend->ControlLock);
     KeInitializeSpinLock(&backend->TxLock);
-
-    KeInitializeDpc(&backend->Dpc, VirtioSndBackendDpc, backend);
-    backend->DpcInFlight = 0;
 
     status = VirtioPciModernInitWdm(DeviceObject, LowerDeviceObject, &backend->Virtio);
     if (!NT_SUCCESS(status)) {
@@ -869,7 +837,6 @@ VirtioSndBackend_Create(PDEVICE_OBJECT DeviceObject,
 
     status = VirtioSndBackendConnectInterrupt(backend, TranslatedResources);
     if (!NT_SUCCESS(status)) {
-        backend->InterruptObject = NULL;
         VIRTIOSND_TRACE_ERROR("interrupt not connected: 0x%08X (polling only)\n", status);
     }
 
@@ -887,7 +854,6 @@ VOID
 VirtioSndBackend_Destroy(PVIRTIOSND_BACKEND Backend)
 {
     ULONG cacheBytes;
-    LARGE_INTEGER delay;
 
     if (Backend == NULL) {
         return;
@@ -895,24 +861,7 @@ VirtioSndBackend_Destroy(PVIRTIOSND_BACKEND Backend)
 
     InterlockedExchange(&Backend->ShuttingDown, 1);
 
-    if (Backend->InterruptObject != NULL) {
-        IoDisconnectInterrupt(Backend->InterruptObject);
-        Backend->InterruptObject = NULL;
-    }
-
-    if (KeRemoveQueueDpc(&Backend->Dpc)) {
-        LONG remaining = InterlockedDecrement(&Backend->DpcInFlight);
-        if (remaining < 0) {
-            (VOID)InterlockedExchange(&Backend->DpcInFlight, 0);
-        }
-    }
-
-    /* Wait for any in-flight DPC to finish before freeing queues/MMIO state. */
-    delay.QuadPart = -10 * 1000; /* 1ms */
-    while (InterlockedCompareExchange(&Backend->DpcInFlight, 0, 0) != 0) {
-        KeDelayExecutionThread(KernelMode, FALSE, &delay);
-    }
-    (VOID)InterlockedExchange(&Backend->PendingIsrStatus, 0);
+    VirtioIntxDisconnect(&Backend->Intx);
 
     if (Backend->Virtio.CommonCfg != NULL) {
         VirtioPciResetDevice(&Backend->Virtio);
