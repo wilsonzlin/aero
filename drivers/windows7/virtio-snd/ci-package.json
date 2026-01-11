@@ -1,6 +1,7 @@
 {
   "$schema": "../../../ci/driver-package.schema.json",
   "additionalFiles": [
+    "README.md",
     "SOURCES.md",
     "docs/README.md",
     "docs/design.md",
