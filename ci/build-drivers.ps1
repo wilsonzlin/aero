@@ -13,6 +13,10 @@ Discovery conventions (encoded here for CI determinism):
   - Each driver provides either:
       - a solution file `drivers/<name>/<name>.sln`, OR
       - exactly one project file `drivers/<name>/*.vcxproj`.
+  - Only CI-buildable drivers are selected:
+      - Require at least one `.inf` somewhere under the driver directory tree (excluding
+        common build-output directories: `obj/`, `out/`, `build/`, `target/`).
+      - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile).
   - Build outputs are staged under:
       - `out/drivers/<name>/<arch>/...`
 
@@ -301,6 +305,45 @@ function Get-SafeFileName {
   return $result
 }
 
+function Find-FirstFileInTree {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$Filter,
+    [string[]]$ExcludeDirectoryNames = @('obj', 'out', 'build', 'target')
+  )
+
+  if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+    return $null
+  }
+
+  $exclude = @{}
+  foreach ($name in $ExcludeDirectoryNames) {
+    if ([string]::IsNullOrWhiteSpace($name)) { continue }
+    $exclude[$name.Trim().ToLowerInvariant()] = $true
+  }
+
+  $stack = New-Object System.Collections.Generic.Stack[string]
+  $stack.Push((Resolve-Path -LiteralPath $Root).Path)
+
+  while ($stack.Count -gt 0) {
+    $current = $stack.Pop()
+
+    $files = @(Get-ChildItem -LiteralPath $current -File -Filter $Filter -ErrorAction SilentlyContinue)
+    if ($files.Count -gt 0) {
+      return $files[0]
+    }
+
+    $dirs = @(Get-ChildItem -LiteralPath $current -Directory -ErrorAction SilentlyContinue)
+    foreach ($dir in $dirs) {
+      $dirName = $dir.Name.ToLowerInvariant()
+      if ($exclude.ContainsKey($dirName)) { continue }
+      $stack.Push($dir.FullName)
+    }
+  }
+
+  return $null
+}
+
 function Test-IsMakefileVcxproj {
   param([Parameter(Mandatory = $true)][string]$VcxprojPath)
 
@@ -358,11 +401,7 @@ function Test-IsMakefileSolution {
 function Test-HasInfInTree {
   param([Parameter(Mandatory = $true)][string]$DirectoryPath)
 
-  if (-not (Test-Path -LiteralPath $DirectoryPath -PathType Container)) {
-    return $false
-  }
-
-  $inf = Get-ChildItem -LiteralPath $DirectoryPath -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+  $inf = Find-FirstFileInTree -Root $DirectoryPath -Filter '*.inf'
   return ($null -ne $inf)
 }
 
@@ -394,9 +433,11 @@ function Try-GetDriverBuildTargetFromDirectory {
 
   # Skip classic WDK NMake wrapper projects/solutions (MakeFileProj / ConfigurationType=Makefile).
   if ($kind -eq 'vcxproj' -and (Test-IsMakefileVcxproj -VcxprojPath $buildPath)) {
+    Write-Host ("Skipping driver project because '{0}' is a MakeFileProj/Makefile (legacy WDK build wrapper; not CI-buildable)." -f $buildPath)
     return $null
   }
   if ($kind -eq 'sln' -and (Test-IsMakefileSolution -SolutionPath $buildPath)) {
+    Write-Host ("Skipping driver solution because '{0}' references MakeFileProj/Makefile project(s) (legacy WDK build wrapper; not CI-buildable)." -f $buildPath)
     return $null
   }
 
