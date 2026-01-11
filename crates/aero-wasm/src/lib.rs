@@ -1437,13 +1437,16 @@ impl AeroApi {
 // Legacy demo VM (snapshotting) API
 // -------------------------------------------------------------------------------------------------
 
+// `#[deprecated]` is on the public `DemoVm` WASM export. `wasm-bindgen` expands that
+// into helper items that reference the deprecated type, which triggers
+// `deprecated` warnings when compiling this crate. Keep the deprecation for
+// downstream users while silencing the internal macro expansion.
 #[allow(deprecated)]
 mod legacy_demo_vm {
     use wasm_bindgen::prelude::*;
 
     #[cfg(target_arch = "wasm32")]
     use super::OpfsSyncFile;
-
     /// Deterministic stub VM used by the snapshot demo panels.
     ///
     /// Deprecated in favor of the canonical full-system VM (`Machine`).
