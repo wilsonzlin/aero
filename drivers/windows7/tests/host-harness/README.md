@@ -246,6 +246,10 @@ You can probe the PCI IDs (including Revision ID) that your local QEMU build adv
 ```bash
 python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --mode default
 python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --mode contract-v1
+
+# Include virtio-snd as well (requires QEMU virtio-sound-pci/virtio-snd-pci + -audiodev support):
+python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --with-virtio-snd --mode default
+python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --with-virtio-snd --mode contract-v1
 ```
 
 ### Transitional virtio fallback (older QEMU / legacy drivers)

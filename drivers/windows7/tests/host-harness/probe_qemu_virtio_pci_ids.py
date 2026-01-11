@@ -44,6 +44,34 @@ def _fmt_hex(width: int, value: int | None) -> str:
     return f"0x{value:0{width}x}"
 
 
+def _detect_virtio_snd_device(qemu_system: str) -> str | None:
+    """
+    Return the virtio-snd PCI device name if available, else None.
+
+    QEMU device naming has changed over time. Prefer the modern upstream name but fall back
+    to distro aliases when present.
+    """
+    try:
+        proc = subprocess.run(
+            [qemu_system, "-device", "help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+
+    help_text = proc.stdout or ""
+    if "virtio-sound-pci" in help_text:
+        return "virtio-sound-pci"
+    if "virtio-snd-pci" in help_text:
+        return "virtio-snd-pci"
+    return None
+
+
 def _read_qmp_obj(stdout: "subprocess._TextIOWrapper") -> dict:
     while True:
         line = stdout.readline()
@@ -128,6 +156,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu-system", default="qemu-system-x86_64", help="Path to qemu-system-* binary")
     parser.add_argument(
+        "--with-virtio-snd",
+        action="store_true",
+        help=(
+            "Also attach a virtio-snd PCI device (requires QEMU virtio-sound-pci/virtio-snd-pci + -audiodev support). "
+            "This matches the host harness behavior when virtio-snd is enabled."
+        ),
+    )
+    parser.add_argument(
         "--mode",
         choices=["default", "contract-v1"],
         default="default",
@@ -182,6 +218,18 @@ def main() -> int:
             "-device",
             f"virtio-mouse-pci,disable-legacy=on{rev_arg}",
         ]
+        if args.with_virtio_snd:
+            device_name = _detect_virtio_snd_device(args.qemu_system)
+            if not device_name:
+                raise SystemExit(
+                    "ERROR: QEMU does not advertise a virtio-snd PCI device (expected virtio-sound-pci or virtio-snd-pci)."
+                )
+            qemu_args += [
+                "-audiodev",
+                "none,id=snd0",
+                "-device",
+                f"{device_name},audiodev=snd0,disable-legacy=on{rev_arg}",
+            ]
 
         proc = subprocess.Popen(
             qemu_args,
@@ -209,6 +257,8 @@ def main() -> int:
             devices = _iter_pci_devices(query)
 
             want = {(0x1AF4, 0x1041), (0x1AF4, 0x1042), (0x1AF4, 0x1052)}
+            if args.with_virtio_snd:
+                want.add((0x1AF4, 0x1059))
             filtered = [d for d in devices if (d.vendor_id, d.device_id) in want]
 
             print(f"QEMU: {args.qemu_system}")
