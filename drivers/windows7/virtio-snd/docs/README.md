@@ -158,6 +158,8 @@ Notes:
 
 The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the shipped INF does not bind to transitional IDs.
 
+CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj.py`.
+
 ## Design notes
 
 - Driver architecture overview: [`design.md`](design.md)
