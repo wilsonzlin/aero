@@ -309,3 +309,35 @@ fn uhci_greset_resets_attached_devices() {
     uhci.port_write(REG_USBCMD, 2, (USBCMD_GRESET | USBCMD_MAXP) as u32);
     assert_eq!(*resets.borrow(), 2);
 }
+
+#[test]
+fn uhci_egsm_suspends_frame_counter() {
+    let mut mem = Bus::new(0x1000);
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // Start the controller.
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+    let fr0 = uhci.port_read(REG_FRNUM, 2) as u16;
+    uhci.tick_1ms(&mut mem);
+    let fr1 = uhci.port_read(REG_FRNUM, 2) as u16;
+    assert_eq!(fr1, fr0.wrapping_add(1) & 0x07ff);
+
+    // Enter global suspend mode: controller should stop advancing FRNUM.
+    uhci.port_write(
+        REG_USBCMD,
+        2,
+        (USBCMD_RS | USBCMD_MAXP | USBCMD_EGSM) as u32,
+    );
+    let fr_before = uhci.port_read(REG_FRNUM, 2) as u16;
+    for _ in 0..5 {
+        uhci.tick_1ms(&mut mem);
+    }
+    let fr_after = uhci.port_read(REG_FRNUM, 2) as u16;
+    assert_eq!(fr_after, fr_before);
+
+    // Resume: FRNUM advances again.
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+    uhci.tick_1ms(&mut mem);
+    let fr_resume = uhci.port_read(REG_FRNUM, 2) as u16;
+    assert_eq!(fr_resume, fr_after.wrapping_add(1) & 0x07ff);
+}
