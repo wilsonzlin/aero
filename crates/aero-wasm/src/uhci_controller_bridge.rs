@@ -13,11 +13,11 @@
 use wasm_bindgen::prelude::*;
 
 use aero_usb::GuestMemory;
+use aero_usb::UsbWebUsbPassthroughDevice;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::UsbDevice;
-use aero_usb::UsbWebUsbPassthroughDevice;
 
 const UHCI_IO_BASE: u16 = 0;
 const UHCI_IRQ_LINE: u8 = 0x0b;

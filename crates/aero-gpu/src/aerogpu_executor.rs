@@ -1436,7 +1436,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             let alloc_offset = dst_backing
                 .alloc_offset_bytes
                 .checked_add(dst_offset_bytes)
-                .ok_or_else(|| ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into()))?;
+                .ok_or_else(|| {
+                    ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into())
+                })?;
             let dst_gpa = table.resolve_gpa(dst_backing.alloc_id, alloc_offset, size_bytes)?;
             guest_memory.write(dst_gpa, &data)?;
         }
@@ -1692,7 +1694,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
 
             let table = alloc_table.ok_or_else(|| {
-                ExecutorError::Validation("COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into())
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
+                )
             })?;
             let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
@@ -1739,7 +1743,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                 let alloc_offset = dst_backing
                     .alloc_offset_bytes
                     .checked_add(write_offset)
-                    .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst alloc offset overflow".into()))?;
+                    .ok_or_else(|| {
+                        ExecutorError::Validation(
+                            "COPY_TEXTURE2D: dst alloc offset overflow".into(),
+                        )
+                    })?;
                 let dst_gpa =
                     table.resolve_gpa(dst_backing.alloc_id, alloc_offset, u64::from(row_bytes))?;
 
