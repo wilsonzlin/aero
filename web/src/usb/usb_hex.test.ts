@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatHexBytes } from "./usb_hex";
+import { formatHexBytes, hex16, hex8 } from "./usb_hex";
 
 describe("usb/formatHexBytes", () => {
   it("formats bytes into 16-byte rows", () => {
@@ -26,5 +26,11 @@ describe("usb/formatHexBytes", () => {
   it("does not emit a leading newline when truncating with maxBytes=0", () => {
     expect(formatHexBytes(Uint8Array.of(1, 2, 3), 0)).toBe("… (+3 bytes)");
   });
-});
 
+  it("formats numbers as padded hex", () => {
+    expect(hex8(0)).toBe("0x00");
+    expect(hex8(255)).toBe("0xff");
+    expect(hex16(0)).toBe("0x0000");
+    expect(hex16(0x1234)).toBe("0x1234");
+  });
+});

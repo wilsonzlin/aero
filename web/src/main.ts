@@ -48,7 +48,7 @@ import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
 import { isUsbUhciHarnessStatusMessage, type WebUsbUhciHarnessRuntimeSnapshot } from "./usb/webusb_harness_runtime";
 import { UsbBroker } from "./usb/usb_broker";
 import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
-import { formatHexBytes } from "./usb/usb_hex";
+import { formatHexBytes, hex16, hex8 } from "./usb/usb_hex";
 import {
   isUsbPassthroughDemoResultMessage,
   type UsbPassthroughDemoResult,
@@ -3070,14 +3070,6 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   const lastActionLine = el("pre", { class: "mono", text: "Last action: (none)" });
   const lastCompletionLine = el("pre", { class: "mono", text: "Last completion: (none)" });
   const errorLine = el("div", { class: "bad", text: "" });
-
-  function hex8(value: number): string {
-    return `0x${(value & 0xff).toString(16).padStart(2, "0")}`;
-  }
-
-  function hex16(value: number): string {
-    return `0x${(value & 0xffff).toString(16).padStart(4, "0")}`;
-  }
 
   function describeAction(action: UsbHostAction): string {
     switch (action.kind) {

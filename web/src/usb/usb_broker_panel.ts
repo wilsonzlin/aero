@@ -1,5 +1,6 @@
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import type { UsbBroker } from "./usb_broker";
+import { hex16 } from "./usb_hex";
 import { isUsbGuestWebUsbStatusMessage, isUsbSelectedMessage, type UsbGuestWebUsbSnapshot } from "./usb_proxy_protocol";
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -25,10 +26,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
     node.append(child);
   }
   return node;
-}
-
-function hex16(value: number): string {
-  return `0x${value.toString(16).padStart(4, "0")}`;
 }
 
 function describeUsbDevice(device: USBDevice): string {

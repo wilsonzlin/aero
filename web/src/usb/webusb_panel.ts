@@ -1,7 +1,7 @@
 import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { WebUsbBackend, type SetupPacket } from "./webusb_backend";
-import { formatHexBytes } from "./usb_hex";
+import { formatHexBytes, hex16, hex8 } from "./usb_hex";
 
 type ForgettableUsbDevice = USBDevice & { forget: () => Promise<void> };
 
@@ -15,14 +15,6 @@ type ParsedDeviceDescriptor = {
   idVendor?: number;
   idProduct?: number;
 };
-
-function hex16(value: number): string {
-  return `0x${value.toString(16).padStart(4, "0")}`;
-}
-
-function hex8(value: number): string {
-  return `0x${value.toString(16).padStart(2, "0")}`;
-}
 
 function parseDeviceDescriptor(bytes: Uint8Array): ParsedDeviceDescriptor {
   const out: ParsedDeviceDescriptor = {};
