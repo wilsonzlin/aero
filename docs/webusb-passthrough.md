@@ -28,9 +28,9 @@ Implementation references (current repo):
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
 - (Repo-root WebUSB demo broker/client RPC; not the passthrough wire contract): `src/platform/webusb_{broker,client,protocol}.ts`
 
-Note: `crates/emulator` contains a legacy UHCI + passthrough model used by native/emulator tests.
-Per [ADR 0015](./adr/0015-canonical-usb-stack.md), the browser/WASM runtime uses `aero-usb` +
-`aero-wasm` + `web/` and should not grow a parallel USB stack in `crates/emulator`.
+Note: `crates/emulator/src/io/usb/*` contains a legacy UHCI + passthrough model used by
+native/emulator tests. Per [ADR 0015](./adr/0015-canonical-usb-stack.md), the browser/WASM runtime
+uses `aero-usb` + `aero-wasm` + `web/` and should not grow a parallel USB stack in `crates/emulator`.
 
 ---
 
