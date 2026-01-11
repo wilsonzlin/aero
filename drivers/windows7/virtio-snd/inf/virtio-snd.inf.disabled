@@ -20,9 +20,9 @@ DriverVer   = 01/10/2026,0.0.0.1
 CatalogFile = aero_virtio_snd.cat
 
 [Manufacturer]
-%ProviderName% = VirtioSndModels,NTx86,NTamd64
+%ProviderName% = AeroVirtioSndModels,NTx86,NTamd64
 
-[VirtioSndModels.NTx86]
+[AeroVirtioSndModels.NTx86]
 ; Aero Windows 7 virtio device contract:
 ;   - Modern virtio-pci only (PCI vendor-specific capabilities + MMIO)
 ;   - PCI Revision ID encodes the contract major version (v1 == REV_01)
@@ -36,59 +36,59 @@ CatalogFile = aero_virtio_snd.cat
 ;
 ; Contract v1 devices MUST expose PCI Revision ID 0x01. Match REV_01 in the INF
 ; to avoid binding to unsupported contract versions.
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
+%AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+; %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
-[VirtioSndModels.NTamd64]
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
+[AeroVirtioSndModels.NTamd64]
+%AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+; %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [DestinationDirs]
-VirtioSnd.CopyFiles = 12
+AeroVirtioSnd.CopyFiles = 12
 
-[VirtioSnd_Install.NT]
+[AeroVirtioSnd_Install.NT]
 ; PortCls / KS / WDMAudio integration (in-box on Windows 7).
 Include  = ks.inf, wdmaudio.inf
 Needs    = KS.Registration, WDMAUDIO.Registration
-CopyFiles = VirtioSnd.CopyFiles
-AddReg    = VirtioSnd.AddReg
+CopyFiles = AeroVirtioSnd.CopyFiles
+AddReg    = AeroVirtioSnd.AddReg
 
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
-[VirtioSnd_Install.NT.Interfaces]
-AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     VirtioSnd.Wave.Interface
-AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     VirtioSnd.Wave.Interface
-AddInterface = %KSCATEGORY_CAPTURE%,  %KSNAME_Wave%,     VirtioSnd.Capture.Interface
-AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%,     VirtioSnd.Wave.Interface
-AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, VirtioSnd.Topology.Interface
-AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSnd.Topology.Interface
+[AeroVirtioSnd_Install.NT.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     AeroVirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     AeroVirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_CAPTURE%,  %KSNAME_Wave%,     AeroVirtioSnd.Capture.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%,     AeroVirtioSnd.Wave.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, AeroVirtioSnd.Topology.Interface
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, AeroVirtioSnd.Topology.Interface
 
-[VirtioSnd.Wave.Interface]
-AddReg = VirtioSnd.Wave.Interface.AddReg
+[AeroVirtioSnd.Wave.Interface]
+AddReg = AeroVirtioSnd.Wave.Interface.AddReg
 
-[VirtioSnd.Wave.Interface.AddReg]
+[AeroVirtioSnd.Wave.Interface.AddReg]
 HKR,,CLSID,,%KSProxy.CLSID%
-HKR,,FriendlyName,,%VirtioSnd.EndpointDesc%
+HKR,,FriendlyName,,%AeroVirtioSnd.EndpointDesc%
 
-[VirtioSnd.Capture.Interface]
-AddReg = VirtioSnd.Capture.Interface.AddReg
+[AeroVirtioSnd.Capture.Interface]
+AddReg = AeroVirtioSnd.Capture.Interface.AddReg
 
-[VirtioSnd.Capture.Interface.AddReg]
+[AeroVirtioSnd.Capture.Interface.AddReg]
 HKR,,CLSID,,%KSProxy.CLSID%
-HKR,,FriendlyName,,%VirtioSnd.CaptureEndpointDesc%
+HKR,,FriendlyName,,%AeroVirtioSnd.CaptureEndpointDesc%
 
-[VirtioSnd.Topology.Interface]
-AddReg = VirtioSnd.Topology.Interface.AddReg
+[AeroVirtioSnd.Topology.Interface]
+AddReg = AeroVirtioSnd.Topology.Interface.AddReg
 
-[VirtioSnd.Topology.Interface.AddReg]
+[AeroVirtioSnd.Topology.Interface.AddReg]
 HKR,,CLSID,,%KSProxy.CLSID%
-HKR,,FriendlyName,,%VirtioSnd.TopologyDesc%
+HKR,,FriendlyName,,%AeroVirtioSnd.TopologyDesc%
 
 ; PortCls subdevice registration. PortCls creates KS filters named "Wave" and
 ; "Topology"; WDMAudio / KSProxy use these keys for per-filter metadata.
-[VirtioSnd.AddReg]
+[AeroVirtioSnd.AddReg]
 HKR,,CLSID,,%KSProxy.CLSID%
-HKR,,FriendlyName,,%VirtioSnd.DeviceDesc%
+HKR,,FriendlyName,,%AeroVirtioSnd.DeviceDesc%
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,aero_virtio_snd.sys
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
@@ -96,26 +96,26 @@ HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 HKR,Drivers,SubClasses,,"wave,topology"
 HKR,Drivers,Driver,,wdmaud.sys
 HKR,Drivers\wave,Driver,,aero_virtio_snd.sys
-HKR,Drivers\wave,Description,,%VirtioSnd.EndpointDesc%
+HKR,Drivers\wave,Description,,%AeroVirtioSnd.EndpointDesc%
 HKR,Drivers\topology,Driver,,aero_virtio_snd.sys
-HKR,Drivers\topology,Description,,%VirtioSnd.TopologyDesc%
+HKR,Drivers\topology,Description,,%AeroVirtioSnd.TopologyDesc%
 
 HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
-HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSnd.EndpointDesc%
+HKR,%KSNAME_Wave%,FriendlyName,,%AeroVirtioSnd.EndpointDesc%
 HKR,%KSNAME_Wave%,Driver,,aero_virtio_snd.sys
- 
+  
 HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
-HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSnd.TopologyDesc%
+HKR,%KSNAME_Topology%,FriendlyName,,%AeroVirtioSnd.TopologyDesc%
 HKR,%KSNAME_Topology%,Driver,,aero_virtio_snd.sys
 
-[VirtioSnd.CopyFiles]
+[AeroVirtioSnd.CopyFiles]
 aero_virtio_snd.sys
 
-[VirtioSnd_Install.NT.Services]
-AddService = aero_virtio_snd, 0x00000002, VirtioSnd_Service_Inst
+[AeroVirtioSnd_Install.NT.Services]
+AddService = aero_virtio_snd, 0x00000002, AeroVirtioSnd_Service_Inst
 
-[VirtioSnd_Service_Inst]
-DisplayName   = %VirtioSnd.ServiceDesc%
+[AeroVirtioSnd_Service_Inst]
+DisplayName   = %AeroVirtioSnd.ServiceDesc%
 ServiceType   = 1
 StartType     = 3
 ErrorControl  = 1
@@ -130,8 +130,8 @@ aero_virtio_snd.sys = 1
 [Strings]
 ProviderName           = "Aero Project"
 DiskName               = "Aero VirtIO Sound Driver Disk"
-VirtioSnd.DeviceDesc   = "Aero VirtIO Sound Device"
-VirtioSnd.ServiceDesc  = "Aero VirtIO Sound Driver"
+AeroVirtioSnd.DeviceDesc   = "Aero VirtIO Sound Device"
+AeroVirtioSnd.ServiceDesc  = "Aero VirtIO Sound Driver"
 
 ; KS / audio stack identifiers (Windows 7).
 KSProxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
@@ -146,6 +146,6 @@ KSNAME_Wave          = "Wave"
 KSNAME_Topology      = "Topology"
 
 ; Names shown to users (MMDevice / Sound control panel).
-VirtioSnd.EndpointDesc  = "Aero VirtIO Sound Output"
-VirtioSnd.CaptureEndpointDesc  = "Aero VirtIO Sound Input"
-VirtioSnd.TopologyDesc  = "Aero VirtIO Sound Topology"
+AeroVirtioSnd.EndpointDesc  = "Aero VirtIO Sound Output"
+AeroVirtioSnd.CaptureEndpointDesc  = "Aero VirtIO Sound Input"
+AeroVirtioSnd.TopologyDesc  = "Aero VirtIO Sound Topology"

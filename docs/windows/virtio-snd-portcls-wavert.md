@@ -731,9 +731,9 @@ At minimum:
 
 And an interfaces section that includes both directions, for example:
 
-* `AddInterface = %KSCATEGORY_RENDER%,  %KSNAME_Wave%, VirtioSnd.Wave.Interface`
-* `AddInterface = %KSCATEGORY_CAPTURE%, %KSNAME_Wave%, VirtioSnd.Wave.Capture.Interface`
-* `AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSnd.Topology.Interface`
+* `AddInterface = %KSCATEGORY_RENDER%,  %KSNAME_Wave%, AeroVirtioSnd.Wave.Interface`
+* `AddInterface = %KSCATEGORY_CAPTURE%, %KSNAME_Wave%, AeroVirtioSnd.Capture.Interface`
+* `AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, AeroVirtioSnd.Topology.Interface`
 
 And in `AddReg`:
 
@@ -741,9 +741,9 @@ And in `AddReg`:
 * `HKR,,NTMPDriver,,aero_virtio_snd.sys`
 * `HKR,Drivers,SubClasses,, "wave,topology"`
 * `HKR,Drivers\wave,Driver,,aero_virtio_snd.sys`
-* `HKR,Drivers\wave,Description,,%VirtioSnd.WaveDesc%`
+* `HKR,Drivers\wave,Description,,%AeroVirtioSnd.EndpointDesc%`
 * `HKR,Drivers\topology,Driver,,aero_virtio_snd.sys`
-* `HKR,Drivers\topology,Description,,%VirtioSnd.TopoDesc%`
+* `HKR,Drivers\topology,Description,,%AeroVirtioSnd.TopologyDesc%`
 
 ### 7.2 Hardware IDs
 
@@ -772,18 +772,18 @@ This is an example fragment showing only the Win7-critical keys (not a complete 
 
 ```ini
 ; --- Registration glue so SysAudio/WDMAud bind correctly ---
-[VirtioSnd_Install.NT]
+[AeroVirtioSnd_Install.NT]
 Include=ks.inf,wdmaudio.inf
 Needs=KS.Registration,WDMAUDIO.Registration
-CopyFiles=VirtioSnd.CopyFiles
-AddReg=VirtioSnd.AddReg
+CopyFiles=AeroVirtioSnd.CopyFiles
+AddReg=AeroVirtioSnd.AddReg
 
-[VirtioSnd_Install.NT.Interfaces]
-AddInterface=%KSCATEGORY_RENDER%,%KSNAME_Wave%,VirtioSnd.Wave.Interface
-AddInterface=%KSCATEGORY_CAPTURE%,%KSNAME_Wave%,VirtioSnd.Wave.Capture.Interface
-AddInterface=%KSCATEGORY_TOPOLOGY%,%KSNAME_Topology%,VirtioSnd.Topology.Interface
+[AeroVirtioSnd_Install.NT.Interfaces]
+AddInterface=%KSCATEGORY_RENDER%,%KSNAME_Wave%,AeroVirtioSnd.Wave.Interface
+AddInterface=%KSCATEGORY_CAPTURE%,%KSNAME_Wave%,AeroVirtioSnd.Capture.Interface
+AddInterface=%KSCATEGORY_TOPOLOGY%,%KSNAME_Topology%,AeroVirtioSnd.Topology.Interface
 
-[VirtioSnd.AddReg]
+[AeroVirtioSnd.AddReg]
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,aero_virtio_snd.sys
 
@@ -792,11 +792,11 @@ HKR,Drivers,SubClasses,,"wave,topology"
 
 ; WaveRT subdevice
 HKR,Drivers\wave,Driver,,aero_virtio_snd.sys
-HKR,Drivers\wave,Description,,%VirtioSnd.WaveDesc%
+HKR,Drivers\wave,Description,,%AeroVirtioSnd.EndpointDesc%
 
 ; Topology subdevice
 HKR,Drivers\topology,Driver,,aero_virtio_snd.sys
-HKR,Drivers\topology,Description,,%VirtioSnd.TopoDesc%
+HKR,Drivers\topology,Description,,%AeroVirtioSnd.TopologyDesc%
 ```
 
 Notes:

@@ -9,6 +9,13 @@
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1042`)
 > - `x-pci-revision=0x01` (ensures the device enumerates as `REV_01`)
 
+## What it provides
+
+- Presents a StorPort SCSI adapter to Windows backed by a virtio-blk PCI function.
+- Uses shared Windows 7 virtio helpers from `drivers/windows7/virtio/common/`:
+  - `virtio_pci_modern_miniport.{c,h}` (miniport modern transport shim)
+  - `virtqueue_split_legacy.{c,h}` (split ring implementation)
+
 ## Files
 
 - `src/aero_virtio_blk.c` – StorPort miniport driver implementation.
