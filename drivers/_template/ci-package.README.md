@@ -24,6 +24,7 @@ Explicit list of `.inf` files to stage (paths are **relative to the driver direc
 - Use this when a driver ships **multiple INFs** but only a subset should be packaged together
   (feature variants, optional components, etc).
 - If present, the list must be non-empty.
+- Paths must stay under the driver directory (no absolute paths / `..` traversal).
 - CI copies selected INFs into the staged package root by file name; ensure selected INF file
   names are unique within the driver (avoid two different `foo.inf` files in different folders).
 

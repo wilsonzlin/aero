@@ -28,6 +28,7 @@ Supported fields:
 - `infFiles` (optional): explicit list of `.inf` files to stage (paths relative to the driver directory). If omitted, CI discovers all `.inf` files under the driver directory.
   - Use this for drivers that ship multiple INFs (feature variants, optional components) where staging all of them together is undesirable (e.g. multiple INFs with the same HWIDs).
   - If present, the list must be non-empty.
+  - Paths must stay under the driver directory (no absolute paths / `..` traversal).
 - `wow64Files` (optional): list of **file names** to copy from the driver’s **x86** build output into the **x64** staged package directory *before* INF stamping + Inf2Cat.
   - Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs).
   - Entries must be `.dll` file names.

@@ -11,7 +11,7 @@
     },
     "infFiles": {
       "type": "array",
-      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty.",
+      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must stay under the driver directory (no absolute paths / '..' traversal).",
       "minItems": 1,
       "items": {
         "type": "string",
@@ -32,7 +32,7 @@
     },
     "additionalFiles": {
       "type": "array",
-      "description": "Additional files (relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab).",
+      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must stay under the driver directory (no absolute paths / '..' traversal). CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab).",
       "items": {
         "type": "string",
         "minLength": 1
