@@ -247,11 +247,18 @@ async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForHttpReady(url, { timeoutMs, intervalMs, serverProcess }) {
+async function waitForHttpReady(url, { timeoutMs, intervalMs, serverProcess, getServerError }) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (serverProcess && serverProcess.exitCode !== null) {
-      throw new Error(`Preview server exited early with code ${serverProcess.exitCode}`);
+    if (typeof getServerError === "function") {
+      const err = getServerError();
+      if (err) throw err;
+    }
+
+    if (serverProcess && (serverProcess.exitCode !== null || serverProcess.signalCode)) {
+      throw new Error(
+        `Preview server exited early (code ${serverProcess.exitCode ?? "null"}, signal ${serverProcess.signalCode ?? "null"})`,
+      );
     }
 
     try {
@@ -418,9 +425,18 @@ async function main() {
           detached: process.platform !== "win32",
         },
       );
+      let serverSpawnError = null;
+      server.once("error", (err) => {
+        serverSpawnError = err;
+      });
 
       url = `http://${host}:${port}/`;
-      await waitForHttpReady(url, { timeoutMs: 60_000, intervalMs: 1_000, serverProcess: server });
+      await waitForHttpReady(url, {
+        timeoutMs: 60_000,
+        intervalMs: 1_000,
+        serverProcess: server,
+        getServerError: () => serverSpawnError,
+      });
     }
 
     const runnerArgs = [perfRunner, "--url", url, "--out-dir", outDirAbs, "--iterations", String(opts.iterations)];
