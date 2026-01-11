@@ -499,9 +499,9 @@ static void TestQueueSetupAndNotify(void)
 	assert(st == STATUS_SUCCESS);
 	assert(*(UINT16 *)(dev.Bar0 + 0x1000) == 0);
 
-	/* STRICT: reject queue_notify_off mismatch. */
+	/* STRICT: reject queue_notify_off mismatch at queue setup time. */
 	common->queue_notify_off = 5;
-	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa);
 	assert(st == STATUS_NOT_SUPPORTED);
 
 	VirtioPciModernTransportUninit(&t);

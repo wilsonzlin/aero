@@ -656,6 +656,8 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 					    UINT64 used_pa)
 {
 	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
+	UINT16 notify_off;
+	UINT16 enabled;
 
 	if (t == NULL || t->CommonCfg == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -676,6 +678,12 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 		return STATUS_NOT_FOUND;
 	}
 
+	notify_off = t->CommonCfg->queue_notify_off;
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && notify_off != q) {
+		VirtioPciModernUnlock(t, state);
+		return STATUS_NOT_SUPPORTED;
+	}
+
 	t->CommonCfg->queue_desc_lo = (UINT32)desc_pa;
 	t->CommonCfg->queue_desc_hi = (UINT32)(desc_pa >> 32);
 	t->CommonCfg->queue_avail_lo = (UINT32)avail_pa;
@@ -686,6 +694,13 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 
 	t->CommonCfg->queue_enable = 1;
 	VirtioPciModernMb(t);
+
+	/* Optional readback confirmation. */
+	enabled = t->CommonCfg->queue_enable;
+	if (enabled != 1) {
+		VirtioPciModernUnlock(t, state);
+		return STATUS_IO_DEVICE_ERROR;
+	}
 
 	VirtioPciModernUnlock(t, state);
 	return STATUS_SUCCESS;
@@ -717,15 +732,28 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 		return STATUS_INVALID_PARAMETER;
 	}
 
+	/*
+	 * AERO-W7-VIRTIO v1 fixes notify semantics:
+	 *   notify_off_multiplier = 4
+	 *   queue_notify_off(q) = q
+	 *
+	 * Avoid touching the selector-based common_cfg registers on the hot path.
+	 */
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+		byte_off = (UINT64)q * (UINT64)t->NotifyOffMultiplier;
+		if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
+			return STATUS_INVALID_PARAMETER;
+		}
+		*(volatile UINT16 *)(t->NotifyBase + (UINT32)byte_off) = q;
+		VirtioPciModernMb(t);
+		return STATUS_SUCCESS;
+	}
+
 	VirtioPciModernLock(t, &state);
 	t->CommonCfg->queue_select = q;
 	VirtioPciModernMb(t);
 	notify_off = t->CommonCfg->queue_notify_off;
 	VirtioPciModernUnlock(t, state);
-
-	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && notify_off != q) {
-		return STATUS_NOT_SUPPORTED;
-	}
 
 	byte_off = (UINT64)notify_off * (UINT64)t->NotifyOffMultiplier;
 	if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
