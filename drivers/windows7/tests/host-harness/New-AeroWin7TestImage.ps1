@@ -46,7 +46,7 @@ param(
   [switch]$RequireSnd,
 
   # If set, the scheduled selftest will skip the virtio-snd section even if a device is present.
-  # This depends on guest selftest support for `--disable-snd`.
+  # This adds `--disable-snd` to the scheduled task.
   [Parameter(Mandatory = $false)]
   [switch]$DisableSnd
 )
@@ -192,7 +192,7 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
 Notes:
 - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
-- To require virtio-snd to be present (and fail if missing), generate this media with `-RequireSnd`.
+- By default, virtio-snd is tested and the selftest will FAIL if the virtio-snd endpoint is missing.
 - To skip the virtio-snd test entirely (even if a device is present), generate this media with `-DisableSnd`.
 - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
