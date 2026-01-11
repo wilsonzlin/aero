@@ -2,6 +2,23 @@
 # Source this file to set recommended environment variables for Aero development.
 # Usage: source scripts/agent-env.sh
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Cargo registry cache contention can be a major slowdown when many agents share
+# the same host (cargo prints: "Blocking waiting for file lock on package cache").
+# Opt into a per-checkout Cargo home to avoid that contention.
+#
+# Usage:
+#   export AERO_ISOLATE_CARGO_HOME=1
+#   source scripts/agent-env.sh
+if [[ -n "${AERO_ISOLATE_CARGO_HOME:-}" ]]; then
+  if [[ -z "${CARGO_HOME:-}" ]]; then
+    export CARGO_HOME="$REPO_ROOT/.cargo-home"
+  fi
+  mkdir -p "$CARGO_HOME"
+fi
+
 # Rust/Cargo - balance speed vs memory
 export CARGO_BUILD_JOBS=4
 export CARGO_INCREMENTAL=1
@@ -26,9 +43,8 @@ fi
 # If the major version doesn't match, enable the opt-in bypass for `check-node-version.mjs`
 # so `cargo xtask` and friends can still run (it will emit a warning instead of failing).
 if command -v node >/dev/null 2>&1; then
-  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  if [[ -f "${repo_root}/.nvmrc" ]]; then
-    expected_major="$(cut -d. -f1 "${repo_root}/.nvmrc" | tr -d '\r\n ' | head -n1)"
+  if [[ -f "${REPO_ROOT}/.nvmrc" ]]; then
+    expected_major="$(cut -d. -f1 "${REPO_ROOT}/.nvmrc" | tr -d '\r\n ' | head -n1)"
     current_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
     if [[ -n "${expected_major}" && -n "${current_major}" && "${current_major}" != "${expected_major}" ]]; then
       if [[ -z "${AERO_ALLOW_UNSUPPORTED_NODE:-}" ]]; then
@@ -48,6 +64,9 @@ echo "Aero agent environment configured:"
 echo "  CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
 echo "  RUSTFLAGS=$RUSTFLAGS"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
+if [[ -n "${CARGO_HOME:-}" ]]; then
+  echo "  CARGO_HOME=$CARGO_HOME"
+fi
 echo "  NODE_OPTIONS=$NODE_OPTIONS"
 if [[ -n "${AERO_ALLOW_UNSUPPORTED_NODE:-}" ]]; then
   echo "  AERO_ALLOW_UNSUPPORTED_NODE=$AERO_ALLOW_UNSUPPORTED_NODE"

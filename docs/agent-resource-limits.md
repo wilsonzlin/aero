@@ -188,6 +188,13 @@ Mitigations:
   CARGO_HOME="$PWD/.cargo-home" cargo build --locked
   ```
 
+  If you are using the agent env helper, you can opt into the same behavior:
+
+  ```bash
+  export AERO_ISOLATE_CARGO_HOME=1
+  source ./scripts/agent-env.sh
+  ```
+
 ### Build is very slow
 
 You might be over-constrained. Check if you're accidentally running with `-j1`:

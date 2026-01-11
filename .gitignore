@@ -6,6 +6,7 @@ bench/compare.json
 # Local-only agent notes
 scratchpad.md
 handoff.md
+.cargo-home/
 
 # Python
 __pycache__/
