@@ -1528,7 +1528,10 @@ mod tests {
             usage_page: 0x01,
             usage: 0x02,
             collection_type: 0x01,
-            input_reports: vec![HidReportInfo { report_id: 0, items }],
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items,
+            }],
             output_reports: vec![],
             feature_reports: vec![],
             children: vec![],
