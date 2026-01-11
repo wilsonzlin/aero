@@ -17,17 +17,17 @@ pub struct PciHostBridge {
     config: PciConfigSpace,
 }
 
+impl Default for PciHostBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PciHostBridge {
     pub fn new() -> Self {
         let mut config = PciConfigSpace::new(INTEL_VENDOR_ID, Q35_HOST_BRIDGE_DEVICE_ID);
         config.set_class_code(0x06, 0x00, 0x00, 0x00);
         Self { config }
-    }
-}
-
-impl Default for PciHostBridge {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -45,17 +45,17 @@ pub struct PciIsaBridge {
     config: PciConfigSpace,
 }
 
+impl Default for PciIsaBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PciIsaBridge {
     pub fn new() -> Self {
         let mut config = PciConfigSpace::new(INTEL_VENDOR_ID, ICH9_LPC_DEVICE_ID);
         config.set_class_code(0x06, 0x01, 0x00, 0x00);
         Self { config }
-    }
-}
-
-impl Default for PciIsaBridge {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

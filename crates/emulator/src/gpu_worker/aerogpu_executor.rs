@@ -20,7 +20,9 @@ use crate::gpu_worker::aerogpu_backend::{
 use crate::gpu_worker::aerogpu_software::AeroGpuSoftwareExecutor;
 
 #[cfg(feature = "aerogpu-trace")]
-use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceWriteError, TraceWriter};
+use aero_gpu_trace::{
+    AerogpuMemoryRangeCapture, AerogpuSubmissionInfo, TraceMeta, TraceWriteError, TraceWriter,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AeroGpuFenceCompletionMode {
@@ -1861,10 +1863,12 @@ impl AerogpuSubmissionTrace {
         }
 
         self.writer.write_aerogpu_submission(
-            desc.flags,
-            desc.context_id,
-            desc.engine_id,
-            desc.signal_fence,
+            AerogpuSubmissionInfo {
+                submit_flags: desc.flags,
+                context_id: desc.context_id,
+                engine_id: desc.engine_id,
+                signal_fence: desc.signal_fence,
+            },
             &cmd_stream_bytes,
             alloc_table_bytes.as_deref(),
             &ranges,

@@ -514,9 +514,7 @@ impl CmdWriter {
         cs_shader: ResourceId,
         bindings: &[BindingDesc],
     ) {
-        let mut payload: Vec<u32> = Vec::new();
-        payload.push(pipeline_id);
-        payload.push(cs_shader);
+        let mut payload: Vec<u32> = vec![pipeline_id, cs_shader];
 
         payload.push(bindings.len() as u32);
         for b in bindings {

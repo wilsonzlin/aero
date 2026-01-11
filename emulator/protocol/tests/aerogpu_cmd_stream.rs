@@ -26,7 +26,7 @@ fn pad_to_4(buf: &mut Vec<u8>) {
 fn build_packet(opcode: u32, mut payload: Vec<u8>) -> Vec<u8> {
     pad_to_4(&mut payload);
     let size_bytes = (8 + payload.len()) as u32;
-    assert_eq!(size_bytes % 4, 0);
+    assert!(size_bytes.is_multiple_of(4));
 
     let mut packet = Vec::new();
     push_u32(&mut packet, opcode);

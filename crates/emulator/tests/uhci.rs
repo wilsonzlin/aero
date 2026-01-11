@@ -17,8 +17,6 @@ use emulator::io::usb::{
 use emulator::io::PortIO;
 use memory::MemoryBus;
 
-type InterruptOutLog = Rc<RefCell<Vec<(u8, Vec<u8>)>>>;
-
 const FRAME_LIST_BASE: u32 = 0x1000;
 const QH_ADDR: u32 = 0x2000;
 const TD0: u32 = 0x3000;
@@ -60,6 +58,9 @@ const PORTSC_LS_MASK: u16 = 0x0030;
 const PORTSC_LS_J_FS: u16 = 0x0010;
 const PORTSC_LSDA: u16 = 0x0100;
 const PORTSC_PR: u16 = 0x0200;
+
+type InterruptOutPacket = (u8, Vec<u8>);
+type InterruptOutLog = Rc<RefCell<Vec<InterruptOutPacket>>>;
 
 struct TestMemBus {
     mem: Vec<u8>,
@@ -175,7 +176,7 @@ impl DummyInterruptOutDevice {
         }
     }
 
-    fn received(&self) -> Vec<(u8, Vec<u8>)> {
+    fn received(&self) -> Vec<InterruptOutPacket> {
         self.received.borrow().clone()
     }
 }

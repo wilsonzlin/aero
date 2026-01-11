@@ -7,6 +7,13 @@ pub struct VgaDevice {
     default_attr: u8,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TextRegion {
+    pub top_row: u8,
+    pub top_col: u8,
+    pub bottom_row: u8,
+    pub bottom_col: u8,
+}
 impl Default for VgaDevice {
     fn default() -> Self {
         Self::new()
@@ -94,7 +101,18 @@ impl VgaDevice {
 
         if row >= rows {
             // Scroll up one line and keep cursor on last line.
-            self.scroll_up(mem, 0, 1, self.default_attr, 0, 0, rows - 1, cols - 1);
+            self.scroll_up(
+                mem,
+                0,
+                1,
+                self.default_attr,
+                TextRegion {
+                    top_row: 0,
+                    top_col: 0,
+                    bottom_row: rows - 1,
+                    bottom_col: cols - 1,
+                },
+            );
             row = rows - 1;
         }
 
@@ -108,10 +126,7 @@ impl VgaDevice {
         page: u8,
         lines: u8,
         attr: u8,
-        top_row: u8,
-        top_col: u8,
-        bottom_row: u8,
-        bottom_col: u8,
+        region: TextRegion,
     ) {
         if page != 0 {
             return;
@@ -119,10 +134,10 @@ impl VgaDevice {
 
         let cols = BiosDataArea::read_screen_cols(mem);
         let rows = 25u16;
-        let top_row = top_row as u16;
-        let top_col = top_col as u16;
-        let bottom_row = bottom_row.min((rows - 1) as u8) as u16;
-        let bottom_col = bottom_col.min((cols - 1) as u8) as u16;
+        let top_row = region.top_row as u16;
+        let top_col = region.top_col as u16;
+        let bottom_row = region.bottom_row.min((rows - 1) as u8) as u16;
+        let bottom_col = region.bottom_col.min((cols - 1) as u8) as u16;
 
         let lines = lines as u16;
         let window_rows = bottom_row - top_row + 1;

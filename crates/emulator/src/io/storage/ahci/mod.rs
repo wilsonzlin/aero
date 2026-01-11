@@ -178,9 +178,7 @@ impl AhciController {
         self.update_hba_is();
 
         let global_ie = self.hba.ghc & GHC_IE != 0;
-        let pending = global_ie && (self.port0.is & self.port0.ie) != 0;
-
-        self.irq_level = pending;
+        self.irq_level = global_ie && (self.port0.is & self.port0.ie) != 0;
     }
 
     fn set_port_interrupt(&mut self, bits: u32) {

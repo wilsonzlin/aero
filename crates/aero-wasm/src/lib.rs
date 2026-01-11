@@ -81,7 +81,7 @@ use aero_usb::{
     hid::passthrough::{SharedUsbHidPassthroughDevice, UsbHidPassthrough},
     hid::webhid,
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
-    usb::{UsbDevice, UsbHandshake},
+    usb::{SetupPacket, UsbDevice, UsbHandshake},
 };
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -106,7 +106,9 @@ pub fn wasm_start() {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     {
         // Ensure the TLS dummy is not optimized away.
-        let _ = &TLS_DUMMY as *const u8;
+        TLS_DUMMY.with(|value| {
+            let _ = value;
+        });
     }
 }
 
@@ -363,10 +365,37 @@ pub struct UsbHidBridge {
 impl UsbHidBridge {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
+        fn configure(dev: &mut impl UsbDevice) {
+            // Our HID device models behave like real USB devices and only produce
+            // interrupt IN data after the host sets a non-zero configuration.
+            //
+            // The web runtime uses `UsbHidBridge` as a lightweight "report
+            // generator" in tests and in the I/O worker, so configure the devices
+            // eagerly to make `drain_next_*_report()` immediately usable.
+            dev.handle_setup(SetupPacket {
+                request_type: 0x00,
+                request: 0x09, // SET_CONFIGURATION
+                value: 1,
+                index: 0,
+                length: 0,
+            });
+            let mut empty = [];
+            let _ = dev.handle_in(0, &mut empty);
+        }
+
+        let mut keyboard = UsbHidKeyboard::new();
+        configure(&mut keyboard);
+
+        let mut mouse = UsbHidMouse::new();
+        configure(&mut mouse);
+
+        let mut gamepad = UsbHidGamepad::new();
+        configure(&mut gamepad);
+
         Self {
-            keyboard: UsbHidKeyboard::new(),
-            mouse: UsbHidMouse::new(),
-            gamepad: UsbHidGamepad::new(),
+            keyboard,
+            mouse,
+            gamepad,
             mouse_buttons: 0,
         }
     }

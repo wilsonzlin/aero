@@ -235,7 +235,9 @@ impl<S: ByteStorage> SparseDisk<S> {
             ));
         }
         if record.physical_offset != 0
-            && record.physical_offset % self.header.block_size as u64 != 0
+            && !record
+                .physical_offset
+                .is_multiple_of(self.header.block_size as u64)
         {
             return Err(DiskError::CorruptImage(
                 "journal physical offset not aligned",

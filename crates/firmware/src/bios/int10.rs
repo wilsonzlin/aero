@@ -1,3 +1,4 @@
+use crate::video::vga::TextRegion;
 use crate::{bda::BiosDataArea, cpu::CpuState, memory::MemoryBus};
 
 use super::Bios;
@@ -69,7 +70,16 @@ impl Bios {
                 let bottom_row = cpu.dh();
                 let bottom_col = cpu.dl();
                 self.video.vga.scroll_up(
-                    memory, 0, lines, attr, top_row, top_col, bottom_row, bottom_col,
+                    memory,
+                    0,
+                    lines,
+                    attr,
+                    TextRegion {
+                        top_row,
+                        top_col,
+                        bottom_row,
+                        bottom_col,
+                    },
                 );
             }
             0x09 => {

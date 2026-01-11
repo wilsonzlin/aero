@@ -12,4 +12,6 @@ pub use format::{
     TraceMeta, TraceToc, CONTAINER_VERSION, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE,
 };
 pub use reader::{TraceReadError, TraceReader, TraceRecord};
-pub use writer::{AerogpuMemoryRangeCapture, Recorder, TraceWriteError, TraceWriter};
+pub use writer::{
+    AerogpuMemoryRangeCapture, AerogpuSubmissionInfo, Recorder, TraceWriteError, TraceWriter,
+};

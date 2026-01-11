@@ -229,18 +229,21 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
         let capacity_bytes = read_u32_le(bytes, base + queue_desc::CAPACITY_BYTES * 4)?;
         let reserved = read_u32_le(bytes, base + queue_desc::RESERVED * 4)?;
 
+        let offset_bytes_usize = offset_bytes as usize;
+        let capacity_bytes_usize = capacity_bytes as usize;
+
         if reserved != 0 {
             return Err(IpcLayoutError::QueueReservedNotZero { index: i, reserved });
         }
 
-        if !(offset_bytes as usize).is_multiple_of(RECORD_ALIGN) {
+        if !offset_bytes_usize.is_multiple_of(RECORD_ALIGN) {
             return Err(IpcLayoutError::QueueOffsetMisaligned {
                 index: i,
                 offset_bytes,
                 align: RECORD_ALIGN,
             });
         }
-        if !(capacity_bytes as usize).is_multiple_of(RECORD_ALIGN) {
+        if !capacity_bytes_usize.is_multiple_of(RECORD_ALIGN) {
             return Err(IpcLayoutError::QueueCapacityMisaligned {
                 index: i,
                 capacity_bytes,
@@ -248,9 +251,9 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
             });
         }
 
-        let region_end = (offset_bytes as usize)
+        let region_end = offset_bytes_usize
             .checked_add(ring_ctrl::BYTES)
-            .and_then(|v| v.checked_add(capacity_bytes as usize))
+            .and_then(|v| v.checked_add(capacity_bytes_usize))
             .ok_or(IpcLayoutError::QueueOutOfBounds {
                 index: i,
                 offset_bytes,
@@ -266,7 +269,7 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
             });
         }
 
-        let ring_header_cap = read_u32_le(bytes, offset_bytes as usize + ring_ctrl::CAPACITY * 4)?;
+        let ring_header_cap = read_u32_le(bytes, offset_bytes_usize + ring_ctrl::CAPACITY * 4)?;
         if ring_header_cap != capacity_bytes {
             return Err(IpcLayoutError::RingHeaderCapacityMismatch {
                 index: i,
@@ -277,8 +280,8 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
 
         queues.push(IpcQueueInfo {
             kind,
-            offset_bytes: offset_bytes as usize,
-            capacity_bytes: capacity_bytes as usize,
+            offset_bytes: offset_bytes_usize,
+            capacity_bytes: capacity_bytes_usize,
         });
     }
 
@@ -319,9 +322,8 @@ pub fn create_ipc_buffer(specs: &[IpcQueueSpec]) -> Vec<u8> {
     let mut queues: Vec<IpcQueueInfo> = Vec::with_capacity(specs.len());
 
     for spec in specs {
-        assert_eq!(
-            spec.capacity_bytes % RECORD_ALIGN,
-            0,
+        assert!(
+            spec.capacity_bytes.is_multiple_of(RECORD_ALIGN),
             "queue.capacity_bytes must be aligned to {RECORD_ALIGN}"
         );
         assert!(

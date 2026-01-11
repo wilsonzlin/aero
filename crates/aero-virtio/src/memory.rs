@@ -16,7 +16,6 @@ pub enum GuestMemoryError {
 pub trait GuestMemory {
     /// Total length of the guest memory address space handled by this object.
     fn len(&self) -> u64;
-
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

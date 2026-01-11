@@ -596,17 +596,30 @@ fn deliver_event<B: CpuBus>(
             bus,
             state,
             pending,
-            vector,
-            saved_rip,
-            None,
-            false,
-            InterruptSource::External,
+            VectorDelivery {
+                vector,
+                saved_rip,
+                error_code: None,
+                is_interrupt: false,
+                source: InterruptSource::External,
+            },
         ),
         PendingEvent::Interrupt {
             vector,
             saved_rip,
             source,
-        } => deliver_vector(bus, state, pending, vector, saved_rip, None, true, source),
+        } => deliver_vector(
+            bus,
+            state,
+            pending,
+            VectorDelivery {
+                vector,
+                saved_rip,
+                error_code: None,
+                is_interrupt: true,
+                source,
+            },
+        ),
     }
 }
 
@@ -648,11 +661,13 @@ fn deliver_exception<B: CpuBus>(
         bus,
         state,
         pending,
-        exception.vector(),
-        saved_rip,
-        code,
-        false,
-        InterruptSource::External,
+        VectorDelivery {
+            vector: exception.vector(),
+            saved_rip,
+            error_code: code,
+            is_interrupt: false,
+            source: InterruptSource::External,
+        },
     );
 
     pending.exception_depth = pending.exception_depth.saturating_sub(1);
@@ -660,39 +675,27 @@ fn deliver_exception<B: CpuBus>(
     res
 }
 
-#[allow(clippy::too_many_arguments)]
-fn deliver_vector<B: CpuBus>(
-    bus: &mut B,
-    state: &mut state::CpuState,
-    pending: &mut PendingEventState,
+#[derive(Clone, Copy, Debug)]
+struct VectorDelivery {
     vector: u8,
     saved_rip: u64,
     error_code: Option<u32>,
     is_interrupt: bool,
     source: InterruptSource,
+}
+
+fn deliver_vector<B: CpuBus>(
+    bus: &mut B,
+    state: &mut state::CpuState,
+    pending: &mut PendingEventState,
+    req: VectorDelivery,
 ) -> Result<(), CpuExit> {
     match state.mode {
-        CpuMode::Real | CpuMode::Vm86 => deliver_real_mode(bus, state, pending, vector, saved_rip),
-        CpuMode::Protected => deliver_protected_mode(
-            bus,
-            state,
-            pending,
-            vector,
-            saved_rip,
-            error_code,
-            is_interrupt,
-            source,
-        ),
-        CpuMode::Long => deliver_long_mode(
-            bus,
-            state,
-            pending,
-            vector,
-            saved_rip,
-            error_code,
-            is_interrupt,
-            source,
-        ),
+        CpuMode::Real | CpuMode::Vm86 => {
+            deliver_real_mode(bus, state, pending, req.vector, req.saved_rip)
+        }
+        CpuMode::Protected => deliver_protected_mode(bus, state, pending, req),
+        CpuMode::Long => deliver_long_mode(bus, state, pending, req),
     }
 }
 
@@ -745,12 +748,15 @@ fn deliver_protected_mode<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
     pending: &mut PendingEventState,
-    vector: u8,
-    saved_rip: u64,
-    error_code: Option<u32>,
-    is_interrupt: bool,
-    source: InterruptSource,
+    req: VectorDelivery,
 ) -> Result<(), CpuExit> {
+    let VectorDelivery {
+        vector,
+        saved_rip,
+        error_code,
+        is_interrupt,
+        source,
+    } = req;
     let gate = match with_supervisor_access(bus, state, |bus, state| {
         read_idt_gate32(bus, state, vector)
     }) {
@@ -874,12 +880,15 @@ fn deliver_long_mode<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
     pending: &mut PendingEventState,
-    vector: u8,
-    saved_rip: u64,
-    error_code: Option<u32>,
-    is_interrupt: bool,
-    source: InterruptSource,
+    req: VectorDelivery,
 ) -> Result<(), CpuExit> {
+    let VectorDelivery {
+        vector,
+        saved_rip,
+        error_code,
+        is_interrupt,
+        source,
+    } = req;
     let gate = match with_supervisor_access(bus, state, |bus, state| {
         read_idt_gate64(bus, state, vector)
     }) {

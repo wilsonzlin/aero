@@ -89,8 +89,7 @@ impl CaptureManager {
             target: meta.target,
         };
 
-        let line = serde_json::to_vec(&record)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        let line = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
         writer.write_all(&line).await?;
         writer.write_all(b"\n").await?;
         writer.flush().await?;
@@ -123,8 +122,7 @@ impl ConnectionCapture {
             data_b64: base64::engine::general_purpose::STANDARD.encode(data),
         };
 
-        let line = serde_json::to_vec(&record)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        let line = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
 
         let mut writer = self.writer.lock().await;
         writer.write_all(&line).await?;
@@ -204,7 +202,7 @@ impl CaptureManagerInner {
             && total_files > 1
         {
             let (path, bytes) = entries.remove(0);
-            if keep.map_or(false, |keep| keep == path.as_path()) {
+            if keep == Some(path.as_path()) {
                 entries.push((path, bytes));
                 entries.sort_by(|(a, _), (b, _)| a.file_name().cmp(&b.file_name()));
                 continue;

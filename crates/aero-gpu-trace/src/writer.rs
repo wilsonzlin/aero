@@ -39,6 +39,14 @@ pub struct AerogpuMemoryRangeCapture<'a> {
     pub bytes: &'a [u8],
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AerogpuSubmissionInfo {
+    pub submit_flags: u32,
+    pub context_id: u32,
+    pub engine_id: u32,
+    pub signal_fence: u64,
+}
+
 pub struct TraceWriter<W> {
     writer: W,
     pos: u64,
@@ -149,10 +157,7 @@ impl<W: Write> TraceWriter<W> {
     #[allow(clippy::too_many_arguments)]
     pub fn write_aerogpu_submission(
         &mut self,
-        submit_flags: u32,
-        context_id: u32,
-        engine_id: u32,
-        signal_fence: u64,
+        submission: AerogpuSubmissionInfo,
         cmd_stream_bytes: &[u8],
         alloc_table_bytes: Option<&[u8]>,
         memory_ranges: &[AerogpuMemoryRangeCapture<'_>],
@@ -165,6 +170,13 @@ impl<W: Write> TraceWriter<W> {
         if self.open_frame.is_none() {
             return Err(TraceWriteError::NoOpenFrame);
         }
+
+        let AerogpuSubmissionInfo {
+            submit_flags,
+            context_id,
+            engine_id,
+            signal_fence,
+        } = submission;
 
         let cmd_stream_blob_id = self.write_blob(BlobKind::AerogpuCmdStream, cmd_stream_bytes)?;
         let alloc_table_blob_id = match alloc_table_bytes {
@@ -406,10 +418,7 @@ impl<W: Write> Recorder<W> {
     #[allow(clippy::too_many_arguments)]
     pub fn record_aerogpu_submission(
         &mut self,
-        submit_flags: u32,
-        context_id: u32,
-        engine_id: u32,
-        signal_fence: u64,
+        submission: AerogpuSubmissionInfo,
         cmd_stream_bytes: &[u8],
         alloc_table_bytes: Option<&[u8]>,
         memory_ranges: &[AerogpuMemoryRangeCapture<'_>],
@@ -417,10 +426,7 @@ impl<W: Write> Recorder<W> {
         match self {
             Self::Disabled => Ok(()),
             Self::Enabled(writer) => writer.write_aerogpu_submission(
-                submit_flags,
-                context_id,
-                engine_id,
-                signal_fence,
+                submission,
                 cmd_stream_bytes,
                 alloc_table_bytes,
                 memory_ranges,

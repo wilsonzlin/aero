@@ -1,5 +1,4 @@
 #![allow(deprecated)]
-
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, RFLAGS_IF};
 use aero_devices::a20_gate::A20Gate as Port92A20Gate;
 use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};

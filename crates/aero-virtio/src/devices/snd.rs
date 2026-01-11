@@ -338,7 +338,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 PLAYBACK_CHANNELS,
             ));
         }
-        if start_id <= CAPTURE_STREAM_ID && CAPTURE_STREAM_ID < end {
+        if (start_id..end).contains(&CAPTURE_STREAM_ID) {
             resp.extend_from_slice(&virtio_snd_pcm_info(
                 CAPTURE_STREAM_ID,
                 VIRTIO_SND_D_INPUT,

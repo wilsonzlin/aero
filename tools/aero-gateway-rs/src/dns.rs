@@ -19,6 +19,10 @@ impl DnsCache {
         self.inner.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     pub async fn connect(&self, host: &str, port: u16) -> std::io::Result<tokio::net::TcpStream> {
         let ip = match host.parse::<IpAddr>() {
             Ok(ip) => ip,

@@ -207,7 +207,12 @@ impl NetTracer {
     ) {
         let ts = now_unix_timestamp_ns();
         self.record_udp_proxy_at(
-            ts, direction, transport, remote_ip, src_port, dst_port, data,
+            ts,
+            direction,
+            transport,
+            remote_ip,
+            (src_port, dst_port),
+            data,
         );
     }
 
@@ -218,14 +223,14 @@ impl NetTracer {
         direction: ProxyDirection,
         transport: UdpTransport,
         remote_ip: Ipv4Addr,
-        src_port: u16,
-        dst_port: u16,
+        ports: (u16, u16),
         data: &[u8],
     ) {
         if !self.is_enabled() || !self.cfg.capture_udp_proxy {
             return;
         }
 
+        let (src_port, dst_port) = ports;
         let data = match &self.cfg.redactor {
             Some(redactor) => match redactor.redact_udp_proxy(
                 direction,

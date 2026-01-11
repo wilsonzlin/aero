@@ -193,10 +193,13 @@ impl DecodedInstruction {
         self.instruction.len() as u8
     }
 
+    /// Returns `true` if the instruction length is 0 bytes.
+    ///
+    /// Note: valid x86 instructions are never empty; this is provided for API
+    /// completeness alongside [`Self::len`].
     #[inline]
-    /// Returns `true` when the decoded instruction has length 0.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.instruction.len() == 0
     }
 }
 

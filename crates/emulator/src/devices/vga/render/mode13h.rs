@@ -97,16 +97,9 @@ impl Mode13hRenderer {
             let start_line = start / BYTES_PER_SCANLINE;
             let end_line = (end - 1) / BYTES_PER_SCANLINE;
 
-            let start_line = start_line.min(MODE13H_HEIGHT);
-            let end_line = end_line.min(MODE13H_HEIGHT.saturating_sub(1));
-            if start_line <= end_line {
-                for dirty in dirty_scanlines
-                    .iter_mut()
-                    .take(end_line + 1)
-                    .skip(start_line)
-                {
-                    *dirty = true;
-                }
+            if start_line < MODE13H_HEIGHT {
+                let end_line = end_line.min(MODE13H_HEIGHT - 1);
+                dirty_scanlines[start_line..=end_line].fill(true);
             }
         }
 

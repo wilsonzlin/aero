@@ -149,19 +149,18 @@ fn pcmp_generate_mask(
     let mut res1 = 0u32;
     match op {
         StrOp::EqualAny => {
-            for (i, &ai) in a_elems.iter().enumerate().take(len_a) {
+            for (i, &ai) in a_elems.iter().take(len_a).enumerate() {
                 if b_elems[..len_b].contains(&ai) {
                     res1 |= 1u32 << i;
                 }
             }
         }
         StrOp::Ranges => {
-            let range_count = len_b / 2;
-            for (i, &ai) in a_elems.iter().enumerate().take(len_a) {
+            for (i, &ai) in a_elems.iter().take(len_a).enumerate() {
                 let mut match_any = false;
-                for r in 0..range_count {
-                    let lo = b_elems[r * 2];
-                    let hi = b_elems[r * 2 + 1];
+                for pair in b_elems[..len_b].chunks_exact(2) {
+                    let lo = pair[0];
+                    let hi = pair[1];
                     let (minv, maxv) = if lo <= hi { (lo, hi) } else { (hi, lo) };
                     if ai >= minv && ai <= maxv {
                         match_any = true;
@@ -242,7 +241,7 @@ fn pcmp_mask_to_xmm(mask: u32, n: usize, imm8: u8, elem: StrElem) -> u128 {
 
     match elem {
         StrElem::Byte => {
-            for (i, byte) in out.iter_mut().enumerate().take(n) {
+            for (i, byte) in out.iter_mut().take(n).enumerate() {
                 *byte = if ((mask >> i) & 1) != 0 { 0xFF } else { 0 };
             }
         }

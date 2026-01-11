@@ -82,6 +82,12 @@ impl Default for SamplerResource {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct TextureSampling<'a> {
+    tex: &'a Texture2DResource,
+    sampler: SamplerResource,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct InputElement {
     input_slot: u32,
     aligned_byte_offset: u32,
@@ -1069,12 +1075,7 @@ impl AeroGpuSoftwareExecutor {
     fn rasterize_triangle(
         tex: &mut Texture2DResource,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32),
-        v1: (f32, f32),
-        v2: (f32, f32),
-        c0: [f32; 4],
-        c1: [f32; 4],
-        c2: [f32; 4],
+        tri: [Vertex; 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1084,7 +1085,12 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        let [v0, v1, v2] = tri;
+        let (v0x, v0y) = v0.pos;
+        let (v1x, v1y) = v1.pos;
+        let (v2x, v2y) = v2.pos;
+
+        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
         if area == 0.0 {
             return;
         }
@@ -1095,10 +1101,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
-        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
-        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
-        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
+        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
+        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
+        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1113,9 +1119,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
-                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
-                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
+                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
+                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1123,8 +1129,8 @@ impl AeroGpuSoftwareExecutor {
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
                 let mut out = [0.0f32; 4];
-                for i in 0..4 {
-                    out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
+                for (i, chan) in out.iter_mut().enumerate() {
+                    *chan = v0.color[i] * w0 + v1.color[i] * w1 + v2.color[i] * w2;
                 }
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
@@ -1137,12 +1143,7 @@ impl AeroGpuSoftwareExecutor {
         depth_tex: &mut Texture2DResource,
         depth_state: DepthStencilState,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32, f32),
-        v1: (f32, f32, f32),
-        v2: (f32, f32, f32),
-        c0: [f32; 4],
-        c1: [f32; 4],
-        c2: [f32; 4],
+        tri: [Vertex; 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1152,7 +1153,12 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        let [v0, v1, v2] = tri;
+        let (v0x, v0y) = v0.pos;
+        let (v1x, v1y) = v1.pos;
+        let (v2x, v2y) = v2.pos;
+
+        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
         if area == 0.0 {
             return;
         }
@@ -1163,10 +1169,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
-        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
-        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
-        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
+        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
+        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
+        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1183,9 +1189,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
-                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
-                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
+                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
+                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1193,7 +1199,7 @@ impl AeroGpuSoftwareExecutor {
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
 
-                let depth = (v0.2 * w0 + v1.2 * w1 + v2.2 * w2).clamp(0.0, 1.0);
+                let depth = (v0.depth * w0 + v1.depth * w1 + v2.depth * w2).clamp(0.0, 1.0);
 
                 let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
                     continue;
@@ -1213,8 +1219,8 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let mut out = [0.0f32; 4];
-                for i in 0..4 {
-                    out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
+                for (i, chan) in out.iter_mut().enumerate() {
+                    *chan = v0.color[i] * w0 + v1.color[i] * w1 + v2.color[i] * w2;
                 }
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
@@ -1224,15 +1230,9 @@ impl AeroGpuSoftwareExecutor {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_textured(
         tex: &mut Texture2DResource,
-        src_tex: &Texture2DResource,
-        sampler: SamplerResource,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32),
-        v1: (f32, f32),
-        v2: (f32, f32),
-        uv0: (f32, f32),
-        uv1: (f32, f32),
-        uv2: (f32, f32),
+        sampling: TextureSampling<'_>,
+        tri: [Vertex; 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1242,7 +1242,12 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        let [v0, v1, v2] = tri;
+        let (v0x, v0y) = v0.pos;
+        let (v1x, v1y) = v1.pos;
+        let (v2x, v2y) = v2.pos;
+
+        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
         if area == 0.0 {
             return;
         }
@@ -1253,10 +1258,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
-        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
-        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
-        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
+        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
+        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
+        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1271,9 +1276,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
-                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
-                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
+                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
+                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1282,10 +1287,10 @@ impl AeroGpuSoftwareExecutor {
                 let w2 = w2 * inv_area;
 
                 let uv = (
-                    uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
-                    uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
+                    v0.uv.0 * w0 + v1.uv.0 * w1 + v2.uv.0 * w2,
+                    v0.uv.1 * w0 + v1.uv.1 * w1 + v2.uv.1 * w2,
                 );
-                let out = Self::sample_texture_2d(src_tex, sampler, uv);
+                let out = Self::sample_texture_2d(sampling.tex, sampling.sampler, uv);
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
@@ -1295,16 +1300,10 @@ impl AeroGpuSoftwareExecutor {
     fn rasterize_triangle_depth_textured(
         tex: &mut Texture2DResource,
         depth_tex: &mut Texture2DResource,
-        src_tex: &Texture2DResource,
-        sampler: SamplerResource,
         depth_state: DepthStencilState,
         clip: (i32, i32, i32, i32),
-        v0: (f32, f32, f32),
-        v1: (f32, f32, f32),
-        v2: (f32, f32, f32),
-        uv0: (f32, f32),
-        uv1: (f32, f32),
-        uv2: (f32, f32),
+        sampling: TextureSampling<'_>,
+        tri: [Vertex; 3],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1314,7 +1313,12 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        let [v0, v1, v2] = tri;
+        let (v0x, v0y) = v0.pos;
+        let (v1x, v1y) = v1.pos;
+        let (v2x, v2y) = v2.pos;
+
+        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
         if area == 0.0 {
             return;
         }
@@ -1325,10 +1329,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
-        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
-        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
-        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
+        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
+        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
+        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1345,9 +1349,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
-                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
-                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
+                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
+                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1355,7 +1359,7 @@ impl AeroGpuSoftwareExecutor {
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
 
-                let depth = (v0.2 * w0 + v1.2 * w1 + v2.2 * w2).clamp(0.0, 1.0);
+                let depth = (v0.depth * w0 + v1.depth * w1 + v2.depth * w2).clamp(0.0, 1.0);
 
                 let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
                     continue;
@@ -1375,10 +1379,10 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let uv = (
-                    uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
-                    uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
+                    v0.uv.0 * w0 + v1.uv.0 * w1 + v2.uv.0 * w2,
+                    v0.uv.1 * w0 + v1.uv.1 * w1 + v2.uv.1 * w2,
                 );
-                let out = Self::sample_texture_2d(src_tex, sampler, uv);
+                let out = Self::sample_texture_2d(sampling.tex, sampling.sampler, uv);
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
@@ -1591,7 +1595,12 @@ impl AeroGpuSoftwareExecutor {
                         return;
                     };
 
-                    for tri in vertices.chunks_exact(3) {
+                    let sampling = TextureSampling {
+                        tex: &src_tex,
+                        sampler,
+                    };
+                    for triangle in vertices.chunks_exact(3) {
+                        let tri = [triangle[0], triangle[1], triangle[2]];
                         if rast.depth_clip_enable
                             && (tri[0].depth < vp.min_depth
                                 || tri[0].depth > vp.max_depth
@@ -1626,16 +1635,10 @@ impl AeroGpuSoftwareExecutor {
                         Self::rasterize_triangle_depth_textured(
                             tex,
                             &mut depth_tex,
-                            &src_tex,
-                            sampler,
                             depth_state,
                             (clip_x0, clip_y0, clip_x1, clip_y1),
-                            (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
-                            (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
-                            (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
-                            tri[0].uv,
-                            tri[1].uv,
-                            tri[2].uv,
+                            sampling,
+                            tri,
                             blend,
                         );
                     }
@@ -1650,7 +1653,12 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return;
                 };
-                for tri in vertices.chunks_exact(3) {
+                let sampling = TextureSampling {
+                    tex: &src_tex,
+                    sampler,
+                };
+                for triangle in vertices.chunks_exact(3) {
+                    let tri = [triangle[0], triangle[1], triangle[2]];
                     if rast.depth_clip_enable
                         && (tri[0].depth < vp.min_depth
                             || tri[0].depth > vp.max_depth
@@ -1682,15 +1690,9 @@ impl AeroGpuSoftwareExecutor {
                     }
                     Self::rasterize_triangle_textured(
                         tex,
-                        &src_tex,
-                        sampler,
                         (clip_x0, clip_y0, clip_x1, clip_y1),
-                        tri[0].pos,
-                        tri[1].pos,
-                        tri[2].pos,
-                        tri[0].uv,
-                        tri[1].uv,
-                        tri[2].uv,
+                        sampling,
+                        tri,
                         blend,
                     );
                 }
@@ -1729,7 +1731,8 @@ impl AeroGpuSoftwareExecutor {
                     return;
                 };
 
-                for tri in vertices.chunks_exact(3) {
+                for triangle in vertices.chunks_exact(3) {
+                    let tri = [triangle[0], triangle[1], triangle[2]];
                     if rast.depth_clip_enable
                         && (tri[0].depth < vp.min_depth
                             || tri[0].depth > vp.max_depth
@@ -1765,12 +1768,7 @@ impl AeroGpuSoftwareExecutor {
                         &mut depth_tex,
                         depth_state,
                         (clip_x0, clip_y0, clip_x1, clip_y1),
-                        (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
-                        (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
-                        (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
-                        tri[0].color,
-                        tri[1].color,
-                        tri[2].color,
+                        tri,
                         blend,
                     );
                 }
@@ -1784,7 +1782,8 @@ impl AeroGpuSoftwareExecutor {
                 Self::record_error(regs);
                 return;
             };
-            for tri in vertices.chunks_exact(3) {
+            for triangle in vertices.chunks_exact(3) {
+                let tri = [triangle[0], triangle[1], triangle[2]];
                 if rast.depth_clip_enable
                     && (tri[0].depth < vp.min_depth
                         || tri[0].depth > vp.max_depth
@@ -1814,17 +1813,7 @@ impl AeroGpuSoftwareExecutor {
                         }
                     }
                 }
-                Self::rasterize_triangle(
-                    tex,
-                    (clip_x0, clip_y0, clip_x1, clip_y1),
-                    tri[0].pos,
-                    tri[1].pos,
-                    tri[2].pos,
-                    tri[0].color,
-                    tri[1].color,
-                    tri[2].color,
-                    blend,
-                );
+                Self::rasterize_triangle(tex, (clip_x0, clip_y0, clip_x1, clip_y1), tri, blend);
             }
 
             tex.dirty = true;

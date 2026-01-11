@@ -5,9 +5,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_PRESENT_FLAG_VSYNC,
 };
-use aero_protocol::aerogpu::aerogpu_pci::{
-    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
-};
+use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
 };
@@ -195,13 +193,15 @@ fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
     let features = (dev.mmio_read(&mut mem, mmio::FEATURES_LO, 4) as u64)
         | ((dev.mmio_read(&mut mem, mmio::FEATURES_HI, 4) as u64) << 32);
 
-    let transfer_supported = (features & FEATURE_TRANSFER) != 0;
-    let transfer_expected = AEROGPU_ABI_MINOR >= 1;
-    assert_eq!(transfer_supported, transfer_expected);
-
-    if transfer_supported {
-        assert_eq!(AerogpuCmdOpcode::CopyBuffer as u32, 0x105);
-        assert_eq!(AerogpuCmdOpcode::CopyTexture2d as u32, 0x106);
+    let abi_minor = (dev.regs.abi_version & 0xffff) as u16;
+    if (features & FEATURE_TRANSFER) != 0 {
+        assert!(abi_minor >= 1);
+        let copy_buffer = AerogpuCmdOpcode::CopyBuffer as u32;
+        let copy_texture2d = AerogpuCmdOpcode::CopyTexture2d as u32;
+        assert_eq!(copy_buffer, 0x105);
+        assert_eq!(copy_texture2d, 0x106);
+    } else {
+        assert!(abi_minor < 1);
     }
 }
 

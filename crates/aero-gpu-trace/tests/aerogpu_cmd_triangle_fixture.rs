@@ -1,4 +1,6 @@
-use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceReader, TraceWriter};
+use aero_gpu_trace::{
+    AerogpuMemoryRangeCapture, AerogpuSubmissionInfo, TraceMeta, TraceReader, TraceWriter,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
@@ -209,10 +211,12 @@ fn generate_trace() -> Vec<u8> {
     writer.begin_frame(0).unwrap();
     writer
         .write_aerogpu_submission(
-            AEROGPU_SUBMIT_FLAG_PRESENT,
-            0, // context_id
-            0, // engine_id
-            1, // signal_fence
+            AerogpuSubmissionInfo {
+                submit_flags: AEROGPU_SUBMIT_FLAG_PRESENT,
+                context_id: 0,
+                engine_id: 0,
+                signal_fence: 1,
+            },
             &cmd_stream,
             Some(&alloc_table),
             &[AerogpuMemoryRangeCapture {

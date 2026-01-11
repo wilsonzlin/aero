@@ -13,6 +13,12 @@ pub struct Stats {
     inner: Arc<StatsInner>,
 }
 
+impl Default for Stats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct StatsInner {
     started_at: Instant,
     next_connection_id: AtomicU64,

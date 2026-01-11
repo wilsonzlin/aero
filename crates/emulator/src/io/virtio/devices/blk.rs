@@ -1,4 +1,4 @@
-use crate::io::storage::disk::{DiskBackend, DiskResult};
+use crate::io::storage::{DiskBackend, DiskResult};
 use crate::io::virtio::vio_core::{DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE};
 use memory::GuestMemory;
 

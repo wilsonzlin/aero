@@ -267,8 +267,8 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
             4,
             1,
             1,
-            0, // row_pitch_bytes
-            1, // backing_alloc_id
+            0,
+            1,
             0,
         );
         let err = res.expect_err("expected create_texture2d to reject missing row_pitch_bytes");

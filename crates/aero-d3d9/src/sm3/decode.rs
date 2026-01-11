@@ -458,11 +458,9 @@ pub fn decode_u8_le_bytes(bytes: &[u8]) -> Result<DecodedShader, DecodeError> {
         });
     }
     let mut tokens = Vec::with_capacity(bytes.len() / 4);
-    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+    for chunk in bytes.chunks_exact(4) {
         let token = u32::from_le_bytes(chunk.try_into().unwrap());
         tokens.push(token);
-        // Keep token_index aligned to u32 tokens for error messages.
-        let _ = i;
     }
     decode_u32_tokens(&tokens)
 }

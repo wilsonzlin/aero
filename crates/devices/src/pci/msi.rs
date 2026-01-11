@@ -18,6 +18,12 @@ pub struct MsiCapability {
     pending_bits: u32,
 }
 
+impl Default for MsiCapability {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MsiCapability {
     pub fn new() -> Self {
         Self {
@@ -128,12 +134,6 @@ impl MsiCapability {
             config[offset + 2],
             config[offset + 3],
         ])
-    }
-}
-
-impl Default for MsiCapability {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

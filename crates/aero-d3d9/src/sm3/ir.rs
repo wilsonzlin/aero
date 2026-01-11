@@ -34,20 +34,14 @@ pub struct ConstDefF32 {
     pub value: [f32; 4],
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
 }
 
 impl Block {
     pub fn new() -> Self {
-        Self { stmts: Vec::new() }
-    }
-}
-
-impl Default for Block {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 

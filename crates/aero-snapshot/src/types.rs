@@ -228,12 +228,12 @@ impl CpuState {
             r15,
             rip,
             rflags,
-            cs,
-            ds,
             es,
+            cs,
+            ss,
+            ds,
             fs,
             gs,
-            ss,
             xmm,
             ..Self::default()
         })
@@ -315,20 +315,21 @@ impl CpuState {
         let fpu = FpuState::decode(r)?;
         let mxcsr = r.read_u32_le()?;
         let mut xmm = [0u128; 16];
-        for reg in &mut xmm {
-            *reg = r.read_u128_le()?;
+        for slot in &mut xmm {
+            *slot = r.read_u128_le()?;
         }
         let mut fxsave = [0u8; FXSAVE_AREA_SIZE];
         r.read_exact(&mut fxsave)?;
+
         let mut state = Self {
             rax,
+            rbx,
             rcx,
             rdx,
-            rbx,
-            rsp,
-            rbp,
             rsi,
             rdi,
+            rbp,
+            rsp,
             r8,
             r9,
             r10,

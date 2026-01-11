@@ -188,7 +188,7 @@ impl Default for BiosConfig {
         // We keep it in the EBDA so guests can find it by scanning the first KiB.
         let acpi_placement = AcpiPlacement {
             rsdp_addr: EBDA_BASE + 0x100,
-            ..AcpiPlacement::default()
+            ..Default::default()
         };
         Self {
             memory_size_bytes: 16 * 1024 * 1024,
