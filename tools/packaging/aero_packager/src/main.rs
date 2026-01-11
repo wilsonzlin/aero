@@ -17,7 +17,7 @@ struct Cli {
     #[arg(long)]
     out_dir: PathBuf,
 
-    /// JSON spec describing required drivers and expected hardware IDs.
+    /// JSON spec describing drivers (required + optional) and expected hardware IDs.
     #[arg(long)]
     spec: PathBuf,
 

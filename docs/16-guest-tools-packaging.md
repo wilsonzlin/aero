@@ -102,19 +102,43 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-This uses the in-repo spec:
+This uses the in-repo "minimal" spec:
 
-- `tools/packaging/specs/win7-virtio-win.json`
+- `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
+
+To also include optional virtio drivers (if present in the input), use:
+
+- `tools/packaging/specs/win7-virtio-full.json` (optional: `vioinput` + `viosnd`)
 
 ## Validation: required drivers + hardware IDs
 
 Before producing any output, the packager verifies that:
 
-- each required driver is present for both `x86` and `amd64`,
-- each required driver contains at least one `.inf`, `.sys`, and `.cat`,
-- each required driver's `.inf` files contain the expected hardware IDs (regex match).
+- the output includes **only** driver directories listed in the packaging spec (prevents accidentally shipping stray/incomplete driver folders),
+- each **required** driver is present for both `x86` and `amd64` (missing required drivers are fatal),
+- each included driver (required + optional that are present) contains at least one `.inf`, `.sys`, and `.cat`,
+- each included driver's `.inf` files contain the expected hardware IDs (regex match, case-insensitive) if provided.
 
 These checks are driven by a small JSON spec passed via `--spec`.
+
+### Spec schema: required + optional drivers
+
+The current schema uses a unified `drivers` list where each entry declares whether it is required:
+
+```json
+{
+  "drivers": [
+    {"name": "viostor", "required": true, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1001|1042)"]},
+    {"name": "netkvm", "required": true, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1000|1041)"]},
+    {"name": "vioinput", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1011|1052)"]},
+    {"name": "viosnd", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1018|1059)"]}
+  ]
+}
+```
+
+If an optional driver is listed but missing from the input driver directory, the packager emits a warning and continues.
+
+Legacy specs using the older top-level `required_drivers` list are still accepted and treated as `required=true` entries.
 
 ## CI coverage (packager + config/spec drift)
 

@@ -64,6 +64,33 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         fs::read(&outputs3.manifest_path)?
     );
 
+    // Legacy spec schema (`required_drivers`) should still work and produce identical output.
+    let legacy_spec_dir = tempfile::tempdir()?;
+    let legacy_spec_path = legacy_spec_dir.path().join("spec.json");
+    let legacy_spec = serde_json::json!({
+        "required_drivers": [
+            {
+                "name": "testdrv",
+                "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+            }
+        ]
+    });
+    fs::write(&legacy_spec_path, serde_json::to_vec_pretty(&legacy_spec)?)?;
+
+    let out4 = tempfile::tempdir()?;
+    let config4 = aero_packager::PackageConfig {
+        out_dir: out4.path().to_path_buf(),
+        spec_path: legacy_spec_path,
+        ..config1.clone()
+    };
+    let outputs4 = aero_packager::package_guest_tools(&config4)?;
+    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs4.iso_path)?);
+    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs4.zip_path)?);
+    assert_eq!(
+        fs::read(&outputs1.manifest_path)?,
+        fs::read(&outputs4.manifest_path)?
+    );
+
     // Verify ISO contains expected tree (via Joliet directory records).
     let iso_bytes = fs::read(&outputs1.iso_path)?;
     let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
@@ -162,6 +189,190 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
             .collect::<BTreeSet<_>>(),
         zip_paths
     );
+
+    Ok(())
+}
+
+#[test]
+fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
+) -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+
+    // Add an incomplete stray driver directory that should be ignored because it
+    // isn't declared in the spec. If the packager accidentally validates or
+    // includes it, packaging would fail.
+    for arch in ["x86", "amd64"] {
+        let stray_dir = drivers_tmp.path().join(arch).join("stray");
+        fs::create_dir_all(&stray_dir)?;
+        fs::write(stray_dir.join("stray.inf"), b"; stray\n")?;
+    }
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "testdrv",
+                "required": true,
+                "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+            },
+            {
+                "name": "optdrv",
+                "required": false,
+                "expected_hardware_ids": [r"PCI\\VEN_BEEF&DEV_CAFE"],
+            },
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        source_date_epoch: 0,
+    };
+
+    let outputs = aero_packager::package_guest_tools(&config)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+
+    assert!(tree.contains("drivers/x86/testdrv/test.inf"));
+    assert!(tree.contains("drivers/amd64/testdrv/test.inf"));
+
+    assert!(
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/x86/stray/")),
+        "stray driver unexpectedly packaged for x86"
+    );
+    assert!(
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/amd64/stray/")),
+        "stray driver unexpectedly packaged for amd64"
+    );
+
+    assert!(
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/x86/optdrv/")),
+        "missing optional driver unexpectedly packaged for x86"
+    );
+    assert!(
+        !tree
+            .paths
+            .iter()
+            .any(|p| p.starts_with("drivers/amd64/optdrv/")),
+        "missing optional driver unexpectedly packaged for amd64"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn optional_drivers_are_validated_when_present() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+
+    // Add an optional driver directory, but make it incomplete (missing .sys)
+    // to ensure optional drivers are still validated when present.
+    for arch in ["x86", "amd64"] {
+        let opt_dir = drivers_tmp.path().join(arch).join("optdrv");
+        fs::create_dir_all(&opt_dir)?;
+        fs::write(
+            opt_dir.join("opt.inf"),
+            b"[Version]\n; PCI\\VEN_BEEF&DEV_CAFE\n",
+        )?;
+        fs::write(opt_dir.join("opt.cat"), b"dummy cat\n")?;
+    }
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "testdrv",
+                "required": true,
+                "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+            },
+            {
+                "name": "optdrv",
+                "required": false,
+                "expected_hardware_ids": [r"PCI\\VEN_BEEF&DEV_CAFE"],
+            },
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("optdrv") && msg.contains("incomplete"),
+        "unexpected error: {msg}"
+    );
+
+    // Now make the optional driver complete and ensure it is included.
+    for arch in ["x86", "amd64"] {
+        let opt_dir = drivers_tmp.path().join(arch).join("optdrv");
+        fs::write(opt_dir.join("opt.sys"), b"dummy sys\n")?;
+    }
+
+    let out2 = tempfile::tempdir()?;
+    let config2 = aero_packager::PackageConfig {
+        out_dir: out2.path().to_path_buf(),
+        ..config
+    };
+
+    let outputs = aero_packager::package_guest_tools(&config2)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+
+    for required in [
+        "drivers/x86/optdrv/opt.inf",
+        "drivers/x86/optdrv/opt.sys",
+        "drivers/x86/optdrv/opt.cat",
+        "drivers/amd64/optdrv/opt.inf",
+        "drivers/amd64/optdrv/opt.sys",
+        "drivers/amd64/optdrv/opt.cat",
+    ] {
+        assert!(
+            tree.contains(required),
+            "ISO is missing expected optional driver file: {required}"
+        );
+    }
 
     Ok(())
 }

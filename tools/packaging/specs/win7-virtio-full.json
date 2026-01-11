@@ -13,6 +13,20 @@
       "expected_hardware_ids": [
         "PCI\\\\VEN_1AF4&DEV_(1000|1041)"
       ]
+    },
+    {
+      "name": "vioinput",
+      "required": false,
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_(1011|1052)"
+      ]
+    },
+    {
+      "name": "viosnd",
+      "required": false,
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_(1018|1059)"
+      ]
     }
   ]
 }

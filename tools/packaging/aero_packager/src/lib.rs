@@ -8,11 +8,11 @@ use sha2::{Digest as _, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub use iso9660::read_joliet_tree;
 pub use iso9660::read_joliet_file_entries;
+pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use manifest::{Manifest, ManifestFileEntry};
-pub use spec::{PackagingSpec, RequiredDriver};
+pub use spec::{DriverSpec, PackagingSpec};
 
 /// Configuration for producing the distributable "Aero Drivers / Guest Tools" media.
 #[derive(Debug, Clone)]
@@ -49,9 +49,10 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
 
-    validate_drivers(&spec, &config.drivers_dir).with_context(|| "validate driver artifacts")?;
+    let driver_plan = validate_drivers(&spec, &config.drivers_dir)
+        .with_context(|| "validate driver artifacts")?;
 
-    let mut files = collect_files(config, &spec)?;
+    let mut files = collect_files(config, &driver_plan)?;
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
     // Hash all files that will be included, except the manifest which is generated below.
@@ -104,7 +105,19 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     })
 }
 
-fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<FileToPackage>> {
+#[derive(Debug, Clone)]
+struct DriverToInclude {
+    name: String,
+    dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct DriverPlan {
+    x86: Vec<DriverToInclude>,
+    amd64: Vec<DriverToInclude>,
+}
+
+fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec<FileToPackage>> {
     let mut out = Vec::new();
 
     // Guest tools top-level scripts/doc.
@@ -240,30 +253,9 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     }
 
     // Drivers.
-    for arch_out in ["x86", "amd64"] {
-        let arch_dir = resolve_input_arch_dir(&config.drivers_dir, arch_out)
-            .with_context(|| format!("resolve driver input directory for {arch_out}"))?;
-
-        // Only include files underneath each driver directory, preserving hierarchy.
-        let mut driver_dirs = Vec::new();
-        for entry in
-            fs::read_dir(&arch_dir).with_context(|| format!("read {}", arch_dir.display()))?
-        {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                driver_dirs.push(entry.path());
-            }
-        }
-        driver_dirs.sort();
-
-        for driver_dir in driver_dirs {
-            let driver_name = driver_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| anyhow::anyhow!("non-utf8 driver directory name"))?
-                .to_string();
-
-            for entry in walkdir::WalkDir::new(&driver_dir)
+    for (arch_out, drivers) in [("x86", &driver_plan.x86), ("amd64", &driver_plan.amd64)] {
+        for driver in drivers {
+            for entry in walkdir::WalkDir::new(&driver.dir)
                 .follow_links(false)
                 .sort_by_file_name()
             {
@@ -273,8 +265,8 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
                 }
                 let rel = entry
                     .path()
-                    .strip_prefix(&driver_dir)
-                    .expect("walkdir under driver_dir");
+                    .strip_prefix(&driver.dir)
+                    .expect("walkdir under driver dir");
                 let rel_str = path_to_slash(rel);
                 let rel_str_lower = rel_str.to_ascii_lowercase();
                 if !(rel_str_lower.ends_with(".inf")
@@ -285,7 +277,7 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
                 }
 
                 out.push(FileToPackage {
-                    rel_path: format!("drivers/{}/{}/{}", arch_out, driver_name, rel_str),
+                    rel_path: format!("drivers/{}/{}/{}", arch_out, driver.name, rel_str),
                     bytes: fs::read(entry.path())
                         .with_context(|| format!("read {}", entry.path().display()))?,
                 });
@@ -296,73 +288,97 @@ fn collect_files(config: &PackageConfig, _spec: &PackagingSpec) -> Result<Vec<Fi
     Ok(out)
 }
 
-fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<()> {
+fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPlan> {
     let drivers_x86_dir = resolve_input_arch_dir(drivers_dir, "x86")
         .with_context(|| "resolve driver input directory for x86")?;
     let drivers_amd64_dir = resolve_input_arch_dir(drivers_dir, "amd64")
         .with_context(|| "resolve driver input directory for amd64")?;
 
-    for required in &spec.required_drivers {
-        for (arch, arch_dir) in [("x86", &drivers_x86_dir), ("amd64", &drivers_amd64_dir)] {
-            let driver_dir = arch_dir.join(&required.name);
+    let mut plan = DriverPlan {
+        x86: Vec::new(),
+        amd64: Vec::new(),
+    };
+
+    for drv in &spec.drivers {
+        for (arch, arch_dir, out) in [
+            ("x86", &drivers_x86_dir, &mut plan.x86),
+            ("amd64", &drivers_amd64_dir, &mut plan.amd64),
+        ] {
+            let driver_dir = arch_dir.join(&drv.name);
             if !driver_dir.is_dir() {
-                bail!(
-                    "required driver directory missing: {}",
-                    driver_dir.to_string_lossy()
-                );
-            }
-
-            let mut found_inf = false;
-            let mut found_sys = false;
-            let mut found_cat = false;
-            let mut inf_texts = Vec::new();
-
-            for entry in walkdir::WalkDir::new(&driver_dir)
-                .follow_links(false)
-                .sort_by_file_name()
-            {
-                let entry = entry?;
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                let path = entry.path();
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                let lower = name.to_ascii_lowercase();
-                if lower.ends_with(".inf") {
-                    found_inf = true;
-                    inf_texts.push(
-                        read_inf_text(path).with_context(|| {
-                            format!("read INF for {} ({})", required.name, arch)
-                        })?,
-                    );
-                } else if lower.ends_with(".sys") {
-                    found_sys = true;
-                } else if lower.ends_with(".cat") {
-                    found_cat = true;
-                }
-            }
-
-            if !found_inf || !found_sys || !found_cat {
-                bail!(
-                    "required driver {} ({}) is incomplete: expected at least one .inf, .sys, and .cat",
-                    required.name,
-                    arch
-                );
-            }
-
-            for hwid_re in &required.expected_hardware_ids {
-                let re = regex::RegexBuilder::new(hwid_re)
-                    .case_insensitive(true)
-                    .build()
-                    .with_context(|| format!("compile regex for hardware ID: {hwid_re}"))?;
-                if !inf_texts.iter().any(|t| re.is_match(t)) {
+                if drv.required {
                     bail!(
-                        "required driver {} ({}) INF files missing expected hardware ID pattern: {hwid_re}",
-                        required.name,
-                        arch
+                        "required driver directory missing: {}",
+                        driver_dir.to_string_lossy()
                     );
                 }
+                eprintln!(
+                    "warning: optional driver directory missing: {} ({})",
+                    drv.name, arch
+                );
+                continue;
             }
+
+            validate_driver_dir(drv, arch, &driver_dir)?;
+            out.push(DriverToInclude {
+                name: drv.name.clone(),
+                dir: driver_dir,
+            });
+        }
+    }
+
+    Ok(plan)
+}
+
+fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Result<()> {
+    let mut found_inf = false;
+    let mut found_sys = false;
+    let mut found_cat = false;
+    let mut inf_texts = Vec::new();
+
+    for entry in walkdir::WalkDir::new(driver_dir)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".inf") {
+            found_inf = true;
+            inf_texts.push(
+                read_inf_text(path)
+                    .with_context(|| format!("read INF for {} ({})", driver.name, arch))?,
+            );
+        } else if lower.ends_with(".sys") {
+            found_sys = true;
+        } else if lower.ends_with(".cat") {
+            found_cat = true;
+        }
+    }
+
+    if !found_inf || !found_sys || !found_cat {
+        bail!(
+            "driver {} ({}) is incomplete: expected at least one .inf, .sys, and .cat",
+            driver.name,
+            arch
+        );
+    }
+
+    for hwid_re in &driver.expected_hardware_ids {
+        let re = regex::RegexBuilder::new(hwid_re)
+            .case_insensitive(true)
+            .build()
+            .with_context(|| format!("compile regex for hardware ID: {hwid_re}"))?;
+        if !inf_texts.iter().any(|t| re.is_match(t)) {
+            bail!(
+                "driver {} ({}) INF files missing expected hardware ID pattern: {hwid_re}",
+                driver.name,
+                arch
+            );
         }
     }
 
