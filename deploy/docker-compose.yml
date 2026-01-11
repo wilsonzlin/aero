@@ -142,19 +142,21 @@ services:
 
       # L2 tunnel auth (Option C).
       #
-      # Prefer cookie session auth for single-origin deployments (recommended). This
-      # validates the `aero_session` cookie minted by `backend/aero-gateway` at
-      # `POST /session`.
+      # Default: no authentication (`none`), only Origin allowlisting.
       #
-      # IMPORTANT: cookie auth requires the L2 proxy and gateway to share the same
-      # session signing secret. This deploy stack wires `SESSION_SECRET` into both.
-      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-cookie}
+      # Cookie session auth (recommended for single-origin deployments) validates the
+      # `aero_session` cookie minted by `backend/aero-gateway` at `POST /session`.
+      #
+      # IMPORTANT: cookie auth requires the L2 proxy and gateway to share the same signing secret.
+      # `crates/aero-l2-proxy` reads this from AERO_L2_SESSION_SECRET or falls back to SESSION_SECRET.
+      #
+      # Supported auth modes: none, cookie, api_key, jwt, cookie_or_jwt
+      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-}
+      AERO_L2_SESSION_SECRET: ${AERO_L2_SESSION_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
 
-      # Optional token authentication (recommended for cross-origin deployments).
+      # Token/JWT auth configuration (only required when enabled via AERO_L2_AUTH_MODE).
       #
-      # When using AERO_L2_AUTH_MODE=api_key or jwt, set the corresponding secret
-      # (or use the legacy AERO_L2_TOKEN escape hatch).
       AERO_L2_API_KEY: ${AERO_L2_API_KEY:-}
       AERO_L2_JWT_SECRET: ${AERO_L2_JWT_SECRET:-}
 

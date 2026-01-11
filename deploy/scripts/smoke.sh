@@ -682,11 +682,11 @@ function checkL2RejectsMissingCookie(path) {
       const lines = headerBlock.split("\r\n");
       const statusLine = lines[0] ?? "";
       const status = parseStatusCode(statusLine);
-      if (status === 401 || status === 403) {
+      if (status === 401) {
         resolve();
         return;
       }
-      reject(new Error(`expected ${path} without Cookie to be rejected with 401/403 (got: ${statusLine})`));
+      reject(new Error(`expected ${path} without Cookie to be rejected with 401 (got: ${statusLine})`));
     });
 
     socket.on("error", (err) => {
@@ -1299,6 +1299,7 @@ function checkUdpRelayToken(cookiePair) {
   let lastL2Error;
   for (let attempt = 1; attempt <= 30; attempt++) {
     try {
+      await checkL2RejectsMissingCookie(session.l2Path);
       await checkL2Upgrade(session.cookiePair, session.l2Path);
       lastL2Error = undefined;
       break;
@@ -1313,7 +1314,6 @@ function checkUdpRelayToken(cookiePair) {
     throw lastL2Error;
   }
 
-  await checkL2RejectsMissingCookie(session.l2Path);
   await checkL2RejectsMissingOrigin(session.cookiePair, session.l2Path);
   const token = await checkUdpRelayToken(session.cookiePair);
   if (token !== session.udpRelayToken) {
