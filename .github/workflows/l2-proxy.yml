@@ -1,0 +1,88 @@
+name: L2 proxy CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - crates/aero-l2-proxy/**
+      - crates/aero-l2-protocol/**
+      - crates/aero-net-stack/**
+      - crates/nt-packetlib/**
+      - docs/l2-tunnel-*.md
+      - docs/adr/0005-networking-l2-tunnel.md
+      - tests/protocol-vectors/**
+      - .github/workflows/l2-proxy.yml
+  pull_request:
+    paths:
+      - crates/aero-l2-proxy/**
+      - crates/aero-l2-protocol/**
+      - crates/aero-net-stack/**
+      - crates/nt-packetlib/**
+      - docs/l2-tunnel-*.md
+      - docs/adr/0005-networking-l2-tunnel.md
+      - tests/protocol-vectors/**
+      - .github/workflows/l2-proxy.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: always
+
+      - name: cargo test (aero-l2-proxy + dependencies)
+        run: |
+          cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} \
+            -p aero-l2-proxy \
+            -p aero-l2-protocol \
+            -p aero-net-stack
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read pinned Rust version
+        id: rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rust_version="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml | head -n1)"
+          if [[ -z "${rust_version}" ]]; then
+            echo "error: failed to parse rust-toolchain.toml channel" >&2
+            exit 1
+          fi
+          echo "rust_version=${rust_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (no push)
+        run: |
+          docker build \
+            --build-arg RUST_VERSION=${{ steps.rust.outputs.rust_version }} \
+            -t aero-l2-proxy:ci \
+            -f crates/aero-l2-proxy/Dockerfile \
+            .
