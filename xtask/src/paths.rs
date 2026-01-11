@@ -154,85 +154,9 @@ pub fn resolve_wasm_crate_dir(repo_root: &Path, cli_override: Option<&str>) -> R
         )));
     }
 
-    // Fallback implementation when the shared resolver script is unavailable.
-    if let Some(dir) = cli_override {
-        return normalize_and_validate_wasm_crate_dir(repo_root, dir);
-    }
-
-    if let Some(dir) = env_var_nonempty("AERO_WASM_CRATE_DIR").or_else(|| env_var_nonempty("AERO_WASM_DIR")) {
-        return normalize_and_validate_wasm_crate_dir(repo_root, &dir);
-    }
-
-    let canonical = repo_root.join("crates/aero-wasm");
-    if canonical.join("Cargo.toml").is_file() {
-        return Ok(canonical);
-    }
-
-    let output = Command::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version=1"])
-        .current_dir(repo_root)
-        .output()
-        .map_err(|err| {
-            XtaskError::Message(format!(
-                "failed to run `cargo metadata` for wasm crate auto-detection: {err}"
-            ))
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(XtaskError::Message(format!(
-            "`cargo metadata` failed (exit code {:?}): {stderr}",
-            output.status.code()
-        )));
-    }
-
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|err| {
-        XtaskError::Message(format!("failed to parse `cargo metadata` output as JSON: {err}"))
-    })?;
-
-    let Some(packages) = json.get("packages").and_then(|v| v.as_array()) else {
-        return Err(XtaskError::Message(
-            "`cargo metadata` output did not include a `packages` array".to_string(),
-        ));
-    };
-
-    let mut cdylib_dirs: Vec<PathBuf> = Vec::new();
-    for pkg in packages {
-        let Some(targets) = pkg.get("targets").and_then(|v| v.as_array()) else {
-            continue;
-        };
-
-        let has_cdylib = targets.iter().any(|t| {
-            t.get("kind")
-                .and_then(|v| v.as_array())
-                .is_some_and(|kinds| kinds.iter().any(|k| k.as_str() == Some("cdylib")))
-        });
-        if !has_cdylib {
-            continue;
-        }
-
-        let Some(manifest_path) = pkg.get("manifest_path").and_then(|v| v.as_str()) else {
-            continue;
-        };
-
-        let manifest_path = PathBuf::from(manifest_path);
-        let Some(dir) = manifest_path.parent() else {
-            continue;
-        };
-        cdylib_dirs.push(dir.to_path_buf());
-    }
-
-    match cdylib_dirs.as_slice() {
-        [] => Err(XtaskError::Message(
-            "unable to auto-detect a wasm-pack crate (no workspace packages expose a cdylib target); set AERO_WASM_CRATE_DIR"
-                .to_string(),
-        )),
-        [single] => Ok(single.clone()),
-        _ => Err(XtaskError::Message(
-            "multiple workspace crates expose a cdylib target; set AERO_WASM_CRATE_DIR to disambiguate"
-                .to_string(),
-        )),
-    }
+    Err(XtaskError::Message(format!(
+        "wasm crate resolver script not found: {detect_script:?} (expected in this repo)."
+    )))
 }
 
 fn normalize_and_validate_node_dir(repo_root: &Path, dir: &str) -> Result<PathBuf> {
@@ -242,17 +166,6 @@ fn normalize_and_validate_node_dir(repo_root: &Path, dir: &str) -> Result<PathBu
     } else {
         Err(XtaskError::Message(format!(
             "package.json not found in node dir: {dir:?}"
-        )))
-    }
-}
-
-fn normalize_and_validate_wasm_crate_dir(repo_root: &Path, dir: &str) -> Result<PathBuf> {
-    let dir = normalize_dir(repo_root, dir);
-    if dir.join("Cargo.toml").is_file() {
-        Ok(dir)
-    } else {
-        Err(XtaskError::Message(format!(
-            "Cargo.toml not found in wasm crate dir: {dir:?}"
         )))
     }
 }
