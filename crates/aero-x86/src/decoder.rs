@@ -381,6 +381,21 @@ fn fixup_implicit_operands(
                 rip_relative: false,
             }));
         }
+        (OpcodeMap::Map0F, 0xF7, _)
+            if operands.iter().all(|op| !matches!(op, Operand::Memory(_))) =>
+        {
+            // MASKMOVQ/MASKMOVDQU: implicit memory operand at [DI/EDI/RDI]. `yaxpeax-x86` only
+            // exposes the explicit register operands.
+            operands.push(Operand::Memory(crate::inst::MemoryOperand {
+                segment: prefixes.segment,
+                addr_size: address_size,
+                base: Some(crate::inst::Gpr { index: 7 }), // DI/EDI/RDI
+                index: None,
+                scale: 1,
+                disp: 0,
+                rip_relative: false,
+            }));
+        }
         (OpcodeMap::Primary, 0xCC, _) => {
             // INT3 is a dedicated 1-byte encoding and has no explicit operands.
             operands.clear();
