@@ -58,6 +58,15 @@ The AeroGPU D3D9 UMD supports both models. Command emission calls `ensure_cmd_sp
 
 When the UMD acquires transient buffers via `AllocateCb`, it returns them via `DeallocateCb` after submission (or at device teardown if the buffer was never submitted).
 
+### Runtime variance: pDmaBuffer vs pCommandBuffer
+
+Some WDDM callback structs expose both:
+
+- a base **DMA buffer** pointer/size (`pDmaBuffer` / `DmaBufferSize`), and
+- a potentially offset **command buffer** pointer (`pCommandBuffer`).
+
+When `pCommandBuffer` is an offset within the DMA buffer, the effective writable command-buffer capacity is reduced by the offset. The AeroGPU D3D9 UMD handles this by tracking `WddmContext::pDmaBuffer` separately and by adjusting capacities via `AdjustCommandBufferSizeFromDmaBuffer()` (`src/aerogpu_wddm_submit_buffer_utils.h`) whenever it must fall back to a `DmaBufferSize`-derived capacity.
+
 ### DMA buffer private data (UMD→dxgkrnl→KMD) and security
 
 Win7/WDDM submission callbacks include a `pDmaBufferPrivateData` pointer + size.
