@@ -125,7 +125,7 @@ fn aerogpu_cmd_depth_enable_controls_overdraw() {
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         // Stream 1: create resources + draw with depth disabled.
         let mut stream = begin_stream();
@@ -306,7 +306,7 @@ fn aerogpu_cmd_depth_enable_controls_overdraw() {
 
         patch_stream_size(&mut stream);
 
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -405,7 +405,7 @@ fn aerogpu_cmd_depth_enable_controls_overdraw() {
 
         patch_stream_size(&mut stream);
 
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -479,7 +479,7 @@ fn aerogpu_cmd_depth_less_allows_near_overwrite_after_far_then_rejects_far() {
             },
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let mut stream = begin_stream();
 
@@ -661,7 +661,7 @@ fn aerogpu_cmd_depth_less_allows_near_overwrite_after_far_then_rejects_far() {
 
         patch_stream_size(&mut stream);
 
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -732,7 +732,7 @@ fn aerogpu_cmd_d24s8_depth_testing_keeps_near_fragment() {
         ];
         let vb_bytes = bytemuck::bytes_of(&vertices);
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let mut stream = begin_stream();
 
         // CREATE_BUFFER (VB)
@@ -913,7 +913,7 @@ fn aerogpu_cmd_d24s8_depth_testing_keeps_near_fragment() {
 
         patch_stream_size(&mut stream);
 
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

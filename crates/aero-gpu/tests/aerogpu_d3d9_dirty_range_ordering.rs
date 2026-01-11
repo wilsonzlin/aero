@@ -1,7 +1,5 @@
 mod common;
 
-use std::cell::Cell;
-
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{
     AerogpuD3d9Error, AerogpuD3d9Executor, GuestMemory, GuestMemoryError, VecGuestMemory,
@@ -129,7 +127,7 @@ fn assemble_ps_solid_color_c0() -> Vec<u8> {
 /// first read. This simulates a guest CPU updating a guest-backed resource between draws within a
 /// single command stream submission.
 struct PhasedGuestMemory {
-    phase: Cell<u32>,
+    phase: u32,
     before: VecGuestMemory,
     after: VecGuestMemory,
 }
@@ -137,7 +135,7 @@ struct PhasedGuestMemory {
 impl PhasedGuestMemory {
     fn new(before: VecGuestMemory, after: VecGuestMemory) -> Self {
         Self {
-            phase: Cell::new(0),
+            phase: 0,
             before,
             after,
         }
@@ -145,17 +143,17 @@ impl PhasedGuestMemory {
 }
 
 impl GuestMemory for PhasedGuestMemory {
-    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
-        if self.phase.get() == 0 {
+    fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
+        if self.phase == 0 {
             self.before.read(gpa, dst)?;
-            self.phase.set(1);
+            self.phase = 1;
             Ok(())
         } else {
             self.after.read(gpa, dst)
         }
     }
 
-    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+    fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
         // Keep both phases coherent so writeback/dirty-range tests see consistent memory.
         self.before.write(gpa, src)?;
         self.after.write(gpa, src)
@@ -231,11 +229,11 @@ fn d3d9_dirty_range_flush_respects_ordering_with_interleaved_draws() {
     assert_eq!(vb_data_a.len(), 3 * 16);
     assert_eq!(vb_data_b.len(), 3 * 16);
 
-    let guest_before = VecGuestMemory::new(0x4000);
-    let guest_after = VecGuestMemory::new(0x4000);
+    let mut guest_before = VecGuestMemory::new(0x4000);
+    let mut guest_after = VecGuestMemory::new(0x4000);
     guest_before.write(VB_GPA, &vb_data_a).unwrap();
     guest_after.write(VB_GPA, &vb_data_b).unwrap();
-    let guest_memory = PhasedGuestMemory::new(guest_before, guest_after);
+    let mut guest_memory = PhasedGuestMemory::new(guest_before, guest_after);
 
     let alloc_table = AllocTable::new([(
         VB_ALLOC_ID,
@@ -426,7 +424,7 @@ fn d3d9_dirty_range_flush_respects_ordering_with_interleaved_draws() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))

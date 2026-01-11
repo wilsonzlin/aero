@@ -467,8 +467,8 @@ fn aerogpu_cmd_texture_sampling_sanity() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0x1000);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0x1000);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("cmd stream execution failed");
         exec.poll_wait();
 

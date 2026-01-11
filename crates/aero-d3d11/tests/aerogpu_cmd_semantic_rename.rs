@@ -218,9 +218,9 @@ fn aerogpu_cmd_links_vs_ps_by_register_even_when_semantics_rename() {
         writer.present(0, 0);
         let stream = writer.finish();
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let report = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

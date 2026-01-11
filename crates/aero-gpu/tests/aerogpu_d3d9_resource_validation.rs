@@ -636,7 +636,7 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    let guest_memory = VecGuestMemory::new(0x1000);
+    let mut guest_memory = VecGuestMemory::new(0x1000);
     let alloc_table = AllocTable::new([(
         1,
         AllocEntry {
@@ -663,7 +663,8 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
     );
 
     let stream = writer.finish();
-    match exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table)) {
+    match exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
+    {
         Ok(_) => panic!("expected CREATE_TEXTURE2D with invalid row_pitch_bytes to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("row_pitch_bytes")),
         Err(other) => panic!("unexpected error: {other:?}"),

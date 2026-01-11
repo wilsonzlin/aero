@@ -755,7 +755,7 @@ impl AerogpuD3d11Executor {
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         let mut pending_writebacks = Vec::new();
         let report = self.execute_cmd_stream_inner(
@@ -790,7 +790,7 @@ impl AerogpuD3d11Executor {
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         let mut pending_writebacks = Vec::new();
         let report = self.execute_cmd_stream_inner(
@@ -810,7 +810,7 @@ impl AerogpuD3d11Executor {
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<ExecuteReport> {
         self.encoder_has_commands = false;
@@ -896,7 +896,7 @@ impl AerogpuD3d11Executor {
     fn flush_pending_writebacks_blocking(
         &self,
         pending: Vec<PendingWriteback>,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         for writeback in pending {
             match writeback {
@@ -1007,7 +1007,7 @@ impl AerogpuD3d11Executor {
     async fn flush_pending_writebacks_async(
         &self,
         pending: Vec<PendingWriteback>,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         for writeback in pending {
             match writeback {
@@ -1120,7 +1120,7 @@ impl AerogpuD3d11Executor {
         opcode: u32,
         cmd_bytes: &[u8],
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         pending_writebacks: &mut Vec<PendingWriteback>,
         report: &mut ExecuteReport,
     ) -> Result<()> {
@@ -1186,7 +1186,7 @@ impl AerogpuD3d11Executor {
         stream_bytes: &'a [u8],
         stream_size: usize,
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
     ) -> Result<()> {
         if self.state.render_targets.is_empty() {
@@ -2131,7 +2131,7 @@ impl AerogpuD3d11Executor {
         encoder: &mut wgpu::CommandEncoder,
         cmd_bytes: &[u8],
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<()> {
         let cmd = decode_cmd_copy_buffer_le(cmd_bytes)
@@ -2330,7 +2330,7 @@ impl AerogpuD3d11Executor {
         encoder: &mut wgpu::CommandEncoder,
         cmd_bytes: &[u8],
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<()> {
         let cmd = decode_cmd_copy_texture2d_le(cmd_bytes)
@@ -3460,7 +3460,7 @@ impl AerogpuD3d11Executor {
         encoder: &mut wgpu::CommandEncoder,
         cmd_bytes: &[u8],
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         // struct aerogpu_cmd_clear (36 bytes)
         if cmd_bytes.len() < 36 {
@@ -3609,7 +3609,7 @@ impl AerogpuD3d11Executor {
         encoder: &mut wgpu::CommandEncoder,
         pipeline_bindings: &PipelineBindingsInfo,
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let max_uniform_binding_size = self.device.limits().max_uniform_buffer_binding_size as u64;
@@ -3730,7 +3730,7 @@ impl AerogpuD3d11Executor {
         encoder: &mut wgpu::CommandEncoder,
         buffer_handle: u32,
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         let (dirty, backing, buffer_size, buffer_gpu_size) = {
             let Some(buf) = self.resources.buffers.get_mut(&buffer_handle) else {
@@ -3815,7 +3815,7 @@ impl AerogpuD3d11Executor {
         encoder: &mut wgpu::CommandEncoder,
         texture_handle: u32,
         allocs: &AllocTable,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         let (desc, row_pitch_bytes, backing) = match self.resources.textures.get(&texture_handle) {
             Some(tex) if tex.dirty => (tex.desc, tex.row_pitch_bytes, tex.backing),
@@ -3904,7 +3904,7 @@ impl AerogpuD3d11Executor {
             height: u32,
             bytes_per_row: u32,
             gpa: u64,
-            guest_mem: &dyn GuestMemory,
+            guest_mem: &mut dyn GuestMemory,
         ) -> Result<()> {
             let bpt = bytes_per_texel(format)?;
             let unpadded_bpr = width

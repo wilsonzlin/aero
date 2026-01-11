@@ -123,7 +123,7 @@ fn aerogpu_cmd_compacts_sparse_vertex_buffer_slots() {
         let pos_bytes = bytemuck::bytes_of(&positions);
         let color_bytes = bytemuck::bytes_of(&colors);
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         guest_mem.write(0x100, pos_bytes).unwrap();
         guest_mem.write(0x200, color_bytes).unwrap();
 
@@ -362,7 +362,7 @@ fn aerogpu_cmd_compacts_sparse_vertex_buffer_slots() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 

@@ -310,8 +310,8 @@ fn aerogpu_cmd_depth_write_disable_allows_far_overwrite() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -528,8 +528,8 @@ fn aerogpu_cmd_rasterizer_state_enables_scissor() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -754,8 +754,8 @@ fn aerogpu_cmd_scissor_rect_is_clamped_to_render_target() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -962,8 +962,8 @@ fn aerogpu_cmd_viewport_is_clamped_to_render_target() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

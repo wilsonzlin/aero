@@ -61,9 +61,9 @@ fn aerogpu_cmd_set_samplers_rejects_slot_out_of_range() {
         end_cmd(&mut stream, start);
 
         let stream = finish_stream(stream);
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected SET_SAMPLERS to reject out-of-range slot");
         let msg = format!("{err:#}");
         assert!(
@@ -105,9 +105,9 @@ fn aerogpu_cmd_set_constant_buffers_rejects_slot_out_of_range() {
         end_cmd(&mut stream, start);
 
         let stream = finish_stream(stream);
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected SET_CONSTANT_BUFFERS to reject out-of-range slot");
         let msg = format!("{err:#}");
         assert!(
@@ -143,9 +143,9 @@ fn aerogpu_cmd_set_texture_rejects_slot_out_of_range() {
         end_cmd(&mut stream, start);
 
         let stream = finish_stream(stream);
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected SET_TEXTURE to reject out-of-range slot");
         let msg = format!("{err:#}");
         assert!(

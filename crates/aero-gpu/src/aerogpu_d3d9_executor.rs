@@ -94,10 +94,8 @@ pub struct PresentedScanout<'a> {
     pub width: u32,
     pub height: u32,
 }
-
-#[derive(Clone, Copy)]
 struct SubmissionCtx<'a> {
-    guest_memory: Option<&'a dyn GuestMemory>,
+    guest_memory: Option<&'a mut dyn GuestMemory>,
     alloc_table: Option<&'a AllocTable>,
 }
 
@@ -851,7 +849,7 @@ impl AerogpuD3d9Executor {
     fn flush_pending_writebacks_blocking(
         &self,
         pending: Vec<PendingWriteback>,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
     ) -> Result<(), AerogpuD3d9Error> {
         for writeback in pending {
             match writeback {
@@ -942,7 +940,7 @@ impl AerogpuD3d9Executor {
     async fn flush_pending_writebacks_async(
         &self,
         pending: Vec<PendingWriteback>,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
     ) -> Result<(), AerogpuD3d9Error> {
         for writeback in pending {
             match writeback {
@@ -1095,7 +1093,7 @@ impl AerogpuD3d9Executor {
     pub fn execute_cmd_stream_with_guest_memory(
         &mut self,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.execute_cmd_stream_with_guest_memory_for_context(0, bytes, guest_memory, alloc_table)
@@ -1105,7 +1103,7 @@ impl AerogpuD3d9Executor {
         &mut self,
         context_id: u32,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.execute_cmd_stream_with_ctx(
@@ -1121,7 +1119,7 @@ impl AerogpuD3d9Executor {
     pub async fn execute_cmd_stream_with_guest_memory_async(
         &mut self,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.execute_cmd_stream_with_guest_memory_for_context_async(
@@ -1142,19 +1140,19 @@ impl AerogpuD3d9Executor {
         &mut self,
         context_id: u32,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.switch_context(context_id);
 
         let stream = parse_cmd_stream(bytes)?;
         let mut pending_writebacks = Vec::new();
-        let ctx = SubmissionCtx {
+        let mut ctx = SubmissionCtx {
             guest_memory: Some(guest_memory),
             alloc_table,
         };
         for cmd in stream.cmds {
-            if let Err(err) = self.execute_cmd(cmd, ctx, &mut pending_writebacks) {
+            if let Err(err) = self.execute_cmd(cmd, &mut ctx, &mut pending_writebacks) {
                 self.encoder = None;
                 self.queue.submit([]);
                 return Err(err);
@@ -1162,6 +1160,10 @@ impl AerogpuD3d9Executor {
         }
         self.flush()?;
         if !pending_writebacks.is_empty() {
+            let guest_memory = ctx
+                .guest_memory
+                .take()
+                .expect("ctx always contains guest memory for async execution");
             self.flush_pending_writebacks_async(pending_writebacks, guest_memory)
                 .await?;
         }
@@ -1194,14 +1196,14 @@ impl AerogpuD3d9Executor {
         &mut self,
         context_id: u32,
         bytes: &[u8],
-        ctx: SubmissionCtx<'_>,
+        mut ctx: SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.switch_context(context_id);
 
         let stream = parse_cmd_stream(bytes)?;
         let mut pending_writebacks = Vec::new();
         for cmd in stream.cmds {
-            if let Err(err) = self.execute_cmd(cmd, ctx, &mut pending_writebacks) {
+            if let Err(err) = self.execute_cmd(cmd, &mut ctx, &mut pending_writebacks) {
                 // Do not submit partially-recorded work; drop the encoder but still push an empty
                 // submit boundary so `queue.write_texture` calls don't stay queued indefinitely.
                 self.encoder = None;
@@ -1439,7 +1441,7 @@ impl AerogpuD3d9Executor {
     fn execute_cmd(
         &mut self,
         cmd: AeroGpuCmd<'_>,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<(), AerogpuD3d9Error> {
         match cmd {
@@ -2187,7 +2189,7 @@ impl AerogpuD3d9Executor {
                                 "COPY_BUFFER: WRITEBACK_DST requires guest-backed dst".into(),
                             )
                         })?;
-                        let Some(_guest_memory) = ctx.guest_memory else {
+                        let Some(_guest_memory) = ctx.guest_memory.as_deref_mut() else {
                             return Err(AerogpuD3d9Error::MissingGuestMemory(dst_buffer));
                         };
                         let alloc = ctx
@@ -3233,7 +3235,7 @@ impl AerogpuD3d9Executor {
 
     fn resource_dirty_range(
         &mut self,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
         resource_handle: u32,
         offset_bytes: u64,
         size_bytes: u64,
@@ -3305,7 +3307,7 @@ impl AerogpuD3d9Executor {
         &mut self,
         encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
         let underlying = self.resolve_resource_handle(handle)?;
         let Some(res) = self.resources.get_mut(&underlying) else {
@@ -3328,7 +3330,7 @@ impl AerogpuD3d9Executor {
         if dirty_ranges.is_empty() {
             return Ok(());
         }
-        let Some(guest_memory) = ctx.guest_memory else {
+        let Some(guest_memory) = ctx.guest_memory.as_deref_mut() else {
             return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
         };
         let table = ctx
@@ -3410,7 +3412,7 @@ impl AerogpuD3d9Executor {
         &mut self,
         encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
         strict: bool,
     ) -> Result<(), AerogpuD3d9Error> {
         let underlying = match self.resolve_resource_handle(handle) {
@@ -3451,7 +3453,7 @@ impl AerogpuD3d9Executor {
         if dirty_ranges.is_empty() {
             return Ok(());
         }
-        let Some(guest_memory) = ctx.guest_memory else {
+        let Some(guest_memory) = ctx.guest_memory.as_deref_mut() else {
             return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
         };
         let alloc_entry = ctx
@@ -3617,7 +3619,7 @@ impl AerogpuD3d9Executor {
         &mut self,
         encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.flush_texture_if_dirty(encoder, handle, ctx, true)
     }
@@ -3626,7 +3628,7 @@ impl AerogpuD3d9Executor {
         &mut self,
         encoder: Option<&mut wgpu::CommandEncoder>,
         handle: u32,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
         self.flush_texture_if_dirty(encoder, handle, ctx, false)
     }
@@ -3634,7 +3636,7 @@ impl AerogpuD3d9Executor {
     fn encode_clear(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
         flags: u32,
         color_rgba: [f32; 4],
         depth: f32,
@@ -3745,7 +3747,7 @@ impl AerogpuD3d9Executor {
     fn encode_clear_scissored(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
         flags: u32,
         color_rgba: [f32; 4],
         depth: f32,
@@ -4080,7 +4082,7 @@ impl AerogpuD3d9Executor {
     fn encode_draw(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        ctx: SubmissionCtx<'_>,
+        ctx: &mut SubmissionCtx<'_>,
         draw: DrawParams,
     ) -> Result<(), AerogpuD3d9Error> {
         let vs_handle = self.state.vs;

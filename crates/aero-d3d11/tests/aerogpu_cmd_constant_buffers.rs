@@ -260,7 +260,7 @@ fn aerogpu_cmd_renders_with_bound_constant_buffer() {
         let cb_bytes = bytemuck::cast_slice(&cb_words);
         let cb_size = cb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         let vb_offset = 0u64;
@@ -462,7 +462,7 @@ fn aerogpu_cmd_renders_with_bound_constant_buffer() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 

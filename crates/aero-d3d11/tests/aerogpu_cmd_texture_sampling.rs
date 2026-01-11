@@ -443,7 +443,7 @@ fn aerogpu_cmd_renders_with_texture_sampling_ps() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -663,7 +663,7 @@ fn aerogpu_cmd_renders_with_texture_sampling_ps() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -711,7 +711,7 @@ fn aerogpu_cmd_set_samplers_binds_created_sampler() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -943,7 +943,7 @@ fn aerogpu_cmd_set_samplers_binds_created_sampler() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -990,7 +990,7 @@ fn aerogpu_cmd_renders_with_texture_load_ps() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -1202,7 +1202,7 @@ fn aerogpu_cmd_renders_with_texture_load_ps() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -1249,7 +1249,7 @@ fn aerogpu_cmd_renders_with_texture_load_nonzero_coord_ps() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -1471,7 +1471,7 @@ fn aerogpu_cmd_renders_with_texture_load_nonzero_coord_ps() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -1518,7 +1518,7 @@ fn aerogpu_cmd_renders_with_allocation_backed_texture_mip() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
 
@@ -1735,7 +1735,7 @@ fn aerogpu_cmd_renders_with_allocation_backed_texture_mip() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -1761,7 +1761,7 @@ fn aerogpu_cmd_copy_texture2d_reads_allocation_backed_mip() {
         const SRC: u32 = 1;
         const DST: u32 = 2;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
 
@@ -1848,7 +1848,7 @@ fn aerogpu_cmd_copy_texture2d_reads_allocation_backed_mip() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -1895,7 +1895,7 @@ fn aerogpu_cmd_set_constant_buffers_binds_cb0_ranges() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -2114,7 +2114,7 @@ fn aerogpu_cmd_set_constant_buffers_binds_cb0_ranges() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 

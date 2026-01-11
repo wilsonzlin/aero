@@ -80,9 +80,9 @@ fn aerogpu_cmd_rejects_unaligned_buffer_upload() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected unaligned buffer upload to be rejected");
         assert!(
             format!("{err:#}").contains("UPLOAD_RESOURCE"),
@@ -141,9 +141,9 @@ fn aerogpu_cmd_rejects_unaligned_copy_buffer() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected unaligned copy_buffer to be rejected");
         assert!(
             format!("{err:#}").contains("COPY_BUFFER"),
@@ -168,7 +168,7 @@ fn aerogpu_cmd_allows_unaligned_copy_buffer_at_end_of_buffer() {
         let bytes: [u8; 6] = [1, 2, 3, 4, 5, 6];
         let size_bytes = bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let src_alloc_id = 1u32;
         let dst_alloc_id = 2u32;
         let src_gpa = 0x100u64;
@@ -245,7 +245,7 @@ fn aerogpu_cmd_allows_unaligned_copy_buffer_at_end_of_buffer() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 

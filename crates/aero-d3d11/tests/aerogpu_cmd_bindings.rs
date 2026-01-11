@@ -553,8 +553,8 @@ fn aerogpu_cmd_binds_constant_buffer_cb0() {
 
         let stream = finish_stream(stream);
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -787,8 +787,8 @@ fn aerogpu_cmd_binds_texture_and_sampler() {
 
         let stream = finish_stream(stream);
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -1046,8 +1046,8 @@ fn aerogpu_cmd_rebinds_texture_between_draws() {
 
         let stream = finish_stream(stream);
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -1311,7 +1311,7 @@ fn aerogpu_cmd_rebinds_allocation_backed_texture_between_draws_uploads_second_te
 
         let stream = finish_stream(stream);
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
         guest_mem
             .write(alloc_gpa, &[255u8, 0, 0, 255])
             .expect("write red texel");
@@ -1319,7 +1319,7 @@ fn aerogpu_cmd_rebinds_allocation_backed_texture_between_draws_uploads_second_te
             .write(alloc_gpa + 4, &[0u8, 255, 0, 255])
             .expect("write green texel");
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

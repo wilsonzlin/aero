@@ -248,8 +248,8 @@ fn aerogpu_cmd_blend_factor_constant() {
         };
 
         let stream = build_stream([0.25; 4], 0xFFFF_FFFF);
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -288,8 +288,8 @@ fn aerogpu_cmd_sample_mask_discards_draw() {
         };
 
         let stream = build_stream([0.25; 4], 0);
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

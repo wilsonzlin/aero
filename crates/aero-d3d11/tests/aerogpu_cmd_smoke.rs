@@ -82,9 +82,9 @@ fn aerogpu_cmd_renders_solid_red_triangle_fixture() {
             }
         };
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let report = exec
-            .execute_cmd_stream(CMD_TRIANGLE_SM4, None, &guest_mem)
+            .execute_cmd_stream(CMD_TRIANGLE_SM4, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -125,9 +125,9 @@ fn aerogpu_cmd_renders_triangle_fixture_with_small_viewport() {
         // the rest at the clear color.
         patch_first_viewport(&mut stream, 32.0, 32.0);
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let report = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -174,7 +174,7 @@ fn aerogpu_cmd_copy_buffer_writeback_updates_guest_memory() {
         let bytes: [u8; 16] = *b"hello aero-gpu!!";
         let size_bytes = bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let src_alloc_id = 1u32;
         let dst_alloc_id = 2u32;
         let src_gpa = 0x100u64;
@@ -251,7 +251,7 @@ fn aerogpu_cmd_copy_buffer_writeback_updates_guest_memory() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -284,7 +284,7 @@ fn aerogpu_cmd_copy_texture2d_writeback_updates_guest_memory() {
             0xCC, 0xDD,
         ];
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let src_alloc_id = 1u32;
         let dst_alloc_id = 2u32;
         let src_gpa = 0x100u64;
@@ -378,7 +378,7 @@ fn aerogpu_cmd_copy_texture2d_writeback_updates_guest_memory() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
@@ -402,7 +402,7 @@ fn aerogpu_cmd_copy_buffer_validates_bounds() {
         const BUF_A: u32 = 1;
         const BUF_B: u32 = 2;
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let mut stream = Vec::new();
         // Stream header (24 bytes)
@@ -450,7 +450,7 @@ fn aerogpu_cmd_copy_buffer_validates_bounds() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("COPY_BUFFER"), "unexpected error: {msg}");
@@ -471,7 +471,7 @@ fn aerogpu_cmd_copy_texture2d_validates_bounds() {
         const SRC: u32 = 1;
         const DST: u32 = 2;
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let mut stream = Vec::new();
         // Stream header (24 bytes)
@@ -522,7 +522,7 @@ fn aerogpu_cmd_copy_texture2d_validates_bounds() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -586,7 +586,7 @@ fn aerogpu_cmd_copy_texture2d_validates_bounds() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -650,7 +650,7 @@ fn aerogpu_cmd_copy_texture2d_validates_bounds() {
             .copy_from_slice(&total_size.to_le_bytes());
 
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .unwrap_err();
         let msg = err.to_string();
         assert!(

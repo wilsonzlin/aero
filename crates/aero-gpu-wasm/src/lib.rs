@@ -50,7 +50,7 @@ mod wasm {
     }
 
     impl GuestMemory for JsGuestMemory {
-        fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
+        fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
             let len = dst.len();
             let start = usize::try_from(gpa).map_err(|_| GuestMemoryError { gpa, len })?;
             let end = start
@@ -68,7 +68,7 @@ mod wasm {
             Ok(())
         }
 
-        fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+        fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
             let len = src.len();
             let start = usize::try_from(gpa).map_err(|_| GuestMemoryError { gpa, len })?;
             let end = start
@@ -122,8 +122,8 @@ mod wasm {
         let len = len as usize;
         let mut out = vec![0u8; len];
         GUEST_MEMORY.with(|slot| {
-            let slot = slot.borrow();
-            let mem = slot.as_ref().ok_or_else(|| {
+            let mut slot = slot.borrow_mut();
+            let mem = slot.as_mut().ok_or_else(|| {
                 JsValue::from_str(
                     "guest memory is not configured; call set_guest_memory(Uint8Array)",
                 )
@@ -421,7 +421,7 @@ mod wasm {
             None => (None, None),
         };
 
-        let guest_memory = GUEST_MEMORY.with(|slot| slot.borrow().clone());
+        let mut guest_memory = GUEST_MEMORY.with(|slot| slot.borrow().clone());
         let allocations = allocations.as_deref();
         let d3d9_state = D3D9_STATE
             .with(|slot| slot.borrow_mut().take())
@@ -432,32 +432,31 @@ mod wasm {
             })?;
 
         let mut d3d9_state = d3d9_state;
-        let exec_result: Result<(), JsValue> = match (alloc_table.as_ref(), guest_memory.as_ref()) {
-            (Some(_), None) => Err(JsValue::from_str(
-                "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
-            )),
-            (Some(table), Some(mem)) => d3d9_state
-                .executor
-                .execute_cmd_stream_with_guest_memory_for_context_async(
-                    context_id,
-                    &bytes,
-                    mem,
-                    Some(table),
-                )
-                .await
-                .map_err(|err| JsValue::from_str(&err.to_string())),
-            (None, Some(mem)) => d3d9_state
-                .executor
-                .execute_cmd_stream_with_guest_memory_for_context_async(
-                    context_id, &bytes, mem, None,
-                )
-                .await
-                .map_err(|err| JsValue::from_str(&err.to_string())),
-            (None, None) => d3d9_state
-                .executor
-                .execute_cmd_stream_for_context(context_id, &bytes)
-                .map_err(|err| JsValue::from_str(&err.to_string())),
-        };
+        let exec_result: Result<(), JsValue> =
+            match (alloc_table.as_ref(), guest_memory.as_mut()) {
+                (Some(_), None) => Err(JsValue::from_str(
+                    "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
+                )),
+                (Some(table), Some(mem)) => d3d9_state
+                    .executor
+                    .execute_cmd_stream_with_guest_memory_for_context_async(
+                        context_id,
+                        &bytes,
+                        mem,
+                        Some(table),
+                    )
+                    .await
+                    .map_err(|err| JsValue::from_str(&err.to_string())),
+                (None, Some(mem)) => d3d9_state
+                    .executor
+                    .execute_cmd_stream_with_guest_memory_for_context_async(context_id, &bytes, mem, None)
+                    .await
+                    .map_err(|err| JsValue::from_str(&err.to_string())),
+                (None, None) => d3d9_state
+                    .executor
+                    .execute_cmd_stream_for_context(context_id, &bytes)
+                    .map_err(|err| JsValue::from_str(&err.to_string())),
+            };
 
         let processor_result: Result<(Option<u64>, Option<u32>), JsValue> = if exec_result.is_ok() {
             PROCESSOR.with(|processor| {

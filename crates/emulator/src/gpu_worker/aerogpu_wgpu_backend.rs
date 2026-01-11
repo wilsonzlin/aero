@@ -1,6 +1,5 @@
 #![cfg(feature = "aerogpu-exec")]
 
-use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
@@ -32,34 +31,32 @@ impl AerogpuWgpuBackend {
 }
 
 struct MemoryBusGuestMemory<'a> {
-    mem: RefCell<&'a mut dyn MemoryBus>,
+    mem: &'a mut dyn MemoryBus,
 }
 
 impl<'a> MemoryBusGuestMemory<'a> {
     fn new(mem: &'a mut dyn MemoryBus) -> Self {
-        Self {
-            mem: RefCell::new(mem),
-        }
+        Self { mem }
     }
 }
 
 impl GuestMemory for MemoryBusGuestMemory<'_> {
-    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
+    fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
         let len = dst.len();
         let _end = gpa
             .checked_add(len as u64)
             .ok_or(GuestMemoryError { gpa, len })?;
         // `MemoryBus` reads are infallible; unmapped accesses yield 0xFF.
-        self.mem.borrow_mut().read_physical(gpa, dst);
+        self.mem.read_physical(gpa, dst);
         Ok(())
     }
 
-    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+    fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
         let len = src.len();
         let _end = gpa
             .checked_add(len as u64)
             .ok_or(GuestMemoryError { gpa, len })?;
-        self.mem.borrow_mut().write_physical(gpa, src);
+        self.mem.write_physical(gpa, src);
         Ok(())
     }
 }
@@ -87,7 +84,7 @@ impl AeroGpuCommandBackend for AerogpuWgpuBackend {
                 return Ok(());
             }
 
-            let guest_mem = MemoryBusGuestMemory::new(mem);
+            let mut guest_mem = MemoryBusGuestMemory::new(mem);
             let allocs = submission
                 .alloc_table
                 .as_deref()
@@ -97,7 +94,7 @@ impl AeroGpuCommandBackend for AerogpuWgpuBackend {
             let report = self.exec.execute_cmd_stream(
                 &submission.cmd_stream,
                 allocs.as_deref(),
-                &guest_mem,
+                &mut guest_mem,
             )?;
 
             for present in report.presents {

@@ -202,7 +202,7 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
 
     let tex_data = [255u8, 0, 0, 255];
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     guest_memory.write(VB_GPA, &vb_data).unwrap();
     guest_memory.write(TEX_GPA, &tex_data).unwrap();
 
@@ -411,7 +411,7 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
@@ -468,7 +468,7 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
 
     // Populate two possible base GPAs. The executor must consult the current submission's
     // allocation table when flushing dirty ranges; it must not bake the base GPA at create time.
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     guest_memory.write(TEX_GPA_A, &[0, 255, 0, 255]).unwrap(); // green
     guest_memory.write(TEX_GPA_B, &[255, 0, 0, 255]).unwrap(); // red
 
@@ -509,7 +509,7 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
 
     exec.execute_cmd_stream_with_guest_memory(
         &stream_create,
-        &guest_memory,
+        &mut guest_memory,
         Some(&alloc_table_create),
     )
     .expect("create submission should succeed");
@@ -712,7 +712,7 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_draw, &guest_memory, Some(&alloc_table_draw))
+    exec.execute_cmd_stream_with_guest_memory(&stream_draw, &mut guest_memory, Some(&alloc_table_draw))
         .expect("draw submission should succeed");
 
     let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
@@ -791,7 +791,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
     let src_tex_data = [255u8, 0, 0, 255];
     let dst_tex_data = [0u8, 255, 0, 255];
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     guest_memory.write(DST_GPA, &dst_tex_data).unwrap();
 
     let alloc_table = AllocTable::new([(
@@ -1017,7 +1017,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
@@ -1051,7 +1051,7 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
     const DST_ALLOC_ID: u32 = 1;
     const DST_GPA: u64 = 0x1000;
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
@@ -1104,7 +1104,7 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let mut out = vec![0u8; pattern.len()];
@@ -1136,7 +1136,7 @@ fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
     const DST_ALLOC_ID: u32 = 1;
     const DST_GPA: u64 = 0x1000;
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     guest_memory
         .write(DST_GPA, &[0xEEu8; 16])
         .expect("write dst sentinel");
@@ -1193,7 +1193,7 @@ fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
     });
 
     let err = exec
-        .execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect_err("execute should fail");
     match err {
         AerogpuD3d9Error::Validation(msg) => {
@@ -1236,7 +1236,7 @@ fn d3d9_create_buffer_rebind_updates_guest_backing() {
     const GPA_A: u64 = 0x1000;
     const GPA_B: u64 = 0x2000;
 
-    let guest_memory = VecGuestMemory::new(0x8000);
+    let mut guest_memory = VecGuestMemory::new(0x8000);
     let alloc_table = AllocTable::new([
         (
             ALLOC_A,
@@ -1298,7 +1298,7 @@ fn d3d9_create_buffer_rebind_updates_guest_backing() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_a, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream_a, &mut guest_memory, Some(&alloc_table))
         .expect("first submit should succeed");
 
     let mut out_a = vec![0u8; pattern_a.len()];
@@ -1335,7 +1335,7 @@ fn d3d9_create_buffer_rebind_updates_guest_backing() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_b, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream_b, &mut guest_memory, Some(&alloc_table))
         .expect("second submit should succeed");
 
     let mut out_a_after = vec![0u8; pattern_a.len()];
@@ -1423,7 +1423,7 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
     ];
     assert_eq!(src_tex_data.len(), (bpr * height) as usize);
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     let dst_init = vec![0xEEu8; (row_pitch * height) as usize];
     guest_memory.write(DST_GPA, &dst_init).unwrap();
     let alloc_table = AllocTable::new([(
@@ -1493,7 +1493,7 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let mut out = vec![0u8; (row_pitch * height) as usize];
@@ -1535,7 +1535,7 @@ fn d3d9_copy_texture2d_writeback_rejects_readonly_alloc() {
     let row_pitch = 4u32;
     let backing_len = (row_pitch * height) as usize;
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     let sentinel = vec![0xEEu8; backing_len];
     guest_memory.write(DST_GPA, &sentinel).unwrap();
     let alloc_table = AllocTable::new([(
@@ -1607,7 +1607,7 @@ fn d3d9_copy_texture2d_writeback_rejects_readonly_alloc() {
     });
 
     let err = exec
-        .execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect_err("execute should fail");
     match err {
         AerogpuD3d9Error::Validation(msg) => {
@@ -1658,7 +1658,7 @@ fn d3d9_create_texture2d_rebind_updates_guest_backing() {
     let backing_len = (row_pitch * height) as usize;
     let bpr = (width * 4) as usize;
 
-    let guest_memory = VecGuestMemory::new(0x8000);
+    let mut guest_memory = VecGuestMemory::new(0x8000);
     guest_memory
         .write(GPA_A, &vec![0xEEu8; backing_len])
         .unwrap();
@@ -1746,7 +1746,7 @@ fn d3d9_create_texture2d_rebind_updates_guest_backing() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_a, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream_a, &mut guest_memory, Some(&alloc_table))
         .expect("first submit should succeed");
 
     let mut out_a = vec![0u8; backing_len];
@@ -1797,7 +1797,7 @@ fn d3d9_create_texture2d_rebind_updates_guest_backing() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_b, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream_b, &mut guest_memory, Some(&alloc_table))
         .expect("second submit should succeed");
 
     let mut out_a_after = vec![0u8; backing_len];
@@ -1894,7 +1894,7 @@ fn d3d9_copy_texture2d_writeback_respects_copy_region() {
     ];
     let pixel = [255u8, 0, 0, 255];
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     guest_memory
         .write(DST_GPA, &vec![0xEEu8; backing_len])
         .unwrap();
@@ -1968,7 +1968,7 @@ fn d3d9_copy_texture2d_writeback_respects_copy_region() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let mut out = vec![0u8; backing_len];
@@ -2018,7 +2018,7 @@ fn d3d9_copy_texture2d_writeback_encodes_x8_alpha_as_255() {
     let row1 = row_pitch as usize;
     upload[row1..row1 + 8].copy_from_slice(&[7, 8, 9, 0, 10, 11, 12, 0]);
 
-    let guest_memory = VecGuestMemory::new(0x4000);
+    let mut guest_memory = VecGuestMemory::new(0x4000);
     guest_memory
         .write(DST_GPA, &vec![0xEEu8; backing_total])
         .unwrap();
@@ -2088,7 +2088,7 @@ fn d3d9_copy_texture2d_writeback_encodes_x8_alpha_as_255() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory(&stream, &mut guest_memory, Some(&alloc_table))
         .expect("execute should succeed");
 
     let mut out = vec![0u8; backing_total];

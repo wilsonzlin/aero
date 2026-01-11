@@ -73,7 +73,7 @@ async fn aerogpu_d3d9_writeback_dst_updates_guest_memory_on_wasm() {
         }
     }
 
-    let guest_mem = VecGuestMemory::new(0x10000);
+    let mut guest_mem = VecGuestMemory::new(0x10000);
 
     let buf_src_alloc_id = 1u32;
     let buf_dst_alloc_id = 2u32;
@@ -234,7 +234,7 @@ async fn aerogpu_d3d9_writeback_dst_updates_guest_memory_on_wasm() {
     stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&total_size.to_le_bytes());
 
-    exec.execute_cmd_stream_with_guest_memory_async(&stream, &guest_mem, Some(&alloc_table))
+    exec.execute_cmd_stream_with_guest_memory_async(&stream, &mut guest_mem, Some(&alloc_table))
         .await
         .unwrap();
 

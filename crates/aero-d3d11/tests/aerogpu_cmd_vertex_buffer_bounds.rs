@@ -233,9 +233,9 @@ fn aerogpu_cmd_rejects_vertex_buffer_offset_out_of_bounds() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected OOB vertex buffer offset to be rejected");
         assert!(
             format!("{err:#}").contains("vertex buffer"),

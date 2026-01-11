@@ -148,7 +148,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         let vb_gpa = 0x1000u64;
@@ -308,7 +308,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -365,7 +365,7 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory containing two potential backing locations for the same alloc_id.
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
         const ALLOC_TEX: u32 = 1;
         let tex_gpa_a = 0x1000u64;
         let tex_gpa_b = 0x2000u64;
@@ -523,7 +523,7 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
             .write(cmd_a_gpa, &stream_a)
             .expect("write cmd stream A");
         let report_a = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_a_gpa,
             stream_a.len() as u32,
             alloc_table_gpa,
@@ -623,7 +623,7 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
             .write(cmd_b_gpa, &stream_b)
             .expect("write cmd stream B");
         let report_b = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_b_gpa,
             stream_b.len() as u32,
             alloc_table_gpa,
@@ -672,7 +672,7 @@ fn copy_buffer_executes_before_draw() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Host-owned buffers are updated through UPLOAD_RESOURCE, so no alloc table is needed.
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -824,7 +824,7 @@ fn copy_buffer_executes_before_draw() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             /*alloc_table_gpa=*/ 0,
@@ -871,7 +871,7 @@ fn copy_texture2d_executes_before_draw() {
         };
 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -1027,7 +1027,7 @@ fn copy_texture2d_executes_before_draw() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             /*alloc_table_gpa=*/ 0,
@@ -1074,7 +1074,7 @@ fn copy_buffer_writeback_writes_guest_backing() {
         };
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 1;
         const DST_GPA: u64 = 0x1000;
@@ -1157,7 +1157,7 @@ fn copy_buffer_writeback_writes_guest_backing() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -1187,7 +1187,7 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
         };
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 1;
         const DST_GPA: u64 = 0x1000;
@@ -1269,7 +1269,7 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -1309,7 +1309,7 @@ fn copy_texture2d_writeback_writes_guest_backing() {
         };
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 1;
         const DST_GPA: u64 = 0x1000;
@@ -1410,7 +1410,7 @@ fn copy_texture2d_writeback_writes_guest_backing() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -1444,7 +1444,7 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
         };
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 99;
         const DST_GPA: u64 = 0x1000;
@@ -1553,7 +1553,7 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -1587,7 +1587,7 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
         };
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         const ALLOC_DST: u32 = 1;
         const DST_GPA: u64 = 0x1000;
@@ -1688,7 +1688,7 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -1729,7 +1729,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let guest = VecGuestMemory::new(0x30_000);
+        let mut guest = VecGuestMemory::new(0x30_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         const ALLOC_IB: u32 = 3;
@@ -1930,7 +1930,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -1977,7 +1977,7 @@ fn upload_resource_updates_host_owned_resources() {
         };
 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -2096,8 +2096,13 @@ fn upload_resource_updates_host_owned_resources() {
         let cmd_gpa = 0x9000u64;
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
-        let report =
-            exec.process_submission_from_guest_memory(&guest, cmd_gpa, stream.len() as u32, 0, 0);
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_gpa,
+            stream.len() as u32,
+            0,
+            0,
+        );
         assert!(
             report.is_ok(),
             "executor report had errors: {:#?}",
@@ -2193,7 +2198,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Guest memory + allocation table.
-        let guest = VecGuestMemory::new(0x40_000);
+        let mut guest = VecGuestMemory::new(0x40_000);
         const ALLOC_VB: u32 = 1;
         const ALLOC_TEX: u32 = 2;
         let vb_gpa = 0x1000u64;
@@ -2350,7 +2355,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
         let report = exec.process_submission_from_guest_memory(
-            &guest,
+            &mut guest,
             cmd_gpa,
             stream.len() as u32,
             alloc_table_gpa,
@@ -2396,7 +2401,7 @@ fn draw_to_bgra_render_target_is_supported() {
         };
 
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-        let guest = VecGuestMemory::new(0x20_000);
+        let mut guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -2515,8 +2520,13 @@ fn draw_to_bgra_render_target_is_supported() {
         let cmd_gpa = 0x9000u64;
         guest.write(cmd_gpa, &stream).expect("write command stream");
 
-        let report =
-            exec.process_submission_from_guest_memory(&guest, cmd_gpa, stream.len() as u32, 0, 0);
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_gpa,
+            stream.len() as u32,
+            0,
+            0,
+        );
         assert!(
             report.is_ok(),
             "executor report had errors: {:#?}",

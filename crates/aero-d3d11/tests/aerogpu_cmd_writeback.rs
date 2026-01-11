@@ -60,7 +60,7 @@ fn copy_buffer_writeback_roundtrip() {
         let copy_dst_offset = 32u64;
         let copy_size = 64u64;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
 
         let src_pattern: Vec<u8> = (0u8..=255u8).collect();
         assert_eq!(src_pattern.len(), buf_size as usize);
@@ -126,7 +126,7 @@ fn copy_buffer_writeback_roundtrip() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -175,7 +175,7 @@ fn copy_buffer_writeback_roundtrip_async() {
         let copy_dst_offset = 32u64;
         let copy_size = 64u64;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
 
         let src_pattern: Vec<u8> = (0u8..=255u8).collect();
         assert_eq!(src_pattern.len(), buf_size as usize);
@@ -241,7 +241,7 @@ fn copy_buffer_writeback_roundtrip_async() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream_async(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream_async(&stream, Some(&allocs), &mut guest_mem)
             .await
             .expect("execute_cmd_stream_async should succeed");
         exec.poll_wait();
@@ -288,7 +288,7 @@ fn copy_buffer_writeback_allows_unaligned_size_at_buffer_end() {
         let src_backing_offset = 0u32;
         let dst_backing_offset = 0x100u32;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
         let src_bytes = [0u8, 1, 2, 3, 4, 5];
         let dst_bytes = [0xEEu8; 6];
         guest_mem
@@ -346,7 +346,7 @@ fn copy_buffer_writeback_allows_unaligned_size_at_buffer_end() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -408,7 +408,7 @@ fn copy_texture2d_writeback_roundtrip() {
 
         let dst_bytes = vec![0x11u8; texture_bytes_len];
 
-        let guest_mem = VecGuestMemory::new(0x8000);
+        let mut guest_mem = VecGuestMemory::new(0x8000);
         guest_mem
             .write(alloc.gpa + src_backing_offset as u64, &src_bytes)
             .expect("write src texture bytes");
@@ -486,7 +486,7 @@ fn copy_texture2d_writeback_roundtrip() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -549,7 +549,7 @@ fn copy_texture2d_writeback_does_not_clobber_uncopied_pixels() {
         let texture_bytes_len = (row_pitch as usize) * (height as usize);
         let dst_bytes = vec![0x11u8; texture_bytes_len];
 
-        let guest_mem = VecGuestMemory::new(0x8000);
+        let mut guest_mem = VecGuestMemory::new(0x8000);
         guest_mem
             .write(alloc.gpa + dst_backing_offset as u64, &dst_bytes)
             .expect("write dst texture bytes");
@@ -660,7 +660,7 @@ fn copy_texture2d_writeback_does_not_clobber_uncopied_pixels() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -711,7 +711,7 @@ fn copy_buffer_clears_dst_dirty_after_copy() {
         let dst_backing_offset = 0x100u32;
         let out_backing_offset = 0x200u32;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
 
         let src_pattern = vec![0xAAu8; buf_size as usize];
         let dst_pattern = vec![0x11u8; buf_size as usize];
@@ -789,7 +789,7 @@ fn copy_buffer_clears_dst_dirty_after_copy() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -842,7 +842,7 @@ fn copy_texture2d_clears_dst_dirty_after_copy() {
         assert_eq!(src_bytes.len(), texture_bytes_len);
         assert_eq!(dst_bytes.len(), texture_bytes_len);
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
         guest_mem
             .write(alloc.gpa + src_backing_offset as u64, &src_bytes)
             .expect("write src texture bytes");
@@ -946,7 +946,7 @@ fn copy_texture2d_clears_dst_dirty_after_copy() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

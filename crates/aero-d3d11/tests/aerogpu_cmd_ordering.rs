@@ -64,7 +64,7 @@ impl SwitchingGuestMemory {
 }
 
 impl GuestMemory for SwitchingGuestMemory {
-    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
+    fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
         // Delegate to VecGuestMemory for bounds checking, then overwrite the designated upload range.
         self.inner.read(gpa, dst)?;
 
@@ -102,7 +102,7 @@ impl GuestMemory for SwitchingGuestMemory {
         Ok(())
     }
 
-    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+    fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
         self.inner.write(gpa, src)
     }
 }
@@ -221,8 +221,8 @@ fn aerogpu_cmd_preserves_upload_copy_ordering() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -271,7 +271,7 @@ fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_buffers() {
         let rb2_offset = 0x200u32;
 
         let src_gpa = alloc.gpa + src_offset as u64;
-        let guest_mem = SwitchingGuestMemory::new(
+        let mut guest_mem = SwitchingGuestMemory::new(
             VecGuestMemory::new(0x2000),
             src_gpa,
             buf_size as usize,
@@ -377,7 +377,7 @@ fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_buffers() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -433,7 +433,7 @@ fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_textures() {
         let allocs = [alloc];
 
         let src_gpa = alloc.gpa;
-        let guest_mem = SwitchingGuestMemory::new(
+        let mut guest_mem = SwitchingGuestMemory::new(
             VecGuestMemory::new(0x2000),
             src_gpa,
             total_bytes,
@@ -518,7 +518,7 @@ fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_textures() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
@@ -562,7 +562,7 @@ fn aerogpu_cmd_preserves_upload_copy_ordering_for_buffers() {
         let rb1_offset = 0u32;
         let rb2_offset = 0x100u32;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
 
         let mut stream = Vec::new();
         // Stream header (24 bytes)
@@ -672,7 +672,7 @@ fn aerogpu_cmd_preserves_upload_copy_ordering_for_buffers() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 

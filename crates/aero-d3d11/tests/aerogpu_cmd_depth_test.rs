@@ -94,7 +94,7 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         let vb_bytes = bytemuck::cast_slice(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -295,7 +295,7 @@ fn aerogpu_cmd_depth_test_rejects_far_fragments() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 

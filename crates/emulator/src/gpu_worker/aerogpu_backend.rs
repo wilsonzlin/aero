@@ -1,5 +1,3 @@
-#[cfg(feature = "aerogpu-native")]
-use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use memory::MemoryBus;
@@ -152,15 +150,13 @@ pub struct NativeAeroGpuBackend {
 
 #[cfg(feature = "aerogpu-native")]
 struct MemoryBusGuestMemory<'a> {
-    mem: RefCell<&'a mut dyn MemoryBus>,
+    mem: &'a mut dyn MemoryBus,
 }
 
 #[cfg(feature = "aerogpu-native")]
 impl<'a> MemoryBusGuestMemory<'a> {
     fn new(mem: &'a mut dyn MemoryBus) -> Self {
-        Self {
-            mem: RefCell::new(mem),
-        }
+        Self { mem }
     }
 }
 
@@ -251,22 +247,22 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
 
 #[cfg(feature = "aerogpu-native")]
 impl aero_gpu::GuestMemory for MemoryBusGuestMemory<'_> {
-    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), aero_gpu::GuestMemoryError> {
+    fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), aero_gpu::GuestMemoryError> {
         let len = dst.len();
         let _end = gpa
             .checked_add(len as u64)
             .ok_or(aero_gpu::GuestMemoryError { gpa, len })?;
         // `MemoryBus` reads are infallible; unmapped accesses yield 0xFF.
-        self.mem.borrow_mut().read_physical(gpa, dst);
+        self.mem.read_physical(gpa, dst);
         Ok(())
     }
 
-    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), aero_gpu::GuestMemoryError> {
+    fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), aero_gpu::GuestMemoryError> {
         let len = src.len();
         let _end = gpa
             .checked_add(len as u64)
             .ok_or(aero_gpu::GuestMemoryError { gpa, len })?;
-        self.mem.borrow_mut().write_physical(gpa, src);
+        self.mem.write_physical(gpa, src);
         Ok(())
     }
 }
@@ -302,7 +298,7 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
             return Ok(());
         }
 
-        let guest_mem = MemoryBusGuestMemory::new(mem);
+        let mut guest_mem = MemoryBusGuestMemory::new(mem);
         let alloc_table = match submission
             .alloc_table
             .as_deref()
@@ -325,7 +321,7 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
         let result = self.exec.execute_cmd_stream_with_guest_memory_for_context(
             submission.context_id,
             &submission.cmd_stream,
-            &guest_mem,
+            &mut guest_mem,
             alloc_table.as_ref(),
         );
 

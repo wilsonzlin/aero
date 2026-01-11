@@ -168,14 +168,14 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled() {
         setup[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&setup, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&setup, None, &mut guest_mem)
             .expect("setup cmd stream should succeed");
         exec.poll_wait();
 
         // Case 1: Depth clip enabled (default) -> triangle should be clipped away (z=2, w=1).
         let stream_enabled = build_draw_stream(RT, VB, VS, PS, IL, 0);
-        exec.execute_cmd_stream(&stream_enabled, None, &guest_mem)
+        exec.execute_cmd_stream(&stream_enabled, None, &mut guest_mem)
             .expect("draw (depth clip enabled) should succeed");
         exec.poll_wait();
         let pixels = exec
@@ -193,7 +193,7 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled() {
             IL,
             AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
         );
-        exec.execute_cmd_stream(&stream_disabled, None, &guest_mem)
+        exec.execute_cmd_stream(&stream_disabled, None, &mut guest_mem)
             .expect("draw (depth clip disabled) should succeed");
         exec.poll_wait();
         let pixels = exec

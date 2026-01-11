@@ -58,10 +58,10 @@ fn alloc_table_duplicate_alloc_id_is_rejected() {
         ],
     );
 
-    let mem = VecGuestMemory::new(0x4000);
+    let mut mem = VecGuestMemory::new(0x4000);
     mem.write(gpa, &bytes).unwrap();
 
-    let err = AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes)
+    let err = AllocTable::decode_from_guest_memory(&mut mem, gpa, size_bytes)
         .expect_err("duplicate alloc_id must be rejected");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
@@ -78,10 +78,11 @@ fn alloc_table_header_stride_too_small_is_rejected() {
     let size_bytes = AerogpuAllocTableHeader::SIZE_BYTES as u32;
     let bytes = build_alloc_table_bytes(size_bytes, 1, 0, &[]);
 
-    let mem = VecGuestMemory::new(0x2000);
+    let mut mem = VecGuestMemory::new(0x2000);
     mem.write(gpa, &bytes).unwrap();
 
-    let err = AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes).expect_err("must fail");
+    let err =
+        AllocTable::decode_from_guest_memory(&mut mem, gpa, size_bytes).expect_err("must fail");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
     };
@@ -99,10 +100,11 @@ fn alloc_table_header_size_too_small_for_entry_count_is_rejected() {
     let entry_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
     let bytes = build_alloc_table_bytes(size_bytes, 1, entry_stride, &[]);
 
-    let mem = VecGuestMemory::new(0x2000);
+    let mut mem = VecGuestMemory::new(0x2000);
     mem.write(gpa, &bytes).unwrap();
 
-    let err = AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes).expect_err("must fail");
+    let err =
+        AllocTable::decode_from_guest_memory(&mut mem, gpa, size_bytes).expect_err("must fail");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
     };

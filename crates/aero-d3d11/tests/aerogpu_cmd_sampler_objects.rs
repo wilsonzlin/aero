@@ -250,7 +250,7 @@ fn aerogpu_cmd_sampler_repeat_address_mode_is_honored() {
         let vb_bytes = bytemuck::bytes_of(&vertices);
         let vb_size = vb_bytes.len() as u64;
 
-        let guest_mem = VecGuestMemory::new(0x1000);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
         let alloc_id = 1u32;
         let alloc_gpa = 0x100u64;
         guest_mem.write(alloc_gpa, vb_bytes).unwrap();
@@ -473,7 +473,7 @@ fn aerogpu_cmd_sampler_repeat_address_mode_is_honored() {
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 

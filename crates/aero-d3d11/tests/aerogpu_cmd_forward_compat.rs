@@ -51,7 +51,7 @@ fn aerogpu_cmd_present_accepts_trailing_bytes() {
             }
         };
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let build_stream = |with_trailing: bool| {
             let mut stream = Vec::new();
@@ -76,10 +76,10 @@ fn aerogpu_cmd_present_accepts_trailing_bytes() {
         };
 
         let report_base = exec
-            .execute_cmd_stream(&build_stream(false), None, &guest_mem)
+            .execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
             .unwrap();
         let report_extended = exec
-            .execute_cmd_stream(&build_stream(true), None, &guest_mem)
+            .execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
             .unwrap();
 
         assert_eq!(report_base.presents.len(), 1);
@@ -168,7 +168,7 @@ fn aerogpu_cmd_copy_buffer_accepts_trailing_bytes() {
         };
 
         let run = |exec: &mut AerogpuD3d11Executor, with_trailing: bool| -> VecGuestMemory {
-            let guest_mem = VecGuestMemory::new(0x2000);
+            let mut guest_mem = VecGuestMemory::new(0x2000);
             guest_mem
                 .write(alloc.gpa + SRC_OFFSET as u64, &src_bytes)
                 .unwrap();
@@ -176,13 +176,13 @@ fn aerogpu_cmd_copy_buffer_accepts_trailing_bytes() {
                 .write(alloc.gpa + DST_OFFSET as u64, &[0u8; SIZE_BYTES as usize])
                 .unwrap();
 
-            exec.execute_cmd_stream(&build_stream(with_trailing), Some(&allocs), &guest_mem)
+            exec.execute_cmd_stream(&build_stream(with_trailing), Some(&allocs), &mut guest_mem)
                 .unwrap();
             exec.poll_wait();
             guest_mem
         };
 
-        let guest_mem_base = run(&mut exec, false);
+        let mut guest_mem_base = run(&mut exec, false);
         let mut out = [0u8; SIZE_BYTES as usize];
         guest_mem_base
             .read(alloc.gpa + DST_OFFSET as u64, &mut out)
@@ -191,7 +191,7 @@ fn aerogpu_cmd_copy_buffer_accepts_trailing_bytes() {
 
         exec.reset();
 
-        let guest_mem_extended = run(&mut exec, true);
+        let mut guest_mem_extended = run(&mut exec, true);
         let mut out = [0u8; SIZE_BYTES as usize];
         guest_mem_extended
             .read(alloc.gpa + DST_OFFSET as u64, &mut out)
@@ -286,7 +286,7 @@ fn aerogpu_cmd_copy_texture2d_accepts_trailing_bytes() {
         };
 
         let run = |exec: &mut AerogpuD3d11Executor, with_trailing: bool| -> VecGuestMemory {
-            let guest_mem = VecGuestMemory::new(0x2000);
+            let mut guest_mem = VecGuestMemory::new(0x2000);
             guest_mem
                 .write(alloc.gpa + SRC_OFFSET as u64, &src_pixels)
                 .unwrap();
@@ -294,13 +294,13 @@ fn aerogpu_cmd_copy_texture2d_accepts_trailing_bytes() {
                 .write(alloc.gpa + DST_OFFSET as u64, &[0u8; TEX_SIZE])
                 .unwrap();
 
-            exec.execute_cmd_stream(&build_stream(with_trailing), Some(&allocs), &guest_mem)
+            exec.execute_cmd_stream(&build_stream(with_trailing), Some(&allocs), &mut guest_mem)
                 .unwrap();
             exec.poll_wait();
             guest_mem
         };
 
-        let guest_mem_base = run(&mut exec, false);
+        let mut guest_mem_base = run(&mut exec, false);
         let mut out = [0u8; TEX_SIZE];
         guest_mem_base
             .read(alloc.gpa + DST_OFFSET as u64, &mut out)
@@ -309,7 +309,7 @@ fn aerogpu_cmd_copy_texture2d_accepts_trailing_bytes() {
 
         exec.reset();
 
-        let guest_mem_extended = run(&mut exec, true);
+        let mut guest_mem_extended = run(&mut exec, true);
         let mut out = [0u8; TEX_SIZE];
         guest_mem_extended
             .read(alloc.gpa + DST_OFFSET as u64, &mut out)
@@ -329,7 +329,7 @@ fn aerogpu_cmd_set_samplers_accepts_trailing_bytes() {
             }
         };
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let build_stream = |with_trailing: bool| {
             let mut stream = Vec::new();
@@ -358,9 +358,9 @@ fn aerogpu_cmd_set_samplers_accepts_trailing_bytes() {
             stream
         };
 
-        exec.execute_cmd_stream(&build_stream(false), None, &guest_mem)
+        exec.execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
             .unwrap();
-        exec.execute_cmd_stream(&build_stream(true), None, &guest_mem)
+        exec.execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
             .unwrap();
     });
 }
@@ -376,7 +376,7 @@ fn aerogpu_cmd_set_constant_buffers_accepts_trailing_bytes() {
             }
         };
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let build_stream = |with_trailing: bool| {
             let mut stream = Vec::new();
@@ -408,9 +408,9 @@ fn aerogpu_cmd_set_constant_buffers_accepts_trailing_bytes() {
             stream
         };
 
-        exec.execute_cmd_stream(&build_stream(false), None, &guest_mem)
+        exec.execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
             .unwrap();
-        exec.execute_cmd_stream(&build_stream(true), None, &guest_mem)
+        exec.execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
             .unwrap();
     });
 }
@@ -426,7 +426,7 @@ fn aerogpu_cmd_set_shader_constants_f_accepts_trailing_bytes() {
             }
         };
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
 
         let build_stream = |with_trailing: bool| {
             let mut stream = Vec::new();
@@ -456,11 +456,11 @@ fn aerogpu_cmd_set_shader_constants_f_accepts_trailing_bytes() {
             stream
         };
 
-        exec.execute_cmd_stream(&build_stream(false), None, &guest_mem)
+        exec.execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
             .unwrap();
         exec.poll_wait();
         exec.reset();
-        exec.execute_cmd_stream(&build_stream(true), None, &guest_mem)
+        exec.execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
             .unwrap();
         exec.poll_wait();
     });
@@ -770,8 +770,8 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
         };
 
         let pixels_base = {
-            let guest_mem = VecGuestMemory::new(0x1000);
-            exec.execute_cmd_stream(&build_stream(false), None, &guest_mem)
+            let mut guest_mem = VecGuestMemory::new(0x1000);
+            exec.execute_cmd_stream(&build_stream(false), None, &mut guest_mem)
                 .unwrap();
             exec.poll_wait();
             exec.read_texture_rgba8(RT).await.unwrap()
@@ -791,8 +791,8 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
         exec.reset();
 
         let pixels_ext = {
-            let guest_mem = VecGuestMemory::new(0x1000);
-            exec.execute_cmd_stream(&build_stream(true), None, &guest_mem)
+            let mut guest_mem = VecGuestMemory::new(0x1000);
+            exec.execute_cmd_stream(&build_stream(true), None, &mut guest_mem)
                 .unwrap();
             exec.poll_wait();
             exec.read_texture_rgba8(RT).await.unwrap()

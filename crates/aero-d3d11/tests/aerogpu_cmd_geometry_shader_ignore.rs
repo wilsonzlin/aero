@@ -78,8 +78,8 @@ fn aerogpu_cmd_ignores_geometry_shader_dxbc_payloads() {
         writer.destroy_shader(1);
         let stream = writer.finish();
 
-        let guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &guest_mem)
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("geometry shader DXBC should be ignored, not rejected");
     });
 }
@@ -102,9 +102,9 @@ fn aerogpu_cmd_still_rejects_vertex_pixel_stage_mismatch() {
         writer.create_shader_dxbc(2, AerogpuShaderStage::Pixel, &vs_dxbc);
         let stream = writer.finish();
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("vertex/pixel stage mismatch should still error");
         assert!(
             err.to_string().contains("stage mismatch"),

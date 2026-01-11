@@ -62,9 +62,9 @@ fn aerogpu_cmd_set_render_targets_rejects_gaps() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0);
+        let mut guest_mem = VecGuestMemory::new(0);
         let err = exec
-            .execute_cmd_stream(&stream, None, &guest_mem)
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected SET_RENDER_TARGETS gap to error");
         assert!(err.to_string().contains("gaps are not supported"));
     });

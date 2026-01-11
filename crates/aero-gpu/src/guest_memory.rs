@@ -5,7 +5,6 @@
 //! both native Rust and WASM (via future JS glue).
 
 use core::fmt;
-use std::cell::{Ref, RefCell, RefMut};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GuestMemoryError {
@@ -25,34 +24,34 @@ impl fmt::Display for GuestMemoryError {
 
 impl std::error::Error for GuestMemoryError {}
 
-/// Minimal guest memory interface.
+/// Minimal guest memory read/write interface.
 pub trait GuestMemory {
-    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError>;
-    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError>;
+    fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError>;
+    fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError>;
 }
 
 /// Simple contiguous in-memory guest RAM implementation for tests.
 #[derive(Clone, Debug)]
 pub struct VecGuestMemory {
-    mem: RefCell<Vec<u8>>,
+    mem: Vec<u8>,
 }
 
 impl VecGuestMemory {
     pub fn new(size_bytes: usize) -> Self {
         Self {
-            mem: RefCell::new(vec![0u8; size_bytes]),
+            mem: vec![0u8; size_bytes],
         }
     }
 
-    pub fn as_slice(&self) -> Ref<'_, [u8]> {
-        Ref::map(self.mem.borrow(), |v| v.as_slice())
+    pub fn as_slice(&self) -> &[u8] {
+        self.mem.as_slice()
     }
 
-    pub fn as_mut_slice(&self) -> RefMut<'_, [u8]> {
-        RefMut::map(self.mem.borrow_mut(), |v| v.as_mut_slice())
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.mem.as_mut_slice()
     }
 
-    pub fn write(&self, gpa: u64, data: &[u8]) -> Result<(), GuestMemoryError> {
+    pub fn write(&mut self, gpa: u64, data: &[u8]) -> Result<(), GuestMemoryError> {
         let start = usize::try_from(gpa).map_err(|_| GuestMemoryError {
             gpa,
             len: data.len(),
@@ -61,8 +60,7 @@ impl VecGuestMemory {
             gpa,
             len: data.len(),
         })?;
-        let mut mem = self.mem.borrow_mut();
-        let slice = mem.get_mut(start..end).ok_or(GuestMemoryError {
+        let slice = self.mem.get_mut(start..end).ok_or(GuestMemoryError {
             gpa,
             len: data.len(),
         })?;
@@ -72,7 +70,7 @@ impl VecGuestMemory {
 }
 
 impl GuestMemory for VecGuestMemory {
-    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
+    fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
         let start = usize::try_from(gpa).map_err(|_| GuestMemoryError {
             gpa,
             len: dst.len(),
@@ -81,8 +79,7 @@ impl GuestMemory for VecGuestMemory {
             gpa,
             len: dst.len(),
         })?;
-        let mem = self.mem.borrow();
-        let slice = mem.get(start..end).ok_or(GuestMemoryError {
+        let slice = self.mem.get(start..end).ok_or(GuestMemoryError {
             gpa,
             len: dst.len(),
         })?;
@@ -90,7 +87,7 @@ impl GuestMemory for VecGuestMemory {
         Ok(())
     }
 
-    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+    fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
         VecGuestMemory::write(self, gpa, src)
     }
 }

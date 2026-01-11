@@ -494,7 +494,7 @@ impl AerogpuResourceManager {
         &mut self,
         handle: AerogpuHandle,
         dirty: DirtyRange,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         alloc_table: &HashMap<u32, AerogpuAllocEntry>,
     ) -> Result<()> {
         let buf = self
@@ -556,7 +556,7 @@ impl AerogpuResourceManager {
         &mut self,
         handle: AerogpuHandle,
         dirty: DirtyRange,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &mut dyn GuestMemory,
         alloc_table: &HashMap<u32, AerogpuAllocEntry>,
     ) -> Result<()> {
         let tex = self

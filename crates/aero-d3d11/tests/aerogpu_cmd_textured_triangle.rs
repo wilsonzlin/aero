@@ -493,8 +493,8 @@ fn aerogpu_cmd_renders_textured_fullscreen_triangle() {
         stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
             .copy_from_slice(&total_size.to_le_bytes());
 
-        let guest_mem = VecGuestMemory::new(0x1000);
-        exec.execute_cmd_stream(&stream, None, &guest_mem).unwrap();
+        let mut guest_mem = VecGuestMemory::new(0x1000);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem).unwrap();
         exec.poll_wait();
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();

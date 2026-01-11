@@ -190,7 +190,7 @@ impl AllocTable {
     }
 
     pub fn decode_from_guest_memory(
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         table_gpa: u64,
         table_size_bytes: u32,
     ) -> Result<Self, ExecutorError> {
@@ -496,7 +496,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     pub fn process_cmd_stream(
         &mut self,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> ExecutionReport {
         match self.execute_cmd_stream_internal(bytes, guest_memory, alloc_table) {
@@ -516,7 +516,7 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     pub fn process_submission_from_guest_memory(
         &mut self,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         cmd_gpa: u64,
         cmd_size_bytes: u32,
         alloc_table_gpa: u64,
@@ -564,7 +564,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     pub fn execute_cmd_stream(
         &mut self,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         self.execute_cmd_stream_internal(bytes, guest_memory, alloc_table)
@@ -575,7 +575,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     fn execute_cmd_stream_internal(
         &mut self,
         bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<u32, (usize, ExecutorError, u32)> {
         let stream =
@@ -1354,7 +1354,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         src_offset_bytes: u64,
         size_bytes: u64,
         flags: u32,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         if size_bytes == 0 {
@@ -1524,7 +1524,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         width: u32,
         height: u32,
         flags: u32,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         if width == 0 || height == 0 {
@@ -2049,7 +2049,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         instance_count: u32,
         first_vertex: u32,
         first_instance: u32,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(rt) = self.state.render_target else {
@@ -2159,7 +2159,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         first_index: u32,
         base_vertex: i32,
         first_instance: u32,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(rt) = self.state.render_target else {
@@ -2286,7 +2286,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     fn flush_buffer_if_dirty(
         &mut self,
         handle: u32,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(buffer) = self.buffers.get_mut(&handle) else {
@@ -2336,7 +2336,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     fn flush_texture_if_dirty(
         &mut self,
         handle: u32,
-        guest_memory: &dyn GuestMemory,
+        guest_memory: &mut dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(tex) = self.textures.get_mut(&handle) else {
@@ -2533,13 +2533,13 @@ mod tests {
 
     #[test]
     fn alloc_table_decode_accepts_valid_entries() {
-        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut guest = crate::guest_memory::VecGuestMemory::new(4096);
         let table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000), (2, 0x3000, 0x4000)]);
         let table_gpa = 0x100u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
         let table =
-            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+            AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
                 .unwrap();
         assert_eq!(table.get(1).unwrap().gpa, 0x1000);
         assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
@@ -2549,7 +2549,7 @@ mod tests {
 
     #[test]
     fn alloc_table_decode_accepts_extended_entry_stride_bytes() {
-        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut guest = crate::guest_memory::VecGuestMemory::new(4096);
         let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES as u32 + 16;
         let table_bytes = build_alloc_table_with_stride(
             &[(1, 0x1000, 0x2000), (2, 0x3000, 0x4000)],
@@ -2559,7 +2559,7 @@ mod tests {
         guest.write(table_gpa, &table_bytes).unwrap();
 
         let table =
-            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+            AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
                 .unwrap();
         assert_eq!(table.get(1).unwrap().gpa, 0x1000);
         assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
@@ -2569,13 +2569,13 @@ mod tests {
 
     #[test]
     fn alloc_table_decode_accepts_zero_gpa() {
-        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut guest = crate::guest_memory::VecGuestMemory::new(4096);
         let table_bytes = build_alloc_table(&[(1, 0, 0x2000)]);
         let table_gpa = 0x180u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
         let table =
-            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+            AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
                 .unwrap();
         assert_eq!(table.get(1).unwrap().gpa, 0);
         assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
@@ -2583,12 +2583,12 @@ mod tests {
 
     #[test]
     fn alloc_table_decode_rejects_alloc_id_zero() {
-        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut guest = crate::guest_memory::VecGuestMemory::new(4096);
         let table_bytes = build_alloc_table(&[(0, 0x1000, 0x2000)]);
         let table_gpa = 0x200u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err = AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+        let err = AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
             .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
@@ -2600,12 +2600,12 @@ mod tests {
 
     #[test]
     fn alloc_table_decode_rejects_duplicate_alloc_id() {
-        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut guest = crate::guest_memory::VecGuestMemory::new(4096);
         let table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000), (1, 0x3000, 0x4000)]);
         let table_gpa = 0x300u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err = AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+        let err = AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
             .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
@@ -2617,7 +2617,7 @@ mod tests {
 
     #[test]
     fn alloc_table_decode_rejects_size_bytes_too_small_for_layout() {
-        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut guest = crate::guest_memory::VecGuestMemory::new(4096);
         let mut table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000)]);
         // Corrupt the header size_bytes field so the prefix validation fails.
         table_bytes[8..12]
@@ -2625,7 +2625,7 @@ mod tests {
         let table_gpa = 0x400u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err = AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+        let err = AllocTable::decode_from_guest_memory(&mut guest, table_gpa, table_bytes.len() as u32)
             .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
