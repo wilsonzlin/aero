@@ -79,6 +79,22 @@ pub struct AcpiConfig {
     pub pci_mmio_base: u32,
     pub pci_mmio_size: u32,
 
+    /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
+    ///
+    /// When set to a non-zero value, [`AcpiTables::build`] will emit an `MCFG`
+    /// table describing the ECAM region and the PCI root bridge will report a
+    /// PCIe-compatible HID (`PNP0A08`).
+    ///
+    /// Set to 0 to omit the `MCFG` table and expose a legacy PCI root bridge
+    /// (`PNP0A03`) only.
+    pub pcie_ecam_base: u64,
+    /// PCI segment group number for the ECAM region (usually 0).
+    pub pcie_segment: u16,
+    /// First bus number covered by the ECAM region.
+    pub pcie_start_bus: u8,
+    /// Last bus number covered by the ECAM region.
+    pub pcie_end_bus: u8,
+
     /// Mapping of PCI PIRQ[A-D] to platform GSIs (used by the DSDT `_PRT`).
     ///
     /// The swizzle follows: `pirq = (device + pin) mod 4` where `pin` is
@@ -116,6 +132,14 @@ impl Default for AcpiConfig {
             pci_mmio_base: 0xC000_0000,
             pci_mmio_size: 0x3EC0_0000,
 
+            // Disabled by default. Platforms that want PCIe-friendly config
+            // access should set this to the mapped ECAM base (and optionally
+            // adjust `pci_mmio_base/pci_mmio_size` to avoid overlaps).
+            pcie_ecam_base: 0,
+            pcie_segment: 0,
+            pcie_start_bus: 0,
+            pcie_end_bus: 0xFF,
+
             // Match the default routing in `devices::pci::irq_router::PciIntxRouterConfig`.
             pirq_to_gsi: [10, 11, 12, 13],
         }
@@ -130,6 +154,7 @@ pub struct AcpiAddresses {
     pub fadt: u64,
     pub madt: u64,
     pub hpet: u64,
+    pub mcfg: Option<u64>,
     pub dsdt: u64,
     pub facs: u64,
 }
@@ -143,6 +168,7 @@ pub struct AcpiTables {
     pub fadt: Vec<u8>,
     pub madt: Vec<u8>,
     pub hpet: Vec<u8>,
+    pub mcfg: Option<Vec<u8>>,
     pub dsdt: Vec<u8>,
     pub facs: Vec<u8>,
 }
@@ -157,6 +183,7 @@ impl fmt::Debug for AcpiTables {
             .field("fadt_len", &self.fadt.len())
             .field("madt_len", &self.madt.len())
             .field("hpet_len", &self.hpet.len())
+            .field("mcfg_len", &self.mcfg.as_ref().map(|t| t.len()))
             .field("dsdt_len", &self.dsdt.len())
             .field("facs_len", &self.facs.len())
             .finish()
@@ -192,6 +219,15 @@ impl AcpiTables {
         let hpet = build_hpet(cfg);
         next = align_up(hpet_addr + hpet.len() as u64, align);
 
+        let (mcfg_addr, mcfg) = if cfg.pcie_ecam_base != 0 {
+            let mcfg_addr = align_up(next, align);
+            let mcfg = build_mcfg(cfg);
+            next = align_up(mcfg_addr + mcfg.len() as u64, align);
+            (Some(mcfg_addr), Some(mcfg))
+        } else {
+            (None, None)
+        };
+
         let rsdt_addr = align_up(next, align);
         let fadt32: u32 = fadt_addr
             .try_into()
@@ -202,11 +238,22 @@ impl AcpiTables {
         let hpet32: u32 = hpet_addr
             .try_into()
             .expect("ACPI tables must be placed below 4GiB to populate the RSDT");
-        let rsdt = build_rsdt(cfg, &[fadt32, madt32, hpet32]);
+        let mut rsdt_entries = vec![fadt32, madt32, hpet32];
+        if let Some(addr) = mcfg_addr {
+            let addr32: u32 = addr
+                .try_into()
+                .expect("ACPI tables must be placed below 4GiB to populate the RSDT");
+            rsdt_entries.push(addr32);
+        }
+        let rsdt = build_rsdt(cfg, &rsdt_entries);
         next = align_up(rsdt_addr + rsdt.len() as u64, align);
 
         let xsdt_addr = align_up(next, align);
-        let xsdt = build_xsdt(cfg, &[fadt_addr, madt_addr, hpet_addr]);
+        let mut xsdt_entries = vec![fadt_addr, madt_addr, hpet_addr];
+        if let Some(addr) = mcfg_addr {
+            xsdt_entries.push(addr);
+        }
+        let xsdt = build_xsdt(cfg, &xsdt_entries);
         next = align_up(xsdt_addr + xsdt.len() as u64, align);
 
         let rsdp_addr = align_up(placement.rsdp_addr, 16);
@@ -219,6 +266,7 @@ impl AcpiTables {
             fadt: fadt_addr,
             madt: madt_addr,
             hpet: hpet_addr,
+            mcfg: mcfg_addr,
             dsdt: dsdt_addr,
             facs: facs_addr,
         };
@@ -243,6 +291,7 @@ impl AcpiTables {
             fadt,
             madt,
             hpet,
+            mcfg,
             dsdt,
             facs,
         }
@@ -254,6 +303,9 @@ impl AcpiTables {
         mem.write(self.addresses.fadt, &self.fadt);
         mem.write(self.addresses.madt, &self.madt);
         mem.write(self.addresses.hpet, &self.hpet);
+        if let (Some(addr), Some(table)) = (self.addresses.mcfg, self.mcfg.as_ref()) {
+            mem.write(addr, table);
+        }
         mem.write(self.addresses.rsdt, &self.rsdt);
         mem.write(self.addresses.xsdt, &self.xsdt);
         mem.write(self.addresses.rsdp, &self.rsdp);
@@ -342,6 +394,46 @@ fn build_xsdt(cfg: &AcpiConfig, addrs: &[u64]) -> Vec<u8> {
     for &addr in addrs {
         out.extend_from_slice(&addr.to_le_bytes());
     }
+    finalize_sdt(out)
+}
+
+fn build_mcfg(cfg: &AcpiConfig) -> Vec<u8> {
+    assert!(cfg.pcie_ecam_base != 0, "MCFG requested with pcie_ecam_base=0");
+    assert_eq!(
+        cfg.pcie_ecam_base & ((1u64 << 20) - 1),
+        0,
+        "pcie_ecam_base must be 1MiB-aligned"
+    );
+    assert!(
+        cfg.pcie_start_bus <= cfg.pcie_end_bus,
+        "pcie_start_bus must be <= pcie_end_bus"
+    );
+
+    // MCFG revision 1 (PCI firmware spec / ACPI 3.0+).
+    //
+    // Layout:
+    // - SDT header (36 bytes)
+    // - reserved (8 bytes)
+    // - one allocation structure (16 bytes)
+    let total_len = 36 + 8 + 16;
+    let mut out = Vec::with_capacity(total_len);
+    out.extend_from_slice(&build_sdt_header(
+        *b"MCFG",
+        1,
+        total_len as u32,
+        cfg,
+    ));
+
+    out.extend_from_slice(&[0u8; 8]); // reserved
+
+    // Configuration Space Base Address Allocation Structure.
+    out.extend_from_slice(&cfg.pcie_ecam_base.to_le_bytes());
+    out.extend_from_slice(&cfg.pcie_segment.to_le_bytes());
+    out.push(cfg.pcie_start_bus);
+    out.push(cfg.pcie_end_bus);
+    out.extend_from_slice(&0u32.to_le_bytes()); // reserved
+
+    debug_assert_eq!(out.len(), total_len);
     finalize_sdt(out)
 }
 
@@ -794,11 +886,22 @@ fn aml_s5() -> Vec<u8> {
 
 fn aml_device_pci0(cfg: &AcpiConfig) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0A03"));
+    let pcie = cfg.pcie_ecam_base != 0;
+    if pcie {
+        body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0A08"));
+        // Provide a compatible ID for OSes that still look for a legacy PCI root bridge.
+        body.extend_from_slice(&aml_name_eisa_id(*b"_CID", "PNP0A03"));
+    } else {
+        body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0A03"));
+    }
     body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
     body.extend_from_slice(&aml_name_integer(*b"_ADR", 0));
-    body.extend_from_slice(&aml_name_integer(*b"_BBN", 0));
-    body.extend_from_slice(&aml_name_integer(*b"_SEG", 0));
+    body.extend_from_slice(&aml_name_integer(*b"_BBN", u64::from(cfg.pcie_start_bus)));
+    body.extend_from_slice(&aml_name_integer(*b"_SEG", u64::from(cfg.pcie_segment)));
+    if pcie {
+        // Base address of the ECAM configuration window.
+        body.extend_from_slice(&aml_name_integer(*b"_CBA", cfg.pcie_ecam_base));
+    }
     body.extend_from_slice(&aml_name_buffer(*b"_CRS", &pci0_crs(cfg)));
     body.extend_from_slice(&aml_name_pkg(*b"_PRT", &pci0_prt(cfg)));
 
@@ -918,15 +1021,19 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     let mut out = Vec::new();
 
     // Word Address Space Descriptor (Bus Number).
+    let start_bus = u16::from(cfg.pcie_start_bus);
+    let end_bus_raw = u16::from(cfg.pcie_end_bus);
+    let end_bus = end_bus_raw.max(start_bus);
+    let bus_len = end_bus - start_bus + 1;
     out.extend_from_slice(&word_addr_space_descriptor(
         0x02,
         0x0D, // producer + min/max fixed
         0x00,
         0x0000,
+        start_bus,
+        end_bus,
         0x0000,
-        0x00FF,
-        0x0000,
-        0x0100,
+        bus_len,
     ));
 
     // I/O Port Descriptor for PCI config mechanism 1 (0xCF8..0xCFF).
@@ -957,18 +1064,52 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     ));
 
     // DWord Address Space Descriptor (Memory): PCI MMIO window.
-    let start = cfg.pci_mmio_base;
-    let end = start.wrapping_add(cfg.pci_mmio_size).wrapping_sub(1);
-    out.extend_from_slice(&dword_addr_space_descriptor(
-        0x00,
-        0x0D,
-        0x06, // cacheable, read/write
-        0x0000_0000,
-        start,
-        end,
-        0x0000_0000,
-        cfg.pci_mmio_size,
-    ));
+    //
+    // When ECAM/MMCONFIG is enabled, make sure the configuration space window is not reported as
+    // part of the MMIO window available for PCI BAR allocation.
+    let mmio_start = u64::from(cfg.pci_mmio_base);
+    let mmio_end = mmio_start.saturating_add(u64::from(cfg.pci_mmio_size));
+    let pcie = cfg.pcie_ecam_base != 0;
+    let ecam_start = cfg.pcie_ecam_base;
+    let bus_count = u64::from(cfg.pcie_end_bus.saturating_sub(cfg.pcie_start_bus)) + 1;
+    let ecam_end = ecam_start.saturating_add(bus_count.saturating_mul(1 << 20));
+    {
+        let mut emit_mmio = |range_start: u64, range_end: u64| {
+            if range_end <= range_start {
+                return;
+            }
+            let start: u32 = range_start
+                .try_into()
+                .expect("PCI MMIO window must fit in 32-bit address space");
+            let end_inclusive: u32 = range_end
+                .saturating_sub(1)
+                .try_into()
+                .expect("PCI MMIO window must fit in 32-bit address space");
+            let len: u32 = range_end
+                .saturating_sub(range_start)
+                .try_into()
+                .expect("PCI MMIO window size must fit in 32-bit address space");
+
+            out.extend_from_slice(&dword_addr_space_descriptor(
+                0x00,
+                0x0D,
+                0x06, // cacheable, read/write
+                0x0000_0000,
+                start,
+                end_inclusive,
+                0x0000_0000,
+                len,
+            ));
+        };
+
+        if !pcie || ecam_end <= mmio_start || ecam_start >= mmio_end {
+            emit_mmio(mmio_start, mmio_end);
+        } else {
+            // Split the MMIO window around the ECAM region (which is described separately by MCFG).
+            emit_mmio(mmio_start, ecam_start.min(mmio_end));
+            emit_mmio(ecam_end.max(mmio_start), mmio_end);
+        }
+    }
 
     // EndTag.
     out.extend_from_slice(&[0x79, 0x00]);

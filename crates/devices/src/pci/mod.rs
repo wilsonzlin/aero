@@ -9,6 +9,7 @@ pub mod profile;
 mod acpi;
 mod bios;
 mod bus;
+mod ecam;
 mod ports;
 mod platform;
 mod resources;
@@ -16,6 +17,7 @@ mod resources;
 pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
 pub use bios::bios_post;
 pub use bus::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciMappedBar};
+pub use ecam::{PciEcamConfig, PciEcamMmio, PCIE_ECAM_BUS_STRIDE};
 pub use config::{
     PciBarDefinition, PciBarKind, PciBarRange, PciCommandChange, PciConfigSpace,
     PciConfigSpaceState, PciConfigWriteEffects, PciDevice, PciSubsystemIds, PciVendorDeviceId,

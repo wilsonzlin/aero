@@ -170,6 +170,11 @@ fn parse_sdt_header(buf: &[u8]) -> SdtHeader {
     }
 }
 
+fn read_sdt_signature(mem: &TestMemory, paddr: u64) -> [u8; 4] {
+    let hdr = mem.read(paddr, 4);
+    [hdr[0], hdr[1], hdr[2], hdr[3]]
+}
+
 #[test]
 fn generated_tables_are_self_consistent_and_checksums_pass() {
     let mut cfg = AcpiConfig::default();
@@ -410,4 +415,81 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     ] {
         assert_eq!(addr % DEFAULT_ACPI_ALIGNMENT, 0);
     }
+}
+
+#[test]
+fn mcfg_is_emitted_and_describes_the_ecam_window_when_enabled() {
+    let mut cfg = AcpiConfig::default();
+    cfg.pcie_ecam_base = 0xC000_0000;
+    cfg.pcie_segment = 0;
+    cfg.pcie_start_bus = 0;
+    cfg.pcie_end_bus = 0;
+
+    let placement = AcpiPlacement::default();
+    let tables = AcpiTables::build(&cfg, placement);
+    let mcfg_addr = tables.addresses.mcfg.expect("MCFG should be present");
+
+    // Allocate enough physical memory to cover all the written tables.
+    let max_end = [
+        tables.addresses.rsdp + tables.rsdp.len() as u64,
+        tables.addresses.xsdt + tables.xsdt.len() as u64,
+        tables.addresses.facs + tables.facs.len() as u64,
+        mcfg_addr + tables.mcfg.as_ref().unwrap().len() as u64,
+    ]
+    .into_iter()
+    .max()
+    .unwrap();
+    let mem_size = (max_end + 0x1000) as usize;
+    let mut mem = TestMemory::new(mem_size);
+    tables.write_to(&mut mem);
+
+    // Ensure RSDT/XSDT include the MCFG entry.
+    let rsdp = mem.read(tables.addresses.rsdp, 36);
+    let rsdt_addr = read_u32_le(rsdp, 16) as u64;
+    let xsdt_addr = read_u64_le(rsdp, 24);
+
+    let rsdt_hdr_raw = mem.read(rsdt_addr, 36);
+    let rsdt_hdr = parse_sdt_header(rsdt_hdr_raw);
+    let rsdt_blob = mem.read(rsdt_addr, rsdt_hdr.length as usize);
+    let rsdt_entries = (rsdt_hdr.length as usize - 36) / 4;
+    let mut rsdt_ptrs = Vec::new();
+    for i in 0..rsdt_entries {
+        rsdt_ptrs.push(read_u32_le(rsdt_blob, 36 + i * 4) as u64);
+    }
+    assert!(
+        rsdt_ptrs.contains(&mcfg_addr),
+        "RSDT must include MCFG entry"
+    );
+
+    let xsdt_hdr_raw = mem.read(xsdt_addr, 36);
+    let xsdt_hdr = parse_sdt_header(xsdt_hdr_raw);
+    let xsdt_blob = mem.read(xsdt_addr, xsdt_hdr.length as usize);
+    let xsdt_entries = (xsdt_hdr.length as usize - 36) / 8;
+    let mut xsdt_ptrs = Vec::new();
+    for i in 0..xsdt_entries {
+        xsdt_ptrs.push(read_u64_le(xsdt_blob, 36 + i * 8));
+    }
+    assert!(
+        xsdt_ptrs.contains(&mcfg_addr),
+        "XSDT must include MCFG entry"
+    );
+
+    // Validate MCFG checksum and allocation structure.
+    assert_eq!(read_sdt_signature(&mem, mcfg_addr), *b"MCFG");
+    let mcfg_hdr = parse_sdt_header(mem.read(mcfg_addr, 36));
+    assert_eq!(mcfg_hdr.revision, 1);
+    let mcfg = mem.read(mcfg_addr, mcfg_hdr.length as usize);
+    assert_eq!(checksum(mcfg), 0);
+    assert!(mcfg_hdr.length >= 36 + 8 + 16);
+
+    // First allocation structure begins at offset 44.
+    let ecam_base = read_u64_le(mcfg, 44);
+    let seg = read_u16_le(mcfg, 52);
+    let start_bus = mcfg[54];
+    let end_bus = mcfg[55];
+
+    assert_eq!(ecam_base, cfg.pcie_ecam_base);
+    assert_eq!(seg, cfg.pcie_segment);
+    assert_eq!(start_bus, cfg.pcie_start_bus);
+    assert_eq!(end_bus, cfg.pcie_end_bus);
 }
