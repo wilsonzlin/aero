@@ -1096,7 +1096,8 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
                     const idVendor = isDeviceDescriptor ? bytes[8]! | (bytes[9]! << 8) : null;
                     const idProduct = isDeviceDescriptor ? bytes[10]! | (bytes[11]! << 8) : null;
                     console.log("[io.worker] WebUSB demo result ok", {
-                      bytes: Array.from(bytes),
+                      byteLength: bytes.byteLength,
+                      head: Array.from(bytes.subarray(0, 64)),
                       idVendor,
                       idProduct,
                     });
@@ -1550,7 +1551,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       usbDemo?.onUsbCompletion(msg);
       if (import.meta.env.DEV) {
         if (msg.completion.status === "success" && "data" in msg.completion) {
-          console.log("[io.worker] WebUSB completion success", msg.completion.kind, msg.completion.id, Array.from(msg.completion.data));
+          const data = msg.completion.data;
+          console.log("[io.worker] WebUSB completion success", msg.completion.kind, msg.completion.id, {
+            byteLength: data.byteLength,
+            head: Array.from(data.subarray(0, 64)),
+          });
         } else {
           console.log("[io.worker] WebUSB completion", msg.completion);
         }
