@@ -9,23 +9,38 @@
 #define VIRTIOSND_CTRL_TIMEOUT_DEFAULT_MS 1000u
 
 /*
- * Per-request context. Allocated from NonPagedPool so it is safe to touch from
- * control-queue DPC context.
+ * Per-request context + DMA buffers.
+ *
+ * A control request is submitted as a 2-descriptor chain:
+ *  - request header (device-readable)
+ *  - response/status buffer (device-writable)
+ *
+ * We allocate the entire request context as a single physically-contiguous DMA
+ * buffer so the virtqueue SG list can be built using a simple base+offset
+ * translation (no MmGetPhysicalAddress-based per-page splitting).
  *
  * Lifetime:
  *  - One reference is owned by the sending thread.
  *  - One reference is owned by the virtqueue cookie and released on completion.
  *
- * This ensures the DMA buffers remain valid even if the synchronous wait times
- * out and completion arrives later.
+ * STOP_DEVICE must cancel/drain all active requests before releasing the DMA
+ * adapter so common buffers can be freed safely.
  */
 typedef struct _VIRTIOSND_CTRL_REQUEST {
-    LONG RefCount;
-    KEVENT Event;
-
+    LIST_ENTRY Link;
     LIST_ENTRY InflightLink;
     VIRTIOSND_CONTROL* Owner;
     volatile NTSTATUS CompletionStatus;
+
+    VIRTIOSND_DMA_BUFFER DmaBuf;
+    ULONG ReqOffset;
+    ULONG RespOffset;
+
+    /* 0 = in-flight (queue ref not released), 1 = completed/canceled. */
+    volatile LONG Completed;
+
+    LONG RefCount;
+    KEVENT Event;
 
     ULONG Code;
 
@@ -43,52 +58,39 @@ static __forceinline VOID
 VirtioSndCtrlRequestRelease(_In_ VIRTIOSND_CTRL_REQUEST* Req)
 {
     if (InterlockedDecrement(&Req->RefCount) == 0) {
-        ExFreePoolWithTag(Req, VIRTIOSND_CTRL_REQ_TAG);
+        VIRTIOSND_CONTROL* ctrl;
+        KIRQL oldIrql;
+
+        ctrl = Req->Owner;
+        if (ctrl != NULL) {
+            KeAcquireSpinLock(&ctrl->ReqLock, &oldIrql);
+            RemoveEntryList(&Req->Link);
+            if (IsListEmpty(&ctrl->ReqList)) {
+                KeSetEvent(&ctrl->ReqIdleEvent, IO_NO_INCREMENT, FALSE);
+            }
+            KeReleaseSpinLock(&ctrl->ReqLock, oldIrql);
+        }
+
+        VirtIoSndFreeCommonBuffer(ctrl ? ctrl->DmaCtx : NULL, &Req->DmaBuf);
     }
 }
 
-static NTSTATUS
-VirtioSndCtrlAppendSg(
-    _Inout_updates_(SgCap) VIRTIOSND_SG* Sg,
-    _In_ USHORT SgCap,
-    _Inout_ USHORT* SgCount,
-    _In_reads_bytes_(Length) const VOID* Buffer,
-    _In_ ULONG Length,
-    _In_ BOOLEAN Write)
+static __forceinline BOOLEAN
+VirtioSndCtrlRequestTryAddRef(_Inout_ VIRTIOSND_CTRL_REQUEST* Req)
 {
-    PUCHAR p;
-    ULONG remaining;
+    LONG old;
+    LONG newValue;
 
-    p = (PUCHAR)Buffer;
-    remaining = Length;
-
-    while (remaining != 0) {
-        ULONG pageOffset;
-        ULONG chunk;
-        PHYSICAL_ADDRESS pa;
-
-        if (*SgCount >= SgCap) {
-            return STATUS_INSUFFICIENT_RESOURCES;
+    for (;;) {
+        old = Req->RefCount;
+        if (old == 0) {
+            return FALSE;
         }
-
-        pageOffset = (ULONG)((ULONG_PTR)p & (PAGE_SIZE - 1));
-        chunk = PAGE_SIZE - pageOffset;
-        if (chunk > remaining) {
-            chunk = remaining;
+        newValue = old + 1;
+        if (InterlockedCompareExchange(&Req->RefCount, newValue, old) == old) {
+            return TRUE;
         }
-
-        pa = MmGetPhysicalAddress(p);
-
-        Sg[*SgCount].addr = (UINT64)pa.QuadPart;
-        Sg[*SgCount].len = (UINT32)chunk;
-        Sg[*SgCount].write = Write;
-        (*SgCount)++;
-
-        p += chunk;
-        remaining -= chunk;
     }
-
-    return STATUS_SUCCESS;
 }
 
 static VOID
@@ -96,6 +98,10 @@ VirtioSndCtrlCompleteRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req, _In_ ULONG Use
 {
     KIRQL oldIrql;
     ULONG virtioStatus;
+
+    if (InterlockedCompareExchange(&Req->Completed, 1, 0) != 0) {
+        return;
+    }
 
     Req->UsedLen = UsedLen;
 
@@ -131,10 +137,45 @@ VirtioSndCtrlCompleteRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req, _In_ ULONG Use
     VirtioSndCtrlRequestRelease(Req);
 }
 
+static VOID
+VirtioSndCtrlCancelRequest(_Inout_ VIRTIOSND_CTRL_REQUEST* Req)
+{
+    KIRQL oldIrql;
+
+    if (InterlockedCompareExchange(&Req->Completed, 1, 0) != 0) {
+        return;
+    }
+
+    Req->CompletionStatus = STATUS_CANCELLED;
+    Req->UsedLen = sizeof(ULONG);
+    Req->VirtioStatus = VIRTIO_SND_S_IO_ERR;
+
+    if (Req->RespBuf != NULL && Req->RespCap >= sizeof(ULONG)) {
+        *(UNALIGNED ULONG*)Req->RespBuf = VIRTIO_SND_S_IO_ERR;
+    }
+
+    /* Remove from the control engine's inflight list (best-effort). */
+    if (Req->Owner != NULL) {
+        KeAcquireSpinLock(&Req->Owner->InflightLock, &oldIrql);
+        if (!IsListEmpty(&Req->InflightLink)) {
+            RemoveEntryList(&Req->InflightLink);
+            InitializeListHead(&Req->InflightLink);
+        }
+        KeReleaseSpinLock(&Req->Owner->InflightLock, oldIrql);
+    }
+
+    KeMemoryBarrier();
+    KeSetEvent(&Req->Event, IO_NO_INCREMENT, FALSE);
+
+    /* Drop the queue-owned reference. */
+    VirtioSndCtrlRequestRelease(Req);
+}
+
 VOID
-VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ VIRTIOSND_QUEUE* ControlQ)
+VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx, _In_ VIRTIOSND_QUEUE* ControlQ)
 {
     RtlZeroMemory(Ctrl, sizeof(*Ctrl));
+    Ctrl->DmaCtx = DmaCtx;
     Ctrl->ControlQ = ControlQ;
 
     KeInitializeSpinLock(&Ctrl->InflightLock);
@@ -142,6 +183,66 @@ VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ VIRTIOSND_QUEUE* ControlQ)
 
     ExInitializeFastMutex(&Ctrl->Mutex);
 
+    KeInitializeSpinLock(&Ctrl->ReqLock);
+    InitializeListHead(&Ctrl->ReqList);
+    KeInitializeEvent(&Ctrl->ReqIdleEvent, NotificationEvent, TRUE);
+    Ctrl->Stopping = 0;
+
+    Ctrl->StreamState = VirtioSndStreamStateIdle;
+    RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
+}
+
+_Use_decl_annotations_
+VOID
+VirtioSndCtrlUninit(VIRTIOSND_CONTROL* Ctrl)
+{
+    NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+
+    if (Ctrl == NULL) {
+        return;
+    }
+
+    InterlockedExchange(&Ctrl->Stopping, 1);
+
+    /*
+     * Device is expected to be reset/stopped by the caller before uninit so no
+     * further DMA is in flight. Drain any pending used entries, then complete
+     * and cancel any remaining requests.
+     */
+    VirtioSndCtrlProcessUsed(Ctrl);
+
+    for (;;) {
+        PLIST_ENTRY entry;
+        VIRTIOSND_CTRL_REQUEST* req;
+        KIRQL oldIrql;
+
+        req = NULL;
+
+        KeAcquireSpinLock(&Ctrl->ReqLock, &oldIrql);
+        for (entry = Ctrl->ReqList.Flink; entry != &Ctrl->ReqList; entry = entry->Flink) {
+            VIRTIOSND_CTRL_REQUEST* candidate = CONTAINING_RECORD(entry, VIRTIOSND_CTRL_REQUEST, Link);
+            if (InterlockedCompareExchange(&candidate->Completed, 0, 0) == 0) {
+                if (VirtioSndCtrlRequestTryAddRef(candidate)) {
+                    req = candidate;
+                    break;
+                }
+            }
+        }
+        KeReleaseSpinLock(&Ctrl->ReqLock, oldIrql);
+
+        if (req == NULL) {
+            break;
+        }
+
+        VirtioSndCtrlCancelRequest(req);
+        VirtioSndCtrlRequestRelease(req);
+    }
+
+    (VOID)KeWaitForSingleObject(&Ctrl->ReqIdleEvent, Executive, KernelMode, FALSE, NULL);
+
+    Ctrl->DmaCtx = NULL;
+    Ctrl->ControlQ = NULL;
+    Ctrl->Stopping = 0;
     Ctrl->StreamState = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
 }
@@ -163,6 +264,13 @@ VirtioSndCtrlCancelAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ NTSTATUS CancelStat
         entry = RemoveHeadList(&Ctrl->InflightList);
         req = CONTAINING_RECORD(entry, VIRTIOSND_CTRL_REQUEST, InflightLink);
         InitializeListHead(&req->InflightLink);
+
+        if (InterlockedCompareExchange(&req->Completed, 1, 0) != 0) {
+            /* Already completed/canceled; keep existing completion status. */
+            KeMemoryBarrier();
+            KeSetEvent(&req->Event, IO_NO_INCREMENT, FALSE);
+            continue;
+        }
 
         req->CompletionStatus = CancelStatus;
 
@@ -228,12 +336,14 @@ VirtioSndCtrlSendSyncLocked(
     ULONG reqOffset;
     ULONG respOffset;
     VIRTIOSND_CTRL_REQUEST* ctx;
+    VIRTIOSND_DMA_BUFFER dmaBuf;
     VIRTIOSND_SG sg[16];
     USHORT sgCount;
     LARGE_INTEGER timeout;
     ULONG usedLen;
     ULONG virtioStatus;
     ULONG copyLen;
+    KIRQL oldIrql;
 
     if (OutVirtioStatus != NULL) {
         *OutVirtioStatus = 0;
@@ -252,6 +362,12 @@ VirtioSndCtrlSendSyncLocked(
         Ctrl->ControlQ->Ops->Kick == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
+    if (Ctrl->DmaCtx == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (InterlockedCompareExchange(&Ctrl->Stopping, 0, 0) != 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     reqOffset = ALIGN_UP_BY(sizeof(*ctx), sizeof(ULONG));
     respOffset = ALIGN_UP_BY(reqOffset + ReqLen, sizeof(ULONG));
@@ -261,11 +377,17 @@ VirtioSndCtrlSendSyncLocked(
         return STATUS_INTEGER_OVERFLOW;
     }
 
-    ctx = (VIRTIOSND_CTRL_REQUEST*)ExAllocatePoolWithTag(NonPagedPool, allocSize, VIRTIOSND_CTRL_REQ_TAG);
-    if (ctx == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
+    status = VirtIoSndAllocCommonBuffer(Ctrl->DmaCtx, allocSize, FALSE, &dmaBuf);
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
-    RtlZeroMemory(ctx, sizeof(*ctx));
+    RtlZeroMemory(dmaBuf.Va, allocSize);
+    ctx = (VIRTIOSND_CTRL_REQUEST*)dmaBuf.Va;
+    ctx->Owner = Ctrl;
+    ctx->DmaBuf = dmaBuf;
+    ctx->ReqOffset = reqOffset;
+    ctx->RespOffset = respOffset;
+    ctx->Completed = 0;
 
     /*
      * Hold both references up-front to avoid a race where the device completes
@@ -275,8 +397,14 @@ VirtioSndCtrlSendSyncLocked(
     ctx->RefCount = 2;
     KeInitializeEvent(&ctx->Event, NotificationEvent, FALSE);
     InitializeListHead(&ctx->InflightLink);
-    ctx->Owner = Ctrl;
     ctx->CompletionStatus = STATUS_PENDING;
+
+    KeAcquireSpinLock(&Ctrl->ReqLock, &oldIrql);
+    if (IsListEmpty(&Ctrl->ReqList)) {
+        KeClearEvent(&Ctrl->ReqIdleEvent);
+    }
+    InsertTailList(&Ctrl->ReqList, &ctx->Link);
+    KeReleaseSpinLock(&Ctrl->ReqLock, oldIrql);
 
     ctx->Code = (ReqLen >= sizeof(ULONG)) ? *(UNALIGNED const ULONG*)Req : 0;
     ctx->ReqBuf = ((PUCHAR)ctx) + reqOffset;
@@ -289,21 +417,15 @@ VirtioSndCtrlSendSyncLocked(
     RtlCopyMemory(ctx->ReqBuf, Req, ReqLen);
     RtlZeroMemory(ctx->RespBuf, RespCap);
 
-    sgCount = 0;
-    status = VirtioSndCtrlAppendSg(sg, (USHORT)(sizeof(sg) / sizeof(sg[0])), &sgCount, ctx->ReqBuf, ctx->ReqLen, FALSE);
-    if (NT_SUCCESS(status)) {
-        status = VirtioSndCtrlAppendSg(
-            sg,
-            (USHORT)(sizeof(sg) / sizeof(sg[0])),
-            &sgCount,
-            ctx->RespBuf,
-            ctx->RespCap,
-            TRUE);
-    }
-    if (!NT_SUCCESS(status)) {
-        ExFreePoolWithTag(ctx, VIRTIOSND_CTRL_REQ_TAG);
-        return status;
-    }
+    sg[0].addr = ctx->DmaBuf.DmaAddr + (UINT64)reqOffset;
+    sg[0].len = (UINT32)ReqLen;
+    sg[0].write = FALSE;
+
+    sg[1].addr = ctx->DmaBuf.DmaAddr + (UINT64)respOffset;
+    sg[1].len = (UINT32)RespCap;
+    sg[1].write = TRUE;
+
+    sgCount = 2;
 
     VIRTIOSND_TRACE("ctrlq send code=0x%08lx req_len=%lu resp_cap=%lu\n", ctx->Code, ReqLen, RespCap);
 

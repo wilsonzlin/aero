@@ -5,6 +5,7 @@
 #include <ntddk.h>
 
 #include "virtio_snd_proto.h"
+#include "virtiosnd_dma.h"
 #include "virtiosnd_queue.h"
 
 /*
@@ -37,6 +38,8 @@ typedef struct _VIRTIOSND_PCM_PARAMS {
 } VIRTIOSND_PCM_PARAMS;
 
 typedef struct _VIRTIOSND_CONTROL {
+    PVIRTIOSND_DMA_CONTEXT DmaCtx;
+
     /* Control virtqueue (queue_index=VIRTIO_SND_QUEUE_CONTROL). */
     VIRTIOSND_QUEUE* ControlQ;
 
@@ -47,6 +50,17 @@ typedef struct _VIRTIOSND_CONTROL {
     /* Serializes control operations at PASSIVE_LEVEL (submit + wait + state). */
     FAST_MUTEX Mutex;
 
+    /*
+     * Tracks all active control requests so STOP_DEVICE can cancel and drain
+     * them before releasing the DMA adapter.
+     *
+     * Protected by ReqLock and usable at IRQL <= DISPATCH_LEVEL.
+     */
+    KSPIN_LOCK ReqLock;
+    LIST_ENTRY ReqList;
+    KEVENT ReqIdleEvent;
+    volatile LONG Stopping;
+
     VIRTIOSND_STREAM_STATE StreamState;
     VIRTIOSND_PCM_PARAMS Params;
 } VIRTIOSND_CONTROL, *PVIRTIOSND_CONTROL;
@@ -55,7 +69,13 @@ typedef struct _VIRTIOSND_CONTROL {
 extern "C" {
 #endif
 
-VOID VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ VIRTIOSND_QUEUE* ControlQ);
+VOID VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx, _In_ VIRTIOSND_QUEUE* ControlQ);
+
+/*
+ * Cancels any in-flight control requests and waits for all request contexts to
+ * be freed (PASSIVE_LEVEL only).
+ */
+VOID VirtioSndCtrlUninit(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
 /*
  * Cancel all in-flight synchronous control requests and wake any waiters.

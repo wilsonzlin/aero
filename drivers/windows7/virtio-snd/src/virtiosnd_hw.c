@@ -194,6 +194,8 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
         VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
     }
 
+    VirtioSndCtrlUninit(&Dx->Control);
+
     VirtioSndTxUninit(&Dx->Tx);
 
     VirtIoSndDestroyQueues(Dx);
@@ -260,7 +262,7 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     /* Initialize the protocol engines now that queues are available. */
-    VirtioSndCtrlInit(&Dx->Control, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
+    VirtioSndCtrlInit(&Dx->Control, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
 
     status = VirtIoSndIntxConnect(Dx);
     if (!NT_SUCCESS(status)) {
