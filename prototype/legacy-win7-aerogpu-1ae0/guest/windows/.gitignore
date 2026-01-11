@@ -1,0 +1,12 @@
+# Visual Studio / WDK build outputs (archived prototype only)
+.vs/
+ipch/
+x86/
+x64/
+Win32/
+Debug/
+Release/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
