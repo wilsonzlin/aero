@@ -642,6 +642,154 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	}
 }
 
+func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
+	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendForwardOrigin = true
+
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	openCh := make(chan struct{})
+	gotCh := make(chan []byte, 1)
+
+	dc.OnOpen(func() { close(openCh) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if msg.IsString {
+			return
+		}
+		select {
+		case gotCh <- append([]byte(nil), msg.Data...):
+		default:
+		}
+	})
+
+	// No Origin header is provided; the relay should derive a deterministic Origin
+	// from the request host/scheme.
+	exchangeOffer(t, baseURL, pc)
+
+	select {
+	case <-openCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 datachannel open")
+	}
+
+	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	if err := dc.Send(ping); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+
+	select {
+	case <-gotCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pong")
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
+		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
+	}
+
+	infoAny := dialInfo.Load()
+	info, ok := infoAny.(l2BackendDialInfo)
+	if !ok {
+		t.Fatalf("unexpected dialInfo type: %T", infoAny)
+	}
+	if info.Origin != strings.ToLower(baseURL) {
+		t.Fatalf("backend Origin=%q, want %q", info.Origin, strings.ToLower(baseURL))
+	}
+}
+
+func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.T) {
+	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendForwardOrigin = true
+	relayCfg.L2BackendWSOrigin = "https://backend.example.com"
+
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	openCh := make(chan struct{})
+	gotCh := make(chan []byte, 1)
+
+	dc.OnOpen(func() { close(openCh) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if msg.IsString {
+			return
+		}
+		select {
+		case gotCh <- append([]byte(nil), msg.Data...):
+		default:
+		}
+	})
+
+	headers := http.Header{
+		"Origin": []string{baseURL},
+	}
+	exchangeOfferWithHeaders(t, baseURL+"/offer", headers, pc)
+
+	select {
+	case <-openCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 datachannel open")
+	}
+
+	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	if err := dc.Send(ping); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+
+	select {
+	case <-gotCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pong")
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
+		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
+	}
+
+	infoAny := dialInfo.Load()
+	info, ok := infoAny.(l2BackendDialInfo)
+	if !ok {
+		t.Fatalf("unexpected dialInfo type: %T", infoAny)
+	}
+	if info.Origin != "https://backend.example.com" {
+		t.Fatalf("backend Origin=%q, want %q", info.Origin, "https://backend.example.com")
+	}
+}
+
 func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
