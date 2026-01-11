@@ -1689,6 +1689,59 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
     return false;
   }
 
+  const aerogpu_handle_t original_handle = res->handle;
+  const aerogpu_handle_t alias_handle = alias->handle;
+
+  // Validate that DestroyResource emits DESTROY_RESOURCE even for shared surfaces.
+  auto check_destroy_stream = [&](aerogpu_handle_t expected_handle, const char* which) -> bool {
+    dev->cmd.finalize();
+    if (!Check(ValidateStream(dma.data(), dma.size()), which)) {
+      return false;
+    }
+    if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_DESTROY_RESOURCE) >= 1, which)) {
+      return false;
+    }
+    const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(dma.data());
+    size_t offset = sizeof(aerogpu_cmd_stream_header);
+    while (offset + sizeof(aerogpu_cmd_hdr) <= stream->size_bytes) {
+      const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(dma.data() + offset);
+      if (hdr->opcode == AEROGPU_CMD_DESTROY_RESOURCE) {
+        const auto* cmd = reinterpret_cast<const aerogpu_cmd_destroy_resource*>(hdr);
+        if (cmd->resource_handle == expected_handle) {
+          return true;
+        }
+      }
+      if (hdr->size_bytes == 0 || hdr->size_bytes > stream->size_bytes - offset) {
+        break;
+      }
+      offset += hdr->size_bytes;
+    }
+    std::fprintf(stderr, "FAIL: %s missing expected handle %u\n", which, static_cast<unsigned>(expected_handle));
+    return false;
+  };
+
+  std::memset(dma.data(), 0, dma.size());
+  dev->cmd.set_span(dma.data(), dma.size());
+  if (cleanup.device_funcs.pfnDestroyResource) {
+    cleanup.device_funcs.pfnDestroyResource(create_dev.hDevice, cleanup.hAlias);
+    cleanup.has_alias = false;
+  }
+  if (!check_destroy_stream(alias_handle, "DestroyResource(alias) emits DESTROY_RESOURCE")) {
+    dev->cmd.set_vector();
+    return false;
+  }
+
+  std::memset(dma.data(), 0, dma.size());
+  dev->cmd.set_span(dma.data(), dma.size());
+  if (cleanup.device_funcs.pfnDestroyResource) {
+    cleanup.device_funcs.pfnDestroyResource(create_dev.hDevice, cleanup.hResource);
+    cleanup.has_resource = false;
+  }
+  if (!check_destroy_stream(original_handle, "DestroyResource(original) emits DESTROY_RESOURCE")) {
+    dev->cmd.set_vector();
+    return false;
+  }
+
   // Make cleanup safe: switch back to vector mode so subsequent destroy calls
   // can't fail due to span-buffer capacity constraints.
   dev->cmd.set_vector();
