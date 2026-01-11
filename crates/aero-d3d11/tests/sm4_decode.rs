@@ -487,6 +487,41 @@ fn decodes_arithmetic_and_skips_decls() {
 }
 
 #[test]
+fn does_not_misclassify_unknown_instruction_as_decl() {
+    const DCL_DUMMY: u32 = 0x100;
+    const OPCODE_UNKNOWN: u32 = 0x00;
+
+    let mut body = Vec::<u32>::new();
+
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 3)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
+
+    body.push(opcode_token(OPCODE_UNKNOWN, 1));
+
+    // mov r0, v0
+    let mut mov = vec![opcode_token(OPCODE_MOV, 5)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&mov);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert_eq!(module.decls.len(), 1);
+    assert_eq!(module.instructions.len(), 3);
+    assert!(matches!(module.instructions[1], Sm4Inst::Mov { .. }));
+}
+
+#[test]
 fn decodes_sample_and_sample_l() {
     const DCL_DUMMY: u32 = 0x200;
     let mut body = Vec::<u32>::new();

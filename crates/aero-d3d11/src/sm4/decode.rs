@@ -96,6 +96,8 @@ impl fmt::Display for Sm4DecodeError {
 
 impl std::error::Error for Sm4DecodeError {}
 
+const DECLARATION_OPCODE_MIN: u32 = 0x100;
+
 pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError> {
     let declared_len = *program.tokens.get(1).unwrap_or(&0) as usize;
     if declared_len < 2 || declared_len > program.tokens.len() {
@@ -141,7 +143,7 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         // All declarations are required to come before the instruction stream. Unknown
         // declarations are preserved as `Sm4Decl::Unknown` so later stages can still decide
         // whether they're important.
-        if in_decls && !is_supported_instruction_opcode(opcode) {
+        if in_decls && opcode >= DECLARATION_OPCODE_MIN {
             let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
             decls.push(decl);
             i += len;
@@ -159,25 +161,6 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         decls,
         instructions,
     })
-}
-
-fn is_supported_instruction_opcode(opcode: u32) -> bool {
-    matches!(
-        opcode,
-        OPCODE_MOV
-            | OPCODE_ADD
-            | OPCODE_MUL
-            | OPCODE_MAD
-            | OPCODE_DP3
-            | OPCODE_DP4
-            | OPCODE_MIN
-            | OPCODE_MAX
-            | OPCODE_RCP
-            | OPCODE_RSQ
-            | OPCODE_RET
-            | OPCODE_SAMPLE
-            | OPCODE_SAMPLE_L
-    )
 }
 
 fn decode_instruction(
