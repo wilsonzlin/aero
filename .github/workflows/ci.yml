@@ -717,6 +717,8 @@ jobs:
     name: CI gate
     needs:
       - policy
+      - toolchains
+      - wasm-threaded
       - rust
       - acpi-iasl
       - win7-virtio-portable-tests
@@ -749,6 +751,16 @@ jobs:
           fi
 
           failures=0
+
+          if [[ "${{ needs.toolchains.result }}" != "success" ]]; then
+            echo "::error::toolchains job result: ${{ needs.toolchains.result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['wasm-threaded'].result }}" != "success" ]]; then
+            echo "::error::wasm-threaded job result: ${{ needs['wasm-threaded'].result }}"
+            failures=1
+          fi
 
           if [[ "${{ needs.rust.result }}" != "success" ]]; then
             echo "::error::rust job result: ${{ needs.rust.result }}"
