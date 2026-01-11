@@ -1024,6 +1024,14 @@ impl HdaController {
         pending
     }
 
+    /// Returns the current level of the controller's IRQ line.
+    ///
+    /// This is intended for level-triggered interrupt routing (PCI INTx). The line remains
+    /// asserted while an enabled interrupt source is pending.
+    pub fn irq_level(&self) -> bool {
+        self.irq_pending
+    }
+
     /// Advance the HDA device by `output_frames` worth of host time.
     pub fn process(&mut self, mem: &mut dyn MemoryAccess, output_frames: usize) {
         let mut silence = SilenceCaptureSource;

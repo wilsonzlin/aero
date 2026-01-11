@@ -6,8 +6,9 @@ use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    register_pci_config_ports, PciConfigPorts, PciEcamConfig, PciEcamMmio, PciIntxRouter,
-    PciIntxRouterConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciConfigPorts, PciDevice,
+    PciEcamConfig, PciEcamMmio, PciIntxRouter, PciIntxRouterConfig, PciInterruptPin,
+    PciResourceAllocator, PciResourceAllocatorConfig, PciSubsystemIds, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -15,6 +16,7 @@ use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::{hpet, i8042};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
+use aero_audio::hda::{HdaController, HDA_MMIO_SIZE};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::interrupts::PlatformInterrupts;
@@ -42,6 +44,80 @@ pub const PCIE_ECAM_CONFIG: PciEcamConfig = PciEcamConfig {
 pub enum ResetEvent {
     Cpu,
     System,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PcPlatformConfig {
+    pub enable_hda: bool,
+}
+
+struct HdaPciConfigDevice {
+    config: aero_devices::pci::PciConfigSpace,
+}
+
+impl HdaPciConfigDevice {
+    fn new() -> Self {
+        let profile = aero_devices::pci::profile::HDA_ICH6;
+        let mut config = aero_devices::pci::PciConfigSpace::new(profile.vendor_id, profile.device_id);
+        config.set_class_code(
+            profile.class.base_class,
+            profile.class.sub_class,
+            profile.class.prog_if,
+            profile.revision_id,
+        );
+        config.set_subsystem_ids(PciSubsystemIds {
+            subsystem_vendor_id: profile.subsystem_vendor_id,
+            subsystem_id: profile.subsystem_id,
+        });
+        config.write(0x0e, 1, u32::from(profile.header_type));
+        config.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: HDA_MMIO_SIZE as u32,
+                prefetchable: false,
+            },
+        );
+        Self { config }
+    }
+}
+
+impl PciDevice for HdaPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.config
+    }
+}
+
+#[derive(Clone)]
+struct HdaMmio {
+    hda: Rc<RefCell<HdaController>>,
+}
+
+impl MmioHandler for HdaMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        self.hda.borrow_mut().mmio_read(offset, size)
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        self.hda.borrow_mut().mmio_write(offset, size, value);
+    }
+}
+
+struct HdaDmaMemory<'a> {
+    mem: RefCell<&'a mut MemoryBus>,
+}
+
+impl aero_audio::mem::MemoryAccess for HdaDmaMemory<'_> {
+    fn read_physical(&self, addr: u64, buf: &mut [u8]) {
+        self.mem.borrow_mut().read_physical(addr, buf);
+    }
+
+    fn write_physical(&mut self, addr: u64, buf: &[u8]) {
+        self.mem.borrow_mut().write_physical(addr, buf);
+    }
 }
 
 struct IoApicMmio {
@@ -145,6 +221,10 @@ pub struct PcPlatform {
     pub pci_intx: PciIntxRouter,
     pub acpi_pm: SharedAcpiPmIo,
 
+    pub hda: Option<Rc<RefCell<HdaController>>>,
+
+    pci_allocator: PciResourceAllocator,
+
     clock: ManualClock,
     pit: SharedPit8254,
     rtc: SharedRtcCmos<ManualClock, PlatformIrqLine>,
@@ -156,6 +236,19 @@ pub struct PcPlatform {
 
 impl PcPlatform {
     pub fn new(ram_size: usize) -> Self {
+        Self::new_with_config(ram_size, PcPlatformConfig::default())
+    }
+
+    pub fn new_with_hda(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_hda: true,
+            },
+        )
+    }
+
+    pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
         let chipset = ChipsetState::new(false);
         let filter = AddressFilter::new(chipset.a20());
 
@@ -242,6 +335,49 @@ impl PcPlatform {
         );
 
         let pci_intx = PciIntxRouter::new(PciIntxRouterConfig::default());
+        let mut pci_allocator = PciResourceAllocator::new(PciResourceAllocatorConfig::default());
+
+        let hda = if config.enable_hda {
+            let profile = aero_devices::pci::profile::HDA_ICH6;
+            let bdf = profile.bdf;
+
+            let hda = Rc::new(RefCell::new(HdaController::new()));
+
+            let mut dev = HdaPciConfigDevice::new();
+            pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
+            pci_cfg.borrow_mut().bus_mut().add_device(bdf, Box::new(dev));
+
+            Some(hda)
+        } else {
+            None
+        };
+
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            bios_post(pci_cfg.bus_mut(), &mut pci_allocator).unwrap();
+        }
+
+        // Map PCI BAR-backed MMIO ranges into the platform physical address space.
+        //
+        // Note: `MemoryBus` currently rejects overlapping MMIO mappings and does not support
+        // unmapping. For now, map BARs once during platform construction. If a future reset flow
+        // reprograms BARs to different addresses, the MMIO map will need to be rebuilt.
+        if let Some(hda) = hda.clone() {
+            let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
+            let bar0_base = {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                let bus = pci_cfg.bus_mut();
+                let bar0 = bus
+                    .device_config(bdf)
+                    .and_then(|cfg| cfg.bar_range(0))
+                    .expect("HDA BAR0 must be assigned by BIOS POST");
+                bar0.base
+            };
+
+            memory
+                .map_mmio(bar0_base, HDA_MMIO_SIZE as u64, Box::new(HdaMmio { hda }))
+                .unwrap();
+        }
 
         let hpet = Rc::new(RefCell::new(hpet::Hpet::new_default(clock.clone())));
 
@@ -282,6 +418,8 @@ impl PcPlatform {
             pci_cfg,
             pci_intx,
             acpi_pm,
+            hda,
+            pci_allocator,
             clock,
             pit,
             rtc,
@@ -293,6 +431,38 @@ impl PcPlatform {
 
     pub fn i8042_controller(&self) -> SharedI8042Controller {
         self.i8042.controller()
+    }
+
+    pub fn reset_pci(&mut self) {
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        bios_post(pci_cfg.bus_mut(), &mut self.pci_allocator).unwrap();
+    }
+
+    pub fn process_hda(&mut self, output_frames: usize) {
+        let Some(hda) = self.hda.as_ref() else {
+            return;
+        };
+        let mut hda = hda.borrow_mut();
+        let mut mem = HdaDmaMemory {
+            mem: RefCell::new(&mut self.memory),
+        };
+        hda.process(&mut mem, output_frames);
+    }
+
+    pub fn poll_pci_intx_lines(&mut self) {
+        let Some(hda) = self.hda.as_ref() else {
+            return;
+        };
+
+        let level = hda.borrow().irq_level();
+        let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
+
+        self.pci_intx.set_intx_level(
+            bdf,
+            PciInterruptPin::IntA,
+            level,
+            &mut *self.interrupts.borrow_mut(),
+        );
     }
 
     pub fn tick(&mut self, delta_ns: u64) {
