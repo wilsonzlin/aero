@@ -43,6 +43,10 @@ The intended end-state is to use the same “main-thread owns the handle, worker
 models the USB device” architecture described below, but with a richer transfer
 bridge.
 
+Note: WebUSB is also a poor fit for many HID-class devices because browsers
+treat some USB interface classes as “protected” and disallow access via WebUSB.
+For HID peripherals, prefer WebHID.
+
 ## High-level architecture
 
 The key constraint is that **browser device handles are main-thread objects**.
@@ -129,8 +133,11 @@ WebHID device metadata:
 - `idVendor` / `idProduct`: from WebHID vendor/product IDs
 - strings: best-effort from `productName` / `manufacturerName` if available
 
-The HID **report descriptor** should be the one surfaced by WebHID (so the guest
-sees the same top-level collections and report IDs as the real device).
+WebHID does **not** expose the raw HID report descriptor byte stream. It exposes
+a structured view (`HIDDevice.collections`, reports, and report items), so we
+synthesize a semantically equivalent HID report descriptor from that metadata.
+See [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md)
+for the exact synthesis contract.
 
 The USB device model must still provide the normal USB descriptors used during
 enumeration:
@@ -248,3 +255,5 @@ Recommended guardrails:
 
 - [`docs/08-input-devices.md`](./08-input-devices.md) — overall input strategy
 - [`docs/usb-hid.md`](./usb-hid.md) — HID usages and report formats
+- [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md) — WebHID metadata → HID report descriptor bytes
+- [`docs/webusb.md`](./webusb.md) — WebUSB constraints and troubleshooting
