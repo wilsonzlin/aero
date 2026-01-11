@@ -2917,9 +2917,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     res->wddm.km_resource_handle = km_resource;
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_allocation_handles.push_back(km_alloc);
+    uint32_t runtime_alloc = 0;
     if constexpr (has_member_hAllocation<AllocationInfoT>::value) {
-      res->wddm_allocation_handle = static_cast<uint32_t>(alloc_info[0].hAllocation);
+      runtime_alloc = static_cast<uint32_t>(alloc_info[0].hAllocation);
     }
+    // Prefer the runtime allocation handle (`hAllocation`) for LockCb/UnlockCb,
+    // but fall back to the only handle we have if the WDK revision does not
+    // expose it.
+    res->wddm_allocation_handle = runtime_alloc ? runtime_alloc : static_cast<uint32_t>(km_alloc);
     return S_OK;
   };
 
@@ -5927,9 +5932,68 @@ static HRESULT MapLocked11(Device* dev,
     return E_FAIL;
   }
 
+  if ((map_flags & ~static_cast<UINT>(D3D11_MAP_FLAG_DO_NOT_WAIT)) != 0) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+
   const uint32_t map_u32 = static_cast<uint32_t>(map_type);
-  const bool want_read = (map_u32 == D3D11_MAP_READ || map_u32 == D3D11_MAP_READ_WRITE);
-  const bool want_write = (map_u32 != D3D11_MAP_READ);
+  bool want_read = false;
+  bool want_write = false;
+  switch (map_u32) {
+    case D3D11_MAP_READ:
+      want_read = true;
+      break;
+    case D3D11_MAP_WRITE:
+    case D3D11_MAP_WRITE_DISCARD:
+    case D3D11_MAP_WRITE_NO_OVERWRITE:
+      want_write = true;
+      break;
+    case D3D11_MAP_READ_WRITE:
+      want_read = true;
+      want_write = true;
+      break;
+    default:
+      SetError(dev, E_INVALIDARG);
+      return E_INVALIDARG;
+  }
+
+  // Enforce the D3D11 Map/Usage rules (see docs/graphics/win7-d3d11-map-unmap.md).
+  switch (res->usage) {
+    case kD3D11UsageDynamic:
+      if (map_u32 != D3D11_MAP_WRITE_DISCARD && map_u32 != D3D11_MAP_WRITE_NO_OVERWRITE) {
+        SetError(dev, E_INVALIDARG);
+        return E_INVALIDARG;
+      }
+      break;
+    case kD3D11UsageStaging: {
+      const uint32_t access_mask = kD3D11CpuAccessRead | kD3D11CpuAccessWrite;
+      const uint32_t access = res->cpu_access_flags & access_mask;
+      if (access == kD3D11CpuAccessRead) {
+        if (map_u32 != D3D11_MAP_READ) {
+          SetError(dev, E_INVALIDARG);
+          return E_INVALIDARG;
+        }
+      } else if (access == kD3D11CpuAccessWrite) {
+        if (map_u32 != D3D11_MAP_WRITE) {
+          SetError(dev, E_INVALIDARG);
+          return E_INVALIDARG;
+        }
+      } else if (access == access_mask) {
+        if (map_u32 != D3D11_MAP_READ && map_u32 != D3D11_MAP_WRITE && map_u32 != D3D11_MAP_READ_WRITE) {
+          SetError(dev, E_INVALIDARG);
+          return E_INVALIDARG;
+        }
+      } else {
+        SetError(dev, E_INVALIDARG);
+        return E_INVALIDARG;
+      }
+      break;
+    }
+    default:
+      SetError(dev, E_INVALIDARG);
+      return E_INVALIDARG;
+  }
 
   if (want_read && !(res->cpu_access_flags & kD3D11CpuAccessRead)) {
     SetError(dev, E_INVALIDARG);
@@ -5989,7 +6053,15 @@ static HRESULT MapLocked11(Device* dev,
     SetError(dev, E_FAIL);
     return E_FAIL;
   }
-  if (res->wddm.km_allocation_handles.empty() || res->wddm.km_allocation_handles[0] == 0) {
+
+  uint64_t alloc_handle = 0;
+  if (res->wddm_allocation_handle != 0) {
+    alloc_handle = static_cast<uint64_t>(res->wddm_allocation_handle);
+  } else if (!res->wddm.km_allocation_handles.empty()) {
+    alloc_handle = res->wddm.km_allocation_handles[0];
+  }
+
+  if (!alloc_handle) {
     SetError(dev, E_FAIL);
     return E_FAIL;
   }
@@ -5999,9 +6071,8 @@ static HRESULT MapLocked11(Device* dev,
   res->mapped_wddm_pitch = 0;
   res->mapped_wddm_slice_pitch = 0;
 
-  const uint64_t km_alloc = res->wddm.km_allocation_handles[0];
   D3DDDICB_LOCK lock = {};
-  lock.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+  lock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
   __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
     lock.SubresourceIndex = subresource;
   }
@@ -6052,7 +6123,7 @@ static HRESULT MapLocked11(Device* dev,
   }
   if (!lock.pData) {
     D3DDDICB_UNLOCK unlock = {};
-    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(km_alloc);
+    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
     __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
       unlock.SubresourceIndex = subresource;
     }
@@ -6065,7 +6136,7 @@ static HRESULT MapLocked11(Device* dev,
   }
 
   res->mapped_wddm_ptr = lock.pData;
-  res->mapped_wddm_allocation = km_alloc;
+  res->mapped_wddm_allocation = alloc_handle;
   __if_exists(D3DDDICB_LOCK::Pitch) {
     res->mapped_wddm_pitch = lock.Pitch;
   }
