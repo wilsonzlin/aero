@@ -51,26 +51,26 @@ if defined PROCESSOR_ARCHITEW6432 set "IS_X64=1"
 
 if "%IS_X64%"=="1" (
   echo INFO: Detected x64 Windows
-  call :check_file_required "%SystemRoot%\System32\aerogpu_d3d9_x64.dll"
+  call :check_file_required "%SYS32%\aerogpu_d3d9_x64.dll"
   call :check_file_required "%SystemRoot%\SysWOW64\aerogpu_d3d9.dll"
   echo.
   if "%REQUIRE_DX11%"=="1" (
-    call :check_file_required "%SystemRoot%\System32\aerogpu_d3d10_x64.dll"
+    call :check_file_required "%SYS32%\aerogpu_d3d10_x64.dll"
     call :check_file_required "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
   ) else (
     echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
-    call :check_file_optional "%SystemRoot%\System32\aerogpu_d3d10_x64.dll"
+    call :check_file_optional "%SYS32%\aerogpu_d3d10_x64.dll"
     call :check_file_optional "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
   )
 ) else (
   echo INFO: Detected x86 Windows
-  call :check_file_required "%SystemRoot%\System32\aerogpu_d3d9.dll"
+  call :check_file_required "%SYS32%\aerogpu_d3d9.dll"
   echo.
   if "%REQUIRE_DX11%"=="1" (
-    call :check_file_required "%SystemRoot%\System32\aerogpu_d3d10.dll"
+    call :check_file_required "%SYS32%\aerogpu_d3d10.dll"
   ) else (
     echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
-    call :check_file_optional "%SystemRoot%\System32\aerogpu_d3d10.dll"
+    call :check_file_optional "%SYS32%\aerogpu_d3d10.dll"
   )
 )
 echo.
