@@ -1,14 +1,16 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
 
 using aerogpu_test::ComPtr;
 
-static int FailD3D11WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -16,6 +18,9 @@ static int FailD3D11WithRemovedReason(const char* test_name,
                                  test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
+  }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
   }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
@@ -39,15 +44,18 @@ static int RunMapRoundtrip(int argc, char** argv) {
   const char* kTestName = "d3d11_map_roundtrip";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
+        "Usage: %s.exe [--dump] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -57,14 +65,14 @@ static int RunMapRoundtrip(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -83,15 +91,15 @@ static int RunMapRoundtrip(int argc, char** argv) {
   HRESULT hr = D3D11CreateDevice(NULL,
                                  D3D_DRIVER_TYPE_HARDWARE,
                                  NULL,
-                                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                  D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                  feature_levels,
                                  ARRAYSIZE(feature_levels),
                                  D3D11_SDK_VERSION,
                                  device.put(),
-                                 &chosen_level,
-                                 context.put());
+                                  &chosen_level,
+                                  context.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D11CreateDevice(HARDWARE)", hr);
+    return reporter.FailHresult("D3D11CreateDevice(HARDWARE)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
 
@@ -120,40 +128,41 @@ static int RunMapRoundtrip(int argc, char** argv) {
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
         if (!allow_microsoft && ad.VendorId == 0x1414) {
-          return aerogpu_test::Fail(kTestName,
-                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                    "Install AeroGPU driver or pass --allow-microsoft.",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)ad.DeviceId);
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
         }
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) &&
             !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
-                                    "or use --require-vid/--require-did)",
-                                    ad.Description);
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
         }
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName,
-        "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)",
-        hr);
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   const int kWidth = 37;
@@ -176,25 +185,24 @@ static int RunMapRoundtrip(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> tex;
   hr = device->CreateTexture2D(&desc, NULL, tex.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging)", hr);
+    return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(tex.get(), 0, D3D11_MAP_WRITE, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(WRITE)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(WRITE)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(tex.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(WRITE) returned NULL pData");
+    return reporter.Fail("Map(WRITE) returned NULL pData");
   }
   if (map.RowPitch < (UINT)(kWidth * 4)) {
     context->Unmap(tex.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(WRITE) returned RowPitch=%u (< %u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)(kWidth * 4));
+    return reporter.Fail("Map(WRITE) returned RowPitch=%u (< %u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)(kWidth * 4));
   }
 
   for (int y = 0; y < kHeight; ++y) {
@@ -207,11 +215,11 @@ static int RunMapRoundtrip(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(tex.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(READ)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(READ)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(tex.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(READ) returned NULL pData");
+    return reporter.Fail("Map(READ) returned NULL pData");
   }
 
   for (int y = 0; y < kHeight; ++y) {
@@ -220,12 +228,11 @@ static int RunMapRoundtrip(int argc, char** argv) {
       const uint32_t expected = CheckerColor(x, y);
       if ((got & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
         context->Unmap(tex.get(), 0);
-        return aerogpu_test::Fail(kTestName,
-                                  "pixel mismatch at (%d,%d): got 0x%08lX expected 0x%08lX",
-                                  x,
-                                  y,
-                                  (unsigned long)got,
-                                  (unsigned long)expected);
+        return reporter.Fail("pixel mismatch at (%d,%d): got 0x%08lX expected 0x%08lX",
+                             x,
+                             y,
+                             (unsigned long)got,
+                             (unsigned long)expected);
       }
     }
   }
@@ -233,23 +240,24 @@ static int RunMapRoundtrip(int argc, char** argv) {
   if (dump) {
     const std::wstring dir = aerogpu_test::GetModuleDir();
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_map_roundtrip.bmp"),
+    const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_map_roundtrip.bmp");
+    if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                       kWidth,
                                       kHeight,
                                       map.pData,
                                       (int)map.RowPitch,
                                       &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+    } else {
+      reporter.AddArtifactPathW(bmp_path);
     }
   }
 
   context->Unmap(tex.get(), 0);
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunMapRoundtrip(argc, argv);
 }
-
