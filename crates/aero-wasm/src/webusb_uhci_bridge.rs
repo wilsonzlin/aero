@@ -1,9 +1,13 @@
 use wasm_bindgen::prelude::*;
 
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::{GuestMemory as UsbGuestMemory, UsbWebUsbPassthroughDevice};
+
+const WEBUSB_UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"WUHB";
+const WEBUSB_UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
 // UHCI register layout (0x20 bytes).
 const REG_USBCMD: u16 = 0x00;
@@ -343,6 +347,55 @@ impl WebUsbUhciBridge {
             &path,
             Box::new(device.as_usb_device()),
         )
+    }
+
+    /// Serialize the current bridge state into a deterministic snapshot blob.
+    ///
+    /// Format: top-level `aero-io-snapshot` TLV with:
+    /// - tag 1: `aero_usb::uhci::UhciController` snapshot bytes
+    /// - tag 2: IRQ latch (`irq_level`)
+    pub fn save_state(&self) -> Vec<u8> {
+        const TAG_CONTROLLER: u16 = 1;
+        const TAG_IRQ_ASSERTED: u16 = 2;
+
+        let mut w = SnapshotWriter::new(WEBUSB_UHCI_BRIDGE_DEVICE_ID, WEBUSB_UHCI_BRIDGE_DEVICE_VERSION);
+        w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
+        w.field_bool(TAG_IRQ_ASSERTED, self.irq.asserted);
+        w.finish()
+    }
+
+    /// Restore bridge state from a snapshot blob produced by [`save_state`].
+    ///
+    /// WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
+    /// snapshot. As part of restore we drop the passthrough device's host-action queues and
+    /// in-flight maps so the guest's UHCI TD retries will re-emit host actions instead of waiting
+    /// forever for completions that will never arrive.
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        const TAG_CONTROLLER: u16 = 1;
+        const TAG_IRQ_ASSERTED: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, WEBUSB_UHCI_BRIDGE_DEVICE_ID)
+            .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?;
+        r.ensure_device_major(WEBUSB_UHCI_BRIDGE_DEVICE_VERSION.major)
+            .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?;
+
+        let controller_bytes = r.bytes(TAG_CONTROLLER).ok_or_else(|| {
+            JsValue::from_str("WebUSB UHCI bridge snapshot missing controller state")
+        })?;
+        self.controller
+            .load_state(controller_bytes)
+            .map_err(|e| JsValue::from_str(&format!("Invalid UHCI controller snapshot: {e}")))?;
+
+        self.irq.asserted = r
+            .bool(TAG_IRQ_ASSERTED)
+            .map_err(|e| JsValue::from_str(&format!("Invalid WebUSB UHCI bridge snapshot: {e}")))?
+            .unwrap_or(false);
+
+        if let Some(dev) = self.passthrough_device_mut() {
+            dev.reset_host_state_for_restore();
+        }
+
+        Ok(())
     }
 }
 

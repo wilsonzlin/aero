@@ -12,6 +12,7 @@
 
 use wasm_bindgen::prelude::*;
 
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::GuestMemory;
 use aero_usb::UsbWebUsbPassthroughDevice;
 use aero_usb::hub::UsbHubDevice;
@@ -21,6 +22,9 @@ use aero_usb::usb::UsbDevice;
 
 const UHCI_IO_BASE: u16 = 0;
 const UHCI_IRQ_LINE: u8 = 0x0b;
+
+const UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"UHCB";
+const UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
 // UHCI register layout (0x20 bytes).
 const REG_USBCMD: u16 = 0x00;
@@ -752,5 +756,50 @@ impl UhciControllerBridge {
     ) -> Result<(), JsValue> {
         let path = parse_usb_path(path)?;
         attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
+    }
+
+    /// Serialize the current UHCI controller state into a deterministic snapshot blob.
+    ///
+    /// The returned bytes use the canonical `aero-io-snapshot` TLV format:
+    /// - tag 1: `aero_usb::uhci::UhciController` snapshot bytes
+    /// - tag 2: bridge-side IRQ latch (`irq_asserted`)
+    pub fn save_state(&self) -> Vec<u8> {
+        const TAG_CONTROLLER: u16 = 1;
+        const TAG_IRQ_ASSERTED: u16 = 2;
+
+        let mut w = SnapshotWriter::new(UHCI_BRIDGE_DEVICE_ID, UHCI_BRIDGE_DEVICE_VERSION);
+        w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
+        w.field_bool(TAG_IRQ_ASSERTED, self.irq.asserted);
+        w.finish()
+    }
+
+    /// Restore UHCI controller state from a snapshot blob produced by [`save_state`].
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        const TAG_CONTROLLER: u16 = 1;
+        const TAG_IRQ_ASSERTED: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, UHCI_BRIDGE_DEVICE_ID)
+            .map_err(|e| js_error(format!("Invalid UHCI bridge snapshot: {e}")))?;
+        r.ensure_device_major(UHCI_BRIDGE_DEVICE_VERSION.major)
+            .map_err(|e| js_error(format!("Invalid UHCI bridge snapshot: {e}")))?;
+
+        let ctrl_bytes = r
+            .bytes(TAG_CONTROLLER)
+            .ok_or_else(|| js_error("UHCI bridge snapshot missing controller state"))?;
+        self.ctrl
+            .load_state(ctrl_bytes)
+            .map_err(|e| js_error(format!("Invalid UHCI controller snapshot: {e}")))?;
+
+        self.irq.asserted = r
+            .bool(TAG_IRQ_ASSERTED)
+            .map_err(|e| js_error(format!("Invalid UHCI bridge snapshot: {e}")))?
+            .unwrap_or(false);
+        self.irq.last_irq = if self.irq.asserted {
+            Some(UHCI_IRQ_LINE)
+        } else {
+            None
+        };
+
+        Ok(())
     }
 }

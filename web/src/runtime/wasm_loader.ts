@@ -27,6 +27,8 @@ export type UhciControllerBridgeHandle = {
     io_write(offset: number, size: number, value: number): void;
     tick_1ms(): void;
     irq_asserted(): boolean;
+    save_state?(): Uint8Array;
+    load_state?(bytes: Uint8Array): void;
     free(): void;
 };
 
@@ -81,6 +83,8 @@ export interface WasmApi {
             io_write(offset: number, size: number, value: number): void;
             tick_1ms(): void;
             irq_asserted(): boolean;
+            save_state?(): Uint8Array;
+            load_state?(bytes: Uint8Array): void;
             free(): void;
         };
         new (guestBase: number, guestSize: number): {
@@ -98,6 +102,9 @@ export interface WasmApi {
             tick_1ms(): void;
 
             irq_asserted(): boolean;
+
+            save_state?(): Uint8Array;
+            load_state?(bytes: Uint8Array): void;
 
             attach_hub(rootPort: number, portCount: number): void;
             detach_at_path(path: number[]): void;
@@ -276,6 +283,8 @@ export interface WasmApi {
         detach_at_path(path: number[]): void;
         attach_webhid_device(path: number[], device: unknown): void;
         attach_usb_hid_passthrough_device(path: number[], device: unknown): void;
+        save_state?(): Uint8Array;
+        load_state?(bytes: Uint8Array): void;
 
         drain_actions(): UsbHostAction[] | null;
         push_completion(completion: UsbHostCompletion): void;

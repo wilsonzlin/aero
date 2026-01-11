@@ -92,6 +92,16 @@ impl UsbWebUsbPassthroughDevice {
         self.passthrough.pending_summary()
     }
 
+    /// Clears host-side WebUSB bookkeeping without changing guest-visible USB state.
+    ///
+    /// WebUSB host actions are backed by JS Promises that cannot be resumed after a VM snapshot
+    /// restore. On restore we drop queued actions, completions, and in-flight maps so that the next
+    /// UHCI TD retry re-emits host actions instead of deadlocking on a completion that will never
+    /// arrive.
+    pub fn reset_host_state_for_restore(&mut self) {
+        self.passthrough.reset();
+    }
+
     fn to_passthrough_setup(setup: UsbSetupPacket) -> HostSetupPacket {
         HostSetupPacket {
             bm_request_type: setup.request_type,
