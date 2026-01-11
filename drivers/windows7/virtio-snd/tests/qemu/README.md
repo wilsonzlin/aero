@@ -110,7 +110,8 @@ Note: Many QEMU builds report `REV_00` for virtio PCI devices. Because the Aero 
 the HWID in Device Manager.
 
 If your QEMU build supports overriding the PCI Revision ID, pass `x-pci-revision=0x01` as shown
-in the command lines above (the Aero Win7 host harness does this automatically).
+in the command lines above. The Aero Win7 host harness **requires** `x-pci-revision` support (and
+adds `x-pci-revision=0x01` automatically) so the device matches the contract v1 HWID.
 
 ## Verifying HWID in Device Manager
 
@@ -130,7 +131,10 @@ Expected values include at least one of:
 More specific forms may also appear (with `SUBSYS_...`). The Aero INF matches the revision-gated
 form `PCI\VEN_1AF4&DEV_1059&REV_01`.
 
-The automated host harness already probes QEMU for `disable-legacy` and `x-pci-revision` support (via `-device <virtio-snd>,help`) and enables them when present:
+The automated host harness probes QEMU for virtio-snd device properties (via `-device <virtio-snd>,help`):
+
+- `disable-legacy` is enabled when supported (`disable-legacy=on`).
+- `x-pci-revision` is **required** for Aero contract v1 (`x-pci-revision=0x01`).
 
 - `drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1`
 - `drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py`
