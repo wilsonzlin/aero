@@ -12,14 +12,12 @@
 
 static BOOLEAN VirtIoSndIntxIsSharedInterrupt(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR *Desc)
 {
-#if defined(CmResourceShareShared)
-    return (Desc->ShareDisposition == CmResourceShareShared) ? TRUE : FALSE;
-#elif defined(CmShareShared)
-    return (Desc->ShareDisposition == CmShareShared) ? TRUE : FALSE;
-#else
-    UNREFERENCED_PARAMETER(Desc);
-    return TRUE;
-#endif
+    /*
+     * CM_SHARE_DISPOSITION enum member names differ across WDK versions
+     * (CmResourceShareShared vs CmShareShared), but the numeric value for "shared"
+     * has been stable (3). Compare by value for portability.
+     */
+    return (Desc->ShareDisposition == 3) ? TRUE : FALSE;
 }
 
 static VOID VirtIoSndIntxQueueUsed(
