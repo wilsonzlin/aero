@@ -118,15 +118,27 @@ Notes:
 
 These templates apply headers to **all paths** so they cover HTML, JS, WASM, and worker scripts.
 
-### Netlify / Cloudflare Pages (Vite `_headers`)
+The canonical header values live in:
 
-The canonical header values for the frontend live in:
+- `scripts/headers.json` (data)
+- `scripts/security_headers.mjs` (exports for Vite/config/templates)
 
-- `scripts/headers.json`
+CI validates that the following stay in sync with the canonical values:
 
-CI validates that all hosting/proxy templates and Vite servers match this canonical set:
+- Vite configs:
+  - `web/vite.config.ts` (production app)
+  - `vite.harness.config.ts` (repo-root dev harness)
+- Deployment templates:
+  - `web/public/_headers` (`_headers` file for static hosts like Netlify/Cloudflare Pages)
+  - `vercel.json`
+  - `deploy/caddy/Caddyfile`
+  - `deploy/nginx/nginx.conf`
+
+The check lives at:
 
 - `scripts/ci/check-security-headers.mjs`
+
+### Static hosts that support `_headers` (Netlify, Cloudflare Pages)
 
 The `_headers` file shipped with the built frontend lives at:
 
@@ -138,19 +150,16 @@ Vite copies `public/` into `dist/`, so production builds automatically contain:
 
 Netlify and Cloudflare Pages will apply this file automatically when it exists at the root of the deployed output directory.
 
-Netlify build settings are in `netlify.toml` (repo root).
+Netlify build settings are in `netlify.toml` (repo root). (Header values are intentionally not duplicated there.)
 
 ### Vercel (`vercel.json`)
 
 See: `vercel.json` (repo root).
 
-### Cloudflare Pages (`_headers`)
+### Reverse proxy templates (self-host)
 
-Cloudflare Pages requires `_headers` to be present at the **root of the build output directory**. For the Vite frontend in this repo, this is handled by `web/public/_headers` → `web/dist/_headers` during build.
-
-### Caddy / Docker (local dev + self-host)
-
-See: `deploy/caddy/Caddyfile`
+- Caddy: `deploy/caddy/Caddyfile`
+- nginx: `deploy/nginx/nginx.conf`
 
 The Caddy template supports `AERO_CSP_CONNECT_SRC_EXTRA` to append additional allowed `connect-src` origins without editing the CSP string directly.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -189,13 +189,11 @@ function checkViteConfig(fileLabel, filePath) {
 }
 
 const targets = [
+  // Vite configs that must stay in sync with the canonical headers.
   { type: 'vite', path: 'vite.harness.config.ts' },
   { type: 'vite', path: 'web/vite.config.ts' },
+  // Deployment templates that must stay in sync with the canonical headers.
   { type: 'headers', path: 'web/public/_headers' },
-  { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
-  { type: 'netlify', path: 'deploy/netlify.toml' },
-  { type: 'vercel', path: 'deploy/vercel.json' },
-  // The primary Vercel deployment config lives at repo root.
   { type: 'vercel', path: 'vercel.json' },
   { type: 'nginx', path: 'deploy/nginx/nginx.conf' },
   { type: 'caddy', path: 'deploy/caddy/Caddyfile' },
@@ -205,38 +203,55 @@ const allErrors = [];
 
 for (const target of targets) {
   const filePath = resolve(repoRoot, target.path);
+  if (!existsSync(filePath)) {
+    allErrors.push(
+      `${target.path}: missing template file (CI validates templates against scripts/headers.json via scripts/security_headers.mjs)`,
+    );
+    continue;
+  }
   if (target.type === 'vite') {
-    allErrors.push(...checkViteConfig(target.path, filePath));
+    try {
+      allErrors.push(...checkViteConfig(target.path, filePath));
+    } catch (err) {
+      allErrors.push(`${target.path}: failed to read file: ${err?.message ?? String(err)}`);
+    }
     continue;
   }
 
   let rules;
-  switch (target.type) {
-    case 'headers':
-      rules = parseHeadersFile(filePath);
-      break;
-    case 'netlify':
-      rules = parseNetlifyToml(filePath);
-      break;
-    case 'vercel':
-      rules = parseVercelJson(filePath);
-      break;
-    case 'nginx':
-      rules = parseNginxConf(filePath);
-      break;
-    case 'caddy':
-      rules = parseCaddyfile(filePath);
-      break;
-    default:
-      throw new Error(`Unknown target type: ${target.type}`);
+  try {
+    switch (target.type) {
+      case 'headers':
+        rules = parseHeadersFile(filePath);
+        break;
+      case 'netlify':
+        rules = parseNetlifyToml(filePath);
+        break;
+      case 'vercel':
+        rules = parseVercelJson(filePath);
+        break;
+      case 'nginx':
+        rules = parseNginxConf(filePath);
+        break;
+      case 'caddy':
+        rules = parseCaddyfile(filePath);
+        break;
+      default:
+        allErrors.push(`${target.path}: unknown target type: ${target.type}`);
+        continue;
+    }
+  } catch (err) {
+    allErrors.push(`${target.path}: failed to parse: ${err?.message ?? String(err)}`);
+    continue;
   }
 
   allErrors.push(...checkRules(target.path, rules));
 }
 
 if (allErrors.length !== 0) {
-  console.error('Security header templates are out of sync with scripts/headers.json.');
-  console.error('Fix the templates or update scripts/headers.json, then re-run this check.\n');
+  console.error('Security header templates are out of sync with the canonical values.');
+  console.error('Canonical values live in scripts/headers.json (loaded by scripts/security_headers.mjs).');
+  console.error('Fix the templates (or update scripts/headers.json), then re-run: node scripts/ci/check-security-headers.mjs\n');
   console.error(allErrors.join('\n'));
   process.exit(1);
 }

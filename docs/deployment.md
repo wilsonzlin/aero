@@ -48,10 +48,20 @@ The Vite preview server is configured to send COOP/COEP (and the rest of the rec
 Canonical header values live in:
 
 - `scripts/headers.json`
+- `scripts/security_headers.mjs` (exports used by Vite config)
 
 CI validates that Vite servers + deployment templates stay in sync via:
 
 - `scripts/ci/check-security-headers.mjs`
+
+Currently validated files:
+
+- `web/vite.config.ts`
+- `vite.harness.config.ts`
+- `web/public/_headers`
+- `vercel.json`
+- `deploy/caddy/Caddyfile`
+- `deploy/nginx/nginx.conf`
 
 ```bash
 npm ci
@@ -128,6 +138,19 @@ The generated `web/dist/_headers` file is deployed automatically and enables cro
 > The provided `_headers` file repeats COOP/COEP/CORP in the `/assets/*` and
 > `/assets/*.wasm` rules so that cached/static assets remain cross-origin isolated
 > even under “most specific wins” behavior.
+
+### Caddy (self-host / reverse proxy)
+
+This repo provides a production-ready Caddy reverse proxy template:
+
+- `deploy/caddy/Caddyfile`
+- (end-to-end example) `deploy/docker-compose.yml`
+
+### nginx (self-host / reverse proxy)
+
+This repo provides an nginx reference config:
+
+- `deploy/nginx/nginx.conf`
 
 ---
 
