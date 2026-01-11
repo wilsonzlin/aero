@@ -220,6 +220,9 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 - **Code 10**: device cannot start
   - Confirm the guest is binding the expected hardware ID (see “Verifying HWID”).
   - Confirm the QEMU device type matches what the driver expects (modern/non-transitional vs transitional).
+  - This driver is built against the **Aero Win7 virtio contract v1** and uses the virtio-input `ID_NAME`
+    config string to classify the device as keyboard vs mouse. If the device model does not report the
+    expected names (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`), the driver will refuse to start.
 
 ### `hidtest` cannot open the device
 
