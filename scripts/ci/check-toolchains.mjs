@@ -52,7 +52,27 @@ function assertNoFloatingNightlyInWorkflows(workflowsDir) {
         // `toolchain: stable`/`toolchain: nightly` always resolve to the repo-pinned versions.
         { pattern: /\bdtolnay\/rust-toolchain@/u, message: "uses dtolnay/rust-toolchain directly" },
         { pattern: /\btoolchain:\s*\d+\.\d+\.\d+\b/u, message: "hardcodes a stable toolchain version" },
-        { pattern: /\bnightly-\d{4}-\d{2}-\d{2}\b/u, message: "hardcodes a nightly toolchain date" },
+        { pattern: /\btoolchain:\s*nightly-\d{4}-\d{2}-\d{2}\b/u, message: "hardcodes a pinned nightly toolchain date" },
+        {
+            pattern: /\bcargo\s+\+nightly-\d{4}-\d{2}-\d{2}\b/u,
+            message: "hardcodes a pinned nightly toolchain date via `cargo +nightly-YYYY-MM-DD`",
+        },
+        {
+            pattern: /\brustc\s+\+nightly-\d{4}-\d{2}-\d{2}\b/u,
+            message: "hardcodes a pinned nightly toolchain date via `rustc +nightly-YYYY-MM-DD`",
+        },
+        {
+            pattern: /\brustup\s+toolchain\s+install\s+nightly-\d{4}-\d{2}-\d{2}\b/u,
+            message: "hardcodes a pinned nightly toolchain date via `rustup toolchain install nightly-YYYY-MM-DD`",
+        },
+        {
+            pattern: /--toolchain\s+nightly-\d{4}-\d{2}-\d{2}\b/u,
+            message: "hardcodes a pinned nightly toolchain date via `--toolchain nightly-YYYY-MM-DD`",
+        },
+        {
+            pattern: /\bRUSTUP_TOOLCHAIN\b\s*[:=]\s*nightly-\d{4}-\d{2}-\d{2}\b/u,
+            message: "hardcodes a pinned nightly toolchain date via RUSTUP_TOOLCHAIN=nightly-YYYY-MM-DD",
+        },
         { pattern: /\bcargo\s+\+nightly(?!-)/u, message: "uses floating cargo +nightly" },
         { pattern: /\brustc\s+\+nightly(?!-)/u, message: "uses floating rustc +nightly" },
         { pattern: /\brustup\s+toolchain\s+install\s+nightly(?!-)/u, message: "installs floating rustup nightly" },
@@ -64,7 +84,10 @@ function assertNoFloatingNightlyInWorkflows(workflowsDir) {
         const content = readFileSync(filePath, "utf8");
         for (const { pattern, message } of forbiddenPatterns) {
             if (pattern.test(content)) {
-                fail(`${rel} ${message}; use scripts/toolchains.json (rust.nightlyWasm) instead.`);
+                fail(
+                    `${rel} ${message}; workflows should install Rust via ./.github/actions/setup-rust ` +
+                        "(toolchain: stable/nightly) so toolchain pins come from rust-toolchain.toml and scripts/toolchains.json.",
+                );
             }
         }
     }
