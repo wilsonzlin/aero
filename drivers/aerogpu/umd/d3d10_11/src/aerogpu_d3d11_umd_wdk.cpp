@@ -14,6 +14,7 @@
 #include <d3dkmthk.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <cstdio>
@@ -1543,6 +1544,28 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
 
   auto zero_out = [&] { std::memset(data, 0, size); };
 
+  auto log_unknown_type_once = [&](uint32_t unknown_type) {
+    if (!aerogpu_d3d10_11_log_enabled()) {
+      return;
+    }
+
+    // Track a common range of D3D11DDICAPS_TYPE values without any heap
+    // allocations (UMD-friendly).
+    static std::atomic<uint64_t> logged[4] = {}; // 256 bits.
+    if (unknown_type < 256) {
+      const uint32_t idx = unknown_type / 64;
+      const uint64_t bit = 1ull << (unknown_type % 64);
+      const uint64_t prev = logged[idx].fetch_or(bit, std::memory_order_relaxed);
+      if ((prev & bit) != 0) {
+        return;
+      }
+    }
+
+    AEROGPU_D3D10_11_LOG("GetCaps11 unknown type=%u (size=%u) -> zero-fill + S_OK",
+                         (unsigned)unknown_type,
+                         (unsigned)size);
+  };
+
   switch (pGetCaps->Type) {
     case D3D11DDICAPS_TYPE_FEATURE_LEVELS: {
       zero_out();
@@ -1608,6 +1631,37 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
     case D3D11DDICAPS_TYPE_D3D9_OPTIONS:
       zero_out();
       return S_OK;
+
+    case D3D11DDICAPS_TYPE_SHADER: {
+      // Shader model caps for FL10_0: VS/GS/PS are SM4.0; HS/DS/CS are unsupported.
+      //
+      // The WDK output struct layout has been stable in practice: it begins with
+      // six UINT "version tokens" matching the D3D shader bytecode token format:
+      //   (program_type << 16) | (major << 4) | minor
+      //
+      // Be careful about overrunning DataSize: only write fields that fit.
+      zero_out();
+
+      constexpr auto ver_token = [](UINT program_type, UINT major, UINT minor) -> UINT {
+        return (program_type << 16) | (major << 4) | minor;
+      };
+
+      constexpr UINT kShaderTypePixel = 0;
+      constexpr UINT kShaderTypeVertex = 1;
+      constexpr UINT kShaderTypeGeometry = 2;
+
+      auto write_u32 = [&](size_t offset, UINT value) {
+        if (size < offset + sizeof(UINT)) {
+          return;
+        }
+        *reinterpret_cast<UINT*>(reinterpret_cast<uint8_t*>(data) + offset) = value;
+      };
+
+      write_u32(0, ver_token(kShaderTypePixel, 4, 0));
+      write_u32(sizeof(UINT), ver_token(kShaderTypeVertex, 4, 0));
+      write_u32(sizeof(UINT) * 2, ver_token(kShaderTypeGeometry, 4, 0));
+      return S_OK;
+    }
 
     case D3D11DDICAPS_TYPE_FORMAT: {
       if (size < sizeof(DXGI_FORMAT)) {
@@ -1692,10 +1746,8 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
 
     default:
       // Unknown caps are treated as unsupported. Zero-fill so the runtime won't
-      // read garbage, but log the type for bring-up.
-      AEROGPU_D3D10_11_LOG("GetCaps11 unknown type=%u (size=%u) -> zero-fill + S_OK",
-                           (unsigned)static_cast<uint32_t>(pGetCaps->Type),
-                           (unsigned)size);
+      // read garbage, but log the type once for bring-up.
+      log_unknown_type_once(static_cast<uint32_t>(pGetCaps->Type));
       zero_out();
       return S_OK;
   }
