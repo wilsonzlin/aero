@@ -9,13 +9,14 @@ static int RunD3D9RasterStatusPacing(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--samples=N] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu]",
+        "[--allow-microsoft] [--allow-non-aerogpu] [--allow-remote]",
         kTestName);
     return 0;
   }
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
 
   uint32_t require_vid = 0;
@@ -41,12 +42,27 @@ static int RunD3D9RasterStatusPacing(int argc, char** argv) {
 
   uint32_t max_samples = 200000;
   aerogpu_test::GetArgUint32(argc, argv, "--samples", &max_samples);
-  if (max_samples < 1000) {
-    max_samples = 1000;
+  // `run_all.cmd` forwards `--samples` to multiple tests, many of which default to ~120 samples.
+  // `GetRasterStatus` can be very fast, so enforce a larger minimum to make it likely we observe
+  // scanline progression + vblank transitions even on fast hosts.
+  if (max_samples < 50000) {
+    max_samples = 50000;
   }
 
   const int kWidth = 64;
   const int kHeight = 64;
+
+  // Some remote display paths do not deliver vblank semantics in a meaningful way.
+  if (GetSystemMetrics(SM_REMOTESESSION)) {
+    if (allow_remote) {
+      aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
+      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
+      return 0;
+    }
+    return aerogpu_test::Fail(
+        kTestName,
+        "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
+  }
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9RasterStatusPacing",
                                               L"AeroGPU D3D9 Raster Status Pacing",
