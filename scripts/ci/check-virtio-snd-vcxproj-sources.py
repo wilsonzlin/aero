@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VCXPROJ = REPO_ROOT / "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
 AERO_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+LEGACY_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf"
 
 # virtio-snd ships with a primary, strict Aero contract INF (`aero-virtio-snd.inf`).
 # A legacy filename alias INF may optionally be present as `virtio-snd.inf`. In
@@ -130,6 +131,60 @@ def validate_virtio_snd_inf_hwid_policy(inf_path: Path) -> None:
                 f"virtio-snd INF must gate DEV_1059 by REV_01: {inf_path.as_posix()}\n"
                 f"  offending line: {line}"
             )
+
+
+def validate_virtio_snd_legacy_inf_policy(inf_path: Path) -> None:
+    """
+    Enforce the opt-in transitional/QEMU virtio-snd INF policy.
+
+    Requirements:
+      - Must match transitional DEV_1018 (without requiring REV_01).
+      - Must NOT match the Aero contract-v1 modern ID (DEV_1059) to avoid HWID overlap with the
+        shipped contract package.
+      - Must reference wdmaud.sys (wdmaudio.sys is a common typo).
+    """
+
+    text = read_text(inf_path)
+    lines = iter_inf_non_comment_lines(text)
+
+    has_transitional = False
+    has_wdmaud = False
+
+    for line in lines:
+        upper = line.upper()
+
+        if "PCI\\VEN_1AF4&DEV_1059" in upper:
+            fail(
+                f"virtio-snd legacy INF must not match Aero contract DEV_1059: {inf_path.as_posix()}\n"
+                f"  offending line: {line}"
+            )
+
+        if "PCI\\VEN_1AF4&DEV_1018" in upper:
+            has_transitional = True
+            if "&REV_01" in upper:
+                fail(
+                    f"virtio-snd legacy INF must not require REV_01: {inf_path.as_posix()}\n"
+                    f"  offending line: {line}"
+                )
+
+        if "WDMAUDIO.SYS" in upper:
+            fail(
+                f"virtio-snd legacy INF references wdmaudio.sys (typo; expected wdmaud.sys): {inf_path.as_posix()}\n"
+                f"  offending line: {line}"
+            )
+        if "WDMAUD.SYS" in upper:
+            has_wdmaud = True
+
+    if not has_transitional:
+        fail(
+            f"virtio-snd legacy INF must match transitional DEV_1018: {inf_path.as_posix()}\n"
+            "  expected a line containing: PCI\\VEN_1AF4&DEV_1018"
+        )
+    if not has_wdmaud:
+        fail(
+            f"virtio-snd legacy INF missing wdmaud.sys reference: {inf_path.as_posix()}\n"
+            "  expected a line containing: wdmaud.sys"
+        )
 
 
 def normalize_path(value: str) -> str:
@@ -253,6 +308,18 @@ def parse_vcxproj_output_name(vcxproj: Path) -> str:
     return f"{target_name}{target_ext}"
 
 
+def vcxproj_has_target_name(vcxproj: Path, expected: str) -> bool:
+    try:
+        root = ET.parse(vcxproj).getroot()
+    except ET.ParseError as e:
+        fail(f"invalid XML in {vcxproj.as_posix()}: {e}")
+
+    for elem in root.findall(".//{*}TargetName"):
+        if (elem.text or "").strip().lower() == expected.lower():
+            return True
+    return False
+
+
 def extract_inf_ntmpdriver(inf_path: Path) -> str:
     # Match `HKR,,NTMPDriver,,virtiosnd.sys` (common in this tree) and tolerate
     # optional flags or quoted strings.
@@ -340,6 +407,23 @@ def main() -> None:
             "virtio-snd output name mismatch between MSBuild project and INF:\n"
             f"  {VCXPROJ.as_posix()}: {output_name}\n"
             f"  {AERO_INF.as_posix()}: NTMPDriver={expected}"
+        )
+
+    # Validate the opt-in transitional/QEMU package (aero-virtio-snd-legacy.inf).
+    # This is intentionally not part of the default CI driver bundle, but should remain
+    # buildable/installable for QEMU bring-up without overlapping the contract HWIDs.
+    legacy_ntmp = extract_inf_ntmpdriver_required(LEGACY_INF)
+    validate_virtio_snd_legacy_inf_policy(LEGACY_INF)
+    if legacy_ntmp.lower() != "virtiosnd_legacy.sys":
+        fail(
+            "virtio-snd legacy INF must install virtiosnd_legacy.sys:\n"
+            f"  {LEGACY_INF.as_posix()}: NTMPDriver={legacy_ntmp}"
+        )
+    if not vcxproj_has_target_name(VCXPROJ, "virtiosnd_legacy"):
+        fail(
+            "virtio-snd.vcxproj missing Legacy build target name "
+            "(expected <TargetName>virtiosnd_legacy</TargetName>)\n"
+            f"  file: {VCXPROJ.as_posix()}"
         )
 
     # Best-effort: keep the legacy alias INF (if present) in sync with the shipped
