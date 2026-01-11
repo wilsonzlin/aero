@@ -4554,6 +4554,8 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                                pMap ? static_cast<unsigned>(pMap->Subresource) : 0u,
                                pMap ? static_cast<unsigned>(pMap->MapType) : 0u,
                                static_cast<unsigned>(map_flags_for_log));
+  // Keep this local referenced even when tracing is compiled out.
+  (void)map_flags_for_log;
   if (!hDevice.pDrvPrivate || !pMap || !pOut) {
     return;
   }
