@@ -255,6 +255,7 @@ async function runLoop(): Promise<void> {
   const forwarder = l2Forwarder;
   const txRing = netTxRing;
   const rxRing = netRxRing;
+  const cmdRing = commandRing;
   if (!forwarder || !txRing || !rxRing) {
     throw new Error("net.worker was not initialized correctly (missing forwarder or rings).");
   }
@@ -303,9 +304,19 @@ async function runLoop(): Promise<void> {
     const timeoutMs = pendingRx ? (hasWaitAsync ? L2_STATS_LOG_INTERVAL_MS : NET_PENDING_RX_POLL_MS) : NET_IDLE_WAIT_MS;
     if (hasWaitAsync) {
       if (pendingRx) {
-        await Promise.race([txRing.waitForDataAsync(timeoutMs), rxRing.waitForConsumeAsync(timeoutMs)]);
+        // Wake on:
+        // - NET_TX data (guest wants to transmit)
+        // - NET_RX consumption (guest freed space for pending RX flush)
+        // - runtime control commands (e.g. shutdown)
+        await Promise.race([
+          txRing.waitForDataAsync(timeoutMs),
+          rxRing.waitForConsumeAsync(timeoutMs),
+          cmdRing.waitForDataAsync(timeoutMs),
+        ]);
       } else {
-        await txRing.waitForDataAsync(timeoutMs);
+        // When idle, also wake on runtime commands (shutdown) so the coordinator
+        // doesn't wait for the NET idle timeout to elapse.
+        await Promise.race([txRing.waitForDataAsync(timeoutMs), cmdRing.waitForDataAsync(timeoutMs)]);
       }
     } else {
       // In worker contexts without `Atomics.waitAsync`, `RingBuffer.waitForDataAsync()`
