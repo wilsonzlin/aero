@@ -87,12 +87,13 @@ def _load_contract(contract_path: Path) -> tuple[dict[str, Any], dict[str, dict[
 
     return root, devices
 
-
 def _render_devices_cmd(contract: dict[str, Any], devices: dict[str, dict[str, Any]]) -> str:
-    contract_name = contract.get("contract_name")
-    contract_name = contract_name if isinstance(contract_name, str) else None
     contract_version = contract.get("contract_version")
     contract_version = contract_version if isinstance(contract_version, str) else None
+    contract_name = contract.get("contract_name")
+    contract_name = contract_name if isinstance(contract_name, str) and contract_name else None
+    schema_version = contract.get("schema_version")
+    schema_version = schema_version if isinstance(schema_version, int) else None
 
     def device(name: str) -> dict[str, Any]:
         if name not in devices:
@@ -123,9 +124,11 @@ def _render_devices_cmd(contract: dict[str, Any], devices: dict[str, dict[str, A
     lines.append("rem GENERATED FILE - DO NOT EDIT MANUALLY")
     lines.append("rem")
     lines.append("rem Source of truth: Windows device contract JSON")
+    lines.append("rem Generator: scripts/generate-guest-tools-devices-cmd.py")
     if contract_name:
         lines.append(f"rem Contract name: {contract_name}")
-    lines.append("rem Generator: scripts/generate-guest-tools-devices-cmd.py")
+    if schema_version is not None:
+        lines.append(f"rem Contract schema_version: {schema_version}")
     if contract_version:
         lines.append(f"rem Contract version: {contract_version}")
     lines.append("rem -----------------------------------------------------------------------------")

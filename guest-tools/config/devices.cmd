@@ -3,8 +3,9 @@ rem ----------------------------------------------------------------------------
 rem GENERATED FILE - DO NOT EDIT MANUALLY
 rem
 rem Source of truth: Windows device contract JSON
-rem Contract name: aero-windows-pci-device-contract
 rem Generator: scripts/generate-guest-tools-devices-cmd.py
+rem Contract name: aero-windows-pci-device-contract
+rem Contract schema_version: 1
 rem Contract version: 1.0.2
 rem -----------------------------------------------------------------------------
 

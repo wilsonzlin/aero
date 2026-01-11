@@ -119,10 +119,14 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
     out.push_str("rem GENERATED FILE - DO NOT EDIT MANUALLY\r\n");
     out.push_str("rem\r\n");
     out.push_str("rem Source of truth: Windows device contract JSON\r\n");
+    out.push_str("rem Generator: scripts/generate-guest-tools-devices-cmd.py\r\n");
     if !contract_name.is_empty() {
         out.push_str(&format!("rem Contract name: {contract_name}\r\n"));
     }
-    out.push_str("rem Generator: scripts/generate-guest-tools-devices-cmd.py\r\n");
+    out.push_str(&format!(
+        "rem Contract schema_version: {}\r\n",
+        contract.schema_version
+    ));
     if !contract_version.is_empty() {
         out.push_str(&format!("rem Contract version: {contract_version}\r\n"));
     }
