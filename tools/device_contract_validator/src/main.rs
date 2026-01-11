@@ -274,19 +274,11 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                 );
             }
         } else if dev.device == "aero-gpu" {
-<<<<<<< HEAD
             // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI). The deprecated
             // legacy bring-up identity (vendor 1AED) is intentionally excluded from the canonical
             // Windows device contract; it requires the legacy INFs under
             // `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model in the
             // emulator.
-=======
-            // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI).
-            //
-            // Legacy bring-up device models are intentionally out of scope for Guest Tools; they
-            // use the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and require
-            // enabling the legacy emulator device model (`emulator/aerogpu-legacy`).
->>>>>>> 88747466 (fix(contract): align validators/tests with canonical-only AeroGPU HWID)
             let hwids = dev
                 .hardware_id_patterns
                 .iter()
@@ -303,7 +295,6 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     "{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"
                 );
             }
-<<<<<<< HEAD
             // Ensure we do not accidentally re-add the legacy AeroGPU ID to the canonical contract.
             //
             // Avoid embedding the full legacy vendor token (`VEN_` + `1AED`) in the source (there
@@ -313,8 +304,6 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
             if hwids.iter().any(|p| p.contains(&legacy_fragment)) {
                 bail!("{name}: hardware_id_patterns must not include legacy bring-up HWID family (vendor 1AED); canonical contract is A3A0-only");
             }
-=======
->>>>>>> 88747466 (fix(contract): align validators/tests with canonical-only AeroGPU HWID)
         }
     }
 
