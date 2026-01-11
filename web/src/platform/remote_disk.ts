@@ -214,6 +214,13 @@ export type RemoteDiskCacheStatus = {
 
 export type RemoteDiskOptions = {
   blockSize?: number;
+  /**
+   * Maximum bytes to keep in the persistent cache (LRU-evicted).
+   *
+   * - `undefined` (default): use a reasonable default limit (currently 512MiB)
+   * - `null`: disable eviction (unbounded cache; subject to browser storage quota)
+   * - `0`: disable caching entirely (always fetch via HTTP Range)
+   */
   cacheLimitBytes?: number | null;
   prefetchSequentialBlocks?: number;
   cacheBackend?: DiskBackend;

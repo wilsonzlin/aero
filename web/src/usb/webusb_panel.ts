@@ -290,8 +290,22 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   };
 
   const refreshStatus = () => {
+    const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
+    const hasUsb = typeof navigator !== "undefined" && "usb" in navigator && !!(navigator as Navigator & { usb?: unknown }).usb;
+    const userActivation = typeof navigator !== "undefined" ? navigator.userActivation : undefined;
+    const envInfo =
+      `isSecureContext=${secure}\n` +
+      `crossOriginIsolated=${report.crossOriginIsolated}\n` +
+      `userActivation.isActive=${userActivation?.isActive ?? "n/a"}\n` +
+      `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? "n/a"}\n`;
+
     if (!report.webusb) {
-      status.textContent = "WebUSB: missing (navigator.usb is not available in this browser/context)";
+      const reason = !secure
+        ? "requires a secure context (https:// or localhost)"
+        : !hasUsb
+          ? "navigator.usb is not available (unsupported browser or blocked by policy)"
+          : "unavailable";
+      status.textContent = `WebUSB: missing (${reason})\n\n${envInfo}`;
       requestButton.disabled = true;
       openButton.disabled = true;
       listButton.disabled = true;
@@ -303,14 +317,6 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
     vendorIdInput.disabled = false;
     productIdInput.disabled = false;
-
-    const userActivation = navigator.userActivation;
-    const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
-    const envInfo =
-      `isSecureContext=${secure}\n` +
-      `crossOriginIsolated=${report.crossOriginIsolated}\n` +
-      `userActivation.isActive=${userActivation?.isActive ?? "n/a"}\n` +
-      `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? "n/a"}\n`;
 
     if (!selected) {
       status.textContent = `WebUSB: supported. No device selected.\n\n${envInfo}`;

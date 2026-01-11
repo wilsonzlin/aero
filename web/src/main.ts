@@ -274,7 +274,7 @@ function render(): void {
     renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderMicrophonePanel(),
-    renderWebUsbDiagnosticsPanel(),
+    renderWebUsbDiagnosticsPanel(report),
     renderWebUsbPanel(report),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
@@ -285,20 +285,41 @@ function render(): void {
   );
 }
 
-function renderWebUsbDiagnosticsPanel(): HTMLElement {
+function renderWebUsbDiagnosticsPanel(report: PlatformFeatureReport): HTMLElement {
   const link = el("a", {
     href: "./webusb_diagnostics.html",
     target: "_blank",
     rel: "noopener",
     text: "./webusb_diagnostics.html",
   });
-  const supported = typeof (navigator as unknown as { usb?: unknown }).usb !== "undefined";
+
+  const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
+  const hasUsb =
+    typeof navigator !== "undefined" && "usb" in navigator && !!(navigator as Navigator & { usb?: unknown }).usb;
+
+  const messages: string[] = [];
+  if (!secure) messages.push("Not a secure context (WebUSB requires https:// or localhost).");
+  if (!hasUsb) messages.push("navigator.usb is missing (unsupported browser or blocked by policy).");
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "WebUSB diagnostics" }),
     el("div", { class: "hint" }, "Standalone WebUSB diagnostics: ", link, "."),
-    supported ? null : el("div", { class: "bad", text: "WebUSB unavailable (navigator.usb missing in this context)." }),
+    report.webusb
+      ? el("div", { class: "ok", text: "WebUSB appears to be available in this context." })
+      : el(
+          "div",
+          { class: "bad" },
+          el("div", { text: "WebUSB is unavailable in this context." }),
+          messages.length
+            ? el(
+                "ul",
+                { class: "hint" },
+                ...messages.map((m) => el("li", { text: m })),
+              )
+            : null,
+        ),
   );
 }
 

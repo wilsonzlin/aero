@@ -340,6 +340,7 @@ export function allocateSharedMemorySegments(options?: {
         "Ensure COOP/COEP headers are set and the browser supports WASM threads.",
     );
   }
+  const guestSab = guestBuffer;
 
   const control = new SharedArrayBuffer(CONTROL_BYTES);
   const status = new Int32Array(control, CONTROL_LAYOUT.statusOffset, STATUS_INTS);
@@ -361,13 +362,12 @@ export function allocateSharedMemorySegments(options?: {
     FramebufferFormat.RGBA8,
     CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
   );
-
   const embeddedOffsetBytes = layout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
   const embeddedRequiredBytes = embeddedOffsetBytes + sharedFramebufferLayout.totalBytes;
 
-  const sharedFramebufferEmbedded = embeddedRequiredBytes <= guestBuffer.byteLength;
+  const sharedFramebufferEmbedded = embeddedRequiredBytes <= guestSab.byteLength;
 
-  const sharedFramebuffer = sharedFramebufferEmbedded ? guestBuffer : new SharedArrayBuffer(sharedFramebufferLayout.totalBytes);
+  const sharedFramebuffer = sharedFramebufferEmbedded ? guestSab : new SharedArrayBuffer(sharedFramebufferLayout.totalBytes);
   const sharedFramebufferOffsetBytes = sharedFramebufferEmbedded ? embeddedOffsetBytes : 0;
   const sharedHeader = new Int32Array(sharedFramebuffer, sharedFramebufferOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
