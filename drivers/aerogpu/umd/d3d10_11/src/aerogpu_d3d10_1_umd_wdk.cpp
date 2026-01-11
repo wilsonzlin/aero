@@ -1283,11 +1283,19 @@ struct CopyResourceImpl;
 template <typename Ret, typename... Args>
 struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
   static Ret AEROGPU_APIENTRY Call(Args... args) {
+    D3D10DDI_HDEVICE hDevice{};
+    bool has_device = false;
     D3D10DDI_HRESOURCE res_args[2]{};
     uint32_t count = 0;
 
     auto capture = [&](auto v) {
       using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, D3D10DDI_HDEVICE>) {
+        if (!has_device) {
+          hDevice = v;
+          has_device = true;
+        }
+      }
       if constexpr (std::is_same_v<T, D3D10DDI_HRESOURCE>) {
         if (count < 2) {
           res_args[count++] = v;
@@ -1296,19 +1304,124 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
     };
     (capture(args), ...);
 
-    if (count < 2) {
+    auto* dev = has_device ? FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice) : nullptr;
+    if (dev) {
+      dev->mutex.lock();
+    }
+
+    auto finish = [&](HRESULT hr) -> Ret {
+      if (FAILED(hr)) {
+        set_error(dev, hr);
+      }
+      if (dev) {
+        dev->mutex.unlock();
+      }
       if constexpr (std::is_same_v<Ret, HRESULT>) {
-        return E_INVALIDARG;
+        return hr;
       } else if constexpr (std::is_same_v<Ret, void>) {
         return;
       } else {
         return Ret{};
       }
+    };
+
+    if (count < 2) {
+      return finish(E_INVALIDARG);
     }
 
     auto* dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(res_args[0]);
     auto* src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(res_args[1]);
     if (!dst || !src) {
+      return finish(E_INVALIDARG);
+    }
+
+    try {
+      if (dst->kind == ResourceKind::Buffer && src->kind == ResourceKind::Buffer) {
+        const uint64_t copy_bytes = std::min<uint64_t>(dst->size_bytes, src->size_bytes);
+        if (copy_bytes) {
+          if (dst->storage.size() < static_cast<size_t>(dst->size_bytes)) {
+            dst->storage.resize(static_cast<size_t>(dst->size_bytes), 0);
+          }
+          if (src->storage.size() < static_cast<size_t>(copy_bytes)) {
+            src->storage.resize(static_cast<size_t>(copy_bytes), 0);
+          }
+          std::memcpy(dst->storage.data(), src->storage.data(), static_cast<size_t>(copy_bytes));
+        }
+      } else if (dst->kind == ResourceKind::Texture2D && src->kind == ResourceKind::Texture2D) {
+        if (dst->row_pitch_bytes == 0) {
+          dst->row_pitch_bytes = dst->width * 4;
+        }
+        if (src->row_pitch_bytes == 0) {
+          src->row_pitch_bytes = src->width * 4;
+        }
+
+        const uint32_t copy_w = std::min(dst->width, src->width);
+        const uint32_t copy_h = std::min(dst->height, src->height);
+        const uint32_t row_bytes = copy_w * 4;
+
+        const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
+        const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
+        if (dst_total <= static_cast<uint64_t>(SIZE_MAX) && dst->storage.size() < static_cast<size_t>(dst_total)) {
+          dst->storage.resize(static_cast<size_t>(dst_total), 0);
+        }
+        if (src_total <= static_cast<uint64_t>(SIZE_MAX) && src->storage.size() < static_cast<size_t>(src_total)) {
+          src->storage.resize(static_cast<size_t>(src_total), 0);
+        }
+
+        for (uint32_t y = 0; y < copy_h; ++y) {
+          const uint8_t* src_row = src->storage.data() + static_cast<size_t>(y) * src->row_pitch_bytes;
+          uint8_t* dst_row = dst->storage.data() + static_cast<size_t>(y) * dst->row_pitch_bytes;
+          std::memcpy(dst_row, src_row, row_bytes);
+        }
+      }
+    } catch (...) {
+      return finish(E_OUTOFMEMORY);
+    }
+
+    return finish(S_OK);
+  }
+};
+
+// Minimal CPU-side CopySubresourceRegion implementation (full-copy only). Some
+// D3D10.x runtimes may implement CopyResource in terms of CopySubresourceRegion.
+template <typename FnPtr>
+struct CopySubresourceRegionImpl;
+
+template <typename Ret, typename... Args>
+struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    D3D10DDI_HDEVICE hDevice{};
+    bool has_device = false;
+    D3D10DDI_HRESOURCE res_args[2]{};
+    uint32_t count = 0;
+    bool nonzero_u32 = false;
+    bool has_src_box = false;
+
+    auto capture = [&](auto v) {
+      using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, D3D10DDI_HDEVICE>) {
+        if (!has_device) {
+          hDevice = v;
+          has_device = true;
+        }
+      } else if constexpr (std::is_same_v<T, D3D10DDI_HRESOURCE>) {
+        if (count < 2) {
+          res_args[count++] = v;
+        }
+      } else if constexpr (std::is_same_v<T, UINT>) {
+        if (v != 0) {
+          nonzero_u32 = true;
+        }
+      } else if constexpr (std::is_pointer_v<T> &&
+                           std::is_same_v<std::remove_cv_t<std::remove_pointer_t<T>>, D3D10_DDI_BOX>) {
+        has_src_box = (v != nullptr);
+      }
+    };
+    (capture(args), ...);
+
+    auto* dev = has_device ? FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice) : nullptr;
+    if (count < 2) {
+      set_error(dev, E_INVALIDARG);
       if constexpr (std::is_same_v<Ret, HRESULT>) {
         return E_INVALIDARG;
       } else if constexpr (std::is_same_v<Ret, void>) {
@@ -1317,53 +1430,19 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
         return Ret{};
       }
     }
-
-    if (dst->kind == ResourceKind::Buffer && src->kind == ResourceKind::Buffer) {
-      const uint64_t copy_bytes = std::min<uint64_t>(dst->size_bytes, src->size_bytes);
-      if (copy_bytes) {
-        if (dst->storage.size() < static_cast<size_t>(dst->size_bytes)) {
-          dst->storage.resize(static_cast<size_t>(dst->size_bytes), 0);
-        }
-        if (src->storage.size() < static_cast<size_t>(copy_bytes)) {
-          src->storage.resize(static_cast<size_t>(copy_bytes), 0);
-        }
-        std::memcpy(dst->storage.data(), src->storage.data(), static_cast<size_t>(copy_bytes));
-      }
-    } else if (dst->kind == ResourceKind::Texture2D && src->kind == ResourceKind::Texture2D) {
-      if (dst->row_pitch_bytes == 0) {
-        dst->row_pitch_bytes = dst->width * 4;
-      }
-      if (src->row_pitch_bytes == 0) {
-        src->row_pitch_bytes = src->width * 4;
-      }
-
-      const uint32_t copy_w = std::min(dst->width, src->width);
-      const uint32_t copy_h = std::min(dst->height, src->height);
-      const uint32_t row_bytes = copy_w * 4;
-
-      const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
-      const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
-      if (dst_total <= static_cast<uint64_t>(SIZE_MAX) && dst->storage.size() < static_cast<size_t>(dst_total)) {
-        dst->storage.resize(static_cast<size_t>(dst_total), 0);
-      }
-      if (src_total <= static_cast<uint64_t>(SIZE_MAX) && src->storage.size() < static_cast<size_t>(src_total)) {
-        src->storage.resize(static_cast<size_t>(src_total), 0);
-      }
-
-      for (uint32_t y = 0; y < copy_h; ++y) {
-        const uint8_t* src_row = src->storage.data() + static_cast<size_t>(y) * src->row_pitch_bytes;
-        uint8_t* dst_row = dst->storage.data() + static_cast<size_t>(y) * dst->row_pitch_bytes;
-        std::memcpy(dst_row, src_row, row_bytes);
+    if (nonzero_u32 || has_src_box) {
+      set_error(dev, E_NOTIMPL);
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
       }
     }
 
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
-      return S_OK;
-    } else if constexpr (std::is_same_v<Ret, void>) {
-      return;
-    } else {
-      return Ret{};
-    }
+    // Delegate to the CopyResource CPU implementation.
+    return CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)>::Call(args...);
   }
 };
 
@@ -3162,7 +3241,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
   pCreateDevice->pDeviceFuncs->pfnCopyResource =
       &CopyResourceImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnCopySubresourceRegion, CopySubresourceRegion);
+  pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
+      &CopySubresourceRegionImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
 
   #undef AEROGPU_D3D10_ASSIGN_STUB
 
@@ -3306,7 +3386,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCopyResource =
       &CopyResourceImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
   pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
-      &DdiErrorStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
+      &CopySubresourceRegionImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
 
   AEROGPU_D3D10_RET_HR(S_OK);
 }
