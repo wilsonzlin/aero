@@ -70,6 +70,8 @@ import type {
   GpuRuntimeErrorEvent,
   GpuRuntimeInMessage,
   GpuRuntimeFallbackInfo,
+  GpuRuntimeCursorSetImageMessage,
+  GpuRuntimeCursorSetStateMessage,
   GpuRuntimeEventsMessage,
   GpuRuntimeInitMessage,
   GpuRuntimeInitOptions,
@@ -203,6 +205,113 @@ type FramebufferProtocolViews = {
 
 let framebufferProtocolViews: FramebufferProtocolViews | null = null;
 let framebufferProtocolLayoutKey: string | null = null;
+
+type CursorPresenter = Presenter & {
+  setCursorImageRgba8?: (rgba: Uint8Array, width: number, height: number) => void;
+  setCursorState?: (enabled: boolean, x: number, y: number, hotX: number, hotY: number) => void;
+  setCursorRenderEnabled?: (enabled: boolean) => void;
+  redraw?: () => void;
+};
+
+let cursorImage: Uint8Array | null = null;
+let cursorWidth = 0;
+let cursorHeight = 0;
+let cursorEnabled = false;
+let cursorX = 0;
+let cursorY = 0;
+let cursorHotX = 0;
+let cursorHotY = 0;
+
+// Normally true; temporarily disabled for cursor-less screenshots.
+let cursorRenderEnabled = true;
+
+const getCursorPresenter = (): CursorPresenter | null => presenter as unknown as CursorPresenter | null;
+
+const syncCursorToPresenter = (): void => {
+  const p = getCursorPresenter();
+  if (!p) return;
+
+  if (p.setCursorRenderEnabled) {
+    p.setCursorRenderEnabled(cursorRenderEnabled);
+  }
+
+  if (cursorImage && cursorWidth > 0 && cursorHeight > 0 && p.setCursorImageRgba8) {
+    p.setCursorImageRgba8(cursorImage, cursorWidth, cursorHeight);
+  }
+
+  if (p.setCursorState) {
+    p.setCursorState(cursorEnabled, cursorX, cursorY, cursorHotX, cursorHotY);
+  }
+};
+
+const redrawCursor = (): void => {
+  const p = getCursorPresenter();
+  if (!p) return;
+  if (p.redraw) {
+    p.redraw();
+    return;
+  }
+
+  // Best-effort fallback: re-present the current framebuffer if no redraw primitive exists.
+  const frame = getCurrentFrameInfo();
+  if (!frame || !presenter) return;
+  presenter.present(frame.pixels, frame.strideBytes);
+};
+
+const compositeCursorOverRgba8 = (
+  dst: Uint8Array,
+  dstWidth: number,
+  dstHeight: number,
+  enabled: boolean,
+  cursorRgba: Uint8Array | null,
+  cursorW: number,
+  cursorH: number,
+  cursorX: number,
+  cursorY: number,
+  hotX: number,
+  hotY: number,
+): void => {
+  if (!enabled) return;
+  if (!cursorRgba) return;
+  if (cursorW <= 0 || cursorH <= 0) return;
+  if (dstWidth <= 0 || dstHeight <= 0) return;
+
+  const requiredCursorLen = cursorW * cursorH * 4;
+  if (cursorRgba.byteLength < requiredCursorLen) return;
+
+  const originX = cursorX - hotX;
+  const originY = cursorY - hotY;
+
+  for (let cy = 0; cy < cursorH; cy += 1) {
+    const dy = originY + cy;
+    if (dy < 0 || dy >= dstHeight) continue;
+    for (let cx = 0; cx < cursorW; cx += 1) {
+      const dx = originX + cx;
+      if (dx < 0 || dx >= dstWidth) continue;
+
+      const srcOff = (cy * cursorW + cx) * 4;
+      const a = cursorRgba[srcOff + 3]!;
+      if (a === 0) continue;
+
+      const dstOff = (dy * dstWidth + dx) * 4;
+      if (a === 255) {
+        dst[dstOff + 0] = cursorRgba[srcOff + 0]!;
+        dst[dstOff + 1] = cursorRgba[srcOff + 1]!;
+        dst[dstOff + 2] = cursorRgba[srcOff + 2]!;
+        dst[dstOff + 3] = 255;
+        continue;
+      }
+
+      const invA = 255 - a;
+      for (let ch = 0; ch < 3; ch += 1) {
+        const src = cursorRgba[srcOff + ch]!;
+        const dstCh = dst[dstOff + ch]!;
+        dst[dstOff + ch] = Math.floor((src * a + dstCh * invA + 127) / 255);
+      }
+      dst[dstOff + 3] = 255;
+    }
+  }
+};
 
 const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
 let lastFrameStartMs: number | null = null;
@@ -1346,6 +1455,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
       presenterSrcWidth = width;
       presenterSrcHeight = height;
       if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+      syncCursorToPresenter();
 
       if (backend !== firstBackend && firstError) {
         const reason = firstError instanceof Error ? firstError.message : String(firstError);
@@ -1564,6 +1674,15 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         aerogpuPresentCount = 0n;
         aerogpuLastPresentedFrame = null;
         aerogpuSubmitChain = Promise.resolve();
+        cursorImage = null;
+        cursorWidth = 0;
+        cursorHeight = 0;
+        cursorEnabled = false;
+        cursorX = 0;
+        cursorY = 0;
+        cursorHotX = 0;
+        cursorHotY = 0;
+        cursorRenderEnabled = true;
 
         presenterUserOnError = runtimeOptions?.presenter?.onError;
         presenterInitOptions = { ...(runtimeOptions?.presenter ?? {}) };
@@ -1664,6 +1783,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
         try {
           await maybeSendReady();
+          const includeCursor = req.includeCursor === true;
 
           // Ensure the screenshot reflects the latest presented pixels. The shared
           // framebuffer producer can advance `frameSeq` before the presenter runs,
@@ -1690,19 +1810,33 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
           if (presenter && !isDeviceLost) {
-            const shot = await presenter.screenshot();
-            postToMain(
-              {
-                type: "screenshot",
-                requestId: req.requestId,
-                width: shot.width,
-                height: shot.height,
-                rgba8: shot.pixels,
-                origin: "top-left",
-                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
-              },
-              [shot.pixels],
-            );
+            const prevCursorRenderEnabled = cursorRenderEnabled;
+            if (!includeCursor) {
+              cursorRenderEnabled = false;
+              syncCursorToPresenter();
+            }
+
+            try {
+              const shot = await presenter.screenshot();
+              postToMain(
+                {
+                  type: "screenshot",
+                  requestId: req.requestId,
+                  width: shot.width,
+                  height: shot.height,
+                  rgba8: shot.pixels,
+                  origin: "top-left",
+                  ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+                },
+                [shot.pixels],
+              );
+            } finally {
+              if (!includeCursor) {
+                cursorRenderEnabled = prevCursorRenderEnabled;
+                syncCursorToPresenter();
+                getCursorPresenter()?.redraw?.();
+              }
+            }
             return;
           }
 
@@ -1738,6 +1872,26 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               const srcStart = y * frame.strideBytes;
               const dstStart = y * rowBytes;
               out.set(frame.pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
+            }
+
+            if (includeCursor) {
+              try {
+                compositeCursorOverRgba8(
+                  out,
+                  frame.width,
+                  frame.height,
+                  cursorEnabled,
+                  cursorImage,
+                  cursorWidth,
+                  cursorHeight,
+                  cursorX,
+                  cursorY,
+                  cursorHotX,
+                  cursorHotY,
+                );
+              } catch {
+                // Ignore; screenshot cursor compositing is best-effort.
+              }
             }
 
             postToMain(
@@ -1780,6 +1934,35 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           postStub(typeof seqNow === "number" ? seqNow : undefined);
         }
       })();
+      break;
+    }
+
+    case "cursor_set_image": {
+      const req = msg as GpuRuntimeCursorSetImageMessage;
+      const w = Math.max(0, req.width | 0);
+      const h = Math.max(0, req.height | 0);
+      if (w === 0 || h === 0) {
+        postPresenterError(new PresenterError("invalid_cursor_image", "cursor_set_image width/height must be non-zero"));
+        break;
+      }
+
+      cursorWidth = w;
+      cursorHeight = h;
+      cursorImage = new Uint8Array(req.rgba8);
+      syncCursorToPresenter();
+      redrawCursor();
+      break;
+    }
+
+    case "cursor_set_state": {
+      const req = msg as GpuRuntimeCursorSetStateMessage;
+      cursorEnabled = !!req.enabled;
+      cursorX = req.x | 0;
+      cursorY = req.y | 0;
+      cursorHotX = Math.max(0, req.hotX | 0);
+      cursorHotY = Math.max(0, req.hotY | 0);
+      syncCursorToPresenter();
+      redrawCursor();
       break;
     }
 

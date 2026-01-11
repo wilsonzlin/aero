@@ -75,6 +75,29 @@ export type GpuRuntimeTickMessage = {
 export type GpuRuntimeScreenshotRequestMessage = {
   type: "screenshot";
   requestId: number;
+  /**
+   * Whether the screenshot should include the cursor overlay.
+   *
+   * Default: false (cursor excluded) so screenshot hashing stays deterministic even
+   * when the guest is actively moving the hardware cursor.
+   */
+  includeCursor?: boolean;
+};
+
+export type GpuRuntimeCursorSetImageMessage = {
+  type: "cursor_set_image";
+  width: number;
+  height: number;
+  rgba8: ArrayBuffer;
+};
+
+export type GpuRuntimeCursorSetStateMessage = {
+  type: "cursor_set_state";
+  enabled: boolean;
+  x: number;
+  y: number;
+  hotX: number;
+  hotY: number;
 };
 
 export type GpuRuntimeSubmitAerogpuMessage = {
@@ -106,6 +129,8 @@ export type GpuRuntimeInMessage =
   | GpuRuntimeResizeMessage
   | GpuRuntimeTickMessage
   | GpuRuntimeScreenshotRequestMessage
+  | GpuRuntimeCursorSetImageMessage
+  | GpuRuntimeCursorSetStateMessage
   | GpuRuntimeSubmitAerogpuMessage
   | GpuRuntimeShutdownMessage;
 

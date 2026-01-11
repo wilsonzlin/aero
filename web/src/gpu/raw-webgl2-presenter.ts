@@ -30,13 +30,19 @@ precision highp int;
 
 in vec2 v_uv;
 uniform sampler2D u_tex;
+uniform sampler2D u_cursor_tex;
 uniform uint u_flags;
+uniform ivec2 u_src_size;
+uniform ivec2 u_cursor_pos;
+uniform ivec2 u_cursor_hot;
+uniform ivec2 u_cursor_size;
 out vec4 outColor;
 
 const uint FLAG_APPLY_SRGB_ENCODE = 1u;
 const uint FLAG_PREMULTIPLY_ALPHA = 2u;
 const uint FLAG_FORCE_OPAQUE_ALPHA = 4u;
 const uint FLAG_FLIP_Y = 8u;
+const uint FLAG_CURSOR_ENABLE = 16u;
 
 float srgbEncodeChannel(float x) {
   float v = clamp(x, 0.0, 1.0);
@@ -59,6 +65,22 @@ void main() {
   }
 
   vec4 color = texture(u_tex, uv);
+
+  if ((u_flags & FLAG_CURSOR_ENABLE) != 0u && u_cursor_size.x > 0 && u_cursor_size.y > 0) {
+    ivec2 srcSize = max(u_src_size, ivec2(1, 1));
+    ivec2 screenPx = ivec2(v_uv * vec2(srcSize));
+    screenPx = clamp(screenPx, ivec2(0, 0), srcSize - ivec2(1, 1));
+
+    ivec2 origin = u_cursor_pos - u_cursor_hot;
+    ivec2 cursorPx = screenPx - origin;
+    if (cursorPx.x >= 0 && cursorPx.y >= 0 && cursorPx.x < u_cursor_size.x && cursorPx.y < u_cursor_size.y) {
+      vec2 cuv = (vec2(cursorPx) + vec2(0.5)) / vec2(u_cursor_size);
+      vec4 cursorColor = texture(u_cursor_tex, cuv);
+      float a = cursorColor.a;
+      color.rgb = cursorColor.rgb * a + color.rgb * (1.0 - a);
+      color.a = a + color.a * (1.0 - a);
+    }
+  }
 
   if ((u_flags & FLAG_PREMULTIPLY_ALPHA) != 0u) {
     color.rgb *= color.a;
@@ -130,10 +152,20 @@ export class RawWebGL2Presenter {
   program;
   /** @type {WebGLTexture} */
   srcTex;
+  /** @type {WebGLTexture} */
+  cursorTex;
   /** @type {WebGLVertexArrayObject} */
   vao;
   /** @type {WebGLUniformLocation} */
   uFlagsLoc;
+  /** @type {WebGLUniformLocation} */
+  uSrcSizeLoc;
+  /** @type {WebGLUniformLocation} */
+  uCursorPosLoc;
+  /** @type {WebGLUniformLocation} */
+  uCursorHotLoc;
+  /** @type {WebGLUniformLocation} */
+  uCursorSizeLoc;
   /** @type {RawWebGL2PresenterOptions} */
   opts;
 
@@ -141,6 +173,21 @@ export class RawWebGL2Presenter {
   srcWidth = 0;
   /** @type {number} */
   srcHeight = 0;
+
+  /** @type {boolean} */
+  cursorEnabled = false;
+  /** @type {number} */
+  cursorX = 0;
+  /** @type {number} */
+  cursorY = 0;
+  /** @type {number} */
+  cursorHotX = 0;
+  /** @type {number} */
+  cursorHotY = 0;
+  /** @type {number} */
+  cursorWidth = 0;
+  /** @type {number} */
+  cursorHeight = 0;
 
   /**
    * @param {HTMLCanvasElement | OffscreenCanvas} canvas
@@ -172,6 +219,10 @@ export class RawWebGL2Presenter {
     const tex = gl.createTexture();
     if (!tex) throw new Error("createTexture failed");
     this.srcTex = tex;
+
+    const cursorTex = gl.createTexture();
+    if (!cursorTex) throw new Error("createTexture failed");
+    this.cursorTex = cursorTex;
 
     const vao = gl.createVertexArray();
     if (!vao) throw new Error("createVertexArray failed");
@@ -205,9 +256,24 @@ export class RawWebGL2Presenter {
     const uTexLoc = gl.getUniformLocation(this.program, "u_tex");
     if (!uTexLoc) throw new Error("u_tex uniform missing");
     gl.uniform1i(uTexLoc, 0);
+    const uCursorTexLoc = gl.getUniformLocation(this.program, "u_cursor_tex");
+    if (!uCursorTexLoc) throw new Error("u_cursor_tex uniform missing");
+    gl.uniform1i(uCursorTexLoc, 1);
     const uFlagsLoc = gl.getUniformLocation(this.program, "u_flags");
     if (!uFlagsLoc) throw new Error("u_flags uniform missing");
     this.uFlagsLoc = uFlagsLoc;
+    const uSrcSizeLoc = gl.getUniformLocation(this.program, "u_src_size");
+    if (!uSrcSizeLoc) throw new Error("u_src_size uniform missing");
+    this.uSrcSizeLoc = uSrcSizeLoc;
+    const uCursorPosLoc = gl.getUniformLocation(this.program, "u_cursor_pos");
+    if (!uCursorPosLoc) throw new Error("u_cursor_pos uniform missing");
+    this.uCursorPosLoc = uCursorPosLoc;
+    const uCursorHotLoc = gl.getUniformLocation(this.program, "u_cursor_hot");
+    if (!uCursorHotLoc) throw new Error("u_cursor_hot uniform missing");
+    this.uCursorHotLoc = uCursorHotLoc;
+    const uCursorSizeLoc = gl.getUniformLocation(this.program, "u_cursor_size");
+    if (!uCursorSizeLoc) throw new Error("u_cursor_size uniform missing");
+    this.uCursorSizeLoc = uCursorSizeLoc;
     gl.useProgram(null);
 
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -215,6 +281,26 @@ export class RawWebGL2Presenter {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    gl.bindTexture(gl.TEXTURE_2D, cursorTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const cursorInternalFormat =
+      this.opts.framebufferColorSpace === "srgb" ? gl.SRGB8_ALPHA8 : gl.RGBA8;
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      cursorInternalFormat,
+      1,
+      1,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 0, 0]),
+    );
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
@@ -343,7 +429,40 @@ export class RawWebGL2Presenter {
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
   }
 
-  present() {
+  setCursorImageRgba8(rgba: Uint8Array, width: number, height: number) {
+    const gl = this.gl;
+    const w = Math.max(0, width | 0);
+    const h = Math.max(0, height | 0);
+    if (w === 0 || h === 0) {
+      throw new Error("cursor width/height must be non-zero");
+    }
+
+    if (w !== this.cursorWidth || h !== this.cursorHeight) {
+      this.cursorWidth = w;
+      this.cursorHeight = h;
+
+      gl.bindTexture(gl.TEXTURE_2D, this.cursorTex);
+      const internalFormat =
+        this.opts.framebufferColorSpace === "srgb" ? gl.SRGB8_ALPHA8 : gl.RGBA8;
+      gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, this.cursorTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  setCursorState(enabled: boolean, x: number, y: number, hotX: number, hotY: number) {
+    this.cursorEnabled = !!enabled;
+    this.cursorX = x | 0;
+    this.cursorY = y | 0;
+    this.cursorHotX = Math.max(0, hotX | 0);
+    this.cursorHotY = Math.max(0, hotY | 0);
+  }
+
+  present(opts: { includeCursor?: boolean } = {}) {
     const gl = this.gl;
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
@@ -357,18 +476,30 @@ export class RawWebGL2Presenter {
     if (this.opts.alphaMode === "premultiplied") flags |= 2;
     if (this.opts.alphaMode === "opaque") flags |= 4;
     if (this.opts.flipY) flags |= 8;
+    const includeCursor = opts.includeCursor !== false;
+    if (includeCursor && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0) flags |= 16;
 
     gl.useProgram(this.program);
     gl.uniform1ui(this.uFlagsLoc, flags);
+    gl.uniform2i(this.uSrcSizeLoc, Math.max(1, this.srcWidth | 0), Math.max(1, this.srcHeight | 0));
+    gl.uniform2i(this.uCursorPosLoc, this.cursorX | 0, this.cursorY | 0);
+    gl.uniform2i(this.uCursorHotLoc, this.cursorHotX | 0, this.cursorHotY | 0);
+    gl.uniform2i(this.uCursorSizeLoc, this.cursorWidth | 0, this.cursorHeight | 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.cursorTex);
 
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
 
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE0);
     gl.useProgram(null);
   }
 }

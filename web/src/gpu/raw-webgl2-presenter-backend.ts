@@ -78,11 +78,28 @@ export class RawWebGl2Presenter implements Presenter {
   private program: WebGLProgram | null = null;
   private vao: WebGLVertexArrayObject | null = null;
   private frameTexture: WebGLTexture | null = null;
+  private cursorTexture: WebGLTexture | null = null;
   private uFrameLoc: WebGLUniformLocation | null = null;
+  private uCursorLoc: WebGLUniformLocation | null = null;
+  private uSrcSizeLoc: WebGLUniformLocation | null = null;
+  private uCursorEnableLoc: WebGLUniformLocation | null = null;
+  private uCursorPosLoc: WebGLUniformLocation | null = null;
+  private uCursorHotLoc: WebGLUniformLocation | null = null;
+  private uCursorSizeLoc: WebGLUniformLocation | null = null;
 
   private isContextLost = false;
   private onContextLost: ((ev: Event) => void) | null = null;
   private onContextRestored: (() => void) | null = null;
+
+  private cursorImage: Uint8Array | null = null;
+  private cursorWidth = 0;
+  private cursorHeight = 0;
+  private cursorEnabled = false;
+  private cursorRenderEnabled = true;
+  private cursorX = 0;
+  private cursorY = 0;
+  private cursorHotX = 0;
+  private cursorHotY = 0;
 
   public init(canvas: OffscreenCanvas, width: number, height: number, dpr: number, opts?: PresenterInitOptions): void {
     this.canvas = canvas;
@@ -225,6 +242,42 @@ export class RawWebGl2Presenter implements Presenter {
     this.draw();
   }
 
+  public setCursorImageRgba8(rgba: Uint8Array, width: number, height: number): void {
+    const w = Math.max(0, width | 0);
+    const h = Math.max(0, height | 0);
+    if (w === 0 || h === 0) {
+      throw new PresenterError('invalid_cursor_image', 'cursor width/height must be non-zero');
+    }
+    const required = w * h * 4;
+    if (rgba.byteLength < required) {
+      throw new PresenterError(
+        'invalid_cursor_image',
+        `cursor RGBA buffer too small: expected at least ${required} bytes, got ${rgba.byteLength}`,
+      );
+    }
+
+    this.cursorImage = rgba;
+    this.cursorWidth = w;
+    this.cursorHeight = h;
+    this.uploadCursorTexture();
+  }
+
+  public setCursorState(enabled: boolean, x: number, y: number, hotX: number, hotY: number): void {
+    this.cursorEnabled = !!enabled;
+    this.cursorX = x | 0;
+    this.cursorY = y | 0;
+    this.cursorHotX = Math.max(0, hotX | 0);
+    this.cursorHotY = Math.max(0, hotY | 0);
+  }
+
+  public setCursorRenderEnabled(enabled: boolean): void {
+    this.cursorRenderEnabled = !!enabled;
+  }
+
+  public redraw(): void {
+    this.draw();
+  }
+
   public screenshot(): PresenterScreenshot {
     const gl = this.gl;
     const canvas = this.canvas;
@@ -268,12 +321,20 @@ export class RawWebGl2Presenter implements Presenter {
       if (this.program) gl.deleteProgram(this.program);
       if (this.vao) gl.deleteVertexArray(this.vao);
       if (this.frameTexture) gl.deleteTexture(this.frameTexture);
+      if (this.cursorTexture) gl.deleteTexture(this.cursorTexture);
     }
 
     this.program = null;
     this.vao = null;
     this.frameTexture = null;
+    this.cursorTexture = null;
     this.uFrameLoc = null;
+    this.uCursorLoc = null;
+    this.uSrcSizeLoc = null;
+    this.uCursorEnableLoc = null;
+    this.uCursorPosLoc = null;
+    this.uCursorHotLoc = null;
+    this.uCursorSizeLoc = null;
     this.gl = null;
     this.canvas = null;
   }
@@ -294,6 +355,7 @@ export class RawWebGl2Presenter implements Presenter {
     if (this.program) gl.deleteProgram(this.program);
     if (this.vao) gl.deleteVertexArray(this.vao);
     if (this.frameTexture) gl.deleteTexture(this.frameTexture);
+    if (this.cursorTexture) gl.deleteTexture(this.cursorTexture);
 
     this.program = this.createProgram(gl, blitVertSource, blitFragSource);
     this.vao = gl.createVertexArray();
@@ -301,6 +363,8 @@ export class RawWebGl2Presenter implements Presenter {
 
     this.frameTexture = gl.createTexture();
     if (!this.frameTexture) throw new PresenterError('webgl_resource_failed', 'Failed to create frame texture');
+    this.cursorTexture = gl.createTexture();
+    if (!this.cursorTexture) throw new PresenterError('webgl_resource_failed', 'Failed to create cursor texture');
 
     gl.bindVertexArray(this.vao);
 
@@ -315,16 +379,41 @@ export class RawWebGl2Presenter implements Presenter {
 
     this.resizeTexture(this.srcWidth, this.srcHeight);
 
+    gl.bindTexture(gl.TEXTURE_2D, this.cursorTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, glFilter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, glFilter);
+    // Always allocate something so the sampler is complete.
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+
     gl.useProgram(this.program);
     this.uFrameLoc = gl.getUniformLocation(this.program, 'u_frame');
     if (!this.uFrameLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_frame uniform');
     gl.uniform1i(this.uFrameLoc, 0);
+
+    this.uCursorLoc = gl.getUniformLocation(this.program, 'u_cursor');
+    if (!this.uCursorLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor uniform');
+    gl.uniform1i(this.uCursorLoc, 1);
+
+    this.uSrcSizeLoc = gl.getUniformLocation(this.program, 'u_src_size');
+    if (!this.uSrcSizeLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_src_size uniform');
+    this.uCursorEnableLoc = gl.getUniformLocation(this.program, 'u_cursor_enable');
+    if (!this.uCursorEnableLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor_enable uniform');
+    this.uCursorPosLoc = gl.getUniformLocation(this.program, 'u_cursor_pos');
+    if (!this.uCursorPosLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor_pos uniform');
+    this.uCursorHotLoc = gl.getUniformLocation(this.program, 'u_cursor_hot');
+    if (!this.uCursorHotLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor_hot uniform');
+    this.uCursorSizeLoc = gl.getUniformLocation(this.program, 'u_cursor_size');
+    if (!this.uCursorSizeLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor_size uniform');
 
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
     gl.disable(gl.CULL_FACE);
 
     assertWebGlOk(gl, 'recreateResources');
+
+    this.uploadCursorTexture();
   }
 
   private resizeTexture(width: number, height: number): void {
@@ -335,10 +424,54 @@ export class RawWebGl2Presenter implements Presenter {
     assertWebGlOk(gl, 'texImage2D');
   }
 
+  private uploadCursorTexture(): void {
+    const gl = this.gl;
+    if (!gl || !this.cursorTexture) return;
+    if (!this.cursorImage || this.cursorWidth <= 0 || this.cursorHeight <= 0) return;
+
+    gl.bindTexture(gl.TEXTURE_2D, this.cursorTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.cursorWidth, this.cursorHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+    // Cursor data is provided with a top-left origin. We keep `UNPACK_FLIP_Y_WEBGL = 0`
+    // so the first scanline becomes the bottom row in GL texture coordinates, matching
+    // the top-left math used by the cursor compositor in the fragment shader.
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      this.cursorWidth,
+      this.cursorHeight,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      this.cursorImage,
+    );
+    assertWebGlOk(gl, 'cursor texSubImage2D');
+  }
+
   private draw(): void {
     const gl = this.gl;
     const canvas = this.canvas;
-    if (!gl || !canvas || !this.program || !this.vao || this.isContextLost) return;
+    if (
+      !gl ||
+      !canvas ||
+      !this.program ||
+      !this.vao ||
+      !this.frameTexture ||
+      !this.cursorTexture ||
+      !this.uSrcSizeLoc ||
+      !this.uCursorEnableLoc ||
+      !this.uCursorPosLoc ||
+      !this.uCursorHotLoc ||
+      !this.uCursorSizeLoc ||
+      this.isContextLost
+    ) {
+      return;
+    }
 
     const canvasW = canvas.width;
     const canvasH = canvas.height;
@@ -356,11 +489,23 @@ export class RawWebGl2Presenter implements Presenter {
     gl.viewport(vp.x, vp.y, vp.w, vp.h);
 
     gl.useProgram(this.program);
+    gl.uniform2i(this.uSrcSizeLoc, this.srcWidth | 0, this.srcHeight | 0);
+
+    const cursorEnable =
+      this.cursorRenderEnabled && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0 ? 1 : 0;
+    gl.uniform1i(this.uCursorEnableLoc, cursorEnable);
+    gl.uniform2i(this.uCursorPosLoc, this.cursorX | 0, this.cursorY | 0);
+    gl.uniform2i(this.uCursorHotLoc, this.cursorHotX | 0, this.cursorHotY | 0);
+    gl.uniform2i(this.uCursorSizeLoc, this.cursorWidth | 0, this.cursorHeight | 0);
+
     gl.bindVertexArray(this.vao);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.frameTexture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.cursorTexture);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   private createProgram(gl: WebGL2RenderingContext, vertSrc: string, fragSrc: string): WebGLProgram {

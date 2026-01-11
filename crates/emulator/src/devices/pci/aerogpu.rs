@@ -160,6 +160,10 @@ impl AeroGpuPciDevice {
         self.regs.scanout0.read_rgba(mem)
     }
 
+    pub fn read_cursor_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
+        self.regs.cursor.read_rgba(mem)
+    }
+
     pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
         self.executor.complete_fence(&mut self.regs, mem, fence);
         self.update_irq_level();
@@ -230,7 +234,7 @@ impl AeroGpuPciDevice {
             mmio::SCANOUT0_VBLANK_TIME_NS_HI => (self.regs.scanout0_vblank_time_ns >> 32) as u32,
             mmio::SCANOUT0_VBLANK_PERIOD_NS => self.regs.scanout0_vblank_period_ns,
 
-            // Cursor registers are feature-gated; we keep them as inert storage.
+            // Cursor registers are implemented as simple storage; presentation is handled by the caller.
             mmio::CURSOR_ENABLE => self.regs.cursor.enable as u32,
             mmio::CURSOR_X => self.regs.cursor.x as u32,
             mmio::CURSOR_Y => self.regs.cursor.y as u32,
