@@ -34,7 +34,11 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     // Ensure security/keepalive knobs are deterministic for this end-to-end probe test (do not
     // inherit developer environment overrides).
     std::env::set_var("AERO_L2_OPEN", "0");
+    std::env::remove_var("AERO_L2_AUTH_MODE");
     std::env::remove_var("AERO_L2_TOKEN");
+    std::env::remove_var("AERO_L2_SESSION_SECRET");
+    std::env::remove_var("AERO_L2_API_KEY");
+    std::env::remove_var("AERO_L2_JWT_SECRET");
     std::env::set_var("AERO_L2_MAX_CONNECTIONS", "0");
     std::env::set_var("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     std::env::set_var("AERO_L2_MAX_FRAMES_PER_SECOND", "0");

@@ -110,6 +110,89 @@ func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgr
 	return "ws://" + ln.Addr().String() + "/l2", &upgrades
 }
 
+type l2BackendDialInfo struct {
+	Origin            string
+	TokenQuery        string
+	SubprotocolHeader string
+}
+
+func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL string, upgradeCount *atomic.Int64, dialInfo *atomic.Value) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen backend: %v", err)
+	}
+
+	var upgrades atomic.Int64
+	var info atomic.Value
+	info.Store(l2BackendDialInfo{})
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin:  func(r *http.Request) bool { return true },
+		Subprotocols: []string{testL2TunnelSubprotocol},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /l2", func(w http.ResponseWriter, r *http.Request) {
+		info.Store(l2BackendDialInfo{
+			Origin:            strings.TrimSpace(r.Header.Get("Origin")),
+			TokenQuery:        r.URL.Query().Get("token"),
+			SubprotocolHeader: r.Header.Get("Sec-WebSocket-Protocol"),
+		})
+
+		if expectedToken != "" && r.URL.Query().Get("token") != expectedToken {
+			http.Error(w, "missing or invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		upgrades.Add(1)
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		if conn.Subprotocol() != testL2TunnelSubprotocol {
+			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseProtocolError, "missing subprotocol"), time.Now().Add(time.Second))
+			return
+		}
+
+		for {
+			msgType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if msgType != websocket.BinaryMessage {
+				continue
+			}
+			// Minimal subset of docs/l2-tunnel-protocol.md: PING (0xA2 0x03 0x01 0x00) -> PONG.
+			if len(payload) < 4 || payload[0] != 0xA2 || payload[1] != 0x03 || payload[2] != 0x01 {
+				continue
+			}
+			out := append([]byte(nil), payload...)
+			out[2] = 0x02
+			_ = conn.WriteMessage(websocket.BinaryMessage, out)
+		}
+	})
+
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(ln)
+	}()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		<-errCh
+	})
+
+	return "ws://" + ln.Addr().String() + "/l2", &upgrades, &info
+}
+
 func startTestRelayServer(t *testing.T, relayCfg relay.Config, destPolicy *policy.DestinationPolicy) (baseURL string) {
 	t.Helper()
 
@@ -152,7 +235,60 @@ func startTestRelayServer(t *testing.T, relayCfg relay.Config, destPolicy *polic
 	return "http://" + ln.Addr().String()
 }
 
+func startTestRelayServerWithAuth(t *testing.T, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, authMode config.AuthMode, apiKey string) (baseURL string) {
+	t.Helper()
+
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        authMode,
+		APIKey:          apiKey,
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	httpSrv := httpserver.New(cfg, log, httpserver.BuildInfo{})
+
+	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
+	authz, err := signaling.NewAuthAuthorizer(cfg)
+	if err != nil {
+		t.Fatalf("configure auth: %v", err)
+	}
+	signalingSrv := signaling.NewServer(signaling.Config{
+		Sessions:    sessionMgr,
+		WebRTC:      webrtc.NewAPI(),
+		ICEServers:  cfg.ICEServers,
+		RelayConfig: relayCfg,
+		Policy:      destPolicy,
+		Authorizer:  authz,
+	})
+	signalingSrv.RegisterRoutes(httpSrv.Mux())
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen http: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- httpSrv.Serve(ln)
+	}()
+	t.Cleanup(func() {
+		signalingSrv.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(ctx)
+		<-errCh
+	})
+
+	return "http://" + ln.Addr().String()
+}
+
 func exchangeOffer(t *testing.T, baseURL string, pc *webrtc.PeerConnection) {
+	exchangeOfferWithHeaders(t, baseURL+"/offer", nil, pc)
+}
+
+func exchangeOfferWithHeaders(t *testing.T, offerURL string, headers http.Header, pc *webrtc.PeerConnection) {
 	t.Helper()
 
 	offer, err := pc.CreateOffer(nil)
@@ -174,7 +310,18 @@ func exchangeOffer(t *testing.T, baseURL string, pc *webrtc.PeerConnection) {
 		t.Fatalf("marshal offer: %v", err)
 	}
 
-	resp, err := http.Post(baseURL+"/offer", "application/json", bytes.NewReader(offerBody))
+	req, err := http.NewRequest(http.MethodPost, offerURL, bytes.NewReader(offerBody))
+	if err != nil {
+		t.Fatalf("build offer request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, vv := range headers {
+		for _, v := range vv {
+			req.Header.Add(k, v)
+		}
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post offer: %v", err)
 	}
@@ -403,5 +550,92 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 
 	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
 		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
+	}
+}
+
+func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
+	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "relay-secret")
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendForwardOrigin = true
+	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeQuery
+
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "relay-secret")
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	openCh := make(chan struct{})
+	gotCh := make(chan []byte, 1)
+
+	dc.OnOpen(func() { close(openCh) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if msg.IsString {
+			return
+		}
+		select {
+		case gotCh <- append([]byte(nil), msg.Data...):
+		default:
+		}
+	})
+
+	headers := http.Header{
+		"Origin": []string{baseURL},
+	}
+	exchangeOfferWithHeaders(t, baseURL+"/offer?token=relay-secret", headers, pc)
+
+	select {
+	case <-openCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 datachannel open")
+	}
+
+	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	if err := dc.Send(ping); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-gotCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pong")
+	}
+
+	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("pong mismatch: %x != %x", got, want)
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
+		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
+	}
+
+	infoAny := dialInfo.Load()
+	info, ok := infoAny.(l2BackendDialInfo)
+	if !ok {
+		t.Fatalf("unexpected dialInfo type: %T", infoAny)
+	}
+	if info.TokenQuery != "relay-secret" {
+		t.Fatalf("backend query token=%q, want %q", info.TokenQuery, "relay-secret")
+	}
+	if info.Origin != strings.ToLower(baseURL) {
+		t.Fatalf("backend Origin=%q, want %q", info.Origin, strings.ToLower(baseURL))
+	}
+	if strings.Contains(info.SubprotocolHeader, "aero-l2-token.") {
+		t.Fatalf("expected no aero-l2-token subprotocol when backend token is unset (got %q)", info.SubprotocolHeader)
 	}
 }
