@@ -318,7 +318,7 @@ void virtqueue_split_reset(virtqueue_split_t *vq)
     }
 
     ring_required = virtqueue_split_ring_size(vq->queue_size, vq->queue_align, vq->event_idx);
-    if (ring_required != 0) {
+    if (ring_required != 0 && ring_required <= vq->ring_dma.size) {
         virtio_memset(vq->ring_dma.vaddr, 0, ring_required);
     } else {
         /* Defensive: fall back to clearing only the state we touch below. */

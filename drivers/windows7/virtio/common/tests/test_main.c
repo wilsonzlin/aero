@@ -752,6 +752,87 @@ static void test_reset_invalid_queue_align_fallback(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_reset_ring_size_overflow_fallback(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    vring_device_sim_t sim;
+    virtio_sg_entry_t sg;
+    uint16_t head;
+    void *cookie_in;
+    void *cookie_out;
+    uint32_t used_len;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    memset(&sim, 0, sizeof(sim));
+    sim.vq = &vq;
+    sim.notify_batch = 1;
+
+    sg.addr = 0x200000u;
+    sg.len = 512;
+    sg.device_writes = VIRTIO_FALSE;
+
+    /* Ensure we have an in-flight cookie when we reset. */
+    cookie_in = (void *)(uintptr_t)0x1234u;
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    assert(vq.num_free == 7);
+
+    /*
+     * Corrupt queue_align to a valid-but-wrong value that makes
+     * virtqueue_split_ring_size() compute a size larger than the original
+     * allocation. Reset must not blindly memset past the ring buffer.
+     */
+    vq.queue_align = 4096;
+
+    virtqueue_split_reset(&vq);
+    sim.last_avail_idx = 0;
+
+    assert(vq.avail_idx == 0);
+    assert(vq.last_used_idx == 0);
+    assert(vq.last_kick_avail == 0);
+    assert(vq.num_free == vq.queue_size);
+    assert(vq.free_head == 0);
+    assert(vq.avail->idx == 0);
+    assert(vq.used->idx == 0);
+
+    for (uint32_t i = 0; i < vq.queue_size; i++) {
+        assert(vq.cookies[i] == NULL);
+    }
+
+    /* Restore and ensure the queue remains usable after the fallback reset path. */
+    vq.queue_align = 4;
+
+    cookie_in = (void *)(uintptr_t)0x9abcu;
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+    sim_process(&sim);
+    assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+    assert(cookie_out == cookie_in);
+    assert(used_len == sg.len);
+
+    assert(vq.num_free == vq.queue_size);
+    validate_queue(&vq);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_fuzz(void)
 {
     test_os_ctx_t os_ctx;
@@ -1127,6 +1208,7 @@ int main(void)
     test_reset_queue_align4();
     test_reset_event_idx_queue_align4();
     test_reset_invalid_queue_align_fallback();
+    test_reset_ring_size_overflow_fallback();
     test_fuzz();
     test_pci_legacy_integration();
     test_pci_modern_integration();
