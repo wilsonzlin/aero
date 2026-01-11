@@ -196,7 +196,7 @@ pub fn run_batch_with_assists<B: CpuBus>(
                 // Preserve the "basic block" behavior of `run_batch` by returning
                 // `Branch` when the assist instruction changes RIP.
                 let ip = state.rip();
-                let fetch_addr = state.seg_base_reg(Register::CS).wrapping_add(ip);
+                let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
                 let bytes = match bus.fetch(fetch_addr, 15) {
                     Ok(bytes) => bytes,
                     Err(e) => {

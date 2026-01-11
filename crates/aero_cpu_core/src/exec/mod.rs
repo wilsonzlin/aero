@@ -227,7 +227,10 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                 StepExit::Assist(AssistReason::Interrupt) => {
                     // Decode the instruction again to execute the interrupt/flag semantics.
                     let ip = cpu.cpu.state.rip();
-                    let fetch_addr = cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip);
+                    let fetch_addr = cpu
+                        .cpu
+                        .state
+                        .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
                     let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
                     let decoded =
                         aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness()).expect("decode interrupt assist");
