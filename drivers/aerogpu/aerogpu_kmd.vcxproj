@@ -97,24 +97,5 @@
     <ClInclude Include="protocol\aerogpu_ring.h" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(Platform)'=='x64'">
-    <Wow64UmdProjects Include="$(ProjectDir)umd\d3d9\aerogpu_d3d9_umd.vcxproj" />
-    <Wow64UmdProjects Include="$(ProjectDir)umd\d3d10_11\aerogpu_d3d10_11.vcxproj" />
-  </ItemGroup>
-
-  <!--
-    Win7 x64 driver packages must include the 32-bit WoW64 UMD DLLs (SysWOW64) in addition to
-    the native 64-bit DLLs (System32). CI stages the x64 package from the x64 build output
-    directory only, so build the Win32 UMDs into $(OutDir) as part of the x64 solution build.
-  -->
-  <Target Name="BuildWow64Umd" AfterTargets="Build" Condition="'$(Platform)'=='x64'">
-    <MSBuild
-      Projects="@(Wow64UmdProjects)"
-      Targets="Build"
-      Properties="Configuration=$(Configuration);Platform=Win32;OutDir=$(OutDir);BaseIntermediateOutputPath=$(IntDir)wow64\"
-      BuildInParallel="true" />
-  </Target>
-
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
-
