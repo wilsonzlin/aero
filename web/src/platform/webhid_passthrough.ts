@@ -550,15 +550,14 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
       state.knownDevices.some((d) => canForgetDevice(d)) ||
       state.attachedDevices.some((d) => canForgetDevice(d.device));
 
-    if (!forgetSupported) {
-      permissionHint.replaceChildren(
-        el("span", { text: "WebHID permissions persist per-origin. To revoke access, use your browser's " }),
-        siteSettingsLink,
-        el("span", { text: " and remove HID device permissions for this site." }),
-      );
-    } else {
-      permissionHint.textContent = "";
-    }
+    const hintPrefix = forgetSupported
+      ? "WebHID permissions persist per-origin. Some Chromium builds support revoking permissions via the “Forget” buttons below; otherwise, use your browser's "
+      : "WebHID permissions persist per-origin. To revoke access, use your browser's ";
+    permissionHint.replaceChildren(
+      el("span", { text: hintPrefix }),
+      siteSettingsLink,
+      el("span", { text: " and remove HID device permissions for this site." }),
+    );
 
     const attachedSet = new Set(state.attachedDevices.map((d) => d.device));
     const known = state.knownDevices.filter((d) => !attachedSet.has(d));

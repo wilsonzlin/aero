@@ -162,6 +162,20 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const title = document.createElement("h2");
   title.textContent = "WebUSB";
 
+  const siteSettingsHref = (() => {
+    try {
+      return `chrome://settings/content/siteDetails?site=${encodeURIComponent(location.origin)}`;
+    } catch {
+      return "chrome://settings/content/siteDetails";
+    }
+  })();
+  const siteSettingsLink = Object.assign(document.createElement("a"), {
+    href: siteSettingsHref,
+    target: "_blank",
+    rel: "noopener",
+    textContent: "site settings",
+  });
+
   const note = document.createElement("div");
   note.className = "hint";
   note.append(
@@ -176,7 +190,9 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     }),
     ".",
     document.createElement("br"),
-    "To revoke access, use “Forget permission” (if available) or remove this site's USB permissions in your browser settings.",
+    "To revoke access, use “Forget permission” (if available) or remove this site's USB permissions in your browser's ",
+    siteSettingsLink,
+    ".",
   );
 
   const requestButton = document.createElement("button");
