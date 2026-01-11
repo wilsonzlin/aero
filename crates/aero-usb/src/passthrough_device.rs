@@ -483,14 +483,18 @@ mod tests {
         dev.handle_setup(setup1);
         let summary = dev.pending_summary();
         assert_eq!(summary.queued_actions, 1);
-        let id1 = summary.inflight_control.expect("expected inflight control id");
+        let id1 = summary
+            .inflight_control
+            .expect("expected inflight control id");
 
         // Issuing a new SETUP must cancel the previous in-flight control transfer and drop its
         // queued host action (if it hasn't been drained yet).
         dev.handle_setup(setup2);
         let summary = dev.pending_summary();
         assert_eq!(summary.queued_actions, 1);
-        let id2 = summary.inflight_control.expect("expected inflight control id");
+        let id2 = summary
+            .inflight_control
+            .expect("expected inflight control id");
         assert_ne!(id1, id2);
 
         let actions = dev.drain_actions();
@@ -515,14 +519,18 @@ mod tests {
         // Stale completion for the canceled id must be ignored.
         dev.push_completion(UsbHostCompletion::ControlIn {
             id: id1,
-            result: UsbHostCompletionIn::Success { data: vec![1, 2, 3, 4] },
+            result: UsbHostCompletionIn::Success {
+                data: vec![1, 2, 3, 4],
+            },
         });
         assert_eq!(dev.pending_summary().queued_completions, 0);
 
         // Completion for the active request should deliver data and complete the control transfer.
         dev.push_completion(UsbHostCompletion::ControlIn {
             id: id2,
-            result: UsbHostCompletionIn::Success { data: vec![9, 8, 7, 6] },
+            result: UsbHostCompletionIn::Success {
+                data: vec![9, 8, 7, 6],
+            },
         });
 
         let mut buf = [0u8; 4];
