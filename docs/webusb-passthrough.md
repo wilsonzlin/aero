@@ -245,6 +245,13 @@ In this repo:
 - `WebUsbBackend` normalizes WebUSB `DataView` payloads into `Uint8Array` completions
   (`dataViewToUint8Array`). If you forward completions across `postMessage`, you may transfer the
   underlying `ArrayBuffer` to avoid copies.
+  - `web/src/usb/usb_proxy_protocol.ts` exports helpers (`getTransferablesForUsbProxyMessage`, etc.)
+    to pick the correct transfer list for `usb.action` / `usb.completion` messages.
+  - Note: transferring detaches the sender’s `ArrayBuffer`. Treat the payload `Uint8Array` as
+    consumed after `postMessage`.
+  - Some buffers (notably `WebAssembly.Memory.buffer`) are not transferable and will throw if put
+    in the transfer list. Production code should fall back to non-transfer `postMessage` (copy) in
+    that case; the built-in passthrough runtime/broker already do this.
 
 ### Physical disconnect / guest hot-unplug
 
