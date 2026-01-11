@@ -58,6 +58,9 @@ The browser compare tool uses the `browser` suite section with either:
 Run locally (requires a Playwright Chromium install):
 
 ```bash
+# Install deps once from the repo root (npm workspaces).
+npm ci
+
 node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
 ```
 
@@ -65,6 +68,8 @@ Run locally against a built/previewed app (closer to CI behavior):
 
 ```bash
 # One-time setup (per machine): install Playwright browsers.
+# (Install deps first so `npx playwright` uses the repo-pinned version.)
+npm ci
 npx playwright install chromium
 
 # Build + start `vite preview`, wait for readiness, run tools/perf/run.mjs, and clean up.
