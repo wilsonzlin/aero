@@ -122,6 +122,13 @@ static int RunD3D101Triangle(int argc, char** argv) {
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
+  const D3D10_FEATURE_LEVEL1 actual_level = device->GetFeatureLevel();
+  if (actual_level != chosen_level) {
+    return aerogpu_test::Fail(kTestName,
+                              "ID3D10Device1::GetFeatureLevel returned 0x%04X (expected 0x%04X)",
+                              (unsigned)actual_level,
+                              (unsigned)chosen_level);
+  }
 
   ComPtr<IDXGIDevice> dxgi_device;
   hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)dxgi_device.put());
@@ -224,8 +231,8 @@ static int RunD3D101Triangle(int argc, char** argv) {
   D3D10_VIEWPORT vp;
   vp.TopLeftX = 0;
   vp.TopLeftY = 0;
-  vp.Width = kWidth;
-  vp.Height = kHeight;
+  vp.Width = (UINT)kWidth;
+  vp.Height = (UINT)kHeight;
   vp.MinDepth = 0.0f;
   vp.MaxDepth = 1.0f;
   device->RSSetViewports(1, &vp);
