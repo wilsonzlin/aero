@@ -58,24 +58,6 @@ constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
     static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 
-static uint64_t AllocateShareToken() {
-  uint64_t token = 0;
-  for (int attempt = 0; attempt < 8; ++attempt) {
-    if (detail::fill_random_bytes(&token, sizeof(token)) && token != 0) {
-      return token;
-    }
-  }
-
-  static std::atomic<uint64_t> counter{1};
-  for (;;) {
-    const uint64_t ctr = counter.fetch_add(1, std::memory_order_relaxed);
-    token = detail::splitmix64(detail::fallback_entropy(ctr));
-    if (token != 0) {
-      return token;
-    }
-  }
-}
-
 #ifndef STATUS_TIMEOUT
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
 #endif
@@ -2180,7 +2162,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       priv.flags |= AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING;
     }
 
-    priv.share_token = is_shared ? AllocateShareToken() : 0;
+    // The Win7 KMD owns share_token generation; provide 0 as a placeholder.
+    priv.share_token = 0;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(size_bytes);
     priv.reserved0 = static_cast<aerogpu_wddm_u64>(pitch_bytes);
     priv.kind = (res->kind == ResourceKind::Buffer)

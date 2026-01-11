@@ -2020,13 +2020,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       #endif
     }
 
-    if (is_shared) {
-      const uint64_t token =
-          (static_cast<uint64_t>(GetCurrentProcessId()) << 32) | static_cast<uint64_t>(alloc_id);
-      priv.share_token = token ? token : static_cast<uint64_t>(alloc_id);
-    } else {
-      priv.share_token = 0;
-    }
+    // The Win7 KMD owns share_token generation; provide 0 as a placeholder.
+    priv.share_token = 0;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(size_bytes);
     priv.reserved0 = static_cast<aerogpu_wddm_u64>(pitch_bytes);
     priv.kind = (res->kind == ResourceKind::Buffer)
