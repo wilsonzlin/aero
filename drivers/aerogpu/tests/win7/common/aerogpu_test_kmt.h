@@ -335,9 +335,9 @@ static inline bool AerogpuEscapeWithTimeout(const D3DKMT_FUNCS* f,
   if (out_status) {
     *out_status = (w == WAIT_TIMEOUT) ? (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */ : (NTSTATUS)GetLastError();
   }
-  if (w == WAIT_TIMEOUT) {
-    InterlockedExchange(&g_skip_close_adapter, 1);
-  }
+  // If we failed to observe the worker thread exit, it may still be blocked inside the kernel
+  // thunk. Avoid deadlock-prone teardown paths (CloseAdapter/FreeLibrary) in this case.
+  InterlockedExchange(&g_skip_close_adapter, 1);
   return false;
 }
 
