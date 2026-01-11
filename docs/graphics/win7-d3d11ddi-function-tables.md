@@ -53,6 +53,10 @@ Must be non-null and must succeed for the tests:
   * `pfnDestroyDevice`
 * Resources:
   * `pfnCalcPrivateResourceSize`, `pfnCreateResource`, `pfnDestroyResource`
+  * must handle (at minimum):
+    * `D3D11_USAGE_DEFAULT` buffers created with `D3D11_SUBRESOURCE_DATA` (initial data upload)
+    * `D3D11_USAGE_DEFAULT` `Texture2D` render targets (BGRA)
+    * `D3D11_USAGE_STAGING` `Texture2D` with `CPU_ACCESS_READ` (staging readback)
 * RTV:
   * `pfnCalcPrivateRenderTargetViewSize`, `pfnCreateRenderTargetView`, `pfnDestroyRenderTargetView`
 * Shaders:
@@ -610,12 +614,12 @@ Tests:
 | `ID3D11DeviceContext::RSSetViewports` | context `pfnSetViewports`. |
 | `CreateVertexShader` / `CreatePixelShader` | `pfnCalcPrivate*ShaderSize` → `pfnCreate*Shader`. |
 | `CreateInputLayout` | `pfnCalcPrivateElementLayoutSize` → `pfnCreateElementLayout`. |
-| `CreateBuffer` (VB) | `pfnCalcPrivateResourceSize` → `pfnCreateResource`. |
+| `CreateBuffer` (VB) | `pfnCalcPrivateResourceSize` → `pfnCreateResource` (must support initial data upload via `D3D11_SUBRESOURCE_DATA`). |
 | `IASetInputLayout` / `IASetPrimitiveTopology` / `IASetVertexBuffers` | context `pfnIaSetInputLayout` / `pfnIaSetTopology` / `pfnIaSetVertexBuffers`. |
 | `VSSetShader` / `PSSetShader` | context `pfnVsSetShader` / `pfnPsSetShader`. |
 | `ClearRenderTargetView` | context `pfnClearRenderTargetView`. |
 | `Draw` | context `pfnDraw`. |
-| `CreateTexture2D` (staging) | `pfnCalcPrivateResourceSize` → `pfnCreateResource`. |
+| `CreateTexture2D` (staging) | `pfnCalcPrivateResourceSize` → `pfnCreateResource` (must support `D3D11_USAGE_STAGING` + `CPU_ACCESS_READ`). |
 | `CopyResource` | context `pfnCopyResource`. |
 | `Flush` | context `pfnFlush`. |
 | `Map` / `Unmap` | context `pfnMap` / `pfnUnmap`. |
@@ -626,7 +630,7 @@ Tests:
 Same as above except:
 
 * No swapchain creation / `pfnPresent` required.
-* Render target is a regular `Texture2D` created via `pfnCreateResource` + `pfnCreateRenderTargetView`.
+* Render target is a regular `Texture2D` created via `pfnCreateResource` + `pfnCreateRenderTargetView` (BGRA, `D3D11_BIND_RENDER_TARGET`).
 
 ---
 
