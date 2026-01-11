@@ -1,6 +1,6 @@
-# Win7 (WDDM 1.1) D3D10/D3D11 UMD callbacks, submission, and fences (WDK 7.1 reference)
+# Win7 (WDDM 1.1) D3D10/D3D11 UMD callbacks, submission, and fences (Win7 WDK reference)
 
-This document pins down the **exact Windows 7 WDK 7.1 symbol names** (types, struct fields, and callback entrypoints) that matter for a D3D10/D3D11 **user-mode display driver (UMD)** implementing:
+This document pins down the **exact Windows 7 (WDDM 1.1) symbol names** (types, struct fields, and callback entrypoints) that matter for a D3D10/D3D11 **user-mode display driver (UMD)** implementing:
 
 - DMA buffer allocation (command buffer acquisition)
 - command submission (**render** and **present**)
@@ -8,7 +8,7 @@ This document pins down the **exact Windows 7 WDK 7.1 symbol names** (types, str
 - fence wait/poll for `Map(READ)` (staging readback)
 - WOW64 (32-bit UMD on x64) ABI gotchas
 
-It is intended to be used *together with* the WDK 7.1 headers:
+It is intended to be used *together with* the Win7-era D3D UMD headers shipped with a Windows SDK/WDK install (WDK10+ supported), including:
 
 - `d3d10umddi.h`, `d3d10_1umddi.h`
 - `d3d11umddi.h`
@@ -39,7 +39,7 @@ This doc focuses on (3): the callbacks the UMD uses for **submission and synchro
 
 ### 1.1 OpenAdapter time (adapter callbacks)
 
-**Exports (WDK 7.1):**
+**Exports (Win7):**
 
 - D3D10: `HRESULT APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData)`
 - D3D10.1: `HRESULT APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData)`
@@ -177,7 +177,7 @@ Struct:
 
 - `D3DDDICB_GETCOMMANDINFO`
 
-Important fields (WDK 7.1 names):
+Important fields (header names):
 
 - `D3DKMT_HANDLE hContext` — kernel context handle to build commands for.
 - output pointers (memory owned by runtime/OS for this DMA buffer instance):
@@ -391,7 +391,7 @@ Therefore:
 If you call `D3DKMT*` thunks directly:
 
 - call the documented user-mode exports (typically from `gdi32.dll`), not private syscalls
-- do not hand-roll struct layouts; include the WDK 7.1 `d3dkmthk.h`
+- do not hand-roll struct layouts; include the SDK/WDK `d3dkmthk.h`
 
 This ensures the WOW64 layer performs the correct pointer-size translation for thunk parameter structs.
 
