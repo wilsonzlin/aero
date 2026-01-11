@@ -70,6 +70,14 @@ Optional flags:
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 
+Exit codes (for automation):
+
+- `0`: success
+- `10`: Administrator privileges required
+- `11`: driver directory missing (`drivers\\<arch>\\`)
+- `12`: no certificate files found under `certs\\`
+- `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the staged driver INFs
+
 ## `uninstall.cmd`
 
 Run as Administrator:
@@ -90,6 +98,11 @@ Optional flags:
 Output:
 
 - `C:\AeroGuestTools\uninstall.log`
+
+Exit codes:
+
+- `0`: success
+- `10`: Administrator privileges required
 
 ## Troubleshooting / Recovery (storage)
 
