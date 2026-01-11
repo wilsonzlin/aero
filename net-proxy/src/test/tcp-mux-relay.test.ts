@@ -178,6 +178,47 @@ test("tcp-mux upgrade requires aero-tcp-mux-v1 subprotocol", async () => {
   }
 });
 
+test("tcp-mux negotiates aero-tcp-mux-v1 subprotocol when multiple are offered", async () => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, ["bogus-subprotocol", TCP_MUX_SUBPROTOCOL]);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
+      timeout.unref();
+      ws!.once("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      ws!.once("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+    const waiter = createFrameWaiter(ws);
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([1])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+  }
+});
+
 test("tcp-mux closes with 1003 (unsupported data) on WebSocket text messages", async () => {
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
   const proxyAddr = proxy.server.address();
