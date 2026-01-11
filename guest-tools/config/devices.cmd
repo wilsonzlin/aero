@@ -33,4 +33,6 @@ set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1018" "PCI\VEN_1AF4&DEV_1059"
 
 rem Aero WDDM GPU stack.
 rem Must match emulator-presented IDs and the AeroGPU display driver INF.
-set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001"
+rem The display driver supports both the new ABI (VEN_A3A0) and a legacy bring-up ABI (VEN_1AED).
+rem Note: the older 1AE0-family vendor ID is stale/deprecated; keep it out of Guest Tools config.
+set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001" "PCI\VEN_1AED&DEV_0001"
