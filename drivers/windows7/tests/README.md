@@ -69,13 +69,17 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
 `host-harness/Invoke-AeroVirtioWin7Tests.ps1`:
 - Starts a tiny HTTP server on the host (loopback), reachable from the guest as `10.0.2.2`.
 - Launches QEMU with:
-  - virtio-blk disk
-  - virtio-net NIC (user-mode networking / slirp)
-  - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`)
+  - virtio-blk disk (**modern-only** virtio-pci: `disable-legacy=on`)
+  - virtio-net NIC (user-mode networking / slirp; **modern-only** virtio-pci: `disable-legacy=on`)
+  - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`; **modern-only** virtio-pci: `disable-legacy=on`)
   - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`)
   - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL`.
 - Exits with `0` on PASS, non-zero on FAIL/timeout.
+
+The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match the
+[`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md). Newer Aero drivers may refuse to bind
+if the Revision ID does not match.
 
 For Linux/CI environments, `host-harness/invoke_aero_virtio_win7_tests.py` provides the same behavior without requiring PowerShell.
 
