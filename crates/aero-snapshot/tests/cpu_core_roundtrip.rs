@@ -513,3 +513,91 @@ fn cpu_core_execute_snapshot_restore_continue() {
         "branch should follow ZF=1 path after restore"
     );
 }
+
+#[test]
+fn cpu_core_long_mode_execute_snapshot_restore_continue() {
+    // Long-mode variant of `cpu_core_execute_snapshot_restore_continue`.
+    //
+    // This specifically exercises that FS base comes from the IA32_FS_BASE MSR in long mode,
+    // and that it is preserved across snapshot/restore.
+    //
+    // Program (64-bit):
+    //   mov eax, fs:[0]
+    //   cmp eax, 4
+    //   jne else
+    //   mov dword ptr fs:[8], 0x11111111
+    //   jmp end
+    // else:
+    //   mov dword ptr fs:[8], 0x22222222
+    // end:
+    //   hlt
+    const CODE: &[u8] = &[
+        0x64, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, // mov eax, fs:[0] (abs32 via SIB)
+        0x83, 0xF8, 0x04, // cmp eax, 4
+        0x75, 0x0E, // jne else (+0x0E)
+        0x64, 0xC7, 0x04, 0x25, 0x08, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11,
+        0x11, // mov fs:[8], 0x11111111
+        0xEB, 0x0C, // jmp end (+0x0C)
+        0x64, 0xC7, 0x04, 0x25, 0x08, 0x00, 0x00, 0x00, 0x22, 0x22, 0x22,
+        0x22, // mov fs:[8], 0x22222222
+        0xF4, // hlt
+    ];
+
+    const MEM_LEN: usize = 0x4000;
+    const FS_BASE: u64 = 0x2000;
+
+    let mut cpu = CoreCpuState::new(CoreCpuMode::Long);
+    cpu.rip = 0;
+    cpu.msr.fs_base = FS_BASE;
+
+    let mut baseline = CoreHarness::new(cpu.clone(), MEM_LEN);
+    baseline.load(0, CODE);
+    baseline.load(FS_BASE, &4u32.to_le_bytes());
+
+    while !baseline.cpu.halted {
+        let (cpu, mem) = (&mut baseline.cpu, &mut baseline.mem);
+        let mut bus = FlatBus::new(mem);
+        tier0::exec::step(cpu, &mut bus).unwrap();
+    }
+    let expected_mem = baseline.mem.clone();
+
+    let mut snap_vm = CoreHarness::new(cpu, MEM_LEN);
+    snap_vm.load(0, CODE);
+    snap_vm.load(FS_BASE, &4u32.to_le_bytes());
+    snap_vm.cpu_internal.interrupt_inhibit = 1;
+    snap_vm.cpu_internal.pending_external_interrupts = vec![0x20, 0x21];
+
+    for _ in 0..2 {
+        let (cpu, mem) = (&mut snap_vm.cpu, &mut snap_vm.mem);
+        let mut bus = FlatBus::new(mem);
+        tier0::exec::step(cpu, &mut bus).unwrap();
+        assert!(!snap_vm.cpu.halted);
+    }
+
+    let mut cursor = Cursor::new(Vec::new());
+    save_snapshot(&mut cursor, &mut snap_vm, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+
+    let mut resumed = CoreHarness::new(CoreCpuState::default(), MEM_LEN);
+    restore_snapshot(&mut Cursor::new(&bytes), &mut resumed).unwrap();
+
+    while !resumed.cpu.halted {
+        let (cpu, mem) = (&mut resumed.cpu, &mut resumed.mem);
+        let mut bus = FlatBus::new(mem);
+        tier0::exec::step(cpu, &mut bus).unwrap();
+    }
+
+    assert_eq!(resumed.mem, expected_mem);
+    assert_eq!(resumed.cpu.msr.fs_base, FS_BASE);
+    assert_eq!(resumed.cpu_internal.interrupt_inhibit, 1);
+    assert_eq!(resumed.cpu_internal.pending_external_interrupts, vec![0x20, 0x21]);
+    assert_eq!(resumed.cpu.gpr[core_gpr::RAX] as u32, 4);
+    assert_eq!(
+        u32::from_le_bytes(
+            resumed.mem[(FS_BASE as usize + 8)..(FS_BASE as usize + 12)]
+                .try_into()
+                .unwrap()
+        ),
+        0x1111_1111
+    );
+}
