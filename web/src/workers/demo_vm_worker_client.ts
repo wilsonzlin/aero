@@ -18,7 +18,7 @@ type PendingEntry = {
 
 type DemoVmWorkerClientOptions = {
   onStatus?: (status: DemoVmWorkerStepResult) => void;
-  onError?: (error: DemoVmWorkerSerializedError) => void;
+  onError?: (err: Error) => void;
   onFatalError?: (err: Error) => void;
 };
 
@@ -30,7 +30,7 @@ export class DemoVmWorkerClient {
   #pending = new Map<number, PendingEntry>();
   #destroyed = false;
   #onStatus?: (status: DemoVmWorkerStepResult) => void;
-  #onError?: (error: DemoVmWorkerSerializedError) => void;
+  #onError?: (err: Error) => void;
   #onFatalError?: (err: Error) => void;
 
   constructor(options: DemoVmWorkerClientOptions = {}) {
@@ -95,6 +95,19 @@ export class DemoVmWorkerClient {
     this.#destroy(new Error("DemoVmWorkerClient terminated"));
   }
 
+  #deserializeError(serialized: DemoVmWorkerSerializedError): Error {
+    const err = new Error(serialized.message);
+    err.name = serialized.name;
+    if (serialized.stack) {
+      try {
+        err.stack = serialized.stack;
+      } catch {
+        // ignore (some runtimes expose stack as readonly)
+      }
+    }
+    return err;
+  }
+
   #handleMessage(msg: DemoVmWorkerMessage): void {
     if (msg.type === "rpcResult") {
       const pendingReq = this.#pending.get(msg.id);
@@ -102,16 +115,7 @@ export class DemoVmWorkerClient {
       this.#pending.delete(msg.id);
       if (msg.ok) pendingReq.resolve(msg.result);
       else {
-        const err = new Error(msg.error.message);
-        err.name = msg.error.name;
-        if (msg.error.stack) {
-          try {
-            err.stack = msg.error.stack;
-          } catch {
-            // ignore (some runtimes expose stack as readonly)
-          }
-        }
-        pendingReq.reject(err);
+        pendingReq.reject(this.#deserializeError(msg.error));
       }
       return;
     }
@@ -122,7 +126,7 @@ export class DemoVmWorkerClient {
     }
 
     if (msg.type === "error") {
-      this.#onError?.(msg.error);
+      this.#onError?.(this.#deserializeError(msg.error));
     }
   }
 

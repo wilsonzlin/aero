@@ -602,10 +602,11 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     autosaveInFlight = false;
   }
 
-  function setError(msg: string): void {
-    error.textContent = msg;
-    testState.error = msg;
-    console.error(msg);
+  function setError(err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    error.textContent = message;
+    testState.error = message;
+    console.error(err);
   }
 
   function formatSerialBytes(value: number | null): string {
@@ -625,7 +626,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   function handleWorkerFatal(err: Error): void {
     clearAutosaveTimer();
     status.textContent = "Demo VM unavailable (worker crashed)";
-    setError(err.message);
+    setError(err);
     setButtonsEnabled(false);
     workerReady = false;
     workerClient?.terminate();
@@ -688,7 +689,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       if (autosaveInFlight) return;
       autosaveInFlight = true;
       saveSnapshot()
-        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+        .catch((err) => setError(err))
         .finally(() => {
           autosaveInFlight = false;
         });
@@ -703,12 +704,12 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
 
   saveButton.onclick = () => {
     clearError();
-    saveSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    saveSnapshot().catch((err) => setError(err));
   };
 
   loadButton.onclick = () => {
     clearError();
-    loadSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    loadSnapshot().catch((err) => setError(err));
   };
 
   advanceButton.onclick = () => {
@@ -721,7 +722,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
           `steps=${state.steps.toLocaleString()} ` +
           `serial_bytes=${state.serialBytes === null ? "unknown" : state.serialBytes.toLocaleString()}`;
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(err));
   };
 
   exportButton.onclick = () => {
@@ -735,7 +736,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
         downloadFile(file, "aero-demo-vm.snap");
         status.textContent = `Exported snapshot (${formatBytes(file.size)})`;
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(err));
   };
 
   deleteButton.onclick = () => {
@@ -744,7 +745,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       .then(() => {
         status.textContent = "Deleted snapshot from OPFS.";
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(err));
   };
 
   importInput.addEventListener("change", () => {
@@ -761,7 +762,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
         restored?.serialBytes ?? null,
       )}`;
       importInput.value = "";
-    })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    })().catch((err) => setError(err));
   });
 
   if (!report.opfs) {
@@ -785,14 +786,13 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
             `steps=${steps.toLocaleString()} ` +
             `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
         },
-        onError: (err) => setError(err.message),
+        onError: (err) => setError(err),
         onFatalError: (err) => handleWorkerFatal(err),
       });
     } catch (err) {
       clearAutosaveTimer();
-      const message = err instanceof Error ? err.message : String(err);
       status.textContent = "Demo VM unavailable (worker creation failed)";
-      setError(message);
+      setError(err);
       workerClient = null;
       testState.ready = false;
       testState.streaming = false;
@@ -848,14 +848,13 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
             }
           } catch (err) {
             // If restore fails, keep running from a clean state.
-            setError(err instanceof Error ? err.message : String(err));
+            setError(err);
           }
         } catch (err) {
           clearAutosaveTimer();
-          const message = err instanceof Error ? err.message : String(err);
           status.textContent = "Demo VM unavailable (worker init failed)";
           setButtonsEnabled(false);
-          setError(message);
+          setError(err);
           workerReady = false;
           workerClient?.terminate();
           workerClient = null;
