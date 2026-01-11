@@ -31,6 +31,7 @@ import {
   opfsResizeDisk,
   type ImportProgress,
 } from "./import_export";
+import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { RemoteCacheManager } from "./remote_cache_manager";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
@@ -461,7 +462,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const cacheBackendRaw = payload.cacheBackend ?? backend;
       assertValidDiskBackend(cacheBackendRaw);
       const cacheBackend = cacheBackendRaw;
-      const defaultChunkSizeBytes = delivery === "chunked" ? 4 * 1024 * 1024 : 1024 * 1024;
+      const defaultChunkSizeBytes = delivery === "chunked" ? CHUNKED_DISK_CHUNK_SIZE : RANGE_STREAM_CHUNK_SIZE;
       const chunkSizeBytes =
         typeof payload.chunkSizeBytes === "number" && Number.isFinite(payload.chunkSizeBytes) && payload.chunkSizeBytes > 0
           ? payload.chunkSizeBytes
@@ -473,7 +474,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const overlayBlockSizeBytes =
         typeof payload.overlayBlockSizeBytes === "number" && Number.isFinite(payload.overlayBlockSizeBytes) && payload.overlayBlockSizeBytes > 0
           ? payload.overlayBlockSizeBytes
-          : 1024 * 1024;
+          : RANGE_STREAM_CHUNK_SIZE;
       if (overlayBlockSizeBytes % 512 !== 0 || !isPowerOfTwo(overlayBlockSizeBytes)) {
         throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
       }

@@ -1,4 +1,5 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
+import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 import { opfsGetDisksDir } from "./metadata";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
@@ -494,7 +495,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   static async open(url: string, options: RemoteRangeDiskOptions = {}): Promise<RemoteRangeDisk> {
-    const chunkSize = options.chunkSize ?? 1024 * 1024;
+    const chunkSize = options.chunkSize ?? RANGE_STREAM_CHUNK_SIZE;
     const maxConcurrentFetches = options.maxConcurrentFetches ?? 4;
     const maxRetries = options.maxRetries ?? 4;
     const readAheadChunks = options.readAheadChunks ?? 2;

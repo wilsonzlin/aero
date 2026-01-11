@@ -6,6 +6,7 @@ import type { AsyncSectorDisk } from "./disk";
 import { IdbCowDisk } from "./idb_cow";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
+import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 import { pickDefaultBackend, type DiskBackend, type DiskImageMetadata } from "./metadata";
 import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
@@ -359,7 +360,7 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         } catch {
           overlay = await OpfsAeroSparseDisk.create(overlayName, {
             diskSizeBytes: meta.sizeBytes,
-            blockSizeBytes: overlayBlockSizeBytes ?? 1024 * 1024,
+            blockSizeBytes: overlayBlockSizeBytes ?? RANGE_STREAM_CHUNK_SIZE,
           });
         }
 
