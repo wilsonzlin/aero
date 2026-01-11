@@ -78,8 +78,8 @@
       (d3d9umddi.h / d3dumddi.h) available, so the default is to use the in-tree
       minimal ABI subset.
 
-      Set /p:AeroGpuUseWdkHeaders=1 to enable WDK headers. For Win7-era WDK/WinDDK
-      (7600/7.1) layouts, set /p:AeroGpuWdkRoot=... (or rely on WINDDK / WDK_ROOT /
+      Set /p:AeroGpuUseWdkHeaders=1 to enable WDK headers. For Win7-era WinDDK 7600
+      layouts, set /p:AeroGpuWdkRoot=... (or rely on WINDDK / WDK_ROOT /
       WDKROOT env vars) so the build can locate headers under:
         - $(AeroGpuWdkRoot)\inc\api
         - $(AeroGpuWdkRoot)\inc\ddk

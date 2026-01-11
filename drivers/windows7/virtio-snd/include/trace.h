@@ -5,7 +5,7 @@
 #include <ntddk.h>
 
 /*
- * WDK 7600/7.1 headers do not always provide the NT_ASSERT() macro.
+ * WinDDK 7600 headers do not always provide the NT_ASSERT() macro.
  * Use ASSERT() as a compatible fallback.
  */
 #ifndef NT_ASSERT

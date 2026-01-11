@@ -2,7 +2,7 @@
 #
 # virtio-snd (Windows 7) - clean-room PortCls (WaveRT) audio driver.
 #
-# Build with the WDK 7600/7.1 "build" utility from:
+# Build with the WinDDK 7600 "build" utility from:
 #   drivers\windows7\virtio-snd
 #
 # x86: use the Win7 x86 Free/Checked build environment.

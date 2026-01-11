@@ -10,8 +10,8 @@
 #define VIRTIOSND_CTRL_TIMEOUT_DEFAULT_MS 1000u
 
 /*
- * WDK 7600 headers predate ALIGN_UP_BY(). Provide a local fallback to keep the
- * virtio-snd driver building against both WDK7 and newer kits.
+ * WinDDK 7600 headers predate ALIGN_UP_BY(). Provide a local fallback to keep
+ * the virtio-snd driver building against both WinDDK 7600 and newer WDKs.
  */
 #ifndef ALIGN_UP_BY
 #define ALIGN_UP_BY(_length, _alignment) (((_length) + ((_alignment) - 1)) & ~((_alignment) - 1))
