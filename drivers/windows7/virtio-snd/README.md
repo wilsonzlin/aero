@@ -155,10 +155,11 @@ Expected output (once `virtiosnd.sys` exists in `inf/`):
 
 ```text
 inf\aero-virtio-snd.cat
-inf\virtio-snd.cat
+# Optional (legacy alias INF):
+# inf\virtio-snd.cat
 ```
 
-`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present.
+`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present (rename from `virtio-snd.inf.disabled` to enable the legacy alias).
 
 ## Signing (SYS + CAT)
 
@@ -188,6 +189,9 @@ This signs:
 It installs the same driver/service as `aero-virtio-snd.inf`, but is less strict: it also matches
 `PCI\VEN_1AF4&DEV_1059` without `REV_01` and the transitional virtio-snd ID (`DEV_1018`), and uses
 `CatalogFile = virtio-snd.cat`.
+
+To avoid accidentally installing **two** INFs that match the same HWIDs, the alias INF is checked in as
+`virtio-snd.inf.disabled`; rename it back to `virtio-snd.inf` if you need the legacy filename.
 
 ## Offline / slipstream installation (optional)
 

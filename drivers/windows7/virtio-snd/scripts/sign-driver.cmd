@@ -23,6 +23,7 @@ set SYS_FILE=%INF_DIR%\virtiosnd.sys
 set AERO_INF=%INF_DIR%\aero-virtio-snd.inf
 set AERO_CAT=%INF_DIR%\aero-virtio-snd.cat
 set LEGACY_INF=%INF_DIR%\virtio-snd.inf
+set LEGACY_INF_DISABLED=%INF_DIR%\virtio-snd.inf.disabled
 set LEGACY_CAT=%INF_DIR%\virtio-snd.cat
 set PFX_FILE=%ROOT_DIR%\cert\aero-virtio-snd-test.pfx
 
@@ -44,6 +45,9 @@ if not exist "%AERO_INF%" (
     echo        Expected one or both of:
     echo          - "%AERO_INF%"
     echo          - "%LEGACY_INF%"
+    if exist "%LEGACY_INF_DISABLED%" (
+      echo        HINT: Rename "%LEGACY_INF_DISABLED%" to "%LEGACY_INF%" to enable the legacy alias INF.
+    )
     exit /b 1
   )
 )

@@ -459,10 +459,11 @@ Expected output:
 
 ```text
 inf\aero-virtio-snd.cat
-inf\virtio-snd.cat
+# Optional (legacy alias INF):
+# inf\virtio-snd.cat
 ```
 
-`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present.
+`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present (rename from `inf\virtio-snd.inf.disabled` to enable the legacy alias).
 
 ### 3) Sign the SYS + CAT
 
@@ -529,7 +530,7 @@ guest-tools\drivers\<arch>\virtio-snd\
    - `aero-virtio-snd.inf`
    - `virtiosnd.sys`
    - `aero-virtio-snd.cat` (signed)
-   - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed)
+   - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed; rename `virtio-snd.inf.disabled` to enable)
 2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
 
 INF selection note:
@@ -539,6 +540,9 @@ INF selection note:
   It installs the same driver/service as `aero-virtio-snd.inf`, but is less strict: it also matches
   `PCI\VEN_1AF4&DEV_1059` without `REV_01` and the transitional virtio-snd ID (`DEV_1018`), and uses
   `CatalogFile = virtio-snd.cat`.
+
+  To avoid accidentally installing **two** INFs that match the same HWIDs, the alias INF is checked in as
+  `virtio-snd.inf.disabled`; rename it back to `virtio-snd.inf` if you need the legacy filename.
 
 For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
 

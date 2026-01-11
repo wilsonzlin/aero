@@ -6,7 +6,8 @@ rem Generates a driver catalog for Windows 7 (x86 + x64) using Inf2Cat.
 rem
 rem Prerequisites:
 rem   - Inf2Cat.exe available in PATH (run from a WDK command prompt)
-rem   - inf\aero-virtio-snd.inf and/or inf\virtio-snd.inf exists
+rem   - inf\aero-virtio-snd.inf exists
+rem   - Optional: inf\virtio-snd.inf exists (rename from inf\virtio-snd.inf.disabled to enable the legacy alias)
 rem   - All files referenced by the INF exist in inf\ (at minimum virtiosnd.sys)
 
 set SCRIPT_DIR=%~dp0
@@ -15,6 +16,7 @@ set INF_DIR=%ROOT_DIR%\inf
 set AERO_INF=%INF_DIR%\aero-virtio-snd.inf
 set AERO_CAT=%INF_DIR%\aero-virtio-snd.cat
 set LEGACY_INF=%INF_DIR%\virtio-snd.inf
+set LEGACY_INF_DISABLED=%INF_DIR%\virtio-snd.inf.disabled
 set LEGACY_CAT=%INF_DIR%\virtio-snd.cat
 set SYS_FILE=%INF_DIR%\virtiosnd.sys
 
@@ -24,6 +26,9 @@ if not exist "%AERO_INF%" (
     echo        Expected one or both of:
     echo          - "%AERO_INF%"
     echo          - "%LEGACY_INF%"
+    if exist "%LEGACY_INF_DISABLED%" (
+      echo        HINT: Rename "%LEGACY_INF_DISABLED%" to "%LEGACY_INF%" to enable the legacy alias INF.
+    )
     exit /b 1
   )
 )
