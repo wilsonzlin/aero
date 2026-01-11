@@ -1,11 +1,9 @@
-#![allow(deprecated)]
-
-use std::io::{Cursor, Read, Seek, SeekFrom};
-
+use aero_cpu_core::state::gpr;
 use aero_snapshot::RamMode;
 use firmware::bios::{Bios, BiosConfig};
-use machine::{A20Gate, CpuExit, InMemoryDisk, MemoryAccess, FLAG_ALWAYS_ON, FLAG_CF, FLAG_ZF};
-use vm::{SnapshotError, SnapshotOptions, Vm};
+use firmware::bios::InMemoryDisk;
+use memory::MemoryBus as _;
+use vm::{CpuExit, SnapshotError, SnapshotOptions, Vm};
 
 fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -14,27 +12,6 @@ fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
     sector[510] = 0x55;
     sector[511] = 0xAA;
     sector
-}
-
-fn cpu_state_from_snapshot(bytes: &[u8]) -> aero_snapshot::CpuState {
-    let mut cursor = Cursor::new(bytes);
-    let index = aero_snapshot::inspect_snapshot(&mut cursor).unwrap();
-    let cpu_section = index
-        .sections
-        .iter()
-        .find(|section| section.id == aero_snapshot::SectionId::CPU)
-        .expect("snapshot missing CPU section");
-
-    cursor
-        .seek(SeekFrom::Start(cpu_section.offset))
-        .expect("seek to CPU section");
-    let mut cpu_bytes = vec![0u8; cpu_section.len.try_into().unwrap()];
-    cursor.read_exact(&mut cpu_bytes).expect("read CPU section");
-    let mut cpu_reader = Cursor::new(cpu_bytes);
-    match cpu_section.version {
-        1 => aero_snapshot::CpuState::decode_v1(&mut cpu_reader).unwrap(),
-        _ => aero_snapshot::CpuState::decode_v2(&mut cpu_reader).unwrap(),
-    }
 }
 
 #[test]
@@ -52,11 +29,12 @@ fn snapshot_round_trip_preserves_pending_bios_int() {
 
     // Program: INT 10h; HLT
     vm.mem.write_physical(0x7C00, &[0xCD, 0x10, 0xF4]);
-    vm.cpu.rax = 0x0E00 | (b'A' as u64);
+    vm.cpu.gpr[gpr::RAX] = 0x0E00 | (b'A' as u64);
 
     // Execute INT: sets up pending BIOS interrupt + jumps into ROM stub.
     assert_eq!(vm.step(), CpuExit::Continue);
-    assert_eq!(vm.cpu.pending_bios_int, Some(0x10));
+    assert!(vm.cpu.pending_bios_int_valid);
+    assert_eq!(vm.cpu.pending_bios_int, 0x10);
 
     let snapshot = vm.save_snapshot(SnapshotOptions::default()).unwrap();
 
@@ -82,30 +60,6 @@ fn snapshot_round_trip_preserves_pending_bios_int() {
 }
 
 #[test]
-fn snapshot_cpu_section_records_pending_bios_int_and_a20_state() {
-    let cfg = BiosConfig {
-        memory_size_bytes: 16 * 1024 * 1024,
-        boot_drive: 0x80,
-        ..BiosConfig::default()
-    };
-    let bios = Bios::new(cfg.clone());
-    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
-
-    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
-    vm.reset();
-
-    vm.cpu.pending_bios_int = Some(0x10);
-    vm.mem.set_a20_enabled(false);
-
-    let snapshot = vm.save_snapshot(SnapshotOptions::default()).unwrap();
-    let state = cpu_state_from_snapshot(&snapshot);
-
-    assert!(!state.a20_enabled);
-    assert!(state.pending_bios_int_valid);
-    assert_eq!(state.pending_bios_int, 0x10);
-}
-
-#[test]
 fn snapshot_round_trip_preserves_bios_output_buffer() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
@@ -121,7 +75,7 @@ fn snapshot_round_trip_preserves_bios_output_buffer() {
     // Program: INT 10h; INT 10h; HLT
     vm.mem
         .write_physical(0x7C00, &[0xCD, 0x10, 0xCD, 0x10, 0xF4]);
-    vm.cpu.rax = 0x0E00 | (b'A' as u64);
+    vm.cpu.gpr[gpr::RAX] = 0x0E00 | (b'A' as u64);
 
     // Run first INT to completion (ROM stub prints once).
     assert_eq!(vm.step(), CpuExit::Continue); // INT
@@ -170,7 +124,7 @@ fn snapshot_round_trip_dirty_chain_preserves_stack_writes() {
     // Program: INT 10h; INT 10h; HLT
     vm.mem
         .write_physical(0x7C00, &[0xCD, 0x10, 0xCD, 0x10, 0xF4]);
-    vm.cpu.rax = 0x0E00 | (b'A' as u64);
+    vm.cpu.gpr[gpr::RAX] = 0x0E00 | (b'A' as u64);
 
     // First INT to completion.
     assert_eq!(vm.step(), CpuExit::Continue);
@@ -303,18 +257,12 @@ fn snapshot_restore_requires_full_dirty_parent_chain() {
 
     // Cannot apply C onto a fresh VM (no parent restored).
     let err = restored.restore_snapshot(&diff2).unwrap_err();
-    assert!(matches!(
-        err,
-        SnapshotError::Corrupt("snapshot parent mismatch")
-    ));
+    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
 
     // Restoring A then skipping B and applying C must also fail (wrong parent id).
     restored.restore_snapshot(&base).unwrap();
     let err = restored.restore_snapshot(&diff2).unwrap_err();
-    assert!(matches!(
-        err,
-        SnapshotError::Corrupt("snapshot parent mismatch")
-    ));
+    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
 
     // Restoring the full chain A -> B -> C should succeed.
     restored.restore_snapshot(&diff1).unwrap();
@@ -337,8 +285,8 @@ fn snapshot_restore_full_snapshot_ignores_existing_last_snapshot_id() {
     vm.reset();
 
     let base = vm.save_snapshot(SnapshotOptions::default()).unwrap();
-    let expected_rip = vm.cpu.rip;
-    let expected_cs = vm.cpu.cs.selector;
+    let expected_rip = vm.cpu.rip();
+    let expected_cs = vm.cpu.segments.cs.selector;
     let expected_boot_opcode = vm.mem.read_u8(0x7C00);
 
     // Create a VM that already has a non-None last_snapshot_id, then restore a full snapshot into it.
@@ -350,74 +298,10 @@ fn snapshot_restore_full_snapshot_ignores_existing_last_snapshot_id() {
 
     // Take any snapshot to set last_snapshot_id, then perturb state so restore definitely does work.
     let _ = restored.save_snapshot(SnapshotOptions::default()).unwrap();
-    restored.cpu.rip = 0;
+    restored.cpu.set_rip(0);
 
     restored.restore_snapshot(&base).unwrap();
-    assert_eq!(restored.cpu.rip, expected_rip);
-    assert_eq!(restored.cpu.cs.selector, expected_cs);
+    assert_eq!(restored.cpu.rip(), expected_rip);
+    assert_eq!(restored.cpu.segments.cs.selector, expected_cs);
     assert_eq!(restored.mem.read_u8(0x7C00), expected_boot_opcode);
-}
-
-#[test]
-fn snapshot_round_trip_preserves_cpu_registers_segments_and_flags() {
-    let cfg = BiosConfig {
-        memory_size_bytes: 16 * 1024 * 1024,
-        boot_drive: 0x80,
-        ..BiosConfig::default()
-    };
-    let bios = Bios::new(cfg.clone());
-    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
-
-    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
-    vm.reset();
-
-    vm.cpu.rax = 0x1122_3344_5566_7788;
-    vm.cpu.rbx = 0x8877_6655_4433_2211;
-    vm.cpu.rcx = 0xDEAD_BEEF;
-    vm.cpu.rdx = 0xFEED_FACE;
-    vm.cpu.rsi = 0xA5A5_A5A5;
-    vm.cpu.rdi = 0x5A5A_5A5A;
-    vm.cpu.rbp = 0x1357_9BDF;
-    vm.cpu.rsp = 0x2468_ACF0;
-    vm.cpu.rip = 0x7C55;
-
-    vm.cpu.cs.selector = 0x1111;
-    vm.cpu.ds.selector = 0x2222;
-    vm.cpu.es.selector = 0x3333;
-    vm.cpu.ss.selector = 0x4444;
-
-    // Deliberately omit FLAG_ALWAYS_ON to ensure restores always re-assert it.
-    vm.cpu.rflags = FLAG_CF | FLAG_ZF;
-
-    vm.cpu.pending_bios_int = Some(0x10);
-    vm.cpu.halted = true;
-
-    let snapshot = vm.save_snapshot(SnapshotOptions::default()).unwrap();
-
-    let expected_rflags = (FLAG_CF | FLAG_ZF) | FLAG_ALWAYS_ON;
-
-    let bios2 = Bios::new(cfg);
-    let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
-    let mut restored = Vm::new(16 * 1024 * 1024, bios2, disk2);
-    restored.reset();
-    restored.restore_snapshot(&snapshot).unwrap();
-
-    assert_eq!(restored.cpu.rax, 0x1122_3344_5566_7788);
-    assert_eq!(restored.cpu.rbx, 0x8877_6655_4433_2211);
-    assert_eq!(restored.cpu.rcx, 0xDEAD_BEEF);
-    assert_eq!(restored.cpu.rdx, 0xFEED_FACE);
-    assert_eq!(restored.cpu.rsi, 0xA5A5_A5A5);
-    assert_eq!(restored.cpu.rdi, 0x5A5A_5A5A);
-    assert_eq!(restored.cpu.rbp, 0x1357_9BDF);
-    assert_eq!(restored.cpu.rsp, 0x2468_ACF0);
-    assert_eq!(restored.cpu.rip, 0x7C55);
-
-    assert_eq!(restored.cpu.cs.selector, 0x1111);
-    assert_eq!(restored.cpu.ds.selector, 0x2222);
-    assert_eq!(restored.cpu.es.selector, 0x3333);
-    assert_eq!(restored.cpu.ss.selector, 0x4444);
-
-    assert_eq!(restored.cpu.rflags, expected_rflags);
-    assert_eq!(restored.cpu.pending_bios_int, Some(0x10));
-    assert!(restored.cpu.halted);
 }

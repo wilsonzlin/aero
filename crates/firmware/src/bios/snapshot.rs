@@ -395,17 +395,17 @@ impl BiosSnapshot {
 }
 
 impl Bios {
-    pub fn snapshot(&self, memory: &impl MemoryBus) -> BiosSnapshot {
+    pub fn snapshot(&self) -> BiosSnapshot {
         BiosSnapshot {
             config: self.config.clone(),
             rtc: self.rtc.snapshot(),
             bda_time: self.bda_time.snapshot(),
             e820_map: self.e820_map.clone(),
             keyboard_queue: self.keyboard_queue.iter().copied().collect(),
-            // Video mode lives in the BIOS Data Area (BDA), which is part of guest RAM.
-            // Capture it explicitly so snapshot payloads stay self-contained even if callers
-            // choose a RAM snapshot mode that does not include low memory.
-            video_mode: BiosDataArea::read_video_mode(memory),
+            // Video mode lives in the BIOS Data Area (BDA), which is part of guest RAM. We also
+            // cache the value in `Bios::video_mode` so BIOS snapshots can be created without a
+            // memory bus (important for snapshot APIs that only expose `&self`).
+            video_mode: self.video_mode,
             tty_output: self.tty_output.clone(),
             rsdp_addr: self.rsdp_addr,
             acpi_reclaimable: self.acpi_reclaimable,
@@ -423,6 +423,7 @@ impl Bios {
         self.e820_map = snapshot.e820_map;
         self.keyboard_queue = VecDeque::from(snapshot.keyboard_queue);
         BiosDataArea::write_video_mode(memory, snapshot.video_mode);
+        self.video_mode = snapshot.video_mode;
         self.tty_output = snapshot.tty_output;
         self.rsdp_addr = snapshot.rsdp_addr;
         self.acpi_reclaimable = snapshot.acpi_reclaimable;

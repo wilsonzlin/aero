@@ -53,7 +53,6 @@ members = [
     "crates/devices",
     "crates/emulator",
     "crates/firmware",
-    "crates/machine",
     "crates/memory",
     "crates/platform",
     "crates/aero-pc-constants",

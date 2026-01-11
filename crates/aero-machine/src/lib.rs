@@ -9,7 +9,6 @@
 //! The intention is to make "which machine runs in the browser?" an explicit, stable answer:
 //! **`aero_machine::Machine`**.
 #![forbid(unsafe_code)]
-#![allow(deprecated)]
 
 use std::cell::RefCell;
 use std::fmt;
@@ -23,7 +22,7 @@ use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::CpuBus;
-use aero_cpu_core::state::{gpr, CpuMode, CpuState, Segment as CoreSegment};
+use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
 use aero_devices::a20_gate::A20Gate as A20GateDevice;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
@@ -33,12 +32,8 @@ use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
 use aero_snapshot as snapshot;
-use firmware::bios::{build_bios_rom, Bios, BiosBus, BiosConfig, BIOS_BASE};
-use machine::{
-    A20Gate as FirmwareA20Gate, BlockDevice, CpuState as FirmwareCpuState, FirmwareMemory,
-    MemoryAccess, Segment as FirmwareSegment,
-};
-use memory::{DenseMemory, PhysicalMemoryBus};
+use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, BlockDevice, DiskError, FirmwareMemory};
+use memory::{DenseMemory, MapError, MemoryBus as _, PhysicalMemoryBus};
 
 const FAST_A20_PORT: u16 = 0x92;
 const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
@@ -158,16 +153,16 @@ impl VecBlockDevice {
 }
 
 impl BlockDevice for VecBlockDevice {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), machine::DiskError> {
-        let idx = usize::try_from(lba).map_err(|_| machine::DiskError::OutOfRange)?;
-        let start = idx.checked_mul(512).ok_or(machine::DiskError::OutOfRange)?;
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+        let idx = usize::try_from(lba).map_err(|_| DiskError::OutOfRange)?;
+        let start = idx.checked_mul(512).ok_or(DiskError::OutOfRange)?;
         let end = start
             .checked_add(512)
-            .ok_or(machine::DiskError::OutOfRange)?;
+            .ok_or(DiskError::OutOfRange)?;
         let src = self
             .data
             .get(start..end)
-            .ok_or(machine::DiskError::OutOfRange)?;
+            .ok_or(DiskError::OutOfRange)?;
         buf.copy_from_slice(src);
         Ok(())
     }
@@ -214,6 +209,27 @@ impl DirtyBitmap {
         }
     }
 
+    fn mark_range(&mut self, start: u64, len: usize) {
+        if len == 0 {
+            return;
+        }
+        let len_u64 = len as u64;
+        let end = start.saturating_add(len_u64).saturating_sub(1);
+        let first_page = usize::try_from(start / self.page_size as u64).unwrap_or(usize::MAX);
+        let last_page = usize::try_from(end / self.page_size as u64).unwrap_or(usize::MAX);
+        if first_page >= self.pages {
+            return;
+        }
+        let last_page = last_page.min(self.pages.saturating_sub(1));
+        for page in first_page..=last_page {
+            let word = page / 64;
+            let bit = page % 64;
+            if let Some(slot) = self.bits.get_mut(word) {
+                *slot |= 1u64 << bit;
+            }
+        }
+    }
+
     fn take(&mut self) -> Vec<u64> {
         let mut pages = Vec::new();
         for (word_idx, word) in self.bits.iter_mut().enumerate() {
@@ -249,13 +265,7 @@ impl SystemMemory {
     fn new(ram_size_bytes: u64, a20: A20GateHandle) -> Result<Self, MachineError> {
         let ram = DenseMemory::new(ram_size_bytes)
             .map_err(|_| MachineError::GuestMemoryTooLarge(ram_size_bytes))?;
-        let mut inner = PhysicalMemoryBus::new(Box::new(ram));
-
-        // Map the BIOS ROM at the conventional window, and also at the 4GiB alias used by the
-        // architectural reset vector.
-        let rom: Arc<[u8]> = build_bios_rom().into();
-        let _ = inner.map_rom(BIOS_BASE, rom.clone());
-        let _ = inner.map_rom(0xFFFF_0000, rom);
+        let inner = PhysicalMemoryBus::new(Box::new(ram));
 
         Ok(Self {
             a20,
@@ -281,7 +291,7 @@ impl SystemMemory {
     }
 }
 
-impl FirmwareA20Gate for SystemMemory {
+impl A20Gate for SystemMemory {
     fn set_a20_enabled(&mut self, enabled: bool) {
         self.a20.set_enabled(enabled);
     }
@@ -292,26 +302,56 @@ impl FirmwareA20Gate for SystemMemory {
 }
 
 impl FirmwareMemory for SystemMemory {
-    fn map_rom(&mut self, base: u64, rom: &[u8]) {
-        let rom: Arc<[u8]> = rom.to_vec().into();
-        let _ = self.inner.borrow_mut().map_rom(base, rom);
+    fn map_rom(&mut self, base: u64, rom: Arc<[u8]>) {
+        let len = rom.len();
+        let mut inner = self.inner.borrow_mut();
+        match inner.map_rom(base, rom) {
+            Ok(()) => {}
+            Err(MapError::Overlap) => {
+                // BIOS resets may re-map the same ROM windows. Treat identical overlaps as
+                // idempotent, but reject unexpected overlaps to avoid silently corrupting the bus.
+                let already_mapped = inner
+                    .rom_regions()
+                    .iter()
+                    .any(|r| r.start == base && r.data.len() == len);
+                if !already_mapped {
+                    panic!("unexpected ROM mapping overlap at 0x{base:016x}");
+                }
+            }
+            Err(MapError::AddressOverflow) => {
+                panic!("ROM mapping overflow at 0x{base:016x} (len=0x{len:x})")
+            }
+        }
     }
 }
 
-impl MemoryAccess for SystemMemory {
-    fn read_u8(&self, addr: u64) -> u8 {
-        let addr = self.translate_a20(addr);
-        self.inner.borrow_mut().read_physical_u8(addr)
+impl memory::MemoryBus for SystemMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if self.a20.enabled() {
+            self.inner.borrow_mut().read_physical(paddr, buf);
+            return;
+        }
+
+        let mut inner = self.inner.borrow_mut();
+        for (i, slot) in buf.iter_mut().enumerate() {
+            let addr = self.translate_a20(paddr.wrapping_add(i as u64));
+            *slot = inner.read_physical_u8(addr);
+        }
     }
 
-    fn write_u8(&mut self, addr: u64, val: u8) {
-        let addr = self.translate_a20(addr);
-        self.inner.borrow_mut().write_physical_u8(addr, val);
-        self.dirty.mark_addr(addr);
-    }
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        if self.a20.enabled() {
+            self.inner.borrow_mut().write_physical(paddr, buf);
+            self.dirty.mark_range(paddr, buf.len());
+            return;
+        }
 
-    fn fetch_code(&self, _addr: u64, _len: usize) -> &[u8] {
-        &[]
+        let mut inner = self.inner.borrow_mut();
+        for (i, byte) in buf.iter().copied().enumerate() {
+            let addr = self.translate_a20(paddr.wrapping_add(i as u64));
+            inner.write_physical_u8(addr, byte);
+            self.dirty.mark_addr(addr);
+        }
     }
 }
 
@@ -322,47 +362,47 @@ struct Bus<'a> {
 
 impl CpuBus for Bus<'_> {
     fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
-        Ok(MemoryAccess::read_u8(&*self.mem, vaddr))
+        Ok(self.mem.read_u8(vaddr))
     }
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        Ok(MemoryAccess::read_u16(&*self.mem, vaddr))
+        Ok(self.mem.read_u16(vaddr))
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        Ok(MemoryAccess::read_u32(&*self.mem, vaddr))
+        Ok(self.mem.read_u32(vaddr))
     }
 
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        Ok(MemoryAccess::read_u64(&*self.mem, vaddr))
+        Ok(self.mem.read_u64(vaddr))
     }
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        Ok(MemoryAccess::read_u128(&*self.mem, vaddr))
+        Ok(self.mem.read_u128(vaddr))
     }
 
     fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
-        MemoryAccess::write_u8(self.mem, vaddr, val);
+        self.mem.write_u8(vaddr, val);
         Ok(())
     }
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        MemoryAccess::write_u16(self.mem, vaddr, val);
+        self.mem.write_u16(vaddr, val);
         Ok(())
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        MemoryAccess::write_u32(self.mem, vaddr, val);
+        self.mem.write_u32(vaddr, val);
         Ok(())
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        MemoryAccess::write_u64(self.mem, vaddr, val);
+        self.mem.write_u64(vaddr, val);
         Ok(())
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        MemoryAccess::write_u128(self.mem, vaddr, val);
+        self.mem.write_u128(vaddr, val);
         Ok(())
     }
 
@@ -370,7 +410,7 @@ impl CpuBus for Bus<'_> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
         for i in 0..len {
-            buf[i] = MemoryAccess::read_u8(&*self.mem, vaddr + i as u64);
+            buf[i] = self.mem.read_u8(vaddr + i as u64);
         }
         Ok(buf)
     }
@@ -601,6 +641,7 @@ impl Machine {
         }
 
         self.assist = AssistContext::default();
+        self.cpu = CpuCore::new(CpuMode::Real);
 
         // Run firmware POST (in Rust) to initialize IVT/BDA, map BIOS stubs, and load the boot
         // sector into RAM.
@@ -609,15 +650,8 @@ impl Machine {
             cpu_count: self.cfg.cpu_count,
             ..Default::default()
         });
-        let mut fw_cpu = FirmwareCpuState::default();
         let bus: &mut dyn BiosBus = &mut self.mem;
-        self.bios.post(&mut fw_cpu, bus, &mut self.disk);
-
-        // Reset non-ABI CPU bookkeeping (pending events + virtual time) before syncing the
-        // firmware-provided register state back into the Tier-0 core state.
-        self.cpu = CpuCore::new(CpuMode::Real);
-        sync_firmware_to_core(&fw_cpu, &mut self.cpu.state);
-        self.cpu.state.halted = false;
+        self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.mem.clear_dirty();
     }
@@ -682,12 +716,12 @@ impl Machine {
     }
 
     fn handle_bios_interrupt(&mut self, vector: u8) {
-        let mut fw_cpu = FirmwareCpuState::default();
-        sync_core_to_firmware(&self.cpu.state, &mut fw_cpu);
+        // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
+        self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         let bus: &mut dyn BiosBus = &mut self.mem;
         self.bios
-            .dispatch_interrupt(vector, &mut fw_cpu, bus, &mut self.disk);
-        sync_firmware_to_core(&fw_cpu, &mut self.cpu.state);
+            .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
+        self.cpu.state.a20_enabled = self.chipset.a20().enabled();
     }
 
     fn flush_serial(&mut self) {
@@ -740,7 +774,7 @@ impl snapshot::SnapshotSource for Machine {
         let mut devices = Vec::new();
 
         // Firmware snapshot: required for deterministic BIOS interrupt behavior.
-        let bios_snapshot = self.bios.snapshot(&self.mem);
+        let bios_snapshot = self.bios.snapshot();
         let mut bios_bytes = Vec::new();
         if bios_snapshot.encode(&mut bios_bytes).is_ok() {
             devices.push(snapshot::DeviceState {
@@ -835,7 +869,7 @@ impl snapshot::SnapshotTarget for Machine {
                     }
                     let enabled = state.data.first().copied().unwrap_or(0) != 0;
                     self.chipset.a20().set_enabled(enabled);
-                    self.cpu.a20_enabled = enabled;
+                    self.cpu.state.a20_enabled = enabled;
                 }
                 snapshot::DeviceId::SERIAL => {
                     if state.version != 1 {
@@ -873,78 +907,9 @@ impl snapshot::SnapshotTarget for Machine {
         self.assist = AssistContext::default();
         self.cpu.pending = Default::default();
         self.mem.clear_dirty();
-        self.cpu.a20_enabled = self.chipset.a20().enabled();
+        self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         Ok(())
     }
-}
-
-fn set_real_mode_seg(seg: &mut CoreSegment, selector: u16) {
-    seg.selector = selector;
-    seg.base = (selector as u64) << 4;
-    seg.limit = 0xFFFF;
-    seg.access = 0;
-}
-
-fn sync_firmware_to_core(fw: &FirmwareCpuState, core: &mut CpuState) {
-    core.mode = CpuMode::Real;
-    core.halted = fw.halted;
-    core.clear_pending_bios_int();
-
-    core.gpr[gpr::RAX] = fw.rax;
-    core.gpr[gpr::RCX] = fw.rcx;
-    core.gpr[gpr::RDX] = fw.rdx;
-    core.gpr[gpr::RBX] = fw.rbx;
-    core.gpr[gpr::RSP] = fw.rsp;
-    core.gpr[gpr::RBP] = fw.rbp;
-    core.gpr[gpr::RSI] = fw.rsi;
-    core.gpr[gpr::RDI] = fw.rdi;
-    core.gpr[gpr::R8] = 0;
-    core.gpr[gpr::R9] = 0;
-    core.gpr[gpr::R10] = 0;
-    core.gpr[gpr::R11] = 0;
-    core.gpr[gpr::R12] = 0;
-    core.gpr[gpr::R13] = 0;
-    core.gpr[gpr::R14] = 0;
-    core.gpr[gpr::R15] = 0;
-
-    core.set_rip(fw.rip);
-    core.set_rflags(fw.rflags);
-
-    set_real_mode_seg(&mut core.segments.cs, fw.cs.selector);
-    set_real_mode_seg(&mut core.segments.ds, fw.ds.selector);
-    set_real_mode_seg(&mut core.segments.es, fw.es.selector);
-    set_real_mode_seg(&mut core.segments.ss, fw.ss.selector);
-    set_real_mode_seg(&mut core.segments.fs, 0);
-    set_real_mode_seg(&mut core.segments.gs, 0);
-}
-
-fn sync_core_to_firmware(core: &CpuState, fw: &mut FirmwareCpuState) {
-    fw.rax = core.gpr[gpr::RAX];
-    fw.rbx = core.gpr[gpr::RBX];
-    fw.rcx = core.gpr[gpr::RCX];
-    fw.rdx = core.gpr[gpr::RDX];
-    fw.rsi = core.gpr[gpr::RSI];
-    fw.rdi = core.gpr[gpr::RDI];
-    fw.rbp = core.gpr[gpr::RBP];
-    fw.rsp = core.gpr[gpr::RSP];
-    fw.rip = core.rip();
-    fw.rflags = core.rflags();
-
-    fw.cs = FirmwareSegment {
-        selector: core.segments.cs.selector,
-    };
-    fw.ds = FirmwareSegment {
-        selector: core.segments.ds.selector,
-    };
-    fw.es = FirmwareSegment {
-        selector: core.segments.es.selector,
-    };
-    fw.ss = FirmwareSegment {
-        selector: core.segments.ss.selector,
-    };
-
-    fw.pending_bios_int = None;
-    fw.halted = core.halted;
 }
 
 #[cfg(test)]

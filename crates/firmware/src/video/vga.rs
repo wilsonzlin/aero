@@ -35,7 +35,7 @@ impl VgaDevice {
         BiosDataArea::write_cursor_pos_page0(mem, row, col);
     }
 
-    pub fn get_cursor_pos(&self, mem: &impl MemoryBus, page: u8) -> (u8, u8) {
+    pub fn get_cursor_pos(&self, mem: &mut impl MemoryBus, page: u8) -> (u8, u8) {
         if page != 0 {
             return (0, 0);
         }
@@ -46,7 +46,7 @@ impl VgaDevice {
         BiosDataArea::write_cursor_shape(mem, start, end);
     }
 
-    pub fn get_cursor_shape(&self, mem: &impl MemoryBus) -> (u8, u8) {
+    pub fn get_cursor_shape(&self, mem: &mut impl MemoryBus) -> (u8, u8) {
         BiosDataArea::read_cursor_shape(mem)
     }
 

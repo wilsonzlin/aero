@@ -357,7 +357,6 @@ dependencies = [
  "aero-platform",
  "aero-snapshot",
  "firmware",
- "machine",
  "memory",
  "pretty_assertions",
 ]
@@ -445,12 +444,12 @@ name = "aero-platform"
 version = "0.1.0"
 dependencies = [
  "aero-acpi",
+ "aero-cpu-core",
  "aero-devices",
  "aero-interrupts",
  "aero-io-snapshot",
  "firmware",
  "js-sys",
- "machine",
  "memory",
  "wasm-bindgen",
 ]
@@ -1614,7 +1613,6 @@ dependencies = [
  "font8x8",
  "hyper 0.14.32",
  "image",
- "machine",
  "memory",
  "pollster",
  "proptest",
@@ -1700,11 +1698,11 @@ name = "firmware"
 version = "0.1.0"
 dependencies = [
  "aero-acpi",
+ "aero-cpu-core",
  "aero-devices",
  "aero-edid",
  "aero-pc-constants",
  "aero-platform",
- "machine",
  "memory",
 ]
 
@@ -2732,10 +2730,6 @@ checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "machine"
-version = "0.1.0"
 
 [[package]]
 name = "malloc_buf"

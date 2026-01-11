@@ -16,7 +16,7 @@ pub const BDA_ACTIVE_PAGE_ADDR: u64 = 0x0462;
 pub struct BiosDataArea;
 
 impl BiosDataArea {
-    pub fn read_video_mode(mem: &impl MemoryBus) -> u8 {
+    pub fn read_video_mode(mem: &mut impl MemoryBus) -> u8 {
         mem.read_u8(BDA_VIDEO_MODE_ADDR)
     }
 
@@ -24,7 +24,7 @@ impl BiosDataArea {
         mem.write_u8(BDA_VIDEO_MODE_ADDR, mode);
     }
 
-    pub fn read_screen_cols(mem: &impl MemoryBus) -> u16 {
+    pub fn read_screen_cols(mem: &mut impl MemoryBus) -> u16 {
         mem.read_u16(BDA_SCREEN_COLS_ADDR)
     }
 
@@ -32,7 +32,7 @@ impl BiosDataArea {
         mem.write_u16(BDA_SCREEN_COLS_ADDR, cols);
     }
 
-    pub fn read_page_size(mem: &impl MemoryBus) -> u16 {
+    pub fn read_page_size(mem: &mut impl MemoryBus) -> u16 {
         mem.read_u16(BDA_PAGE_SIZE_ADDR)
     }
 
@@ -40,7 +40,7 @@ impl BiosDataArea {
         mem.write_u16(BDA_PAGE_SIZE_ADDR, bytes);
     }
 
-    pub fn read_active_page(mem: &impl MemoryBus) -> u8 {
+    pub fn read_active_page(mem: &mut impl MemoryBus) -> u8 {
         mem.read_u8(BDA_ACTIVE_PAGE_ADDR)
     }
 
@@ -48,7 +48,7 @@ impl BiosDataArea {
         mem.write_u8(BDA_ACTIVE_PAGE_ADDR, page);
     }
 
-    pub fn read_cursor_pos_page0(mem: &impl MemoryBus) -> (u8, u8) {
+    pub fn read_cursor_pos_page0(mem: &mut impl MemoryBus) -> (u8, u8) {
         let word = mem.read_u16(BDA_CURSOR_POS_PAGE0_ADDR);
         let col = (word & 0xFF) as u8;
         let row = (word >> 8) as u8;
@@ -62,7 +62,7 @@ impl BiosDataArea {
         );
     }
 
-    pub fn read_cursor_shape(mem: &impl MemoryBus) -> (u8, u8) {
+    pub fn read_cursor_shape(mem: &mut impl MemoryBus) -> (u8, u8) {
         let word = mem.read_u16(BDA_CURSOR_SHAPE_ADDR);
         let end = (word & 0xFF) as u8;
         let start = (word >> 8) as u8;

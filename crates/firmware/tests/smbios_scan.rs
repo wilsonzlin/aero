@@ -1,7 +1,7 @@
 use firmware::memory::{MemoryBus, VecMemory};
 use firmware::smbios::{SmbiosConfig, SmbiosTables};
 
-fn scan_for_eps(mem: &VecMemory) -> Option<u32> {
+fn scan_for_eps(mem: &mut VecMemory) -> Option<u32> {
     // SMBIOS spec: search first KB of EBDA (if present), else scan 0xF0000-0xFFFFF.
     let mut ebda_seg_bytes = [0u8; 2];
     mem.read_physical(0x40E, &mut ebda_seg_bytes);
@@ -15,7 +15,7 @@ fn scan_for_eps(mem: &VecMemory) -> Option<u32> {
     scan_region(mem, 0xF0000, 0x10000)
 }
 
-fn scan_region(mem: &VecMemory, base: u32, len: usize) -> Option<u32> {
+fn scan_region(mem: &mut VecMemory, base: u32, len: usize) -> Option<u32> {
     let mut buf = vec![0u8; len];
     mem.read_physical(base as u64, &mut buf);
     for off in (0..len.saturating_sub(4)).step_by(16) {
@@ -37,7 +37,7 @@ fn host_memory_scan_finds_eps_and_parses_table() {
     };
     let eps_addr = SmbiosTables::build_and_write(&config, &mut mem);
 
-    let scanned = scan_for_eps(&mem).expect("EPS not found by scan");
+    let scanned = scan_for_eps(&mut mem).expect("EPS not found by scan");
     assert_eq!(scanned, eps_addr);
 
     // Parse EPS enough to sanity-check the table is reachable and ends with Type 127.

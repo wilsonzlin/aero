@@ -103,7 +103,8 @@ fn assign_pci_irq(pirq_to_gsi: [u32; 4], device: u8, interrupt_pin: u8) -> u8 {
 mod tests {
     use super::*;
     use crate::bios::BiosConfig;
-    use machine::{CpuState, InMemoryDisk, PhysicalMemory};
+    use aero_cpu_core::state::{CpuMode, CpuState};
+    use crate::bios::{InMemoryDisk, TestMemory};
 
     #[derive(Clone, Debug)]
     struct DevCfg {
@@ -188,8 +189,8 @@ mod tests {
 
     #[test]
     fn post_programs_pci_interrupt_line_using_intx_swizzle_and_pirq_map() {
-        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
-        let mut cpu = CpuState::default();
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
+        let mut cpu = CpuState::new(CpuMode::Real);
         let mut sector = [0u8; 512];
         sector[510] = 0x55;
         sector[511] = 0xAA;

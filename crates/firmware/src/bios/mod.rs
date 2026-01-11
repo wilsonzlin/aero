@@ -27,12 +27,16 @@ mod rom;
 mod snapshot;
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::memory::MemoryBus;
+use aero_cpu_core::state::{CpuState, Segment};
+#[cfg(test)]
+use memory::{DenseMemory, MapError, PhysicalMemoryBus};
+
+use crate::memory::MemoryBus as FirmwareMemoryBus;
 use crate::rtc::{CmosRtc, DateTime};
 use crate::video::VideoDevice;
-use machine::{BlockDevice, CpuState, DiskError, FirmwareMemory, MemoryAccess, Segment};
 
 pub use acpi::{AcpiBuilder, AcpiInfo};
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
@@ -77,9 +81,67 @@ pub const INT16_STUB_OFFSET: u16 = 0xE700;
 pub const INT1A_STUB_OFFSET: u16 = 0xE900;
 pub const DEFAULT_INT_STUB_OFFSET: u16 = 0xEF00;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskError {
+    OutOfRange,
+}
+
+pub trait BlockDevice {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError>;
+
+    fn size_in_sectors(&self) -> u64;
+}
+
+/// In-memory block device backed by a `Vec<u8>` of 512-byte sectors.
+#[derive(Debug, Clone)]
+pub struct InMemoryDisk {
+    data: Vec<u8>,
+}
+
+impl InMemoryDisk {
+    pub fn new(mut data: Vec<u8>) -> Self {
+        if data.len() % 512 != 0 {
+            let new_len = (data.len() + 511) & !511;
+            data.resize(new_len, 0);
+        }
+        Self { data }
+    }
+
+    pub fn from_boot_sector(sector: [u8; 512]) -> Self {
+        Self {
+            data: sector.to_vec(),
+        }
+    }
+}
+
+impl BlockDevice for InMemoryDisk {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+        let start = lba.checked_mul(512).ok_or(DiskError::OutOfRange)? as usize;
+        let end = start.checked_add(512).ok_or(DiskError::OutOfRange)?;
+        if end > self.data.len() {
+            return Err(DiskError::OutOfRange);
+        }
+        buf.copy_from_slice(&self.data[start..end]);
+        Ok(())
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        (self.data.len() / 512) as u64
+    }
+}
+
+pub trait FirmwareMemory {
+    fn map_rom(&mut self, base: u64, rom: Arc<[u8]>);
+}
+
+pub trait A20Gate {
+    fn set_a20_enabled(&mut self, enabled: bool);
+    fn a20_enabled(&self) -> bool;
+}
+
 /// Memory interface required by the BIOS.
-pub trait BiosBus: MemoryAccess + FirmwareMemory + machine::A20Gate {}
-impl<T: MemoryAccess + FirmwareMemory + machine::A20Gate> BiosBus for T {}
+pub trait BiosBus: memory::MemoryBus + FirmwareMemory + A20Gate {}
+impl<T: memory::MemoryBus + FirmwareMemory + A20Gate> BiosBus for T {}
 
 /// Adapter that lets BIOS code reuse helpers written against the firmware-side [`MemoryBus`]
 /// abstraction (used by the INT 10h text/VBE implementation).
@@ -93,8 +155,8 @@ impl<'a> BiosMemoryBus<'a> {
     }
 }
 
-impl MemoryBus for BiosMemoryBus<'_> {
-    fn read_u8(&self, addr: u64) -> u8 {
+impl FirmwareMemoryBus for BiosMemoryBus<'_> {
+    fn read_u8(&mut self, addr: u64) -> u8 {
         self.bus.read_u8(addr)
     }
 
@@ -221,11 +283,11 @@ impl Bios {
     }
 
     /// Initialize BDA time fields from the RTC.
-    pub fn init<M: MemoryBus + ?Sized>(&mut self, memory: &mut M) {
+    pub fn init<M: FirmwareMemoryBus + ?Sized>(&mut self, memory: &mut M) {
         self.bda_time.write_to_bda(memory);
     }
 
-    pub fn advance_time<M: MemoryBus + ?Sized>(&mut self, memory: &mut M, delta: Duration) {
+    pub fn advance_time<M: FirmwareMemoryBus + ?Sized>(&mut self, memory: &mut M, delta: Duration) {
         self.rtc.advance(delta);
         self.bda_time.advance(memory, delta);
     }
@@ -283,8 +345,11 @@ impl Bios {
     }
 }
 
-fn seg(selector: u16) -> Segment {
-    Segment { selector }
+fn set_real_mode_seg(seg: &mut Segment, selector: u16) {
+    seg.selector = selector;
+    seg.base = (selector as u64) << 4;
+    seg.limit = 0xFFFF;
+    seg.access = 0;
 }
 
 fn disk_err_to_int13_status(err: DiskError) -> u8 {
@@ -294,9 +359,101 @@ fn disk_err_to_int13_status(err: DiskError) -> u8 {
 }
 
 #[cfg(test)]
+pub(super) struct TestMemory {
+    a20_enabled: bool,
+    inner: PhysicalMemoryBus,
+}
+
+#[cfg(test)]
+impl TestMemory {
+    pub(super) fn new(size: u64) -> Self {
+        let ram = DenseMemory::new(size).expect("guest RAM allocation failed");
+        Self {
+            a20_enabled: false,
+            inner: PhysicalMemoryBus::new(Box::new(ram)),
+        }
+    }
+
+    fn translate_a20(&self, addr: u64) -> u64 {
+        if self.a20_enabled {
+            addr
+        } else {
+            addr & !(1u64 << 20)
+        }
+    }
+
+    pub(super) fn read_bytes(&mut self, paddr: u64, len: usize) -> Vec<u8> {
+        let mut out = vec![0u8; len];
+        self.read_physical(paddr, &mut out);
+        out
+    }
+}
+
+#[cfg(test)]
+impl A20Gate for TestMemory {
+    fn set_a20_enabled(&mut self, enabled: bool) {
+        self.a20_enabled = enabled;
+    }
+
+    fn a20_enabled(&self) -> bool {
+        self.a20_enabled
+    }
+}
+
+#[cfg(test)]
+impl FirmwareMemory for TestMemory {
+    fn map_rom(&mut self, base: u64, rom: Arc<[u8]>) {
+        let len = rom.len();
+        match self.inner.map_rom(base, rom) {
+            Ok(()) => {}
+            Err(MapError::Overlap) => {
+                let already_mapped = self
+                    .inner
+                    .rom_regions()
+                    .iter()
+                    .any(|r| r.start == base && r.data.len() == len);
+                if !already_mapped {
+                    panic!("unexpected ROM mapping overlap at 0x{base:016x}");
+                }
+            }
+            Err(MapError::AddressOverflow) => {
+                panic!("ROM mapping overflow at 0x{base:016x} (len=0x{len:x})");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl memory::MemoryBus for TestMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if self.a20_enabled {
+            self.inner.read_physical(paddr, buf);
+            return;
+        }
+
+        for (i, slot) in buf.iter_mut().enumerate() {
+            let addr = self.translate_a20(paddr.wrapping_add(i as u64));
+            *slot = self.inner.read_physical_u8(addr);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        if self.a20_enabled {
+            self.inner.write_physical(paddr, buf);
+            return;
+        }
+
+        for (i, byte) in buf.iter().copied().enumerate() {
+            let addr = self.translate_a20(paddr.wrapping_add(i as u64));
+            self.inner.write_physical_u8(addr, byte);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use machine::{A20Gate, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_IF};
+    use aero_cpu_core::state::{gpr, RFLAGS_IF};
 
     fn boot_sector(pattern: u8) -> [u8; 512] {
         let mut sector = [pattern; 512];
@@ -326,43 +483,40 @@ mod tests {
     #[test]
     fn post_initializes_ivt_vectors() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut cpu = CpuState::default();
-        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
         bios.post(&mut cpu, &mut mem, &mut disk);
 
-        let read_vec = |mem: &PhysicalMemory, v: u8| -> (u16, u16) {
+        let read_vec = |mem: &mut TestMemory, v: u8| -> (u16, u16) {
             let addr = (v as u64) * 4;
-            (
-                MemoryAccess::read_u16(mem, addr),
-                MemoryAccess::read_u16(mem, addr + 2),
-            )
+            (mem.read_u16(addr), mem.read_u16(addr + 2))
         };
 
-        assert_eq!(read_vec(&mem, 0x10), (INT10_STUB_OFFSET, BIOS_SEGMENT));
-        assert_eq!(read_vec(&mem, 0x13), (INT13_STUB_OFFSET, BIOS_SEGMENT));
-        assert_eq!(read_vec(&mem, 0x15), (INT15_STUB_OFFSET, BIOS_SEGMENT));
-        assert_eq!(read_vec(&mem, 0x16), (INT16_STUB_OFFSET, BIOS_SEGMENT));
-        assert_eq!(read_vec(&mem, 0x1A), (INT1A_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(read_vec(&mut mem, 0x10), (INT10_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(read_vec(&mut mem, 0x13), (INT13_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(read_vec(&mut mem, 0x15), (INT15_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(read_vec(&mut mem, 0x16), (INT16_STUB_OFFSET, BIOS_SEGMENT));
+        assert_eq!(read_vec(&mut mem, 0x1A), (INT1A_STUB_OFFSET, BIOS_SEGMENT));
     }
 
     #[test]
     fn post_initializes_bda_and_ebda() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut cpu = CpuState::default();
-        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
         bios.post(&mut cpu, &mut mem, &mut disk);
 
-        let ebda_segment = MemoryAccess::read_u16(&mem, BDA_BASE + 0x0E);
+        let ebda_segment = mem.read_u16(BDA_BASE + 0x0E);
         assert_eq!(ebda_segment, (EBDA_BASE / 16) as u16);
 
-        let base_mem_kb = MemoryAccess::read_u16(&mem, BDA_BASE + 0x13);
+        let base_mem_kb = mem.read_u16(BDA_BASE + 0x13);
         assert_eq!(base_mem_kb, (EBDA_BASE / 1024) as u16);
 
-        let ebda_kb = MemoryAccess::read_u16(&mem, EBDA_BASE);
+        let ebda_kb = mem.read_u16(EBDA_BASE);
         assert_eq!(ebda_kb, (EBDA_SIZE / 1024) as u16);
     }
 
@@ -373,8 +527,8 @@ mod tests {
             boot_drive: 0x80,
             ..BiosConfig::default()
         });
-        let mut cpu = CpuState::default();
-        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0xAA));
 
         bios.post(&mut cpu, &mut mem, &mut disk);
@@ -384,38 +538,35 @@ mod tests {
         assert_eq!(loaded[510], 0x55);
         assert_eq!(loaded[511], 0xAA);
 
-        assert_eq!(cpu.cs.selector, 0x0000);
-        assert_eq!(cpu.rip, 0x7C00);
-        assert_eq!(cpu.rsp, 0x7C00);
-        assert_eq!(cpu.rdx as u8, 0x80);
-        assert_ne!(cpu.rflags & FLAG_IF, 0);
+        assert_eq!(cpu.segments.cs.selector, 0x0000);
+        assert_eq!(cpu.rip(), 0x7C00);
+        assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7C00);
+        assert_eq!(cpu.gpr[gpr::RDX] as u8, 0x80);
+        assert!(cpu.get_flag(RFLAGS_IF));
     }
 
     #[test]
     fn post_maps_bios_rom_at_the_reset_vector_alias() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut cpu = CpuState::default();
-        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
         bios.post(&mut cpu, &mut mem, &mut disk);
 
         // BIOS POST enables A20 before handing control to the boot sector.
-        assert!(A20Gate::a20_enabled(&mem));
+        assert!(mem.a20_enabled());
 
         // The ROM is mirrored at the architectural reset-vector alias (0xFFFF_FFF0).
-        assert_eq!(MemoryAccess::read_u8(&mem, RESET_VECTOR_ALIAS_PHYS), 0xEA);
-        assert_eq!(
-            mem.read_bytes(RESET_VECTOR_ALIAS_PHYS, 5),
-            vec![0xEA, 0x00, 0xE0, 0x00, 0xF0]
-        );
+        assert_eq!(mem.read_u8(RESET_VECTOR_ALIAS_PHYS), 0xEA);
+        assert_eq!(mem.read_bytes(RESET_VECTOR_ALIAS_PHYS, 5), vec![0xEA, 0x00, 0xE0, 0x00, 0xF0]);
     }
 
     #[test]
     fn post_builds_acpi_rsdp_in_ebda() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut cpu = CpuState::default();
-        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
         bios.post(&mut cpu, &mut mem, &mut disk);

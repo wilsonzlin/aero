@@ -20,7 +20,7 @@ pub struct BuiltTable {
     pub max_structure_size: u16,
 }
 
-pub fn choose_placement<M: MemoryBus>(config: &SmbiosConfig, mem: &M) -> Placement {
+pub fn choose_placement<M: MemoryBus>(config: &SmbiosConfig, mem: &mut M) -> Placement {
     let eps_addr = if let Some(addr) = config.eps_addr {
         align_up(addr, 16)
     } else if let Some(ebda_base) = read_ebda_base(mem) {
@@ -44,7 +44,7 @@ pub fn choose_placement<M: MemoryBus>(config: &SmbiosConfig, mem: &M) -> Placeme
     }
 }
 
-fn read_ebda_base<M: MemoryBus>(mem: &M) -> Option<u32> {
+fn read_ebda_base<M: MemoryBus>(mem: &mut M) -> Option<u32> {
     let mut seg_bytes = [0u8; 2];
     mem.read_physical(BDA_EBDA_SEGMENT_PADDR, &mut seg_bytes);
     let segment = u16::from_le_bytes(seg_bytes);
@@ -166,7 +166,7 @@ mod tests {
         let mut mem = VecMemory::new(2 * 1024 * 1024);
         mem.write_physical(BDA_EBDA_SEGMENT_PADDR, &0x9FC0u16.to_le_bytes());
 
-        let placement = choose_placement(&SmbiosConfig::default(), &mem);
+        let placement = choose_placement(&SmbiosConfig::default(), &mut mem);
         assert!(placement.eps_addr >= 0x9FC00);
         assert!(placement.eps_addr < 0xA0000);
         assert!(placement.table_addr >= 0x9FC00);
@@ -175,9 +175,9 @@ mod tests {
 
     #[test]
     fn placement_falls_back_to_bios_scan_region_when_ebda_missing() {
-        let mem = VecMemory::new(2 * 1024 * 1024);
+        let mut mem = VecMemory::new(2 * 1024 * 1024);
 
-        let placement = choose_placement(&SmbiosConfig::default(), &mem);
+        let placement = choose_placement(&SmbiosConfig::default(), &mut mem);
         assert_eq!(placement.eps_addr, BIOS_SCAN_BASE);
         assert_eq!(placement.table_addr, BIOS_SCAN_BASE + 0x200);
     }

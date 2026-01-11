@@ -1,12 +1,12 @@
 use std::io::Cursor;
-use std::ops::Range;
 
+use aero_cpu_core::assist::AssistContext;
 use aero_snapshot::{
-    CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, RestoreOptions,
-    SaveOptions, SegmentState, SnapshotMeta, SnapshotSource, SnapshotTarget,
+    apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core, cpu_state_from_cpu_core,
+    mmu_state_from_cpu_core, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode,
+    RestoreOptions, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
-use firmware::bios::BiosSnapshot;
-use machine::{A20Gate, BlockDevice, CpuState as MachineCpuState, PhysicalMemory, FLAG_ALWAYS_ON};
+use firmware::bios::{A20Gate, BiosSnapshot, BlockDevice};
 
 use crate::Vm;
 
@@ -25,138 +25,8 @@ impl Default for SnapshotOptions {
 
 pub type SnapshotError = aero_snapshot::SnapshotError;
 
-fn machine_cpu_to_snapshot(cpu: &MachineCpuState) -> CpuState {
-    let mut state = CpuState::default();
-    state.rax = cpu.rax;
-    state.rbx = cpu.rbx;
-    state.rcx = cpu.rcx;
-    state.rdx = cpu.rdx;
-    state.rsi = cpu.rsi;
-    state.rdi = cpu.rdi;
-    state.rbp = cpu.rbp;
-    state.rsp = cpu.rsp;
-    state.rip = cpu.rip;
-    state.rflags = cpu.rflags;
-    state.mode = CpuMode::Real;
-    state.halted = cpu.halted;
-    if let Some(vector) = cpu.pending_bios_int {
-        state.pending_bios_int_valid = true;
-        state.pending_bios_int = vector;
-    }
-    state.cs = SegmentState::real_mode(cpu.cs.selector);
-    state.ds = SegmentState::real_mode(cpu.ds.selector);
-    state.es = SegmentState::real_mode(cpu.es.selector);
-    state.ss = SegmentState::real_mode(cpu.ss.selector);
-    state.fs = SegmentState::real_mode(0);
-    state.gs = SegmentState::real_mode(0);
-    state
-}
-
-fn snapshot_cpu_to_machine(state: CpuState, cpu: &mut MachineCpuState) {
-    cpu.rax = state.rax;
-    cpu.rbx = state.rbx;
-    cpu.rcx = state.rcx;
-    cpu.rdx = state.rdx;
-    cpu.rsi = state.rsi;
-    cpu.rdi = state.rdi;
-    cpu.rbp = state.rbp;
-    cpu.rsp = state.rsp;
-    cpu.rip = state.rip;
-    cpu.rflags = state.rflags | FLAG_ALWAYS_ON;
-    cpu.cs.selector = state.cs.selector;
-    cpu.ds.selector = state.ds.selector;
-    cpu.es.selector = state.es.selector;
-    cpu.ss.selector = state.ss.selector;
-    cpu.pending_bios_int = state
-        .pending_bios_int_valid
-        .then_some(state.pending_bios_int);
-    cpu.halted = state.halted;
-}
-
-fn encode_cpu_internal(cpu: &MachineCpuState) -> Vec<u8> {
-    // v1 payload:
-    //  u8 pending_present
-    //  [u8 pending_int]
-    //  u8 halted
-    let mut out = Vec::with_capacity(3);
-    match cpu.pending_bios_int {
-        Some(int) => {
-            out.push(1);
-            out.push(int);
-        }
-        None => out.push(0),
-    }
-    out.push(cpu.halted as u8);
-    out
-}
-
-fn decode_cpu_internal(bytes: &[u8]) -> Result<(Option<u8>, bool), SnapshotError> {
-    if bytes.is_empty() {
-        return Err(SnapshotError::Corrupt("cpu_internal payload too short"));
-    }
-    let mut idx = 0;
-    let pending = match bytes[idx] {
-        0 => {
-            idx += 1;
-            None
-        }
-        1 => {
-            if bytes.len() < 2 {
-                return Err(SnapshotError::Corrupt("cpu_internal pending missing"));
-            }
-            idx += 1;
-            let val = bytes[idx];
-            idx += 1;
-            Some(val)
-        }
-        _ => return Err(SnapshotError::Corrupt("cpu_internal invalid pending tag")),
-    };
-    if idx >= bytes.len() {
-        return Err(SnapshotError::Corrupt("cpu_internal halted missing"));
-    }
-    let halted = bytes[idx] != 0;
-    Ok((pending, halted))
-}
-
-fn encode_memory_state(mem: &PhysicalMemory) -> Vec<u8> {
-    // v1 payload:
-    //  u8 a20_enabled
-    //  u32 range_count
-    //  repeated: u64 start, u64 end
-    let ranges = mem.read_only_ranges();
-    let mut out = Vec::with_capacity(1 + 4 + ranges.len() * 16);
-    out.push(mem.a20_enabled() as u8);
-    out.extend_from_slice(&(ranges.len() as u32).to_le_bytes());
-    for r in ranges {
-        out.extend_from_slice(&r.start.to_le_bytes());
-        out.extend_from_slice(&r.end.to_le_bytes());
-    }
-    out
-}
-
-fn decode_memory_state(bytes: &[u8]) -> Result<(bool, Vec<Range<u64>>), SnapshotError> {
-    const MAX_RANGES: u32 = 16 * 1024;
-    if bytes.len() < 5 {
-        return Err(SnapshotError::Corrupt("memory payload too short"));
-    }
-    let a20_enabled = bytes[0] != 0;
-    let count = u32::from_le_bytes(bytes[1..5].try_into().unwrap()).min(MAX_RANGES) as usize;
-    let mut idx = 5usize;
-    let mut ranges = Vec::with_capacity(count.min(64));
-    for _ in 0..count {
-        if idx + 16 > bytes.len() {
-            return Err(SnapshotError::Corrupt("memory read-only range truncated"));
-        }
-        let start = u64::from_le_bytes(bytes[idx..idx + 8].try_into().unwrap());
-        let end = u64::from_le_bytes(bytes[idx + 8..idx + 16].try_into().unwrap());
-        ranges.push(start..end);
-        idx += 16;
-    }
-    Ok((a20_enabled, ranges))
-}
-
 fn encode_bios_state(vm: &Vm<impl BlockDevice>) -> Result<Vec<u8>, SnapshotError> {
-    let snapshot = vm.bios.snapshot(&vm.mem);
+    let snapshot = vm.bios.snapshot();
     let mut buf = Vec::new();
     snapshot.encode(&mut buf)?;
     Ok(buf)
@@ -168,50 +38,25 @@ fn decode_bios_state(bytes: &[u8]) -> Result<BiosSnapshot, SnapshotError> {
 
 impl<D: BlockDevice> SnapshotSource for Vm<D> {
     fn snapshot_meta(&mut self) -> SnapshotMeta {
-        let snapshot_id = self.snapshot_seq;
-        self.snapshot_seq = self.snapshot_seq.saturating_add(1);
-        let meta = SnapshotMeta {
-            snapshot_id,
-            parent_snapshot_id: self.last_snapshot_id,
-            created_unix_ms: 0,
-            label: None,
-        };
-        self.last_snapshot_id = Some(snapshot_id);
-        meta
+        Vm::snapshot_meta(self)
     }
 
-    fn cpu_state(&self) -> CpuState {
-        let mut state = machine_cpu_to_snapshot(&self.cpu);
-        state.a20_enabled = self.mem.a20_enabled();
-        state
+    fn cpu_state(&self) -> aero_snapshot::CpuState {
+        cpu_state_from_cpu_core(&self.cpu)
     }
 
     fn mmu_state(&self) -> MmuState {
-        MmuState::default()
+        mmu_state_from_cpu_core(&self.cpu)
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
         let bios_state = encode_bios_state(self).expect("BiosSnapshot encoding to Vec cannot fail");
-        vec![
-            DeviceState {
-                id: DeviceId::CPU_INTERNAL,
-                version: 1,
-                flags: 0,
-                data: encode_cpu_internal(&self.cpu),
-            },
-            DeviceState {
-                id: DeviceId::MEMORY,
-                version: 1,
-                flags: 0,
-                data: encode_memory_state(&self.mem),
-            },
-            DeviceState {
-                id: DeviceId::BIOS,
-                version: 1,
-                flags: 0,
-                data: bios_state,
-            },
-        ]
+        vec![DeviceState {
+            id: DeviceId::BIOS,
+            version: 1,
+            flags: 0,
+            data: bios_state,
+        }]
     }
 
     fn disk_overlays(&self) -> DiskOverlayRefs {
@@ -228,7 +73,7 @@ impl<D: BlockDevice> SnapshotSource for Vm<D> {
     }
 
     fn dirty_page_size(&self) -> u32 {
-        self.mem.dirty_page_size()
+        super::DIRTY_PAGE_SIZE as u32
     }
 
     fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
@@ -238,37 +83,24 @@ impl<D: BlockDevice> SnapshotSource for Vm<D> {
 
 impl<D: BlockDevice> SnapshotTarget for Vm<D> {
     fn restore_meta(&mut self, meta: SnapshotMeta) {
-        self.last_snapshot_id = Some(meta.snapshot_id);
-        self.snapshot_seq = self.snapshot_seq.max(meta.snapshot_id.saturating_add(1));
+        Vm::set_last_snapshot_id(self, meta.snapshot_id);
     }
 
-    fn restore_cpu_state(&mut self, state: CpuState) {
-        snapshot_cpu_to_machine(state, &mut self.cpu);
+    fn restore_cpu_state(&mut self, state: aero_snapshot::CpuState) {
+        apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
+        self.mem.set_a20_enabled(state.a20_enabled);
     }
 
-    fn restore_mmu_state(&mut self, _state: MmuState) {}
+    fn restore_mmu_state(&mut self, state: MmuState) {
+        apply_mmu_state_to_cpu_core(&state, &mut self.cpu);
+    }
 
     fn restore_device_states(&mut self, states: Vec<DeviceState>) {
         for state in states {
-            match state.id {
-                id if id == DeviceId::CPU_INTERNAL && state.version == 1 => {
-                    if let Ok((pending, halted)) = decode_cpu_internal(&state.data) {
-                        self.cpu.pending_bios_int = pending;
-                        self.cpu.halted = halted;
-                    }
+            if state.id == DeviceId::BIOS && state.version == 1 {
+                if let Ok(snapshot) = decode_bios_state(&state.data) {
+                    self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
-                id if id == DeviceId::MEMORY && state.version == 1 => {
-                    if let Ok((a20_enabled, ranges)) = decode_memory_state(&state.data) {
-                        self.mem.set_a20_enabled(a20_enabled);
-                        self.mem.set_read_only_ranges(ranges);
-                    }
-                }
-                id if id == DeviceId::BIOS && state.version == 1 => {
-                    if let Ok(snapshot) = decode_bios_state(&state.data) {
-                        self.bios.restore_snapshot(snapshot, &mut self.mem);
-                    }
-                }
-                _ => {}
             }
         }
     }
@@ -285,7 +117,11 @@ impl<D: BlockDevice> SnapshotTarget for Vm<D> {
     }
 
     fn post_restore(&mut self) -> Result<(), SnapshotError> {
+        // Snapshot payloads store the A20 latch in the CPU state; keep the memory translation in
+        // sync so subsequent guest execution uses the restored addressing behaviour.
+        self.mem.set_a20_enabled(self.cpu.a20_enabled);
         self.mem.clear_dirty();
+        self.assist = AssistContext::default();
         Ok(())
     }
 }
@@ -296,17 +132,13 @@ pub fn save_vm_snapshot<D: BlockDevice>(
 ) -> Result<Vec<u8>, SnapshotError> {
     let mut save = SaveOptions::default();
     save.ram.mode = options.ram_mode;
-    save.ram.page_size = vm.mem.dirty_page_size();
     let mut cursor = Cursor::new(Vec::new());
     aero_snapshot::save_snapshot(&mut cursor, vm, save)?;
     Ok(cursor.into_inner())
 }
 
-pub fn restore_vm_snapshot<D: BlockDevice>(
-    vm: &mut Vm<D>,
-    bytes: &[u8],
-) -> Result<(), SnapshotError> {
-    let expected_parent_snapshot_id = vm.last_snapshot_id;
+pub fn restore_vm_snapshot<D: BlockDevice>(vm: &mut Vm<D>, bytes: &[u8]) -> Result<(), SnapshotError> {
+    let expected_parent_snapshot_id = Vm::last_snapshot_id(vm);
     aero_snapshot::restore_snapshot_with_options(
         &mut Cursor::new(bytes),
         vm,

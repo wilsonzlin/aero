@@ -1,8 +1,9 @@
 #![allow(deprecated)]
 
 use firmware::bios::{Bios, BiosConfig};
-use machine::{CpuExit, InMemoryDisk, MemoryAccess};
-use vm::Vm;
+use firmware::bios::InMemoryDisk;
+use memory::MemoryBus as _;
+use vm::{CpuExit, Vm};
 
 #[test]
 fn boot_sector_int_sanity_exercises_int10_13_15_16_and_reaches_signature() {

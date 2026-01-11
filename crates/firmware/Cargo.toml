@@ -7,9 +7,9 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-acpi = { path = "../aero-acpi" }
 aero-edid = { path = "../aero-edid" }
+aero-cpu-core = { path = "../aero-cpu-core" }
 aero-pc-constants = { path = "../aero-pc-constants" }
 memory = { path = "../memory" }
-machine = { path = "../machine" }
 
 [dev-dependencies]
 aero-devices = { path = "../devices" }

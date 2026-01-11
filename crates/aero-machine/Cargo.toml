@@ -10,7 +10,6 @@ aero-devices = { path = "../devices" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot" }
 firmware = { path = "../firmware" }
-machine = { path = "../machine" }
 memory = { path = "../memory" }
 
 [dev-dependencies]

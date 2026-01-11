@@ -1,8 +1,8 @@
 pub trait MemoryBus {
-    fn read_u8(&self, addr: u64) -> u8;
+    fn read_u8(&mut self, addr: u64) -> u8;
     fn write_u8(&mut self, addr: u64, value: u8);
 
-    fn read_physical(&self, paddr: u64, buf: &mut [u8]) {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         for (i, out) in buf.iter_mut().enumerate() {
             *out = self.read_u8(paddr + i as u64);
         }
@@ -14,7 +14,7 @@ pub trait MemoryBus {
         }
     }
 
-    fn read_u16(&self, addr: u64) -> u16 {
+    fn read_u16(&mut self, addr: u64) -> u16 {
         let lo = self.read_u8(addr) as u16;
         let hi = self.read_u8(addr + 1) as u16;
         lo | (hi << 8)
@@ -25,7 +25,7 @@ pub trait MemoryBus {
         self.write_u8(addr + 1, (value >> 8) as u8);
     }
 
-    fn read_u32(&self, addr: u64) -> u32 {
+    fn read_u32(&mut self, addr: u64) -> u32 {
         let b0 = self.read_u8(addr) as u32;
         let b1 = self.read_u8(addr + 1) as u32;
         let b2 = self.read_u8(addr + 2) as u32;
@@ -40,7 +40,7 @@ pub trait MemoryBus {
         self.write_u8(addr + 3, ((value >> 24) & 0xFF) as u8);
     }
 
-    fn read_bytes(&self, addr: u64, out: &mut [u8]) {
+    fn read_bytes(&mut self, addr: u64, out: &mut [u8]) {
         for (i, b) in out.iter_mut().enumerate() {
             *b = self.read_u8(addr + i as u64);
         }
@@ -87,7 +87,7 @@ impl VecMemory {
 }
 
 impl MemoryBus for VecMemory {
-    fn read_u8(&self, addr: u64) -> u8 {
+    fn read_u8(&mut self, addr: u64) -> u8 {
         self.data[addr as usize]
     }
 
@@ -96,13 +96,13 @@ impl MemoryBus for VecMemory {
     }
 }
 
-// Allow BIOS helpers to operate on the `machine` memory bus used by the HLE BIOS.
-impl<T: machine::MemoryAccess + ?Sized> MemoryBus for T {
-    fn read_u8(&self, addr: u64) -> u8 {
-        machine::MemoryAccess::read_u8(self, addr)
+// Allow firmware helpers to operate directly on the canonical guest memory bus.
+impl<T: memory::MemoryBus + ?Sized> MemoryBus for T {
+    fn read_u8(&mut self, addr: u64) -> u8 {
+        memory::MemoryBus::read_u8(self, addr)
     }
 
     fn write_u8(&mut self, addr: u64, value: u8) {
-        machine::MemoryAccess::write_u8(self, addr, value)
+        memory::MemoryBus::write_u8(self, addr, value);
     }
 }

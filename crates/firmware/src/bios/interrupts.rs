@@ -1,6 +1,9 @@
-use machine::{BlockDevice, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
+use aero_cpu_core::state::{gpr, mask_bits, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 
-use super::{disk_err_to_int13_status, seg, Bios, BiosBus, BiosMemoryBus, EBDA_BASE, EBDA_SIZE};
+use super::{
+    disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
+    EBDA_BASE, EBDA_SIZE,
+};
 use crate::cpu::CpuState as FirmwareCpuState;
 
 pub const E820_RAM: u32 = 1;
@@ -29,8 +32,10 @@ pub fn dispatch_interrupt(
     //   [SS:SP+0]  return IP
     //   [SS:SP+2]  return CS
     //   [SS:SP+4]  return FLAGS
-    let sp = cpu.rsp as u16;
-    let flags_addr = cpu.linear_addr(cpu.ss, sp.wrapping_add(4));
+    let sp_bits = cpu.stack_ptr_bits();
+    let sp = cpu.stack_ptr();
+    let flags_sp = sp.wrapping_add(4) & mask_bits(sp_bits);
+    let flags_addr = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(flags_sp));
     let saved_flags = bus.read_u16(flags_addr);
 
     match vector {
@@ -48,40 +53,41 @@ pub fn dispatch_interrupt(
     // Merge the flags the handler set into the saved FLAGS image so the stub's IRET
     // returns them to the caller, while preserving IF from the original interrupt frame.
     const RETURN_MASK: u16 = (FLAG_CF | FLAG_PF | FLAG_ZF | FLAG_SF | FLAG_DF | FLAG_OF) as u16;
-    let new_flags = (saved_flags & !RETURN_MASK) | ((cpu.rflags as u16) & RETURN_MASK) | 0x0002;
+    let new_flags =
+        (saved_flags & !RETURN_MASK) | ((cpu.rflags() as u16) & RETURN_MASK) | 0x0002;
     bus.write_u16(flags_addr, new_flags);
 }
 
 fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     // Keep the historical "TTY output" buffer for tests/debugging.
-    let ah = ((cpu.rax >> 8) & 0xFF) as u8;
+    let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     if ah == 0x0E {
-        bios.tty_output.push((cpu.rax & 0xFF) as u8);
+        bios.tty_output.push((cpu.gpr[gpr::RAX] & 0xFF) as u8);
     }
 
     // Bridge machine CPU state + memory bus to the firmware-side INT 10h implementation.
     let mut fw_cpu = FirmwareCpuState {
-        rax: cpu.rax,
-        rbx: cpu.rbx,
-        rcx: cpu.rcx,
-        rdx: cpu.rdx,
-        rsi: cpu.rsi,
-        rdi: cpu.rdi,
+        rax: cpu.gpr[gpr::RAX],
+        rbx: cpu.gpr[gpr::RBX],
+        rcx: cpu.gpr[gpr::RCX],
+        rdx: cpu.gpr[gpr::RDX],
+        rsi: cpu.gpr[gpr::RSI],
+        rdi: cpu.gpr[gpr::RDI],
         rflags: 0, // INT 10h does not define flag inputs; start with CF clear.
-        ds: cpu.ds.selector,
-        es: cpu.es.selector,
+        ds: cpu.segments.ds.selector,
+        es: cpu.segments.es.selector,
     };
 
     bios.handle_int10(&mut fw_cpu, &mut BiosMemoryBus::new(bus));
 
-    cpu.rax = fw_cpu.rax;
-    cpu.rbx = fw_cpu.rbx;
-    cpu.rcx = fw_cpu.rcx;
-    cpu.rdx = fw_cpu.rdx;
-    cpu.rsi = fw_cpu.rsi;
-    cpu.rdi = fw_cpu.rdi;
-    cpu.ds.selector = fw_cpu.ds;
-    cpu.es.selector = fw_cpu.es;
+    cpu.gpr[gpr::RAX] = fw_cpu.rax;
+    cpu.gpr[gpr::RBX] = fw_cpu.rbx;
+    cpu.gpr[gpr::RCX] = fw_cpu.rcx;
+    cpu.gpr[gpr::RDX] = fw_cpu.rdx;
+    cpu.gpr[gpr::RSI] = fw_cpu.rsi;
+    cpu.gpr[gpr::RDI] = fw_cpu.rdi;
+    set_real_mode_seg(&mut cpu.segments.ds, fw_cpu.ds);
+    set_real_mode_seg(&mut cpu.segments.es, fw_cpu.es);
     cpu.set_flag(FLAG_CF, fw_cpu.cf());
 }
 
@@ -91,20 +97,20 @@ fn handle_int13(
     bus: &mut dyn BiosBus,
     disk: &mut dyn BlockDevice,
 ) {
-    let ah = ((cpu.rax >> 8) & 0xFF) as u8;
-    let drive = (cpu.rdx & 0xFF) as u8;
+    let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
+    let drive = (cpu.gpr[gpr::RDX] & 0xFF) as u8;
 
     match ah {
         0x00 => {
             // Reset disk system.
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
-            cpu.rax &= !0xFF00u64;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         0x01 => {
             // Get status of last disk operation.
             let status = bios.last_int13_status;
-            cpu.rax = (cpu.rax & 0xFF) | ((status as u64) << 8);
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
             if status == 0 {
                 cpu.rflags &= !FLAG_CF;
             } else {
@@ -113,14 +119,14 @@ fn handle_int13(
         }
         0x02 => {
             // Read sectors (CHS).
-            let mut count = (cpu.rax & 0xFF) as u16;
+            let mut count = (cpu.gpr[gpr::RAX] & 0xFF) as u16;
             if count == 0 {
                 // INT 13h AH=02h uses AL=0 as 256 sectors.
                 count = 256;
             }
-            let cl = (cpu.rcx & 0xFF) as u8;
-            let ch = ((cpu.rcx >> 8) & 0xFF) as u8;
-            let dh = ((cpu.rdx >> 8) & 0xFF) as u8;
+            let cl = (cpu.gpr[gpr::RCX] & 0xFF) as u8;
+            let ch = ((cpu.gpr[gpr::RCX] >> 8) & 0xFF) as u8;
+            let dh = ((cpu.gpr[gpr::RDX] >> 8) & 0xFF) as u8;
 
             let sector = (cl & 0x3F) as u16;
             let cylinder = ((ch as u16) | (((cl as u16) & 0xC0) << 2)) as u32;
@@ -132,12 +138,14 @@ fn handle_int13(
             if sector == 0 || sector > spt as u16 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | ((0x01u64) << 8);
+                cpu.gpr[gpr::RAX] =
+                    (cpu.gpr[gpr::RAX] & 0xFF) | ((0x01u64) << 8);
                 return;
             }
 
             let lba = ((cylinder * heads + head) * spt + (sector as u32 - 1)) as u64;
-            let dst = cpu.linear_addr(cpu.es, (cpu.rbx & 0xFFFF) as u16);
+            let bx = (cpu.gpr[gpr::RBX] & 0xFFFF) as u64;
+            let dst = cpu.apply_a20(cpu.segments.es.base.wrapping_add(bx));
 
             // Many real BIOS implementations use DMA for this path and require the transfer
             // buffer not cross a 64KiB physical boundary.
@@ -145,13 +153,13 @@ fn handle_int13(
             let Some(end_addr) = dst.checked_add(total_bytes.saturating_sub(1)) else {
                 bios.last_int13_status = 0x09;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & !0xFFFF) | (0x09u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x09u64 << 8);
                 return;
             };
             if (dst & 0xFFFF_0000) != (end_addr & 0xFFFF_0000) {
                 bios.last_int13_status = 0x09; // data boundary error
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & !0xFFFF) | (0x09u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x09u64 << 8);
                 return;
             }
 
@@ -166,7 +174,9 @@ fn handle_int13(
                         let status = disk_err_to_int13_status(e);
                         bios.last_int13_status = status;
                         // AH=status, AL=sectors transferred.
-                        cpu.rax = (cpu.rax & !0xFFFF) | (i & 0xFF) | ((status as u64) << 8);
+                        cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF)
+                            | (i & 0xFF)
+                            | ((status as u64) << 8);
                         return;
                     }
                 }
@@ -176,7 +186,7 @@ fn handle_int13(
             cpu.rflags &= !FLAG_CF;
             // AH=0 on success, AL = sectors transferred.
             let transferred = if count == 256 { 0u64 } else { count as u64 };
-            cpu.rax = (cpu.rax & !0xFFFF) | transferred;
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | transferred;
             let _ = drive;
         }
         0x08 => {
@@ -191,36 +201,38 @@ fn handle_int13(
             let cl = (spt & 0x3F) | (((cyl_minus1 >> 2) as u8) & 0xC0);
             let dh = heads - 1;
 
-            cpu.rcx = (cpu.rcx & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
+            cpu.gpr[gpr::RCX] =
+                (cpu.gpr[gpr::RCX] & !0xFFFF) | (cl as u64) | ((ch as u64) << 8);
             // DL = number of drives; DH = max head.
-            cpu.rdx = (cpu.rdx & !0xFFFF) | 1u64 | ((dh as u64) << 8);
-            cpu.rax &= !0xFF00u64;
+            cpu.gpr[gpr::RDX] =
+                (cpu.gpr[gpr::RDX] & !0xFFFF) | 1u64 | ((dh as u64) << 8);
+            cpu.gpr[gpr::RAX] &= !0xFF00u64;
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
         }
         0x15 => {
             // Get disk type.
             if drive < 0x80 {
-                cpu.rax = 0;
+                cpu.gpr[gpr::RAX] = 0;
             } else {
-                cpu.rax = 0x0300;
+                cpu.gpr[gpr::RAX] = 0x0300;
             }
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
         }
         0x41 => {
             // Extensions check.
-            if (cpu.rbx & 0xFFFF) == 0x55AA && drive >= 0x80 {
+            if (cpu.gpr[gpr::RBX] & 0xFFFF) == 0x55AA && drive >= 0x80 {
                 // Report EDD 3.0 (AH=0x30) and that we support 42h + 48h.
-                cpu.rax = (cpu.rax & !0xFFFF) | (0x30u64 << 8);
-                cpu.rbx = (cpu.rbx & !0xFFFF) | 0xAA55;
-                cpu.rcx = (cpu.rcx & !0xFFFF) | 0x0005;
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (0x30u64 << 8);
+                cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | 0xAA55;
+                cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | 0x0005;
                 bios.last_int13_status = 0;
                 cpu.rflags &= !FLAG_CF;
             } else {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
             }
         }
         0x42 => {
@@ -228,23 +240,24 @@ fn handle_int13(
             if drive < 0x80 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
-            let dap_addr = cpu.linear_addr(cpu.ds, (cpu.rsi & 0xFFFF) as u16);
+            let si = cpu.gpr[gpr::RSI] & 0xFFFF;
+            let dap_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
             let dap_size = bus.read_u8(dap_addr);
             if dap_size != 0x10 && dap_size != 0x18 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
             if bus.read_u8(dap_addr + 1) != 0 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
@@ -252,32 +265,32 @@ fn handle_int13(
             if count == 0 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
                 return;
             }
             let buf_off = bus.read_u16(dap_addr + 4);
             let buf_seg = bus.read_u16(dap_addr + 6);
             let lba = bus.read_u64(dap_addr + 8);
-            let mut dst = cpu.linear_addr(seg(buf_seg), buf_off);
+            let mut dst = cpu.apply_a20(((buf_seg as u64) << 4).wrapping_add(buf_off as u64));
 
             if dap_size == 0x18 {
                 // 24-byte DAP includes a 64-bit flat pointer at offset 16.
                 let buf64 = bus.read_u64(dap_addr + 16);
                 if buf64 != 0 {
-                    dst = buf64;
+                    dst = cpu.apply_a20(buf64);
                 }
             }
 
             let Some(end) = lba.checked_add(count) else {
                 bios.last_int13_status = 0x04;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x04u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x04u64 << 8);
                 return;
             };
             if end > disk.size_in_sectors() {
                 bios.last_int13_status = 0x04;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x04u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x04u64 << 8);
                 return;
             }
 
@@ -289,7 +302,8 @@ fn handle_int13(
                         cpu.rflags |= FLAG_CF;
                         let status = disk_err_to_int13_status(e);
                         bios.last_int13_status = status;
-                        cpu.rax = (cpu.rax & 0xFF) | ((status as u64) << 8);
+                        cpu.gpr[gpr::RAX] =
+                            (cpu.gpr[gpr::RAX] & 0xFF) | ((status as u64) << 8);
                         return;
                     }
                 }
@@ -297,7 +311,7 @@ fn handle_int13(
 
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
-            cpu.rax &= !0xFF00u64;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         0x48 => {
             // Extended get drive parameters (EDD).
@@ -307,16 +321,17 @@ fn handle_int13(
             if drive < 0x80 {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
-            let table_addr = cpu.linear_addr(cpu.ds, (cpu.rsi & 0xFFFF) as u16);
+            let si = cpu.gpr[gpr::RSI] & 0xFFFF;
+            let table_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
             let buf_size = bus.read_u16(table_addr) as usize;
             if buf_size < 0x1A {
                 bios.last_int13_status = 0x01;
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
                 return;
             }
 
@@ -348,43 +363,45 @@ fn handle_int13(
 
             bios.last_int13_status = 0;
             cpu.rflags &= !FLAG_CF;
-            cpu.rax &= !0xFF00u64;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64;
         }
         _ => {
             eprintln!("BIOS: unhandled INT 13h AH={ah:02x}");
             bios.last_int13_status = 0x01;
             cpu.rflags |= FLAG_CF;
-            cpu.rax = (cpu.rax & 0xFF) | (0x01u64 << 8);
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x01u64 << 8);
         }
     }
 }
 
 fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
-    let ax = (cpu.rax & 0xFFFF) as u16;
+    let ax = (cpu.gpr[gpr::RAX] & 0xFFFF) as u16;
     match ax {
         0x2400 => {
             // Disable A20 gate.
             bus.set_a20_enabled(false);
-            cpu.rax &= !0xFF00u64; // AH=0
+            cpu.a20_enabled = bus.a20_enabled();
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
             cpu.rflags &= !FLAG_CF;
         }
         0x2401 => {
             // Enable A20 gate.
             bus.set_a20_enabled(true);
-            cpu.rax &= !0xFF00u64; // AH=0
+            cpu.a20_enabled = bus.a20_enabled();
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
             cpu.rflags &= !FLAG_CF;
         }
         0x2402 => {
             // Query A20 gate status: AL=0 disabled / AL=1 enabled.
             let al = if bus.a20_enabled() { 1u64 } else { 0u64 };
-            cpu.rax = (cpu.rax & !0xFFFF) | al;
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | al;
             cpu.rflags &= !FLAG_CF;
         }
         0x2403 => {
             // Get A20 support (bitmask of supported methods).
             // We advertise keyboard controller + port 0x92 + INT15 methods.
-            cpu.rbx = (cpu.rbx & !0xFFFF) | 0x0007;
-            cpu.rax &= !0xFF00u64; // AH=0
+            cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | 0x0007;
+            cpu.gpr[gpr::RAX] &= !0xFF00u64; // AH=0
             cpu.rflags &= !FLAG_CF;
         }
         0xE801 => {
@@ -398,20 +415,20 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             }
 
             let (ax_kb, bx_blocks) = e801_from_e820(&bios.e820_map);
-            cpu.rax = (cpu.rax & !0xFFFF) | (ax_kb as u64);
-            cpu.rbx = (cpu.rbx & !0xFFFF) | (bx_blocks as u64);
-            cpu.rcx = (cpu.rcx & !0xFFFF) | (ax_kb as u64);
-            cpu.rdx = (cpu.rdx & !0xFFFF) | (bx_blocks as u64);
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (ax_kb as u64);
+            cpu.gpr[gpr::RBX] = (cpu.gpr[gpr::RBX] & !0xFFFF) | (bx_blocks as u64);
+            cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (ax_kb as u64);
+            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (bx_blocks as u64);
             cpu.rflags &= !FLAG_CF;
         }
         0xE820 => {
             // E820 memory map.
-            if (cpu.rdx & 0xFFFF_FFFF) != 0x534D_4150 {
+            if (cpu.gpr[gpr::RDX] & 0xFFFF_FFFF) != 0x534D_4150 {
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x86u64 << 8);
                 return;
             }
-            let req_size = (cpu.rcx & 0xFFFF_FFFF) as u32;
+            let req_size = (cpu.gpr[gpr::RCX] & 0xFFFF_FFFF) as u32;
             if req_size < 20 {
                 cpu.rflags |= FLAG_CF;
                 return;
@@ -425,15 +442,16 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                 );
             }
 
-            let idx = (cpu.rbx & 0xFFFF_FFFF) as usize;
+            let idx = (cpu.gpr[gpr::RBX] & 0xFFFF_FFFF) as usize;
             if idx >= bios.e820_map.len() {
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x86u64 << 8);
                 return;
             }
             let entry = bios.e820_map[idx];
 
-            let dst = cpu.linear_addr(cpu.es, (cpu.rdi & 0xFFFF) as u16);
+            let di = cpu.gpr[gpr::RDI] & 0xFFFF;
+            let dst = cpu.apply_a20(cpu.segments.es.base.wrapping_add(di));
             bus.write_u64(dst, entry.base);
             bus.write_u64(dst + 8, entry.length);
             bus.write_u32(dst + 16, entry.region_type);
@@ -442,9 +460,9 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                 bus.write_u32(dst + 20, entry.extended_attributes);
             }
 
-            cpu.rax = 0x534D_4150;
-            cpu.rcx = resp_size as u64;
-            cpu.rbx = if idx + 1 < bios.e820_map.len() {
+            cpu.gpr[gpr::RAX] = 0x534D_4150;
+            cpu.gpr[gpr::RCX] = resp_size as u64;
+            cpu.gpr[gpr::RBX] = if idx + 1 < bios.e820_map.len() {
                 (idx as u64) + 1
             } else {
                 0
@@ -455,13 +473,13 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             0x88 => {
                 // Extended memory size (KB above 1MB).
                 let ext_kb = bios.config.memory_size_bytes.saturating_sub(1024 * 1024) / 1024;
-                cpu.rax = ext_kb.min(0xFFFF) as u64;
+                cpu.gpr[gpr::RAX] = ext_kb.min(0xFFFF) as u64;
                 cpu.rflags &= !FLAG_CF;
             }
             _ => {
                 eprintln!("BIOS: unhandled INT 15h AX={ax:04x}");
                 cpu.rflags |= FLAG_CF;
-                cpu.rax = (cpu.rax & 0xFF) | (0x86u64 << 8);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & 0xFF) | (0x86u64 << 8);
             }
         },
     }
@@ -500,15 +518,15 @@ fn sum_e820_ram(map: &[E820Entry], start: u64, end: u64) -> u64 {
 }
 
 fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
-    let ah = ((cpu.rax >> 8) & 0xFF) as u8;
+    let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     match ah {
         0x00 => {
             // Read keystroke (blocking in real BIOS; we return 0 if none).
             if let Some(k) = bios.keyboard_queue.pop_front() {
-                cpu.rax = (cpu.rax & !0xFFFF) | (k as u64);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (k as u64);
                 cpu.rflags &= !FLAG_ZF;
             } else {
-                cpu.rax &= !0xFFFF;
+                cpu.gpr[gpr::RAX] &= !0xFFFF;
                 cpu.rflags |= FLAG_ZF;
             }
             cpu.rflags &= !FLAG_CF;
@@ -516,7 +534,7 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
         0x01 => {
             // Check for keystroke (ZF=1 if none).
             if let Some(&k) = bios.keyboard_queue.front() {
-                cpu.rax = (cpu.rax & !0xFFFF) | (k as u64);
+                cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFFFF) | (k as u64);
                 cpu.rflags &= !FLAG_ZF;
             } else {
                 cpu.rflags |= FLAG_ZF;
@@ -531,16 +549,18 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
 }
 
 fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
-    let ah = ((cpu.rax >> 8) & 0xFF) as u8;
+    let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     match ah {
         0x00 => {
             // Get system time: CX:DX = ticks since midnight, AL = midnight flag.
             let ticks = bios.bda_time.tick_count();
             let midnight_flag = bios.bda_time.midnight_flag();
 
-            cpu.rcx = (cpu.rcx & !0xFFFF) | ((ticks >> 16) as u64);
-            cpu.rdx = (cpu.rdx & !0xFFFF) | ((ticks & 0xFFFF) as u64);
-            cpu.rax = (cpu.rax & !0xFF) | (midnight_flag as u64);
+            cpu.gpr[gpr::RCX] =
+                (cpu.gpr[gpr::RCX] & !0xFFFF) | ((ticks >> 16) as u64);
+            cpu.gpr[gpr::RDX] =
+                (cpu.gpr[gpr::RDX] & !0xFFFF) | ((ticks & 0xFFFF) as u64);
+            cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF) | (midnight_flag as u64);
             cpu.rflags &= !FLAG_CF;
 
             bios.bda_time.clear_midnight_flag();
@@ -548,13 +568,14 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
         }
         0x01 => {
             // Set system time from CX:DX.
-            let ticks = (((cpu.rcx & 0xFFFF) as u32) << 16) | ((cpu.rdx & 0xFFFF) as u32);
+            let ticks = (((cpu.gpr[gpr::RCX] & 0xFFFF) as u32) << 16)
+                | ((cpu.gpr[gpr::RDX] & 0xFFFF) as u32);
             bios.bda_time.set_tick_count(bus, ticks);
             let _ = bios
                 .rtc
                 .set_time_of_day(super::BdaTime::duration_from_ticks(ticks));
 
-            cpu.rax &= !0xFF00;
+            cpu.gpr[gpr::RAX] &= !0xFF00;
             cpu.rflags &= !FLAG_CF;
         }
         0x02 => {
@@ -562,15 +583,15 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             let time = bios.rtc.read_time();
             let cx = ((time.hour as u16) << 8) | (time.minute as u16);
             let dx = ((time.second as u16) << 8) | (time.daylight_savings as u16);
-            cpu.rcx = (cpu.rcx & !0xFFFF) | (cx as u64);
-            cpu.rdx = (cpu.rdx & !0xFFFF) | (dx as u64);
-            cpu.rax &= !0xFF00;
+            cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cx as u64);
+            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (dx as u64);
+            cpu.gpr[gpr::RAX] &= !0xFF00;
             cpu.rflags &= !FLAG_CF;
         }
         0x03 => {
             // Set RTC time.
-            let cx = (cpu.rcx & 0xFFFF) as u16;
-            let dx = (cpu.rdx & 0xFFFF) as u16;
+            let cx = (cpu.gpr[gpr::RCX] & 0xFFFF) as u16;
+            let dx = (cpu.gpr[gpr::RDX] & 0xFFFF) as u16;
             let hour = (cx >> 8) as u8;
             let minute = (cx & 0xFF) as u8;
             let second = (dx >> 8) as u8;
@@ -583,11 +604,11 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                 Ok(()) => {
                     bios.bda_time = super::BdaTime::from_rtc(&bios.rtc);
                     bios.bda_time.write_to_bda(bus);
-                    cpu.rax &= !0xFF00;
+                    cpu.gpr[gpr::RAX] &= !0xFF00;
                     cpu.rflags &= !FLAG_CF;
                 }
                 Err(()) => {
-                    cpu.rax = (cpu.rax & !0xFF00) | (1u64 << 8);
+                    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | (1u64 << 8);
                     cpu.rflags |= FLAG_CF;
                 }
             }
@@ -597,15 +618,15 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             let date = bios.rtc.read_date();
             let cx = ((date.century as u16) << 8) | (date.year as u16);
             let dx = ((date.month as u16) << 8) | (date.day as u16);
-            cpu.rcx = (cpu.rcx & !0xFFFF) | (cx as u64);
-            cpu.rdx = (cpu.rdx & !0xFFFF) | (dx as u64);
-            cpu.rax &= !0xFF00;
+            cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cx as u64);
+            cpu.gpr[gpr::RDX] = (cpu.gpr[gpr::RDX] & !0xFFFF) | (dx as u64);
+            cpu.gpr[gpr::RAX] &= !0xFF00;
             cpu.rflags &= !FLAG_CF;
         }
         0x05 => {
             // Set RTC date.
-            let cx = (cpu.rcx & 0xFFFF) as u16;
-            let dx = (cpu.rdx & 0xFFFF) as u16;
+            let cx = (cpu.gpr[gpr::RCX] & 0xFFFF) as u16;
+            let dx = (cpu.gpr[gpr::RDX] & 0xFFFF) as u16;
             let century = (cx >> 8) as u8;
             let year = (cx & 0xFF) as u8;
             let month = (dx >> 8) as u8;
@@ -613,11 +634,11 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
 
             match bios.rtc.set_date_cmos(century, year, month, day) {
                 Ok(()) => {
-                    cpu.rax &= !0xFF00;
+                    cpu.gpr[gpr::RAX] &= !0xFF00;
                     cpu.rflags &= !FLAG_CF;
                 }
                 Err(()) => {
-                    cpu.rax = (cpu.rax & !0xFF00) | (1u64 << 8);
+                    cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | (1u64 << 8);
                     cpu.rflags |= FLAG_CF;
                 }
             }
@@ -756,9 +777,10 @@ fn build_e820_map(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{BiosConfig, PCIE_ECAM_BASE, PCIE_ECAM_SIZE};
+    use super::super::{A20Gate, BiosConfig, InMemoryDisk, TestMemory, PCIE_ECAM_BASE, PCIE_ECAM_SIZE};
     use super::*;
-    use machine::{CpuState, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_CF};
+    use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF};
+    use memory::MemoryBus as _;
 
     #[test]
     fn int13_ext_read_reads_lba_into_memory() {
@@ -767,14 +789,15 @@ mod tests {
         disk_bytes[512..1024].fill(0xAA);
         let mut disk = InMemoryDisk::new(disk_bytes);
 
-        let mut cpu = CpuState::default();
-        cpu.ds.selector = 0;
-        cpu.rsi = 0x0500;
-        cpu.rdx = 0x80; // DL = HDD0
-        cpu.rax = 0x4200; // AH=42h
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0x80; // DL = HDD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
 
-        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
-        let dap_addr = cpu.linear_addr(cpu.ds, 0x0500);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        cpu.a20_enabled = mem.a20_enabled();
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
         mem.write_u8(dap_addr + 0, 0x10);
         mem.write_u8(dap_addr + 1, 0x00);
         mem.write_u16(dap_addr + 2, 1); // count
@@ -785,7 +808,7 @@ mod tests {
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
-        assert_eq!((cpu.rax >> 8) & 0xFF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
 
         let buf = mem.read_bytes(0x1000, 512);
         assert_eq!(buf, vec![0xAA; 512]);
@@ -798,20 +821,21 @@ mod tests {
         let sectors = (disk_bytes.len() / 512) as u64;
         let mut disk = InMemoryDisk::new(disk_bytes);
 
-        let mut cpu = CpuState::default();
-        cpu.ds.selector = 0;
-        cpu.rsi = 0x0600;
-        cpu.rdx = 0x80; // DL = HDD0
-        cpu.rax = 0x4800; // AH=48h
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0600;
+        cpu.gpr[gpr::RDX] = 0x80; // DL = HDD0
+        cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
 
-        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
-        let table_addr = cpu.linear_addr(cpu.ds, 0x0600);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        cpu.a20_enabled = mem.a20_enabled();
+        let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
         mem.write_u16(table_addr, 0x1E); // buffer size
 
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
-        assert_eq!((cpu.rax >> 8) & 0xFF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
 
         assert_eq!(mem.read_u64(table_addr + 16), sectors);
         assert_eq!(mem.read_u16(table_addr + 24), 512);
@@ -824,11 +848,11 @@ mod tests {
             boot_drive: 0x80,
             ..BiosConfig::default()
         });
-        let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
-        let mut cpu = CpuState::default();
+        let mut bus = TestMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::new(CpuMode::Real);
 
         // Enable A20 and verify 1MiB is distinct.
-        cpu.rax = 0x2401;
+        cpu.gpr[gpr::RAX] = 0x2401;
         handle_int15(&mut bios, &mut cpu, &mut bus);
         assert_eq!(cpu.rflags & FLAG_CF, 0, "CF should be cleared");
         bus.write_u8(0x0, 0x11);
@@ -837,7 +861,7 @@ mod tests {
         assert_eq!(bus.read_u8(0x1_00000), 0x22);
 
         // Disable A20 and verify wraparound.
-        cpu.rax = 0x2400;
+        cpu.gpr[gpr::RAX] = 0x2400;
         handle_int15(&mut bios, &mut cpu, &mut bus);
         assert_eq!(bus.read_u8(0x1_00000), 0x11);
     }
@@ -845,18 +869,18 @@ mod tests {
     #[test]
     fn int15_a20_query_reports_state() {
         let mut bios = Bios::new(BiosConfig::default());
-        let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
-        let mut cpu = CpuState::default();
+        let mut bus = TestMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::new(CpuMode::Real);
 
-        cpu.rax = 0x2402;
+        cpu.gpr[gpr::RAX] = 0x2402;
         handle_int15(&mut bios, &mut cpu, &mut bus);
-        assert_eq!(cpu.rax as u16, 0x0000);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0000);
 
-        cpu.rax = 0x2401;
+        cpu.gpr[gpr::RAX] = 0x2401;
         handle_int15(&mut bios, &mut cpu, &mut bus);
-        cpu.rax = 0x2402;
+        cpu.gpr[gpr::RAX] = 0x2402;
         handle_int15(&mut bios, &mut cpu, &mut bus);
-        assert_eq!(cpu.rax as u16, 0x0001);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0001);
     }
 
     #[test]
@@ -897,16 +921,16 @@ mod tests {
                 boot_drive: 0x80,
                 ..BiosConfig::default()
             });
-            let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
-            let mut cpu = CpuState::default();
-            cpu.rax = 0xE801;
+            let mut bus = TestMemory::new(2 * 1024 * 1024);
+            let mut cpu = CpuState::new(CpuMode::Real);
+            cpu.gpr[gpr::RAX] = 0xE801;
             handle_int15(&mut bios, &mut cpu, &mut bus);
 
             assert_eq!(cpu.rflags & FLAG_CF, 0);
-            assert_eq!(cpu.rax as u16, expected_ax);
-            assert_eq!(cpu.rbx as u16, expected_bx);
-            assert_eq!(cpu.rcx as u16, expected_ax);
-            assert_eq!(cpu.rdx as u16, expected_bx);
+            assert_eq!(cpu.gpr[gpr::RAX] as u16, expected_ax);
+            assert_eq!(cpu.gpr[gpr::RBX] as u16, expected_bx);
+            assert_eq!(cpu.gpr[gpr::RCX] as u16, expected_ax);
+            assert_eq!(cpu.gpr[gpr::RDX] as u16, expected_bx);
         }
     }
 
@@ -916,14 +940,15 @@ mod tests {
         let disk_bytes = vec![0u8; 512];
         let mut disk = InMemoryDisk::new(disk_bytes);
 
-        let mut cpu = CpuState::default();
-        cpu.ds.selector = 0;
-        cpu.rsi = 0x0700;
-        cpu.rdx = 0x80; // DL = HDD0
-        cpu.rax = 0x4200; // AH=42h
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0700;
+        cpu.gpr[gpr::RDX] = 0x80; // DL = HDD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
 
-        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
-        let dap_addr = cpu.linear_addr(cpu.ds, 0x0700);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        cpu.a20_enabled = mem.a20_enabled();
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0700);
         mem.write_u8(dap_addr + 0, 0x10);
         mem.write_u8(dap_addr + 1, 0x00);
         mem.write_u16(dap_addr + 2, 1); // count
@@ -933,12 +958,12 @@ mod tests {
 
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
-        assert_eq!((cpu.rax >> 8) & 0xFF, 0x04);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
 
-        cpu.rax = 0x0100; // AH=01h
+        cpu.gpr[gpr::RAX] = 0x0100; // AH=01h
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
-        assert_eq!((cpu.rax >> 8) & 0xFF, 0x04);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
     }
 
     #[test]

@@ -1,8 +1,10 @@
-use machine::{CpuState, FLAG_ALWAYS_ON, FLAG_IF};
+use std::sync::Arc;
+
+use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 
 use super::{
-    ivt, pci::PciConfigSpace, rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_ALIAS_BASE, BIOS_BASE,
-    BIOS_SEGMENT, EBDA_BASE,
+    ivt, pci::PciConfigSpace, rom, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
+    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -11,7 +13,7 @@ impl Bios {
         &mut self,
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
-        disk: &mut dyn machine::BlockDevice,
+        disk: &mut dyn BlockDevice,
         mut pci: Option<&mut dyn PciConfigSpace>,
     ) {
         // Reset transient POST state.
@@ -32,22 +34,23 @@ impl Bios {
         //
         // Note: `BIOS_ALIAS_BASE` is outside typical guest RAM. Bus implementations that only
         // model RAM may need to treat ROM mappings as sparse.
-        let rom_image = rom::build_bios_rom();
-        bus.map_rom(BIOS_BASE, &rom_image);
-        bus.map_rom(BIOS_ALIAS_BASE, &rom_image);
+        let rom_image: Arc<[u8]> = rom::build_bios_rom().into();
+        bus.map_rom(BIOS_BASE, rom_image.clone());
+        bus.map_rom(BIOS_ALIAS_BASE, rom_image);
 
         // 1) Real-mode CPU init: interrupts disabled during POST.
+        cpu.mode = CpuMode::Real;
         cpu.halted = false;
-        cpu.pending_bios_int = None;
-        cpu.rflags = FLAG_ALWAYS_ON;
-        cpu.rflags &= !FLAG_IF;
+        cpu.clear_pending_bios_int();
+        cpu.set_rflags(0);
+        cpu.a20_enabled = bus.a20_enabled();
 
-        cpu.cs = seg(BIOS_SEGMENT);
-        cpu.ds = seg(0);
-        cpu.es = seg(0);
-        cpu.ss = seg(0);
-        cpu.rsp = 0x7C00;
-        cpu.rip = super::RESET_VECTOR_OFFSET; // conventional reset vector within F000 segment
+        set_real_mode_seg(&mut cpu.segments.cs, BIOS_SEGMENT);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        set_real_mode_seg(&mut cpu.segments.ss, 0);
+        cpu.gpr[gpr::RSP] = 0x7C00;
+        cpu.set_rip(super::RESET_VECTOR_OFFSET); // conventional reset vector within F000 segment
 
         // 2) BDA/EBDA: reserve a 4KiB EBDA page below 1MiB and advertise base memory size.
         ivt::init_bda(bus);
@@ -79,6 +82,7 @@ impl Bios {
         //
         // This must happen before writing any firmware tables above 1MiB (ACPI reclaimable blobs).
         bus.set_a20_enabled(true);
+        cpu.a20_enabled = bus.a20_enabled();
 
         // 6) Optional PCI enumeration + deterministic IRQ routing (must match ACPI `_PRT`).
         if let Some(pci) = pci.as_deref_mut() {
@@ -101,7 +105,7 @@ impl Bios {
         }
 
         // 8) Re-enable interrupts after POST.
-        cpu.rflags |= FLAG_IF;
+        cpu.rflags |= RFLAGS_IF;
 
         // 9) Boot: load sector 0 to 0x7C00 and jump.
         if let Err(msg) = self.boot(cpu, bus, disk) {
@@ -113,7 +117,7 @@ impl Bios {
         &mut self,
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
-        disk: &mut dyn machine::BlockDevice,
+        disk: &mut dyn BlockDevice,
     ) -> Result<(), &'static str> {
         let mut sector = [0u8; 512];
         disk.read_sector(0, &mut sector)
@@ -126,20 +130,20 @@ impl Bios {
         bus.write_physical(0x7C00, &sector);
 
         // Register setup per BIOS conventions.
-        cpu.rax = 0;
-        cpu.rbx = 0;
-        cpu.rcx = 0;
-        cpu.rdx = self.config.boot_drive as u64; // DL
-        cpu.rsi = 0;
-        cpu.rdi = 0;
-        cpu.rbp = 0;
-        cpu.rsp = 0x7C00;
+        cpu.gpr[gpr::RAX] = 0;
+        cpu.gpr[gpr::RBX] = 0;
+        cpu.gpr[gpr::RCX] = 0;
+        cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
+        cpu.gpr[gpr::RSI] = 0;
+        cpu.gpr[gpr::RDI] = 0;
+        cpu.gpr[gpr::RBP] = 0;
+        cpu.gpr[gpr::RSP] = 0x7C00;
 
-        cpu.cs = seg(0x0000);
-        cpu.ds = seg(0x0000);
-        cpu.es = seg(0x0000);
-        cpu.ss = seg(0x0000);
-        cpu.rip = 0x7C00;
+        set_real_mode_seg(&mut cpu.segments.cs, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.es, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
+        cpu.set_rip(0x7C00);
 
         Ok(())
     }

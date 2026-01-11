@@ -3,7 +3,7 @@
 use firmware::bios::{
     Bios, BiosConfig, PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
 };
-use machine::InMemoryDisk;
+use firmware::bios::InMemoryDisk;
 use vm::Vm;
 
 fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {

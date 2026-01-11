@@ -101,7 +101,7 @@ mod tests {
         formatted: Vec<u8>,
     }
 
-    fn parse_eps(mem: &VecMemory, eps_addr: u32) -> (u32, u16) {
+    fn parse_eps(mem: &mut VecMemory, eps_addr: u32) -> (u32, u16) {
         let mut eps = [0u8; builder::EPS_LENGTH as usize];
         mem.read_physical(eps_addr as u64, &mut eps);
         assert_eq!(&eps[0..4], b"_SM_");
@@ -156,7 +156,7 @@ mod tests {
         };
         let eps_addr = SmbiosTables::build_and_write(&config, &mut mem);
 
-        let (table_addr, table_len) = parse_eps(&mem, eps_addr);
+        let (table_addr, table_len) = parse_eps(&mut mem, eps_addr);
         let mut table = vec![0u8; table_len as usize];
         mem.read_physical(table_addr as u64, &mut table);
 
