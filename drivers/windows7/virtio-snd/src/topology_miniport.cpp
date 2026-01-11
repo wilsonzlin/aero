@@ -252,6 +252,7 @@ static const GUID* g_TopologyCategories[] = {
 
 static const PCFILTER_DESCRIPTOR g_TopologyFilterDescriptor = {
     1, // Version
+    0, // Flags
     NULL, // AutomationTable
     sizeof(PCPIN_DESCRIPTOR),
     RTL_NUMBER_OF(g_TopologyPins),
