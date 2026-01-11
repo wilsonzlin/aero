@@ -43,9 +43,11 @@ The repository also contains bring-up code for a modern virtio-pci (MMIO/capabil
 Modern virtio transport (bring-up notes):
 
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
-  - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
 - Connects **INTx** and routes used-ring completions to the control/TX/RX protocol engines in a DPC
-- Includes control/TX/RX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c` / `virtiosnd_rx.c`) and thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) used by the WaveRT virtio backend (render). Capture endpoint plumbing is not implemented yet.
+- Includes control/TX/RX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c` / `virtiosnd_rx.c`) and thin wrappers:
+  - `VirtIoSndHwSendControl`, `VirtIoSndHwSubmitTx` (playback)
+  - `VirtIoSndHwSubmitRxSg` + `VirtIoSndHwSetRxCompletionCallback` (capture)
+  Capture endpoint plumbing (PortCls pin) is not implemented yet.
 
 ## Design notes
 

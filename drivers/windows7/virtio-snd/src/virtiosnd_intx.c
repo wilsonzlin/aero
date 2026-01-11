@@ -40,7 +40,7 @@ static VOID VirtIoSndIntxQueueUsed(
         }
         break;
     case VIRTIOSND_QUEUE_RX:
-        if (dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
+        if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
             VirtIoSndRxOnUsed(&dx->Rx, Cookie, UsedLen);
         } else {
             VIRTIOSND_TRACE_ERROR("rxq unexpected completion: cookie=%p len=%lu\n", Cookie, (ULONG)UsedLen);
@@ -311,11 +311,11 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
             if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 && dx->Tx.Queue != NULL && dx->Tx.Buffers != NULL) {
                 VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_TX], VirtIoSndIntxQueueUsed, dx);
             }
-            if (dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
+            if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
                 VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_RX], VirtIoSndIntxQueueUsed, dx);
             }
         }
-     }
+    }
 
     remaining = InterlockedDecrement(&dx->DpcInFlight);
     if (remaining <= 0) {

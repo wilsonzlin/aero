@@ -262,6 +262,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     VirtioSndTxUninit(&Dx->Tx);
     (VOID)InterlockedExchange(&Dx->TxEngineInitialized, 0);
 
+    (VOID)InterlockedExchange(&Dx->RxEngineInitialized, 0);
     VirtIoSndRxUninit(&Dx->Rx);
 
     VirtIoSndDestroyQueues(Dx);
@@ -330,6 +331,8 @@ NTSTATUS VirtIoSndStartHardware(
 
     RtlZeroMemory(&Dx->Tx, sizeof(Dx->Tx));
     Dx->TxEngineInitialized = 0;
+    RtlZeroMemory(&Dx->Rx, sizeof(Dx->Rx));
+    Dx->RxEngineInitialized = 0;
 
     status = VirtIoSndIntxConnect(Dx);
     if (!NT_SUCCESS(status)) {
@@ -515,4 +518,125 @@ VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     }
 
     VirtioSndTxUninit(&Dx->Tx);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndInitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG RequestCount)
+{
+    NTSTATUS status;
+
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) != 0) {
+#ifdef STATUS_ALREADY_INITIALIZED
+        return STATUS_ALREADY_INITIALIZED;
+#else
+        return STATUS_INVALID_DEVICE_STATE;
+#endif
+    }
+
+    status = VirtIoSndRxInit(&Dx->Rx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_RX], RequestCount);
+    if (NT_SUCCESS(status)) {
+        InterlockedExchange(&Dx->RxEngineInitialized, 1);
+    } else {
+        RtlZeroMemory(&Dx->Rx, sizeof(Dx->Rx));
+        InterlockedExchange(&Dx->RxEngineInitialized, 0);
+    }
+
+    return status;
+}
+
+_Use_decl_annotations_
+VOID VirtIoSndUninitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    LARGE_INTEGER delay;
+
+    if (Dx == NULL) {
+        return;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return;
+    }
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0) {
+        return;
+    }
+
+    InterlockedExchange(&Dx->RxEngineInitialized, 0);
+
+    delay.QuadPart = -10 * 1000; /* 1ms */
+    while (InterlockedCompareExchange(&Dx->DpcInFlight, 0, 0) != 0) {
+        KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+
+    VirtIoSndRxUninit(&Dx->Rx);
+}
+
+_Use_decl_annotations_
+VOID VirtIoSndHwSetRxCompletionCallback(PVIRTIOSND_DEVICE_EXTENSION Dx, EVT_VIRTIOSND_RX_COMPLETION* Callback, void* Context)
+{
+    if (Dx == NULL) {
+        return;
+    }
+    if (Dx->Removed || !Dx->Started) {
+        return;
+    }
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0) {
+        return;
+    }
+
+    VirtIoSndRxSetCompletionCallback(&Dx->Rx, Callback, Context);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndHwSubmitRxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_RX_SEGMENT* Segments, USHORT SegmentCount, void* Cookie)
+{
+    if (Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
+    if (!Dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 || Dx->Rx.Queue == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    return VirtIoSndRxSubmitSg(&Dx->Rx, Segments, SegmentCount, Cookie);
+}
+
+_Use_decl_annotations_
+ULONG VirtIoSndHwDrainRxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx, EVT_VIRTIOSND_RX_COMPLETION* Callback, void* Context)
+{
+    if (Dx == NULL) {
+        return 0;
+    }
+
+    if (Dx->Removed) {
+        return 0;
+    }
+
+    if (!Dx->Started) {
+        return 0;
+    }
+
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 || Dx->Rx.Queue == NULL) {
+        return 0;
+    }
+
+    return VirtIoSndRxDrainCompletions(&Dx->Rx, Callback, Context);
 }

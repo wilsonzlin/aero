@@ -94,6 +94,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     VIRTIOSND_TX_ENGINE Tx;
     volatile LONG TxEngineInitialized;
     VIRTIOSND_RX_ENGINE Rx;
+    volatile LONG RxEngineInitialized;
 
     /* INTx plumbing */
     PKINTERRUPT InterruptObject;
@@ -186,6 +187,60 @@ _Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngine(
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtIoSndUninitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
+/*
+ * Initialize the RX (capture) engine.
+ *
+ * The caller should configure stream 1 via the control engine (SET_PARAMS1 /
+ * PREPARE1 / START1) and provide a completion callback via
+ * VirtIoSndHwSetRxCompletionCallback before submitting buffers.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndInitRxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG RequestCount);
+
+/*
+ * Tear down the RX (capture) engine.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+VOID VirtIoSndUninitRxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
+/*
+ * Set the RX completion callback invoked from the INTx DPC.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID VirtIoSndHwSetRxCompletionCallback(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
+    _In_opt_ void* Context);
+
+/*
+ * Submit an RX capture buffer as a list of DMA segments.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndHwSubmitRxSg(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_reads_(SegmentCount) const VIRTIOSND_RX_SEGMENT* Segments,
+    _In_ USHORT SegmentCount,
+    _In_opt_ void* Cookie);
+
+/*
+ * Drain used completions from rxq (polling use cases).
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+ULONG VirtIoSndHwDrainRxCompletions(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
+    _In_opt_ void* Context);
 
 #ifdef __cplusplus
 } /* extern "C" */
