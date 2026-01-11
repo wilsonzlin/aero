@@ -224,6 +224,7 @@ struct TextureWritebackPlan {
     dst_x: u32,
     dst_y: u32,
     height: u32,
+    is_x8: bool,
     bytes_per_pixel: u32,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
@@ -825,7 +826,19 @@ impl AerogpuD3d9Executor {
                     guest_memory.write(dst_gpa, slice)?;
                 }
                 PendingWriteback::Texture2d { staging, plan } => {
-                    let bytes = self.readback_buffer_bytes(&staging)?;
+                    let mut bytes = self.readback_buffer_bytes(&staging)?;
+                    if plan.is_x8 && plan.bytes_per_pixel == 4 {
+                        for row in 0..plan.height as usize {
+                            let start = row * plan.padded_bytes_per_row as usize;
+                            let end = start + plan.unpadded_bytes_per_row as usize;
+                            let row_bytes = bytes.get_mut(start..end).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture writeback staging out of bounds".into(),
+                                )
+                            })?;
+                            force_opaque_alpha_rgba8(row_bytes);
+                        }
+                    }
                     let row_pitch = plan.backing.row_pitch_bytes as u64;
                     let dst_x_bytes = (plan.dst_x as u64)
                         .checked_mul(plan.bytes_per_pixel as u64)
@@ -902,7 +915,19 @@ impl AerogpuD3d9Executor {
                     guest_memory.write(dst_gpa, slice)?;
                 }
                 PendingWriteback::Texture2d { staging, plan } => {
-                    let bytes = self.readback_buffer_bytes_async(&staging).await?;
+                    let mut bytes = self.readback_buffer_bytes_async(&staging).await?;
+                    if plan.is_x8 && plan.bytes_per_pixel == 4 {
+                        for row in 0..plan.height as usize {
+                            let start = row * plan.padded_bytes_per_row as usize;
+                            let end = start + plan.unpadded_bytes_per_row as usize;
+                            let row_bytes = bytes.get_mut(start..end).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "texture writeback staging out of bounds".into(),
+                                )
+                            })?;
+                            force_opaque_alpha_rgba8(row_bytes);
+                        }
+                    }
                     let row_pitch = plan.backing.row_pitch_bytes as u64;
                     let dst_x_bytes = (plan.dst_x as u64)
                         .checked_mul(plan.bytes_per_pixel as u64)
@@ -1774,6 +1799,7 @@ impl AerogpuD3d9Executor {
                         }
                         Resource::Texture2d {
                             texture,
+                            format_raw,
                             format,
                             width,
                             height,
@@ -1811,7 +1837,7 @@ impl AerogpuD3d9Executor {
                             let x = (x_bytes / bpp as u64) as u32;
 
                             let origin_y = y as u32;
-                            let (origin_x, copy_w, copy_h, bytes_per_row, bytes) =
+                            let (origin_x, copy_w, copy_h, bytes_per_row, mut bytes) =
                                 if x_bytes == 0 && (size_bytes % src_pitch_u64) == 0 {
                                     // Upload whole rows (including padding) starting at row `y`.
                                     let copy_h = (size_bytes / src_pitch_u64) as u32;
@@ -1878,6 +1904,15 @@ impl AerogpuD3d9Executor {
                                     };
                                     (x, copy_w, 1u32, bytes_per_row, bytes)
                                 };
+
+                            if is_x8_format(*format_raw) && bpp == 4 {
+                                let row_bytes = copy_w as usize * bpp as usize;
+                                let stride = bytes_per_row as usize;
+                                for row in 0..copy_h as usize {
+                                    let start = row * stride;
+                                    force_opaque_alpha_rgba8(&mut bytes[start..start + row_bytes]);
+                                }
+                            }
 
                             let staging =
                                 self.device
@@ -2176,8 +2211,8 @@ impl AerogpuD3d9Executor {
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
                     let dst_underlying = self.resolve_resource_handle(dst_texture)?;
                     let (
-                        (src_format, src_w, src_h, src_mips, src_layers),
-                        (dst_format, dst_w, dst_h, dst_mips, dst_layers, dst_backing),
+                        (src_format_raw, _src_format, src_w, src_h, src_mips, src_layers),
+                        (dst_format_raw, dst_format, dst_w, dst_h, dst_mips, dst_layers, dst_backing),
                     ) = {
                         let src = self
                             .resources
@@ -2190,13 +2225,21 @@ impl AerogpuD3d9Executor {
 
                         let src_info = match src {
                             Resource::Texture2d {
+                                format_raw,
                                 format,
                                 width,
                                 height,
                                 mip_level_count,
                                 array_layers,
                                 ..
-                            } => (*format, *width, *height, *mip_level_count, *array_layers),
+                            } => (
+                                *format_raw,
+                                *format,
+                                *width,
+                                *height,
+                                *mip_level_count,
+                                *array_layers,
+                            ),
                             _ => {
                                 return Err(AerogpuD3d9Error::CopyNotSupported {
                                     src: src_texture,
@@ -2206,6 +2249,7 @@ impl AerogpuD3d9Executor {
                         };
                         let dst_info = match dst {
                             Resource::Texture2d {
+                                format_raw,
                                 format,
                                 width,
                                 height,
@@ -2214,6 +2258,7 @@ impl AerogpuD3d9Executor {
                                 backing,
                                 ..
                             } => (
+                                *format_raw,
                                 *format,
                                 *width,
                                 *height,
@@ -2231,7 +2276,7 @@ impl AerogpuD3d9Executor {
                         (src_info, dst_info)
                     };
 
-                    if src_format != dst_format {
+                    if src_format_raw != dst_format_raw {
                         return Err(AerogpuD3d9Error::CopyNotSupported {
                             src: src_texture,
                             dst: dst_texture,
@@ -2505,6 +2550,7 @@ impl AerogpuD3d9Executor {
                                 dst_x,
                                 dst_y,
                                 height,
+                                is_x8: is_x8_format(dst_format_raw),
                                 bytes_per_pixel: bpp,
                                 unpadded_bytes_per_row: unpadded_bpr,
                                 padded_bytes_per_row: padded_bpr,
@@ -3279,6 +3325,7 @@ impl AerogpuD3d9Executor {
         };
         let Resource::Texture2d {
             texture,
+            format_raw,
             format,
             width,
             height,
@@ -3346,6 +3393,7 @@ impl AerogpuD3d9Executor {
         }
 
         let bpp = bytes_per_pixel(*format);
+        let is_x8 = is_x8_format(*format_raw);
         let unpadded_bpr = width
             .checked_mul(bpp)
             .ok_or_else(|| AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into()))?;
@@ -3389,6 +3437,11 @@ impl AerogpuD3d9Executor {
                     src_gpa,
                     &mut staging[dst_off..dst_off + unpadded_bpr as usize],
                 )?;
+                if is_x8 && bpp == 4 {
+                    force_opaque_alpha_rgba8(
+                        &mut staging[dst_off..dst_off + unpadded_bpr as usize],
+                    );
+                }
             }
 
             if let Some(encoder) = encoder.as_deref_mut() {
@@ -5005,6 +5058,17 @@ fn align_up_u64(value: u64, alignment: u64) -> Result<u64, AerogpuD3d9Error> {
         .checked_add(alignment - 1)
         .map(|v| v & !(alignment - 1))
         .ok_or_else(|| AerogpuD3d9Error::Validation("alignment overflow".into()))
+}
+
+fn is_x8_format(format_raw: u32) -> bool {
+    format_raw == AerogpuFormat::B8G8R8X8Unorm as u32
+        || format_raw == AerogpuFormat::R8G8B8X8Unorm as u32
+}
+
+fn force_opaque_alpha_rgba8(pixels: &mut [u8]) {
+    for alpha in pixels.iter_mut().skip(3).step_by(4) {
+        *alpha = 0xFF;
+    }
 }
 
 fn coalesce_ranges(ranges: &mut Vec<Range<u64>>) {

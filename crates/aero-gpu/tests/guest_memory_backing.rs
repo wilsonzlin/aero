@@ -1433,6 +1433,149 @@ fn copy_texture2d_writeback_writes_guest_backing() {
 }
 
 #[test]
+fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        let guest = VecGuestMemory::new(0x20_000);
+
+        const ALLOC_DST: u32 = 99;
+        const DST_GPA: u64 = 0x1000;
+        const BACKING_OFFSET_BYTES: u32 = 4;
+        const ROW_PITCH_BYTES: u32 = 12;
+
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_DST);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, DST_GPA);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        // 2x2 BGRAX texture with padded rows (row_pitch=12, row_bytes=8) and a non-zero backing
+        // offset. Fill with a sentinel to prove we only overwrite the single target texel.
+        let backing_bytes = (BACKING_OFFSET_BYTES + ROW_PITCH_BYTES * 2) as usize;
+        let sentinel = vec![0xEEu8; backing_bytes];
+        guest.write(DST_GPA, &sentinel).expect("write dst sentinel");
+
+        let mut upload = vec![0u8; (ROW_PITCH_BYTES * 2) as usize];
+        // Row 0 (y=0): pixel(0,0)=[1,2,3,0] pixel(1,0)=[4,5,6,0]
+        upload[0..8].copy_from_slice(&[1, 2, 3, 0, 4, 5, 6, 0]);
+        // Row 1 (y=1): pixel(0,1)=[7,8,9,0] pixel(1,1)=[10,11,12,0]
+        let row1 = ROW_PITCH_BYTES as usize;
+        upload[row1..row1 + 8].copy_from_slice(&[7, 8, 9, 0, 10, 11, 12, 0]);
+
+        let stream = build_stream(|out| {
+            // Source texture (handle=3) host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 3); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::B8G8R8X8Unorm as u32); // format
+                push_u32(out, 2); // width
+                push_u32(out, 2); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, ROW_PITCH_BYTES); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 3); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, upload.len() as u64); // size_bytes
+                out.extend_from_slice(&upload);
+            });
+
+            // Destination texture (handle=4) guest-backed with padding and backing offset.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 4); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::B8G8R8X8Unorm as u32); // format
+                push_u32(out, 2); // width
+                push_u32(out, 2); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, ROW_PITCH_BYTES); // row_pitch_bytes
+                push_u32(out, ALLOC_DST); // backing_alloc_id
+                push_u32(out, BACKING_OFFSET_BYTES); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // Copy src pixel (0,1) into dst pixel (1,0) (with writeback).
+            emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                push_u32(out, 4); // dst_texture
+                push_u32(out, 3); // src_texture
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 1); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 0); // src_x
+                push_u32(out, 1); // src_y
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST); // flags
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(
+            report.is_ok(),
+            "executor report had errors: {:#?}",
+            report.events
+        );
+
+        let mut readback = vec![0u8; backing_bytes];
+        guest.read(DST_GPA, &mut readback).expect("read writeback");
+
+        let mut expected = sentinel;
+        let pixel_off = (BACKING_OFFSET_BYTES + 4) as usize;
+        expected[pixel_off..pixel_off + 4].copy_from_slice(&[7, 8, 9, 255]);
+        assert_eq!(readback, expected);
+    });
+}
+
+#[test]
 fn copy_texture2d_writeback_rejects_readonly_alloc() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {

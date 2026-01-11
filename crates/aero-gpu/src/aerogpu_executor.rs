@@ -38,6 +38,17 @@ fn align_up_u64(value: u64, alignment: u64) -> Result<u64, ExecutorError> {
         .ok_or_else(|| ExecutorError::Validation("alignment overflow".into()))
 }
 
+fn is_x8_format(format_raw: u32) -> bool {
+    format_raw == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+        || format_raw == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+}
+
+fn force_opaque_alpha_rgba8(pixels: &mut [u8]) {
+    for alpha in pixels.iter_mut().skip(3).step_by(4) {
+        *alpha = 0xFF;
+    }
+}
+
 fn map_cmd_stream_parse_error(err: AeroGpuCmdStreamParseError) -> ExecutorError {
     match err {
         AeroGpuCmdStreamParseError::BufferTooSmall => ExecutorError::TruncatedStream,
@@ -1196,20 +1207,35 @@ fn fs_main() -> @location(0) vec4<f32> {
                 align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             };
 
-            let mut repacked = Vec::<u8>::new();
-            let bytes: &[u8] = if upload_bpr == tex.linear_row_pitch_bytes {
+            let is_x8 = is_x8_format(tex.format_raw);
+            let mut owned_bytes = Vec::<u8>::new();
+            let bytes: &[u8] = if upload_bpr == tex.linear_row_pitch_bytes && !is_x8 {
                 data
             } else {
-                // Repack to satisfy WebGPU 256-byte row alignment while ignoring any row padding.
-                repacked.resize(upload_bpr as usize * row_count as usize, 0);
-                for row in 0..row_count as usize {
-                    let src_start = row * tex.linear_row_pitch_bytes as usize;
-                    let src_end = src_start + unpadded_bpr as usize;
-                    let dst_start = row * upload_bpr as usize;
-                    repacked[dst_start..dst_start + unpadded_bpr as usize]
-                        .copy_from_slice(&data[src_start..src_end]);
+                if upload_bpr == tex.linear_row_pitch_bytes {
+                    owned_bytes.extend_from_slice(data);
+                } else {
+                    // Repack to satisfy WebGPU 256-byte row alignment while ignoring any row padding.
+                    owned_bytes.resize(upload_bpr as usize * row_count as usize, 0);
+                    for row in 0..row_count as usize {
+                        let src_start = row * tex.linear_row_pitch_bytes as usize;
+                        let src_end = src_start + unpadded_bpr as usize;
+                        let dst_start = row * upload_bpr as usize;
+                        owned_bytes[dst_start..dst_start + unpadded_bpr as usize]
+                            .copy_from_slice(&data[src_start..src_end]);
+                    }
                 }
-                &repacked
+
+                if is_x8 {
+                    let row_bytes = unpadded_bpr as usize;
+                    let stride = upload_bpr as usize;
+                    for row in 0..row_count as usize {
+                        let start = row * stride;
+                        force_opaque_alpha_rgba8(&mut owned_bytes[start..start + row_bytes]);
+                    }
+                }
+
+                &owned_bytes
             };
 
             self.queue.write_texture(
@@ -1508,7 +1534,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             ));
         }
 
-        let (src_extent, dst_extent, src_format, dst_format, dst_bpp, dst_backing) = {
+        let (src_extent, dst_extent, src_format_raw, dst_format_raw, dst_bpp, dst_backing) = {
             let src = self.textures.get(&src_texture).ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "COPY_TEXTURE2D: unknown src texture {src_texture}"
@@ -1532,18 +1558,19 @@ fn fs_main() -> @location(0) vec4<f32> {
             (
                 (src.width, src.height),
                 (dst.width, dst.height),
-                src.format,
-                dst.format,
+                src.format_raw,
+                dst.format_raw,
                 dst.bytes_per_pixel,
                 dst_backing,
             )
         };
 
-        if src_format != dst_format {
+        if src_format_raw != dst_format_raw {
             return Err(ExecutorError::Validation(
                 "COPY_TEXTURE2D: format mismatch".into(),
             ));
         }
+        let dst_is_x8 = is_x8_format(dst_format_raw);
 
         let src_end_x = src_x
             .checked_add(width)
@@ -1704,7 +1731,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .ok_or_else(|| {
                     ExecutorError::Validation("COPY_TEXTURE2D: staging size overflow".into())
                 })?;
-            let staging_bytes =
+            let mut staging_bytes =
                 self.read_buffer_to_vec_blocking(&staging, staging_size, "COPY_TEXTURE2D")?;
 
             let row_bytes_usize = usize::try_from(row_bytes).map_err(|_| {
@@ -1713,6 +1740,12 @@ fn fs_main() -> @location(0) vec4<f32> {
             let bytes_per_row_usize = usize::try_from(bytes_per_row).map_err(|_| {
                 ExecutorError::Validation("COPY_TEXTURE2D: bytes_per_row out of range".into())
             })?;
+            if dst_is_x8 {
+                for row in 0..height as usize {
+                    let start = row * bytes_per_row_usize;
+                    force_opaque_alpha_rgba8(&mut staging_bytes[start..start + row_bytes_usize]);
+                }
+            }
 
             let dst_x_bytes = u64::from(dst_x)
                 .checked_mul(u64::from(dst_bpp))
@@ -2324,6 +2357,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         } else {
             align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
         };
+        let is_x8 = is_x8_format(tex.format_raw);
 
         for rows in row_ranges {
             let height = rows.end.saturating_sub(rows.start);
@@ -2351,6 +2385,11 @@ fn fs_main() -> @location(0) vec4<f32> {
                     src_gpa,
                     &mut staging[dst_off..dst_off + unpadded_bpr as usize],
                 )?;
+                if is_x8 {
+                    force_opaque_alpha_rgba8(
+                        &mut staging[dst_off..dst_off + unpadded_bpr as usize],
+                    );
+                }
             }
 
             self.queue.write_texture(
