@@ -14,9 +14,11 @@ The driver currently:
   - maps BAR0 MMIO and validates the fixed Aero layout
   - negotiates required features (`VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC`)
 
-- Includes a split-ring virtqueue backend (`virtiosnd_queue_split.c`) and control/TX protocol engines, but they are not yet fully wired into an ISR/DPC path
+- Sets up split-ring virtqueues (control/event/tx) using the reusable backend in `virtiosnd_queue_split.c`
+- Connects **INTx** and drains used-ring entries in a DPC
+- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet wired into the ISR/DPC path or exposed via a PortCls miniport
 
-It **does not** yet connect interrupts, set up virtqueues, or implement any PortCls miniports (WaveRT), so it will not expose audio endpoints yet.
+It **does not** yet implement any PortCls miniports (WaveRT), so it will not expose audio endpoints yet.
 
 ## Compatibility / Aero contract v1
 
