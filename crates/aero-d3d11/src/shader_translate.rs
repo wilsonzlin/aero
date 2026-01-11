@@ -1,6 +1,7 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
@@ -161,7 +162,7 @@ fn translate_vs(
 
     let mut w = WgslWriter::new();
 
-    resources.emit_decls(&mut w)?;
+    resources.emit_decls(&mut w, ShaderStage::Vertex)?;
     io.emit_vs_structs(&mut w)?;
 
     w.line("@vertex");
@@ -206,7 +207,7 @@ fn translate_ps(
 
     let mut w = WgslWriter::new();
 
-    resources.emit_decls(&mut w)?;
+    resources.emit_decls(&mut w, ShaderStage::Pixel)?;
     let ps_has_inputs = !io.inputs.is_empty() || io.ps_position_register.is_some();
     if ps_has_inputs {
         io.emit_ps_structs(&mut w)?;
@@ -827,15 +828,14 @@ struct ResourceUsage {
 }
 
 impl ResourceUsage {
-    /// Offset for sampler bindings inside bind group 1.
-    ///
-    /// D3D11 has separate register spaces for SRVs (`t#`) and samplers (`s#`).
-    /// We want stable binding numbers derived from those indices while keeping
-    /// SRVs and samplers in the same bind group (see `docs/16-d3d10-11-translation.md`).
-    ///
-    /// Using `128` matches the D3D11 common-shader SRV slot count and ensures the
-    /// `t#` and `s#` binding ranges do not overlap.
-    const SAMPLER_BINDING_BASE: u32 = 128;
+    fn stage_bind_group(stage: ShaderStage) -> u32 {
+        match stage {
+            ShaderStage::Vertex => 0,
+            ShaderStage::Pixel => 1,
+            ShaderStage::Compute => 2,
+            _ => 0,
+        }
+    }
 
     fn bindings(&self, stage: ShaderStage) -> Vec<Binding> {
         let visibility = match stage {
@@ -843,28 +843,29 @@ impl ResourceUsage {
             ShaderStage::Pixel => wgpu::ShaderStages::FRAGMENT,
             _ => wgpu::ShaderStages::empty(),
         };
+        let group = Self::stage_bind_group(stage);
 
         let mut out = Vec::new();
         for (&slot, &reg_count) in &self.cbuffers {
             out.push(Binding {
-                group: 0,
-                binding: slot,
+                group,
+                binding: BINDING_BASE_CBUFFER + slot,
                 visibility,
                 kind: BindingKind::ConstantBuffer { slot, reg_count },
             });
         }
         for &slot in &self.textures {
             out.push(Binding {
-                group: 1,
-                binding: slot,
+                group,
+                binding: BINDING_BASE_TEXTURE + slot,
                 visibility,
                 kind: BindingKind::Texture2D { slot },
             });
         }
         for &slot in &self.samplers {
             out.push(Binding {
-                group: 1,
-                binding: Self::SAMPLER_BINDING_BASE + slot,
+                group,
+                binding: BINDING_BASE_SAMPLER + slot,
                 visibility,
                 kind: BindingKind::Sampler { slot },
             });
@@ -872,28 +873,37 @@ impl ResourceUsage {
         out
     }
 
-    fn emit_decls(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
+    fn emit_decls(
+        &self,
+        w: &mut WgslWriter,
+        stage: ShaderStage,
+    ) -> Result<(), ShaderTranslateError> {
+        // Bindings are stage-scoped; these declarations are emitted inside the per-stage WGSL
+        // module, so `group` is derived from the shader stage.
+        let group = Self::stage_bind_group(stage);
         for (&slot, &reg_count) in &self.cbuffers {
             w.line(&format!(
                 "struct Cb{slot} {{ regs: array<vec4<u32>, {reg_count}> }};"
             ));
             w.line(&format!(
-                "@group(0) @binding({slot}) var<uniform> cb{slot}: Cb{slot};"
+                "@group({group}) @binding({}) var<uniform> cb{slot}: Cb{slot};",
+                BINDING_BASE_CBUFFER + slot
             ));
             w.line("");
         }
         for &slot in &self.textures {
             w.line(&format!(
-                "@group(1) @binding({slot}) var t{slot}: texture_2d<f32>;"
+                "@group({group}) @binding({}) var t{slot}: texture_2d<f32>;",
+                BINDING_BASE_TEXTURE + slot
             ));
         }
         if !self.textures.is_empty() {
             w.line("");
         }
         for &slot in &self.samplers {
-            let binding = Self::SAMPLER_BINDING_BASE + slot;
             w.line(&format!(
-                "@group(1) @binding({binding}) var s{slot}: sampler;"
+                "@group({group}) @binding({}) var s{slot}: sampler;",
+                BINDING_BASE_SAMPLER + slot
             ));
         }
         if !self.samplers.is_empty() {

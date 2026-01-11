@@ -10,12 +10,12 @@ aero-protocol = { path = "../../emulator/protocol" }
 aero-dxbc = { path = "../aero-dxbc" }
 anyhow = "1.0"
 futures-intrusive = "0.5"
-pollster = "0.3"
 wgpu = "0.20"
 
 [dev-dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
+pollster = "0.3"
 
 [[test]]
 name = "d3d11_smoke"

@@ -14,6 +14,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `vs_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `mov o0, v0` (position), `mov o1, v1` (color), `ret`
+* `vs_passthrough_texcoord.dxbc`
+  * Shader model: `vs_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: `mov o1, v0` (position), `mov o0, v1` (texcoord), `ret`
 * `vs_matrix.dxbc`
   * Shader model: `vs_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`

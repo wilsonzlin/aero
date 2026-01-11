@@ -6,6 +6,7 @@
 //! - [`sm4`] / [`signature`] / [`sm4_ir`] / [`shader_translate`]: DXBC parsing +
 //!   minimal SM4/SM5 → WGSL translation suitable for FL10_0 bring-up.
 
+pub mod binding_model;
 pub mod input_layout;
 pub mod runtime;
 pub mod shader_translate;
