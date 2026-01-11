@@ -60,6 +60,8 @@ Most maintained backend work lives under:
 
 - `backend/` (e.g. `backend/aero-gateway`)
 - `services/` (deployment-oriented services)
+- `proxy/` (networking relays used in production deployments, e.g. `proxy/webrtc-udp-relay`)
+- `net-proxy/` (local-dev WebSocket TCP/UDP relay; run alongside `vite dev`)
 
 ## Non-canonical / quarantined paths
 
