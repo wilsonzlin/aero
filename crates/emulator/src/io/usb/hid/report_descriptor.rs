@@ -1237,3 +1237,214 @@ mod tests {
         assert_eq!(max_input_report_bytes(&collections), 3);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn usage_u16ish() -> impl Strategy<Value = u32> {
+        0u32..=0x03ff
+    }
+
+    fn collection_type_strategy() -> impl Strategy<Value = u8> {
+        // HID 1.11 collection types are small; keep this "valid-ish" and bounded.
+        0u8..=6
+    }
+
+    fn ordered_i16_pair() -> impl Strategy<Value = (i32, i32)> {
+        (any::<i16>(), any::<i16>()).prop_map(|(a, b)| {
+            let (min, max) = if a <= b { (a, b) } else { (b, a) };
+            (min as i32, max as i32)
+        })
+    }
+
+    fn item_strategy() -> impl Strategy<Value = HidReportItem> {
+        (
+            any::<bool>(), // is_array
+            any::<bool>(), // is_absolute
+            any::<bool>(), // is_constant
+            any::<bool>(), // is_buffered_bytes
+            any::<bool>(), // is_range
+            1u32..=32u32,  // report_size
+            0u32..=32u32,  // report_count
+            ordered_i16_pair(),
+            ordered_i16_pair(),
+            -8i32..=7i32,   // unit_exponent (4-bit signed)
+            0u32..=0u32,    // unit (keep simple for now)
+            usage_u16ish(), // usage_page
+        )
+            .prop_flat_map(
+                |(
+                    is_array,
+                    is_absolute,
+                    is_constant,
+                    is_buffered_bytes,
+                    is_range,
+                    report_size,
+                    report_count,
+                    (logical_minimum, logical_maximum),
+                    (physical_minimum, physical_maximum),
+                    unit_exponent,
+                    unit,
+                    usage_page,
+                )| {
+                    let usages = if is_range {
+                        (usage_u16ish(), usage_u16ish())
+                            .prop_map(|(a, b)| {
+                                let (min, max) = if a <= b { (a, b) } else { (b, a) };
+                                vec![min, max]
+                            })
+                            .boxed()
+                    } else {
+                        prop::collection::vec(usage_u16ish(), 0..=4).boxed()
+                    };
+
+                    usages.prop_map(move |usages| HidReportItem {
+                        is_array,
+                        is_absolute,
+                        is_buffered_bytes,
+                        is_constant,
+                        is_range,
+                        logical_minimum,
+                        logical_maximum,
+                        physical_minimum,
+                        physical_maximum,
+                        unit_exponent,
+                        unit,
+                        report_size,
+                        report_count,
+                        usage_page,
+                        usages,
+                    })
+                },
+            )
+    }
+
+    fn report_list_strategy(use_report_ids: bool) -> BoxedStrategy<Vec<HidReportInfo>> {
+        if use_report_ids {
+            // Generate a small set of unique IDs so parse doesn't need to guess whether multiple
+            // occurrences should be merged.
+            prop::collection::btree_set(1u32..=16, 0..=3)
+                .prop_flat_map(|ids| {
+                    let ids: Vec<u32> = ids.into_iter().collect();
+                    prop::collection::vec(prop::collection::vec(item_strategy(), 0..=8), ids.len())
+                        .prop_map(move |items| {
+                            ids.iter()
+                                .copied()
+                                .zip(items)
+                                .map(|(report_id, items)| HidReportInfo { report_id, items })
+                                .collect::<Vec<_>>()
+                        })
+                })
+                .boxed()
+        } else {
+            // With no Report ID items present, all fields participate in the single implicit
+            // report_id=0 report.
+            prop_oneof![
+                Just(Vec::new()),
+                prop::collection::vec(item_strategy(), 0..=8).prop_map(|items| vec![HidReportInfo {
+                    report_id: 0,
+                    items,
+                }]),
+            ]
+            .boxed()
+        }
+    }
+
+    fn collection_strategy(max_depth: u8, use_report_ids: bool) -> BoxedStrategy<HidCollectionInfo> {
+        let child_strategy = if max_depth > 1 {
+            prop::collection::vec(collection_strategy(max_depth - 1, use_report_ids), 0..=3).boxed()
+        } else {
+            Just(Vec::new()).boxed()
+        };
+
+        (
+            usage_u16ish(),
+            usage_u16ish(),
+            collection_type_strategy(),
+            report_list_strategy(use_report_ids),
+            report_list_strategy(use_report_ids),
+            report_list_strategy(use_report_ids),
+            child_strategy,
+        )
+            .prop_map(
+                |(
+                    usage_page,
+                    usage,
+                    collection_type,
+                    input_reports,
+                    output_reports,
+                    feature_reports,
+                    children,
+                )| HidCollectionInfo {
+                    usage_page,
+                    usage,
+                    collection_type,
+                    input_reports,
+                    output_reports,
+                    feature_reports,
+                    children,
+                },
+            )
+            .boxed()
+    }
+
+    fn collections_strategy() -> impl Strategy<Value = Vec<HidCollectionInfo>> {
+        // Important: avoid the mixed Report ID case (some reports have id 0 while others have a
+        // non-zero id) since it's invalid HID and causes ambiguity on the wire.
+        any::<bool>().prop_flat_map(|use_report_ids| {
+            collection_strategy(3, use_report_ids).prop_map(|root| vec![root])
+        })
+    }
+
+    fn normalize_reports(reports: &mut Vec<HidReportInfo>) {
+        // A report with zero main items synthesizes to nothing and cannot roundtrip.
+        reports.retain(|r| !r.items.is_empty());
+        reports.sort_by_key(|r| r.report_id);
+    }
+
+    fn normalize_collection(collection: &mut HidCollectionInfo) {
+        normalize_reports(&mut collection.input_reports);
+        normalize_reports(&mut collection.output_reports);
+        normalize_reports(&mut collection.feature_reports);
+
+        for child in &mut collection.children {
+            normalize_collection(child);
+        }
+        collection
+            .children
+            .sort_by_key(|c| (c.usage_page, c.usage, c.collection_type));
+    }
+
+    fn normalize_collections(collections: &mut Vec<HidCollectionInfo>) {
+        for c in collections.iter_mut() {
+            normalize_collection(c);
+        }
+        collections.sort_by_key(|c| (c.usage_page, c.usage, c.collection_type));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn parse_synthesize_roundtrip(collections in collections_strategy()) {
+            let bytes = synthesize_report_descriptor(&collections)
+                .expect("synthesized report descriptor must succeed for generated metadata");
+            let parsed = parse_report_descriptor(&bytes)
+                .expect("descriptor synthesized by synthesize_report_descriptor must parse");
+
+            let mut expected = collections.clone();
+            let mut actual = parsed.clone();
+            normalize_collections(&mut expected);
+            normalize_collections(&mut actual);
+            prop_assert_eq!(actual, expected);
+
+            // Regression safety: synthesizing a parsed descriptor must not panic or error.
+            let _ = synthesize_report_descriptor(&parsed).unwrap();
+        }
+    }
+}
