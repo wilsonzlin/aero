@@ -846,7 +846,7 @@ instructions only).
 Run it locally with:
 
 ```bash
-cargo test -p conformance --test conformance -- --nocapture
+cargo test --locked -p conformance --test conformance -- --nocapture
 ```
 
 CI runs a fast subset on PRs and a larger corpus on a schedule via
@@ -865,10 +865,10 @@ Run locally:
 
 ```bash
 # Tier-0 batch vs tier-0 single-step equivalence (always runs)
-cargo test -p aero_cpu_core
+cargo test --locked -p aero_cpu_core
 
 # Differential tests vs QEMU (skips if QEMU is not installed)
-cargo test -p aero_cpu_core --features qemu-diff
+cargo test --locked -p aero_cpu_core --features qemu-diff
 ```
 
 ```rust

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run a command with a timeout, with graceful shutdown.
 # Usage: ./scripts/with-timeout.sh <seconds> <command...>
-# Example: ./scripts/with-timeout.sh 600 cargo build --release
+# Example: ./scripts/with-timeout.sh 600 cargo build --release --locked
 #
 # On timeout:
 # 1. Sends SIGTERM to the process group
@@ -12,7 +12,7 @@ set -e
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <timeout-seconds> <command...>"
-    echo "Example: $0 600 cargo build --release"
+    echo "Example: $0 600 cargo build --release --locked"
     exit 1
 fi
 

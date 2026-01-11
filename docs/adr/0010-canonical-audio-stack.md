@@ -64,5 +64,5 @@ to keep it available for reference and targeted tests.
 - The default build and documentation now have a single, canonical audio stack.
 - The legacy audio implementation remains available behind `emulator/legacy-audio` for now.
 - Targeted legacy tests/benches require opting in via:
-  - `cargo test -p emulator --features legacy-audio`
-  - `cargo bench -p emulator --features legacy-audio`
+  - `cargo test --locked -p emulator --features legacy-audio`
+  - `cargo bench --locked -p emulator --features legacy-audio`

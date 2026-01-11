@@ -22,10 +22,10 @@ Current implementations in this repo:
 - Rust (production target: L2 tunnel termination + user-space NAT stack + egress policy):
 
 ```bash
-cargo run -p aero-l2-proxy
+cargo run --locked -p aero-l2-proxy
 
 # Optional: override listen address (default: 0.0.0.0:8090)
-# AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run -p aero-l2-proxy
+# AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run --locked -p aero-l2-proxy
 ```
 
 - Node (WebSocket upgrade policy / quota harness; **does not implement the L2 data plane**; used by `tests/l2_proxy_security.test.js`):

@@ -304,7 +304,7 @@ Recommended tooling (preferred over manual registry editing):
 
 ```powershell
 cd tools\win-offline-cert-injector
-cargo build --release
+cargo build --release --locked
 
 $Cert = "C:\\aero\\certs\\aero-test-root.cer"
 
@@ -492,11 +492,11 @@ Preferred (more robust): use the repo’s cross-platform BCD patcher (`tools/bcd
 
 ```sh
 # Patch extracted ISO BCD stores (boot/BCD + efi/microsoft/boot/BCD if present).
-cargo run -p bcd_patch -- win7-tree --root iso-root --nointegritychecks off
+cargo run --locked -p bcd_patch -- win7-tree --root iso-root --nointegritychecks off
 
 # Patch BCD-Template inside a mounted install.wim index (run once per index you care about).
 # Example mount root: mnt-install
-cargo run -p bcd_patch -- win7-tree --root mnt-install --nointegritychecks off
+cargo run --locked -p bcd_patch -- win7-tree --root mnt-install --nointegritychecks off
 ```
 
 Alternative: patch via auditable `.reg` files + `hivexregedit` (see `tools/win7-slipstream/patches/README.md` for details):

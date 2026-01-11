@@ -889,7 +889,7 @@ Compilation-phase timings should be captured at **pass boundaries** (not per ins
 The repository includes a small, self-contained implementation of these counters + exports in `crates/perf` (`perf::jit` and `perf::telemetry`), along with a synthetic demo you can run via:
 
 ```sh
-cargo run -p perf --example jit_metrics_demo
+cargo run --locked -p perf --example jit_metrics_demo
 ```
 
 #### Reporting integration (PF-001 HUD + JSON export)

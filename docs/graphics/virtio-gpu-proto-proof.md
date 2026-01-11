@@ -7,7 +7,7 @@ This repo includes a narrow virtio-gpu 2D scanout prototype in `crates/virtio-gp
 Command:
 
 ```bash
-cargo test -p virtio-gpu-proto
+cargo test --locked -p virtio-gpu-proto
 ```
 
 Expected output (trimmed):
@@ -36,5 +36,5 @@ Additional covered behaviors (unit-tested indirectly via the command flow):
 The same scanout sequence is also tested *through* a real virtio-pci + split-virtqueue transport:
 
 ```bash
-cargo test -p aero-virtio virtio_gpu_2d_scanout_via_virtqueue
+cargo test --locked -p aero-virtio virtio_gpu_2d_scanout_via_virtqueue
 ```

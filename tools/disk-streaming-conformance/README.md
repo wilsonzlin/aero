@@ -90,7 +90,7 @@ export DISK_GATEWAY_CORS_ALLOWED_ORIGINS='*'
 mkdir -p public-images
 truncate -s 1M public-images/win7.img
 
-cargo run
+cargo run --locked
 ```
 
 In another terminal:
@@ -112,7 +112,7 @@ export DISK_GATEWAY_CORS_ALLOWED_ORIGINS='*'
 mkdir -p private-images/alice
 truncate -s 1M private-images/alice/secret.img
 
-cargo run
+cargo run --locked
 ```
 
 In another terminal:

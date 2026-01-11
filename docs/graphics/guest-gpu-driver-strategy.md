@@ -186,7 +186,7 @@ This repository includes a narrow virtio-gpu 2D command-processing prototype:
     - `RESOURCE_FLUSH`
   - Supports multi-entry (scatter/gather) backing and a small set of 32-bit formats (BGRA/BGRX variants).
   - Validation test:
-  - `cargo test -p virtio-gpu-proto`
+  - `cargo test --locked -p virtio-gpu-proto`
   - `basic_2d_scanout_roundtrip` simulates a guest writing a BGRA framebuffer in “guest memory”, transferring it to the device, and flushing to scanout; the resulting scanout buffer is byte-for-byte verified.
   - Proof snippet: [virtio-gpu-proto-proof.md](./virtio-gpu-proto-proof.md)
 
@@ -196,7 +196,7 @@ In addition, there is an end-to-end virtqueue/virtio-pci integration test:
   - Wraps `virtio-gpu-proto` in the project’s virtio-pci + split-virtqueue transport (`aero-virtio`).
   - Intended as the “device model hooks” starting point for wiring into the emulator.
 - `crates/aero-virtio/tests/virtio_gpu.rs`
-  - `cargo test -p aero-virtio virtio_gpu_2d_scanout_via_virtqueue`
+  - `cargo test --locked -p aero-virtio virtio_gpu_2d_scanout_via_virtqueue`
   - Exercises the full controlq sequence through virtqueues and verifies scanout bytes after flush.
 
 This prototype is not a Windows driver and does not claim Win7 driver compatibility; it is a **device-model foundation** that can be wired into the emulator once PCI/virtqueue infrastructure exists.

@@ -13,7 +13,7 @@ The Playwright suite spins up **two local HTTP origins** on separate ports:
 1. **App origin** – serves a minimal HTML page with:
    - `Cross-Origin-Opener-Policy: same-origin`
    - `Cross-Origin-Embedder-Policy: require-corp`
-2. **Disk origin** – the real reference `server/disk-gateway` (Rust) started via `cargo run` and configured to serve:
+2. **Disk origin** – the real reference `server/disk-gateway` (Rust) started via `cargo run --locked` and configured to serve:
    - Public image id `win7` → `GET /disk/win7` (Range-capable)
    - Private image id `secret` for user `alice` → `POST /api/images/secret/lease` + `GET /disk/secret` with `Authorization: Bearer <token>`
 

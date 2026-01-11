@@ -15,7 +15,7 @@ and the public contract is documented in:
 ## Run
 
 ```bash
-cargo run -p aero-gateway-rs
+cargo run --locked -p aero-gateway-rs
 ```
 
 Environment variables:

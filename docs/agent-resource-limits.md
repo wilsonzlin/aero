@@ -41,10 +41,10 @@ Wrap long-running or memory-intensive commands:
 
 ```bash
 # For cargo build (can spike to 16GB without limits)
-systemd-run --user --scope -p MemoryMax=12G cargo build --release
+systemd-run --user --scope -p MemoryMax=12G cargo build --release --locked
 
 # Or use the helper script
-./scripts/mem-limit.sh 12G cargo build --release
+./scripts/mem-limit.sh 12G cargo build --release --locked
 ```
 
 ### Option 2: Cgroup (if you have root/sudo)
@@ -99,13 +99,13 @@ Long-running commands should have timeouts to catch infinite loops or stuck proc
 
 ```bash
 # 10 minute timeout for builds
-timeout 600 cargo build
+timeout 600 cargo build --locked
 
 # 5 minute timeout for tests  
-timeout 300 cargo test
+timeout 300 cargo test --locked
 
 # Helper script with graceful shutdown
-./scripts/with-timeout.sh 600 cargo build --release
+./scripts/with-timeout.sh 600 cargo build --release --locked
 ```
 
 ---
@@ -126,8 +126,8 @@ Common memory-hungry operations:
 
 | Operation               | Typical Peak | Mitigation                          |
 | ----------------------- | ------------ | ----------------------------------- |
-| `cargo build --release` | 8-16 GB      | `CARGO_BUILD_JOBS=4` + memory limit |
-| `cargo build` (debug)   | 4-8 GB       | Usually fine                        |
+| `cargo build --release --locked` | 8-16 GB      | `CARGO_BUILD_JOBS=4` + memory limit |
+| `cargo build --locked` (debug)   | 4-8 GB       | Usually fine                        |
 | `wasm-pack build`       | 4-8 GB       | Usually fine                        |
 | Playwright + Chrome     | 2-4 GB       | `PW_TEST_WORKERS=1`                 |
 | `cargo doc`             | 4-8 GB       | Run alone if needed                 |
@@ -151,7 +151,7 @@ dmesg | tail -20 | grep -i oom
 Retry with:
 
 ```bash
-./scripts/mem-limit.sh 12G cargo build
+./scripts/mem-limit.sh 12G cargo build --locked
 ```
 
 ### Build is very slow

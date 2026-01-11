@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run a command with a memory limit using systemd-run.
 # Usage: ./scripts/mem-limit.sh <limit> <command...>
-# Example: ./scripts/mem-limit.sh 12G cargo build --release
+# Example: ./scripts/mem-limit.sh 12G cargo build --release --locked
 #
 # The limit can be specified as: 12G, 8192M, etc.
 # If systemd-run is not available (non-systemd system), falls back to running
@@ -11,7 +11,7 @@ set -e
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <memory-limit> <command...>"
-    echo "Example: $0 12G cargo build --release"
+    echo "Example: $0 12G cargo build --release --locked"
     exit 1
 fi
 

@@ -177,7 +177,12 @@ function resolveCrateFromDir(searchRootAbs, outputRootAbs, dirArg, reason, optio
 }
 
 function runCargoMetadata(repoRoot) {
-    const result = spawnSync("cargo", ["metadata", "--no-deps", "--format-version=1"], {
+    const args = ["metadata", "--no-deps", "--format-version=1"];
+    // Avoid accidentally mutating Cargo.lock during crate auto-detection.
+    if (existsSync(path.join(repoRoot, "Cargo.lock"))) {
+        args.push("--locked");
+    }
+    const result = spawnSync("cargo", args, {
         cwd: repoRoot,
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf8",

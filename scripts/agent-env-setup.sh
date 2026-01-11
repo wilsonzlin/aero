@@ -34,7 +34,7 @@ else
     cat > "$CONFIG_FILE" << 'EOF'
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
-xtask = "run -p xtask --"
+xtask = "run --locked -p xtask --"
 EOF
 fi
 

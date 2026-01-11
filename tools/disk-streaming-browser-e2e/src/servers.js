@@ -36,7 +36,7 @@ async function getFreePort() {
 
 async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
   const start = Date.now();
-  // Poll until the server is listening. This has to tolerate a cold `cargo run`
+  // Poll until the server is listening. This has to tolerate a cold `cargo run --locked`
   // which may compile the binary first.
   while (Date.now() - start < timeoutMs) {
     if (shouldAbort) {
