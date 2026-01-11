@@ -25,18 +25,20 @@ export const HID_REPORT_RING_CTRL_BYTES = HID_REPORT_RING_CTRL_WORDS * 4;
 export const HID_REPORT_RECORD_HEADER_BYTES = 8;
 export const HID_REPORT_RECORD_ALIGN = 4;
 
-const enum CtrlIndex {
-  Head = 0,
-  Tail = 1,
-  Dropped = 2,
-}
+const CtrlIndex = {
+  Head: 0,
+  Tail: 1,
+  Dropped: 2,
+} as const;
 
-export const enum HidReportType {
-  Input = 0,
-  Output = 1,
-  Feature = 2,
-  WrapMarker = 0xff,
-}
+export const HidReportType = {
+  Input: 0,
+  Output: 1,
+  Feature: 2,
+  WrapMarker: 0xff,
+} as const;
+
+export type HidReportType = (typeof HidReportType)[keyof typeof HidReportType];
 
 export type HidReportRingRecord = {
   deviceId: number;

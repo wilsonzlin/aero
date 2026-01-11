@@ -37,25 +37,28 @@ export const USB_PROXY_ACTION_HEADER_BYTES = 8;
 //   id: u32 (LE)
 export const USB_PROXY_COMPLETION_HEADER_BYTES = 8;
 
-const enum CtrlIndex {
-  Head = 0,
-  Tail = 1,
-  Dropped = 2,
-}
+const CtrlIndex = {
+  Head: 0,
+  Tail: 1,
+  Dropped: 2,
+} as const;
 
-const enum UsbRecordKindTag {
-  ControlIn = 1,
-  ControlOut = 2,
-  BulkIn = 3,
-  BulkOut = 4,
-  WrapMarker = 0xff,
-}
+const UsbRecordKindTag = {
+  ControlIn: 1,
+  ControlOut: 2,
+  BulkIn: 3,
+  BulkOut: 4,
+  WrapMarker: 0xff,
+} as const;
 
-const enum UsbCompletionStatusTag {
-  Success = 0,
-  Stall = 1,
-  Error = 2,
-}
+const UsbCompletionStatusTag = {
+  Success: 0,
+  Stall: 1,
+  Error: 2,
+} as const;
+
+type UsbRecordKindTag = (typeof UsbRecordKindTag)[keyof typeof UsbRecordKindTag];
+type UsbCompletionStatusTag = (typeof UsbCompletionStatusTag)[keyof typeof UsbCompletionStatusTag];
 
 const SETUP_PACKET_BYTES = 8;
 
