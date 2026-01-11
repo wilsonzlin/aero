@@ -309,3 +309,100 @@ fn aerogpu_cmd_copy_texture2d_accepts_trailing_bytes() {
         assert_eq!(out, src_pixels);
     });
 }
+
+#[test]
+fn aerogpu_cmd_set_samplers_accepts_trailing_bytes() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd forward-compat test");
+                return;
+            }
+        };
+
+        let guest_mem = VecGuestMemory::new(0);
+
+        let build_stream = |with_trailing: bool| {
+            let mut stream = Vec::new();
+            stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+            stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+            // SET_SAMPLERS (PS s0..s1)
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetSamplers as u32);
+            stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel
+            stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            stream.extend_from_slice(&2u32.to_le_bytes()); // sampler_count
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&123u32.to_le_bytes()); // samplers[0]
+            stream.extend_from_slice(&0u32.to_le_bytes()); // samplers[1] = unbind
+            if with_trailing {
+                // Forward-compatible extension padding.
+                stream.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+            }
+            end_cmd(&mut stream, start);
+
+            end_stream(&mut stream);
+            stream
+        };
+
+        exec.execute_cmd_stream(&build_stream(false), None, &guest_mem)
+            .unwrap();
+        exec.execute_cmd_stream(&build_stream(true), None, &guest_mem)
+            .unwrap();
+    });
+}
+
+#[test]
+fn aerogpu_cmd_set_constant_buffers_accepts_trailing_bytes() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd forward-compat test");
+                return;
+            }
+        };
+
+        let guest_mem = VecGuestMemory::new(0);
+
+        let build_stream = |with_trailing: bool| {
+            let mut stream = Vec::new();
+            stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+            stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+            // SET_CONSTANT_BUFFERS (VS b0)
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetConstantBuffers as u32);
+            stream.extend_from_slice(&0u32.to_le_bytes()); // shader_stage = vertex
+            stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            // bindings[0]
+            stream.extend_from_slice(&0u32.to_le_bytes()); // buffer = unbound
+            stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            if with_trailing {
+                // Forward-compatible extension padding.
+                stream.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+            }
+            end_cmd(&mut stream, start);
+
+            end_stream(&mut stream);
+            stream
+        };
+
+        exec.execute_cmd_stream(&build_stream(false), None, &guest_mem)
+            .unwrap();
+        exec.execute_cmd_stream(&build_stream(true), None, &guest_mem)
+            .unwrap();
+    });
+}

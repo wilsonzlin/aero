@@ -2567,11 +2567,11 @@ impl AerogpuD3d11Executor {
             .checked_mul(16)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: byte_len overflow"))?;
         let expected = 24 + align4(byte_len);
-        if cmd_bytes.len() != expected {
+        // Forward-compat: allow this packet to grow by appending new fields after the data.
+        if cmd_bytes.len() < expected {
             bail!(
-                "SET_SHADER_CONSTANTS_F: size mismatch: cmd_bytes={}, expected={}",
+                "SET_SHADER_CONSTANTS_F: expected at least {expected} bytes, got {}",
                 cmd_bytes.len(),
-                expected
             );
         }
         let data = &cmd_bytes[24..24 + byte_len];
@@ -2614,8 +2614,10 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_texture(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_texture (24 bytes)
-        if cmd_bytes.len() != 24 {
-            bail!("SET_TEXTURE: expected 24 bytes, got {}", cmd_bytes.len());
+        // Forward-compat: allow this packet to grow by appending new fields after the existing
+        // payload.
+        if cmd_bytes.len() < 24 {
+            bail!("SET_TEXTURE: expected at least 24 bytes, got {}", cmd_bytes.len());
         }
         let stage_raw = read_u32_le(cmd_bytes, 8)?;
         let slot = read_u32_le(cmd_bytes, 12)?;
@@ -2636,9 +2638,11 @@ impl AerogpuD3d11Executor {
 
     fn exec_set_sampler_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_sampler_state (24 bytes)
-        if cmd_bytes.len() != 24 {
+        // Forward-compat: allow this packet to grow by appending new fields after the existing
+        // payload.
+        if cmd_bytes.len() < 24 {
             bail!(
-                "SET_SAMPLER_STATE: expected 24 bytes, got {}",
+                "SET_SAMPLER_STATE: expected at least 24 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2649,8 +2653,13 @@ impl AerogpuD3d11Executor {
 
     fn exec_create_sampler(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_create_sampler (28 bytes)
-        if cmd_bytes.len() != 28 {
-            bail!("CREATE_SAMPLER: expected 28 bytes, got {}", cmd_bytes.len());
+        // Forward-compat: allow this packet to grow by appending new fields after the existing
+        // payload.
+        if cmd_bytes.len() < 28 {
+            bail!(
+                "CREATE_SAMPLER: expected at least 28 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
 
         let sampler_handle = read_u32_le(cmd_bytes, 8)?;
@@ -2692,9 +2701,11 @@ impl AerogpuD3d11Executor {
 
     fn exec_destroy_sampler(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_destroy_sampler (16 bytes)
-        if cmd_bytes.len() != 16 {
+        // Forward-compat: allow this packet to grow by appending new fields after the existing
+        // payload.
+        if cmd_bytes.len() < 16 {
             bail!(
-                "DESTROY_SAMPLER: expected 16 bytes, got {}",
+                "DESTROY_SAMPLER: expected at least 16 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2741,11 +2752,11 @@ impl AerogpuD3d11Executor {
         }
 
         let expected = 24 + sampler_count * 4;
-        if cmd_bytes.len() != expected {
+        // Forward-compat: allow this packet to grow by appending new fields after `samplers[]`.
+        if cmd_bytes.len() < expected {
             bail!(
-                "SET_SAMPLERS: size mismatch: cmd_bytes={} expected={}",
+                "SET_SAMPLERS: expected at least {expected} bytes, got {}",
                 cmd_bytes.len(),
-                expected
             );
         }
 
@@ -2794,11 +2805,11 @@ impl AerogpuD3d11Executor {
         }
 
         let expected = 24 + buffer_count * 16;
-        if cmd_bytes.len() != expected {
+        // Forward-compat: allow this packet to grow by appending new fields after `bindings[]`.
+        if cmd_bytes.len() < expected {
             bail!(
-                "SET_CONSTANT_BUFFERS: size mismatch: cmd_bytes={} expected={}",
+                "SET_CONSTANT_BUFFERS: expected at least {expected} bytes, got {}",
                 cmd_bytes.len(),
-                expected
             );
         }
 
