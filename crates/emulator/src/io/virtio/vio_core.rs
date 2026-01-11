@@ -112,6 +112,39 @@ impl VirtQueue {
         Ok(Some(self.read_chain(mem, head_index)?))
     }
 
+    /// Returns the next available descriptor chain without consuming it.
+    ///
+    /// This can be used by devices that need to validate whether they can
+    /// service the chain (e.g. ensure sufficient buffer capacity) before
+    /// advancing the available index.
+    pub fn peek_available(
+        &self,
+        mem: &impl GuestMemory,
+    ) -> Result<Option<DescriptorChain>, VirtQueueError> {
+        let avail_idx = mem.read_u16_le(self.avail_ring + 2)?;
+        if avail_idx == self.last_avail_idx {
+            return Ok(None);
+        }
+
+        let ring_index = (self.last_avail_idx % self.size) as u64;
+        let head_index = mem.read_u16_le(self.avail_ring + 4 + ring_index * 2)?;
+        Ok(Some(self.read_chain(mem, head_index)?))
+    }
+
+    /// Advances the available index by one entry, consuming the same chain
+    /// returned by [`peek_available`].
+    ///
+    /// Returns `true` if an entry was consumed.
+    pub fn consume_available(&mut self, mem: &impl GuestMemory) -> Result<bool, VirtQueueError> {
+        let avail_idx = mem.read_u16_le(self.avail_ring + 2)?;
+        if avail_idx == self.last_avail_idx {
+            return Ok(false);
+        }
+
+        self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
+        Ok(true)
+    }
+
     pub fn push_used(
         &mut self,
         mem: &mut impl GuestMemory,
