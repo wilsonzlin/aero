@@ -1194,6 +1194,7 @@ struct Noop<Ret(APIENTRY*)(Args...)> {
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawInstanced)
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawIndexedInstanced)
 AEROGPU_DEFINE_HAS_MEMBER(pfnDrawAuto)
+AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource)
 AEROGPU_DEFINE_HAS_MEMBER(pfnSoSetTargets)
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetPredication)
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetTextFilterSize)
@@ -3945,6 +3946,9 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   }
   if constexpr (has_pfnDrawAuto<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnDrawAuto = &NotImpl<decltype(funcs.pfnDrawAuto)>::Fn;
+  }
+  if constexpr (has_pfnOpenResource<D3D10DDI_DEVICEFUNCS>::value) {
+    funcs.pfnOpenResource = &NotImpl<decltype(funcs.pfnOpenResource)>::Fn;
   }
   if constexpr (has_pfnSoSetTargets<D3D10DDI_DEVICEFUNCS>::value) {
     // Valid to leave SO unbound for bring-up; treat as a no-op.

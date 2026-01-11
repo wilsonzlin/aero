@@ -1591,6 +1591,11 @@ template <typename T>
 struct HasGenMips<T, std::void_t<decltype(((T*)nullptr)->pfnGenMips)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct HasOpenResource : std::false_type {};
+template <typename T>
+struct HasOpenResource<T, std::void_t<decltype(((T*)nullptr)->pfnOpenResource)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct HasCalcPrivatePredicateSize : std::false_type {};
 template <typename T>
 struct HasCalcPrivatePredicateSize<T, std::void_t<decltype(((T*)nullptr)->pfnCalcPrivatePredicateSize)>> : std::true_type {};
@@ -1866,6 +1871,9 @@ void InitDeviceFuncsWithStubs(FuncsT* funcs) {
 
   // Specialized map helpers (if present in the function table for this interface version).
   using DeviceFuncs = std::remove_pointer_t<decltype(funcs)>;
+  if constexpr (HasOpenResource<DeviceFuncs>::value) {
+    funcs->pfnOpenResource = &DdiStub<decltype(funcs->pfnOpenResource)>::Call;
+  }
   if constexpr (HasGenMips<DeviceFuncs>::value) {
     funcs->pfnGenMips = &DdiErrorStub<decltype(funcs->pfnGenMips)>::Call;
   }
