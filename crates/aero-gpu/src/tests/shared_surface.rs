@@ -64,3 +64,22 @@ fn shared_surface_import_is_idempotent_but_alias_rebind_is_rejected() {
     assert_eq!(table.destroy_handle(2), Some((1, false)));
     assert_eq!(table.destroy_handle(1), Some((1, true)));
 }
+
+#[test]
+fn shared_surface_export_with_zero_token_is_an_error() {
+    let mut table = SharedSurfaceTable::default();
+    table.register_handle(1);
+    assert!(matches!(
+        table.export(1, 0),
+        Err(SharedSurfaceError::InvalidToken(0))
+    ));
+}
+
+#[test]
+fn shared_surface_import_with_zero_token_is_an_error() {
+    let mut table = SharedSurfaceTable::default();
+    assert!(matches!(
+        table.import(1, 0),
+        Err(SharedSurfaceError::InvalidToken(0))
+    ));
+}

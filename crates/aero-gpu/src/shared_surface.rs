@@ -6,6 +6,8 @@ use thiserror::Error;
 pub(crate) enum SharedSurfaceError {
     #[error("unknown shared surface handle 0x{0:08X}")]
     UnknownHandle(u32),
+    #[error("invalid shared surface token 0x{0:016X} (0 is reserved)")]
+    InvalidToken(u64),
     #[error("unknown shared surface token 0x{0:016X}")]
     UnknownToken(u64),
     #[error(
@@ -74,6 +76,9 @@ impl SharedSurfaceTable {
         resource_handle: u32,
         share_token: u64,
     ) -> Result<(), SharedSurfaceError> {
+        if share_token == 0 {
+            return Err(SharedSurfaceError::InvalidToken(share_token));
+        }
         let underlying = self
             .handles
             .get(&resource_handle)
@@ -100,6 +105,9 @@ impl SharedSurfaceTable {
         out_resource_handle: u32,
         share_token: u64,
     ) -> Result<(), SharedSurfaceError> {
+        if share_token == 0 {
+            return Err(SharedSurfaceError::InvalidToken(share_token));
+        }
         let Some(&underlying) = self.by_token.get(&share_token) else {
             return Err(SharedSurfaceError::UnknownToken(share_token));
         };
