@@ -15,6 +15,13 @@ CI stages the INF(s) and built binaries at the **package root** (e.g. `out/packa
 
 The helper scripts (`install.cmd`, `sign_test.cmd`, etc.) auto-detect the package root when run from within this folder, so you do **not** need to copy/move the INF/binaries into `packaging/win7/` for CI-produced packages.
 
+By default, the CI package root contains both INFs:
+
+- `aerogpu.inf` — D3D9-only.
+- `aerogpu_dx11.inf` — D3D9 + optional D3D10/11 UMDs.
+
+The staged INF list and WOW64 payloads are controlled by `drivers/aerogpu/ci-package.json`.
+
 ## 1) Expected build outputs
 
 Copy the built driver binaries into this directory (same folder as the `.inf` files):
@@ -29,7 +36,9 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 > drivers\aerogpu\build\stage_packaging_win7.cmd fre x86
 > ```
 >
-> If you built via the CI scripts, skip staging and instead copy/install the ready-to-install package under `out/packages/aerogpu/<arch>/` (see section 3).
+> If you built via the CI scripts, skip staging and instead copy/install the ready-to-install
+> package under `out/packages/aerogpu/<arch>/` (see section 3). CI outputs include both
+> `aerogpu.inf` (D3D9-only) and `aerogpu_dx11.inf` (D3D9 + D3D10/11) by default.
 
 ### Required (D3D9)
 
@@ -131,6 +140,10 @@ This produces:
 - The signing certificate at:
   - `out/certs/aero-test.cer`
 
+By default, these CI-staged packages contain both `aerogpu.inf` (D3D9-only) and
+`aerogpu_dx11.inf` (D3D9 + D3D10/11). Install the INF that matches the desired UMD set.
+You can stage only a subset by editing `drivers/aerogpu/ci-package.json`.
+
 See **4.1 Host-signed package** for the Win7 VM install steps.
 
 ### Optional: sign inside the Win7 VM with `sign_test.cmd`
@@ -177,7 +190,14 @@ packaging\win7\install.cmd
 :: install.cmd also runs packaging\win7\verify_umd_registration.cmd to sanity-check UMD placement + registry values.
 ```
 
-If installing the optional D3D10/11 UMD variant, install `aerogpu_dx11.inf` from the copied package directory instead.
+To install the optional D3D10/11 UMD variant from the same package, install `aerogpu_dx11.inf`
+instead:
+
+```bat
+pnputil -i -a aerogpu_dx11.inf
+:: or:
+packaging\win7\install.cmd aerogpu_dx11.inf
+```
 
 ### 4.2 Sign inside the Win7 VM (optional)
 

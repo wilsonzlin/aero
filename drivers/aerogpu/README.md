@@ -26,6 +26,11 @@ Binaries are staged under:
 - `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
 - `out/artifacts/` (ZIP/ISO bundles)
 
+Install using the INF that matches the desired user-mode components:
+
+- `aerogpu.inf`: D3D9-only
+- `aerogpu_dx11.inf`: D3D9 + optional D3D10/11 UMDs
+
 ## CI (GitHub Actions)
 
 The canonical CI pipeline for Windows 7 drivers (including AeroGPU) is:
