@@ -226,6 +226,81 @@ describe("net/l2Tunnel", () => {
     }
   });
 
+  it("WebSocket client appends ?token=... by default when a token is provided", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+      token: "sekrit",
+    });
+
+    try {
+      client.connect();
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2?token=sekrit");
+      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
+
+      FakeWebSocket.last?.open();
+      expect(events[0]?.type).toBe("open");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
+  it("WebSocket client can send token via subprotocol (aero-l2-token.<token>)", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+      token: "sekrit",
+      tokenViaSubprotocol: true,
+    });
+
+    try {
+      client.connect();
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
+      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+
+      FakeWebSocket.last?.open();
+      expect(events[0]?.type).toBe("open");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
+  it("rejects tokens that cannot be represented in Sec-WebSocket-Protocol", async () => {
+    expect(
+      () =>
+        new WebSocketL2TunnelClient("wss://gateway.example.com/l2", () => {}, {
+          token: "not a token",
+          tokenViaSubprotocol: true,
+        }),
+    ).toThrow(/Sec-WebSocket-Protocol/);
+  });
+
   it("WebSocket client closes when subprotocol is not negotiated", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;

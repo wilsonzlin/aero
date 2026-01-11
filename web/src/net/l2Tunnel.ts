@@ -11,6 +11,11 @@ import {
 
 export const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
 export const L2_TUNNEL_DATA_CHANNEL_LABEL = "l2";
+const L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX = "aero-l2-token.";
+
+// RFC 6455: Sec-WebSocket-Protocol values must be HTTP "tokens".
+// https://www.rfc-editor.org/rfc/rfc6455#section-4.1
+const WEBSOCKET_SUBPROTOCOL_TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): void {
   if (channel.label !== L2_TUNNEL_DATA_CHANNEL_LABEL) {
@@ -79,9 +84,17 @@ export type L2TunnelClientOptions = {
 
   /**
    * Optional token for deployments that require `?token=...` on the `/l2`
-   * WebSocket URL.
+   * WebSocket URL (or `Sec-WebSocket-Protocol: aero-l2-token.<token>`).
    */
   token?: string;
+
+  /**
+   * Send `token` via WebSocket subprotocol (as an additional offered protocol),
+   * instead of as a query parameter. This avoids tokens in URLs/logs but
+   * requires a token value that is valid for `Sec-WebSocket-Protocol`
+   * (e.g. base64url/JWT).
+   */
+  tokenViaSubprotocol?: boolean;
 };
 
 export interface L2TunnelClient {
@@ -156,6 +169,7 @@ function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: 
 abstract class BaseL2TunnelClient implements L2TunnelClient {
   protected readonly opts: RequiredOptions;
   protected readonly token: string | undefined;
+  protected readonly tokenViaSubprotocol: boolean;
 
   private sendQueue: Uint8Array[] = [];
   private sendQueueHead = 0;
@@ -198,6 +212,17 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
     this.opts = { maxQueuedBytes, maxBufferedAmount, maxFrameSize, errorIntervalMs, keepaliveMinMs, keepaliveMaxMs };
     this.token = opts.token;
+    this.tokenViaSubprotocol = opts.tokenViaSubprotocol ?? false;
+
+    if (this.tokenViaSubprotocol && this.token !== undefined) {
+      const proto = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`;
+      if (!WEBSOCKET_SUBPROTOCOL_TOKEN_RE.test(proto)) {
+        throw new RangeError(
+          `token contains characters not valid for Sec-WebSocket-Protocol; ` +
+            `disable tokenViaSubprotocol or use a header-safe token (got ${JSON.stringify(this.token)})`,
+        );
+      }
+    }
   }
 
   connect(): void {
@@ -498,7 +523,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     if (this.isClosedOrClosing()) return;
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
 
-    const ws = new WebSocket(this.buildWebSocketUrl(), L2_TUNNEL_SUBPROTOCOL);
+    const ws = new WebSocket(this.buildWebSocketUrl(), this.buildWebSocketSubprotocols());
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
@@ -541,11 +566,16 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
       url.pathname = `${path}/l2`;
     }
 
-    if (this.token !== undefined) {
+    if (this.token !== undefined && !this.tokenViaSubprotocol) {
       url.searchParams.set("token", this.token);
     }
 
     return url.toString();
+  }
+
+  private buildWebSocketSubprotocols(): string | string[] {
+    if (this.token === undefined || !this.tokenViaSubprotocol) return L2_TUNNEL_SUBPROTOCOL;
+    return [L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`];
   }
 
   protected canEnqueue(): boolean {
