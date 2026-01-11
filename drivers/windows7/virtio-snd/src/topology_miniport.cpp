@@ -222,14 +222,14 @@ static const PCPIN_DESCRIPTOR g_TopologyPins[] = {
     {
         1,
         1,
-        0,
+        1,
         NULL,
         g_TopologyPinDescriptors[VIRTIO_SND_TOPOLOGY_PIN_WAVE_BRIDGE],
     },
     {
         1,
         1,
-        0,
+        1,
         NULL,
         g_TopologyPinDescriptors[VIRTIO_SND_TOPOLOGY_PIN_SPEAKER],
     },
