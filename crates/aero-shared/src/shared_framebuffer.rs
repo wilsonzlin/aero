@@ -2,9 +2,9 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
 
-#[cfg(feature = "loom")]
+#[cfg(all(feature = "loom", test))]
 use loom::sync::atomic::AtomicU32;
-#[cfg(not(feature = "loom"))]
+#[cfg(not(all(feature = "loom", test)))]
 use std::sync::atomic::AtomicU32;
 
 use std::sync::atomic::Ordering;

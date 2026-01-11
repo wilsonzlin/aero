@@ -190,7 +190,6 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     .unwrap();
     let rst_seg = parse_tcp_from_frame(&rst).unwrap();
     assert_eq!(rst_seg.ack_number(), denied_isn + 1);
-
     // --- Policy sanity check: port allowlist is enforced even with forward-map overrides ---
     let denied_port_guest_port = 40002;
     let denied_port_isn = 2345;

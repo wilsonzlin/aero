@@ -380,24 +380,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-net"
-version = "0.1.0"
-dependencies = [
- "aero-net-proxy-server",
- "anyhow",
- "base64 0.22.1",
- "emulator",
- "futures-util",
- "nt-packetlib",
- "rand 0.8.5",
- "tokio",
- "tokio-tungstenite 0.26.2",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
 name = "aero-net-e1000"
 version = "0.1.0"
 dependencies = [
@@ -422,7 +404,12 @@ dependencies = [
 name = "aero-net-stack"
 version = "0.1.0"
 dependencies = [
+ "aero-gateway-rs",
+ "axum",
+ "futures-util",
  "nt-packetlib",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
 ]
 
 [[package]]

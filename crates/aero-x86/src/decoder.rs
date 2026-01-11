@@ -199,7 +199,9 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         Err(DecodeError::Invalid)
             if matches!(mode, DecodeMode::Bits16 | DecodeMode::Bits32)
                 && opcode.map == OpcodeMap::Primary
-                && matches!(opcode.opcode, 0x9A | 0xEA) =>
+                && matches!(opcode.opcode, 0x9A | 0xEA)
+                && !prefixes.lock
+                && prefixes.rep.is_none() =>
         {
             // Far call/jmp (`CALLF/JMPF ptr16:16/32`) is used during boot and mode transitions.
             // Some third-party decoders treat it as invalid in certain configurations; if the

@@ -9,3 +9,10 @@ publish = false
 nt-packetlib = { path = "../nt-packetlib" }
 
 [dev-dependencies]
+axum = { version = "0.7", features = ["ws"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.26"
+
+# Used to stand up a local `/tcp` proxy in integration tests.
+aero-gateway-rs = { path = "../../tools/aero-gateway-rs" }
