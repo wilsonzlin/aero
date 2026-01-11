@@ -396,6 +396,12 @@ If you suspect the OS is not receiving vblank events at all (interrupt/wait wiri
 aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
 ```
 
+Follow-up check:
+
+- Run `aerogpu_dbgctl --dump-vblank` and look at `IRQ_ENABLE` and `vblank_interrupt_type`.
+  - If `vblank_interrupt_type` is `(not enabled)` even after calling `--wait-vblank`, dxgkrnl may not be enabling vblank interrupts for the adapter (or the KMD is not seeing `DxgkDdiControlInterrupt` calls).
+  - If `vblank_interrupt_type` is set but `IRQ_ENABLE` does not include `VBLANK`, the KMD is likely not programming the device IRQ enable mask correctly.
+
 And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetScanLine`:
 
 ```bat
