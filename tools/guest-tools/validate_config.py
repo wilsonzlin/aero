@@ -323,7 +323,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     if spec_path.name in ("win7-virtio-win.json", "win7-virtio-full.json"):
         required_names = ("viostor", "netkvm")
     elif spec_path.name == "win7-aero-guest-tools.json":
-        required_names = ("aerogpu", "virtio-input")
+        required_names = ("aerogpu", "virtio-blk", "virtio-net", "virtio-input")
     else:
         required_names = ()
 
@@ -405,6 +405,18 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         driver_kind="virtio-input",
     )
     maybe_validate(
+        "virtio-blk",
+        devices_var="AERO_VIRTIO_BLK_HWIDS",
+        hwids=devices.virtio_blk_hwids,
+        driver_kind="virtio-blk",
+    )
+    maybe_validate(
+        "virtio-net",
+        devices_var="AERO_VIRTIO_NET_HWIDS",
+        hwids=devices.virtio_net_hwids,
+        driver_kind="virtio-net",
+    )
+    maybe_validate(
         "virtio-snd",
         devices_var="AERO_VIRTIO_SND_HWIDS",
         hwids=devices.virtio_snd_hwids,
@@ -423,6 +435,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "netkvm",
             "vioinput",
             "viosnd",
+            "virtio-blk",
+            "virtio-net",
             "virtio-input",
             "virtio-snd",
             "aerogpu",
