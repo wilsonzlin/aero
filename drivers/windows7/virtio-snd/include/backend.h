@@ -13,7 +13,12 @@ typedef struct _VIRTIOSND_BACKEND_OPS {
     NTSTATUS (*Start)(_In_ PVOID Context);
     NTSTATUS (*Stop)(_In_ PVOID Context);
     NTSTATUS (*Release)(_In_ PVOID Context);
-    NTSTATUS (*Write)(_In_ PVOID Context, _In_reads_bytes_(Bytes) const VOID *Pcm, _In_ SIZE_T Bytes);
+    NTSTATUS (*WritePeriod)(
+        _In_ PVOID Context,
+        _In_opt_ const VOID *Pcm1,
+        _In_ SIZE_T Pcm1Bytes,
+        _In_opt_ const VOID *Pcm2,
+        _In_ SIZE_T Pcm2Bytes);
     VOID (*Destroy)(_In_ PVOID Context);
 } VIRTIOSND_BACKEND_OPS, *PVIRTIOSND_BACKEND_OPS;
 
@@ -78,16 +83,18 @@ VirtIoSndBackend_Release(_In_ PVIRTIOSND_BACKEND Backend)
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 static __inline NTSTATUS
-VirtIoSndBackend_Write(
+VirtIoSndBackend_WritePeriod(
     _In_ PVIRTIOSND_BACKEND Backend,
-    _In_reads_bytes_(Bytes) const VOID *Pcm,
-    _In_ SIZE_T Bytes
+    _In_opt_ const VOID *Pcm1,
+    _In_ SIZE_T Pcm1Bytes,
+    _In_opt_ const VOID *Pcm2,
+    _In_ SIZE_T Pcm2Bytes
     )
 {
-    if (Backend == NULL || Backend->Ops == NULL || Backend->Ops->Write == NULL) {
+    if (Backend == NULL || Backend->Ops == NULL || Backend->Ops->WritePeriod == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
-    return Backend->Ops->Write(Backend->Context, Pcm, Bytes);
+    return Backend->Ops->WritePeriod(Backend->Context, Pcm1, Pcm1Bytes, Pcm2, Pcm2Bytes);
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)

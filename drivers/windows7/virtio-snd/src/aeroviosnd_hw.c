@@ -551,13 +551,14 @@ _Use_decl_annotations_ NTSTATUS VirtIoSndHwSetPcmParams(PAEROVIOSND_DEVICE_EXTEN
   return STATUS_SUCCESS;
 }
 
-_Use_decl_annotations_ NTSTATUS VirtIoSndHwStartPcm(PAEROVIOSND_DEVICE_EXTENSION Dx) {
+_Use_decl_annotations_ NTSTATUS VirtIoSndHwPreparePcm(PAEROVIOSND_DEVICE_EXTENSION Dx) {
   NTSTATUS status;
+
   if (!Dx || !Dx->Started) {
     return STATUS_DEVICE_NOT_READY;
   }
 
-  if (Dx->PcmState == VirtIoSndPcmRunning) {
+  if (Dx->PcmState == VirtIoSndPcmPrepared || Dx->PcmState == VirtIoSndPcmRunning) {
     return STATUS_SUCCESS;
   }
 
@@ -578,6 +579,24 @@ _Use_decl_annotations_ NTSTATUS VirtIoSndHwStartPcm(PAEROVIOSND_DEVICE_EXTENSION
 
   if (Dx->PcmState != VirtIoSndPcmPrepared) {
     return STATUS_INVALID_DEVICE_STATE;
+  }
+
+  return STATUS_SUCCESS;
+}
+
+_Use_decl_annotations_ NTSTATUS VirtIoSndHwStartPcm(PAEROVIOSND_DEVICE_EXTENSION Dx) {
+  NTSTATUS status;
+  if (!Dx || !Dx->Started) {
+    return STATUS_DEVICE_NOT_READY;
+  }
+
+  if (Dx->PcmState == VirtIoSndPcmRunning) {
+    return STATUS_SUCCESS;
+  }
+
+  status = VirtIoSndHwPreparePcm(Dx);
+  if (!NT_SUCCESS(status)) {
+    return status;
   }
 
   status = VirtIoSndControlSimple(Dx, VIRTIO_SND_R_PCM_START, VIRTIOSND_STREAM_ID_PLAYBACK);

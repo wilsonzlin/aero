@@ -199,16 +199,22 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
 }
 
 static NTSTATUS
-VirtIoSndBackendVirtio_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const VOID *Pcm, _In_ SIZE_T Bytes)
+VirtIoSndBackendVirtio_WritePeriod(
+    _In_ PVOID Context,
+    _In_opt_ const VOID *Pcm1,
+    _In_ SIZE_T Pcm1Bytes,
+    _In_opt_ const VOID *Pcm2,
+    _In_ SIZE_T Pcm2Bytes
+    )
 {
     PVIRTIOSND_BACKEND_VIRTIO ctx;
     PVIRTIOSND_DEVICE_EXTENSION dx;
-    ULONG pcmBytes;
-    ULONG maxPeriod;
+    ULONG periodBytes;
+    SIZE_T totalBytes;
     NTSTATUS status;
 
     ctx = VirtIoSndBackendVirtioFromContext(Context);
-    if (ctx == NULL || ctx->Dx == NULL || Pcm == NULL) {
+    if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
     dx = ctx->Dx;
@@ -220,36 +226,41 @@ VirtIoSndBackendVirtio_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const V
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    if (Bytes > MAXULONG) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    pcmBytes = (ULONG)Bytes;
-    pcmBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
-    if (pcmBytes == 0) {
-        return STATUS_SUCCESS;
-    }
-
-    maxPeriod = ctx->PeriodBytes;
-    if (maxPeriod == 0) {
+    periodBytes = ctx->PeriodBytes;
+    if (periodBytes == 0) {
         return STATUS_INVALID_DEVICE_STATE;
     }
-    if (pcmBytes > maxPeriod) {
+
+    totalBytes = Pcm1Bytes + Pcm2Bytes;
+    if (totalBytes < Pcm1Bytes) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (totalBytes != (SIZE_T)periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
     /*
-     * Opportunistically recycle completed TX buffers; the INTx DPC is expected to
-     * do this normally, but draining here helps forward progress if interrupts
-     * are delayed or suppressed.
+     * Drain completions proactively so small TX buffer pools don't starve.
+     *
+     * Note: In Aero today TX completions are effectively immediate, but that is not
+     * a playback clock; it's just resource reclamation.
      */
     (VOID)VirtIoSndHwDrainTxCompletions(dx);
 
-    status = VirtIoSndHwSubmitTx(dx, Pcm, pcmBytes, NULL, 0, FALSE);
+    status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, TRUE);
     if (status == STATUS_INSUFFICIENT_RESOURCES) {
-        return STATUS_DEVICE_BUSY;
+        (VOID)VirtIoSndHwDrainTxCompletions(dx);
+        status = VirtIoSndHwSubmitTx(dx, Pcm1, (ULONG)Pcm1Bytes, Pcm2, (ULONG)Pcm2Bytes, TRUE);
+        if (status == STATUS_INSUFFICIENT_RESOURCES) {
+            /*
+             * No buffers available right now. Treat as a dropped period so the WaveRT engine
+             * can keep moving; the host side is expected to output silence on underrun.
+             */
+            return STATUS_SUCCESS;
+        }
     }
 
+    (VOID)VirtIoSndHwDrainTxCompletions(dx);
     return status;
 }
 
@@ -272,7 +283,7 @@ static const VIRTIOSND_BACKEND_OPS g_VirtIoSndBackendVirtioOps = {
     VirtIoSndBackendVirtio_Start,
     VirtIoSndBackendVirtio_Stop,
     VirtIoSndBackendVirtio_Release,
-    VirtIoSndBackendVirtio_Write,
+    VirtIoSndBackendVirtio_WritePeriod,
     VirtIoSndBackendVirtio_Destroy,
 };
 

@@ -14,6 +14,16 @@ The supported, default build produces `virtiosnd.sys` and exposes a single **ren
 
 PortCls miniports:
 
+- Registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology` (PortTopology + IMiniportTopology) subdevices.
+- Physically bridges them via `PcRegisterPhysicalConnection`.
+- Exposes a single **render** endpoint (fixed format):
+  - 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
+- Uses a QPC-based playback clock (`KeQueryPerformanceCounter`) for position reporting (virtqueue completions are not a reliable clock in Aero).
+- Uses a periodic timer/DPC “software DMA” model that:
+  - advances play position
+  - signals the WaveRT notification event each period
+  - submits one period of PCM to a backend callback
+
 * `src/adapter.c` — PortCls adapter driver (`PcInitializeAdapterDriver` / `PcAddAdapterDevice`)
 * `src/topology.c` — minimal topology miniport (speaker jack + channel config properties)
 * `src/wavert.c` — WaveRT miniport + stream (periodic timer/DPC advances the ring position and pushes PCM)

@@ -175,6 +175,7 @@ VOID VirtIoSndHwStop(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx);
 
 _Must_inspect_result_ NTSTATUS VirtIoSndHwSetPcmParams(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx, _In_ ULONG BufferBytes,
                                                        _In_ ULONG PeriodBytes);
+_Must_inspect_result_ NTSTATUS VirtIoSndHwPreparePcm(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx);
 _Must_inspect_result_ NTSTATUS VirtIoSndHwStartPcm(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx);
 _Must_inspect_result_ NTSTATUS VirtIoSndHwStopPcm(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx);
 _Must_inspect_result_ NTSTATUS VirtIoSndHwReleasePcm(_Inout_ PAEROVIOSND_DEVICE_EXTENSION Dx);

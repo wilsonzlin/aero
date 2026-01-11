@@ -60,15 +60,26 @@ static NTSTATUS VirtIoSndBackendNull_Release(_In_ PVOID Context)
 }
 
 static NTSTATUS
-VirtIoSndBackendNull_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const VOID *Pcm, _In_ SIZE_T Bytes)
+VirtIoSndBackendNull_WritePeriod(
+    _In_ PVOID Context,
+    _In_opt_ const VOID *Pcm1,
+    _In_ SIZE_T Pcm1Bytes,
+    _In_opt_ const VOID *Pcm2,
+    _In_ SIZE_T Pcm2Bytes
+    )
 {
     PVIRTIOSND_BACKEND_NULL ctx = (PVIRTIOSND_BACKEND_NULL)Context;
-    UNREFERENCED_PARAMETER(Pcm);
+    UNREFERENCED_PARAMETER(Pcm1);
+    UNREFERENCED_PARAMETER(Pcm2);
 
-    ctx->TotalBytesWritten += Bytes;
+    ctx->TotalBytesWritten += (ULONGLONG)(Pcm1Bytes + Pcm2Bytes);
 
     if (ctx->Running) {
-        VIRTIOSND_TRACE("backend(null): Write %Iu (total=%I64u)\n", Bytes, ctx->TotalBytesWritten);
+        VIRTIOSND_TRACE(
+            "backend(null): WritePeriod %Iu+%Iu (total=%I64u)\n",
+            Pcm1Bytes,
+            Pcm2Bytes,
+            ctx->TotalBytesWritten);
     }
 
     return STATUS_SUCCESS;
@@ -86,7 +97,7 @@ static const VIRTIOSND_BACKEND_OPS g_VirtIoSndBackendNullOps = {
     VirtIoSndBackendNull_Start,
     VirtIoSndBackendNull_Stop,
     VirtIoSndBackendNull_Release,
-    VirtIoSndBackendNull_Write,
+    VirtIoSndBackendNull_WritePeriod,
     VirtIoSndBackendNull_Destroy,
 };
 
