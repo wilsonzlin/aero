@@ -92,6 +92,26 @@ jobs:
             --out-dir "$GITHUB_WORKSPACE/perf-results/nightly" \
             --iterations ${{ env.PERF_ITERATIONS }}
 
+      - name: Write GPU perf scenario params
+        run: |
+          set -euo pipefail
+          mkdir -p perf-results/gpu
+          cat > perf-results/gpu/scenario_params.json <<'JSON'
+          {
+            "vga_text_scroll": { "frames": 120 },
+            "vbe_lfb_blit": { "frames": 60, "width": 256, "height": 256 }
+          }
+          JSON
+
+      - name: Run GPU perf (nightly)
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types bench/gpu_bench.ts \
+            --scenarios vga_text_scroll,vbe_lfb_blit,webgpu_triangle_batch,d3d9_state_churn \
+            --scenario-params perf-results/gpu/scenario_params.json \
+            --swiftshader true \
+            --output perf-results/gpu/raw.json
+
       - name: Job summary
         if: always()
         run: |
@@ -112,12 +132,12 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload browser perf artifacts
+      - name: Upload perf artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: perf-nightly-${{ github.run_id }}
-          path: perf-results/nightly
+          path: perf-results
           if-no-files-found: error
           retention-days: 14
 
@@ -135,12 +155,25 @@ jobs:
             cp .gh-pages/history.json bench/history.json
           fi
 
+      - name: Compute history timestamp
+        id: history-timestamp
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Append to history
         run: |
+          ts="${{ steps.history-timestamp.outputs.ts }}"
+
           node bench/history.js append \
             --history bench/history.json \
             --input perf-results/nightly/raw.json \
-            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --timestamp "$ts" \
+            --commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY"
+
+          node bench/history.js append \
+            --history bench/history.json \
+            --input perf-results/gpu/raw.json \
+            --timestamp "$ts" \
             --commit "$GITHUB_SHA" \
             --repository "$GITHUB_REPOSITORY"
 

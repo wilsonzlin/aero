@@ -63,6 +63,9 @@ export function normaliseBenchResult(result) {
   if (result === null || typeof result !== "object") {
     throw new Error("Bench result must be an object");
   }
+  if (isGpuBenchReport(result)) {
+    return normaliseGpuBenchResult(result);
+  }
   if (result.schemaVersion === 1) {
     return normaliseLegacyBenchResult(result);
   }
@@ -73,8 +76,99 @@ export function normaliseBenchResult(result) {
     return normalisePerfToolResult(result);
   }
   throw new Error(
-    "Unsupported benchmark result format (expected schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
+    "Unsupported benchmark result format (expected aero-gpu-bench report, schemaVersion=1 scenarios, scenario runner report.json, or tools/perf {meta, benchmarks})",
   );
+}
+
+function isGpuBenchReport(result) {
+  return (
+    result &&
+    typeof result === "object" &&
+    result.tool === "aero-gpu-bench" &&
+    result.environment &&
+    typeof result.environment === "object" &&
+    result.scenarios &&
+    typeof result.scenarios === "object" &&
+    !Array.isArray(result.scenarios)
+  );
+}
+
+function normaliseGpuBenchResult(result) {
+  const rawScenarios = result.scenarios;
+  if (rawScenarios === null || typeof rawScenarios !== "object" || Array.isArray(rawScenarios)) {
+    throw new Error("GPU bench report scenarios must be an object keyed by scenario id");
+  }
+
+  const scenarios = {};
+
+  /**
+   * @param {Record<string, any>} metrics
+   * @param {string} name
+   * @param {any} rawValue
+   * @param {{unit: string, better: "higher" | "lower", scale?: number}=} opts
+   */
+  function addMetric(metrics, name, rawValue, opts) {
+    if (rawValue === null || rawValue === undefined) return;
+    if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) return;
+    const value = opts?.scale ? rawValue * opts.scale : rawValue;
+    if (!Number.isFinite(value)) return;
+    metrics[name] = {
+      value,
+      unit: opts?.unit ?? "",
+      better: opts?.better ?? "lower",
+      samples: {
+        n: 1,
+        min: value,
+        max: value,
+        stdev: 0,
+        cv: 0,
+      },
+    };
+  }
+
+  for (const [scenarioId, scenario] of Object.entries(rawScenarios)) {
+    if (scenario === null || typeof scenario !== "object") {
+      throw new Error(`GPU bench scenario ${scenarioId} must be an object`);
+    }
+    if (scenario.status && scenario.status !== "ok") {
+      continue;
+    }
+
+    const derived = scenario.derived ?? {};
+    const telemetry = scenario.telemetry ?? {};
+
+    /** @type {Record<string, any>} */
+    const metrics = {};
+
+    addMetric(metrics, "fps_avg", derived.fpsAvg, { unit: "fps", better: "higher" });
+    addMetric(metrics, "frame_time_ms_p50", derived.frameTimeMsP50, { unit: "ms", better: "lower" });
+    addMetric(metrics, "frame_time_ms_p95", derived.frameTimeMsP95, { unit: "ms", better: "lower" });
+    addMetric(metrics, "present_latency_ms_p95", derived.presentLatencyMsP95, { unit: "ms", better: "lower" });
+    addMetric(metrics, "shader_translation_ms_mean", derived.shaderTranslationMsMean, { unit: "ms", better: "lower" });
+    addMetric(metrics, "shader_compilation_ms_mean", derived.shaderCompilationMsMean, { unit: "ms", better: "lower" });
+    addMetric(metrics, "pipeline_cache_hit_rate_pct", derived.pipelineCacheHitRate, {
+      unit: "%",
+      better: "higher",
+      scale: 100,
+    });
+    addMetric(metrics, "texture_upload_mb_s_avg", derived.textureUploadMBpsAvg, { unit: "MB/s", better: "higher" });
+    addMetric(metrics, "dropped_frames", telemetry.droppedFrames, { unit: "frames", better: "lower" });
+
+    if (Object.keys(metrics).length === 0) {
+      continue;
+    }
+
+    scenarios[`gpu/${scenarioId}`] = { metrics };
+  }
+
+  const environment = {};
+  if (result.environment && typeof result.environment === "object") {
+    if (typeof result.environment.userAgent === "string") environment.userAgent = result.environment.userAgent;
+    if (typeof result.environment.webgpu === "boolean") environment.webgpu = result.environment.webgpu;
+    if (typeof result.environment.webgl2 === "boolean") environment.webgl2 = result.environment.webgl2;
+  }
+
+  return { scenarios, environment: Object.keys(environment).length ? environment : undefined };
 }
 
 function normaliseLegacyBenchResult(result) {
@@ -267,20 +361,84 @@ function normalisePerfToolResult(result) {
   };
 }
 
-function appendHistoryEntry({ historyPath, inputPath, timestamp, commitSha, repository, commitUrl }) {
+function mergeEnvironment({ existing, incoming, entryId }) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+
+  const merged = { ...existing };
+  for (const [key, value] of Object.entries(incoming)) {
+    if (Object.prototype.hasOwnProperty.call(existing, key) && existing[key] !== value) {
+      throw new Error(
+        `History entry ${entryId} has conflicting environment.${key}: existing=${JSON.stringify(existing[key])} incoming=${JSON.stringify(value)}`,
+      );
+    }
+    merged[key] = value;
+  }
+  return merged;
+}
+
+function mergeScenarios({ existing, incoming, entryId }) {
+  const merged = { ...existing };
+
+  for (const [scenarioName, scenario] of Object.entries(incoming)) {
+    if (!Object.prototype.hasOwnProperty.call(merged, scenarioName)) {
+      merged[scenarioName] = scenario;
+      continue;
+    }
+
+    const existingScenario = merged[scenarioName];
+    const existingMetrics = existingScenario.metrics ?? {};
+    const incomingMetrics = scenario.metrics ?? {};
+
+    const nextMetrics = { ...existingMetrics };
+    for (const [metricName, metric] of Object.entries(incomingMetrics)) {
+      if (Object.prototype.hasOwnProperty.call(nextMetrics, metricName)) {
+        throw new Error(
+          `History entry ${entryId} has duplicate metric ${scenarioName}.${metricName} across merged inputs`,
+        );
+      }
+      nextMetrics[metricName] = metric;
+    }
+    merged[scenarioName] = { metrics: nextMetrics };
+  }
+
+  return merged;
+}
+
+export function appendHistoryEntry({ historyPath, inputPath, timestamp, commitSha, repository, commitUrl }) {
   const history = loadHistory(historyPath);
   const result = normaliseBenchResult(readJson(inputPath));
 
   const entryId = `${timestamp}-${commitSha}`;
   const url = commitUrl || `https://github.com/${repository}/commit/${commitSha}`;
 
-  history.entries[entryId] = {
-    id: entryId,
-    timestamp,
-    commit: { sha: commitSha, url },
-    environment: result.environment,
-    scenarios: result.scenarios,
-  };
+  const existing = history.entries[entryId];
+  if (existing) {
+    if (existing.commit?.sha !== commitSha) {
+      throw new Error(
+        `History entry id collision: ${entryId} already exists for sha=${String(existing.commit?.sha)}`,
+      );
+    }
+    if (existing.commit?.url && existing.commit.url !== url) {
+      throw new Error(
+        `History entry ${entryId} has conflicting commit url: existing=${existing.commit.url} incoming=${url}`,
+      );
+    }
+
+    history.entries[entryId] = {
+      ...existing,
+      environment: mergeEnvironment({ existing: existing.environment, incoming: result.environment, entryId }),
+      scenarios: mergeScenarios({ existing: existing.scenarios, incoming: result.scenarios, entryId }),
+    };
+  } else {
+    history.entries[entryId] = {
+      id: entryId,
+      timestamp,
+      commit: { sha: commitSha, url },
+      environment: result.environment,
+      scenarios: result.scenarios,
+    };
+  }
 
   const sortedEntries = Object.values(history.entries).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   history.entries = Object.fromEntries(sortedEntries.map((e) => [e.id, e]));
