@@ -78,11 +78,19 @@ impl AudioCaptureSource for aero_platform::audio::mic_bridge::MonoRingBuffer {
     fn read_mono_f32(&mut self, out: &mut [f32]) -> usize {
         self.read(out) as usize
     }
+
+    fn take_dropped_samples(&mut self) -> u64 {
+        self.take_dropped_samples_delta()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl AudioCaptureSource for aero_platform::audio::mic_bridge::MicBridge {
     fn read_mono_f32(&mut self, out: &mut [f32]) -> usize {
         self.read_f32_into(out) as usize
+    }
+
+    fn take_dropped_samples(&mut self) -> u64 {
+        self.take_dropped_samples_delta()
     }
 }

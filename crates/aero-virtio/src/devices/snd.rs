@@ -55,37 +55,6 @@ const PLAYBACK_CHANNELS: u8 = 2;
 /// mono f32 samples.
 const CAPTURE_CHANNELS: u8 = 1;
 
-#[cfg(target_arch = "wasm32")]
-pub struct MicCaptureSource {
-    bridge: aero_platform::audio::mic_bridge::MicBridge,
-    last_dropped_samples: u32,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl MicCaptureSource {
-    pub fn new(bridge: aero_platform::audio::mic_bridge::MicBridge) -> Self {
-        let last_dropped_samples = bridge.dropped_samples();
-        Self {
-            bridge,
-            last_dropped_samples,
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl AudioCaptureSource for MicCaptureSource {
-    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
-        self.bridge.read_f32_into(dst) as usize
-    }
-
-    fn take_dropped_samples(&mut self) -> u64 {
-        let dropped = self.bridge.dropped_samples();
-        let delta = dropped.wrapping_sub(self.last_dropped_samples);
-        self.last_dropped_samples = dropped;
-        delta as u64
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CaptureTelemetry {
     pub dropped_samples: u64,

@@ -6,7 +6,6 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-audio = { path = "../aero-audio" }
-aero-platform = { path = "../platform" }
 virtio-gpu-proto = { path = "../virtio-gpu-proto" }
 
 [dev-dependencies]

@@ -46,6 +46,7 @@ pub struct MonoRingBuffer {
     capacity_samples: u32,
     read_pos: u32,
     write_pos: u32,
+    dropped_samples: u64,
     storage: Vec<f32>,
 }
 
@@ -56,12 +57,19 @@ impl MonoRingBuffer {
             capacity_samples,
             read_pos: 0,
             write_pos: 0,
+            dropped_samples: 0,
             storage: vec![0.0; capacity_samples as usize],
         }
     }
 
     pub fn buffered_samples(&self) -> u32 {
         samples_available_clamped(self.read_pos, self.write_pos, self.capacity_samples)
+    }
+
+    pub fn take_dropped_samples_delta(&mut self) -> u64 {
+        let dropped = self.dropped_samples;
+        self.dropped_samples = 0;
+        dropped
     }
 
     /// Write a block of samples.
@@ -88,6 +96,7 @@ impl MonoRingBuffer {
 
         let to_write = requested.min(free);
         let dropped = requested - to_write;
+        self.dropped_samples = self.dropped_samples.saturating_add(dropped as u64);
 
         // Keep the most recent part of the block if we have to drop.
         let slice = if dropped > 0 {
@@ -249,6 +258,7 @@ mod wasm {
         capacity_samples: u32,
         header: Uint32Array,
         samples: Float32Array,
+        last_dropped_samples: u32,
     }
 
     #[wasm_bindgen]
@@ -299,10 +309,13 @@ mod wasm {
                 capacity_samples,
             );
 
+            let last_dropped_samples = atomic_load_u32(&header, DROPPED_SAMPLES_INDEX);
+
             Ok(Self {
                 capacity_samples,
                 header,
                 samples,
+                last_dropped_samples,
             })
         }
 
@@ -351,6 +364,15 @@ mod wasm {
             atomic_store_u32(&self.header, READ_POS_INDEX, read_pos.wrapping_add(to_read));
 
             to_read
+        }
+    }
+
+    impl MicBridge {
+        pub fn take_dropped_samples_delta(&mut self) -> u64 {
+            let dropped = atomic_load_u32(&self.header, DROPPED_SAMPLES_INDEX);
+            let delta = dropped.wrapping_sub(self.last_dropped_samples);
+            self.last_dropped_samples = dropped;
+            delta as u64
         }
     }
 }
