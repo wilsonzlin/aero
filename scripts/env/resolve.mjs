@@ -196,63 +196,7 @@ function resolveNodeDir({ override }) {
   return { abs, rel: toRelIfInsideRepo(abs), source };
 }
 
-function autoDetectWasmCrateDir() {
-  const detectScript = path.resolve(repoRoot, "scripts/ci/detect-wasm-crate.mjs");
-  if (fileExists(detectScript)) {
-    const tmpOut = path.join(os.tmpdir(), `aero-detect-wasm-crate-${process.pid}-${Date.now()}.txt`);
-    const result = spawnSync(process.execPath, [detectScript, "--allow-missing", "--github-output", tmpOut], {
-      cwd: repoRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    });
-    if ((result.status ?? 1) !== 0) {
-      const details = (result.stderr || result.stdout || "").trim();
-      die(`detect-wasm-crate failed.\n\n${details}`);
-    }
-
-    for (const line of (result.stdout || "").split(/\r?\n/u)) {
-      const idx = line.indexOf("=");
-      if (idx === -1) continue;
-      const key = line.slice(0, idx).trim();
-      const value = line.slice(idx + 1).trim();
-      if (key === "dir" && value) {
-        return resolvePathMaybeAbs(value);
-      }
-    }
-    return null;
-  }
-
-  const candidates = ["crates/aero-wasm", "crates/wasm", "crates/aero-ipc", "wasm", "rust/wasm"];
-  for (const rel of candidates) {
-    const abs = path.resolve(repoRoot, rel);
-    if (fileExists(path.join(abs, "Cargo.toml"))) return abs;
-  }
-
-  // Fallback: query cargo metadata and locate the first crate that builds a `cdylib`.
-  if (!fileExists(path.join(repoRoot, "Cargo.toml"))) return null;
-  try {
-    const raw = execFileSync("cargo", ["metadata", "--no-deps", "--format-version=1"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const meta = JSON.parse(raw);
-    for (const pkg of meta.packages ?? []) {
-      for (const tgt of pkg.targets ?? []) {
-        if ((tgt.kind ?? []).includes("cdylib")) {
-          const manifestPath = pkg.manifest_path;
-          if (typeof manifestPath === "string" && manifestPath) return path.dirname(manifestPath);
-        }
-      }
-    }
-  } catch {
-    // Ignore; return null and let the caller decide whether to error.
-  }
-
-  return null;
-}
-
-function resolveWasmCrateDir({ override }) {
+function resolveWasmCrateDir({ override, require }) {
   let raw = override;
   let source = "cli";
   if (!raw) {
@@ -266,18 +210,52 @@ function resolveWasmCrateDir({ override }) {
     }
   }
 
-  let abs = raw ? resolvePathMaybeAbs(raw) : autoDetectWasmCrateDir();
-  if (!abs) return { abs: null, rel: null, source: source === "cli" ? "auto" : source };
-
-  abs = path.normalize(abs);
-
-  if (!dirExists(abs)) {
-    die(`${source} points to a missing directory: ${abs}`);
-  }
-  if (!fileExists(path.join(abs, "Cargo.toml"))) {
-    die(`Cargo.toml not found in wasm crate dir: ${abs} (set AERO_WASM_CRATE_DIR to a directory containing Cargo.toml)`);
+  const resolverScript = path.join(repoRoot, "scripts/ci/detect-wasm-crate.mjs");
+  if (!fileExists(resolverScript)) {
+    die(`detect-wasm-crate script not found at ${resolverScript}`);
   }
 
+  const cmdArgs = [resolverScript];
+  if (!require && !raw) {
+    cmdArgs.push("--allow-missing");
+  }
+  if (raw) {
+    cmdArgs.push("--wasm-crate-dir", raw);
+  }
+
+  let stdout;
+  try {
+    stdout = execFileSync("node", cmdArgs, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  } catch (err) {
+    if (!require && !raw) {
+      // If wasm is not required for the calling script, keep this helper forgiving.
+      // (The canonical WASM build/test entrypoints will still surface a hard error
+      // when/if wasm is actually requested.)
+      return { abs: null, rel: null, source: source === "cli" ? "auto" : source };
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    die(`failed to resolve wasm crate dir: ${msg}`);
+  }
+
+  let dirRelOrAbs = null;
+  for (const line of String(stdout).split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const idx = trimmed.indexOf("=");
+    if (idx === -1) continue;
+    const key = trimmed.slice(0, idx);
+    const value = trimmed.slice(idx + 1);
+    if (key === "dir") {
+      dirRelOrAbs = value;
+      break;
+    }
+  }
+
+  if (!dirRelOrAbs) {
+    return { abs: null, rel: null, source: source === "cli" ? "auto" : source };
+  }
+
+  const abs = path.isAbsolute(dirRelOrAbs) ? dirRelOrAbs : path.resolve(repoRoot, dirRelOrAbs);
   return { abs, rel: toRelIfInsideRepo(abs), source };
 }
 
@@ -401,7 +379,7 @@ if (args.requireNodeDir && !nodeDir.abs) {
   die("unable to locate package.json; set AERO_NODE_DIR or pass --node-dir <path>");
 }
 
-const wasmCrateDir = resolveWasmCrateDir({ override: args.wasmCrateDir });
+const wasmCrateDir = resolveWasmCrateDir({ override: args.wasmCrateDir, require: args.requireWasmCrateDir });
 if (args.requireWasmCrateDir && !wasmCrateDir.abs) {
   die("unable to locate a wasm crate (Cargo.toml); set AERO_WASM_CRATE_DIR or pass --wasm-crate-dir <path>");
 }
