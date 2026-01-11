@@ -344,26 +344,45 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
 
            const submitRequestId = nextRequestId++;
            const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
-           worker.postMessage(
-             {
+          worker.postMessage(
+            {
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId,
               contextId: 0,
               signalFence: 1n,
-                cmdStream,
-              },
-              [cmdStream],
-            );
-          const early = await Promise.race([
-            submitPromise.then((submit) => ({ kind: "submit", submit })),
-            new Promise((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 50)),
-          ]);
-          const completedBeforeTick = early.kind === "submit";
+              cmdStream,
+            },
+            [cmdStream],
+          );
+          const withTimeout = (promise, ms) =>
+            Promise.race([
+              promise.then((value) => ({ kind: "value", value })),
+              new Promise((resolve) => setTimeout(() => resolve({ kind: "timeout" }), ms)),
+            ]);
+
+          const early = await withTimeout(submitPromise, 50);
+          const completedBeforeTick = early.kind === "value";
+          /** @type {any} */
+          let submit = completedBeforeTick ? early.value : null;
+
           if (!completedBeforeTick) {
-            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+            // Pump ticks until the VSYNC-gated completion arrives. The wasm executor can take
+            // longer than the initial timeout to finish compiling/executing the stream; a
+            // tick sent too early (before the submission is enqueued) should not complete it.
+            const deadline = performance.now() + 2_000;
+            while (submit == null && performance.now() < deadline) {
+              worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+              const next = await withTimeout(submitPromise, 50);
+              if (next.kind === "value") {
+                submit = next.value;
+                break;
+              }
+            }
+            if (submit == null) {
+              throw new Error("timed out waiting for VSYNC submit_complete after pumping ticks");
+            }
           }
-          const submit = completedBeforeTick ? early.submit : await submitPromise;
 
           const screenshotRequestId = nextRequestId++;
           const screenshotPromise = new Promise((resolve, reject) => pending.set(screenshotRequestId, { resolve, reject }));
