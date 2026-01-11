@@ -108,7 +108,7 @@ if [[ -d "$legacy_guest_windows_dir" ]]; then
   # The legacy driver directory is kept as a tombstone for old links. It must remain a stub
   # (no buildable driver projects). We allow a tiny set of redirect/stub files so older
   # links keep working. A comment-only stub INF is allowed so references to the old
-  # `guest/windows/inf/aerogpu.inf` path fail loudly while still pointing at the supported
+  # `guest/` `windows/inf/aerogpu.inf` path fail loudly while still pointing at the supported
   # package location.
   allowed_guest_windows_files=(
     "guest/""windows/README.md"
@@ -133,7 +133,7 @@ if [[ -d "$legacy_guest_windows_dir" ]]; then
       fi
     done
     if [[ "$allowed" -ne 1 ]]; then
-      die "unexpected file under ${legacy_guest_windows_dir}/ (tombstone should only contain README stub + driver_install stub + inf stub): $f"
+      die "unexpected file under ${legacy_guest_windows_dir}/ (tombstone should only contain README stub + driver_install stub + INF stub): $f"
     fi
   done
 fi
