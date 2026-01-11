@@ -46,6 +46,11 @@ function fmtError(err: unknown): string {
   return formatWebUsbError(err);
 }
 
+function deviceSummaryLabel(device: USBDevice): string {
+  const name = device.productName || device.manufacturerName || "USB device";
+  return `${fmtVidPid(device)} ${name}`;
+}
+
 function getUsbApi(): USB | null {
   // Some environments type `navigator.usb` as `USB` even when it doesn't exist.
   // Use a runtime check.
@@ -55,12 +60,22 @@ function getUsbApi(): USB | null {
 
 async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNote: string }> {
   const attempts: Array<{ note: string; options: USBDeviceRequestOptions }> = [
-    { note: "filters: [] (broadest, if allowed by this Chromium build)", options: { filters: [] } },
+    // Chromium currently requires a non-empty filter list; `{}` matches any device
+    // that is eligible for WebUSB (subject to the protected interface class rules).
+    { note: "filters: [{}] (broadest; matches any eligible device)", options: { filters: [{}] } },
+    // Some Chromium builds historically accepted an empty filter list; keep this
+    // as a fallback since the page is explicitly diagnostic.
+    { note: "filters: [] (empty list; accepted by some Chromium builds)", options: { filters: [] } },
     {
-      note: "filters: [{classCode: 0x00}, {classCode: 0xff}] (fallback broad device-class match)",
+      note: "filters: [{classCode: 0xff}] (vendor-specific only fallback)",
+      options: { filters: [{ classCode: 0xff }] },
+    },
+    {
+      // Rare fallback: some stacks require at least one filter and reject empty filter objects.
+      // This is intentionally broad, but still helps catch some composite/vendored devices.
+      note: "filters: [{classCode: 0x00}, {classCode: 0xff}] (broad device-class match fallback)",
       options: { filters: [{ classCode: 0x00 }, { classCode: 0xff }] },
     },
-    { note: "filters: [{classCode: 0xff}] (vendor-specific only fallback)", options: { filters: [{ classCode: 0xff }] } },
   ];
 
   let lastErr: unknown = null;
@@ -261,6 +276,11 @@ function renderWhyDevicesDontShow(): HTMLElement {
         {},
         "Even if an interface is not protected, open/claim can still fail if the OS has an exclusive driver binding.",
       ),
+      el(
+        "li",
+        {},
+        "On Windows, WebUSB often requires the device interface to be bound to WinUSB (development: Zadig; production: Microsoft OS 2.0 descriptors / WCID).",
+      ),
     ),
     el(
       "div",
@@ -268,6 +288,37 @@ function renderWhyDevicesDontShow(): HTMLElement {
       "Note: requestDevice() filtering behavior varies by browser/version. This page tries a broad request first and falls back to device-class filters when required.",
     ),
   );
+}
+
+function snapshotDeviceDescriptors(device: USBDevice): unknown {
+  return {
+    vendorId: device.vendorId,
+    productId: device.productId,
+    productName: device.productName ?? null,
+    manufacturerName: device.manufacturerName ?? null,
+    serialNumber: device.serialNumber ?? null,
+    opened: device.opened,
+    selectedConfigurationValue: device.configuration?.configurationValue ?? null,
+    configurations: (device.configurations ?? []).map((cfg) => ({
+      configurationValue: cfg.configurationValue,
+      interfaces: (cfg.interfaces ?? []).map((iface) => ({
+        interfaceNumber: iface.interfaceNumber,
+        claimed: iface.claimed,
+        alternates: (iface.alternates ?? []).map((alt) => ({
+          alternateSetting: alt.alternateSetting,
+          interfaceClass: alt.interfaceClass,
+          interfaceSubclass: alt.interfaceSubclass,
+          interfaceProtocol: alt.interfaceProtocol,
+          endpoints: (alt.endpoints ?? []).map((ep) => ({
+            endpointNumber: ep.endpointNumber,
+            direction: ep.direction,
+            type: ep.type,
+            packetSize: ep.packetSize,
+          })),
+        })),
+      })),
+    })),
+  };
 }
 
 function main(): void {
@@ -302,11 +353,18 @@ function main(): void {
   const errorDetails = el("div", { class: "hint", text: "" });
   const errorRaw = el("pre", { class: "mono", text: "" });
   const errorHints = el("ul");
+  const eventLog = el("pre", { class: "mono", text: "" });
   const deviceHost = el("div", {});
+  const knownDevicesHost = el("div", {});
 
   let selectedDevice: USBDevice | null = null;
   let selectedClass: WebUsbDeviceClassification | null = null;
   let lastFilterNote: string | null = null;
+
+  function appendEvent(line: string): void {
+    eventLog.textContent = `${eventLog.textContent ?? ""}${line}\n`;
+    eventLog.scrollTop = eventLog.scrollHeight;
+  }
 
   function clearError(): void {
     errorTitle.textContent = "";
@@ -321,6 +379,42 @@ function main(): void {
     errorDetails.textContent = explained.details ?? "";
     errorRaw.textContent = fmtError(err);
     errorHints.replaceChildren(...explained.hints.map((h) => el("li", { text: h })));
+  }
+
+  async function refreshKnownDevices(): Promise<void> {
+    if (typeof usb.getDevices !== "function") {
+      knownDevicesHost.replaceChildren(
+        el("div", { class: "muted", text: "navigator.usb.getDevices() is unavailable in this browser." }),
+      );
+      return;
+    }
+
+    const devices = await usb.getDevices();
+    if (devices.length === 0) {
+      knownDevicesHost.replaceChildren(el("div", { class: "muted", text: "No previously granted WebUSB devices found." }));
+      return;
+    }
+
+    const select = el("select") as HTMLSelectElement;
+    for (const dev of devices) {
+      const option = el("option", { value: fmtVidPid(dev), text: deviceSummaryLabel(dev) }) as HTMLOptionElement;
+      select.append(option);
+    }
+
+    const useBtn = el("button", { text: "Use selected device" }) as HTMLButtonElement;
+    useBtn.onclick = () => {
+      clearError();
+      const idx = select.selectedIndex;
+      if (idx < 0 || idx >= devices.length) return;
+      selectedDevice = devices[idx];
+      selectedClass = classifyWebUsbDevice(selectedDevice);
+      lastFilterNote = "getDevices() (previously granted permission)";
+      claimBtn.disabled = false;
+      copyBtn.disabled = false;
+      renderSelected();
+    };
+
+    knownDevicesHost.replaceChildren(el("div", { class: "row" }, select, useBtn));
   }
 
   const renderSelected = (): void => {
@@ -340,6 +434,47 @@ function main(): void {
 
   const requestBtn = el("button", { text: "Request USB device" }) as HTMLButtonElement;
   const claimBtn = el("button", { text: "Try open + claim (first claimable interface)", disabled: "true" }) as HTMLButtonElement;
+  const copyBtn = el("button", { text: "Copy JSON summary", disabled: "true" }) as HTMLButtonElement;
+  const refreshKnownBtn = el("button", { text: "Refresh granted devices" }) as HTMLButtonElement;
+
+  copyBtn.onclick = () => {
+    void (async () => {
+      status.textContent = "";
+      clearError();
+      if (!selectedDevice || !selectedClass) {
+        status.textContent = "No device selected.";
+        return;
+      }
+
+      const payload = {
+        generatedAt: new Date().toISOString(),
+        filterNote: lastFilterNote,
+        device: snapshotDeviceDescriptors(selectedDevice),
+        classification: selectedClass,
+      };
+      const text = JSON.stringify(payload, null, 2);
+
+      try {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("Clipboard API unavailable (navigator.clipboard.writeText).");
+        }
+        await navigator.clipboard.writeText(text);
+        status.textContent = "Copied JSON summary to clipboard.";
+      } catch (err) {
+        showError(err);
+      }
+    })();
+  };
+
+  refreshKnownBtn.onclick = () => {
+    void (async () => {
+      try {
+        await refreshKnownDevices();
+      } catch (err) {
+        showError(err);
+      }
+    })();
+  };
 
   requestBtn.onclick = () => {
     void (async () => {
@@ -351,6 +486,7 @@ function main(): void {
         selectedClass = classifyWebUsbDevice(device);
         lastFilterNote = filterNote;
         claimBtn.disabled = false;
+        copyBtn.disabled = false;
 
         renderSelected();
       } catch (err) {
@@ -381,19 +517,41 @@ function main(): void {
     })();
   };
 
+  usb.addEventListener("connect", (event) => {
+    const dev = (event as USBConnectionEvent).device;
+    appendEvent(`connect: ${deviceSummaryLabel(dev)}`);
+    void refreshKnownDevices();
+  });
+  usb.addEventListener("disconnect", (event) => {
+    const dev = (event as USBConnectionEvent).device;
+    appendEvent(`disconnect: ${deviceSummaryLabel(dev)}`);
+    void refreshKnownDevices();
+  });
+
+  appendEvent("listening for navigator.usb connect/disconnect events…");
+  void refreshKnownDevices();
+
   app.append(
     renderWhyDevicesDontShow(),
     el(
       "div",
       { class: "panel" },
       el("h2", { text: "Actions" }),
-      el("div", { class: "row actions" }, requestBtn, claimBtn),
+      el("div", { class: "row actions" }, requestBtn, claimBtn, copyBtn),
       status,
       errorTitle,
       errorDetails,
       errorRaw,
       errorHints,
     ),
+    el(
+      "div",
+      { class: "panel" },
+      el("h2", { text: "Previously granted devices" }),
+      el("div", { class: "row" }, refreshKnownBtn),
+      knownDevicesHost,
+    ),
+    el("div", { class: "panel" }, el("h2", { text: "USB connect/disconnect log" }), eventLog),
     deviceHost,
   );
 }
