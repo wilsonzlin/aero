@@ -1719,17 +1719,23 @@ impl AerogpuSubmissionTrace {
 
         self.ensure_frame_open()?;
 
-        if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
-            return Err(TraceWriteError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "aerogpu trace: cmd stream too large",
-            )));
-        }
-        let cmd_size = desc.cmd_size_bytes as usize;
-        let mut cmd_stream_bytes = vec![0u8; cmd_size];
-        if cmd_size > 0 && desc.cmd_gpa != 0 {
+        // Only capture the command stream if the descriptor is consistent. Malformed descriptors
+        // are still recorded (with an empty cmd stream) so tracing can't be disabled by guests
+        // that set `cmd_size_bytes` without a valid GPA.
+        let cmd_stream_bytes = if desc.cmd_gpa != 0 && desc.cmd_size_bytes != 0 {
+            if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
+                return Err(TraceWriteError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "aerogpu trace: cmd stream too large",
+                )));
+            }
+            let cmd_size = desc.cmd_size_bytes as usize;
+            let mut cmd_stream_bytes = vec![0u8; cmd_size];
             mem.read_physical(desc.cmd_gpa, &mut cmd_stream_bytes);
-        }
+            cmd_stream_bytes
+        } else {
+            Vec::new()
+        };
 
         let alloc_table_bytes = if desc.alloc_table_gpa != 0 && desc.alloc_table_size_bytes != 0 {
             if desc.alloc_table_size_bytes > MAX_CAPTURE_BYTES {
