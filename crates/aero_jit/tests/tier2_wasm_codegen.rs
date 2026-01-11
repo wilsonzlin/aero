@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, FlagSet, Gpr, Width};
 mod tier1_common;
@@ -14,7 +12,7 @@ use aero_jit::tier2::ir::{
 };
 use aero_jit::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit::tier2::trace::TraceBuilder;
-use aero_jit::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
+use aero_jit::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN};
 use aero_jit::wasm::{
     IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
@@ -32,19 +30,11 @@ fn validate_wasm(bytes: &[u8]) {
     validator.validate_all(bytes).unwrap();
 }
 
-#[derive(Clone, Debug, Default)]
-struct HostEnv {
-    code_versions: HashMap<u64, u64>,
-}
-
-fn instantiate_trace(
-    bytes: &[u8],
-    code_versions: HashMap<u64, u64>,
-) -> (Store<HostEnv>, Memory, TypedFunc<i32, i64>) {
+fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<i32, i64>) {
     let engine = Engine::default();
     let module = Module::new(&engine, bytes).unwrap();
 
-    let mut store = Store::new(&engine, HostEnv { code_versions });
+    let mut store = Store::new(&engine, ());
     let mut linker = Linker::new(&engine);
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
@@ -55,20 +45,6 @@ fn instantiate_trace(
 
     define_mem_helpers(&mut store, &mut linker, memory.clone());
 
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_CODE_PAGE_VERSION,
-            Func::wrap(
-                &mut store,
-                |caller: Caller<'_, HostEnv>, page: i64| -> i64 {
-                    let page = page as u64;
-                    caller.data().code_versions.get(&page).copied().unwrap_or(0) as i64
-                },
-            ),
-        )
-        .unwrap();
-
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let trace = instance
         .get_typed_func::<i32, i64>(&store, EXPORT_TRACE_FN)
@@ -76,8 +52,8 @@ fn instantiate_trace(
     (store, memory, trace)
 }
 
-fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, memory: Memory) {
-    fn read<const N: usize>(caller: &mut Caller<'_, HostEnv>, memory: &Memory, addr: usize) -> u64 {
+fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Memory) {
+    fn read<const N: usize>(caller: &mut Caller<'_, ()>, memory: &Memory, addr: usize) -> u64 {
         let mut buf = [0u8; N];
         memory
             .read(caller, addr, &mut buf)
@@ -90,7 +66,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
     }
 
     fn write<const N: usize>(
-        caller: &mut Caller<'_, HostEnv>,
+        caller: &mut Caller<'_, ()>,
         memory: &Memory,
         addr: usize,
         value: u64,
@@ -111,7 +87,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_READ_U8,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<1>(&mut caller, &mem, addr as usize) as i32
                 },
             ),
@@ -125,7 +101,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_READ_U16,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<2>(&mut caller, &mem, addr as usize) as i32
                 },
             ),
@@ -139,7 +115,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_READ_U32,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<4>(&mut caller, &mem, addr as usize) as i32
                 },
             ),
@@ -153,7 +129,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_READ_U64,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i64 {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i64 {
                     read::<8>(&mut caller, &mem, addr as usize) as i64
                 },
             ),
@@ -167,7 +143,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_WRITE_U8,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
                     write::<1>(&mut caller, &mem, addr as usize, value as u64);
                 },
             ),
@@ -181,7 +157,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_WRITE_U16,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
                     write::<2>(&mut caller, &mem, addr as usize, value as u64);
                 },
             ),
@@ -195,7 +171,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_WRITE_U32,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
                     write::<4>(&mut caller, &mem, addr as usize, value as u64);
                 },
             ),
@@ -209,7 +185,7 @@ fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, 
             IMPORT_MEM_WRITE_U64,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64, value: i64| {
+                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i64| {
                     write::<8>(&mut caller, &mem, addr as usize, value as u64);
                 },
             ),
@@ -314,7 +290,6 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     profile.edge_counts.insert((BlockId(0), BlockId(0)), 9_000);
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
-    profile.code_page_versions.insert(0, 7);
 
     let builder = TraceBuilder::new(
         &func,
@@ -340,8 +315,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
         init_state.cpu.rflags |= 1u64 << flag.rflags_bit();
     }
 
-    let mut env = RuntimeEnv::default();
-    env.code_page_versions.insert(0, 7);
+    let env = RuntimeEnv::default();
 
     let mut interp_state = init_state.clone();
     let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
@@ -355,9 +329,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     );
     assert_eq!(expected.exit, RunExit::SideExit { next_rip: 100 });
 
-    let mut code_versions = HashMap::new();
-    code_versions.insert(0, 7);
-    let (mut store, memory, func) = instantiate_trace(&wasm, code_versions);
+    let (mut store, memory, func) = instantiate_trace(&wasm);
     let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
     memory.write(&mut store, 0, &guest_mem_init).unwrap();
 
@@ -442,7 +414,7 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
         0x1122_3344_5566_7788
     );
 
-    let (mut store, memory, func) = instantiate_trace(&wasm, HashMap::new());
+    let (mut store, memory, func) = instantiate_trace(&wasm);
 
     let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
     memory.write(&mut store, 0, &guest_mem_init).unwrap();

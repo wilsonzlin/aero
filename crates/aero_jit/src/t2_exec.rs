@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-
 use aero_types::{Flag, FlagSet, Gpr};
-
 use crate::t2_ir::{
     eval_binop, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
 };
@@ -32,10 +29,7 @@ impl PartialEq for T2State {
 impl Eq for T2State {}
 
 #[derive(Clone, Debug, Default)]
-pub struct RuntimeEnv {
-    /// Current code page versions (self-modifying code invalidation).
-    pub code_page_versions: HashMap<u64, u64>,
-}
+pub struct RuntimeEnv {}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecStats {
@@ -83,7 +77,7 @@ fn eval_operand(op: Operand, values: &[u64]) -> u64 {
 fn exec_instr(
     inst: &Instr,
     state: &mut T2State,
-    env: &RuntimeEnv,
+    _env: &RuntimeEnv,
     bus: &mut dyn Tier1Bus,
     values: &mut [u64],
     stats: &mut ExecStats,
@@ -163,20 +157,6 @@ fn exec_instr(
         } => {
             let cond = eval_operand(cond, values) != 0;
             if cond != expected {
-                if let Some(cache) = reg_cache {
-                    cache.spill(&mut state.cpu, stats);
-                }
-                state.cpu.rip = exit_rip;
-                return Some(RunExit::SideExit { next_rip: exit_rip });
-            }
-        }
-        Instr::GuardCodeVersion {
-            page,
-            expected,
-            exit_rip,
-        } => {
-            let current = env.code_page_versions.get(&page).copied().unwrap_or(0);
-            if current != expected {
                 if let Some(cache) = reg_cache {
                     cache.spill(&mut state.cpu, stats);
                 }

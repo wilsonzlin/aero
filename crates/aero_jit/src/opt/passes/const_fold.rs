@@ -84,7 +84,7 @@ fn fold_inst(
             consts.insert(*dst, *value);
             out.push(inst.clone());
         }
-        Instr::LoadReg { .. } | Instr::LoadFlag { .. } | Instr::GuardCodeVersion { .. } => {
+        Instr::LoadReg { .. } | Instr::LoadFlag { .. } => {
             out.push(inst.clone());
         }
         Instr::LoadMem { dst, addr, width } => {

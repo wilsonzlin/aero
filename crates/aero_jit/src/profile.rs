@@ -11,8 +11,6 @@ pub struct ProfileData {
     pub edge_counts: HashMap<(BlockId, BlockId), u64>,
     /// Detected hot backedges (`from` -> `to`), typically loop latches.
     pub hot_backedges: HashSet<(BlockId, BlockId)>,
-    /// Code page versions at the time of trace compilation (self-modifying code guard).
-    pub code_page_versions: HashMap<u64, u64>,
 }
 
 impl ProfileData {
@@ -26,10 +24,6 @@ impl ProfileData {
 
     pub fn is_hot_backedge(&self, from: BlockId, to: BlockId) -> bool {
         self.hot_backedges.contains(&(from, to))
-    }
-
-    pub fn code_page_version(&self, page: u64) -> u64 {
-        self.code_page_versions.get(&page).copied().unwrap_or(0)
     }
 }
 

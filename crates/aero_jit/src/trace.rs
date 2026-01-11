@@ -34,19 +34,11 @@ impl<'a> TraceBuilder<'a> {
             return None;
         }
 
-        let entry_rip = self.func.block(entry_block).start_rip;
-        let entry_page = entry_rip >> 12;
-        let expected_version = self.profile.code_page_version(entry_page);
-
         let mut trace = Trace {
             entry_block,
             blocks: Vec::new(),
             ir: TraceIr {
-                prologue: vec![Instr::GuardCodeVersion {
-                    page: entry_page,
-                    expected: expected_version,
-                    exit_rip: entry_rip,
-                }],
+                prologue: Vec::new(),
                 body: Vec::new(),
                 kind: TraceKind::Linear,
             },

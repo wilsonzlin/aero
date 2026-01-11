@@ -580,7 +580,6 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     profile.edge_counts.insert((BlockId(0), BlockId(0)), 9_000);
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
-    profile.code_page_versions.insert(0, 7);
 
     let cfg = TraceConfig {
         hot_block_threshold: 1000,
@@ -595,8 +594,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     assert_eq!(trace.side_exits.len(), 1);
     assert_eq!(trace.side_exits[0].next_rip, 100);
 
-    let mut env = RuntimeEnv::default();
-    env.code_page_versions.insert(0, 7);
+    let env = RuntimeEnv::default();
     let mut cpu_interp = T2State::default();
     cpu_interp.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
     assert_eq!(

@@ -17,9 +17,6 @@ use crate::wasm::{
 /// Export name for a compiled Tier-2 trace.
 pub const EXPORT_TRACE_FN: &str = "trace";
 
-/// Import that returns the current code page version for self-modifying code guards.
-pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
-
 #[derive(Clone, Copy)]
 struct ImportedFuncs {
     mem_read_u8: u32,
@@ -30,7 +27,6 @@ struct ImportedFuncs {
     mem_write_u16: u32,
     mem_write_u32: u32,
     mem_write_u64: u32,
-    code_page_version: u32,
     count: u32,
 }
 
@@ -47,7 +43,6 @@ impl Tier2WasmCodegen {
     /// - export `trace(cpu_ptr: i32) -> i64` (returns `next_rip`)
     /// - import `env.memory`
     /// - import memory helpers described by the `IMPORT_MEM_*` constants
-    /// - import `env.code_page_version(page: i64) -> i64`
     ///
     /// The trace spills cached registers + `CpuState.rflags` on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
@@ -89,8 +84,6 @@ impl Tier2WasmCodegen {
         types
             .ty()
             .function([ValType::I32, ValType::I64, ValType::I64], []);
-        let ty_code_page_version = types.len();
-        types.ty().function([ValType::I64], [ValType::I64]);
         let ty_trace = types.len();
         types.ty().function([ValType::I32], [ValType::I64]);
         module.section(&types);
@@ -119,7 +112,6 @@ impl Tier2WasmCodegen {
             mem_write_u16: next(&mut next_func),
             mem_write_u32: next(&mut next_func),
             mem_write_u64: next(&mut next_func),
-            code_page_version: next(&mut next_func),
             count: next_func - func_base,
         };
 
@@ -162,11 +154,6 @@ impl Tier2WasmCodegen {
             IMPORT_MODULE,
             IMPORT_MEM_WRITE_U64,
             EntityType::Function(ty_mem_write_u64),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_CODE_PAGE_VERSION,
-            EntityType::Function(ty_code_page_version),
         );
         module.section(&imports);
 
@@ -450,25 +437,6 @@ impl Emitter<'_> {
                     self.f.instruction(&Instruction::I32Eqz);
                 }
 
-                self.f.instruction(&Instruction::If(BlockType::Empty));
-                self.depth += 1;
-                self.f.instruction(&Instruction::I64Const(exit_rip as i64));
-                self.f
-                    .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
-                self.f.instruction(&Instruction::Br(self.depth));
-                self.f.instruction(&Instruction::End);
-                self.depth -= 1;
-            }
-            Instr::GuardCodeVersion {
-                page,
-                expected,
-                exit_rip,
-            } => {
-                self.f.instruction(&Instruction::I64Const(page as i64));
-                self.f
-                    .instruction(&Instruction::Call(self.imported.code_page_version));
-                self.f.instruction(&Instruction::I64Const(expected as i64));
-                self.f.instruction(&Instruction::I64Ne);
                 self.f.instruction(&Instruction::If(BlockType::Empty));
                 self.depth += 1;
                 self.f.instruction(&Instruction::I64Const(exit_rip as i64));

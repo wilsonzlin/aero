@@ -16,7 +16,7 @@ pub fn run(trace: &mut TraceIr) -> bool {
     {
         if matches!(
             inst,
-            Instr::Guard { .. } | Instr::GuardCodeVersion { .. } | Instr::SideExit { .. }
+            Instr::Guard { .. } | Instr::SideExit { .. }
         ) {
             live = live.union(FlagSet::ALU);
         }

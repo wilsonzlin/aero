@@ -327,12 +327,6 @@ pub enum Instr {
         exit_rip: u64,
     },
 
-    GuardCodeVersion {
-        page: u64,
-        expected: u64,
-        exit_rip: u64,
-    },
-
     SideExit {
         exit_rip: u64,
     },
@@ -352,7 +346,6 @@ impl Instr {
             | Self::StoreMem { .. }
             | Self::SetFlags { .. }
             | Self::Guard { .. }
-            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => None,
         }
     }
@@ -378,7 +371,6 @@ impl Instr {
             | Self::LoadMem { .. }
             | Self::StoreMem { .. }
             | Self::Guard { .. }
-            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => true,
             Self::SetFlags { mask, .. } => !mask.is_empty(),
             Self::BinOp { flags, .. } => !flags.is_empty(),
@@ -416,7 +408,6 @@ impl Instr {
             | Self::LoadReg { .. }
             | Self::LoadFlag { .. }
             | Self::SetFlags { .. }
-            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => {}
         }
     }
@@ -443,7 +434,6 @@ impl Instr {
             | Self::LoadReg { .. }
             | Self::LoadFlag { .. }
             | Self::SetFlags { .. }
-            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => {}
         }
     }
