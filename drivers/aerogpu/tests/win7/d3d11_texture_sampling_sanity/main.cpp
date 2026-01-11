@@ -415,6 +415,12 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
   context->DrawIndexed(6, 0, 0);
 
+  // Explicitly unbind resources to exercise the "bind NULL to clear" path.
+  ID3D11ShaderResourceView* null_srvs[] = {NULL};
+  context->PSSetShaderResources(0, 1, null_srvs);
+  ID3D11SamplerState* null_samplers[] = {NULL};
+  context->PSSetSamplers(0, 1, null_samplers);
+
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;
   st_desc.Usage = D3D11_USAGE_STAGING;

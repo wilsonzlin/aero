@@ -374,6 +374,9 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   context->Draw(3, 0);
   context->Draw(3, 3);
 
+  // Explicitly unbind to exercise the "bind NULL to clear" path (common during ClearState).
+  context->OMSetRenderTargets(0, NULL, NULL);
+
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = rt_desc;
   st_desc.Usage = D3D11_USAGE_STAGING;

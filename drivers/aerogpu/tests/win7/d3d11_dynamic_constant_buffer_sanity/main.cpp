@@ -350,6 +350,10 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
 
   context->Draw(3, 3);
 
+  // Explicitly unbind the constant buffer to exercise the "bind NULL to clear" path.
+  ID3D11Buffer* null_cbs[] = {NULL};
+  context->PSSetConstantBuffers(0, 1, null_cbs);
+
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;
   st_desc.Usage = D3D11_USAGE_STAGING;
