@@ -886,6 +886,49 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 	}
 }
 
+func TestWebRTCUDPRelay_L2TunnelSubprotocolForwardingRejectsInvalidCredential(t *testing.T) {
+	backendURL, upgrades := startTestL2Backend(t)
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
+
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "bad=secret")
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	closedCh := make(chan struct{})
+	dc.OnClose(func() { close(closedCh) })
+
+	headers := http.Header{
+		"X-API-Key": []string{"bad=secret"},
+	}
+	exchangeOfferWithHeaders(t, baseURL+"/offer", headers, pc)
+
+	select {
+	case <-closedCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for server to close l2 channel with invalid subprotocol credential")
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades != 0 {
+		t.Fatalf("backend websocket should not be dialed when subprotocol credential is invalid (got %d upgrades)", gotUpgrades)
+	}
+}
+
 func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
