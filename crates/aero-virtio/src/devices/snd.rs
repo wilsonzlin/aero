@@ -1,4 +1,5 @@
 use aero_audio::sink::AudioSink;
+use aero_audio::pcm::LinearResampler;
 
 use crate::devices::{VirtioDevice, VirtioDeviceError};
 use crate::memory::GuestMemory;
@@ -38,6 +39,11 @@ pub const VIRTIO_SND_PCM_RATE_MASK_48000: u64 = 1u64 << VIRTIO_SND_PCM_RATE_4800
 
 pub const PLAYBACK_STREAM_ID: u32 = 0;
 pub const CAPTURE_STREAM_ID: u32 = 1;
+
+/// Sample rate used by the (minimal) virtio-snd guest contract implemented by this device.
+///
+/// The TX and RX PCM payloads are fixed at 48kHz S16_LE in the guest-facing ABI.
+pub const PCM_SAMPLE_RATE_HZ: u32 = 48_000;
 
 const PLAYBACK_CHANNELS: u8 = 2;
 /// Capture stream channel count.
@@ -176,7 +182,10 @@ pub struct VirtioSnd<O: AudioSink, I: AudioCaptureSource = NullCaptureSource> {
     playback: PcmStream,
     capture: PcmStream,
     capture_telemetry: CaptureTelemetry,
-    playback_samples_scratch: Vec<f32>,
+    host_sample_rate_hz: u32,
+    resampler: LinearResampler,
+    decoded_frames_scratch: Vec<[f32; 2]>,
+    resampled_scratch: Vec<f32>,
     capture_samples_scratch: Vec<f32>,
 }
 
@@ -184,10 +193,24 @@ impl<O: AudioSink> VirtioSnd<O, NullCaptureSource> {
     pub fn new(output: O) -> Self {
         Self::new_with_capture(output, NullCaptureSource)
     }
+
+    pub fn new_with_host_sample_rate(output: O, host_sample_rate_hz: u32) -> Self {
+        assert!(host_sample_rate_hz > 0, "host_sample_rate_hz must be non-zero");
+        Self::new_with_capture_and_host_sample_rate(output, NullCaptureSource, host_sample_rate_hz)
+    }
 }
 
 impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     pub fn new_with_capture(output: O, capture_source: I) -> Self {
+        Self::new_with_capture_and_host_sample_rate(output, capture_source, PCM_SAMPLE_RATE_HZ)
+    }
+
+    pub fn new_with_capture_and_host_sample_rate(
+        output: O,
+        capture_source: I,
+        host_sample_rate_hz: u32,
+    ) -> Self {
+        assert!(host_sample_rate_hz > 0, "host_sample_rate_hz must be non-zero");
         Self {
             output,
             capture_source,
@@ -201,9 +224,23 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 state: StreamState::Idle,
             },
             capture_telemetry: CaptureTelemetry::default(),
-            playback_samples_scratch: Vec::new(),
+            host_sample_rate_hz,
+            resampler: LinearResampler::new(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz),
+            decoded_frames_scratch: Vec::new(),
+            resampled_scratch: Vec::new(),
             capture_samples_scratch: Vec::new(),
         }
+    }
+
+    pub fn set_host_sample_rate_hz(&mut self, host_sample_rate_hz: u32) {
+        assert!(host_sample_rate_hz > 0, "host_sample_rate_hz must be non-zero");
+        if self.host_sample_rate_hz == host_sample_rate_hz {
+            return;
+        }
+        self.host_sample_rate_hz = host_sample_rate_hz;
+        self.resampler.reset_rates(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz);
+        self.decoded_frames_scratch.clear();
+        self.resampled_scratch.clear();
     }
 
     pub fn output_mut(&mut self) -> &mut O {
@@ -391,7 +428,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let mut parsed_stream = false;
 
         let mut pending_lo: Option<u8> = None;
-        self.playback_samples_scratch.clear();
+        let mut pending_left: Option<f32> = None;
+        self.decoded_frames_scratch.clear();
 
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
             let mut slice = match mem.get_slice(desc.addr, desc.len as usize) {
@@ -424,7 +462,12 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             for &b in slice {
                 if let Some(lo) = pending_lo.take() {
                     let sample = i16::from_le_bytes([lo, b]);
-                    self.playback_samples_scratch.push(sample as f32 / 32768.0);
+                    let sample = sample as f32 / 32768.0;
+                    if let Some(left) = pending_left.take() {
+                        self.decoded_frames_scratch.push([left, sample]);
+                    } else {
+                        pending_left = Some(sample);
+                    }
                 } else {
                     pending_lo = Some(b);
                 }
@@ -440,13 +483,41 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         }
 
         // Stereo frames must be complete.
-        if self.playback_samples_scratch.len() % 2 != 0 {
+        if pending_left.is_some() {
             return VIRTIO_SND_S_BAD_MSG;
         }
 
-        if !self.playback_samples_scratch.is_empty() {
-            self.output
-                .push_interleaved_f32(&self.playback_samples_scratch);
+        if !self.decoded_frames_scratch.is_empty() {
+            self.resampled_scratch.clear();
+            if self.host_sample_rate_hz == PCM_SAMPLE_RATE_HZ {
+                self.resampled_scratch
+                    .reserve(self.decoded_frames_scratch.len() * 2);
+                for [l, r] in self.decoded_frames_scratch.iter().copied() {
+                    self.resampled_scratch.push(l);
+                    self.resampled_scratch.push(r);
+                }
+            } else {
+                if self.resampler.dst_rate_hz() != self.host_sample_rate_hz {
+                    self.resampler
+                        .reset_rates(PCM_SAMPLE_RATE_HZ, self.host_sample_rate_hz);
+                }
+                self.resampler
+                    .push_source_frames(&self.decoded_frames_scratch);
+
+                // Best-effort reserve based on queued source frames. This avoids allocations in the
+                // steady-state hot path once buffers have warmed up.
+                let queued_src = self.resampler.queued_source_frames() as u64;
+                let dst_rate = self.host_sample_rate_hz as u64;
+                let reserve_frames = queued_src.saturating_mul(dst_rate) / (PCM_SAMPLE_RATE_HZ as u64) + 2;
+                self.resampled_scratch.reserve(reserve_frames as usize * 2);
+                let _ = self
+                    .resampler
+                    .produce_available_interleaved_stereo_into(&mut self.resampled_scratch);
+            }
+
+            if !self.resampled_scratch.is_empty() {
+                self.output.push_interleaved_f32(&self.resampled_scratch);
+            }
         }
 
         VIRTIO_SND_S_OK
@@ -800,7 +871,10 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
             state: StreamState::Idle,
         };
         self.capture_telemetry = CaptureTelemetry::default();
-        self.playback_samples_scratch.clear();
+        self.resampler
+            .reset_rates(PCM_SAMPLE_RATE_HZ, self.host_sample_rate_hz);
+        self.decoded_frames_scratch.clear();
+        self.resampled_scratch.clear();
         self.capture_samples_scratch.clear();
     }
 

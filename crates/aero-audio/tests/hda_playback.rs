@@ -76,3 +76,78 @@ fn hda_dma_tone_reaches_ring_buffer() {
     assert!(out[2].abs() > 0.001);
     assert!(out[2].abs() < 0.6);
 }
+
+#[test]
+fn hda_resamples_stream_to_configured_output_rate() {
+    // Simulate a host AudioContext running at 44.1kHz (Safari/iOS commonly ignores requested 48kHz).
+    let host_rate_hz = 44_100u32;
+    let mut hda = HdaController::new_with_output_rate(host_rate_hz);
+    let mut mem = GuestMemory::new(0x20_000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // Configure the codec converter to listen on stream 1, channel 0.
+    // SET_STREAM_CHANNEL: verb 0x706, payload = stream<<4 | channel
+    let set_stream_ch = (0x706u32 << 8) | 0x10;
+    hda.codec_mut().execute_verb(2, set_stream_ch);
+
+    // Stream format: 48kHz, 16-bit, 2ch.
+    let fmt_raw: u16 = (1 << 4) | 0x1;
+    // SET_CONVERTER_FORMAT (4-bit verb group 0x2 encoded in low 16 bits)
+    let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
+    hda.codec_mut().execute_verb(2, set_fmt);
+
+    // Guest buffer layout.
+    let bdl_base = 0x1000u64;
+    let pcm_base = 0x2000u64;
+    let src_frames = 480usize; // 10ms at 48kHz
+    let dst_frames = 441usize; // 10ms at 44.1kHz
+    let bytes_per_frame = 4usize; // 16-bit stereo
+    let pcm_len_bytes = src_frames * bytes_per_frame;
+
+    // Fill PCM buffer with a 440Hz sine wave.
+    let freq_hz = 440.0f32;
+    let sr_hz = 48_000.0f32;
+    for n in 0..src_frames {
+        let t = n as f32 / sr_hz;
+        let s = (2.0 * core::f32::consts::PI * freq_hz * t).sin() * 0.5;
+        let v = (s * i16::MAX as f32) as i16;
+        let off = pcm_base + (n * bytes_per_frame) as u64;
+        mem.write_u16(off, v as u16);
+        mem.write_u16(off + 2, v as u16);
+    }
+
+    // One BDL entry pointing at the PCM buffer, IOC=1.
+    mem.write_u64(bdl_base + 0, pcm_base);
+    mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
+    mem.write_u32(bdl_base + 12, 1);
+
+    // Configure stream descriptor 0.
+    {
+        let sd = hda.stream_mut(0);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = pcm_len_bytes as u32;
+        sd.lvi = 0;
+        sd.fmt = fmt_raw;
+        // RUN | IOCE | stream number 1.
+        sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 20);
+    }
+
+    // Enable stream interrupts.
+    hda.mmio_write(0x20, 4, (1u64 << 31) | 1u64); // INTCTL.GIE + stream0 enable
+
+    // Run enough host time to consume the buffer once at the host rate.
+    hda.process(&mut mem, dst_frames);
+
+    // IOC should have fired and LPIB should wrap to 0.
+    assert!(hda.take_irq());
+    assert_eq!(hda.stream_mut(0).lpib, 0);
+
+    // Resampled output should contain host_rate_hz-aligned frames.
+    assert_eq!(hda.audio_out.available_frames(), dst_frames);
+    let out = hda.audio_out.pop_interleaved_stereo(dst_frames);
+    assert_eq!(out.len(), dst_frames * 2);
+    assert!(out.iter().any(|s| s.abs() > 0.001));
+}

@@ -281,41 +281,72 @@ impl LinearResampler {
 
     /// Produce up to `dst_frames` output frames, returning interleaved stereo.
     pub fn produce_interleaved_stereo(&mut self, dst_frames: usize) -> Vec<f32> {
-        let mut out = Vec::new();
-        self.produce_interleaved_stereo_into(dst_frames, &mut out);
+        let mut out = Vec::with_capacity(dst_frames * 2);
+        let _ = self.produce_interleaved_stereo_into(dst_frames, &mut out);
         out
     }
 
-    /// Produce up to `dst_frames` output frames, writing interleaved stereo samples into `out`.
+    /// Produce up to `dst_frames` output frames, writing them into `out` as interleaved stereo.
     ///
     /// `out` is cleared before writing.
-    pub fn produce_interleaved_stereo_into(&mut self, dst_frames: usize, out: &mut Vec<f32>) {
+    ///
+    /// Returns the number of frames produced (which may be less than `dst_frames` if the source
+    /// buffer does not contain enough data).
+    pub fn produce_interleaved_stereo_into(&mut self, dst_frames: usize, out: &mut Vec<f32>) -> usize {
         out.clear();
-        out.reserve(dst_frames * 2);
-        for _ in 0..dst_frames {
-            let idx = self.src_pos.floor() as usize;
-            let frac = self.src_pos - idx as f64;
-            let a = match self.src.get(idx) {
-                Some(v) => *v,
-                None => break,
-            };
-            let (l, r) = if frac.abs() <= 1e-12 {
-                (a[0], a[1])
-            } else {
-                let b = match self.src.get(idx + 1) {
-                    Some(v) => *v,
-                    None => break,
-                };
-                (
-                    lerp(a[0], b[0], frac as f32),
-                    lerp(a[1], b[1], frac as f32),
-                )
-            };
-            out.push(l);
-            out.push(r);
-            self.src_pos += self.step_src_per_dst;
-            self.drop_consumed();
+        if dst_frames == 0 {
+            return 0;
         }
+        out.reserve(dst_frames * 2);
+
+        let mut produced = 0usize;
+        for _ in 0..dst_frames {
+            if !self.produce_one_frame(out) {
+                break;
+            }
+            produced += 1;
+        }
+        produced
+    }
+
+    /// Produce as many output frames as possible, writing them into `out` as interleaved stereo.
+    ///
+    /// `out` is cleared before writing.
+    ///
+    /// Returns the number of frames produced.
+    pub fn produce_available_interleaved_stereo_into(&mut self, out: &mut Vec<f32>) -> usize {
+        out.clear();
+        let mut produced = 0usize;
+        while self.produce_one_frame(out) {
+            produced += 1;
+        }
+        produced
+    }
+
+    fn produce_one_frame(&mut self, out: &mut Vec<f32>) -> bool {
+        let idx = self.src_pos.floor() as usize;
+        let frac = self.src_pos - idx as f64;
+        let a = match self.src.get(idx) {
+            Some(v) => *v,
+            None => return false,
+        };
+        let (l, r) = if frac.abs() <= 1e-12 {
+            (a[0], a[1])
+        } else {
+            let b = match self.src.get(idx + 1) {
+                Some(v) => *v,
+                None => return false,
+            };
+            (
+                lerp(a[0], b[0], frac as f32),
+                lerp(a[1], b[1], frac as f32),
+            )
+        };
+        out.push(l);
+        out.push(r);
+        self.src_pos += self.step_src_per_dst;
+        self.drop_consumed();
+        true
     }
 
     fn drop_consumed(&mut self) {

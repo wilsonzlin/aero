@@ -833,7 +833,11 @@ pub struct HdaController {
 
 impl HdaController {
     pub fn new() -> Self {
-        let output_rate_hz = 48_000;
+        Self::new_with_output_rate(48_000)
+    }
+
+    pub fn new_with_output_rate(output_rate_hz: u32) -> Self {
+        assert!(output_rate_hz > 0, "output_rate_hz must be non-zero");
         let num_output_streams: usize = 1;
         let num_input_streams: usize = 1;
         let num_bidir_streams: usize = 0;
@@ -877,7 +881,7 @@ impl HdaController {
                 .collect(),
 
             codec: HdaCodec::new(),
-            audio_out: AudioRingBuffer::new_stereo(48_000 / 10), // ~100ms
+            audio_out: AudioRingBuffer::new_stereo((output_rate_hz / 10).max(1) as usize), // ~100ms
 
             irq_pending: false,
             output_rate_hz,
@@ -897,22 +901,42 @@ impl HdaController {
     /// The controller will resample guest PCM streams to this rate before pushing into the
     /// output sink.
     pub fn set_output_rate_hz(&mut self, output_rate_hz: u32) {
-        assert!(output_rate_hz != 0, "output_rate_hz must be non-zero");
+        assert!(output_rate_hz > 0, "output_rate_hz must be non-zero");
         if self.output_rate_hz == output_rate_hz {
             return;
         }
 
         self.output_rate_hz = output_rate_hz;
 
-        // Reset stream runtime state so the next `process*` call will reconfigure resamplers
-        // based on the currently-programmed SDnFMT values.
-        for rt in self.stream_rt.iter_mut() {
-            rt.reset(self.output_rate_hz);
+        // Reset stream resamplers (but keep DMA position tracking so changing the host rate doesn't
+        // rewind guest playback/capture).
+        //
+        // Stream descriptor order follows the HDA spec: output streams, input streams, bidirectional streams.
+        let oss = (self.gcap & 0xF) as usize;
+        let iss = ((self.gcap >> 4) & 0xF) as usize;
+        for (idx, rt) in self.stream_rt.iter_mut().enumerate() {
+            rt.capture_frame_accum = 0;
+            rt.dma_scratch.clear();
+            rt.decode_scratch.clear();
+            rt.resample_out_scratch.clear();
+            rt.capture_mono_scratch.clear();
+
+            if idx < oss {
+                // Playback: guest-rate -> host-rate.
+                let src = rt.resampler.src_rate_hz();
+                rt.resampler.reset_rates(src, output_rate_hz);
+            } else if idx < oss + iss {
+                // Capture: host-rate -> guest-rate.
+                let dst = rt.resampler.dst_rate_hz();
+                rt.resampler.reset_rates(output_rate_hz, dst);
+            } else {
+                // Bidir streams (unused): treat as playback for now.
+                let src = rt.resampler.src_rate_hz();
+                rt.resampler.reset_rates(src, output_rate_hz);
+            }
         }
 
-        // Keep the internal ring buffer roughly ~100ms long, matching the default.
-        let frames = (self.output_rate_hz as usize / 10).max(1);
-        self.audio_out = AudioRingBuffer::new_stereo(frames);
+        self.audio_out = AudioRingBuffer::new_stereo((output_rate_hz / 10).max(1) as usize);
     }
 
     pub fn codec(&self) -> &HdaCodec {
@@ -1653,15 +1677,16 @@ impl HdaController {
         {
             let sd = &mut self.streams[stream];
             let rt = &mut self.stream_rt[stream];
-
-            if rt.last_fmt_raw != fmt_raw
-                || rt.resampler.src_rate_hz() != fmt.sample_rate_hz
-                || rt.resampler.dst_rate_hz() != output_rate_hz
-            {
+            let fmt_changed =
+                rt.last_fmt_raw != fmt_raw || rt.resampler.src_rate_hz() != fmt.sample_rate_hz;
+            let dst_changed = rt.resampler.dst_rate_hz() != output_rate_hz;
+            if fmt_changed || dst_changed {
                 rt.resampler.reset_rates(fmt.sample_rate_hz, output_rate_hz);
-                rt.last_fmt_raw = fmt_raw;
-                rt.bdl_index = 0;
-                rt.bdl_offset = 0;
+                if fmt_changed {
+                    rt.last_fmt_raw = fmt_raw;
+                    rt.bdl_index = 0;
+                    rt.bdl_offset = 0;
+                }
             }
 
             // Ensure the resampler has enough source frames queued to synthesize the requested output.
