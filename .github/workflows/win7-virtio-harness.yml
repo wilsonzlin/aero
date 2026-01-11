@@ -43,11 +43,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Win7 virtio host harness (QEMU)
+        id: harness
         shell: bash
         run: |
           set -euo pipefail
 
           log_dir="out/win7-virtio-harness-logs"
+          rm -rf "${log_dir}"
           mkdir -p "${log_dir}"
 
           serial_log="${log_dir}/win7-virtio-serial.log"
@@ -140,3 +142,14 @@ jobs:
           name: win7-virtio-harness-logs
           if-no-files-found: error
           path: out/win7-virtio-harness-logs/
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Win7 virtio host harness"
+            echo ""
+            echo "- Harness step: ${{ steps.harness.outcome }}"
+            echo "- Logs artifact: win7-virtio-harness-logs"
+          } >>"$GITHUB_STEP_SUMMARY"
