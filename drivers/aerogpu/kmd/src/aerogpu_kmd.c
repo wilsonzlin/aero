@@ -2615,10 +2615,6 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
      * On Win7, dxgkrnl uses this mechanism to enable/disable vblank delivery for
      * D3DKMTWaitForVerticalBlankEvent and DWM pacing.
      */
-    if (!adapter->SupportsVblank) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
     /*
      * Avoid accidentally treating other (non-vblank) interrupt types as vblank.
      *
@@ -2629,6 +2625,10 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
      */
     if (InterruptType >= DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
         return STATUS_SUCCESS;
+    }
+
+    if (!adapter->SupportsVblank) {
+        return STATUS_NOT_SUPPORTED;
     }
 
     /*
