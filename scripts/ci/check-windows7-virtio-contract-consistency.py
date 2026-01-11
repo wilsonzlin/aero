@@ -226,7 +226,9 @@ def parse_w7_contract_pci_identities(md: str) -> Mapping[str, PciIdentity]:
         "virtio-input (mouse)": mouse_ids,
     }
 
-def parse_w7_contract_pci_identification_tables(md: str) -> tuple[int, int, int, Mapping[str, int], Mapping[str, int]]:
+def parse_w7_contract_pci_identification_tables(
+    md: str,
+) -> tuple[int, int, int, Mapping[str, int], Mapping[str, int], Mapping[str, int]]:
     """
     Parse the summary PCI identification tables in AERO-W7-VIRTIO §1.1.
 
@@ -306,7 +308,7 @@ def parse_w7_contract_pci_identification_tables(md: str) -> tuple[int, int, int,
             "(expected a markdown table listing subsystem device IDs)"
         )
 
-    return vendor_id, subsystem_vendor_id, revision_id, virtio_device_types, subsys_ids
+    return vendor_id, subsystem_vendor_id, revision_id, virtio_device_types, pci_device_ids, subsys_ids
 
 
 def _parse_queue_table_sizes(block: str, *, file: Path, context: str) -> dict[int, int]:
@@ -639,6 +641,7 @@ def main() -> None:
         contract_subsystem_vendor_id,
         contract_revision_id,
         contract_virtio_types,
+        contract_pci_device_ids,
         contract_subsystem_ids,
     ) = parse_w7_contract_pci_identification_tables(w7_md)
 
@@ -728,6 +731,27 @@ def main() -> None:
                     ],
                 )
             )
+
+        actual_pci_id = contract_pci_device_ids.get(device)
+        if actual_pci_id is None:
+            errors.append(
+                format_error(
+                    "AERO-W7-VIRTIO table 1.1.1 is missing a required PCI Device ID entry:",
+                    [f"missing PCI device id for: {device!r}"],
+                )
+            )
+        else:
+            expected_pci_id = VIRTIO_PCI_DEVICE_ID_BASE + expected_type
+            if actual_pci_id != expected_pci_id:
+                errors.append(
+                    format_error(
+                        f"AERO-W7-VIRTIO table 1.1.1 PCI Device ID mismatch for {device}:",
+                        [
+                            f"expected: 0x{expected_pci_id:04X}",
+                            f"got: 0x{actual_pci_id:04X}",
+                        ],
+                    )
+                )
 
     for instance, expected_subsys in (
         ("virtio-net", contract_ids["virtio-net"].subsystem_device_id),
@@ -899,6 +923,22 @@ def main() -> None:
                         ],
                     )
                 )
+            else:
+                expected_subsys_fragment = f"SUBSYS_{subsys_device:04X}{contract_any.subsystem_vendor_id:04X}"
+                expected_rev_fragment = f"REV_{contract_rev:02X}"
+                if not any(
+                    expected_subsys_fragment in pat.upper() and expected_rev_fragment in pat.upper()
+                    for pat in patterns
+                ):
+                    errors.append(
+                        format_error(
+                            f"{device_name}: manifest is missing a revision-qualified SUBSYS hardware ID:",
+                            [
+                                f"expected at least one pattern containing: {expected_subsys_fragment} and {expected_rev_fragment}",
+                                f"got: {patterns}",
+                            ],
+                        )
+                    )
 
         # If any pattern revision-qualifies, it must match the contract major.
         has_rev_qualifier = False
