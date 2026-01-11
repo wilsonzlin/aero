@@ -2879,7 +2879,9 @@ constexpr bool submit_callback_can_signal_present() {
 
 template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, bool is_present) {
-  const bool patch_list_available = (dev->wddm_context.pPatchLocationList != nullptr);
+  [[maybe_unused]] const bool patch_list_available = (dev->wddm_context.pPatchLocationList != nullptr);
+  [[maybe_unused]] const uint32_t patch_list_used = patch_list_available ? dev->wddm_context.patch_location_entries_used : 0;
+  [[maybe_unused]] const uint32_t patch_list_capacity = patch_list_available ? dev->wddm_context.PatchLocationListSize : 0;
   if constexpr (has_member_hDevice<ArgsT>::value) {
     args.hDevice = dev->wddm_device;
   }
@@ -2926,15 +2928,21 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, b
     args.pPatchLocationList = patch_list_available ? dev->wddm_context.pPatchLocationList : nullptr;
   }
   if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
-    // AeroGPU intentionally submits with an empty patch-location list. Some WDK
-    // vintages interpret PatchLocationListSize as the number of patch locations
-    // (used), while others split capacity vs. used across
-    // {PatchLocationListSize, NumPatchLocations}. To avoid ambiguity, always
-    // pass the used count here (0 for AeroGPU).
-    args.PatchLocationListSize = patch_list_available ? dev->wddm_context.patch_location_entries_used : 0;
+    // AeroGPU intentionally submits with an empty patch-location list.
+    //
+    // - Callback structs that split capacity vs. used across
+    //   {PatchLocationListSize, NumPatchLocations} expect PatchLocationListSize to
+    //   describe the list capacity returned by CreateContext.
+    // - Legacy structs with only PatchLocationListSize interpret it as the number
+    //   of patch locations used.
+    if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
+      args.PatchLocationListSize = patch_list_capacity;
+    } else {
+      args.PatchLocationListSize = patch_list_used;
+    }
   }
   if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
-    args.NumPatchLocations = patch_list_available ? dev->wddm_context.patch_location_entries_used : 0;
+    args.NumPatchLocations = patch_list_used;
   }
   if constexpr (has_member_pDmaBufferPrivateData<ArgsT>::value) {
     args.pDmaBufferPrivateData = dev->wddm_context.pDmaBufferPrivateData;
