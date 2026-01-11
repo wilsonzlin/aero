@@ -803,7 +803,16 @@ impl AudioManager {
 
 ## AC'97 Fallback (Legacy)
 
-For compatibility with older drivers:
+AC'97 is **not** part of the canonical Aero audio stack. The only AC'97 device
+model in this repository lives in the legacy `crates/emulator` audio stack, which
+is gated behind `emulator/legacy-audio` (see ADR 0010).
+
+The canonical path is:
+
+- HDA: `crates/aero-audio/src/hda.rs`
+- virtio-snd: `crates/aero-virtio/src/devices/snd.rs`
+
+The snippet below is illustrative of the legacy AC'97 model:
 
 ```rust
 pub struct Ac97Controller {

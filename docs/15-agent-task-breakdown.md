@@ -383,7 +383,7 @@ Implementation references:
 | AU-003 | Sample format conversion           | P0       | None         | Medium     |
 | AU-004 | AudioWorklet integration           | P0       | None         | Medium     |
 | AU-005 | Audio buffering/latency management | P0       | AU-004       | Medium     |
-| AU-006 | AC'97 fallback                     | P2       | None         | High       |
+| AU-006 | AC'97 fallback (legacy; `emulator/legacy-audio`) | P2 | None     | High       |
 | AU-007 | Audio input (microphone)           | P2       | AU-004       | Medium     |
 | AU-008 | Audio test suite                   | P0       | AU-001       | Medium     |
 
