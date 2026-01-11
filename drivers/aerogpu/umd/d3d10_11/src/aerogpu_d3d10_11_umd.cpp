@@ -1912,15 +1912,6 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     upload->reserved0 = 0;
     upload->offset_bytes = offset;
     upload->size_bytes = size;
-
-    auto* dirty = dev->immediate->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    if (!dirty) {
-      return E_OUTOFMEMORY;
-    }
-    dirty->resource_handle = res->handle;
-    dirty->reserved0 = 0;
-    dirty->offset_bytes = offset;
-    dirty->size_bytes = size;
     return S_OK;
   };
 
@@ -5830,11 +5821,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     if (!res->storage.empty()) {
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = 0;
-      dirty->size_bytes = res->size_bytes;
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = 0;
+      upload->size_bytes = res->size_bytes;
     }
     return S_OK;
   }
@@ -5922,11 +5914,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     if (!res->storage.empty()) {
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = 0;
-      dirty->size_bytes = res->storage.size();
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = 0;
+      upload->size_bytes = res->storage.size();
     }
     return S_OK;
   }
