@@ -10,6 +10,7 @@ pub mod t2_ir;
 pub mod tier2;
 pub mod trace;
 pub mod wasm;
+pub mod compiler;
 
 // Tier-1 front-end (baseline): basic block discovery + x86→IR lowering used by
 // unit tests and early JIT bring-up.

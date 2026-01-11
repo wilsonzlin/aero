@@ -8,7 +8,6 @@ license = "MIT OR Apache-2.0"
 wasm-encoder = "0.244.0"
 thiserror = "2.0.17"
 aero_cpu = { path = "../aero_cpu" }
-aero_cpu_core = { path = "../aero_cpu_core" }
 aero_types = { path = "../aero_types" }
 aero_x86 = { path = "../aero_x86" }
 

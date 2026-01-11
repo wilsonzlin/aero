@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use aero_cpu::CpuBus;
 use aero_cpu::CpuState;
 use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit};
 use wasmtime::{Caller, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
@@ -122,6 +123,16 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             .read(&self.store, self.cpu_ptr as usize, &mut buf)
             .expect("read CpuState from linear memory");
         *cpu = CpuState::read_from_mem(&buf, 0);
+    }
+}
+
+impl<Cpu> CpuBus for WasmtimeBackend<Cpu> {
+    fn read_u8(&self, addr: u64) -> u8 {
+        self.memory.data(&self.store)[addr as usize]
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.memory.data_mut(&mut self.store)[addr as usize] = value;
     }
 }
 
