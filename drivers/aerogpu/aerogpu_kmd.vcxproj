@@ -95,6 +95,7 @@
     <ClInclude Include="protocol\aerogpu_pci.h" />
     <ClInclude Include="protocol\aerogpu_protocol.h" />
     <ClInclude Include="protocol\aerogpu_ring.h" />
+    <ClInclude Include="protocol\aerogpu_wddm_alloc.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
