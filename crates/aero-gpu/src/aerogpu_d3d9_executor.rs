@@ -1205,6 +1205,7 @@ impl AerogpuD3d9Executor {
             AeroGpuCmd::SetShaderConstantsF {
                 stage,
                 start_register,
+                vec4_count,
                 data,
                 ..
             } => {
@@ -1213,9 +1214,43 @@ impl AerogpuD3d9Executor {
                 let stage_base = match stage {
                     0 => 0u64,
                     1 => 256u64 * 16,
-                    _ => 0u64,
+                    _ => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "SET_SHADER_CONSTANTS_F: unsupported stage {stage}"
+                        )));
+                    }
                 };
-                let offset = stage_base + start_register as u64 * 16;
+
+                let end_register = start_register.checked_add(vec4_count).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation(
+                        "SET_SHADER_CONSTANTS_F: register range overflow".into(),
+                    )
+                })?;
+                if end_register > 256 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "SET_SHADER_CONSTANTS_F: register range out of bounds (start_register={start_register} vec4_count={vec4_count})"
+                    )));
+                }
+
+                let offset = stage_base
+                    .checked_add(start_register as u64 * 16)
+                    .ok_or_else(|| {
+                        AerogpuD3d9Error::Validation(
+                            "SET_SHADER_CONSTANTS_F: register offset overflow".into(),
+                        )
+                    })?;
+                let end_offset = offset.checked_add(data.len() as u64).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation(
+                        "SET_SHADER_CONSTANTS_F: data length overflow".into(),
+                    )
+                })?;
+                if end_offset > 512 * 16 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "SET_SHADER_CONSTANTS_F: upload out of bounds (end_offset={end_offset} buffer_size={})",
+                        512 * 16
+                    )));
+                }
+
                 self.queue
                     .write_buffer(&self.constants_buffer, offset, data);
                 Ok(())
