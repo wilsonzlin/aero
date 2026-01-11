@@ -32,8 +32,8 @@ cargo run --locked -p aero-l2-proxy
 #   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
 # - Optional token auth (recommended for internet-exposed deployments):
 #   AERO_L2_TOKEN=sekrit cargo run --locked -p aero-l2-proxy
-#   Clients provide the token via `?token=...` or `Sec-WebSocket-Protocol: aero-l2-token.<token>`
-#   (in addition to `aero-l2-tunnel-v1`).
+#   Clients provide the token via `?token=...` or an additional `Sec-WebSocket-Protocol` entry
+#   `aero-l2-token.<token>` (offered alongside `aero-l2-tunnel-v1`).
 #
 # Observability knobs:
 # - Optional: per-session PCAPNG capture (writes one file per tunnel session):
@@ -51,6 +51,33 @@ Expected behavior:
   - `GET /version` – build/version info
   - `GET /metrics` – Prometheus metrics
 - The proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
+
+#### Browser: establish the L2 tunnel over WebSocket
+
+In the browser, create a WebSocket L2 tunnel client and connect it to the proxy:
+
+```ts
+import { WebSocketL2TunnelClient } from "./net";
+
+const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", (ev) => {
+  if (ev.type === "frame") nicRx(ev.frame);
+  if (ev.type === "error") console.error(ev.error);
+});
+
+l2.connect();
+nicTx = (frame) => l2.sendFrame(frame);
+```
+
+If the proxy requires `AERO_L2_TOKEN`, pass a token and choose how it is transported:
+
+```ts
+const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", sink, {
+  token: "sekrit",
+  // default is "query" (adds ?token=...); "subprotocol" uses an additional
+  // Sec-WebSocket-Protocol entry `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`.
+  tokenTransport: "subprotocol",
+});
+```
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 
