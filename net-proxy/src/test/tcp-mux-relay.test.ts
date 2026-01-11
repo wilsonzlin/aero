@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import net from "node:net";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
@@ -668,6 +669,70 @@ test("tcp-mux stream_id is unique for the lifetime of the websocket", async () =
   }
 });
 
+test("tcp-mux supports CLOSE(RST) without killing the websocket", async () => {
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {
+      // ignore
+    });
+    socket.on("data", (data) => socket.write(data));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const addr = server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    const connPromise = once(server, "connection") as Promise<[net.Socket]>;
+
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: addr.port })
+    );
+    const payload = Buffer.from("rst-test");
+    const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload);
+    ws.send(Buffer.concat([open, data]));
+    await waitForEcho(waiter, 1, payload);
+
+    const [serverSocket] = await connPromise;
+    const serverClosePromise = waitForServerSocketClose(serverSocket);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.RST)));
+
+    await serverClosePromise;
+
+    // Ensure the mux WS is still alive.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([11])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    // Further DATA on the stream should yield UNKNOWN_STREAM (stream already destroyed).
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("after-rst")));
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.UNKNOWN_STREAM);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
 test("tcp-mux rejects DATA after client FIN with PROTOCOL_ERROR", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
@@ -710,3 +775,14 @@ test("tcp-mux rejects DATA after client FIN with PROTOCOL_ERROR", async () => {
     await echoServer.close();
   }
 });
+
+async function waitForServerSocketClose(socket: net.Socket, timeoutMs = 2_000): Promise<void> {
+  const closePromise = once(socket, "close");
+  await Promise.race([
+    closePromise,
+    new Promise<never>((_resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timeout waiting for TCP socket close")), timeoutMs);
+      timeout.unref();
+    })
+  ]);
+}
