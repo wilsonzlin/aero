@@ -1746,7 +1746,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                     .alloc_offset_bytes
                     .checked_add(write_offset)
                     .ok_or_else(|| {
-                        ExecutorError::Validation("COPY_TEXTURE2D: dst alloc offset overflow".into())
+                        ExecutorError::Validation(
+                            "COPY_TEXTURE2D: dst alloc offset overflow".into(),
+                        )
                     })?;
                 let dst_gpa =
                     table.resolve_gpa(dst_backing.alloc_id, alloc_offset, u64::from(row_bytes))?;
