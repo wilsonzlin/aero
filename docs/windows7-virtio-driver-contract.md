@@ -618,8 +618,15 @@ Because no offload or mergeable-RX features are negotiated:
 
 #### 3.2.6 Frame size rules
 
-- Minimum frame length: 14 bytes (Ethernet header). Undersized frames MUST be dropped but the descriptor chain MUST still complete successfully.
-- Maximum frame length: 1514 bytes (Ethernet header + 1500 MTU payload). Oversized frames MUST be dropped but the descriptor chain MUST still complete successfully.
+Contract v1 uses classic Ethernet II frames without FCS:
+
+- Minimum frame length: 14 bytes (Ethernet header).
+- Maximum frame length: 1514 bytes (Ethernet header + 1500 MTU payload).
+
+Frame drop semantics:
+
+- TX: if the driver submits a frame outside the valid size range, the device MUST drop it but MUST still complete the TX descriptor chain successfully.
+- RX: if the host/backend delivers a frame outside the valid size range, the device MUST drop it and MUST NOT consume a posted RX chain for it.
 
 #### 3.2.7 TX (driver → device)
 
