@@ -24,14 +24,16 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_swapchain_rotate_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
+        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -175,6 +177,13 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
         hr);
   }
 
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
+  }
+
   ComPtr<ID3D11Texture2D> buffer0;
   hr = swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)buffer0.put());
   if (FAILED(hr)) {
@@ -251,6 +260,8 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   context->CopyResource(staging1.get(), buffer1.get());
   context->Flush();
 
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging0.get(), 0, D3D11_MAP_READ, 0, &map);
@@ -259,6 +270,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   }
   const uint32_t after0 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
+  if (dump) {
+    std::string err;
+    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_swapchain_rotate_sanity_buffer0.bmp"),
+                                      (int)bb_desc.Width,
+                                      (int)bb_desc.Height,
+                                      map.pData,
+                                      (int)map.RowPitch,
+                                      &err)) {
+      aerogpu_test::PrintfStdout("INFO: %s: BMP dump for buffer0 failed: %s", kTestName, err.c_str());
+    }
+  }
   context->Unmap(staging0.get(), 0);
 
   ZeroMemory(&map, sizeof(map));
@@ -268,6 +290,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   }
   const uint32_t after1 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
+  if (dump) {
+    std::string err;
+    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_swapchain_rotate_sanity_buffer1.bmp"),
+                                      (int)bb_desc.Width,
+                                      (int)bb_desc.Height,
+                                      map.pData,
+                                      (int)map.RowPitch,
+                                      &err)) {
+      aerogpu_test::PrintfStdout("INFO: %s: BMP dump for buffer1 failed: %s", kTestName, err.c_str());
+    }
+  }
   context->Unmap(staging1.get(), 0);
 
   const uint32_t expected0 = 0xFF00FF00u;
@@ -293,4 +326,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-

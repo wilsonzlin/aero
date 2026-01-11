@@ -30,13 +30,14 @@ static int RunD3D11GeometryShaderSmoke(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
+        "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -154,6 +155,13 @@ static int RunD3D11GeometryShaderSmoke(int argc, char** argv) {
         kTestName,
         "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)",
         hr);
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   const std::wstring dir = aerogpu_test::GetModuleDir();
@@ -359,4 +367,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D11GeometryShaderSmoke(argc, argv);
 }
-
