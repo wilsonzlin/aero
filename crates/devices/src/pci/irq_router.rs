@@ -216,6 +216,19 @@ impl PciIntxRouter {
     ) {
         self.set_intx_level(bdf, pin, false, sink);
     }
+
+    /// Synchronizes the router's current INTx line levels into the provided sink.
+    ///
+    /// This is primarily intended for snapshot restore flows: `IoSnapshot::load_state()` restores
+    /// the router's internal level/refcount bookkeeping, but it cannot access the platform sink.
+    /// Callers should invoke this after restoring both the router and the platform interrupt
+    /// controller to ensure routed GSIs reflect the restored state.
+    pub fn sync_levels_to_sink(&self, sink: &mut dyn GsiLevelSink) {
+        for gsi in self.cfg.pirq_to_gsi {
+            let asserted = self.gsi_assert_count.get(&gsi).copied().unwrap_or(0) > 0;
+            sink.set_gsi_level(gsi, asserted);
+        }
+    }
 }
 
 impl IoSnapshot for PciIntxRouter {

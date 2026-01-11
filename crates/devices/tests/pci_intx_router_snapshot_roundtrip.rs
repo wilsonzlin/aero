@@ -34,11 +34,14 @@ fn intx_router_snapshot_roundtrip_preserves_assert_counts() {
 
     // Re-asserting an already-asserted source should be a no-op after restore.
     let mut sink2 = MockSink::default();
+    router2.sync_levels_to_sink(&mut sink2);
+    assert_eq!(sink2.events, vec![(10, true), (11, false), (12, false), (13, false)]);
+
     router2.assert_intx(dev0, PciInterruptPin::IntA, &mut sink2);
-    assert!(sink2.events.is_empty());
+    assert_eq!(sink2.events, vec![(10, true), (11, false), (12, false), (13, false)]);
 
     // Asserting another source that shares the same GSI should *not* toggle the line because the
     // restored assert count is already non-zero.
     router2.assert_intx(dev4, PciInterruptPin::IntA, &mut sink2);
-    assert!(sink2.events.is_empty());
+    assert_eq!(sink2.events, vec![(10, true), (11, false), (12, false), (13, false)]);
 }
