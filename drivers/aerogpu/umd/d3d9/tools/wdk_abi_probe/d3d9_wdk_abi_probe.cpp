@@ -1,9 +1,9 @@
-// AeroGPU D3D9 UMD - Win7 WDK 7.1 ABI probe
+// AeroGPU D3D9 UMD - Win7 D3D9 ABI probe (WDK headers)
 //
 // Purpose
 // -------
-// This program is intended to be built *inside a Windows 7 WDK 7.1 environment*
-// (or any environment that can compile against the Win7 WDK headers) to verify
+// This program is intended to be built in an environment that can compile against
+// the Win7 D3D9 UMD DDI headers (typically from the Windows 7 WDK / 7600-era kit) to verify
 // ABI-critical structure layouts and exported entrypoint decorations for the
 // D3D9 user-mode driver.
 //
@@ -208,7 +208,7 @@ static void probe_openadapter_structs() {
   AEROGPU_PRINT_MEMBER_OFFSET(D3DDDIARG_OPENADAPTER, pAdapterFuncs)
 
   // Not all WDKs expose OpenAdapter2; if the type is missing this file will not
-  // compile. For Win7 WDK 7.1, it is expected to exist.
+  // compile. For the Win7 D3D9 UMD header set, it is expected to exist.
   print_sizeof("D3DDDIARG_OPENADAPTER2", sizeof(D3DDDIARG_OPENADAPTER2));
   AEROGPU_PRINT_MEMBER_OFFSET(D3DDDIARG_OPENADAPTER2, Interface)
   AEROGPU_PRINT_MEMBER_OFFSET(D3DDDIARG_OPENADAPTER2, InterfaceVersion)
@@ -321,4 +321,3 @@ int main() {
 
   return 0;
 }
-

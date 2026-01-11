@@ -1,4 +1,4 @@
-// Optional compile-time ABI assertions for Win7 WDK 7.1 D3D9 UMD builds.
+// Optional compile-time ABI assertions for Win7 D3D9 UMD builds against the WDK headers.
 //
 // This header is intentionally a no-op unless you are building the UMD against
 // the *real* WDK D3D headers (d3dumddi.h / d3d9umddi.h). The repository build
@@ -31,7 +31,7 @@
 // -----------------------------------------------------------------------------
 // Compile-time assertion (C/C++, C++03-safe)
 // -----------------------------------------------------------------------------
-// WDK 7.1 toolchains may be older than C++11; avoid relying on `static_assert`.
+// Some Win7-targeted toolchains may be older than C++11; avoid relying on `static_assert`.
 
 #if defined(__cplusplus)
 #define AEROGPU_ABI_STATIC_ASSERT(expr, msg) \

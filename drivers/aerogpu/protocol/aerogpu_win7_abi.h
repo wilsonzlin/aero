@@ -22,7 +22,7 @@ extern "C" {
 
 #include <stddef.h> /* offsetof */
 
-/* Fixed-width types (WDK 7.1 doesn't guarantee stdint.h in kernel-mode). */
+/* Fixed-width types (kernel-mode builds don't reliably provide stdint.h). */
 #if defined(_NTDDK_) || defined(_NTIFS_) || defined(_WDMDDK_) || defined(_KERNEL_MODE)
 #include <ntdef.h>
 typedef UINT32 aerogpu_win7_u32;

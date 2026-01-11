@@ -1,16 +1,21 @@
-# Win7 WDK 7.1 D3D9 UMD ABI Probe
+# Win7 D3D9 UMD ABI Probe (WDK headers)
 
-This directory contains a **standalone console program** that is intended to be built against the **real Windows 7 WDK 7.1 D3D UMD headers** (`d3d9umddi.h`, `d3dumddi.h`, `d3dkmthk.h`) and prints **ABI-critical** information:
+This directory contains a **standalone console program** that is intended to be built against the **real Windows 7 D3D UMD headers** (`d3d9umddi.h`, `d3dumddi.h`, `d3dkmthk.h`) and prints **ABI-critical** information:
 
 - `sizeof(...)` and selected `offsetof(...)` values for key DDI structs/tables.
 - The **expected x86 stdcall-decorated export names** for the UMD entrypoints (e.g. `_OpenAdapter@4` vs `_OpenAdapter@8`).
 
 The goal is to make header/version drift and calling convention mismatches obvious *before* you try to boot a Win7 VM and debug a loader crash.
 
-## Build (WDK 7.1 environment)
+> Note: This is tooling-only and is **not** part of the normal AeroGPU build. The in-tree driver stack builds via
+> `drivers\aerogpu\aerogpu.sln` (MSBuild + WDK10 toolset). This probe is only for validating ABI details
+> against the canonical Win7 D3D UMD header set.
 
-1. Install **Windows 7 WDK 7.1** (the `7600.*` kit).
-2. Open the appropriate WDK build environment command prompt:
+## Build (WDK environment)
+
+1. Install a Windows WDK that provides the Win7-era D3D9 UMD DDI headers (`d3d9umddi.h`, `d3dumddi.h`, `d3dkmthk.h`).
+   The Windows 7 WDK (7600-era) is known to include them.
+2. Open the appropriate WDK build environment command prompt (so the headers are on the include path):
    - “Windows 7 x86 Free Build Environment” (for x86)
    - “Windows 7 x64 Free Build Environment” (for x64)
 3. Build the probe with `cl.exe`:
@@ -78,7 +83,7 @@ Tip: the x86 `aerogpu_d3d9_x86.def` intentionally exports both the undecorated a
 ## Notes
 
 - This probe is a **tooling-only** artifact and is not part of the normal repo build.
-- Its output is intended to be used to keep the UMD’s exported prototypes, `.def` mappings, and structure layouts in sync with the **Win7 WDK 7.1** headers.
+- Its output is intended to be used to keep the UMD’s exported prototypes, `.def` mappings, and structure layouts in sync with the Win7 D3D UMD headers.
 
 ### Optional: compile-time ABI asserts in the UMD
 

@@ -2,10 +2,10 @@
 //
 // This is a clean-room implementation intended for Windows 7 SP1 (WDDM 1.1).
 //
-// The canonical driver build is expected to be performed in a Win7 WDK 7.1
-// environment. When `AEROGPU_D3D9_USE_WDK_DDI` is defined, this header pulls in
-// the official WDK DDI headers (`d3d9umddi.h`, `d3dumddi.h`) and the rest of the
-// code should use those types directly.
+// The canonical in-tree build is performed via MSBuild/WDK10 (see `drivers\aerogpu\aerogpu.sln`).
+// When `AEROGPU_D3D9_USE_WDK_DDI` is defined, this header pulls in the official
+// D3D9 UMD DDI headers (`d3d9umddi.h`, `d3dumddi.h`) from a Win7-capable WDK and
+// the rest of the code should use those types directly.
 //
 // For repository/portable builds (no WDK headers available), we provide a tiny
 // subset of the Win7 D3D9UMDDI ABI. It is intentionally incomplete; it exists so
@@ -663,7 +663,7 @@ struct AEROGPU_D3D9DDI_DEVICEFUNCS {
 
 // Win7 D3D9 runtime entrypoints: open an adapter and return the adapter vtable.
 //
-// These signatures match the WDK 7.1 D3D9UMDDI prototypes. In portable mode they
+// These signatures match the Win7 D3D9UMDDI prototypes. In portable mode they
 // compile against the minimal ABI shims above.
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapter(
     D3D9DDIARG_OPENADAPTER* pOpenAdapter,
