@@ -9,10 +9,13 @@ driver artifacts before producing `aero-guest-tools.iso` / `aero-guest-tools.zip
 All virtio HWID patterns in these specs are expected to follow the **Aero virtio contract v1**
 (virtio-pci **modern-only**), i.e.:
 
-- virtio-net: `PCI\\VEN_1AF4&DEV_1041`
-- virtio-blk: `PCI\\VEN_1AF4&DEV_1042`
-- virtio-input: `PCI\\VEN_1AF4&DEV_1052`
-- virtio-snd: `PCI\\VEN_1AF4&DEV_1059`
+- virtio-net: `PCI\VEN_1AF4&DEV_1041`
+- virtio-blk: `PCI\VEN_1AF4&DEV_1042`
+- virtio-input: `PCI\VEN_1AF4&DEV_1052`
+- virtio-snd: `PCI\VEN_1AF4&DEV_1059`
+
+Note: these specs are JSON, so backslashes are escaped in the file itself. For example, the literal string in JSON is
+`"PCI\\VEN_1AF4&DEV_1041"` but it represents the Windows HWID `PCI\VEN_1AF4&DEV_1041`.
 
 To sanity-check drift between `guest-tools/config/devices.cmd` and these specs, run:
 
@@ -56,7 +59,7 @@ Notes:
   installer configuration. Any additional `expected_hardware_ids` regexes in the spec are also
   enforced.
   The default device contract (and generated `guest-tools/config/devices.cmd`) targets the canonical, versioned AeroGPU
-  device (`PCI\\VEN_A3A0&DEV_0001`); the deprecated legacy bring-up device is intentionally excluded from the default
+  device (`PCI\VEN_A3A0&DEV_0001`); the deprecated legacy bring-up device is intentionally excluded from the default
   Guest Tools media. If you need it for compatibility/bring-up, install using the legacy INFs under
   `drivers/aerogpu/packaging/win7/legacy/` and build the emulator with the legacy device model enabled
   (feature `emulator/aerogpu-legacy`).
