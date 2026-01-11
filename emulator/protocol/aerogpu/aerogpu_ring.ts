@@ -62,11 +62,27 @@ export function decodeRingHeader(view: DataView, byteOffset = 0): AerogpuRingHea
     throw new AerogpuRingError(`ring.size_bytes too small: ${sizeBytes}`);
   }
 
+  const entryCount = view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, true);
+  if (entryCount === 0 || (entryCount & (entryCount - 1)) !== 0) {
+    throw new AerogpuRingError(`ring.entry_count must be a power-of-two: ${entryCount}`);
+  }
+
+  const entryStrideBytes = view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, true);
+  if (entryStrideBytes < AEROGPU_SUBMIT_DESC_SIZE) {
+    throw new AerogpuRingError(`ring.entry_stride_bytes too small: ${entryStrideBytes}`);
+  }
+
+  const requiredBytes =
+    BigInt(AEROGPU_RING_HEADER_SIZE) + BigInt(entryCount) * BigInt(entryStrideBytes);
+  if (requiredBytes > BigInt(sizeBytes)) {
+    throw new AerogpuRingError(`ring.size_bytes too small for layout: ${sizeBytes}`);
+  }
+
   return {
     abiVersion,
     sizeBytes,
-    entryCount: view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, true),
-    entryStrideBytes: view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, true),
+    entryCount,
+    entryStrideBytes,
     flags: view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_FLAGS, true),
     head: view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_HEAD, true),
     tail: view.getUint32(byteOffset + AEROGPU_RING_HEADER_OFF_TAIL, true),

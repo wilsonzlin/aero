@@ -64,9 +64,13 @@ import {
   AEROGPU_FENCE_PAGE_OFF_COMPLETED_FENCE,
   AEROGPU_FENCE_PAGE_OFF_MAGIC,
   AEROGPU_FENCE_PAGE_SIZE,
+  AEROGPU_RING_MAGIC,
   AEROGPU_RING_HEADER_OFF_ABI_VERSION,
+  AEROGPU_RING_HEADER_OFF_ENTRY_COUNT,
+  AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES,
   AEROGPU_RING_HEADER_OFF_HEAD,
   AEROGPU_RING_HEADER_OFF_MAGIC,
+  AEROGPU_RING_HEADER_OFF_SIZE_BYTES,
   AEROGPU_RING_HEADER_OFF_TAIL,
   AEROGPU_RING_HEADER_SIZE,
   AEROGPU_SUBMIT_DESC_OFF_ALLOC_TABLE_GPA,
@@ -75,6 +79,7 @@ import {
   AEROGPU_SUBMIT_DESC_SIZE,
   AEROGPU_SUBMIT_FLAG_NO_IRQ,
   AEROGPU_SUBMIT_FLAG_PRESENT,
+  decodeRingHeader,
   decodeSubmitDesc,
   writeFencePageCompletedFence,
 } from "../aerogpu/aerogpu_ring.ts";
@@ -291,6 +296,61 @@ test("decodeSubmitDesc rejects submit descriptors that exceed the provided max s
   const view = new DataView(buf);
   view.setUint32(0, 128, true);
   assert.throws(() => decodeSubmitDesc(view, 0, AEROGPU_SUBMIT_DESC_SIZE), /exceeds max size/);
+});
+
+test("decodeRingHeader accepts unknown minor versions and extended strides", () => {
+  const buf = new ArrayBuffer(AEROGPU_RING_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_RING_HEADER_OFF_MAGIC, AEROGPU_RING_MAGIC, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ABI_VERSION, (AEROGPU_ABI_MAJOR << 16) | 999, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, 8, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, 128, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_SIZE_BYTES, 64 + 8 * 128, true);
+
+  const hdr = decodeRingHeader(view, 0);
+  assert.equal(hdr.entryCount, 8);
+  assert.equal(hdr.entryStrideBytes, 128);
+  assert.equal(hdr.abiVersion, (AEROGPU_ABI_MAJOR << 16) | 999);
+});
+
+test("decodeRingHeader rejects non-power-of-two entry_count", () => {
+  const buf = new ArrayBuffer(AEROGPU_RING_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_RING_HEADER_OFF_MAGIC, AEROGPU_RING_MAGIC, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ABI_VERSION, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, 3, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, 64, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_SIZE_BYTES, 64 + 3 * 64, true);
+
+  assert.throws(() => decodeRingHeader(view, 0), /power-of-two/);
+});
+
+test("decodeRingHeader rejects too-small entry_stride_bytes", () => {
+  const buf = new ArrayBuffer(AEROGPU_RING_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_RING_HEADER_OFF_MAGIC, AEROGPU_RING_MAGIC, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ABI_VERSION, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, 8, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, 32, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_SIZE_BYTES, 64 + 8 * 32, true);
+
+  assert.throws(() => decodeRingHeader(view, 0), /entry_stride_bytes too small/);
+});
+
+test("decodeRingHeader rejects rings where size_bytes cannot fit the declared layout", () => {
+  const buf = new ArrayBuffer(AEROGPU_RING_HEADER_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_RING_HEADER_OFF_MAGIC, AEROGPU_RING_MAGIC, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ABI_VERSION, AEROGPU_ABI_VERSION_U32, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_COUNT, 8, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_ENTRY_STRIDE_BYTES, 64, true);
+  view.setUint32(AEROGPU_RING_HEADER_OFF_SIZE_BYTES, 64, true); // Too small for 8 entries.
+
+  assert.throws(() => decodeRingHeader(view, 0), /size_bytes too small for layout/);
 });
 
 test("writeFencePageCompletedFence updates the expected bytes", () => {
