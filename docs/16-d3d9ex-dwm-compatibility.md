@@ -178,22 +178,22 @@ Define a guest/host sharing model that does **not** attempt to expose host OS ha
 - The D3D9/D3D9Ex API surface uses a user-mode `HANDLE` (`pSharedHandle`) to represent “shared resources”.
   - This value is a normal Windows handle: **process-local**, not stable cross-process, and commonly different in the consumer after `DuplicateHandle`.
   - **AeroGPU does _not_ use the numeric `HANDLE` value as the protocol `share_token`.**
-- In the AeroGPU protocol, `share_token` is a **UMD-chosen, stable token** stored in the preserved WDDM allocation private-data blob (see `aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+- In the AeroGPU protocol, `share_token` is defined as the **KMD-generated allocation `ShareToken`** returned to the UMD via allocation private driver data (see `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
   - **Do not** treat the raw Win32 `HANDLE` value itself as a stable cross-process token. The handle is still required for correctness (it is how another process asks Windows to open the shared resource), but it is not a good host-mapping key.
 
 Expected sequence:
 
 1. **Create shared resource → export (token)**
    - Producer process creates a shareable resource (`pSharedHandle != nullptr`).
-   - The UMD chooses a stable `share_token` and stores it in WDDM allocation private data for the backing allocation(s); dxgkrnl preserves this blob for cross-process `OpenResource`.
-   - The UMD submits `EXPORT_SHARED_SURFACE { resource_handle, share_token }` so the host can map `share_token → resource`.
+   - The KMD generates/stores a `ShareToken` for the underlying allocation and returns it to the UMD (allocation private driver data).
+   - The UMD submits `EXPORT_SHARED_SURFACE { resource_handle, share_token=ShareToken }` so the host can map `share_token → resource`.
 
 2. **Open shared resource → import (token)**
    - Consumer process opens the resource via the OS shared handle mechanism (the handle must already be valid in the consumer process via `DuplicateHandle`/inheritance).
-   - dxgkrnl returns the same allocation private-data blob (including `share_token`) to the consumer UMD when it opens the shared resource.
-   - The UMD submits `IMPORT_SHARED_SURFACE { share_token } -> resource_handle` to obtain a host resource alias.
+   - The KMD resolves the shared allocation and returns the same `ShareToken` (allocation private driver data).
+   - The UMD submits `IMPORT_SHARED_SURFACE { share_token=ShareToken } -> resource_handle` to obtain a host resource alias.
 
-**Key invariant:** `share_token` must be stable across processes inside the guest VM. Preserving it in WDDM allocation private data (via dxgkrnl) provides that stability; user-mode `HANDLE` numeric values do not.
+**Key invariant:** `share_token` must be stable across processes inside the guest VM. The KMD `ShareToken` is stable; user-mode `HANDLE` numeric values are not.
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for implementation details and the cross-process validation test.
 
