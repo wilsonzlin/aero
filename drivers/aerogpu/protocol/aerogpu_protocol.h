@@ -4,15 +4,16 @@
  * This header defines the original guest<->emulator ABI for the AeroGPU virtual
  * device ("ARGP", PCI 1AED:0001).
  *
- * It is kept so legacy bring-up tooling and the emulator's legacy AeroGPU
- * device model can continue to function during migration. The in-tree Win7 KMD
- * still supports this ABI for compatibility.
+ * It is kept for reference and for compatibility with the emulator's legacy
+ * AeroGPU device model. The current AeroGPU KMD/UMDs do **not** use this header
+ * directly.
  *
- * New code should prefer the versioned ABI split across:
+ * The canonical, versioned AeroGPU device ABI is defined in:
+ *   - `drivers/aerogpu/protocol/README.md`
  *   - `aerogpu_pci.h`  (PCI/MMIO + versioning + features)
  *   - `aerogpu_ring.h` (submission descriptors + optional `aerogpu_alloc_table`)
- *   - `aerogpu_cmd.h`  (command stream with `aerogpu_handle_t` and
- *                       `backing_alloc_id`, plus shared surface export/import)
+ *   - `aerogpu_cmd.h`  (command stream packets and opcodes)
+ *   - `aerogpu_escape.h` (stable `DxgkDdiEscape` packet header + base ops)
  *
  * It intentionally contains two layers:
  *   1) A legacy command stream "wire format" used by early Windows user-mode
@@ -31,6 +32,8 @@
  */
 
 #pragma once
+
+#include "aerogpu_escape.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -373,13 +376,6 @@ typedef struct aerogpu_submission_desc_allocation {
   aerogpu_u32 size_bytes;
   aerogpu_u32 reserved0;
 } aerogpu_submission_desc_allocation;
-
-/*
- * Escape channel ABI (DxgkDdiEscape).
- *
- * Input and output share the same header; operations define additional payload.
- */
-#include "aerogpu_escape.h"
 
 #ifdef __cplusplus
 } // extern "C"

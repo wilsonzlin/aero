@@ -193,11 +193,13 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 
 ## Escape channel
 
-`DxgkDdiEscape` supports bring-up/debug queries:
+`DxgkDdiEscape` supports bring-up/debug queries. The stable Escape packet header/common ops
+are defined in `drivers/aerogpu/protocol/aerogpu_escape.h`; additional bring-up/tooling ops
+are defined in `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`.
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`)
   - returns the detected device ABI (`detected_mmio_magic`), ABI version, and (for versioned devices) feature bits
-  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response (legacy bring-up ABI; see `drivers/aerogpu/protocol/aerogpu_protocol.h`)
+  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response (see `drivers/aerogpu/protocol/aerogpu_escape.h`; legacy ABI details in `drivers/aerogpu/protocol/aerogpu_protocol.h`)
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 

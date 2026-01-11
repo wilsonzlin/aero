@@ -44,7 +44,7 @@ Artifacts produced by the workflow:
 * Win7 packaging/signing/install: `drivers/aerogpu/packaging/win7/README.md`
 * Guest-side validation tests: `drivers/aerogpu/tests/win7/README.md`
 * AeroGPU PCI IDs + ABI generations (new vs legacy): `docs/abi/aerogpu-pci-identity.md`
-* Protocol / device ABI (canonical): `drivers/aerogpu/protocol/README.md`, `drivers/aerogpu/protocol/aerogpu_pci.h`, `drivers/aerogpu/protocol/aerogpu_ring.h`, `drivers/aerogpu/protocol/aerogpu_cmd.h`
+* Protocol / device ABI (canonical): `drivers/aerogpu/protocol/README.md`, `drivers/aerogpu/protocol/aerogpu_pci.h`, `drivers/aerogpu/protocol/aerogpu_ring.h`, `drivers/aerogpu/protocol/aerogpu_cmd.h`, `drivers/aerogpu/protocol/aerogpu_escape.h`
   * Note: `drivers/aerogpu/protocol/aerogpu_protocol.h` is the legacy bring-up ABI (VEN=0x1AED) and should not be treated as the stable interface.
 * Debug control tool (bring-up): `drivers/aerogpu/tools/win7_dbgctl/README.md`
 
