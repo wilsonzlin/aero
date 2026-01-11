@@ -5840,28 +5840,26 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
     case AEROGPU_D3D11DDICAPS_FEATURE_LEVELS: {
       // The Win7 runtime uses this to determine which feature levels to attempt.
       // We advertise only FL10_0 until CS/UAV/etc are implemented.
-      static const uint32_t kLevels[] = {kD3DFeatureLevel10_0};
-
-      // Common layout: {UINT NumFeatureLevels; const D3D_FEATURE_LEVEL* pFeatureLevels;}
-      struct FeatureLevelsCaps {
-        uint32_t NumFeatureLevels;
-        const uint32_t* pFeatureLevels;
-      };
-
-      if (data_size == sizeof(FeatureLevelsCaps)) {
-        auto* out = reinterpret_cast<FeatureLevelsCaps*>(data);
-        out->NumFeatureLevels = 1;
-        out->pFeatureLevels = kLevels;
-        return S_OK;
-      }
-
-      // Fallback layout: an array of D3D_FEATURE_LEVEL values.
-      if (data_size >= sizeof(uint32_t)) {
+      // Win7 D3D11 uses a "count + inline list" layout:
+      //   { UINT NumFeatureLevels; D3D_FEATURE_LEVEL FeatureLevels[NumFeatureLevels]; }
+      //
+      // Avoid using a pointer-based layout here; on x86 the pointer+count struct is
+      // also 8 bytes and can be misinterpreted by the runtime.
+      if (data_size >= sizeof(uint32_t) * 2) {
         std::memset(data, 0, data_size);
         auto* out = reinterpret_cast<uint32_t*>(data);
-        out[0] = kD3DFeatureLevel10_0;
+        out[0] = 1;
+        out[1] = kD3DFeatureLevel10_0;
         return S_OK;
       }
+
+      // Fallback: treat the buffer as a single feature-level value.
+      if (data_size >= sizeof(uint32_t)) {
+        std::memset(data, 0, data_size);
+        reinterpret_cast<uint32_t*>(data)[0] = kD3DFeatureLevel10_0;
+        return S_OK;
+      }
+
       return E_INVALIDARG;
     }
 
