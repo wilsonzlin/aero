@@ -319,6 +319,93 @@ describe("tcp-mux browser client integration", () => {
     }
   });
 
+  it("surfaces stream-level ERROR without closing the mux session", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowedTargetHosts: ["8.8.8.8"],
+        allowedTargetPorts: [echoPort],
+        maxStreams: 16,
+        createConnection: (() =>
+          net.createConnection({
+            host: "127.0.0.1",
+            port: echoPort,
+            allowHalfOpen: true,
+          })) as typeof net.createConnection,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const client = new WebSocketTcpMuxProxyClient(`http://127.0.0.1:${proxyPort}`);
+    const blockedStream = 10;
+    const okStream = 11;
+
+    const events: string[] = [];
+
+    const blockedError = new Promise<{ code: number; message: string }>((resolve) => {
+      client.onError = (id, err) => {
+        events.push(`error:${id}:${err.code}`);
+        if (id === blockedStream) resolve(err);
+      };
+    });
+
+    const blockedClosed = new Promise<void>((resolve) => {
+      client.onClose = (id) => {
+        events.push(`close:${id}`);
+        if (id === blockedStream) resolve();
+      };
+    });
+
+    const opened = new Promise<void>((resolve) => {
+      client.onOpen = (id) => {
+        events.push(`open:${id}`);
+        // Resolve once both opens have been synchronously delivered.
+        if (events.includes(`open:${blockedStream}`) && events.includes(`open:${okStream}`)) resolve();
+      };
+    });
+
+    let okData = "";
+    const okRoundtrip = new Promise<void>((resolve, reject) => {
+      client.onData = (id, data) => {
+        if (id !== okStream) return;
+        okData += new TextDecoder().decode(data);
+        if (okData.includes("ok\n")) resolve();
+      };
+      // `client.onError` is already set above; we rely on the events list.
+      // If okStream errors, the assertions below will fail.
+      void reject;
+    });
+
+    client.open(blockedStream, "8.8.8.8", echoPort + 1);
+    client.open(okStream, "8.8.8.8", echoPort);
+    client.send(okStream, new TextEncoder().encode("ok\n"));
+
+    await withTimeout(opened, 2_000, "expected synchronous onOpen callbacks");
+
+    const err = await withTimeout(blockedError, 2_000, "expected stream-level ERROR for blocked target");
+    assert.equal(err.code, 1);
+    await withTimeout(blockedClosed, 2_000, "expected blocked stream to close after ERROR");
+
+    await withTimeout(okRoundtrip, 2_000, "expected ok stream to remain usable after ERROR");
+    assert.ok(okData.includes("ok\n"));
+
+    // Ensure `onOpen` was invoked before `onError` for the blocked stream.
+    assert.ok(events.indexOf(`open:${blockedStream}`) !== -1);
+    assert.ok(events.indexOf(`error:${blockedStream}:1`) !== -1);
+    assert.ok(events.indexOf(`open:${blockedStream}`) < events.indexOf(`error:${blockedStream}:1`));
+
+    try {
+      client.close(okStream, { fin: true });
+      await client.shutdown();
+    } finally {
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
   it("OPEN encoding matches the gateway's expectations", () => {
     // Lightweight invariant test: ensure OPEN payload encoder can be decoded by
     // the gateway-side codec. This catches accidental endianness regressions.
