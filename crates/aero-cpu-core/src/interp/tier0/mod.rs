@@ -19,12 +19,9 @@ mod ops_x87;
 use crate::cpuid::{CpuFeatureSet, CpuFeatures};
 use crate::exception::{AssistReason, Exception};
 use crate::fpu::FpKind;
-use crate::linear_mem::{
-    contiguous_masked_start, read_u16_wrapped, read_u32_wrapped, read_u64_wrapped,
-    write_u16_wrapped, write_u32_wrapped, write_u64_wrapped,
-};
+use crate::linear_mem::{contiguous_masked_start, write_u16_wrapped, write_u32_wrapped, write_u64_wrapped};
 use crate::mem::CpuBus;
-use crate::state::{CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};
+use crate::state::{mask_bits, CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};
 use aero_x86::{DecodedInst, Mnemonic};
 
 /// Configuration inputs for the Tier-0 interpreter.
@@ -103,14 +100,22 @@ fn atomic_rmw_sized<B: CpuBus, R>(
     // (32-bit wrap in non-long modes, A20 alias wrap in real/v8086 with A20 off).
     // We cannot use `CpuBus::atomic_rmw` because it assumes a contiguous linear
     // range starting at `addr`.
-    let old = match bits {
-        8 => bus.read_u8(state.apply_a20(addr))? as u64,
-        16 => read_u16_wrapped(state, bus, addr)? as u64,
-        32 => read_u32_wrapped(state, bus, addr)? as u64,
-        64 => read_u64_wrapped(state, bus, addr)?,
-        _ => return Err(Exception::InvalidOpcode),
-    };
+    //
+    // `atomic_rmw` also has write-intent semantics even when `new == old`. To
+    // preserve that behavior here, read each byte through `CpuBus::atomic_rmw`
+    // (so paging-aware busses perform write-intent translation/permission
+    // checks) while still applying `CpuState::apply_a20` per byte.
+    let mut old = 0u64;
+    for i in 0..len {
+        let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
+        let b = bus.atomic_rmw::<u8, _>(byte_addr, |old| (old, old))?;
+        old |= (b as u64) << (i * 8);
+    }
+    let mask = mask_bits(bits);
+    old &= mask;
+
     let (new, ret) = f(old);
+    let new = new & mask;
     if new != old {
         match bits {
             8 => bus.write_u8(state.apply_a20(addr), new as u8)?,

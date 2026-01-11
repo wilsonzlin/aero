@@ -111,23 +111,13 @@ fn exec_cmpxchg8b<B: CpuBus>(
         ((state.read_reg(Register::ECX) as u64) << 32) | (state.read_reg(Register::EBX) as u64);
 
     let (old, swapped) = if instr.has_lock_prefix() {
-        if let Some(start) = contiguous_masked_start(state, addr, 8) {
-            bus.atomic_rmw::<u64, _>(start, |old| {
-                if old == expected {
-                    (replacement, (old, true))
-                } else {
-                    (old, (old, false))
-                }
-            })?
-        } else {
-            let old = read_u64_wrapped(state, bus, addr)?;
+        super::atomic_rmw_sized(state, bus, addr, 64, |old| {
             if old == expected {
-                write_u64_wrapped(state, bus, addr, replacement)?;
-                (old, true)
+                (replacement, (old, true))
             } else {
-                (old, false)
+                (old, (old, false))
             }
-        }
+        })?
     } else {
         let old = read_u64_wrapped(state, bus, addr)?;
         if old == expected {
@@ -175,7 +165,12 @@ fn exec_cmpxchg16b<B: CpuBus>(
                 }
             })?
         } else {
-            let old = read_u128_wrapped(state, bus, addr)?;
+            let mut buf = [0u8; 16];
+            for i in 0..buf.len() {
+                let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
+                buf[i] = bus.atomic_rmw::<u8, _>(byte_addr, |old| (old, old))?;
+            }
+            let old = u128::from_le_bytes(buf);
             if old == expected {
                 write_u128_wrapped(state, bus, addr, replacement)?;
                 (old, true)

@@ -96,6 +96,31 @@ fn setup_long4_4k(
     mem.write_u64(pt_base + 8, pte1);
 }
 
+fn setup_pae_4k(
+    mem: &mut impl MemoryBus,
+    pdpt_base: u64,
+    pd_base: u64,
+    pt_base: u64,
+    pte0: u64,
+    pte511: u64,
+) {
+    // IA-32e PDPT (PAE) entries do not have RW/US bits; only bit 0 (P) and a
+    // handful of cache/AVL bits are allowed. Keep it minimal to avoid reserved
+    // bit faults during the walk.
+    mem.write_u64(pdpt_base + 0 * 8, pd_base | PTE_P);
+    mem.write_u64(pdpt_base + 3 * 8, pd_base | PTE_P);
+
+    // Point both PD[0] and PD[511] at the same PT so we can map 0x0000_0000 and
+    // 0xFFFF_F000 with a single 4KiB page table.
+    let pde_flags = PTE_P | PTE_RW | PTE_US;
+    mem.write_u64(pd_base + 0 * 8, pt_base | pde_flags);
+    mem.write_u64(pd_base + 511 * 8, pt_base | pde_flags);
+
+    // PTE[0] and PTE[511]
+    mem.write_u64(pt_base + 0 * 8, pte0);
+    mem.write_u64(pt_base + 511 * 8, pte511);
+}
+
 fn long_state(pml4_base: u64, efer_extra: u64, cpl: u8) -> CpuState {
     let mut state = CpuState::new(CpuMode::Long);
     state.segments.cs.selector = (state.segments.cs.selector & !0b11) | (cpl as u16 & 0b11);
@@ -103,6 +128,17 @@ fn long_state(pml4_base: u64, efer_extra: u64, cpl: u8) -> CpuState {
     state.control.cr3 = pml4_base;
     state.control.cr4 = CR4_PAE;
     state.msr.efer = EFER_LME | efer_extra;
+    state.update_mode();
+    state
+}
+
+fn pae_state(pdpt_base: u64, efer_extra: u64, cpl: u8) -> CpuState {
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.segments.cs.selector = (state.segments.cs.selector & !0b11) | (cpl as u16 & 0b11);
+    state.control.cr0 = CR0_PE | CR0_PG;
+    state.control.cr3 = pdpt_base;
+    state.control.cr4 = CR4_PAE;
+    state.msr.efer = efer_extra;
     state.update_mode();
     state
 }
@@ -357,6 +393,46 @@ fn nx_fault_when_nxe_enabled() {
 }
 
 #[test]
+fn tier0_fetch_wrapping_32bit_linear_address_respects_nx() {
+    let mut phys = TestMemory::new(0x20000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+    let pt_base = 0x3000u64;
+    let low_page = 0x4000u64;
+    let high_page = 0x5000u64;
+
+    setup_pae_4k(
+        &mut phys,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        low_page | PTE_P | PTE_RW | PTE_US | PTE_NX,
+        high_page | PTE_P | PTE_RW | PTE_US,
+    );
+
+    // Place `mov al, imm8` such that the opcode byte is at 0xFFFF_FFFF and the
+    // immediate byte wraps to 0x0000_0000. The low page is marked NX, so the
+    // instruction fetch must #PF there.
+    phys.write_u8_raw(high_page + 0xfff, 0xB0);
+    phys.write_u8_raw(low_page + 0x000, 0x5A);
+
+    let mut bus = PagingBus::new(phys);
+    let mut state = pae_state(pdpt_base, EFER_NXE, 0);
+    state.set_rip(0xFFFF_FFFF);
+
+    let err = step(&mut state, &mut bus).unwrap_err();
+    assert_eq!(
+        err,
+        Exception::PageFault {
+            addr: 0,
+            error_code: (1 << 0) | (1 << 4), // P=1, I/D=1
+        }
+    );
+    assert_eq!(state.control.cr2, 0);
+}
+
+#[test]
 fn non_canonical_address_in_long_mode_is_gp0() {
     let phys = TestMemory::new(0x2000);
     let mut bus = PagingBus::new(phys);
@@ -594,4 +670,53 @@ fn atomic_rmw_faults_on_user_read_only_pages() {
             error_code: (1 << 0) | (1 << 1) | (1 << 2),
         })
     );
+}
+
+#[test]
+fn tier0_locked_rmw_wrap_faults_with_write_intent_even_if_no_store() {
+    // Regression test: Tier-0 must preserve `CpuBus::atomic_rmw` write-intent
+    // semantics even when a locked RMW crosses the 32-bit linear-address wrap.
+    //
+    // Without this, a LOCKed no-op update (e.g. ADD [mem], 0) could incorrectly
+    // succeed on read-only pages when the access wraps across 4GiB.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+    let pt_base = 0x3000u64;
+    let low_page = 0x4000u64;
+    let high_page = 0x5000u64;
+
+    // Map 0x0000_0000 as present/user but read-only, and 0xFFFF_F000 as present/user/writable.
+    setup_pae_4k(
+        &mut phys,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        low_page | PTE_P | PTE_US,
+        high_page | PTE_P | PTE_RW | PTE_US,
+    );
+
+    // `lock add dword ptr [0xFFFF_FFFF], 0` -- the dword operand wraps to 0x0000_0000.
+    // Encoding: F0 81 05 <disp32> <imm32>
+    phys.load(
+        high_page,
+        &[
+            0xF0, 0x81, 0x05, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+        ],
+    );
+
+    let mut bus = PagingBus::new(phys);
+    let mut state = pae_state(pdpt_base, 0, 3);
+    state.set_rip(0xFFFF_F000);
+
+    let err = step(&mut state, &mut bus).unwrap_err();
+    assert_eq!(
+        err,
+        Exception::PageFault {
+            addr: 0,
+            error_code: (1 << 0) | (1 << 1) | (1 << 2), // P=1, W=1, U=1
+        }
+    );
+    assert_eq!(state.control.cr2, 0);
 }
