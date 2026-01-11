@@ -2,7 +2,7 @@ use crate::clock::Clock;
 use crate::irq::IrqLine;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use std::cell::RefCell;
@@ -83,186 +83,17 @@ pub struct RtcCmos<C: Clock, I: IrqLine> {
     reg_b: u8,
     reg_c_flags: u8,
     offset_seconds: i64,
+    /// Nanosecond phase offset applied when computing second boundaries from the clock.
+    ///
+    /// This allows snapshot restore paths to preserve sub-second alignment even when the host
+    /// clock's fractional seconds differ from the snapshot moment.
+    phase_offset_ns: u32,
     set_mode: bool,
     frozen_seconds: i64,
     last_rtc_seconds: i64,
     periodic_interval_ns: Option<u128>,
     next_periodic_ns: Option<u128>,
     irq_level: bool,
-}
-
-impl<C: Clock, I: IrqLine> IoSnapshot for RtcCmos<C, I> {
-    const DEVICE_ID: [u8; 4] = *b"RTCC";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
-
-    fn save_state(&self) -> Vec<u8> {
-        const TAG_PORTS: u16 = 1;
-        const TAG_NVRAM: u16 = 2;
-        const TAG_REGS: u16 = 3;
-        const TAG_TIME: u16 = 4;
-        const TAG_PERIODIC: u16 = 5;
-
-        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-
-        w.field_bytes(
-            TAG_PORTS,
-            Encoder::new()
-                .u8(self.index)
-                .bool(self.nmi_disabled)
-                .finish(),
-        );
-
-        w.field_bytes(TAG_NVRAM, Encoder::new().vec_u8(&self.nvram).finish());
-
-        w.field_bytes(
-            TAG_REGS,
-            Encoder::new()
-                .u8(self.reg_a)
-                .u8(self.reg_b)
-                .u8(self.reg_c_flags)
-                .finish(),
-        );
-
-        w.field_bytes(
-            TAG_TIME,
-            Encoder::new()
-                // Store signed seconds in two's complement form.
-                .u64(self.offset_seconds as u64)
-                .u64(self.frozen_seconds as u64)
-                .u64(self.last_rtc_seconds as u64)
-                .finish(),
-        );
-
-        if let Some(interval) = self.periodic_interval_ns {
-            let now_ns = self.clock.now_ns() as u128;
-            let remaining = self
-                .next_periodic_ns
-                .map(|next| next.saturating_sub(now_ns))
-                .unwrap_or(interval);
-
-            w.field_bytes(
-                TAG_PERIODIC,
-                Encoder::new()
-                    .bool(true)
-                    .u64(interval as u64)
-                    .u64((interval >> 64) as u64)
-                    .u64(remaining as u64)
-                    .u64((remaining >> 64) as u64)
-                    .finish(),
-            );
-        } else {
-            w.field_bytes(TAG_PERIODIC, Encoder::new().bool(false).finish());
-        }
-
-        w.finish()
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        const TAG_PORTS: u16 = 1;
-        const TAG_NVRAM: u16 = 2;
-        const TAG_REGS: u16 = 3;
-        const TAG_TIME: u16 = 4;
-        const TAG_PERIODIC: u16 = 5;
-
-        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
-        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
-        // Deterministic baseline for missing fields (forward-compatible snapshots).
-        self.index = 0;
-        self.nmi_disabled = false;
-        self.nvram = [0; CMOS_LEN];
-        self.reg_a = 0x26;
-        self.reg_b = REG_B_24H;
-        self.reg_c_flags = 0;
-        self.offset_seconds = 0;
-        self.set_mode = false;
-        self.frozen_seconds = 0;
-        self.last_rtc_seconds = 0;
-        self.periodic_interval_ns = None;
-        self.next_periodic_ns = None;
-        self.irq_level = false;
-
-        self.init_nvram();
-        let now_ns = self.clock.now_ns();
-        self.set_rtc_seconds(
-            now_ns,
-            datetime_to_unix_seconds(RtcDateTime {
-                year: 2000,
-                month: 1,
-                day: 1,
-                hour: 0,
-                minute: 0,
-                second: 0,
-            }),
-        );
-        self.recompute_periodic(now_ns as u128);
-
-        if let Some(buf) = r.bytes(TAG_PORTS) {
-            let mut d = Decoder::new(buf);
-            self.index = d.u8()?;
-            self.nmi_disabled = d.bool()?;
-            d.finish()?;
-        }
-
-        if let Some(buf) = r.bytes(TAG_NVRAM) {
-            let mut d = Decoder::new(buf);
-            let data = d.vec_u8()?;
-            d.finish()?;
-            for (dst, src) in self.nvram.iter_mut().zip(data.into_iter()) {
-                *dst = src;
-            }
-        }
-
-        if let Some(buf) = r.bytes(TAG_REGS) {
-            let mut d = Decoder::new(buf);
-            self.reg_a = d.u8()?;
-            self.reg_b = d.u8()?;
-            self.reg_c_flags = d.u8()?;
-            d.finish()?;
-        }
-
-        if let Some(buf) = r.bytes(TAG_TIME) {
-            let mut d = Decoder::new(buf);
-            self.offset_seconds = d.u64()? as i64;
-            self.frozen_seconds = d.u64()? as i64;
-            self.last_rtc_seconds = d.u64()? as i64;
-            d.finish()?;
-        }
-
-        self.set_mode = self.reg_b & REG_B_SET != 0;
-
-        if let Some(buf) = r.bytes(TAG_PERIODIC) {
-            let mut d = Decoder::new(buf);
-            let has_interval = d.bool()?;
-            if has_interval {
-                let interval_lo = d.u64()?;
-                let interval_hi = d.u64()?;
-                let remaining_lo = d.u64()?;
-                let remaining_hi = d.u64()?;
-                d.finish()?;
-
-                let interval = (interval_lo as u128) | ((interval_hi as u128) << 64);
-                let remaining = (remaining_lo as u128) | ((remaining_hi as u128) << 64);
-
-                self.periodic_interval_ns = Some(interval);
-                self.next_periodic_ns =
-                    Some((self.clock.now_ns() as u128).saturating_add(remaining));
-            } else {
-                d.finish()?;
-                self.periodic_interval_ns = None;
-                self.next_periodic_ns = None;
-            }
-        } else {
-            self.recompute_periodic(self.clock.now_ns() as u128);
-        }
-
-        // Ensure the IRQ line matches the restored reg_c_flags latch.
-        let asserted = self.reg_c_flags & (REG_C_PF | REG_C_AF | REG_C_UF) != 0;
-        self.irq_level = asserted;
-        self.irq8.set_level(asserted);
-
-        Ok(())
-    }
 }
 
 impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
@@ -292,6 +123,7 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
             reg_b: REG_B_24H,
             reg_c_flags: 0,
             offset_seconds: 0,
+            phase_offset_ns: 0,
             set_mode: false,
             frozen_seconds: 0,
             last_rtc_seconds: 0,
@@ -424,6 +256,7 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
     }
 
     fn rtc_seconds_at(&self, now_ns: u64) -> i64 {
+        let now_ns = now_ns.wrapping_add(u64::from(self.phase_offset_ns));
         if self.set_mode {
             self.frozen_seconds
         } else {
@@ -432,6 +265,7 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
     }
 
     fn set_rtc_seconds(&mut self, now_ns: u64, unix_seconds: i64) {
+        let now_ns = now_ns.wrapping_add(u64::from(self.phase_offset_ns));
         if self.set_mode {
             self.frozen_seconds = unix_seconds;
             self.last_rtc_seconds = unix_seconds;
@@ -497,6 +331,7 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
         if self.set_mode {
             return false;
         }
+        let now_ns = now_ns.wrapping_add(u64::from(self.phase_offset_ns));
         let subsec_ns = (now_ns % 1_000_000_000) as u32;
         subsec_ns >= 1_000_000_000 - 244_000
     }
@@ -605,8 +440,10 @@ impl<C: Clock, I: IrqLine> RtcCmos<C, I> {
             self.last_rtc_seconds = self.frozen_seconds;
         } else if old_set && !new_set {
             self.set_mode = false;
-            self.offset_seconds = self.frozen_seconds - (now_ns / 1_000_000_000) as i64;
-            self.last_rtc_seconds = self.rtc_seconds_at(now_ns);
+            let adjusted = now_ns.wrapping_add(u64::from(self.phase_offset_ns));
+            self.offset_seconds = self.frozen_seconds - (adjusted / 1_000_000_000) as i64;
+            // Leaving SET mode immediately resumes the counter from the frozen value.
+            self.last_rtc_seconds = self.frozen_seconds;
         }
 
         self.reg_b = value;
@@ -704,6 +541,154 @@ impl<C: Clock, I: IrqLine> PortIoDevice for RtcCmos<C, I> {
             }
             _ => {}
         }
+    }
+}
+
+impl<C: Clock, I: IrqLine> IoSnapshot for RtcCmos<C, I> {
+    const DEVICE_ID: [u8; 4] = *b"RTCC";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_INDEX: u16 = 1;
+        const TAG_NVRAM: u16 = 2;
+        const TAG_REGS: u16 = 3;
+        const TAG_TIME: u16 = 4;
+        const TAG_PHASE_REMAINDER_NS: u16 = 5;
+        const TAG_PERIODIC_REMAINING_NS: u16 = 6;
+
+        let now_ns = self.clock.now_ns();
+        let rtc_seconds = self.rtc_seconds_at(now_ns);
+        let phase_remainder_ns =
+            (now_ns.wrapping_add(u64::from(self.phase_offset_ns)) % 1_000_000_000) as u32;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_bytes(
+            TAG_INDEX,
+            Encoder::new().u8(self.index).bool(self.nmi_disabled).finish(),
+        );
+        w.field_bytes(TAG_NVRAM, self.nvram.to_vec());
+        w.field_bytes(
+            TAG_REGS,
+            Encoder::new()
+                .u8(self.reg_a)
+                .u8(self.reg_b)
+                .u8(self.reg_c_flags)
+                .finish(),
+        );
+        w.field_bytes(
+            TAG_TIME,
+            Encoder::new()
+                .bytes(&rtc_seconds.to_le_bytes())
+                .bytes(&self.frozen_seconds.to_le_bytes())
+                .bytes(&self.last_rtc_seconds.to_le_bytes())
+                .finish(),
+        );
+        w.field_u32(TAG_PHASE_REMAINDER_NS, phase_remainder_ns);
+
+        if let Some(next_ns) = self.next_periodic_ns {
+            let remaining = next_ns.saturating_sub(now_ns as u128);
+            w.field_u64(TAG_PERIODIC_REMAINING_NS, remaining as u64);
+        }
+
+        // `irq8` is a host wiring detail; it is intentionally not serialized.
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_INDEX: u16 = 1;
+        const TAG_NVRAM: u16 = 2;
+        const TAG_REGS: u16 = 3;
+        const TAG_TIME: u16 = 4;
+        const TAG_PHASE_REMAINDER_NS: u16 = 5;
+        const TAG_PERIODIC_REMAINING_NS: u16 = 6;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset deterministic state while keeping host wiring (`clock` and `irq8`) attached.
+        self.index = 0;
+        self.nmi_disabled = false;
+        self.nvram = [0; CMOS_LEN];
+        self.reg_a = 0x26;
+        self.reg_b = REG_B_24H;
+        self.reg_c_flags = 0;
+        self.offset_seconds = 0;
+        self.phase_offset_ns = 0;
+        self.set_mode = false;
+        self.frozen_seconds = 0;
+        self.last_rtc_seconds = 0;
+        self.periodic_interval_ns = None;
+        self.next_periodic_ns = None;
+        self.irq_level = false;
+
+        if let Some(buf) = r.bytes(TAG_INDEX) {
+            let mut d = Decoder::new(buf);
+            self.index = d.u8()?;
+            self.nmi_disabled = d.bool()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_NVRAM) {
+            if buf.len() != CMOS_LEN {
+                return Err(SnapshotError::InvalidFieldEncoding("nvram"));
+            }
+            self.nvram.copy_from_slice(buf);
+        }
+
+        if let Some(buf) = r.bytes(TAG_REGS) {
+            let mut d = Decoder::new(buf);
+            self.reg_a = d.u8()?;
+            self.reg_b = d.u8()?;
+            self.reg_c_flags = d.u8()?;
+            d.finish()?;
+        }
+
+        let mut rtc_seconds = self.last_rtc_seconds;
+        if let Some(buf) = r.bytes(TAG_TIME) {
+            let mut d = Decoder::new(buf);
+            let rtc_raw = d.bytes(8)?;
+            rtc_seconds = i64::from_le_bytes(rtc_raw.try_into().expect("slice length checked"));
+            let frozen_raw = d.bytes(8)?;
+            self.frozen_seconds =
+                i64::from_le_bytes(frozen_raw.try_into().expect("slice length checked"));
+            let last_raw = d.bytes(8)?;
+            self.last_rtc_seconds =
+                i64::from_le_bytes(last_raw.try_into().expect("slice length checked"));
+            d.finish()?;
+        }
+
+        self.set_mode = (self.reg_b & REG_B_SET) != 0;
+
+        let now_ns = self.clock.now_ns();
+        if let Some(phase_remainder_ns) = r.u32(TAG_PHASE_REMAINDER_NS)? {
+            let now_mod = (now_ns % 1_000_000_000) as u32;
+            self.phase_offset_ns =
+                (phase_remainder_ns.wrapping_add(1_000_000_000u32).wrapping_sub(now_mod))
+                    % 1_000_000_000u32;
+        }
+
+        if !self.set_mode {
+            let adjusted = now_ns.wrapping_add(u64::from(self.phase_offset_ns));
+            self.offset_seconds = rtc_seconds - (adjusted / 1_000_000_000) as i64;
+        }
+
+        // Recompute periodic interval from the restored registers, then re-anchor the next tick
+        // based on the stored remaining time.
+        self.recompute_periodic(now_ns as u128);
+        if let Some(remaining) = r.u64(TAG_PERIODIC_REMAINING_NS)? {
+            if self.periodic_interval_ns.is_some() {
+                self.next_periodic_ns = Some(now_ns as u128 + remaining as u128);
+            }
+        }
+
+        // Re-drive IRQ8 based on the restored latch bits so pending level-triggered interrupts
+        // are preserved across restore.
+        let asserted = self.reg_c_flags & (REG_C_PF | REG_C_AF | REG_C_UF) != 0;
+        self.irq_level = asserted;
+        self.irq8.set_level(asserted);
+
+        Ok(())
     }
 }
 

@@ -448,22 +448,16 @@ impl IoSnapshot for PciConfigMechanism1 {
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDR: u16 = 1;
-
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-        w.field_u32(TAG_ADDR, self.addr);
+        w.field_u32(TAG_ADDR, self.addr & !0x3);
         w.finish()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_ADDR: u16 = 1;
-
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
-        if let Some(addr) = r.u32(TAG_ADDR)? {
-            self.addr = addr & !0x3;
-        }
-
+        self.addr = r.u32(TAG_ADDR)?.unwrap_or(0) & !0x3;
         Ok(())
     }
 }

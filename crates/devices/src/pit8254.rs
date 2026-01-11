@@ -366,151 +366,6 @@ pub struct Pit8254 {
     irq0_callback: Option<Box<dyn FnMut() + 'static>>,
 }
 
-impl IoSnapshot for Pit8254 {
-    const DEVICE_ID: [u8; 4] = *b"PIT4";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
-
-    fn save_state(&self) -> Vec<u8> {
-        const TAG_NS_REMAINDER: u16 = 1;
-        const TAG_IRQ0_PULSES: u16 = 2;
-        const TAG_CHANNELS: u16 = 3;
-
-        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-
-        w.field_bytes(
-            TAG_NS_REMAINDER,
-            Encoder::new()
-                .u64(self.ns_remainder as u64)
-                .u64((self.ns_remainder >> 64) as u64)
-                .finish(),
-        );
-        w.field_u64(TAG_IRQ0_PULSES, self.irq0_pulses);
-
-        let mut enc = Encoder::new().u32(self.channels.len() as u32);
-        for ch in &self.channels {
-            let access_bits = ch.access_mode.status_bits();
-            let write_phase = match ch.write_phase {
-                BytePhase::Low => 0u8,
-                BytePhase::High => 1u8,
-            };
-            let read_phase = match ch.read_phase {
-                BytePhase::Low => 0u8,
-                BytePhase::High => 1u8,
-            };
-
-            enc = enc
-                .u8(ch.mode)
-                .bool(ch.bcd)
-                .u8(access_bits)
-                .u8(write_phase)
-                .u8(read_phase)
-                .u8(ch.write_latch_low)
-                .bool(ch.null_count)
-                .u32(ch.reload)
-                .u32(ch.phase_ticks);
-
-            if let Some(latched) = ch.latched_count {
-                let phase = match latched.phase {
-                    BytePhase::Low => 0u8,
-                    BytePhase::High => 1u8,
-                };
-                enc = enc.bool(true).u16(latched.value).u8(phase);
-            } else {
-                enc = enc.bool(false);
-            }
-
-            if let Some(status) = ch.latched_status {
-                enc = enc.bool(true).u8(status);
-            } else {
-                enc = enc.bool(false);
-            }
-        }
-        w.field_bytes(TAG_CHANNELS, enc.finish());
-
-        w.finish()
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        const TAG_NS_REMAINDER: u16 = 1;
-        const TAG_IRQ0_PULSES: u16 = 2;
-        const TAG_CHANNELS: u16 = 3;
-
-        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
-        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
-        // Preserve host wiring (`irq0_callback`) while restoring deterministic PIT state.
-        self.channels = [Channel::default(); 3];
-        self.ns_remainder = 0;
-        self.irq0_pulses = 0;
-
-        if let Some(buf) = r.bytes(TAG_NS_REMAINDER) {
-            let mut d = Decoder::new(buf);
-            let lo = d.u64()?;
-            let hi = d.u64()?;
-            d.finish()?;
-            self.ns_remainder = (lo as u128) | ((hi as u128) << 64);
-        }
-
-        self.irq0_pulses = r.u64(TAG_IRQ0_PULSES)?.unwrap_or(0);
-
-        if let Some(buf) = r.bytes(TAG_CHANNELS) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-
-            for idx in 0..count {
-                let mode = d.u8()?;
-                let bcd = d.bool()?;
-                let access_bits = d.u8()? & 0b11;
-                let write_phase = d.u8()?;
-                let read_phase = d.u8()?;
-                let write_latch_low = d.u8()?;
-                let null_count = d.bool()?;
-                let reload = d.u32()?;
-                let phase_ticks = d.u32()?;
-
-                let latched_count = if d.bool()? {
-                    let value = d.u16()?;
-                    let phase = match d.u8()? {
-                        1 => BytePhase::High,
-                        _ => BytePhase::Low,
-                    };
-                    Some(LatchedValue { value, phase })
-                } else {
-                    None
-                };
-
-                let latched_status = if d.bool()? { Some(d.u8()?) } else { None };
-
-                if idx < self.channels.len() {
-                    self.channels[idx] = Channel {
-                        mode,
-                        bcd,
-                        access_mode: AccessMode::from_bits(access_bits),
-                        write_phase: match write_phase {
-                            1 => BytePhase::High,
-                            _ => BytePhase::Low,
-                        },
-                        read_phase: match read_phase {
-                            1 => BytePhase::High,
-                            _ => BytePhase::Low,
-                        },
-                        write_latch_low,
-                        null_count,
-                        reload,
-                        phase_ticks,
-                        latched_count,
-                        latched_status,
-                    };
-                }
-            }
-
-            d.finish()?;
-        }
-
-        Ok(())
-    }
-}
-
 impl Pit8254 {
     /// Creates a PIT with no IRQ output connected.
     pub fn new() -> Self {
@@ -666,6 +521,137 @@ impl Pit8254 {
         let mode_bits = (val >> 1) & 0b111;
         let bcd = (val & 0b1) != 0;
         self.channels[channel].set_mode(access, mode_bits, bcd);
+    }
+}
+
+impl IoSnapshot for Pit8254 {
+    const DEVICE_ID: [u8; 4] = *b"PIT4";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_NS_REMAINDER: u16 = 1;
+        const TAG_IRQ0_PULSES: u16 = 2;
+        const TAG_CHANNELS: u16 = 3;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        // `ns_remainder` is always < 1e9, but keep it as u64 for clarity.
+        w.field_u64(TAG_NS_REMAINDER, self.ns_remainder as u64);
+        w.field_u64(TAG_IRQ0_PULSES, self.irq0_pulses);
+
+        let mut enc = Encoder::new().u32(self.channels.len() as u32);
+        for ch in &self.channels {
+            let write_phase = match ch.write_phase {
+                BytePhase::Low => 0u8,
+                BytePhase::High => 1u8,
+            };
+            let read_phase = match ch.read_phase {
+                BytePhase::Low => 0u8,
+                BytePhase::High => 1u8,
+            };
+
+            enc = enc
+                .u8(ch.mode)
+                .bool(ch.bcd)
+                .u8(ch.access_mode.status_bits())
+                .u8(write_phase)
+                .u8(read_phase)
+                .u8(ch.write_latch_low)
+                .bool(ch.null_count)
+                .u32(ch.reload)
+                .u32(ch.phase_ticks);
+
+            if let Some(latched) = ch.latched_count {
+                let phase = match latched.phase {
+                    BytePhase::Low => 0u8,
+                    BytePhase::High => 1u8,
+                };
+                enc = enc.bool(true).u16(latched.value).u8(phase);
+            } else {
+                enc = enc.bool(false);
+            }
+
+            if let Some(status) = ch.latched_status {
+                enc = enc.bool(true).u8(status);
+            } else {
+                enc = enc.bool(false);
+            }
+        }
+        w.field_bytes(TAG_CHANNELS, enc.finish());
+
+        // `irq0_callback` is a host wiring detail; it is intentionally not serialized.
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_NS_REMAINDER: u16 = 1;
+        const TAG_IRQ0_PULSES: u16 = 2;
+        const TAG_CHANNELS: u16 = 3;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Preserve host wiring while resetting to a deterministic baseline.
+        let irq0_callback = self.irq0_callback.take();
+        *self = Self::default();
+        self.irq0_callback = irq0_callback;
+
+        if let Some(ns_rem) = r.u64(TAG_NS_REMAINDER)? {
+            self.ns_remainder = ns_rem as u128;
+        }
+        if let Some(pulses) = r.u64(TAG_IRQ0_PULSES)? {
+            self.irq0_pulses = pulses;
+        }
+
+        if let Some(buf) = r.bytes(TAG_CHANNELS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            for idx in 0..count {
+                let mode = d.u8()?;
+                let bcd = d.bool()?;
+                let access_bits = d.u8()?;
+                let write_phase = d.u8()?;
+                let read_phase = d.u8()?;
+                let write_latch_low = d.u8()?;
+                let null_count = d.bool()?;
+                let reload = d.u32()?;
+                let phase_ticks = d.u32()?;
+
+                let latched_count = if d.bool()? {
+                    let value = d.u16()?;
+                    let phase = match d.u8()? {
+                        1 => BytePhase::High,
+                        _ => BytePhase::Low,
+                    };
+                    Some(LatchedValue { value, phase })
+                } else {
+                    None
+                };
+
+                let latched_status = if d.bool()? { Some(d.u8()?) } else { None };
+
+                if idx < self.channels.len() {
+                    let ch = &mut self.channels[idx];
+                    ch.mode = mode;
+                    ch.bcd = bcd;
+                    ch.access_mode = AccessMode::from_bits(access_bits);
+                    ch.write_phase = if write_phase == 1 {
+                        BytePhase::High
+                    } else {
+                        BytePhase::Low
+                    };
+                    ch.read_phase = if read_phase == 1 { BytePhase::High } else { BytePhase::Low };
+                    ch.write_latch_low = write_latch_low;
+                    ch.null_count = null_count;
+                    ch.reload = reload;
+                    ch.phase_ticks = phase_ticks;
+                    ch.latched_count = latched_count;
+                    ch.latched_status = latched_status;
+                }
+            }
+            d.finish()?;
+        }
+
+        Ok(())
     }
 }
 

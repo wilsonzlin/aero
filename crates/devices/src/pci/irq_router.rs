@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{

@@ -1,9 +1,7 @@
 use crate::clock::Clock;
 use crate::ioapic::GsiSink;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
-};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 
 pub const HPET_MMIO_BASE: u64 = 0xFED0_0000;
 pub const HPET_MMIO_SIZE: u64 = 0x400;

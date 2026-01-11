@@ -133,6 +133,10 @@ pub struct PciConfigSpace {
     bars: [PciBarState; 6],
 }
 
+/// Serializable PCI config-space runtime state.
+///
+/// Captures the guest-visible config-space bytes plus the internal BAR decode/probe state needed
+/// to restore deterministic read/write behavior.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PciConfigSpaceState {
     pub bytes: [u8; PCI_CONFIG_SPACE_SIZE],

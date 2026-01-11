@@ -304,14 +304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-jit-proto"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.10.0",
- "perf",
-]
-
-[[package]]
 name = "aero-jit-x86"
 version = "0.1.0"
 dependencies = [
