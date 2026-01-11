@@ -16,6 +16,7 @@ const rustToolchainTomlPath = path.join(repoRoot, "rust-toolchain.toml");
 const toolchainsJsonPath = path.join(repoRoot, "scripts/toolchains.json");
 const wasmBuildScriptPath = path.join(repoRoot, "web/scripts/build_wasm.mjs");
 const justfilePath = path.join(repoRoot, "justfile");
+const devcontainerDockerfilePath = path.join(repoRoot, ".devcontainer/Dockerfile");
 
 const rustToolchainToml = readFileSync(rustToolchainTomlPath, "utf8");
 const channelMatch = rustToolchainToml.match(/^\s*channel\s*=\s*"([^"]+)"\s*$/m);
@@ -78,6 +79,26 @@ for (let i = 0; i < justfileLines.length; i += 1) {
     if (/--toolchain\s+nightly\b/.test(trimmed)) {
         fail(`justfile:${i + 1} references unpinned '--toolchain nightly'; use scripts/toolchains.json (rust.nightlyWasm).`);
     }
+}
+
+const devcontainerDockerfile = readFileSync(devcontainerDockerfilePath, "utf8");
+if (
+    !devcontainerDockerfile.includes("rust-toolchain.toml") ||
+    !devcontainerDockerfile.includes("scripts/toolchains.json")
+) {
+    fail(
+        ".devcontainer/Dockerfile must install Rust toolchains from the repo's pinned sources " +
+            "(rust-toolchain.toml + scripts/toolchains.json).",
+    );
+}
+if (/\b--default-toolchain\s+stable\b/.test(devcontainerDockerfile)) {
+    fail(".devcontainer/Dockerfile uses floating stable ('--default-toolchain stable'); it must install the pinned version.");
+}
+if (/\brustup\s+toolchain\s+install\s+nightly\b/.test(devcontainerDockerfile)) {
+    fail(".devcontainer/Dockerfile installs floating nightly ('rustup toolchain install nightly'); it must use the pinned nightly.");
+}
+if (/--toolchain\s+nightly\b/.test(devcontainerDockerfile)) {
+    fail(".devcontainer/Dockerfile references '--toolchain nightly'; it must use the pinned nightly-YYYY-MM-DD toolchain.");
 }
 
 process.stdout.write(

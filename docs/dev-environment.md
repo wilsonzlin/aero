@@ -17,7 +17,9 @@ Aero’s canonical workflows assume a small set of native tooling (Rust stable +
 
 The container image installs:
 
-- Rust toolchains: **stable + nightly**
+- Rust toolchains: **pinned stable + pinned nightly**
+  - Stable is pinned in `rust-toolchain.toml`.
+  - The threaded-WASM nightly toolchain is pinned in `scripts/toolchains.json` (`rust.nightlyWasm`).
   - `wasm32-unknown-unknown` target for both
   - `rust-src` for nightly (required for `-Z build-std` threaded/shared-memory WASM builds)
 - Node.js **v20.11.1** (matching CI’s pinned Node 20.x version)

@@ -5,6 +5,7 @@ on:
     paths:
       - ".devcontainer/**"
       - "scripts/agent-env.sh"
+      - "scripts/toolchains.json"
       - "rust-toolchain.toml"
       - "package.json"
       - "web/package.json"
@@ -13,6 +14,7 @@ on:
     paths:
       - ".devcontainer/**"
       - "scripts/agent-env.sh"
+      - "scripts/toolchains.json"
       - "rust-toolchain.toml"
       - "package.json"
       - "web/package.json"
@@ -30,4 +32,3 @@ jobs:
 
       - name: Build dev container image
         run: docker build -f .devcontainer/Dockerfile -t aero-devcontainer .
-

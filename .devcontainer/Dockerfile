@@ -76,12 +76,18 @@ RUN arch="$(dpkg --print-architecture)" \
 USER vscode
 ENV PATH="/home/vscode/.cargo/bin:${PATH}"
 
-RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
-  && rustup toolchain install nightly --profile minimal \
-  && rustup target add wasm32-unknown-unknown --toolchain stable \
-  && rustup target add wasm32-unknown-unknown --toolchain nightly \
-  && rustup component add rustfmt clippy \
-  && rustup component add rust-src --toolchain nightly
+COPY --chown=vscode:vscode rust-toolchain.toml scripts/toolchains.json /tmp/aero-toolchains/
+
+RUN stable_toolchain="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]\+\)".*/\1/p' /tmp/aero-toolchains/rust-toolchain.toml | head -n1)" \
+  && wasm_nightly="$(node -p "require('/tmp/aero-toolchains/toolchains.json').rust.nightlyWasm")" \
+  && if [[ -z "${stable_toolchain}" ]]; then echo "error: unable to determine pinned stable toolchain from rust-toolchain.toml" >&2; exit 1; fi \
+  && if [[ -z "${wasm_nightly}" ]]; then echo "error: unable to determine rust.nightlyWasm from scripts/toolchains.json" >&2; exit 1; fi \
+  && curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${stable_toolchain}" \
+  && rustup toolchain install "${wasm_nightly}" --profile minimal \
+  && rustup target add wasm32-unknown-unknown --toolchain "${stable_toolchain}" \
+  && rustup target add wasm32-unknown-unknown --toolchain "${wasm_nightly}" \
+  && rustup component add rustfmt clippy --toolchain "${stable_toolchain}" \
+  && rustup component add rust-src --toolchain "${wasm_nightly}"
 
 RUN cargo install just --locked
 
