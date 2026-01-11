@@ -19,6 +19,15 @@
 
   #include <windows.h>
 
+  #ifndef LABEL_SECURITY_INFORMATION
+    // Missing in some older SDK header configurations unless targeting Vista+.
+    #define LABEL_SECURITY_INFORMATION 0x00000010L
+  #endif
+
+  #ifndef ERROR_INVALID_SECURITY_DESCR
+    #define ERROR_INVALID_SECURITY_DESCR 1338L
+  #endif
+
 namespace aerogpu {
 namespace win32 {
 
@@ -113,6 +122,53 @@ inline bool TryBuildLowIntegritySecurityDescriptor(PSECURITY_DESCRIPTOR* out_sd)
   return true;
 }
 
+inline bool TrySetKernelObjectLowIntegrityLabel(HANDLE handle, DWORD* out_error) {
+  if (out_error) {
+    *out_error = ERROR_SUCCESS;
+  }
+  if (!handle) {
+    if (out_error) {
+      *out_error = ERROR_INVALID_HANDLE;
+    }
+    return false;
+  }
+
+  using SetKernelObjectSecurityFn = BOOL(WINAPI*)(HANDLE, SECURITY_INFORMATION, PSECURITY_DESCRIPTOR);
+  static SetKernelObjectSecurityFn set_kernel_object_security = []() -> SetKernelObjectSecurityFn {
+    HMODULE advapi = GetModuleHandleW(L"advapi32.dll");
+    if (!advapi) {
+      advapi = LoadLibraryW(L"advapi32.dll");
+    }
+    if (!advapi) {
+      return nullptr;
+    }
+    return reinterpret_cast<SetKernelObjectSecurityFn>(GetProcAddress(advapi, "SetKernelObjectSecurity"));
+  }();
+
+  if (!set_kernel_object_security) {
+    if (out_error) {
+      *out_error = ERROR_PROC_NOT_FOUND;
+    }
+    return false;
+  }
+
+  PSECURITY_DESCRIPTOR sd = nullptr;
+  if (!TryBuildLowIntegritySecurityDescriptor(&sd) || !sd) {
+    if (out_error) {
+      *out_error = ERROR_INVALID_SECURITY_DESCR;
+    }
+    return false;
+  }
+
+  const BOOL ok = set_kernel_object_security(handle, LABEL_SECURITY_INFORMATION, sd);
+  const DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+  LocalFree(sd);
+  if (out_error) {
+    *out_error = err;
+  }
+  return ok != FALSE;
+}
+
 inline HANDLE CreateFileMappingWBestEffortLowIntegrity(
     HANDLE hFile,
     DWORD flProtect,
@@ -137,7 +193,21 @@ inline HANDLE CreateFileMappingWBestEffortLowIntegrity(
     const DWORD err = GetLastError();
     LocalFree(sddl_sd);
     if (mapping) {
-      if (log_enabled && lpName && err != ERROR_ALREADY_EXISTS) {
+      if (err == ERROR_ALREADY_EXISTS) {
+        DWORD set_err = ERROR_SUCCESS;
+        const bool relabeled = TrySetKernelObjectLowIntegrityLabel(mapping, &set_err);
+        if (log_enabled && lpName && relabeled) {
+          OutputDebugStringW(L"aerogpu: applied Low IL label to existing file mapping: ");
+          OutputDebugStringW(lpName);
+          OutputDebugStringW(L"\n");
+        } else if (log_enabled && lpName && !relabeled) {
+          OutputDebugStringW(L"aerogpu: failed to apply Low IL label to existing file mapping: ");
+          OutputDebugStringW(lpName);
+          OutputDebugStringW(L" err=");
+          output_debug_hex_dword(set_err);
+          OutputDebugStringW(L"\n");
+        }
+      } else if (log_enabled && lpName) {
         OutputDebugStringW(L"aerogpu: created file mapping with Low IL SDDL: ");
         OutputDebugStringW(lpName);
         OutputDebugStringW(L"\n");
@@ -161,10 +231,22 @@ inline HANDLE CreateFileMappingWBestEffortLowIntegrity(
   sa.lpSecurityDescriptor = null_dacl_ok ? &null_dacl_sd : nullptr;
   HANDLE mapping = CreateFileMappingW(hFile, &sa, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
   const DWORD err = GetLastError();
-  if (log_enabled && lpName && mapping && err != ERROR_ALREADY_EXISTS) {
-    OutputDebugStringW(L"aerogpu: created file mapping with NULL DACL (no explicit MIC label): ");
-    OutputDebugStringW(lpName);
-    OutputDebugStringW(L"\n");
+  if (mapping) {
+    DWORD set_err = ERROR_SUCCESS;
+    const bool relabeled = TrySetKernelObjectLowIntegrityLabel(mapping, &set_err);
+    if (log_enabled && lpName && relabeled && err != ERROR_ALREADY_EXISTS) {
+      OutputDebugStringW(L"aerogpu: created file mapping with NULL DACL; applied Low IL label: ");
+      OutputDebugStringW(lpName);
+      OutputDebugStringW(L"\n");
+    } else if (log_enabled && lpName && relabeled && err == ERROR_ALREADY_EXISTS) {
+      OutputDebugStringW(L"aerogpu: opened existing file mapping via NULL DACL; applied Low IL label: ");
+      OutputDebugStringW(lpName);
+      OutputDebugStringW(L"\n");
+    } else if (log_enabled && lpName && !relabeled && err != ERROR_ALREADY_EXISTS) {
+      OutputDebugStringW(L"aerogpu: created file mapping with NULL DACL (no explicit MIC label): ");
+      OutputDebugStringW(lpName);
+      OutputDebugStringW(L"\n");
+    }
   }
   return mapping;
 }
