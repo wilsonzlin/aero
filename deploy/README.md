@@ -92,6 +92,8 @@ Reproduce locally:
 ```bash
 # Full reproduction (requires: node + docker compose + terraform + tflint + helm + kubeconform)
 ./scripts/ci/check-iac.sh
+# Or, if you have `just` installed:
+#   just check-iac
 
 # Deploy manifest labelling/hygiene (requires docker compose)
 node scripts/ci/check-deploy-manifests.mjs
