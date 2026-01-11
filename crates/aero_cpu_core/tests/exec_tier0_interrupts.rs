@@ -316,7 +316,7 @@ fn tier0_executes_int_iretq_cpl3_to_cpl0_stack_switch() {
     cpu.cpu.state.tables.tr.selector = 0x40;
     cpu.cpu.state.tables.tr.base = tss_base;
     cpu.cpu.state.tables.tr.limit = 0x67;
-    cpu.cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    cpu.cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
     cpu.bus.write_u64(tss_base + 4, 0x9000).unwrap();
 
     let mut interp = Tier0Interpreter::new(1024);

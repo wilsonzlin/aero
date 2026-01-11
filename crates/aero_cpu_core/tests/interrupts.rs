@@ -146,7 +146,7 @@ fn int_protected_mode_cpl3_to_cpl0_stack_switch_and_iret_restore() -> Result<(),
     cpu.state.tables.tr.selector = 0x40;
     cpu.state.tables.tr.base = tss_base;
     cpu.state.tables.tr.limit = 0x67;
-    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
     // 32-bit TSS: ESP0 at +4, SS0 at +8.
     mem.write_u32(tss_base + 4, 0x9000).unwrap();
     mem.write_u16(tss_base + 8, 0x10).unwrap();
@@ -300,7 +300,7 @@ fn int_long_mode_cpl3_to_cpl0_uses_rsp0_and_iretq_returns() -> Result<(), CpuExi
     cpu.state.tables.tr.selector = 0x40;
     cpu.state.tables.tr.base = tss_base;
     cpu.state.tables.tr.limit = 0x67;
-    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
     // 64-bit TSS: RSP0 at +4.
     mem.write_u64(tss_base + 4, 0x9000).unwrap();
 
@@ -350,7 +350,7 @@ fn int_long_mode_ist_overrides_rsp0() -> Result<(), CpuExit> {
     cpu.state.tables.tr.selector = 0x40;
     cpu.state.tables.tr.base = tss_base;
     cpu.state.tables.tr.limit = 0x67;
-    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
     mem.write_u64(tss_base + 4, 0x9000).unwrap();
     // 64-bit TSS: IST1 at +0x24.
     mem.write_u64(tss_base + 0x24, 0xA000).unwrap();

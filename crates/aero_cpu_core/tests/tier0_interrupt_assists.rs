@@ -178,7 +178,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     state.tables.tr.selector = 0x28;
     state.tables.tr.base = TSS_BASE;
     state.tables.tr.limit = 0x67;
-    state.tables.tr.access = SEG_ACCESS_PRESENT;
+    state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
 
     // Push sentinel return address on the user stack.
     let sp_pushed = USER_STACK_TOP - 4;

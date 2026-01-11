@@ -361,6 +361,8 @@ impl CpuState {
         if self.tables.tr.is_unusable()
             || !self.tables.tr.is_present()
             || selector_index(self.tables.tr.selector) == 0
+            || self.tables.tr.s()
+            || !matches!(self.tables.tr.typ(), 0x9 | 0xB)
         {
             return Err(Exception::ts(0));
         }
@@ -376,6 +378,8 @@ impl CpuState {
         if self.tables.tr.is_unusable()
             || !self.tables.tr.is_present()
             || selector_index(self.tables.tr.selector) == 0
+            || self.tables.tr.s()
+            || !matches!(self.tables.tr.typ(), 0x9 | 0xB)
         {
             return Err(Exception::ts(0));
         }
@@ -392,6 +396,8 @@ impl CpuState {
         if self.tables.tr.is_unusable()
             || !self.tables.tr.is_present()
             || selector_index(self.tables.tr.selector) == 0
+            || self.tables.tr.s()
+            || !matches!(self.tables.tr.typ(), 0x9 | 0xB)
         {
             return Err(Exception::ts(0));
         }
@@ -405,6 +411,8 @@ impl CpuState {
         if self.tables.tr.is_unusable()
             || !self.tables.tr.is_present()
             || selector_index(self.tables.tr.selector) == 0
+            || self.tables.tr.s()
+            || !matches!(self.tables.tr.typ(), 0x9 | 0xB)
         {
             return Err(Exception::ts(0));
         }
