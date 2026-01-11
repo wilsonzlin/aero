@@ -41,6 +41,10 @@ The KMD contains optional compile-time ABI asserts in:
 
 - `drivers/aerogpu/kmd/include/aerogpu_kmd_wdk_abi_asserts.h`
 
+The asserts header is intentionally inert unless the build defines
+`AEROGPU_KMD_USE_WDK_DDI=1` (treat `=0` as disabled). The MSBuild project does
+this automatically for the Win7 target builds.
+
 To freeze the Win7 ABI in your WDK build, define one or more expected-value
 macros (using values printed by this probe), e.g.:
 
