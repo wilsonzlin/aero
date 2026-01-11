@@ -121,6 +121,19 @@ We treat the WebHID `HIDReportInfo` that the item came from as the authoritative
 
 WebHID also exposes less-common HID locals (`strings`, `designators`) and related min/max fields. These are currently ignored by synthesis (see [Known limitations](#known-limitations)).
 
+### Usage locals: `isRange` vs `usages`
+
+WebHID surfaces both:
+
+- `item.isRange` + `item.usageMinimum` / `item.usageMaximum`
+- `item.usages` (a list)
+
+Synthesis interpretation:
+
+- If `item.isRange == true`, we emit `Usage Minimum` + `Usage Maximum` and ignore `item.usages`.
+- If `item.isRange == false`, we emit one `Usage` per entry in `item.usages` and ignore `item.usageMinimum` / `item.usageMaximum`.
+- Empty `item.usages` is allowed (common for constant/padding fields); in that case no usage locals are emitted for the item.
+
 ### Deterministic per-item emission order
 
 Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching the canonical encoder in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which is called by `webhid.rs`):
