@@ -323,7 +323,7 @@ test:
   fi
 
 test-all:
-  ./scripts/test-all.sh
+  cargo xtask test-all
 
 fmt:
   #!/usr/bin/env bash
