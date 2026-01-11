@@ -52,23 +52,39 @@ function parseArgs(argv) {
     iterations: null,
   };
 
+  const requireValue = (flag, idx) => {
+    const next = argv[idx + 1];
+    // Treat `--flag --other-flag` as missing value (common typo), while still
+    // allowing negative numbers for numeric flags.
+    if (next === undefined || (next.startsWith("-") && !/^-\d/u.test(next))) {
+      // eslint-disable-next-line no-console
+      console.error(`${flag} requires a value`);
+      usage(1);
+    }
+    return next;
+  };
+
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     switch (arg) {
       case "--workspace":
-        opts.workspace = argv[++i];
+        opts.workspace = requireValue("--workspace", i);
+        i += 1;
         break;
       case "--url":
-        opts.url = argv[++i];
+        opts.url = requireValue("--url", i);
+        i += 1;
         break;
       case "--preview":
         opts.preview = true;
         break;
       case "--preview-port":
-        opts.previewPort = Number.parseInt(argv[++i], 10);
+        opts.previewPort = Number.parseInt(requireValue("--preview-port", i), 10);
+        i += 1;
         break;
       case "--perf-runner":
-        opts.perfRunner = argv[++i];
+        opts.perfRunner = requireValue("--perf-runner", i);
+        i += 1;
         if (!opts.perfRunner) {
           // eslint-disable-next-line no-console
           console.error("--perf-runner requires a value");
@@ -80,16 +96,19 @@ function parseArgs(argv) {
         break;
       case "--trace-duration-ms":
         opts.trace = true;
-        opts.traceDurationMs = Number.parseInt(argv[++i], 10);
+        opts.traceDurationMs = Number.parseInt(requireValue("--trace-duration-ms", i), 10);
+        i += 1;
         break;
       case "--include-aero-bench":
         opts.includeAeroBench = true;
         break;
       case "--out-dir":
-        opts.outDir = argv[++i];
+        opts.outDir = requireValue("--out-dir", i);
+        i += 1;
         break;
       case "--iterations":
-        opts.iterations = Number.parseInt(argv[++i], 10);
+        opts.iterations = Number.parseInt(requireValue("--iterations", i), 10);
+        i += 1;
         break;
       case "--help":
         usage(0);
@@ -98,6 +117,10 @@ function parseArgs(argv) {
         if (arg.startsWith("-")) {
           // eslint-disable-next-line no-console
           console.error(`Unknown option: ${arg}`);
+          usage(1);
+        } else if (arg && String(arg).trim() !== "") {
+          // eslint-disable-next-line no-console
+          console.error(`Unexpected argument: ${arg}`);
           usage(1);
         }
         break;

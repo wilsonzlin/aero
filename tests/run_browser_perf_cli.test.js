@@ -135,3 +135,14 @@ test("run_browser_perf.mjs: requires --out-dir", () => {
   assert.match(res.stderr, /--out-dir is required/u);
 });
 
+test("run_browser_perf.mjs: requires values for flags like --url", () => {
+  const res = run(["--url", "--out-dir", "out"]);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /--url requires a value/u);
+});
+
+test("run_browser_perf.mjs: rejects unexpected positional args", () => {
+  const res = run(["--url", "http://example.invalid/", "--out-dir", "out", "extra"]);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /Unexpected argument: extra/u);
+});
