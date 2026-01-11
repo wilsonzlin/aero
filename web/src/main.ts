@@ -2477,6 +2477,27 @@ function renderWebUsbBrokerPanel(): HTMLElement {
     error.textContent = "WebUSB is not available in this browser context.";
   }
 
+  if (supported) {
+    // Keep the panel in sync with broker selection/disconnect events by attaching a MessagePort.
+    const channel = new MessageChannel();
+    usbBroker.attachWorkerPort(channel.port1);
+    channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
+      const data = ev.data as Partial<{ type: string; ok: boolean; error?: string; info?: unknown }> | undefined;
+      if (!data || data.type !== "usb.selected") return;
+      if (data.ok && data.info && typeof data.info === "object") {
+        const info = data.info as { vendorId: number; productId: number; productName?: string };
+        setStatus(info);
+        error.textContent = "";
+      } else {
+        setStatus(null);
+        if (typeof data.error === "string") {
+          error.textContent = data.error;
+        }
+      }
+    });
+    channel.port2.start();
+  }
+
   const selectButton = el("button", {
     text: "Select WebUSB device for passthrough broker",
     disabled: supported ? undefined : "true",
