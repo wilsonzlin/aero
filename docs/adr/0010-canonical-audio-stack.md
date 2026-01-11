@@ -28,7 +28,7 @@ We standardize on the **newer audio stack** as the canonical implementation:
 
 - **HDA device model**: `crates/aero-audio` (`aero_audio::hda`)
 - **virtio-snd device model**: `crates/aero-virtio` (`aero_virtio::devices::snd`)
-- **AudioWorklet + microphone SharedArrayBuffer bridges**: `crates/aero-platform` (`aero_platform::audio::{worklet_bridge,mic_bridge}`)
+- **AudioWorklet + microphone SharedArrayBuffer bridges**: `crates/platform` (`aero_platform::audio::{worklet_bridge,mic_bridge}`)
 
 The legacy `crates/emulator` audio implementation is retained short-term, but is
 **not built by default**. It is gated behind the `emulator/legacy-audio` feature
