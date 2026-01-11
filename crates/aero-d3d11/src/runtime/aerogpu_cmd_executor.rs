@@ -9,14 +9,14 @@ use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
 use aero_gpu::GpuCapabilities;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
-    decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
-    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le, decode_cmd_create_input_layout_blob_le,
+    decode_cmd_create_shader_dxbc_payload_le, decode_cmd_set_vertex_buffers_bindings_le,
+    decode_cmd_upload_resource_payload_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
+    AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -1224,19 +1224,21 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
     ) -> Result<()> {
-        // struct aerogpu_cmd_copy_buffer (48 bytes)
-        if cmd_bytes.len() != 48 {
-            bail!("COPY_BUFFER: expected 48 bytes, got {}", cmd_bytes.len());
-        }
-        let dst_buffer = read_u32_le(cmd_bytes, 8)?;
-        let src_buffer = read_u32_le(cmd_bytes, 12)?;
-        let dst_offset_bytes = read_u64_le(cmd_bytes, 16)?;
-        let src_offset_bytes = read_u64_le(cmd_bytes, 24)?;
-        let size_bytes = read_u64_le(cmd_bytes, 32)?;
-        let flags = read_u32_le(cmd_bytes, 40)?;
+        let cmd = decode_cmd_copy_buffer_le(cmd_bytes)
+            .map_err(|e| anyhow!("COPY_BUFFER: invalid payload: {e:?}"))?;
+        // `AerogpuCmdCopyBuffer` is `repr(C, packed)` (ABI mirror); copy out fields before use to
+        // avoid taking references to packed fields.
+        let dst_buffer = cmd.dst_buffer;
+        let src_buffer = cmd.src_buffer;
+        let dst_offset_bytes = cmd.dst_offset_bytes;
+        let src_offset_bytes = cmd.src_offset_bytes;
+        let size_bytes = cmd.size_bytes;
+        let flags = cmd.flags;
 
         if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
-            bail!("COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet");
+            bail!(
+                "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported (GuestMemory is read-only)"
+            );
         }
         if flags != 0 {
             bail!("COPY_BUFFER: unknown flags {flags:#x}");
@@ -1261,8 +1263,31 @@ impl AerogpuD3d11Executor {
             );
         }
 
+        let dst_copy_end = dst_offset_bytes
+            .checked_add(size_bytes)
+            .ok_or_else(|| anyhow!("COPY_BUFFER: dst range overflows u64"))?;
+
         // Ensure the source buffer reflects any CPU writes from guest memory before copying.
         self.ensure_buffer_uploaded(src_buffer, allocs, guest_mem)?;
+
+        // If the destination is guest-backed and has pending uploads outside the copied region,
+        // upload them now so untouched bytes remain correct.
+        let needs_dst_upload = {
+            let dst = self
+                .resources
+                .buffers
+                .get(&dst_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
+            match dst.dirty.as_ref() {
+                Some(dirty) if dst.backing.is_some() => {
+                    dirty.start < dst_offset_bytes || dirty.end > dst_copy_end
+                }
+                _ => false,
+            }
+        };
+        if needs_dst_upload {
+            self.ensure_buffer_uploaded(dst_buffer, allocs, guest_mem)?;
+        }
 
         // Encode the copy.
         {
@@ -1280,11 +1305,21 @@ impl AerogpuD3d11Executor {
             let src_end = src_offset_bytes
                 .checked_add(size_bytes)
                 .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows u64"))?;
-            let dst_end = dst_offset_bytes
-                .checked_add(size_bytes)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: dst range overflows u64"))?;
-            if src_end > src.size || dst_end > dst.size {
-                bail!("COPY_BUFFER: out of bounds copy");
+            if src_end > src.size {
+                bail!(
+                    "COPY_BUFFER: src out of bounds: offset=0x{:x} size=0x{:x} buffer_size=0x{:x}",
+                    src_offset_bytes,
+                    size_bytes,
+                    src.size
+                );
+            }
+            if dst_copy_end > dst.size {
+                bail!(
+                    "COPY_BUFFER: dst out of bounds: offset=0x{:x} size=0x{:x} buffer_size=0x{:x}",
+                    dst_offset_bytes,
+                    size_bytes,
+                    dst.size
+                );
             }
 
             encoder.copy_buffer_to_buffer(
@@ -1312,26 +1347,28 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
     ) -> Result<()> {
-        // struct aerogpu_cmd_copy_texture2d (64 bytes)
-        if cmd_bytes.len() != 64 {
-            bail!("COPY_TEXTURE2D: expected 64 bytes, got {}", cmd_bytes.len());
-        }
-        let dst_texture = read_u32_le(cmd_bytes, 8)?;
-        let src_texture = read_u32_le(cmd_bytes, 12)?;
-        let dst_mip_level = read_u32_le(cmd_bytes, 16)?;
-        let dst_array_layer = read_u32_le(cmd_bytes, 20)?;
-        let src_mip_level = read_u32_le(cmd_bytes, 24)?;
-        let src_array_layer = read_u32_le(cmd_bytes, 28)?;
-        let dst_x = read_u32_le(cmd_bytes, 32)?;
-        let dst_y = read_u32_le(cmd_bytes, 36)?;
-        let src_x = read_u32_le(cmd_bytes, 40)?;
-        let src_y = read_u32_le(cmd_bytes, 44)?;
-        let width = read_u32_le(cmd_bytes, 48)?;
-        let height = read_u32_le(cmd_bytes, 52)?;
-        let flags = read_u32_le(cmd_bytes, 56)?;
+        let cmd = decode_cmd_copy_texture2d_le(cmd_bytes)
+            .map_err(|e| anyhow!("COPY_TEXTURE2D: invalid payload: {e:?}"))?;
+        // `AerogpuCmdCopyTexture2d` is `repr(C, packed)` (ABI mirror); copy out fields before use
+        // to avoid taking references to packed fields.
+        let dst_texture = cmd.dst_texture;
+        let src_texture = cmd.src_texture;
+        let dst_mip_level = cmd.dst_mip_level;
+        let dst_array_layer = cmd.dst_array_layer;
+        let src_mip_level = cmd.src_mip_level;
+        let src_array_layer = cmd.src_array_layer;
+        let dst_x = cmd.dst_x;
+        let dst_y = cmd.dst_y;
+        let src_x = cmd.src_x;
+        let src_y = cmd.src_y;
+        let width = cmd.width;
+        let height = cmd.height;
+        let flags = cmd.flags;
 
         if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
-            bail!("COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet");
+            bail!(
+                "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported (GuestMemory is read-only)"
+            );
         }
         if flags != 0 {
             bail!("COPY_TEXTURE2D: unknown flags {flags:#x}");
@@ -1345,6 +1382,29 @@ impl AerogpuD3d11Executor {
 
         // Ensure the source texture reflects any CPU writes from guest memory before copying.
         self.ensure_texture_uploaded(src_texture, allocs, guest_mem)?;
+
+        // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle,
+        // upload it now so the untouched pixels remain correct.
+        let needs_dst_upload = {
+            let dst = self
+                .resources
+                .textures
+                .get(&dst_texture)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
+            if dst.backing.is_none() || !dst.dirty {
+                false
+            } else {
+                let dst_is_base = dst_mip_level == 0 && dst_array_layer == 0;
+                let covers_full = dst_x == 0
+                    && dst_y == 0
+                    && width == dst.desc.width
+                    && height == dst.desc.height;
+                dst_is_base && !covers_full
+            }
+        };
+        if needs_dst_upload {
+            self.ensure_texture_uploaded(dst_texture, allocs, guest_mem)?;
+        }
 
         let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
 
@@ -1386,7 +1446,11 @@ impl AerogpuD3d11Executor {
             }
 
             if src.desc.format != dst.desc.format {
-                bail!("COPY_TEXTURE2D: format mismatch");
+                bail!(
+                    "COPY_TEXTURE2D: format mismatch: src={:?} dst={:?}",
+                    src.desc.format,
+                    dst.desc.format
+                );
             }
 
             let src_w = mip_extent(src.desc.width, src_mip_level);
@@ -1394,10 +1458,23 @@ impl AerogpuD3d11Executor {
             let dst_w = mip_extent(dst.desc.width, dst_mip_level);
             let dst_h = mip_extent(dst.desc.height, dst_mip_level);
 
-            if src_x.saturating_add(width) > src_w || src_y.saturating_add(height) > src_h {
+            let src_x_end = src_x
+                .checked_add(width)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src_x+width overflows u32"))?;
+            let src_y_end = src_y
+                .checked_add(height)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src_y+height overflows u32"))?;
+            let dst_x_end = dst_x
+                .checked_add(width)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x+width overflows u32"))?;
+            let dst_y_end = dst_y
+                .checked_add(height)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y+height overflows u32"))?;
+
+            if src_x_end > src_w || src_y_end > src_h {
                 bail!("COPY_TEXTURE2D: src rect out of bounds");
             }
-            if dst_x.saturating_add(width) > dst_w || dst_y.saturating_add(height) > dst_h {
+            if dst_x_end > dst_w || dst_y_end > dst_h {
                 bail!("COPY_TEXTURE2D: dst rect out of bounds");
             }
 
