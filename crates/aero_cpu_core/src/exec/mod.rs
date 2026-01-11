@@ -218,10 +218,13 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     break;
                 }
                 StepExit::BiosInterrupt(vector) => {
-                    cpu.cpu.pending.retire_instruction();
-                    // Real-mode BIOS stubs may use `HLT` as a hypercall boundary after `INT n`.
-                    // Preserve the vector so higher-level glue can dispatch it if desired.
+                    // Tier-0 surfaces BIOS ROM stubs (`HLT` reached after an `INT n`) as a
+                    // `BiosInterrupt` exit. `step()` consumes the recorded vector via
+                    // `take_pending_bios_int()`, but this `Interpreter` trait only returns a
+                    // RIP. Re-store the vector in CPU state so the embedding can observe and
+                    // dispatch it before resuming execution at the stub's `IRET`.
                     cpu.cpu.state.set_pending_bios_int(vector);
+                    cpu.cpu.pending.retire_instruction();
                     break;
                 }
                 StepExit::Assist(AssistReason::Interrupt) => {
@@ -283,16 +286,6 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     }
 
                     // Preserve basic-block behavior: treat this instruction as a block boundary.
-                    break;
-                }
-                StepExit::BiosInterrupt(vector) => {
-                    // Tier-0 surfaces BIOS ROM stubs (`HLT` reached after an `INT n`) as a
-                    // `BiosInterrupt` exit. `step()` consumes the recorded vector via
-                    // `take_pending_bios_int()`, but this `Interpreter` trait only returns a
-                    // RIP. Re-store the vector in CPU state so the embedding can observe and
-                    // dispatch it before resuming execution at the stub's `IRET`.
-                    cpu.cpu.state.set_pending_bios_int(vector);
-                    cpu.cpu.pending.retire_instruction();
                     break;
                 }
                 StepExit::Assist(other) => panic!("unexpected tier0 assist: {other:?}"),

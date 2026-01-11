@@ -157,18 +157,6 @@ impl Default for UsbPassthroughDevice {
 }
 
 impl UsbDeviceModel for UsbPassthroughDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn reset(&mut self) {
         self.actions.clear();
         self.completions.clear();
@@ -320,18 +308,6 @@ impl Default for UsbPassthroughHandle {
 }
 
 impl UsbDeviceModel for UsbPassthroughHandle {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }

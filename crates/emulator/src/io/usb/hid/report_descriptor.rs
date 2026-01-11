@@ -1187,8 +1187,7 @@ mod tests {
 
     #[test]
     fn parse_expands_keyboard_modifier_usage_range() {
-        let kb = UsbHidKeyboard::new();
-        let parsed = parse_report_descriptor(kb.get_hid_report_descriptor()).unwrap();
+        let parsed = parse_report_descriptor(&keyboard::HID_REPORT_DESCRIPTOR).unwrap();
         assert!(!parsed.truncated_ranges);
         assert_eq!(parsed.collections.len(), 1);
 
@@ -1562,6 +1561,18 @@ mod proptests {
     fn normalize_reports(reports: &mut Vec<HidReportInfo>) {
         // A report with zero main items synthesizes to nothing and cannot roundtrip.
         reports.retain(|r| !r.items.is_empty());
+        for report in reports.iter_mut() {
+            for item in report.items.iter_mut() {
+                // `parse_report_descriptor()` expands small Usage Minimum/Maximum ranges into an
+                // explicit list. Canonicalize to `[min, max]` so `is_range` items roundtrip
+                // regardless of whether the range was expanded.
+                if item.is_range && !item.usages.is_empty() {
+                    let min = *item.usages.iter().min().expect("non-empty");
+                    let max = *item.usages.iter().max().expect("non-empty");
+                    item.usages = vec![min, max];
+                }
+            }
+        }
         reports.sort_by_key(|r| r.report_id);
     }
 

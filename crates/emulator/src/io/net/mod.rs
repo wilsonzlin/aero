@@ -1,7 +1,10 @@
 pub mod e1000;
 pub mod e1000_aero;
 pub mod stack;
+pub mod tunnel_backend;
 pub mod trace;
+
+pub use tunnel_backend::{L2TunnelBackend, L2TunnelBackendStats};
 
 /// Network backend to bridge frames between emulated NICs and the host network stack.
 ///
