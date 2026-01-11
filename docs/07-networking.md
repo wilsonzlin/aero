@@ -35,7 +35,7 @@ Virtual NIC (e1000 / virtio-net)
         ▼
 WASM emulator (Rust)
   L2TunnelBackend: send_frame/recv_frame
-        │   (tunnel protocol frames)
+        │   (Ethernet frames)
         ▼
 Browser transport
   WebSocket (default) / WebRTC DataChannel (optional)
@@ -47,6 +47,10 @@ Proxy: aero-l2-proxy
         ▼
 Internet
 ```
+
+Browser runtime note: in the worker-based web runtime, the emulator exchanges raw Ethernet frames
+with the JS tunnel client via `SharedArrayBuffer` AIPC rings (`NET_TX`/`NET_RX`) inside `ioIpcSab`.
+See `docs/ipc-protocol.md` (queue kinds) and `web/src/runtime/shared_layout.ts` (`IO_IPC_NET_*`).
 
 ### Key docs and repo components
 

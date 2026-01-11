@@ -52,15 +52,61 @@ Each descriptor is 16 bytes:
  
 | Field | Type | Description |
 |---|---:|---|
-| `kind` | `u32` | Application-defined (`0=cmd`, `1=evt` in the default layout) |
+| `kind` | `u32` | Application-defined (see §3.3) |
 | `offset_bytes` | `u32` | Byte offset from start of buffer to the ring buffer header |
 | `capacity_bytes` | `u32` | Size of the ring **data** region (excludes ring header) |
 | `reserved` | `u32` | Must be `0` |
- 
+
 The descriptor makes layouts extensible: multiple queues can live in one `SharedArrayBuffer` without hard-coded offsets.
- 
+
+### 3.3 Queue kinds (application-defined)
+
+The `kind` field is intentionally **application-defined**. The AIPC header/descriptor format only
+describes **where** queues live, not what they mean.
+
+Queue-kind values are therefore part of the application ABI for a particular shared buffer layout.
+For the browser runtime’s `ioIpcSab` segment (created by
+`web/src/runtime/shared_layout.ts:createIoIpcSab()`), the following kinds are currently assigned:
+
+| Kind | Value (TS constant) | Producer → Consumer | Record payload |
+|---|---:|---|---|
+| `CMD` | `0` (`IO_IPC_CMD_QUEUE_KIND`) | CPU/WASM → IO worker | encoded `Command` (see §7.1) |
+| `EVT` | `1` (`IO_IPC_EVT_QUEUE_KIND`) | IO worker → CPU/WASM | encoded `Event` (see §7.2) |
+| `NET_TX` | `2` (`IO_IPC_NET_TX_QUEUE_KIND`) | CPU/WASM → network forwarder (IO worker / net worker) | raw Ethernet frame bytes |
+| `NET_RX` | `3` (`IO_IPC_NET_RX_QUEUE_KIND`) | network forwarder (IO worker / net worker) → CPU/WASM | raw Ethernet frame bytes |
+
+The `NET_TX`/`NET_RX` rings are separate from the command/event rings so bulk frame traffic does not
+starve low-latency device operations.
+
+#### NET_TX / NET_RX semantics
+
+These queues carry **one Ethernet frame per record** (no additional framing; the record payload is
+exactly the frame bytes as seen by the emulated NIC).
+
+- **Expected max frame size:** `2048` bytes.
+  - Producers should drop frames larger than this.
+  - Rationale: matches the default L2 tunnel payload limit (`web/src/shared/l2TunnelProtocol.ts`) and
+    keeps ring-buffer sizing predictable.
+- **Ownership (directionality):**
+  - `NET_TX`: produced by the guest/emulator side; consumed by the JS transport that forwards to the
+    proxy.
+  - `NET_RX`: produced by the JS transport (frames received from the proxy); consumed by the
+    guest/emulator side.
+- **Drop/backpressure:**
+  - These rings are bounded. When `tryPush()` fails (queue full), the producer should treat the
+    frame as **dropped** (best-effort) rather than blocking the emulator.
+  - Consumers should drain promptly; persistent drops generally indicate the tunnel/transport cannot
+    keep up.
+
+One way to visualize the browser-side plumbing:
+
+```
+CPU/WASM worker  --NET_TX-->  JS net forwarder  --WebSocket/WebRTC-->  proxy
+CPU/WASM worker  <--NET_RX--  JS net forwarder  <--WebSocket/WebRTC--  proxy
+```
+
 ---
- 
+
 ## 4. Ring buffer layout
  
 Each queue region begins with a 16-byte ring header, followed by the byte data region.
