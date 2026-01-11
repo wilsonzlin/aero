@@ -1,7 +1,6 @@
 mod tier1_common;
 
-use aero_jit_x86::tier1::BlockLimits;
-use aero_jit_x86::tier2::build_t2_function;
+use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_jit_x86::tier2::ir::Terminator;
 use tier1_common::SimpleBus;
 
@@ -18,7 +17,7 @@ fn cfg_builder_linear_blocks() {
     let mut bus = SimpleBus::new(0x2000);
     bus.load(entry, &code);
 
-    let func = build_t2_function(&bus, entry, BlockLimits::default());
+    let func = build_function_from_x86(&bus, entry, CfgBuildConfig::default());
     assert_eq!(func.blocks.len(), 2);
 
     let b0 = func.find_block_by_rip(entry).unwrap();
@@ -62,7 +61,7 @@ fn cfg_builder_conditional_branch() {
     let mut bus = SimpleBus::new(0x3000);
     bus.load(entry, &code);
 
-    let func = build_t2_function(&bus, entry, BlockLimits::default());
+    let func = build_function_from_x86(&bus, entry, CfgBuildConfig::default());
     assert_eq!(func.blocks.len(), 3);
 
     let head = func.find_block_by_rip(entry).unwrap();
@@ -97,7 +96,7 @@ fn cfg_builder_loop_backedge() {
     let mut bus = SimpleBus::new(0x4000);
     bus.load(entry, &code);
 
-    let func = build_t2_function(&bus, entry, BlockLimits::default());
+    let func = build_function_from_x86(&bus, entry, CfgBuildConfig::default());
     assert_eq!(func.blocks.len(), 2);
 
     let loop_bb = func.find_block_by_rip(entry).unwrap();

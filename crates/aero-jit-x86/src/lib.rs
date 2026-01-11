@@ -13,7 +13,6 @@ mod tier1_bus;
 mod tier1_ir;
 mod tier1_pipeline;
 pub mod tier2;
-mod tier2_builder;
 mod trace;
 mod translate;
 pub mod wasm;

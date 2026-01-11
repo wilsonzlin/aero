@@ -2,7 +2,6 @@
 
 pub mod builder;
 
-pub use crate::tier2_builder::build_t2_function;
 pub use builder::{build_function_from_x86, CfgBuildConfig};
 
 pub mod ir {
