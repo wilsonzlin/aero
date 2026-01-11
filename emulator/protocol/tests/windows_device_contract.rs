@@ -67,6 +67,58 @@ fn inf_add_service_names(inf_text: &str) -> Vec<String> {
     out
 }
 
+fn inf_strings_section(inf_text: &str) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut in_strings = false;
+    for raw_line in inf_text.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_strings = trimmed.eq_ignore_ascii_case("[Strings]");
+            continue;
+        }
+        if !in_strings {
+            continue;
+        }
+
+        let line = trimmed.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((lhs, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        let key = lhs.trim();
+        let value = rhs.trim();
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+        out.insert(key.to_string(), value.to_string());
+    }
+    out
+}
+
+fn inf_has_line_containing_all(inf_text: &str, needles: &[&str]) -> bool {
+    for raw_line in inf_text.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+        let line = trimmed.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let upper = line.to_ascii_uppercase();
+        if needles.iter().all(|needle| upper.contains(&needle.to_ascii_uppercase())) {
+            return true;
+        }
+    }
+    false
+}
+
 #[test]
 fn windows_device_contract_aerogpu_matches_protocol_constants() {
     // These are part of the stable Win7 driver ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`).
@@ -239,6 +291,128 @@ fn contains_needle(haystack: &str, needle: &str) -> bool {
     haystack
         .to_ascii_uppercase()
         .contains(&needle.to_ascii_uppercase())
+}
+
+#[test]
+fn win7_aerogpu_infs_register_umds_with_expected_registry_types() {
+    // UMD registration keys are the most common source of Win7 bring-up failures:
+    // - wrong value type (REG_SZ vs REG_MULTI_SZ)
+    // - missing WOW64 keys on x64
+    // - wrong naming convention (base name vs filename-with-extension)
+    let root = repo_root();
+
+    let infs = [
+        (root.join("drivers/aerogpu/packaging/win7/aerogpu.inf"), false),
+        (
+            root.join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf"),
+            true,
+        ),
+    ];
+
+    for (inf_path, is_dx11) in infs {
+        let inf_text = std::fs::read_to_string(&inf_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", inf_path.display()));
+
+        // Common: D3D9 registration uses base name (no .dll) and must be REG_MULTI_SZ.
+        assert!(
+            contains_needle(
+                &inf_text,
+                "HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,\"aerogpu_d3d9\""
+            ),
+            "{} must register x86 D3D9 via InstalledDisplayDrivers REG_MULTI_SZ base name",
+            inf_path.display()
+        );
+        assert!(
+            contains_needle(
+                &inf_text,
+                "HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,\"aerogpu_d3d9_x64\""
+            ),
+            "{} must register x64 D3D9 via InstalledDisplayDrivers REG_MULTI_SZ base name",
+            inf_path.display()
+        );
+        assert!(
+            contains_needle(
+                &inf_text,
+                "HKR,,InstalledDisplayDriversWow,%REG_MULTI_SZ%,\"aerogpu_d3d9\""
+            ),
+            "{} must register WOW64 D3D9 via InstalledDisplayDriversWow REG_MULTI_SZ base name",
+            inf_path.display()
+        );
+
+        // Copy placement: ensure the x64 INF copies WOW64 DLLs into SysWOW64 explicitly (not by
+        // filesystem redirection).
+        assert!(
+            inf_has_line_containing_all(&inf_text, &["AeroGPU_UMD_Wow64.CopyFiles", "10,SysWOW64"]),
+            "{} must copy WOW64 UMDs into SysWOW64 via DestinationDirs",
+            inf_path.display()
+        );
+
+        if is_dx11 {
+            // D3D10/11 registration uses filename (with .dll) and must be REG_SZ.
+            assert!(
+                contains_needle(&inf_text, "HKR,,UserModeDriverName,%REG_SZ%,\"aerogpu_d3d10.dll\""),
+                "{} must register x86 D3D10/11 via UserModeDriverName REG_SZ filename",
+                inf_path.display()
+            );
+            assert!(
+                contains_needle(
+                    &inf_text,
+                    "HKR,,UserModeDriverName,%REG_SZ%,\"aerogpu_d3d10_x64.dll\""
+                ),
+                "{} must register x64 D3D10/11 via UserModeDriverName REG_SZ filename",
+                inf_path.display()
+            );
+            assert!(
+                contains_needle(
+                    &inf_text,
+                    "HKR,,UserModeDriverNameWow,%REG_SZ%,\"aerogpu_d3d10.dll\""
+                ),
+                "{} must register WOW64 D3D10/11 via UserModeDriverNameWow REG_SZ filename",
+                inf_path.display()
+            );
+        } else {
+            // D3D9-only INF should remove stale D3D10/11 registration when switching from the
+            // DX11-capable package.
+            assert!(
+                inf_has_line_containing_all(&inf_text, &["DelReg", "AeroGPU_Device_DelReg"]),
+                "{} must delete stale D3D10/11 UMD registration via DelReg",
+                inf_path.display()
+            );
+            assert!(
+                contains_needle(&inf_text, "HKR,,UserModeDriverName"),
+                "{} must delete UserModeDriverName under HKR in the DelReg section",
+                inf_path.display()
+            );
+            assert!(
+                contains_needle(&inf_text, "HKR,,UserModeDriverNameWow"),
+                "{} must delete UserModeDriverNameWow under HKR in the DelReg section",
+                inf_path.display()
+            );
+        }
+
+        // Ensure type helper tokens are pinned to the expected AddReg flag values.
+        let strings = inf_strings_section(&inf_text);
+        assert_eq!(
+            strings.get("REG_MULTI_SZ").map(String::as_str),
+            Some("0x00010000"),
+            "{} must define REG_MULTI_SZ=0x00010000 in [Strings]",
+            inf_path.display()
+        );
+        assert_eq!(
+            strings.get("REG_DWORD").map(String::as_str),
+            Some("0x00010001"),
+            "{} must define REG_DWORD=0x00010001 in [Strings]",
+            inf_path.display()
+        );
+        if is_dx11 {
+            assert_eq!(
+                strings.get("REG_SZ").map(String::as_str),
+                Some("0x00000000"),
+                "{} must define REG_SZ=0x00000000 in [Strings]",
+                inf_path.display()
+            );
+        }
+    }
 }
 
 #[test]
