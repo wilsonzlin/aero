@@ -605,6 +605,27 @@ static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
   STUB_FIELD(pfnCalcPrivateClassInstanceSize);
   STUB_FIELD(pfnCreateClassInstance);
   STUB_FIELD(pfnDestroyClassInstance);
+
+  // Optional device-level queries present in some D3D11 DDI revisions. Always
+  // keep them non-null when the field exists to avoid runtime NULL dereferences.
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnCheckCounterInfo) {
+    STUB_FIELD(pfnCheckCounterInfo);
+  }
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnCheckCounter) {
+    STUB_FIELD(pfnCheckCounter);
+  }
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnGetDeviceRemovedReason) {
+    STUB_FIELD(pfnGetDeviceRemovedReason);
+  }
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnGetExceptionMode) {
+    STUB_FIELD(pfnGetExceptionMode);
+  }
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnSetExceptionMode) {
+    STUB_FIELD(pfnSetExceptionMode);
+  }
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnCheckDeferredContextHandleSizes) {
+    STUB_FIELD(pfnCheckDeferredContextHandleSizes);
+  }
 #undef STUB_FIELD
 
   StubPresentAndRotate(&funcs);
@@ -619,6 +640,9 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   STUB_FIELD(pfnIaSetVertexBuffers);
   STUB_FIELD(pfnIaSetIndexBuffer);
   STUB_FIELD(pfnIaSetTopology);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSoSetTargets) {
+    STUB_FIELD(pfnSoSetTargets);
+  }
 
   STUB_FIELD(pfnVsSetShader);
   STUB_FIELD(pfnVsSetConstantBuffers);
@@ -663,9 +687,21 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   STUB_FIELD(pfnSetBlendState);
   STUB_FIELD(pfnSetDepthStencilState);
   STUB_FIELD(pfnSetRenderTargets);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews) {
+    STUB_FIELD(pfnSetRenderTargetsAndUnorderedAccessViews);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews11_1) {
+    STUB_FIELD(pfnSetRenderTargetsAndUnorderedAccessViews11_1);
+  }
 
   STUB_FIELD(pfnClearState);
   STUB_FIELD(pfnClearRenderTargetView);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnClearUnorderedAccessViewUint) {
+    STUB_FIELD(pfnClearUnorderedAccessViewUint);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnClearUnorderedAccessViewFloat) {
+    STUB_FIELD(pfnClearUnorderedAccessViewFloat);
+  }
   STUB_FIELD(pfnClearDepthStencilView);
 
   STUB_FIELD(pfnDraw);
@@ -686,12 +722,27 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   STUB_FIELD(pfnUpdateSubresourceUP);
   STUB_FIELD(pfnCopyResource);
   STUB_FIELD(pfnCopySubresourceRegion);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCopyStructureCount) {
+    STUB_FIELD(pfnCopyStructureCount);
+  }
   STUB_FIELD(pfnResolveSubresource);
   STUB_FIELD(pfnGenerateMips);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetResourceMinLOD) {
+    STUB_FIELD(pfnSetResourceMinLOD);
+  }
 
   STUB_FIELD(pfnBegin);
   STUB_FIELD(pfnEnd);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnQueryGetData) {
+    STUB_FIELD(pfnQueryGetData);
+  }
   STUB_FIELD(pfnSetPredication);
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnExecuteCommandList) {
+    STUB_FIELD(pfnExecuteCommandList);
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnFinishCommandList) {
+    STUB_FIELD(pfnFinishCommandList);
+  }
 
   STUB_FIELD(pfnMap);
   STUB_FIELD(pfnUnmap);
