@@ -189,7 +189,7 @@ function checkViteConfig(fileLabel, filePath) {
 }
 
 const targets = [
-  { type: 'vite', path: 'vite.config.ts' },
+  { type: 'vite', path: 'vite.harness.config.ts' },
   { type: 'vite', path: 'web/vite.config.ts' },
   { type: 'headers', path: 'web/public/_headers' },
   { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
