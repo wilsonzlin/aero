@@ -27,7 +27,8 @@ import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store"
 import { formatByteSize } from "./storage/disk_image_store";
 import { RuntimeDiskClient } from "./storage/runtime_disk_client";
 import { IoWorkerClient } from "./workers/io_worker_client";
-import { type JitCompileRequest, type JitWorkerResponse, isJitWorkerResponse } from "./workers/jit_protocol";
+import { type JitWorkerResponse } from "./workers/jit_protocol";
+import { JitWorkerClient } from "./workers/jit_worker_client";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
@@ -1851,8 +1852,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const forceJitCspLabel = el("label", { class: "mono", text: "force jit_dynamic_wasm=false" });
 
   const JIT_DEMO_WASM_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
-  let nextJitDemoRequestId = 1;
   let jitDemoInFlight = false;
+  let jitClient: JitWorkerClient | null = null;
+  let jitClientWorker: Worker | null = null;
 
   async function runJitCompileDemo(): Promise<void> {
     const jitWorker = workerCoordinator.getWorker("jit");
@@ -1861,43 +1863,21 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
+    if (!jitClient || jitClientWorker !== jitWorker) {
+      jitClient = new JitWorkerClient(jitWorker);
+      jitClientWorker = jitWorker;
+    }
+
     jitDemoError.textContent = "";
     jitDemoLine.textContent = "jit: compiling…";
     jitDemoInFlight = true;
     update();
 
-    const id = nextJitDemoRequestId++;
     const wasmBytes = JIT_DEMO_WASM_BYTES.slice().buffer;
-    const req: JitCompileRequest = { type: "jit:compile", id, wasmBytes };
 
     let response: JitWorkerResponse;
     try {
-      response = await new Promise<JitWorkerResponse>((resolve, reject) => {
-        let timeoutId = 0;
-
-        const onMessage = (event: MessageEvent) => {
-          const data = event.data as unknown;
-          if (!isJitWorkerResponse(data)) return;
-          if (data.id !== id) return;
-          window.clearTimeout(timeoutId);
-          jitWorker.removeEventListener("message", onMessage);
-          resolve(data);
-        };
-
-        timeoutId = window.setTimeout(() => {
-          jitWorker.removeEventListener("message", onMessage);
-          reject(new Error("Timed out waiting for JIT worker response."));
-        }, 5000);
-
-        jitWorker.addEventListener("message", onMessage);
-        try {
-          jitWorker.postMessage(req, [wasmBytes]);
-        } catch (err) {
-          window.clearTimeout(timeoutId);
-          jitWorker.removeEventListener("message", onMessage);
-          reject(err);
-        }
-      });
+      response = await jitClient.compile(wasmBytes, { timeoutMs: 5000 });
     } catch (err) {
       jitDemoError.textContent = err instanceof Error ? err.message : String(err);
       jitDemoLine.textContent = "jit: demo failed";
