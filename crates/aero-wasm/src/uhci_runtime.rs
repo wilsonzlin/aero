@@ -320,11 +320,10 @@ impl UhciRuntime {
 
         let port = self.alloc_port(preferred_port)?;
 
-        let collections: Vec<webhid::HidCollectionInfo> =
-            serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(
-                collections_json,
-            ))
-            .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+        let collections: Vec<webhid::HidCollectionInfo> = serde_path_to_error::deserialize(
+            serde_wasm_bindgen::Deserializer::from(collections_json),
+        )
+        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
         let report_descriptor =
             webhid::synthesize_report_descriptor(&collections).map_err(|err| {
@@ -398,11 +397,10 @@ impl UhciRuntime {
 
         self.webhid_detach(device_id);
 
-        let collections: Vec<webhid::HidCollectionInfo> =
-            serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(
-                collections_json,
-            ))
-            .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+        let collections: Vec<webhid::HidCollectionInfo> = serde_path_to_error::deserialize(
+            serde_wasm_bindgen::Deserializer::from(collections_json),
+        )
+        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
         let report_descriptor =
             webhid::synthesize_report_descriptor(&collections).map_err(|err| {
