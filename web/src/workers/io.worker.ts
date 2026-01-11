@@ -93,6 +93,15 @@ type HidHostSink = {
   error: (message: string, deviceId?: number) => void;
 };
 
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // HID proxy messages transfer the underlying ArrayBuffer between threads.
+  // If a view is backed by a SharedArrayBuffer, it can't be transferred; copy.
+  if (bytes.buffer instanceof ArrayBuffer) return bytes as unknown as Uint8Array<ArrayBuffer>;
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
+
 interface HidGuestBridge {
   attach(msg: HidAttachMessage): void;
   detach(msg: HidDetachMessage): void;
@@ -223,7 +232,12 @@ class WasmHidGuestBridge implements HidGuestBridge {
         }
         if (!report) break;
 
-        this.host.sendReport({ deviceId, reportType: report.reportType, reportId: report.reportId, data: report.data });
+        this.host.sendReport({
+          deviceId,
+          reportType: report.reportType,
+          reportId: report.reportId,
+          data: ensureArrayBufferBacked(report.data),
+        });
       }
     }
   }
