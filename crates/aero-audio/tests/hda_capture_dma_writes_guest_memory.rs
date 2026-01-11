@@ -39,7 +39,7 @@ fn hda_capture_dma_writes_guest_memory() {
         sd.lvi = 0;
         sd.fmt = fmt_raw;
         // RUN | stream number 2.
-        sd.ctl = (1 << 1) | (2 << 20);
+        sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
     }
 
     // Feed a deterministic mono waveform.
@@ -62,4 +62,3 @@ fn hda_capture_dma_writes_guest_memory() {
     }
     assert_eq!(out, expected);
 }
-

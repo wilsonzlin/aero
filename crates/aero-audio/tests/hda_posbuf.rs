@@ -39,7 +39,7 @@ fn configure_basic_stream(mem: &mut GuestMemory, hda: &mut HdaController, frames
     sd.lvi = 0;
     sd.fmt = fmt_raw;
     // RUN | stream number 1.
-    sd.ctl = (1 << 1) | (1 << 20);
+    sd.ctl = (1 << 0) | (1 << 1) | (1 << 20);
 }
 
 #[test]

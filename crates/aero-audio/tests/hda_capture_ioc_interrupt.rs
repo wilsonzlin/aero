@@ -37,7 +37,7 @@ fn hda_capture_ioc_interrupt() {
     sd.lvi = 0;
     sd.fmt = fmt_raw;
     // RUN | IOCE | stream number 2.
-    sd.ctl = (1 << 1) | (1 << 2) | (2 << 20);
+    sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (2 << 20);
 
     // Enable stream 1 interrupts + global interrupt.
     hda.mmio_write(REG_INTCTL, 4, (1u64 << 31) | (1u64 << 1));
@@ -48,4 +48,3 @@ fn hda_capture_ioc_interrupt() {
     hda.process_with_capture(&mut mem, frames, &mut capture);
     assert!(hda.take_irq());
 }
-

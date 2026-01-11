@@ -53,7 +53,7 @@ fn hda_dma_tone_reaches_ring_buffer() {
         sd.lvi = 0;
         sd.fmt = fmt_raw;
         // RUN | IOCE | stream number 1.
-        sd.ctl = (1 << 1) | (1 << 2) | (1 << 20);
+        sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 20);
     }
 
     // Enable stream interrupts.

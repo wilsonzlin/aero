@@ -41,7 +41,7 @@ fn stream_status_byte_is_rw1c_and_clears_intsts() {
         sd.lvi = 0;
         sd.fmt = fmt_raw;
         // RUN | IOCE | stream tag 2.
-        sd.ctl = (1 << 1) | (1 << 2) | (2 << 20);
+        sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (2 << 20);
     }
 
     // Enable stream1 interrupts + global interrupt.
@@ -97,7 +97,7 @@ fn bcis_latches_without_ioce() {
         sd.lvi = 0;
         sd.fmt = fmt_raw;
         // RUN | stream tag 2 (IOCE disabled).
-        sd.ctl = (1 << 1) | (2 << 20);
+        sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
     }
 
     // Enable stream1 interrupts + global interrupt (should not matter; IOCE is off).
@@ -111,4 +111,3 @@ fn bcis_latches_without_ioce() {
     assert_ne!(hda.mmio_read(sd1_sts, 1) as u8 & SD_STS_BCIS, 0);
     assert_eq!(hda.mmio_read(REG_INTSTS, 4) as u32 & (1 << 1), 0);
 }
-

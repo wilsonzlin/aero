@@ -43,7 +43,7 @@ fn hda_posbuf_updates_capture_stream() {
     sd.lvi = 0;
     sd.fmt = fmt_raw;
     // RUN | stream number 2.
-    sd.ctl = (1 << 1) | (2 << 20);
+    sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
 
     let mut capture = VecDequeCaptureSource::new();
     capture.push_samples(&[0.25; 16]);
@@ -54,4 +54,3 @@ fn hda_posbuf_updates_capture_stream() {
     assert_eq!(hda.stream_mut(1).lpib, expected_lpib);
     assert_eq!(mem.read_u32(posbuf_base + 8), expected_lpib);
 }
-

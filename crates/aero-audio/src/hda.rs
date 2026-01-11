@@ -74,7 +74,10 @@ const RING_SIZE_CAP_256: u8 = 1 << 6;
 const DPLBASE_ENABLE: u32 = 1 << 0;
 const DPLBASE_ADDR_MASK: u32 = !0x7f;
 
-const SD_CTL_RST: u32 = 1 << 0;
+/// Stream reset (SRST) bit in SDnCTL.
+///
+/// The Intel HDA spec defines this bit as active-high: when 0, the stream is held in reset.
+const SD_CTL_SRST: u32 = 1 << 0;
 const SD_CTL_RUN: u32 = 1 << 1;
 const SD_CTL_IOCE: u32 = 1 << 2;
 const SD_CTL_STRM_SHIFT: u32 = 20;
@@ -968,27 +971,25 @@ impl HdaController {
                             self.clear_stream_status(stream, sts_clear);
                         }
 
-                        let sd = &mut self.streams[stream];
-                        let prev = sd.ctl;
-                        let prev_ctl = prev & 0x00ff_ffff;
-                        let status = sd.ctl & 0xff00_0000;
-                        let write_ctl = v & 0x00ff_ffff;
-                        let new_ctl = if write_ctl == 0 && sts_clear != 0 {
-                            // Heuristic: status-only write should not stop the stream.
-                            prev_ctl
-                        } else {
-                            write_ctl
+                        let (prev, now) = {
+                            let sd = &mut self.streams[stream];
+                            let prev = sd.ctl;
+                            let prev_ctl = prev & 0x00ff_ffff;
+                            let status = sd.ctl & 0xff00_0000;
+                            let write_ctl = v & 0x00ff_ffff;
+                            let new_ctl = if write_ctl == 0 && sts_clear != 0 {
+                                // Heuristic: status-only write should not stop the stream.
+                                prev_ctl
+                            } else {
+                                write_ctl
+                            };
+                            sd.ctl = status | new_ctl;
+                            (prev, sd.ctl)
                         };
-                        sd.ctl = status | new_ctl;
 
-                        if (sd.ctl & SD_CTL_RST) != 0 && (prev & SD_CTL_RST) == 0 {
-                            // Stream reset asserted.
-                            sd.lpib = 0;
-                            sd.ctl &= 0x00ff_ffff;
-                            self.intsts &= !(1 << stream);
-                            self.recalc_intsts_gis();
-                            self.stream_rt[stream].reset(self.output_rate_hz);
-                            self.update_irq_line();
+                        // SRST cleared -> stream enters reset.
+                        if (prev & SD_CTL_SRST) != 0 && (now & SD_CTL_SRST) == 0 {
+                            self.reset_stream_engine(stream);
                         }
                         return;
                     }
@@ -1000,22 +1001,19 @@ impl HdaController {
                         return;
                     }
 
-                    let sd = &mut self.streams[stream];
-                    let mut bytes = sd.ctl.to_le_bytes();
-                    for i in 0..size {
-                        bytes[start + i] = ((value >> (8 * i)) & 0xff) as u8;
-                    }
-                    let prev = sd.ctl;
-                    sd.ctl = u32::from_le_bytes(bytes);
-                    if (sd.ctl & SD_CTL_RST) != 0 && (prev & SD_CTL_RST) == 0 {
-                        // Stream reset asserted.
-                        sd.lpib = 0;
-                        // Clear any latched status/interrupt state for this stream.
-                        sd.ctl &= 0x00ff_ffff;
-                        self.intsts &= !(1 << stream);
-                        self.recalc_intsts_gis();
-                        self.stream_rt[stream].reset(self.output_rate_hz);
-                        self.update_irq_line();
+                    let (prev, now) = {
+                        let sd = &mut self.streams[stream];
+                        let mut bytes = sd.ctl.to_le_bytes();
+                        for i in 0..size {
+                            bytes[start + i] = ((value >> (8 * i)) & 0xff) as u8;
+                        }
+                        let prev = sd.ctl;
+                        sd.ctl = u32::from_le_bytes(bytes);
+                        (prev, sd.ctl)
+                    };
+
+                    if (prev & SD_CTL_SRST) != 0 && (now & SD_CTL_SRST) == 0 {
+                        self.reset_stream_engine(stream);
                     }
                     return;
                 }
@@ -1205,6 +1203,17 @@ impl HdaController {
         self.update_irq_line();
     }
 
+    fn reset_stream_engine(&mut self, stream: usize) {
+        let sd = &mut self.streams[stream];
+        sd.lpib = 0;
+        // Stream reset clears SDSTS and any pending interrupt for the stream.
+        sd.ctl &= 0x00ff_ffff;
+        self.intsts &= !(1 << stream);
+        self.stream_rt[stream].reset(self.output_rate_hz);
+        self.recalc_intsts_gis();
+        self.update_irq_line();
+    }
+
     fn update_irq_line(&mut self) {
         // Simplified: assert if global interrupt enable is set and any enabled
         // interrupt source is pending.
@@ -1230,7 +1239,7 @@ impl HdaController {
             return Vec::new();
         }
         let sd = &self.streams[stream];
-        if (sd.ctl & SD_CTL_RUN) == 0 {
+        if (sd.ctl & (SD_CTL_SRST | SD_CTL_RUN)) != (SD_CTL_SRST | SD_CTL_RUN) {
             return Vec::new();
         }
         let stream_num = ((sd.ctl & SD_CTL_STRM_MASK) >> SD_CTL_STRM_SHIFT) as u8;
@@ -1319,7 +1328,7 @@ impl HdaController {
         }
 
         let sd = &self.streams[stream];
-        if (sd.ctl & SD_CTL_RUN) == 0 {
+        if (sd.ctl & (SD_CTL_SRST | SD_CTL_RUN)) != (SD_CTL_SRST | SD_CTL_RUN) {
             return;
         }
 

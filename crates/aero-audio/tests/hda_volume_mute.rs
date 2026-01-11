@@ -53,7 +53,7 @@ fn setup_basic_playback(mem: &mut GuestMemory, hda: &mut HdaController, frames: 
     sd.lvi = 0;
     sd.fmt = fmt_raw;
     // RUN | stream number 1.
-    sd.ctl = (1 << 1) | (1 << 20);
+    sd.ctl = (1 << 0) | (1 << 1) | (1 << 20);
 }
 
 fn render(mem: &mut GuestMemory, hda: &mut HdaController, frames: usize) -> Vec<f32> {
@@ -148,4 +148,3 @@ fn pin_ctl_zero_silences_output() {
     let out = render(&mut mem, &mut hda, 16);
     assert!(out.iter().all(|&s| s == 0.0));
 }
-
