@@ -12,6 +12,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,11 +100,27 @@ typedef uint8_t KIRQL;
 #define STATUS_CANCELLED ((NTSTATUS)0xC0000120L)
 #endif
 #ifndef STATUS_DEVICE_PROTOCOL_ERROR
-#define STATUS_DEVICE_PROTOCOL_ERROR ((NTSTATUS)0xC0000185L)
+/*
+ * Use the canonical NTSTATUS value so failures observed under host tests match
+ * Windows error reports.
+ */
+#define STATUS_DEVICE_PROTOCOL_ERROR ((NTSTATUS)0xC000018EL)
 #endif
 
-/* Assertions */
-#define NT_ASSERT(expr) assert(expr)
+/* Assertions (keep active even when NDEBUG is set). */
+static inline VOID virtiosnd_test_nt_assert_fail(const char* expr, const char* file, int line)
+{
+    fprintf(stderr, "NT_ASSERT failed at %s:%d: %s\n", file, line, expr);
+    abort();
+}
+
+#undef NT_ASSERT
+#define NT_ASSERT(expr)                                                                                                    \
+    do {                                                                                                                   \
+        if (!(expr)) {                                                                                                     \
+            virtiosnd_test_nt_assert_fail(#expr, __FILE__, __LINE__);                                                      \
+        }                                                                                                                  \
+    } while (0)
 
 /* SAL annotations (ignored on host). */
 #define _In_

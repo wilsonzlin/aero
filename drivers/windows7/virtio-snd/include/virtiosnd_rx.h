@@ -132,7 +132,7 @@ _Must_inspect_result_ NTSTATUS VirtIoSndRxInit(
      * Number of pre-allocated request contexts.
      *
      * If 0, a default is selected. Values larger than the backing virtqueue size
-     * are clamped when available.
+     * are clamped to the contract v1 rxq size.
      */
     _In_ ULONG RequestCount);
 
