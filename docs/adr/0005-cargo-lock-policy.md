@@ -23,8 +23,9 @@ Policy:
   - The root workspace: `./Cargo.lock`
   - Standalone nested workspaces/tools (each maintains its own `Cargo.lock` next to its `Cargo.toml`).
 - CI runs Rust commands with `--locked` and fails if any command would modify a lockfile.
-- CI verifies lockfile consistency via `cargo metadata --locked` (a deterministic check that fails if `Cargo.toml`
-  and `Cargo.lock` drift).
+- CI verifies lockfile consistency via deterministic drift checks like:
+  - `cargo generate-lockfile --locked` (asserts lockfiles would remain unchanged)
+  - `cargo metadata --locked` (fails if `Cargo.toml` and `Cargo.lock` drift)
 
 ### Updating dependencies
 
