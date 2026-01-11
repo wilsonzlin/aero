@@ -520,6 +520,101 @@ fn tier2_code_version_guard_can_inline_version_table_reads() {
 }
 
 #[test]
+fn tier2_trace_without_code_version_guards_does_not_require_code_page_version_import() {
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::Const {
+                dst: v(0),
+                value: 0xdead_beef,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    // The default Tier-2 options set `code_version_guard_import = true`, but traces without
+    // `GuardCodeVersion` shouldn't need (or import) `env.code_page_version`.
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1234;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, init_state.cpu.rip);
+
+    memory
+        .read(&store, CPU_PTR as usize, &mut cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip, _got_rflags) = read_cpu_state(&cpu_bytes);
+    assert_eq!(got_rip, init_state.cpu.rip);
+    assert_eq!(got_gpr[Gpr::Rax.as_u8() as usize], 0xdead_beef);
+}
+
+#[test]
+fn tier2_inline_tlb_option_is_ignored_for_memory_free_traces() {
+    // Inline-TLB only affects memory loads/stores. A trace with no memory ops should not require
+    // any inline-TLB-specific imports (e.g. `env.mmu_translate`).
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![Instr::StoreReg {
+            reg: Gpr::Rax,
+            src: Operand::Const(1),
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &opt.regalloc,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+        },
+    );
+    validate_wasm(&wasm);
+
+    // `instantiate_trace` intentionally does not define `env.mmu_translate`; this should still work
+    // because the code generator should treat `inline_tlb` as disabled when the trace does no
+    // memory operations.
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1111;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, init_state.cpu.rip);
+}
+
+#[test]
 fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     // A tiny loop in Tier-2 IR form (built from a CFG) that increments RAX until it reaches 10,
     // then side-exits to RIP=100.
