@@ -5,6 +5,9 @@
 //! (TS or Rust/WASM) will receive the same `SharedArrayBuffer` and operate on it
 //! with `Atomics`.
 //!
+//! This module is compiled only when targeting `wasm32` with the crate feature
+//! `"wasm"` enabled.
+//!
 //! This module provides helpers to:
 //! - create typed views (`Int32Array`, `Uint8Array`) for a ring buffer region
 //! - perform atomic operations through JS `Atomics.*`
