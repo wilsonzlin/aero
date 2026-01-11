@@ -5,6 +5,10 @@ use aero_d3d11::{
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_ISG1: FourCC = FourCC(*b"ISG1");
+const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
+const FOURCC_OSG1: FourCC = FourCC(*b"OSG1");
+const FOURCC_PSGN: FourCC = FourCC(*b"PSGN");
+const FOURCC_PSG1: FourCC = FourCC(*b"PSG1");
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
@@ -211,4 +215,40 @@ fn prefers_v1_variant_when_both_present() {
     assert_eq!(isgn.parameters.len(), 2);
     assert_eq!(isgn.parameters[0].semantic_name, "POSITION");
     assert_eq!(isgn.parameters[1].semantic_name, "COLOR");
+}
+
+#[test]
+fn prefers_osg1_variant_when_both_present() {
+    let v0_params = vec![sig_param("OLD_OUT", 0, 7, 0b1111, 0)];
+    let v1_params = vec![sig_param("NEW_OUT", 0, 1, 0b0011, 0)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_OSGN, build_signature_chunk_v0(&v0_params)),
+        (FOURCC_OSG1, build_signature_chunk_v1(&v1_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let sigs = parse_signatures(&dxbc).expect("parse signatures");
+
+    let osgn = sigs.osgn.expect("OSGN/OSG1 signature missing");
+    assert_eq!(osgn.parameters.len(), 1);
+    assert_eq!(osgn.parameters[0].semantic_name, "NEW_OUT");
+    assert_eq!(osgn.parameters[0].register, 1);
+}
+
+#[test]
+fn prefers_psg1_variant_when_both_present() {
+    let v0_params = vec![sig_param("OLD_PATCH", 0, 7, 0b1111, 0)];
+    let v1_params = vec![sig_param("NEW_PATCH", 0, 1, 0b0011, 0)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_PSGN, build_signature_chunk_v0(&v0_params)),
+        (FOURCC_PSG1, build_signature_chunk_v1(&v1_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let sigs = parse_signatures(&dxbc).expect("parse signatures");
+
+    let psgn = sigs.psgn.expect("PSGN/PSG1 signature missing");
+    assert_eq!(psgn.parameters.len(), 1);
+    assert_eq!(psgn.parameters[0].semantic_name, "NEW_PATCH");
+    assert_eq!(psgn.parameters[0].register, 1);
 }
