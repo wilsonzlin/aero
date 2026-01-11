@@ -140,5 +140,3 @@ Audio: PCI device 1af4:1059
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
   `REV_...`). The Aero contract-v1 INF is strict and requires `DEV_1059&REV_01`.
 * For transitional QEMU devices (`DEV_1018`, typically `REV_00`), use the legacy INF/package.
-  `REV_...`). The Aero contract-v1 INF is strict and requires `DEV_1059&REV_01`.
-* For transitional QEMU devices (`DEV_1018`, typically `REV_00`), use the legacy INF/package.
