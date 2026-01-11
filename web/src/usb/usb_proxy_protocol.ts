@@ -18,24 +18,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return isSafeInteger(value) && value >= 0;
+}
+
+function isUint8(value: unknown): value is number {
+  return isSafeInteger(value) && value >= 0 && value <= 0xff;
+}
+
+function isUint16(value: unknown): value is number {
+  return isSafeInteger(value) && value >= 0 && value <= 0xffff;
 }
 
 export function isUsbSetupPacket(value: unknown): value is SetupPacket {
   if (!isRecord(value)) return false;
   return (
-    isFiniteNumber(value.bmRequestType) &&
-    isFiniteNumber(value.bRequest) &&
-    isFiniteNumber(value.wValue) &&
-    isFiniteNumber(value.wIndex) &&
-    isFiniteNumber(value.wLength)
+    isUint8(value.bmRequestType) &&
+    isUint8(value.bRequest) &&
+    isUint16(value.wValue) &&
+    isUint16(value.wIndex) &&
+    isUint16(value.wLength)
   );
 }
 
 export function isUsbHostAction(value: unknown): value is UsbHostAction {
   if (!isRecord(value)) return false;
-  if (!isFiniteNumber(value.id) || typeof value.kind !== "string") return false;
+  if (!isNonNegativeSafeInteger(value.id) || typeof value.kind !== "string") return false;
 
   switch (value.kind) {
     case "controlIn":
@@ -43,9 +55,9 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
     case "controlOut":
       return isUsbSetupPacket(value.setup) && value.data instanceof Uint8Array;
     case "bulkIn":
-      return isFiniteNumber(value.endpoint) && isFiniteNumber(value.length);
+      return isUint8(value.endpoint) && isNonNegativeSafeInteger(value.length);
     case "bulkOut":
-      return isFiniteNumber(value.endpoint) && value.data instanceof Uint8Array;
+      return isUint8(value.endpoint) && value.data instanceof Uint8Array;
     default:
       return false;
   }
@@ -53,7 +65,7 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
 
 export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion {
   if (!isRecord(value)) return false;
-  if (!isFiniteNumber(value.id) || typeof value.kind !== "string" || typeof value.status !== "string") return false;
+  if (!isNonNegativeSafeInteger(value.id) || typeof value.kind !== "string" || typeof value.status !== "string") return false;
 
   switch (value.kind) {
     case "controlIn":
@@ -64,7 +76,7 @@ export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion 
       return false;
     case "controlOut":
     case "bulkOut":
-      if (value.status === "success") return isFiniteNumber(value.bytesWritten);
+      if (value.status === "success") return isNonNegativeSafeInteger(value.bytesWritten);
       if (value.status === "stall") return true;
       if (value.status === "error") return typeof value.message === "string";
       return false;
@@ -95,7 +107,7 @@ export function isUsbSelectedMessage(value: unknown): value is UsbSelectedMessag
   if (value.ok) {
     if (value.info === undefined) return false;
     if (!isRecord(value.info)) return false;
-    return isFiniteNumber(value.info.vendorId) && isFiniteNumber(value.info.productId);
+    return isUint16(value.info.vendorId) && isUint16(value.info.productId);
   }
   if (value.error !== undefined && typeof value.error !== "string") return false;
   return true;
