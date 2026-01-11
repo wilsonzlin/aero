@@ -12,14 +12,16 @@ export const TcpMuxMsgType = {
   PING: 5,
   PONG: 6,
 } as const;
+
 export type TcpMuxMsgType = (typeof TcpMuxMsgType)[keyof typeof TcpMuxMsgType];
 
 export const TcpMuxCloseFlags = {
   FIN: 0x01,
   RST: 0x02,
 } as const;
-export type TcpMuxCloseFlags = (typeof TcpMuxCloseFlags)[keyof typeof TcpMuxCloseFlags];
 
+// Close payload is a bitmask (FIN | RST), so keep the type permissive.
+export type TcpMuxCloseFlags = number;
 export const TcpMuxErrorCode = {
   POLICY_DENIED: 1,
   DIAL_FAILED: 2,

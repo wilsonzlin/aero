@@ -2,19 +2,28 @@ export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
 export const TCP_MUX_HEADER_BYTES = 9;
 
-export enum TcpMuxMsgType {
-  OPEN = 1,
-  DATA = 2,
-  CLOSE = 3,
-  ERROR = 4,
-  PING = 5,
-  PONG = 6,
-}
+// NOTE: This file is executed directly by Node's `--experimental-strip-types`
+// loader in unit tests. Node's "strip-only" TypeScript support does not handle
+// TS `enum`, so we use runtime objects + type aliases instead.
 
-export enum TcpMuxCloseFlags {
-  FIN = 0x01,
-  RST = 0x02,
-}
+export const TcpMuxMsgType = {
+  OPEN: 1,
+  DATA: 2,
+  CLOSE: 3,
+  ERROR: 4,
+  PING: 5,
+  PONG: 6,
+} as const;
+
+export type TcpMuxMsgType = (typeof TcpMuxMsgType)[keyof typeof TcpMuxMsgType];
+
+export const TcpMuxCloseFlags = {
+  FIN: 0x01,
+  RST: 0x02,
+} as const;
+
+// Close flags are a bitmask (FIN | RST), so keep the type permissive.
+export type TcpMuxCloseFlags = number;
 
 export type TcpMuxFrame = Readonly<{
   msgType: TcpMuxMsgType;

@@ -279,19 +279,17 @@ async function withPatchedMemoryImport<T>(
     const hasInstantiateStreaming = typeof WebAssembly.instantiateStreaming === "function";
     const originalInstantiateStreaming = hasInstantiateStreaming ? WebAssembly.instantiateStreaming : undefined;
 
-    const instantiatePatched: typeof WebAssembly.instantiate = (module, imports) =>
-        originalInstantiate(module as any, (() => {
-            patchWasmImportsWithMemory(imports, memory);
-            return imports;
-        })() as any);
+    const instantiatePatched = ((module: WebAssembly.Module | BufferSource, imports?: WebAssembly.Imports) => {
+        patchWasmImportsWithMemory(imports, memory);
+        return originalInstantiate(module as any, imports as any);
+    }) as typeof WebAssembly.instantiate;
 
     (WebAssembly as any).instantiate = instantiatePatched;
     if (hasInstantiateStreaming) {
-        const instantiateStreamingPatched: typeof WebAssembly.instantiateStreaming = (source, imports) =>
-            originalInstantiateStreaming!(source as any, (() => {
-                patchWasmImportsWithMemory(imports, memory);
-                return imports;
-            })() as any);
+        const instantiateStreamingPatched = ((source: any, imports?: WebAssembly.Imports) => {
+            patchWasmImportsWithMemory(imports, memory);
+            return originalInstantiateStreaming!(source as any, imports as any);
+        }) as typeof WebAssembly.instantiateStreaming;
         (WebAssembly as any).instantiateStreaming = instantiateStreamingPatched;
     }
     try {

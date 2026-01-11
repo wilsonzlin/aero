@@ -154,6 +154,15 @@ function compactRanges(ranges: ByteRange[]): ByteRange[] {
   return out;
 }
 
+function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, while
+  // some Web APIs still accept only `ArrayBuffer`-backed views. Most callers pass
+  // ArrayBuffer-backed values, so avoid copies when possible.
+  return data.buffer instanceof ArrayBuffer
+    ? (data as unknown as Uint8Array<ArrayBuffer>)
+    : new Uint8Array(data);
+}
+
 function validateMeta(parsed: unknown): RemoteCacheMetaV1 | null {
   if (!parsed || typeof parsed !== "object") return null;
   const obj = parsed as Partial<RemoteCacheMetaV1>;
@@ -183,7 +192,7 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
   // WebCrypto is available in modern browsers and Node 20+. If unavailable, fall back.
   const subtle = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto?.subtle;
   if (subtle) {
-    const digest = await subtle.digest("SHA-256", data);
+    const digest = await subtle.digest("SHA-256", toArrayBufferUint8(data));
     const bytes = new Uint8Array(digest);
     return Array.from(bytes)
       .map((b) => b.toString(16).padStart(2, "0"))

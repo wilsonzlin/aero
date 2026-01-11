@@ -6,19 +6,20 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "noEmit": true,
     "types": ["vite/client", "node", "@webgpu/types"]
   },
   "include": [
     "src",
+    "web/src/global.d.ts",
     "tests",
     "web/src/hid",
     "vite.harness.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
-    "playwright.gpu.config.ts",
-    "web/src/global.d.ts"
+    "playwright.gpu.config.ts"
   ],
   "exclude": ["tests/e2e/**", "tests/playwright/**"]
 }

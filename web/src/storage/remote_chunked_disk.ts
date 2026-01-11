@@ -92,6 +92,15 @@ export interface BinaryStore {
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
+function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, while
+  // some Web APIs still accept only `ArrayBuffer`-backed views. Most callers
+  // pass ArrayBuffer-backed chunks, so avoid copies when possible.
+  return data.buffer instanceof ArrayBuffer
+    ? (data as unknown as Uint8Array<ArrayBuffer>)
+    : new Uint8Array(data);
+}
+
 class MemoryStore implements BinaryStore {
   private readonly files = new Map<string, Uint8Array>();
 
@@ -131,7 +140,7 @@ class OpfsStore implements BinaryStore {
   async write(path: string, data: Uint8Array): Promise<void> {
     const handle = await openFileHandle(path, { create: true });
     const writable = await handle.createWritable({ keepExistingData: false });
-    await writable.write(data);
+    await writable.write(toArrayBufferUint8(data));
     await writable.close();
   }
 
@@ -365,7 +374,7 @@ function parseManifest(raw: unknown): ParsedChunkedDiskManifest {
 
 async function sha256Hex(data: Uint8Array): Promise<string> {
   const subtle = crypto.subtle;
-  const digest = await subtle.digest("SHA-256", data);
+  const digest = await subtle.digest("SHA-256", toArrayBufferUint8(data));
   const bytes = new Uint8Array(digest);
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))

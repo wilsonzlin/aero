@@ -12,9 +12,9 @@ const HUD_UPDATE_HZ = 5;
 const SPARKLINE_SAMPLES = 120;
 
 type PerfTraceApi = {
-  traceStart?: () => void;
-  traceStop?: () => void;
-  exportTrace?: () => unknown;
+  traceStart(): void;
+  traceStop(): void;
+  exportTrace(opts?: { asString?: boolean }): Promise<unknown | string>;
   traceEnabled?: boolean;
 };
 
@@ -509,18 +509,45 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
       update();
     });
 
-    traceDownloadBtn.addEventListener('click', () => {
-      const data = traceApi.exportTrace?.();
-      const json = JSON.stringify(data);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `aero-trace-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-      document.body.append(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+    let traceDownloadResetTimer: number | null = null;
+
+    traceDownloadBtn.addEventListener('click', async () => {
+      if (traceDownloadBtn.disabled) return;
+      if (traceDownloadResetTimer !== null) {
+        window.clearTimeout(traceDownloadResetTimer);
+        traceDownloadResetTimer = null;
+      }
+
+      const idleLabel = 'Trace JSON';
+      traceDownloadBtn.disabled = true;
+      setText(traceDownloadBtn, 'Exporting…');
+      try {
+        const data = await traceApi.exportTrace?.({ asString: true });
+        if (data === undefined) {
+          throw new Error('Trace export API is unavailable.');
+        }
+
+        const payload = typeof data === 'string' ? data : JSON.stringify(data);
+        const blob = new Blob([payload], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `aero-trace-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setText(traceDownloadBtn, idleLabel);
+      } catch (err) {
+        console.error(err);
+        setText(traceDownloadBtn, 'Trace export failed');
+        traceDownloadResetTimer = window.setTimeout(() => {
+          traceDownloadResetTimer = null;
+          setText(traceDownloadBtn, idleLabel);
+        }, 2500);
+      } finally {
+        traceDownloadBtn.disabled = false;
+      }
     });
   }
 

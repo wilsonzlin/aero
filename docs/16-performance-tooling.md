@@ -193,6 +193,9 @@ a.download = `aero-trace-${new Date().toISOString()}.json`;
 a.click();
 ```
 
+In builds that include the Perf HUD, the **Trace JSON** button performs this same export asynchronously via `exportTrace({ asString: true })`.
+Large traces can take a moment to serialize (events are gathered from multiple workers), so the HUD disables the button while the export is in-flight.
+
 Notes:
 
 - Keep traces short (seconds, not minutes). Long traces are hard to analyze and expensive to record.

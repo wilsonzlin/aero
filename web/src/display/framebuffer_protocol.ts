@@ -24,12 +24,22 @@ export const HEADER_INDEX_CONFIG_COUNTER = 7;
 export const HEADER_I32_COUNT = 8;
 export const HEADER_BYTE_LENGTH = HEADER_I32_COUNT * 4;
 
-/**
- * @param {number} width
- * @param {number} height
- * @param {number} [strideBytes]
- */
-export function requiredFramebufferBytes(width, height, strideBytes = width * 4) {
+export type SharedFramebufferView = Readonly<{
+  buffer: ArrayBuffer | SharedArrayBuffer;
+  byteOffset: number;
+  header: Int32Array;
+  pixelsU8: Uint8Array;
+  pixelsU8Clamped: Uint8ClampedArray;
+}>;
+
+export type FramebufferHeaderConfig = Readonly<{
+  width: number;
+  height: number;
+  strideBytes: number;
+  format?: number;
+}>;
+
+export function requiredFramebufferBytes(width: number, height: number, strideBytes = width * 4): number {
   if (!Number.isInteger(width) || width <= 0) {
     throw new Error(`Invalid width: ${width}`);
   }
@@ -43,30 +53,20 @@ export function requiredFramebufferBytes(width, height, strideBytes = width * 4)
 }
 
 /**
- * @param {ArrayBuffer | SharedArrayBuffer} buffer
- * @returns {buffer is SharedArrayBuffer}
+ * Returns true if `buffer` is a SharedArrayBuffer (and the runtime supports it).
  */
-export function isSharedArrayBuffer(buffer) {
+export function isSharedArrayBuffer(buffer: ArrayBuffer | SharedArrayBuffer): buffer is SharedArrayBuffer {
   return typeof SharedArrayBuffer !== "undefined" && buffer instanceof SharedArrayBuffer;
 }
 
-/**
- * @param {Int32Array} header
- * @param {number} index
- */
-export function loadHeaderI32(header, index) {
+export function loadHeaderI32(header: Int32Array, index: number): number {
   if (isSharedArrayBuffer(header.buffer)) {
     return Atomics.load(header, index);
   }
   return header[index];
 }
 
-/**
- * @param {Int32Array} header
- * @param {number} index
- * @param {number} value
- */
-export function storeHeaderI32(header, index, value) {
+export function storeHeaderI32(header: Int32Array, index: number, value: number): void {
   if (isSharedArrayBuffer(header.buffer)) {
     Atomics.store(header, index, value);
     return;
@@ -76,12 +76,8 @@ export function storeHeaderI32(header, index, value) {
 
 /**
  * Atomically increments a header field.
- *
- * @param {Int32Array} header
- * @param {number} index
- * @param {number} delta
  */
-export function addHeaderI32(header, index, delta) {
+export function addHeaderI32(header: Int32Array, index: number, delta: number): number {
   if (isSharedArrayBuffer(header.buffer)) {
     return Atomics.add(header, index, delta);
   }
@@ -92,11 +88,11 @@ export function addHeaderI32(header, index, delta) {
 
 /**
  * Initializes or re-initializes the shared header.
- *
- * @param {Int32Array} header
- * @param {{width: number, height: number, strideBytes: number, format?: number}} config
  */
-export function initFramebufferHeader(header, { width, height, strideBytes, format = FRAMEBUFFER_FORMAT_RGBA8888 }) {
+export function initFramebufferHeader(
+  header: Int32Array,
+  { width, height, strideBytes, format = FRAMEBUFFER_FORMAT_RGBA8888 }: FramebufferHeaderConfig,
+): void {
   storeHeaderI32(header, HEADER_INDEX_MAGIC, FRAMEBUFFER_MAGIC);
   storeHeaderI32(header, HEADER_INDEX_VERSION, FRAMEBUFFER_VERSION);
   storeHeaderI32(header, HEADER_INDEX_WIDTH, width);
@@ -108,22 +104,9 @@ export function initFramebufferHeader(header, { width, height, strideBytes, form
 }
 
 /**
- * @typedef {object} SharedFramebufferView
- * @property {ArrayBuffer | SharedArrayBuffer} buffer
- * @property {number} byteOffset
- * @property {Int32Array} header
- * @property {Uint8Array} pixelsU8
- * @property {Uint8ClampedArray} pixelsU8Clamped
- */
-
-/**
  * Wraps a framebuffer region stored in `buffer` at `byteOffset`.
- *
- * @param {ArrayBuffer | SharedArrayBuffer} buffer
- * @param {number} byteOffset
- * @returns {SharedFramebufferView}
  */
-export function wrapSharedFramebuffer(buffer, byteOffset = 0) {
+export function wrapSharedFramebuffer(buffer: ArrayBuffer | SharedArrayBuffer, byteOffset = 0): SharedFramebufferView {
   if (!Number.isInteger(byteOffset) || byteOffset < 0) {
     throw new Error(`Invalid byteOffset: ${byteOffset}`);
   }
@@ -144,52 +127,43 @@ export function wrapSharedFramebuffer(buffer, byteOffset = 0) {
   };
 }
 
-/**
- * @typedef {object} FramebufferCopyFrame
- * @property {number} width
- * @property {number} height
- * @property {number} strideBytes
- * @property {number} format
- * @property {number} frameCounter
- * @property {Uint8Array} pixelsU8
- */
-
 export const FRAMEBUFFER_COPY_MESSAGE_TYPE = "aero.framebuffer.copy.v1";
 
-/**
- * @typedef {object} FramebufferCopyMessageV1
- * @property {typeof FRAMEBUFFER_COPY_MESSAGE_TYPE} type
- * @property {number} width
- * @property {number} height
- * @property {number} strideBytes
- * @property {number} format
- * @property {number} frameCounter
- * @property {ArrayBuffer} pixels
- */
+export type FramebufferCopyFrame = Readonly<{
+  width: number;
+  height: number;
+  strideBytes: number;
+  format: number;
+  frameCounter: number;
+  pixelsU8: Uint8Array;
+}>;
 
-/**
- * @param {any} msg
- * @returns {msg is FramebufferCopyMessageV1}
- */
-export function isFramebufferCopyMessageV1(msg) {
+export type FramebufferCopyMessageV1 = Readonly<{
+  type: typeof FRAMEBUFFER_COPY_MESSAGE_TYPE;
+  width: number;
+  height: number;
+  strideBytes: number;
+  format: number;
+  frameCounter: number;
+  pixels: ArrayBuffer;
+}>;
+
+export function isFramebufferCopyMessageV1(msg: unknown): msg is FramebufferCopyMessageV1 {
+  const obj = msg as any;
   return (
-    msg != null &&
-    typeof msg === "object" &&
-    msg.type === FRAMEBUFFER_COPY_MESSAGE_TYPE &&
-    typeof msg.width === "number" &&
-    typeof msg.height === "number" &&
-    typeof msg.strideBytes === "number" &&
-    typeof msg.format === "number" &&
-    typeof msg.frameCounter === "number" &&
-    msg.pixels instanceof ArrayBuffer
+    obj != null &&
+    typeof obj === "object" &&
+    obj.type === FRAMEBUFFER_COPY_MESSAGE_TYPE &&
+    typeof obj.width === "number" &&
+    typeof obj.height === "number" &&
+    typeof obj.strideBytes === "number" &&
+    typeof obj.format === "number" &&
+    typeof obj.frameCounter === "number" &&
+    obj.pixels instanceof ArrayBuffer
   );
 }
 
-/**
- * @param {FramebufferCopyMessageV1} msg
- * @returns {FramebufferCopyFrame}
- */
-export function copyFrameFromMessageV1(msg) {
+export function copyFrameFromMessageV1(msg: FramebufferCopyMessageV1): FramebufferCopyFrame {
   return {
     width: msg.width,
     height: msg.height,
@@ -199,4 +173,3 @@ export function copyFrameFromMessageV1(msg) {
     pixelsU8: new Uint8Array(msg.pixels),
   };
 }
-
