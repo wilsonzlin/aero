@@ -30,6 +30,12 @@ For the end-to-end “real device” passthrough architecture (main thread owns 
 `HIDDevice`, worker models UHCI + a generic HID device), see
 [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
 
+Windows 7 compatibility goals (what we optimize for):
+
+- Prefer descriptor forms that Windows 7 parses reliably (`hidparse.sys`), i.e. **short items** and common main-item flag patterns.
+- Preserve the **top-level application collection** `Usage Page`/`Usage` because Windows 7 uses it to bind client drivers (`kbdhid.sys`, `mouhid.sys`, `hidgame.sys`, …).
+- Avoid uncommon HID tags (strings/designators/long items) unless we find a real device that requires them.
+
 ---
 
 ## High-level algorithm (deterministic descriptor emission)
@@ -290,3 +296,42 @@ End Collection
 ```
 
 This is the shape Windows 7 expects for a conventional HID mouse (and is representative of how the synthesis expands WebHID report items into explicit global/local/main items).
+
+## Example: synthesized boot-keyboard style descriptor (structure)
+
+A typical “boot keyboard” shape (modifier bits + 6-key rollover array) looks like:
+
+```
+Usage Page (Generic Desktop)
+Usage (Keyboard)
+Collection (Application)
+  Report ID (1)                ; omitted if reportId == 0
+
+  ; Modifiers: 8 one-bit fields (E0..E7)
+  Usage Page (Keyboard/Keypad)
+  Usage Min (Left Control)
+  Usage Max (Right GUI)
+  Logical Min (0)
+  Logical Max (1)
+  Report Size (1)
+  Report Count (8)
+  Input (Data, Variable, Absolute)
+
+  ; Reserved byte
+  Report Size (8)
+  Report Count (1)
+  Input (Constant)
+
+  ; Key array: 6 bytes
+  Usage Page (Keyboard/Keypad)
+  Usage Min (0)
+  Usage Max (101)
+  Logical Min (0)
+  Logical Max (101)
+  Report Size (8)
+  Report Count (6)
+  Input (Data, Array, Absolute)
+End Collection
+```
+
+(Optional output reports like keyboard LEDs are represented the same way: a set of globals/locals followed by an `Output(...)` main item.)
