@@ -214,13 +214,13 @@ export class UsbBroker {
 
       // When using addEventListener() MessagePorts need start() to begin dispatch.
       (port as unknown as { start?: () => void }).start?.();
-    }
 
-    // Newly attached ports should learn the current selection/disconnect state.
-    if (this.selectedInfo && !this.disconnectError) {
-      this.postToPort(port, { type: "usb.selected", ok: true, info: this.selectedInfo } satisfies UsbSelectedMessage);
-    } else if (this.disconnectError) {
-      this.postToPort(port, { type: "usb.selected", ok: false, error: this.disconnectError } satisfies UsbSelectedMessage);
+      // Newly attached ports should learn the current selection/disconnect state.
+      if (this.selectedInfo && !this.disconnectError) {
+        this.postToPort(port, { type: "usb.selected", ok: true, info: this.selectedInfo } satisfies UsbSelectedMessage);
+      } else if (this.disconnectError) {
+        this.postToPort(port, { type: "usb.selected", ok: false, error: this.disconnectError } satisfies UsbSelectedMessage);
+      }
     }
   }
 

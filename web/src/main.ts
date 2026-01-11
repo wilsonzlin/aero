@@ -2570,11 +2570,11 @@ function renderWebUsbBrokerPanel(): HTMLElement {
       if (data.ok && data.info && typeof data.info === "object") {
         const info = data.info as { vendorId: number; productId: number; productName?: string };
         setStatus(info);
-        error.textContent = "";
+        clearError();
       } else {
         setStatus(null);
         if (typeof data.error === "string") {
-          error.textContent = data.error;
+          showError(data.error);
         }
       }
     });
@@ -2875,6 +2875,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let schedulerWorker: Worker | null = null;
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: SharedArrayBuffer | null = null;
+  let attachedIoWorker: Worker | null = null;
 
   workerCoordinator.addEventListener("fatal", (ev) => {
     const detail = ev.detail;
@@ -2957,6 +2958,12 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       : `vmState=${vmState}`;
     jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
     forceJitCspBlock.disabled = anyActive;
+
+    const ioWorker = workerCoordinator.getIoWorker();
+    if (ioWorker !== attachedIoWorker) {
+      if (ioWorker) usbBroker.attachWorkerPort(ioWorker);
+      attachedIoWorker = ioWorker;
+    }
 
     statusList.replaceChildren(
       ...Object.entries(statuses).map(([role, status]) => {
