@@ -105,6 +105,28 @@ describe("UsbPassthroughDemoRuntime", () => {
     ]);
   });
 
+  it("does not reuse proxy action IDs after reset", () => {
+    const demo = new FakeDemo();
+    const posted: any[] = [];
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    const selected: UsbSelectedMessage = { type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } };
+    runtime.onUsbSelected(selected);
+    runtime.tick();
+
+    runtime.reset();
+    runtime.onUsbSelected(selected);
+    runtime.tick();
+
+    const ids = posted.filter((m) => m.type === "usb.action").map((m) => m.action.id);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBeGreaterThan(ids[0]);
+  });
+
   it("feeds completions into the demo object and emits result messages", () => {
     const demo = new FakeDemo();
     const posted: unknown[] = [];

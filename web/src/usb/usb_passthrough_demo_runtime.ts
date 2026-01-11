@@ -144,7 +144,6 @@ export class UsbPassthroughDemoRuntime {
   reset(): void {
     this.#demo.reset();
     this.#inflightByProxyId.clear();
-    this.#nextProxyId = USB_PASSTHROUGH_DEMO_ID_BASE;
   }
 
   onUsbSelected(msg: UsbSelectedMessage): void {
