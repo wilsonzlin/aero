@@ -11,7 +11,7 @@
     },
     "infFiles": {
       "type": "array",
-      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).",
+      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory). CI stages selected INFs into the package root by file name; ensure INF file names are unique within the driver.",
       "minItems": 1,
       "items": {
         "type": "string",
