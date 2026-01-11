@@ -36,6 +36,9 @@ pub struct IoParam {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Position,
+    VertexIndex,
+    InstanceIndex,
+    FrontFacing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,7 +150,7 @@ fn translate_vs(
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
-    let io = build_io_maps(isgn, osgn)?;
+    let io = build_io_maps(module, isgn, osgn)?;
     let resources = scan_resources(module);
 
     let reflection = ShaderReflection {
@@ -192,7 +195,7 @@ fn translate_ps(
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
-    let io = build_io_maps(isgn, osgn)?;
+    let io = build_io_maps(module, isgn, osgn)?;
     let resources = scan_resources(module);
 
     let reflection = ShaderReflection {
@@ -235,6 +238,7 @@ fn translate_ps(
 }
 
 fn build_io_maps(
+    module: &Sm4Module,
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
 ) -> Result<IoMaps, ShaderTranslateError> {
@@ -250,7 +254,7 @@ fn build_io_maps(
 
     let mut vs_position_reg = None;
     for p in &osgn.parameters {
-        if is_sv_position(&p.semantic_name) {
+        if is_sv_position_param(p) {
             vs_position_reg = Some(p.register);
             break;
         }
@@ -258,7 +262,7 @@ fn build_io_maps(
 
     let mut ps_position_reg = None;
     for p in &isgn.parameters {
-        if is_sv_position(&p.semantic_name) {
+        if is_sv_position_param(p) {
             ps_position_reg = Some(p.register);
             break;
         }
@@ -266,9 +270,50 @@ fn build_io_maps(
 
     let mut ps_sv_target0_reg = None;
     for p in &osgn.parameters {
-        if is_sv_target(&p.semantic_name) && p.semantic_index == 0 {
+        if is_sv_target_param(p) && p.semantic_index == 0 {
             ps_sv_target0_reg = Some(p.register);
             break;
+        }
+    }
+
+    let mut vs_vertex_id_reg = None;
+    let mut vs_instance_id_reg = None;
+    let mut ps_front_facing_reg = None;
+
+    for p in &isgn.parameters {
+        if is_sv_vertex_id_param(p) {
+            vs_vertex_id_reg = Some(p.register);
+        }
+        if is_sv_instance_id_param(p) {
+            vs_instance_id_reg = Some(p.register);
+        }
+        if is_sv_is_front_face_param(p) {
+            ps_front_facing_reg = Some(p.register);
+        }
+    }
+
+    // Merge declaration-driven system value bindings. These cover the case where
+    // the signature's `system_value_type` is unset (0) and the semantic name
+    // isn't the canonical `SV_*` string, while the token stream uses
+    // `dcl_input_siv` / `dcl_output_siv`.
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::InputSiv { reg, sys_value, .. } => match *sys_value {
+                D3D_NAME_VERTEX_ID => vs_vertex_id_reg = Some(*reg),
+                D3D_NAME_INSTANCE_ID => vs_instance_id_reg = Some(*reg),
+                D3D_NAME_IS_FRONT_FACE => ps_front_facing_reg = Some(*reg),
+                D3D_NAME_POSITION => ps_position_reg = Some(*reg),
+                _ => {}
+            },
+            Sm4Decl::OutputSiv { reg, sys_value, .. } => match *sys_value {
+                D3D_NAME_POSITION => vs_position_reg = Some(*reg),
+                D3D_NAME_TARGET => {
+                    // Assume the first declared target corresponds to SV_Target0.
+                    ps_sv_target0_reg.get_or_insert(*reg);
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 
@@ -278,6 +323,9 @@ fn build_io_maps(
         vs_position_register: vs_position_reg,
         ps_position_register: ps_position_reg,
         ps_sv_target0_register: ps_sv_target0_reg,
+        vs_vertex_id_register: vs_vertex_id_reg,
+        vs_instance_id_register: vs_instance_id_reg,
+        ps_front_facing_register: ps_front_facing_reg,
     })
 }
 
@@ -340,6 +388,9 @@ struct IoMaps {
     vs_position_register: Option<u32>,
     ps_position_register: Option<u32>,
     ps_sv_target0_register: Option<u32>,
+    vs_vertex_id_register: Option<u32>,
+    vs_instance_id_register: Option<u32>,
+    ps_front_facing_register: Option<u32>,
 }
 
 impl IoMaps {
@@ -347,7 +398,7 @@ impl IoMaps {
         self.inputs
             .values()
             .map(|p| {
-                let builtin = is_sv_position(&p.param.semantic_name).then_some(Builtin::Position);
+                let builtin = self.input_builtin(p.param.register, &p.param.semantic_name);
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
@@ -361,10 +412,14 @@ impl IoMaps {
     }
 
     fn outputs_reflection_vertex(&self) -> Vec<IoParam> {
+        let pos_reg = self.vs_position_register;
         self.outputs
             .values()
             .map(|p| {
-                let builtin = is_sv_position(&p.param.semantic_name).then_some(Builtin::Position);
+                let builtin = pos_reg
+                    .filter(|&r| r == p.param.register)
+                    .or_else(|| is_sv_position(&p.param.semantic_name).then_some(p.param.register))
+                    .map(|_| Builtin::Position);
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
@@ -381,7 +436,7 @@ impl IoMaps {
         self.outputs
             .values()
             .map(|p| {
-                let is_target = is_sv_target(&p.param.semantic_name);
+                let is_target = is_sv_target(&p.param.semantic_name) || p.param.system_value_type == D3D_NAME_TARGET;
                 IoParam {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
@@ -397,7 +452,20 @@ impl IoMaps {
     fn emit_vs_structs(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
         w.line("struct VsIn {");
         w.indent();
+
+        if self.vs_vertex_id_register.is_some() {
+            w.line("@builtin(vertex_index) vertex_id: u32,");
+        }
+        if self.vs_instance_id_register.is_some() {
+            w.line("@builtin(instance_index) instance_id: u32,");
+        }
+
         for p in self.inputs.values() {
+            if Some(p.param.register) == self.vs_vertex_id_register
+                || Some(p.param.register) == self.vs_instance_id_register
+            {
+                continue;
+            }
             w.line(&format!(
                 "@location({}) {}: {},",
                 p.param.register,
@@ -442,8 +510,13 @@ impl IoMaps {
         if let Some(_pos_reg) = self.ps_position_register {
             w.line("@builtin(position) pos: vec4<f32>,");
         }
+        if self.ps_front_facing_register.is_some() {
+            w.line("@builtin(front_facing) front_facing: bool,");
+        }
         for p in self.inputs.values() {
-            if Some(p.param.register) == self.ps_position_register {
+            if Some(p.param.register) == self.ps_position_register
+                || Some(p.param.register) == self.ps_front_facing_register
+            {
                 continue;
             }
             w.line(&format!(
@@ -484,6 +557,24 @@ impl IoMaps {
     ) -> Result<String, ShaderTranslateError> {
         match stage {
             ShaderStage::Vertex => {
+                if Some(reg) == self.vs_vertex_id_register {
+                    let p = self.inputs.get(&reg).ok_or(
+                        ShaderTranslateError::SignatureMissingRegister {
+                            io: "input",
+                            register: reg,
+                        },
+                    )?;
+                    return Ok(expand_to_vec4("f32(input.vertex_id)", p));
+                }
+                if Some(reg) == self.vs_instance_id_register {
+                    let p = self.inputs.get(&reg).ok_or(
+                        ShaderTranslateError::SignatureMissingRegister {
+                            io: "input",
+                            register: reg,
+                        },
+                    )?;
+                    return Ok(expand_to_vec4("f32(input.instance_id)", p));
+                }
                 let p = self.inputs.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {
                         io: "input",
@@ -496,6 +587,18 @@ impl IoMaps {
                 if Some(reg) == self.ps_position_register {
                     return Ok("input.pos".to_owned());
                 }
+                if Some(reg) == self.ps_front_facing_register {
+                    let p = self.inputs.get(&reg).ok_or(
+                        ShaderTranslateError::SignatureMissingRegister {
+                            io: "input",
+                            register: reg,
+                        },
+                    )?;
+                    return Ok(expand_to_vec4(
+                        "select(0.0, 1.0, input.front_facing)",
+                        p,
+                    ));
+                }
                 let p = self.inputs.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {
                         io: "input",
@@ -507,6 +610,22 @@ impl IoMaps {
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }
     }
+
+    fn input_builtin(&self, reg: u32, semantic_name: &str) -> Option<Builtin> {
+        if Some(reg) == self.vs_vertex_id_register || is_sv_vertex_id(semantic_name) {
+            return Some(Builtin::VertexIndex);
+        }
+        if Some(reg) == self.vs_instance_id_register || is_sv_instance_id(semantic_name) {
+            return Some(Builtin::InstanceIndex);
+        }
+        if Some(reg) == self.ps_front_facing_register || is_sv_is_front_face(semantic_name) {
+            return Some(Builtin::FrontFacing);
+        }
+        if Some(reg) == self.ps_position_register || is_sv_position(semantic_name) {
+            return Some(Builtin::Position);
+        }
+        None
+    }
 }
 
 fn is_sv_position(name: &str) -> bool {
@@ -516,6 +635,45 @@ fn is_sv_position(name: &str) -> bool {
 fn is_sv_target(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_Target") || name.eq_ignore_ascii_case("SV_TARGET")
 }
+
+fn is_sv_vertex_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_VertexID") || name.eq_ignore_ascii_case("SV_VERTEXID")
+}
+
+fn is_sv_instance_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_InstanceID") || name.eq_ignore_ascii_case("SV_INSTANCEID")
+}
+
+fn is_sv_is_front_face(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_IsFrontFace") || name.eq_ignore_ascii_case("SV_ISFRONTFACE")
+}
+
+fn is_sv_position_param(p: &DxbcSignatureParameter) -> bool {
+    is_sv_position(&p.semantic_name) || p.system_value_type == D3D_NAME_POSITION
+}
+
+fn is_sv_target_param(p: &DxbcSignatureParameter) -> bool {
+    is_sv_target(&p.semantic_name) || p.system_value_type == D3D_NAME_TARGET
+}
+
+fn is_sv_vertex_id_param(p: &DxbcSignatureParameter) -> bool {
+    is_sv_vertex_id(&p.semantic_name) || p.system_value_type == D3D_NAME_VERTEX_ID
+}
+
+fn is_sv_instance_id_param(p: &DxbcSignatureParameter) -> bool {
+    is_sv_instance_id(&p.semantic_name) || p.system_value_type == D3D_NAME_INSTANCE_ID
+}
+
+fn is_sv_is_front_face_param(p: &DxbcSignatureParameter) -> bool {
+    is_sv_is_front_face(&p.semantic_name) || p.system_value_type == D3D_NAME_IS_FRONT_FACE
+}
+
+// `D3D_NAME` system value identifiers we need for builtin mapping.
+const D3D_NAME_POSITION: u32 = 1;
+const D3D_NAME_VERTEX_ID: u32 = 6;
+const D3D_NAME_INSTANCE_ID: u32 = 8;
+const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+const D3D_NAME_TARGET: u32 = 64;
 
 fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
     // D3D input assembler fills missing components with (0,0,0,1). We apply the
