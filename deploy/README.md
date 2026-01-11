@@ -201,9 +201,9 @@ cp deploy/.env.example deploy/.env
 - `AERO_L2_TOKEN` (optional, legacy)
   - Legacy alias for API-key auth.
   - `deploy/docker-compose.yml` defaults `AERO_L2_AUTH_MODE=none`, so `AERO_L2_TOKEN` has no effect unless you
-    explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=api_key`).
-  - Accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=api_key`.
-  - Ignored when `AERO_L2_AUTH_MODE` is set to `cookie`, `jwt`, `cookie_or_jwt`, `cookie_or_api_key`, or `none`.
+    explicitly enable API-key auth (e.g. `AERO_L2_AUTH_MODE=api_key|cookie_or_api_key|cookie_and_api_key`).
+  - Accepted as a fallback value for `AERO_L2_API_KEY` when `AERO_L2_AUTH_MODE=api_key|cookie_or_api_key|cookie_and_api_key`.
+  - Ignored when `AERO_L2_AUTH_MODE` is set to `cookie`, `jwt`, `cookie_or_jwt`, or `none`.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)

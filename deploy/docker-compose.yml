@@ -219,17 +219,19 @@ services:
       # Legacy token (backwards compatibility).
       #
       # Note: this compose file defaults AERO_L2_AUTH_MODE=none, so setting AERO_L2_TOKEN has no
-      # effect unless you explicitly enable token auth (e.g. `AERO_L2_AUTH_MODE=api_key`).
+      # effect unless you explicitly enable API-key auth (e.g. `AERO_L2_AUTH_MODE=api_key`,
+      # `cookie_or_api_key`, or `cookie_and_api_key`).
       #
       # Clients then provide the credential via:
       # - `?token=<value>` (or `?apiKey=<value>`), OR
       # - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
       #   `aero-l2-tunnel-v1`).
       #
-      # In `AERO_L2_AUTH_MODE=api_key`, this is also accepted as a fallback value for `AERO_L2_API_KEY`.
+      # In API-key auth modes (`api_key`, `cookie_or_api_key`, `cookie_and_api_key`), this is also
+      # accepted as a fallback value for `AERO_L2_API_KEY`.
       #
       # This is ignored when `AERO_L2_AUTH_MODE` is explicitly set to `cookie`, `jwt`, `cookie_or_jwt`,
-      # `cookie_or_api_key`, or `none`.
+      # or `none`.
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).
