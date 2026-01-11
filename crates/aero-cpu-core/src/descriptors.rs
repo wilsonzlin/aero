@@ -416,8 +416,8 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         // 32-bit TSS: ESP0 at +4, SS0 at +8.
-        let esp0 = bus.read_u32(base + 4)?;
-        let ss0 = bus.read_u16(base + 8)?;
+        let esp0 = self.with_supervisor_access(bus, |bus| bus.read_u32(base + 4))?;
+        let ss0 = self.with_supervisor_access(bus, |bus| bus.read_u16(base + 8))?;
         if (ss0 >> 3) == 0 {
             return Err(Exception::ts(0));
         }
@@ -440,7 +440,7 @@ impl CpuState {
             return Err(Exception::ts(0));
         }
         // 64-bit TSS: RSP0 at +4.
-        let rsp0 = bus.read_u64(base + 4)?;
+        let rsp0 = self.with_supervisor_access(bus, |bus| bus.read_u64(base + 4))?;
         if rsp0 == 0 || !is_canonical(rsp0) {
             return Err(Exception::ts(0));
         }
@@ -466,7 +466,7 @@ impl CpuState {
         if off.checked_add(7).map_or(true, |end| end > limit) {
             return Err(Exception::ts(0));
         }
-        let rsp = bus.read_u64(base + off)?;
+        let rsp = self.with_supervisor_access(bus, |bus| bus.read_u64(base + off))?;
         if rsp == 0 || !is_canonical(rsp) {
             return Err(Exception::ts(0));
         }
@@ -483,11 +483,12 @@ impl CpuState {
         {
             return Err(Exception::ts(0));
         }
+        let base = self.tables.tr.base;
         let limit = self.tables.tr.limit as u64;
         if 0x66u64.checked_add(1).map_or(true, |end| end > limit) {
             return Err(Exception::ts(0));
         }
-        bus.read_u16(self.tables.tr.base + 0x66)
+        self.with_supervisor_access(bus, |bus| bus.read_u16(base + 0x66))
     }
 }
 
