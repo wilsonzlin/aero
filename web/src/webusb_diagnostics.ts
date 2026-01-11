@@ -440,6 +440,9 @@ function main(): void {
     );
     return;
   }
+  // Capture a non-null USB handle for nested callbacks; TypeScript does not carry
+  // null-narrowing through function boundaries even for `const` bindings.
+  const usbApi: USB = usb;
 
   const status = el("pre", { class: "mono", text: "" });
   const errorTitle = el("div", { class: "bad", text: "" });
@@ -493,14 +496,14 @@ function main(): void {
   }
 
   async function refreshKnownDevices(): Promise<void> {
-    if (typeof usb.getDevices !== "function") {
+    if (typeof usbApi.getDevices !== "function") {
       knownDevicesHost.replaceChildren(
         el("div", { class: "muted", text: "navigator.usb.getDevices() is unavailable in this browser." }),
       );
       return;
     }
 
-    const devices = await usb.getDevices();
+    const devices = await usbApi.getDevices();
     if (devices.length === 0) {
       knownDevicesHost.replaceChildren(el("div", { class: "muted", text: "No previously granted WebUSB devices found." }));
       return;
@@ -631,7 +634,7 @@ function main(): void {
       status.textContent = "";
       clearError();
       try {
-        const { device, filterNote } = await requestUsbDevice(usb);
+        const { device, filterNote } = await requestUsbDevice(usbApi);
         selectedDevice = device;
         selectedClass = classifyWebUsbDevice(device);
         lastFilterNote = filterNote;
@@ -670,12 +673,12 @@ function main(): void {
     })();
   };
 
-  usb.addEventListener("connect", (event) => {
+  usbApi.addEventListener("connect", (event) => {
     const dev = (event as USBConnectionEvent).device;
     appendEvent(`connect: ${deviceSummaryLabel(dev)}`);
     refreshKnownDevicesSafe();
   });
-  usb.addEventListener("disconnect", (event) => {
+  usbApi.addEventListener("disconnect", (event) => {
     const dev = (event as USBConnectionEvent).device;
     appendEvent(`disconnect: ${deviceSummaryLabel(dev)}`);
     refreshKnownDevicesSafe();
