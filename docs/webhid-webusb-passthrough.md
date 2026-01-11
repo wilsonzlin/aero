@@ -468,7 +468,8 @@ Recommended guardrails:
   - WebUSB broker/executor: `web/src/usb/usb_broker.ts`, `web/src/usb/webusb_backend.ts`
   - WebUSB proxy protocol + SAB ring fast path: `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`
   - Worker-side WebUSB passthrough runtime: `web/src/usb/webusb_passthrough_runtime.ts`
-  - Guest-visible WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
+  - Guest-visible UHCI PCI device (production): `web/src/io/devices/uhci.ts`
+  - (Dev/harness) Standalone WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
   - Guest USB attachment path schema (UHCI root port + downstream hub ports): `web/src/platform/hid_passthrough_protocol.ts`
   - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
   - Dev-only main-thread runtime wiring WebHID ↔ WASM bridge: `web/src/usb/webhid_passthrough_runtime.ts`
