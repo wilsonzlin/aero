@@ -1,5 +1,17 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import {
+  baselineSecurityHeaders,
+  crossOriginIsolationHeaders,
+  cspHeaders,
+} from '../../scripts/security_headers.mjs';
+
+function assertResponseHeadersContain(actual: Record<string, string>, expected: Record<string, string>): void {
+  for (const [key, value] of Object.entries(expected)) {
+    expect(actual[key.toLowerCase()]).toBe(value);
+  }
+}
+
 async function assertCrossOriginIsolated(page: Page) {
   const result = await page.evaluate(() => {
     let sharedWasmMemory = false;
@@ -27,11 +39,18 @@ async function assertCrossOriginIsolated(page: Page) {
 }
 
 test('dev server is cross-origin isolated (COOP/COEP)', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  const resp = await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+  expect(resp).toBeTruthy();
+  assertResponseHeadersContain(resp!.headers(), crossOriginIsolationHeaders);
+  assertResponseHeadersContain(resp!.headers(), baselineSecurityHeaders);
   await assertCrossOriginIsolated(page);
 });
 
 test('preview server is cross-origin isolated (COOP/COEP)', async ({ page }) => {
-  await page.goto('http://127.0.0.1:4173/', { waitUntil: 'load' });
+  const resp = await page.goto('http://127.0.0.1:4173/', { waitUntil: 'load' });
+  expect(resp).toBeTruthy();
+  assertResponseHeadersContain(resp!.headers(), crossOriginIsolationHeaders);
+  assertResponseHeadersContain(resp!.headers(), baselineSecurityHeaders);
+  assertResponseHeadersContain(resp!.headers(), cspHeaders);
   await assertCrossOriginIsolated(page);
 });
