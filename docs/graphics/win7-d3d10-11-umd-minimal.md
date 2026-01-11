@@ -365,15 +365,15 @@ Clears and draws
 * `pfnDraw`, `pfnDrawIndexed`
 
 Resource updates
- * `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP`
-   * must cover both:
-     * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
-     * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
-       * Win7 fence wait reference (exact CB struct + field names): `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
- * `pfnUpdateSubresourceUP` (user-memory upload path for `UpdateSubresource`)
-   * struct: `D3D11DDIARG_UPDATESUBRESOURCEUP`
- * `pfnCopyResource` / `pfnCopySubresourceRegion`
- * `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
+* `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP` (see [`win7-d3d11-map-unmap.md`](./win7-d3d11-map-unmap.md) for the definitive Win7 Map/Unmap + `LockCb`/`UnlockCb` contract)
+  * must cover both:
+    * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
+    * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
+      * Win7 fence wait reference (exact CB struct + field names): [`win7-d3d10-11-umd-callbacks-and-fences.md`](./win7-d3d10-11-umd-callbacks-and-fences.md)
+* `pfnUpdateSubresourceUP` (user-memory upload path for `UpdateSubresource`)
+  * struct: `D3D11DDIARG_UPDATESUBRESOURCEUP`
+* `pfnCopyResource` / `pfnCopySubresourceRegion`
+* `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
 
 ---
 
