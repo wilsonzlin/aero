@@ -37,6 +37,23 @@ impl Default for SaveOptions {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RestoreOptions {
+    /// For dirty-page snapshots, the expected parent snapshot id this diff should be applied on
+    /// top of.
+    ///
+    /// Full snapshots are standalone and ignore this field.
+    pub expected_parent_snapshot_id: Option<u64>,
+}
+
+impl Default for RestoreOptions {
+    fn default() -> Self {
+        Self {
+            expected_parent_snapshot_id: None,
+        }
+    }
+}
+
 pub trait SnapshotSource {
     fn snapshot_meta(&mut self) -> SnapshotMeta;
     fn cpu_state(&self) -> CpuState;
@@ -237,6 +254,74 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
     Ok(())
 }
 
+pub fn restore_snapshot_with_options<R: Read + Seek, T: SnapshotTarget>(
+    r: &mut R,
+    target: &mut T,
+    opts: RestoreOptions,
+) -> Result<()> {
+    let start_pos = r.stream_position()?;
+
+    let prescan = prescan_snapshot(r)?;
+    if prescan.ram_mode == Some(RamMode::Dirty) {
+        let meta = prescan
+            .meta
+            .ok_or(SnapshotError::Corrupt("missing META section"))?;
+        if meta.parent_snapshot_id != opts.expected_parent_snapshot_id {
+            return Err(SnapshotError::Corrupt("snapshot parent mismatch"));
+        }
+    }
+
+    r.seek(SeekFrom::Start(start_pos))?;
+    restore_snapshot(r, target)
+}
+
+#[derive(Debug, Clone)]
+struct SnapshotPrescan {
+    meta: Option<SnapshotMeta>,
+    ram_mode: Option<RamMode>,
+}
+
+fn prescan_snapshot<R: Read + Seek>(r: &mut R) -> Result<SnapshotPrescan> {
+    read_file_header(r)?;
+
+    let mut meta = None;
+    let mut ram_mode = None;
+
+    while let Some(header) = read_section_header(r)? {
+        let payload_start = r.stream_position()?;
+        match header.id {
+            id if id == SectionId::META => {
+                if header.version == 1 {
+                    let mut section_reader = r.take(header.len);
+                    meta = Some(SnapshotMeta::decode(&mut section_reader)?);
+                }
+            }
+            id if id == SectionId::RAM => {
+                if header.version == 1 {
+                    let mut section_reader = r.take(header.len);
+                    let _total_len = section_reader.read_u64_le()?;
+                    let _page_size = section_reader.read_u32_le()?;
+                    ram_mode = Some(RamMode::from_u8(section_reader.read_u8()?)?);
+                    let _compression = section_reader.read_u8()?;
+                    let _reserved = section_reader.read_u16_le()?;
+                }
+            }
+            _ => {}
+        }
+
+        let end = payload_start
+            .checked_add(header.len)
+            .ok_or(SnapshotError::Corrupt("section length overflow"))?;
+        r.seek(SeekFrom::Start(end))?;
+
+        if meta.is_some() && ram_mode.is_some() {
+            break;
+        }
+    }
+
+    Ok(SnapshotPrescan { meta, ram_mode })
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SectionHeader {
     id: SectionId,
@@ -321,6 +406,7 @@ mod tests {
     use super::*;
 
     use proptest::prelude::*;
+    use std::io::Cursor;
 
     #[derive(Default)]
     struct DummyTarget {
@@ -365,5 +451,191 @@ mod tests {
             let mut target = DummyTarget::new(1024);
             let _ = restore_snapshot(&mut std::io::Cursor::new(&data), &mut target);
         }
+    }
+
+    #[derive(Clone)]
+    struct DirtyBitmap {
+        bits: Vec<u64>,
+        pages: usize,
+        page_size: usize,
+    }
+
+    impl DirtyBitmap {
+        fn new(mem_len: usize, page_size: usize) -> Self {
+            let pages = mem_len.div_ceil(page_size);
+            let words = pages.div_ceil(64);
+            Self {
+                bits: vec![0u64; words],
+                pages,
+                page_size,
+            }
+        }
+
+        fn mark_addr(&mut self, addr: usize) {
+            let page = addr / self.page_size;
+            if page < self.pages {
+                let word = page / 64;
+                let bit = page % 64;
+                self.bits[word] |= 1u64 << bit;
+            }
+        }
+
+        fn take(&mut self) -> Vec<u64> {
+            let mut pages = Vec::new();
+            for (word_idx, word) in self.bits.iter_mut().enumerate() {
+                let mut w = *word;
+                if w == 0 {
+                    continue;
+                }
+                *word = 0;
+                while w != 0 {
+                    let bit = w.trailing_zeros() as usize;
+                    let page = word_idx * 64 + bit;
+                    if page < self.pages {
+                        pages.push(page as u64);
+                    }
+                    w &= !(1u64 << bit);
+                }
+            }
+            pages
+        }
+    }
+
+    #[derive(Clone)]
+    struct DummySource {
+        cpu: CpuState,
+        mmu: MmuState,
+        ram: Vec<u8>,
+        dirty: DirtyBitmap,
+        next_snapshot_id: u64,
+        last_snapshot_id: Option<u64>,
+    }
+
+    impl DummySource {
+        fn new(ram_len: usize, page_size: usize) -> Self {
+            Self {
+                cpu: CpuState::default(),
+                mmu: MmuState::default(),
+                ram: vec![0u8; ram_len],
+                dirty: DirtyBitmap::new(ram_len, page_size),
+                next_snapshot_id: 1,
+                last_snapshot_id: None,
+            }
+        }
+
+        fn write_u8(&mut self, addr: usize, val: u8) {
+            self.ram[addr] = val;
+            self.dirty.mark_addr(addr);
+        }
+    }
+
+    impl SnapshotSource for DummySource {
+        fn snapshot_meta(&mut self) -> SnapshotMeta {
+            let snapshot_id = self.next_snapshot_id;
+            self.next_snapshot_id += 1;
+            let meta = SnapshotMeta {
+                snapshot_id,
+                parent_snapshot_id: self.last_snapshot_id,
+                created_unix_ms: 0,
+                label: None,
+            };
+            self.last_snapshot_id = Some(snapshot_id);
+            meta
+        }
+
+        fn cpu_state(&self) -> CpuState {
+            self.cpu.clone()
+        }
+
+        fn mmu_state(&self) -> MmuState {
+            self.mmu.clone()
+        }
+
+        fn device_states(&self) -> Vec<DeviceState> {
+            Vec::new()
+        }
+
+        fn disk_overlays(&self) -> DiskOverlayRefs {
+            DiskOverlayRefs::default()
+        }
+
+        fn ram_len(&self) -> usize {
+            self.ram.len()
+        }
+
+        fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+            let offset: usize = offset
+                .try_into()
+                .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+            buf.copy_from_slice(&self.ram[offset..offset + buf.len()]);
+            Ok(())
+        }
+
+        fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+            Some(self.dirty.take())
+        }
+    }
+
+    fn snapshot_bytes<S: SnapshotSource>(source: &mut S, options: SaveOptions) -> Result<Vec<u8>> {
+        let mut cursor = Cursor::new(Vec::new());
+        save_snapshot(&mut cursor, source, options)?;
+        Ok(cursor.into_inner())
+    }
+
+    #[test]
+    fn restore_snapshot_with_options_validates_dirty_parent_chain() {
+        let page_size = 4096usize;
+        let ram_len = page_size * 2;
+        let mut source = DummySource::new(ram_len, page_size);
+
+        source.write_u8(0, 0xAA);
+        source.write_u8(page_size, 0xBB);
+        let base_mem = source.ram.clone();
+
+        let base_bytes = snapshot_bytes(&mut source, SaveOptions::default()).unwrap();
+        let base_snapshot_id = source.last_snapshot_id.unwrap();
+
+        source.write_u8(1, 0xCC);
+        let expected_final_mem = source.ram.clone();
+
+        let mut dirty_opts = SaveOptions::default();
+        dirty_opts.ram.mode = RamMode::Dirty;
+        let diff_bytes = snapshot_bytes(&mut source, dirty_opts).unwrap();
+
+        // Full snapshots are standalone and ignore the expected parent id option.
+        let mut full_target = DummyTarget::new(ram_len);
+        restore_snapshot_with_options(
+            &mut Cursor::new(base_bytes.as_slice()),
+            &mut full_target,
+            RestoreOptions {
+                expected_parent_snapshot_id: Some(12345),
+            },
+        )
+        .unwrap();
+        assert_eq!(full_target.ram, base_mem);
+
+        // Dirty snapshots require an exact match on the expected parent id.
+        let mut target = DummyTarget::new(ram_len);
+        restore_snapshot(&mut Cursor::new(base_bytes.as_slice()), &mut target).unwrap();
+
+        let err = restore_snapshot_with_options(
+            &mut Cursor::new(diff_bytes.as_slice()),
+            &mut target,
+            RestoreOptions {
+                expected_parent_snapshot_id: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+
+        restore_snapshot_with_options(
+            &mut Cursor::new(diff_bytes.as_slice()),
+            &mut target,
+            RestoreOptions {
+                expected_parent_snapshot_id: Some(base_snapshot_id),
+            },
+        )
+        .unwrap();
+        assert_eq!(target.ram, expected_final_mem);
     }
 }

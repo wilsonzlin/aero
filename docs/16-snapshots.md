@@ -85,6 +85,12 @@ Guest RAM dominates snapshot size (multi-GB for Windows 7). `aero-snapshot` supp
 - When the VM tracks dirty pages, a snapshot may include only modified pages since the last snapshot.
 - Each page is stored as `(page_index, compressed_bytes)`.
 - Restore applies diffs on top of an existing memory image (e.g., after loading a base full snapshot).
+- Dirty snapshots are **not standalone**: they must only be applied on top of the snapshot they
+  reference via `SnapshotMeta.parent_snapshot_id`.
+  - Use `aero_snapshot::restore_snapshot_with_options` and pass
+    `RestoreOptions { expected_parent_snapshot_id: Some(base_snapshot_id) }` to guard against
+    accidentally applying a diff to the wrong base.
+  - Full snapshots are standalone and ignore the expected-parent option.
 
 ---
 
