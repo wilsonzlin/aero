@@ -157,6 +157,8 @@ If the VM fails to boot after switching to **virtio-blk**:
 2. Re-run `setup.cmd` as Administrator.
 3. Review `C:\AeroGuestTools\install.log`.
 
+If you installed Guest Tools with `setup.cmd /skipstorage` (check for `C:\AeroGuestTools\storage-preseed.skipped.txt`), boot-critical virtio-blk pre-seeding was intentionally skipped. Re-run `setup.cmd` **without** `/skipstorage` using Guest Tools media that includes the virtio-blk driver before attempting to boot from virtio-blk.
+
 ## `verify.cmd` / `verify.ps1`
 
 Offline diagnostics + verification for Aero Windows 7 drivers.
