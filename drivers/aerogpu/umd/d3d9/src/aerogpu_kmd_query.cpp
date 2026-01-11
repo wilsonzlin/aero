@@ -52,6 +52,13 @@ struct AerogpuKmdQuery::D3DKMT_CLOSEADAPTER {
   D3DKMT_HANDLE hAdapter; // in
 };
 
+struct AerogpuKmdQuery::D3DKMT_QUERYADAPTERINFO {
+  D3DKMT_HANDLE hAdapter;
+  unsigned int Type;
+  void* pPrivateDriverData;
+  unsigned int PrivateDriverDataSize;
+};
+
 struct AerogpuKmdQuery::D3DKMT_ESCAPE {
   D3DKMT_HANDLE hAdapter;
   D3DKMT_HANDLE hDevice;
@@ -83,6 +90,8 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
       reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(gdi32_, "D3DKMTOpenAdapterFromHdc"));
   close_adapter_ =
       reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(gdi32_, "D3DKMTCloseAdapter"));
+  query_adapter_info_ =
+      reinterpret_cast<PFND3DKMTQueryAdapterInfo>(GetProcAddress(gdi32_, "D3DKMTQueryAdapterInfo"));
   escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
 
   if (!close_adapter_ || !escape_) {
@@ -103,6 +112,9 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
     if (NtSuccess(st) && data.hAdapter != 0) {
       adapter_ = data.hAdapter;
       adapter_luid_ = adapter_luid;
+      if (query_adapter_info_) {
+        ProbeUmdPrivateTypeLocked();
+      }
       return true;
     }
   }
@@ -162,6 +174,9 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
 
     adapter_ = open_hdc.hAdapter;
     adapter_luid_ = open_hdc.AdapterLuid;
+    if (query_adapter_info_) {
+      ProbeUmdPrivateTypeLocked();
+    }
     opened = true;
     break;
   }
@@ -190,6 +205,8 @@ bool AerogpuKmdQuery::InitFromHdc(HDC hdc) {
       reinterpret_cast<PFND3DKMTOpenAdapterFromHdc>(GetProcAddress(gdi32_, "D3DKMTOpenAdapterFromHdc"));
   close_adapter_ =
       reinterpret_cast<PFND3DKMTCloseAdapter>(GetProcAddress(gdi32_, "D3DKMTCloseAdapter"));
+  query_adapter_info_ =
+      reinterpret_cast<PFND3DKMTQueryAdapterInfo>(GetProcAddress(gdi32_, "D3DKMTQueryAdapterInfo"));
   escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
 
   if (!open_adapter_from_hdc_ || !close_adapter_ || !escape_) {
@@ -211,6 +228,9 @@ bool AerogpuKmdQuery::InitFromHdc(HDC hdc) {
 
   adapter_ = data.hAdapter;
   adapter_luid_ = data.AdapterLuid;
+  if (query_adapter_info_) {
+    ProbeUmdPrivateTypeLocked();
+  }
   return true;
 }
 
@@ -232,12 +252,61 @@ void AerogpuKmdQuery::ShutdownLocked() {
   open_adapter_from_luid_ = nullptr;
   open_adapter_from_hdc_ = nullptr;
   close_adapter_ = nullptr;
+  query_adapter_info_ = nullptr;
   escape_ = nullptr;
+
+  umdriverprivate_type_known_ = false;
+  umdriverprivate_type_ = 0;
 
   if (gdi32_) {
     FreeLibrary(gdi32_);
     gdi32_ = nullptr;
   }
+}
+
+bool AerogpuKmdQuery::ProbeUmdPrivateTypeLocked() {
+  umdriverprivate_type_known_ = false;
+  umdriverprivate_type_ = 0;
+
+  if (!adapter_ || !query_adapter_info_) {
+    return false;
+  }
+
+  aerogpu_umd_private_v1 blob;
+  std::memset(&blob, 0, sizeof(blob));
+
+  D3DKMT_QUERYADAPTERINFO q;
+  std::memset(&q, 0, sizeof(q));
+  q.hAdapter = adapter_;
+  q.pPrivateDriverData = &blob;
+  q.PrivateDriverDataSize = static_cast<unsigned int>(sizeof(blob));
+
+  // Avoid relying on the WDK's numeric KMTQAITYPE_UMDRIVERPRIVATE constant by probing a
+  // small range of values and looking for a valid AeroGPU UMDRIVERPRIVATE v1 blob.
+  for (unsigned int type = 0; type < 256; ++type) {
+    std::memset(&blob, 0, sizeof(blob));
+    q.Type = type;
+
+    const NTSTATUS st = query_adapter_info_(&q);
+    if (!NtSuccess(st)) {
+      continue;
+    }
+
+    if (blob.size_bytes != sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+      continue;
+    }
+
+    const uint32_t magic = blob.device_mmio_magic;
+    if (magic != 0 && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+      continue;
+    }
+
+    umdriverprivate_type_known_ = true;
+    umdriverprivate_type_ = type;
+    return true;
+  }
+
+  return false;
 }
 
 bool AerogpuKmdQuery::QueryFence(uint64_t* last_submitted, uint64_t* last_completed) {
@@ -281,6 +350,40 @@ bool AerogpuKmdQuery::QueryFence(uint64_t* last_submitted, uint64_t* last_comple
   return true;
 }
 
+bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {
+  if (!out) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!adapter_ || !query_adapter_info_) {
+    return false;
+  }
+
+  if (!umdriverprivate_type_known_ && !ProbeUmdPrivateTypeLocked()) {
+    return false;
+  }
+
+  std::memset(out, 0, sizeof(*out));
+
+  D3DKMT_QUERYADAPTERINFO q;
+  std::memset(&q, 0, sizeof(q));
+  q.hAdapter = adapter_;
+  q.Type = umdriverprivate_type_;
+  q.pPrivateDriverData = out;
+  q.PrivateDriverDataSize = static_cast<unsigned int>(sizeof(*out));
+
+  const NTSTATUS st = query_adapter_info_(&q);
+  if (!NtSuccess(st)) {
+    return false;
+  }
+
+  if (out->size_bytes != sizeof(*out) || out->struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+    return false;
+  }
+  return true;
+}
+
 bool AerogpuKmdQuery::WaitForFence(uint64_t fence, uint32_t timeout_ms) {
   const DWORD start = GetTickCount();
 
@@ -317,6 +420,10 @@ bool AerogpuKmdQuery::InitFromLuid(LUID) {
 void AerogpuKmdQuery::Shutdown() {}
 
 bool AerogpuKmdQuery::QueryFence(uint64_t*, uint64_t*) {
+  return false;
+}
+
+bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1*) {
   return false;
 }
 

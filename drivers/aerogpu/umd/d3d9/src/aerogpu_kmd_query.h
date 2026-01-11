@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <mutex>
 
+#include "../../../protocol/aerogpu_umd_private.h"
+
 #if defined(_WIN32)
   #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
@@ -56,6 +58,12 @@ class AerogpuKmdQuery {
   // elapses. Uses cooperative polling (Sleep(0/1)), not a busy spin.
   bool WaitForFence(uint64_t fence, uint32_t timeout_ms);
 
+  // Queries the AeroGPU UMDRIVERPRIVATE discovery blob from the KMD.
+  //
+  // Returns false if the query path is unavailable (missing exports, adapter
+  // open failure, or query failure).
+  bool QueryUmdPrivate(aerogpu_umd_private_v1* out);
+
  private:
   void ShutdownLocked();
 
@@ -66,21 +74,29 @@ class AerogpuKmdQuery {
   struct D3DKMT_OPENADAPTERFROMLUID;
   struct D3DKMT_OPENADAPTERFROMHDC;
   struct D3DKMT_CLOSEADAPTER;
+  struct D3DKMT_QUERYADAPTERINFO;
   struct D3DKMT_ESCAPE;
 
   using PFND3DKMTOpenAdapterFromLuid = NTSTATUS(__stdcall*)(D3DKMT_OPENADAPTERFROMLUID* pData);
   using PFND3DKMTOpenAdapterFromHdc = NTSTATUS(__stdcall*)(D3DKMT_OPENADAPTERFROMHDC* pData);
   using PFND3DKMTCloseAdapter = NTSTATUS(__stdcall*)(D3DKMT_CLOSEADAPTER* pData);
+  using PFND3DKMTQueryAdapterInfo = NTSTATUS(__stdcall*)(D3DKMT_QUERYADAPTERINFO* pData);
   using PFND3DKMTEscape = NTSTATUS(__stdcall*)(D3DKMT_ESCAPE* pData);
+
+  bool ProbeUmdPrivateTypeLocked();
 
   HMODULE gdi32_ = nullptr;
   PFND3DKMTOpenAdapterFromLuid open_adapter_from_luid_ = nullptr;
   PFND3DKMTOpenAdapterFromHdc open_adapter_from_hdc_ = nullptr;
   PFND3DKMTCloseAdapter close_adapter_ = nullptr;
+  PFND3DKMTQueryAdapterInfo query_adapter_info_ = nullptr;
   PFND3DKMTEscape escape_ = nullptr;
 
   D3DKMT_HANDLE adapter_ = 0;
   LUID adapter_luid_ = {};
+
+  bool umdriverprivate_type_known_ = false;
+  unsigned int umdriverprivate_type_ = 0;
 
   // Guards the handle + function pointer lifetime for Shutdown vs. Query.
   // Queries are expected at ~60Hz so a lightweight mutex is fine.

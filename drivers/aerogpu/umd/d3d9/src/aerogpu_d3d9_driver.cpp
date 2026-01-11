@@ -2823,6 +2823,23 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
                       static_cast<unsigned long long>(submitted),
                       static_cast<unsigned long long>(completed));
       }
+
+      aerogpu_umd_private_v1 priv;
+      std::memset(&priv, 0, sizeof(priv));
+      if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+        char magicStr[5] = {0, 0, 0, 0, 0};
+        magicStr[0] = (char)((priv.device_mmio_magic >> 0) & 0xFF);
+        magicStr[1] = (char)((priv.device_mmio_magic >> 8) & 0xFF);
+        magicStr[2] = (char)((priv.device_mmio_magic >> 16) & 0xFF);
+        magicStr[3] = (char)((priv.device_mmio_magic >> 24) & 0xFF);
+
+        aerogpu::logf("aerogpu-d3d9: UMDRIVERPRIVATE magic=0x%08x (%s) abi=0x%08x features=0x%llx flags=0x%08x\n",
+                      priv.device_mmio_magic,
+                      magicStr,
+                      priv.device_abi_version_u32,
+                      static_cast<unsigned long long>(priv.device_features),
+                      priv.flags);
+      }
     }
   }
 #endif
@@ -2857,6 +2874,23 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
         aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
                       static_cast<unsigned long long>(submitted),
                       static_cast<unsigned long long>(completed));
+      }
+
+      aerogpu_umd_private_v1 priv;
+      std::memset(&priv, 0, sizeof(priv));
+      if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+        char magicStr[5] = {0, 0, 0, 0, 0};
+        magicStr[0] = (char)((priv.device_mmio_magic >> 0) & 0xFF);
+        magicStr[1] = (char)((priv.device_mmio_magic >> 8) & 0xFF);
+        magicStr[2] = (char)((priv.device_mmio_magic >> 16) & 0xFF);
+        magicStr[3] = (char)((priv.device_mmio_magic >> 24) & 0xFF);
+
+        aerogpu::logf("aerogpu-d3d9: UMDRIVERPRIVATE magic=0x%08x (%s) abi=0x%08x features=0x%llx flags=0x%08x\n",
+                      priv.device_mmio_magic,
+                      magicStr,
+                      priv.device_abi_version_u32,
+                      static_cast<unsigned long long>(priv.device_features),
+                      priv.flags);
       }
     }
   }
