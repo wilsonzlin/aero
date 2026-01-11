@@ -16,13 +16,18 @@ param(
 
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
   #
-  # - testsigning: media is intended for test-signed/custom-signed drivers (default)
-  # - nointegritychecks: media may prompt to disable signature enforcement (not recommended)
-  # - none: media is intended for WHQL/production-signed drivers (no cert injection)
-  [ValidateSet("none", "testsigning", "nointegritychecks")]
-  [string] $SigningPolicy = "testsigning",
+  # - test: media is intended for test-signed/custom-signed drivers (default)
+  # - production: media is intended for WHQL/production-signed drivers (no cert injection)
+  # - none: same as production (development use)
+  #
+  # Legacy aliases accepted:
+  # - testsigning / test-signing -> test
+  # - nointegritychecks / no-integrity-checks -> none
+  # - prod / whql -> production
+  [ValidateSet("test", "production", "none", "testsigning", "test-signing", "prod", "whql", "nointegritychecks", "no-integrity-checks")]
+  [string] $SigningPolicy = "test",
 
-  # Public certificate used to sign the driver catalogs (required unless SigningPolicy=none).
+  # Public certificate used to sign the driver catalogs (required when SigningPolicy resolves to test).
   [string] $CertPath = "out/certs/aero-test.cer",
 
   # Packaging spec describing required/optional drivers.

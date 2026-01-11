@@ -9,6 +9,7 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-aero-virtio.ps1"
+      - "drivers/scripts/make-guest-tools-from-ci.ps1"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
       - "drivers/scripts/make-guest-tools-from-virtio-win.sh"
       - "ci/package-guest-tools.ps1"
@@ -21,6 +22,7 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-aero-virtio.ps1"
+      - "drivers/scripts/make-guest-tools-from-ci.ps1"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
       - "drivers/scripts/make-guest-tools-from-virtio-win.sh"
       - "ci/package-guest-tools.ps1"
@@ -33,6 +35,7 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-aero-virtio.ps1"
+      - "drivers/scripts/make-guest-tools-from-ci.ps1"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
       - "drivers/scripts/make-guest-tools-from-virtio-win.sh"
       - "ci/package-guest-tools.ps1"
@@ -124,6 +127,43 @@ jobs:
           set -euo pipefail
           mkdir -p out/guest-tools-packager
           python -m unittest discover -s tools/guest-tools/tests -p 'test_*.py' 2>&1 | tee out/guest-tools-packager/python-unittest-guest-tools.log
+
+      - name: Validate make-guest-tools-from-ci.ps1 signing-policy surface
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Assert-SigningPolicyAccepted {
+            param([Parameter(Mandatory = $true)][string]$Policy)
+
+            $out = & pwsh -NoProfile -ExecutionPolicy Bypass -File 'drivers/scripts/make-guest-tools-from-ci.ps1' `
+              -PackagesRoot 'out/does-not-exist' `
+              -SigningPolicy $Policy 2>&1
+
+            $exit = $LASTEXITCODE
+            $text = $out | Out-String
+
+            if ($exit -eq 0) {
+              throw "Expected wrapper to fail (missing InputRoot), but it succeeded for SigningPolicy=$Policy."
+            }
+
+            if ($text -notmatch 'InputRoot does not exist') {
+              throw "Expected wrapper to reach ci/package-guest-tools.ps1 and fail with missing InputRoot for SigningPolicy=$Policy. Output:`n$text"
+            }
+          }
+
+          # Canonical values:
+          Assert-SigningPolicyAccepted -Policy 'test'
+          Assert-SigningPolicyAccepted -Policy 'production'
+          Assert-SigningPolicyAccepted -Policy 'none'
+
+          # Legacy aliases (for back-compat):
+          Assert-SigningPolicyAccepted -Policy 'testsigning'
+          Assert-SigningPolicyAccepted -Policy 'test-signing'
+          Assert-SigningPolicyAccepted -Policy 'prod'
+          Assert-SigningPolicyAccepted -Policy 'whql'
+          Assert-SigningPolicyAccepted -Policy 'nointegritychecks'
+          Assert-SigningPolicyAccepted -Policy 'no-integrity-checks'
 
       - name: Smoke-test CI wrapper (ci/package-guest-tools.ps1)
         shell: pwsh
