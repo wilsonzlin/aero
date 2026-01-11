@@ -29,8 +29,8 @@ export type PlatformFeatureReport = {
    * Whether WebUSB is exposed (`navigator.usb`) in this context.
    *
    * WebUSB is Chromium-only and only available in secure contexts
-   * (HTTPS / localhost). In practice, browsers hide `navigator.usb` entirely
-   * when it is unavailable, so a simple presence check is sufficient.
+   * (HTTPS / localhost). We explicitly gate on `globalThis.isSecureContext` so
+   * callers can surface a clear reason when it is unavailable.
    */
   webusb: boolean;
   /** Whether WebGL2 is available (via `getContext("webgl2")`). */
@@ -149,7 +149,11 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
 
   const webgpu = typeof navigator !== "undefined" && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-  const webusb = typeof navigator !== "undefined" && typeof navigator.usb !== "undefined";
+  const webusb =
+    typeof navigator !== "undefined" &&
+    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true &&
+    "usb" in navigator &&
+    !!(navigator as Navigator & { usb?: unknown }).usb;
   const webgl2 = detectWebGl2();
   const opfs =
     typeof navigator !== "undefined" &&

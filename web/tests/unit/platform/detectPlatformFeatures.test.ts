@@ -50,6 +50,7 @@ describe("detectPlatformFeatures", () => {
   it("detects exposed browser APIs via globals (navigator.*, Audio*, OffscreenCanvas)", () => {
     WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
     (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
+    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
 
     // Node's global `navigator` is extensible. Stub the fields used by our detector.
     (navigator as unknown as { gpu?: unknown }).gpu = {};
@@ -74,14 +75,17 @@ describe("detectPlatformFeatures", () => {
     expect(report.wasmSimd).toBe(false);
   });
 
-  it("detects WebUSB via navigator.usb presence", () => {
+  it("detects WebUSB only in secure contexts with navigator.usb exposed", () => {
     WebAssembly.validate = (() => false) as typeof WebAssembly.validate;
 
-    const baseline = detectPlatformFeatures();
-    expect(baseline.webusb).toBe(false);
-
+    // Baseline: insecure context (default in Node) => WebUSB gated off.
     (navigator as unknown as { usb?: unknown }).usb = {};
-    const withUsb = detectPlatformFeatures();
-    expect(withUsb.webusb).toBe(true);
+    const insecure = detectPlatformFeatures();
+    expect(insecure.webusb).toBe(false);
+
+    // Secure context + navigator.usb => WebUSB available.
+    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
+    const secure = detectPlatformFeatures();
+    expect(secure.webusb).toBe(true);
   });
 });
