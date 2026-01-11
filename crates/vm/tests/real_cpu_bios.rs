@@ -1,13 +1,21 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
-use aero_cpu_core::state::{gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF};
+use aero_cpu_core::state::{
+    gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF,
+    FLAG_ZF,
+};
 use firmware::bda::BiosDataArea;
-use firmware::bios::{build_bios_rom, Bios, BiosConfig, BiosBus, BIOS_BASE, BIOS_SEGMENT};
+use firmware::bios::{
+    build_bios_rom, Bios, BiosConfig, BiosBus, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR,
+    TICKS_PER_DAY, BIOS_BASE, BIOS_SEGMENT,
+};
+use firmware::rtc::{CmosRtc, DateTime};
 use machine::{
     A20Gate, BlockDevice, CpuState as MachineCpuState, FirmwareMemory, MemoryAccess, PhysicalMemory,
     Segment as MachineSegment,
 };
+use std::time::Duration;
 
 const TEST_MEM_SIZE_BYTES: u64 = 16 * 1024 * 1024;
 const TEST_MEM_SIZE: usize = TEST_MEM_SIZE_BYTES as usize;
@@ -302,6 +310,25 @@ impl<D: BlockDevice> CoreVm<D> {
 }
 
 #[test]
+fn aero_cpu_core_vm_resets_to_0x7c00_with_dl_set() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[0x90, 0x90, 0x90]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    assert_eq!(vm.cpu.segments.cs.selector, 0x0000);
+    assert_eq!(vm.cpu.rip(), 0x7C00);
+    assert_eq!(vm.cpu.gpr[gpr::RSP] as u16, 0x7C00);
+    assert_eq!(vm.cpu.gpr[gpr::RDX] as u8, 0x80);
+
+    assert!(matches!(vm.step(), StepExit::Continue)); // first NOP
+    assert_eq!(vm.cpu.rip(), 0x7C01);
+    assert!(matches!(vm.step(), StepExit::Continue)); // second NOP
+    assert_eq!(vm.cpu.rip(), 0x7C02);
+}
+
+#[test]
 fn aero_cpu_core_int10_tty_hypercall_roundtrip() {
     let bios = Bios::new(test_bios_config());
     let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
@@ -432,4 +459,91 @@ fn aero_cpu_core_int15_e820_returns_first_entry() {
     assert_ne!(length, 0);
     assert_eq!(kind, 1);
     assert_eq!(attrs, 1);
+}
+
+#[test]
+fn aero_cpu_core_int16_read_key_returns_scancode_and_ascii() {
+    let mut bios = Bios::new(test_bios_config());
+    bios.push_key(0x2C5A); // scan=0x2C, ascii='Z'
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 16h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x16, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0000;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x16)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x2C5A);
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert!(!vm.cpu.get_flag(FLAG_ZF));
+}
+
+#[test]
+fn aero_cpu_core_int1a_get_system_time_returns_bda_ticks() {
+    let bios = Bios::new_with_rtc(
+        test_bios_config(),
+        CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)),
+    );
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // BDA tick count is initialized during POST.
+    assert_eq!(vm.mem.read_u32(BDA_TICK_COUNT_ADDR), 0);
+    assert_eq!(vm.mem.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 0);
+
+    // Program: INT 1Ah; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x1A, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0000; // AH=00h Get System Time
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    let ticks =
+        (((vm.cpu.gpr[gpr::RCX] & 0xFFFF) as u32) << 16) | ((vm.cpu.gpr[gpr::RDX] & 0xFFFF) as u32);
+    assert_eq!(ticks, vm.mem.read_u32(BDA_TICK_COUNT_ADDR));
+    assert_eq!((vm.cpu.gpr[gpr::RAX] & 0xFF) as u8, 0);
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+}
+
+#[test]
+fn aero_cpu_core_int1a_midnight_flag_is_reported_and_cleared() {
+    let bios = Bios::new_with_rtc(
+        test_bios_config(),
+        CmosRtc::new(DateTime::new(2026, 1, 1, 23, 59, 59)),
+    );
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Cross midnight by advancing 2 seconds.
+    vm.bios.advance_time(&mut vm.mem, Duration::from_secs(2));
+    assert_eq!(vm.mem.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 1);
+
+    // Program: INT 1Ah; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x1A, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0000; // AH=00h Get System Time
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    let ticks =
+        (((vm.cpu.gpr[gpr::RCX] & 0xFFFF) as u32) << 16) | ((vm.cpu.gpr[gpr::RDX] & 0xFFFF) as u32);
+    assert_eq!(ticks, vm.mem.read_u32(BDA_TICK_COUNT_ADDR));
+    assert_eq!(ticks, (u64::from(TICKS_PER_DAY) * 1 / 86_400) as u32);
+    assert_eq!((vm.cpu.gpr[gpr::RAX] & 0xFF) as u8, 1);
+    assert_eq!(vm.mem.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 0);
+    assert!(!vm.cpu.get_flag(FLAG_CF));
 }
