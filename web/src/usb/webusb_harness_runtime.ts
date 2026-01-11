@@ -466,6 +466,11 @@ export class WebUsbUhciHarnessRuntime {
 
       const brokerId = this.#nextBrokerId;
       this.#nextBrokerId += 1;
+      if (!Number.isSafeInteger(brokerId) || brokerId < 0 || brokerId > 0xffff_ffff) {
+        this.#lastError = `WebUsbUhciHarnessRuntime ran out of valid broker action IDs (next=${this.#nextBrokerId})`;
+        this.stop(this.#lastError);
+        return;
+      }
       const brokerAction = rewriteActionId(action, brokerId);
 
       const actionRing = this.#actionRing;
