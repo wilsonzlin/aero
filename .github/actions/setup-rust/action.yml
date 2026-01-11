@@ -59,7 +59,13 @@ runs:
         # Aero pins stable via rust-toolchain.toml. When callers request "stable"
         # we resolve it to the pinned version to keep CI reproducible.
         if [[ "$requested" == "stable" && -f rust-toolchain.toml ]]; then
-          pinned="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          pinned=""
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*channel[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+              pinned="${BASH_REMATCH[1]}"
+              break
+            fi
+          done < rust-toolchain.toml
           if [[ -n "$pinned" ]]; then
             resolved="$pinned"
           fi
