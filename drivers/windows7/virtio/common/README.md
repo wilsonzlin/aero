@@ -198,8 +198,10 @@ must link **exactly one** of them.
 
 - `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
   - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
-  - Used by Aero's Windows 7 virtio drivers for split-virtqueue descriptor management. The `_legacy`
-    suffix avoids a repository-wide filename clash with `virtqueue_split.h`.
+  - Used by host-side unit tests and legacy/transitional experiments.
+  - Shipped Aero Windows 7 drivers use the canonical WDF-free split virtqueue engine in
+    `drivers/windows/virtio/common/virtqueue_split.{c,h}`; the `_legacy` suffix exists solely to
+    avoid a repository-wide filename clash with `virtqueue_split.h`.
 
 - `include/virtio_sg.h`
   - Shared scatter/gather entry type (`virtio_sg_entry_t`) used by legacy virtqueues and driver helpers.
