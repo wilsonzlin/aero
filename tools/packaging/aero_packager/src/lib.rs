@@ -815,14 +815,22 @@ fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
 
     // Minimum coinstaller sanity: if the INF mentions WdfCoInstaller, ensure the referenced
     // DLL(s) actually exist in the packaged driver directory.
-    let inf_lower = inf_text.to_ascii_lowercase();
+    // Strip comments first to avoid false positives from documentation/comments inside INFs.
+    let mut inf_no_comments = String::new();
+    for raw_line in inf_text.lines() {
+        let before = raw_line.split_once(';').map(|(b, _)| b).unwrap_or(raw_line);
+        inf_no_comments.push_str(before);
+        inf_no_comments.push('\n');
+    }
+
+    let inf_lower = inf_no_comments.to_ascii_lowercase();
     if inf_lower.contains("wdfcoinstaller") {
         let re = regex::RegexBuilder::new(r"wdfcoinstaller[0-9a-z_]*\.dll")
             .case_insensitive(true)
             .build()
             .expect("valid regex");
         let mut found = false;
-        for m in re.find_iter(inf_text) {
+        for m in re.find_iter(&inf_no_comments) {
             found = true;
             referenced.insert(m.as_str().to_string());
         }
