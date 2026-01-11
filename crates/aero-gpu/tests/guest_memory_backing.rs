@@ -355,7 +355,7 @@ fn copy_buffer_executes_before_draw() {
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         // Host-owned buffers are updated through UPLOAD_RESOURCE, so no alloc table is needed.
-        let mut guest = VecGuestMemory::new(0x20_000);
+        let guest = VecGuestMemory::new(0x20_000);
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];

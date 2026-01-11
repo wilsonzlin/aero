@@ -230,8 +230,8 @@ fn d3d9_dirty_range_flush_respects_ordering_with_interleaved_draws() {
     assert_eq!(vb_data_a.len(), 3 * 16);
     assert_eq!(vb_data_b.len(), 3 * 16);
 
-    let mut guest_before = VecGuestMemory::new(0x4000);
-    let mut guest_after = VecGuestMemory::new(0x4000);
+    let guest_before = VecGuestMemory::new(0x4000);
+    let guest_after = VecGuestMemory::new(0x4000);
     guest_before.write(VB_GPA, &vb_data_a).unwrap();
     guest_after.write(VB_GPA, &vb_data_b).unwrap();
     let guest_memory = PhasedGuestMemory::new(guest_before, guest_after);
