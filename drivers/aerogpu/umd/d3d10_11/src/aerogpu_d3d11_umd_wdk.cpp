@@ -871,6 +871,13 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   dev->kmt_fence_syncobj = static_cast<uint32_t>(hSyncObject);
   dev->wddm_dma_private_data = dma_private_data;
   dev->wddm_dma_private_data_bytes = static_cast<uint32_t>(dma_private_data_bytes);
+  if (!dev->wddm_dma_private_data ||
+      dev->wddm_dma_private_data_bytes < static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES)) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: D3D11 CreateContext did not provide usable dma private data ptr=%p bytes=%u (need >=%u)",
+                         dev->wddm_dma_private_data,
+                         static_cast<unsigned>(dev->wddm_dma_private_data_bytes),
+                         static_cast<unsigned>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES));
+  }
   return S_OK;
 }
 
@@ -1226,6 +1233,14 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     }
 
     if (!dma_priv_ptr && dev->wddm_dma_private_data) {
+      static std::atomic<bool> logged_fallback{false};
+      bool expected = false;
+      if (logged_fallback.compare_exchange_strong(expected, true)) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: D3D11 falling back to CreateContext dma private data ptr=%p bytes=%u",
+                             dev->wddm_dma_private_data,
+                             static_cast<unsigned>(dev->wddm_dma_private_data_bytes));
+      }
+
       dma_priv_ptr = dev->wddm_dma_private_data;
       dma_priv_ptr_present = true;
       if (!dma_priv_size && dev->wddm_dma_private_data_bytes) {

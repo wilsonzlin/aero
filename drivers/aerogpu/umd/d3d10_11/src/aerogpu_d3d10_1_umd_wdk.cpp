@@ -965,6 +965,12 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
     if (dev->dma_buffer_private_data && dev->dma_buffer_private_data_size == 0) {
       dev->dma_buffer_private_data_size = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
     }
+    if (!dev->dma_buffer_private_data || dev->dma_buffer_private_data_size < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
+      AEROGPU_D3D10_11_LOG("wddm_submit: D3D10.1 CreateContext did not provide usable dma private data ptr=%p bytes=%u (need >=%u)",
+                           dev->dma_buffer_private_data,
+                           static_cast<unsigned>(dev->dma_buffer_private_data_size),
+                           static_cast<unsigned>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES));
+    }
   }
   __if_not_exists(D3DDDICB_CREATECONTEXT) {
     DestroyKernelDeviceContext(dev);
@@ -1302,6 +1308,13 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       // Some WDK/runtime combinations expose per-DMA-buffer private data via
       // CreateContext rather than AllocateCb. Use it as a fallback for submit,
       // but keep the AllocateCb pointer/size for DeallocateCb.
+      static std::atomic<bool> logged_fallback{false};
+      bool expected = false;
+      if (logged_fallback.compare_exchange_strong(expected, true)) {
+        AEROGPU_D3D10_11_LOG("wddm_submit: D3D10.1 falling back to CreateContext dma private data ptr=%p bytes=%u",
+                             dev->dma_buffer_private_data,
+                             static_cast<unsigned>(dev->dma_buffer_private_data_size));
+      }
       dma_priv_ptr = dev->dma_buffer_private_data;
       dma_priv_ptr_present = true;
       if (dma_priv_size == 0 && dev->dma_buffer_private_data_size != 0) {
@@ -1457,6 +1470,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
         present.PatchLocationListSize = 0;
       }
+      __if_exists(D3DDDICB_PRESENT::CommandBufferSize) {
+        present.CommandBufferSize = dma_cap;
+      }
       __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
         present.pDmaBufferPrivateData = dma_priv_ptr;
       }
@@ -1505,6 +1521,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
       __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
         render.PatchLocationListSize = 0;
+      }
+      __if_exists(D3DDDICB_RENDER::CommandBufferSize) {
+        render.CommandBufferSize = dma_cap;
       }
       __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
         render.pDmaBufferPrivateData = dma_priv_ptr;
