@@ -139,18 +139,6 @@ impl UsbHidPassthroughHandle {
 }
 
 impl UsbDeviceModel for UsbHidPassthroughHandle {
-    fn get_device_descriptor(&self) -> &[u8] {
-        self.device_descriptor.as_ref()
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        self.config_descriptor.as_ref()
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        self.hid_report_descriptor.as_ref()
-    }
-
     fn reset(&mut self) {
         self.inner.borrow_mut().reset();
     }
@@ -357,18 +345,6 @@ impl UsbHidPassthrough {
 }
 
 impl UsbDeviceModel for UsbHidPassthrough {
-    fn get_device_descriptor(&self) -> &[u8] {
-        self.device_descriptor.as_ref()
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        self.config_descriptor.as_ref()
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        self.hid_report_descriptor.as_ref()
-    }
-
     fn reset(&mut self) {
         self.address = 0;
         self.configuration = 0;
@@ -452,9 +428,9 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.device_descriptor.as_ref().to_vec()),
                         USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(self.get_config_descriptor().to_vec())
+                            Some(self.config_descriptor.as_ref().to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
@@ -531,7 +507,7 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_HID_REPORT => {
-                            Some(self.get_hid_report_descriptor().to_vec())
+                            Some(self.hid_report_descriptor.as_ref().to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor.as_ref().to_vec()),
                         _ => None,
@@ -1097,7 +1073,7 @@ mod tests {
     #[test]
     fn descriptors_are_well_formed() {
         let report = sample_report_descriptor_with_ids();
-        let dev = UsbHidPassthroughHandle::new(
+        let mut dev = UsbHidPassthroughHandle::new(
             0x1234,
             0x5678,
             "Vendor".to_string(),
@@ -1110,12 +1086,36 @@ mod tests {
             Some(1),
         );
 
-        let device_desc = dev.get_device_descriptor();
+        let device_desc = match dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
+                w_index: 0,
+                w_length: 18,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         assert_eq!(device_desc.len(), 18);
         assert_eq!(device_desc[0] as usize, device_desc.len());
         assert_eq!(device_desc[1], USB_DESCRIPTOR_TYPE_DEVICE);
 
-        let cfg = dev.get_config_descriptor();
+        let cfg = match dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_index: 0,
+                w_length: 255,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         assert_eq!(cfg[0], 0x09);
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
         assert_eq!(w_le(&cfg, 2) as usize, cfg.len());

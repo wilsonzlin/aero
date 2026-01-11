@@ -451,20 +451,6 @@ impl Default for UsbCompositeHidInputHandle {
 }
 
 impl UsbDeviceModel for UsbCompositeHidInputHandle {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        // Composite devices expose per-interface report descriptors; return the keyboard
-        // report descriptor as a sensible default.
-        &super::keyboard::HID_REPORT_DESCRIPTOR
-    }
-
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }
@@ -583,21 +569,6 @@ impl UsbCompositeHidInput {
 }
 
 impl UsbDeviceModel for UsbCompositeHidInput {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        // The composite device exposes multiple report descriptors; callers should use
-        // GET_DESCRIPTOR(REPORT) routed by interface number. Return the keyboard report
-        // descriptor as a sane default.
-        &super::keyboard::HID_REPORT_DESCRIPTOR
-    }
-
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -667,9 +638,9 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(DEVICE_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(self.get_config_descriptor().to_vec())
+                            Some(CONFIG_DESCRIPTOR.to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
@@ -1191,11 +1162,23 @@ mod tests {
 
     #[test]
     fn config_descriptor_has_three_interfaces_and_endpoints() {
-        let dev = UsbCompositeHidInput::new();
-        let cfg = dev.get_config_descriptor();
+        let mut dev = UsbCompositeHidInput::new();
+        let cfg = match dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_index: 0,
+                w_length: CONFIG_DESCRIPTOR.len() as u16,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         assert_eq!(cfg[0], 0x09);
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
-        assert_eq!(w_le(cfg, 2) as usize, cfg.len());
+        assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
         assert_eq!(cfg[4], 3);
 
         let mut ifaces = 0;
@@ -1224,8 +1207,20 @@ mod tests {
 
     #[test]
     fn hid_descriptors_reference_correct_report_lengths() {
-        let dev = UsbCompositeHidInput::new();
-        let cfg = dev.get_config_descriptor();
+        let mut dev = UsbCompositeHidInput::new();
+        let cfg = match dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_index: 0,
+                w_length: CONFIG_DESCRIPTOR.len() as u16,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
 
         // Layout is deterministic: HID descriptors start after each 9-byte interface descriptor.
         // Interface0 HID at 18, Interface1 HID at 43, Interface2 HID at 68.

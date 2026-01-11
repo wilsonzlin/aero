@@ -7,18 +7,6 @@ use super::{UsbHub, UsbHubDevice};
 struct DummyDevice;
 
 impl UsbDeviceModel for DummyDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(
         &mut self,
         _setup: SetupPacket,

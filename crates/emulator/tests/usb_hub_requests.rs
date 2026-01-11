@@ -9,6 +9,8 @@ const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
 const USB_REQUEST_GET_INTERFACE: u8 = 0x0a;
 const USB_REQUEST_SET_INTERFACE: u8 = 0x0b;
 
+const USB_DESCRIPTOR_TYPE_CONFIGURATION: u16 = 0x02;
+
 const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
 
 const HUB_PORT_FEATURE_ENABLE: u16 = 1;
@@ -29,26 +31,6 @@ const HUB_INTERRUPT_IN_EP: u8 = 0x81;
 struct DummyUsbDevice;
 
 impl UsbDeviceModel for DummyUsbDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        // Minimal full-speed device descriptor (not enumerated by these tests).
-        &[
-            0x12, 0x01, 0x10, 0x01, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01,
-            0x01, 0x02, 0x00, 0x01,
-        ]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        // Config(9) + Interface(9) = 18 bytes.
-        &[
-            0x09, 0x02, 18, 0x00, 0x01, 0x01, 0x00, 0x80, 50, 0x09, 0x04, 0x00, 0x00, 0x00, 0xff,
-            0x00, 0x00, 0x00,
-        ]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(&mut self, _setup: SetupPacket, _data_stage: Option<&[u8]>) -> ControlResponse {
         ControlResponse::Stall
     }
@@ -387,7 +369,19 @@ fn usb_hub_hub_descriptor_fields_are_stable_and_correct_length() {
     assert_eq!(desc[8], HUB_PORT_PWR_CTRL_MASK);
 
     // Configuration descriptor should expose a non-zero bMaxPower.
-    assert_eq!(hub.get_config_descriptor()[8], 50);
+    let ControlResponse::Data(cfg) = hub.handle_control_request(
+        setup(
+            0x80,
+            USB_REQUEST_GET_DESCRIPTOR,
+            USB_DESCRIPTOR_TYPE_CONFIGURATION << 8,
+            0,
+            255,
+        ),
+        None,
+    ) else {
+        panic!("expected configuration descriptor response");
+    };
+    assert_eq!(cfg[8], 50);
 }
 
 #[test]

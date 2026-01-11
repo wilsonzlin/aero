@@ -88,18 +88,6 @@ impl Default for UsbHidMouseHandle {
 }
 
 impl UsbDeviceModel for UsbHidMouseHandle {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &HID_REPORT_DESCRIPTOR
-    }
-
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }
@@ -230,18 +218,6 @@ impl UsbHidMouse {
 }
 
 impl UsbDeviceModel for UsbHidMouse {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &HID_REPORT_DESCRIPTOR
-    }
-
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -311,9 +287,9 @@ impl UsbDeviceModel for UsbHidMouse {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(DEVICE_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(self.get_config_descriptor().to_vec())
+                            Some(CONFIG_DESCRIPTOR.to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
@@ -385,7 +361,7 @@ impl UsbDeviceModel for UsbHidMouse {
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_HID_REPORT => {
-                            Some(self.get_hid_report_descriptor().to_vec())
+                            Some(HID_REPORT_DESCRIPTOR.to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor_bytes().to_vec()),
                         _ => None,
@@ -653,10 +629,22 @@ mod tests {
 
     #[test]
     fn mouse_descriptors_reference_report_length() {
-        let mouse = UsbHidMouse::new();
-        let cfg = mouse.get_config_descriptor();
+        let mut mouse = UsbHidMouse::new();
+        let cfg = match mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_index: 0,
+                w_length: CONFIG_DESCRIPTOR.len() as u16,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
-        assert_eq!(w_le(cfg, 2) as usize, cfg.len());
+        assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
 
         let hid = &cfg[18..27];
         assert_eq!(hid[1], USB_DESCRIPTOR_TYPE_HID);

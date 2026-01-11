@@ -94,18 +94,6 @@ impl UsbHub for TestHub {
 }
 
 impl UsbDeviceModel for TestHub {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(
         &mut self,
         _setup: SetupPacket,
@@ -130,18 +118,6 @@ impl UsbDeviceModel for TestHub {
 struct TestLeaf;
 
 impl UsbDeviceModel for TestLeaf {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(
         &mut self,
         _setup: SetupPacket,

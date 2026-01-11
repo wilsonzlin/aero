@@ -7,6 +7,9 @@ const USB_REQUEST_GET_STATUS: u8 = 0x00;
 const USB_REQUEST_CLEAR_FEATURE: u8 = 0x01;
 const USB_REQUEST_SET_FEATURE: u8 = 0x03;
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
+const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
+
+const USB_DESCRIPTOR_TYPE_DEVICE: u16 = 0x01;
 
 const HUB_PORT_FEATURE_RESET: u16 = 4;
 const HUB_PORT_FEATURE_POWER: u16 = 8;
@@ -95,7 +98,19 @@ fn usb_hub_hotplug_attach_detach_at_path() {
         let dev = root
             .device_mut_for_address(0)
             .expect("downstream device should now be reachable at address 0");
-        let desc = dev.model_mut().get_device_descriptor();
+        let desc = match dev.model_mut().handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: USB_DESCRIPTOR_TYPE_DEVICE << 8,
+                w_index: 0,
+                w_length: 18,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         // Hub uses bDeviceClass=0x09; keyboard uses 0x00.
         assert_eq!(desc.get(4).copied(), Some(0x00));
     }
@@ -153,4 +168,3 @@ fn usb_hub_hotplug_attach_detach_at_path() {
         assert_ne!(change_bits & 0x0001, 0);
     }
 }
-

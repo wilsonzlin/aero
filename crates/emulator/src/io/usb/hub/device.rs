@@ -260,18 +260,6 @@ impl Default for UsbHubDevice {
 }
 
 impl UsbDeviceModel for UsbHubDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &HUB_DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &HUB_CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn hub_port_count(&self) -> Option<u8> {
         Some(HUB_NUM_PORTS as u8)
     }
@@ -370,8 +358,8 @@ impl UsbDeviceModel for UsbHubDevice {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.get_config_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(HUB_DEVICE_DESCRIPTOR.to_vec()),
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(HUB_CONFIG_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         // Accept hub descriptor fetch as both a class request (the common case) and
                         // a standard request. Some host stacks probe descriptor type 0x29 using a

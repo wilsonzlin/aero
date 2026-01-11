@@ -176,18 +176,6 @@ impl DummyInterruptOutDevice {
 }
 
 impl UsbDeviceModel for DummyInterruptOutDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(
         &mut self,
         _setup: SetupPacket,
@@ -217,18 +205,6 @@ impl TestInterruptInDevice {
 }
 
 impl UsbDeviceModel for TestInterruptInDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(
         &mut self,
         _setup: SetupPacket,
@@ -258,18 +234,6 @@ impl DynamicDescriptorDevice {
 }
 
 impl UsbDeviceModel for DynamicDescriptorDevice {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &self.device_descriptor
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &self.config_descriptor
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &[]
-    }
-
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
@@ -282,8 +246,8 @@ impl UsbDeviceModel for DynamicDescriptorDevice {
                         return ControlResponse::Stall;
                     }
                     let data = match setup.descriptor_type() {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
-                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.get_config_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.device_descriptor.clone()),
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.config_descriptor.clone()),
                         _ => None,
                     };
                     data.map(ControlResponse::Data)

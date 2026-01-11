@@ -116,10 +116,6 @@ impl std::fmt::Display for UsbHubAttachError {
 impl std::error::Error for UsbHubAttachError {}
 
 pub trait UsbDeviceModel {
-    fn get_device_descriptor(&self) -> &[u8];
-    fn get_config_descriptor(&self) -> &[u8];
-    fn get_hid_report_descriptor(&self) -> &[u8];
-
     /// Returns the number of downstream ports if this device is a hub.
     fn hub_port_count(&self) -> Option<u8> {
         self.as_hub()

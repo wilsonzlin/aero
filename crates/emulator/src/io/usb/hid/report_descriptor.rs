@@ -893,8 +893,7 @@ pub fn max_feature_report_bytes(collections: &[HidCollectionInfo]) -> usize {
 mod tests {
     use super::*;
 
-    use crate::io::usb::hid::{keyboard::UsbHidKeyboard, mouse::UsbHidMouse};
-    use crate::io::usb::UsbDeviceModel;
+    use crate::io::usb::hid::{keyboard, mouse};
 
     fn roundtrip(desc: &[u8]) {
         let parsed = parse_report_descriptor(desc).unwrap();
@@ -905,11 +904,8 @@ mod tests {
 
     #[test]
     fn roundtrip_keyboard_and_mouse() {
-        let kb = UsbHidKeyboard::new();
-        roundtrip(kb.get_hid_report_descriptor());
-
-        let mouse = UsbHidMouse::new();
-        roundtrip(mouse.get_hid_report_descriptor());
+        roundtrip(&keyboard::HID_REPORT_DESCRIPTOR);
+        roundtrip(&mouse::HID_REPORT_DESCRIPTOR);
     }
 
     #[test]

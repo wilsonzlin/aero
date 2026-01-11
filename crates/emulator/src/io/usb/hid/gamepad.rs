@@ -120,18 +120,6 @@ impl Default for UsbHidGamepadHandle {
 }
 
 impl UsbDeviceModel for UsbHidGamepadHandle {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &HID_REPORT_DESCRIPTOR
-    }
-
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }
@@ -311,18 +299,6 @@ impl UsbHidGamepad {
 }
 
 impl UsbDeviceModel for UsbHidGamepad {
-    fn get_device_descriptor(&self) -> &[u8] {
-        &DEVICE_DESCRIPTOR
-    }
-
-    fn get_config_descriptor(&self) -> &[u8] {
-        &CONFIG_DESCRIPTOR
-    }
-
-    fn get_hid_report_descriptor(&self) -> &[u8] {
-        &HID_REPORT_DESCRIPTOR
-    }
-
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -391,9 +367,9 @@ impl UsbDeviceModel for UsbHidGamepad {
                     let desc_type = setup.descriptor_type();
                     let desc_index = setup.descriptor_index();
                     let data = match desc_type {
-                        USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
+                        USB_DESCRIPTOR_TYPE_DEVICE => Some(DEVICE_DESCRIPTOR.to_vec()),
                         USB_DESCRIPTOR_TYPE_CONFIGURATION => {
-                            Some(self.get_config_descriptor().to_vec())
+                            Some(CONFIG_DESCRIPTOR.to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
                         _ => None,
@@ -461,7 +437,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                     let desc_type = setup.descriptor_type();
                     let data = match desc_type {
                         USB_DESCRIPTOR_TYPE_HID_REPORT => {
-                            Some(self.get_hid_report_descriptor().to_vec())
+                            Some(HID_REPORT_DESCRIPTOR.to_vec())
                         }
                         USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor_bytes().to_vec()),
                         _ => None,
@@ -730,8 +706,20 @@ mod tests {
 
     #[test]
     fn device_descriptor_is_well_formed() {
-        let pad = UsbHidGamepad::new();
-        let dev = pad.get_device_descriptor();
+        let mut pad = UsbHidGamepad::new();
+        let dev = match pad.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
+                w_index: 0,
+                w_length: 18,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         assert_eq!(dev.len(), 18);
         assert_eq!(dev[0] as usize, dev.len());
         assert_eq!(dev[1], USB_DESCRIPTOR_TYPE_DEVICE);
@@ -739,11 +727,23 @@ mod tests {
 
     #[test]
     fn config_descriptor_has_expected_layout() {
-        let pad = UsbHidGamepad::new();
-        let cfg = pad.get_config_descriptor();
+        let mut pad = UsbHidGamepad::new();
+        let cfg = match pad.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_index: 0,
+                w_length: CONFIG_DESCRIPTOR.len() as u16,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
         assert_eq!(cfg[0], 0x09);
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
-        assert_eq!(w_le(cfg, 2) as usize, cfg.len());
+        assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
         assert_eq!(cfg.len(), 34);
 
         // HID descriptor starts at offset 18 (9 config + 9 interface).
