@@ -24,6 +24,15 @@ fn assert_file_contains(path: &Path, needle: &str) {
     );
 }
 
+fn assert_file_not_contains(path: &Path, needle: &str) {
+    let content = read_file(path);
+    assert!(
+        !content.contains(needle),
+        "{} is out of sync: expected NOT to contain `{needle}`",
+        path.display()
+    );
+}
+
 fn parse_u16_literal(lit: &str, path: &Path, define: &str) -> u16 {
     let lit = lit.trim();
     let lit = lit.trim_end_matches(&['u', 'U', 'l', 'L'][..]);
@@ -98,13 +107,15 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_DEVICE_ID");
     let legacy_hwid = format!("PCI\\VEN_{legacy_vendor_id:04X}&DEV_{legacy_device_id:04X}");
 
+    // The shipped driver package + guest-tools target the canonical, versioned ABI (A3A0:0001).
+    // The legacy bring-up device model still exists for debugging, but requires a custom INF.
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
     ] {
         let path = repo_root.join(relative_path);
         assert_file_contains(&path, &new_hwid);
-        assert_file_contains(&path, &legacy_hwid);
+        assert_file_not_contains(&path, &legacy_hwid);
     }
 
     // Guest Tools config is generated from the canonical Windows device contract, which binds only
