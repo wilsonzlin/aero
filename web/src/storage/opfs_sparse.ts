@@ -234,6 +234,19 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
     return this.table[blockIndex] !== 0 || this.cache.get(blockIndex)?.dirty === true;
   }
 
+  getAllocatedBytes(): number {
+    // Persisted blocks are tracked in the header/table. Additionally, a block can be
+    // "logically allocated" but not yet flushed to disk (dirty cache entry with a
+    // zero table slot).
+    let pending = 0;
+    for (const [blockIndex, entry] of this.cache.entries()) {
+      if (!entry.dirty) continue;
+      if (this.table[blockIndex] !== 0) continue;
+      pending += 1;
+    }
+    return toSafeNumber(BigInt(this.header.allocatedBlocks + pending) * BigInt(this.blockSizeBytes), "allocatedBytes");
+  }
+
   private touchCacheKey(key: number, entry: CacheEntry): void {
     // Map maintains insertion order; delete+set moves key to the end (MRU).
     this.cache.delete(key);

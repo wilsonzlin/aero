@@ -109,6 +109,11 @@ export class OpfsCowDisk implements AsyncSectorDisk {
     await baseAny.clearCache();
   }
 
+  getTelemetrySnapshot(): unknown {
+    const baseAny = this.base as unknown as { getTelemetrySnapshot?: () => unknown };
+    return typeof baseAny.getTelemetrySnapshot === "function" ? baseAny.getTelemetrySnapshot() : null;
+  }
+
   async close(): Promise<void> {
     await this.overlay.close?.();
     await this.base.close?.();

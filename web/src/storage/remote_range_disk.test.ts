@@ -26,6 +26,10 @@ class MemorySparseDisk implements RemoteRangeDiskSparseCache {
     return this.blocks.has(blockIndex);
   }
 
+  getAllocatedBytes(): number {
+    return this.blocks.size * this.blockSizeBytes;
+  }
+
   async writeBlock(blockIndex: number, data: Uint8Array): Promise<void> {
     if (data.byteLength !== this.blockSizeBytes) {
       throw new Error("writeBlock: incorrect block size");
@@ -272,6 +276,52 @@ describe("RemoteRangeDisk", () => {
     await disk.readSectors(0, buf);
     expect(buf).toEqual(data.subarray(0, buf.byteLength));
     expect(server.stats.rangeGets).toBe(1);
+  });
+
+  it("exposes a telemetry snapshot compatible with the runtime disk worker", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      imageKey: "test-image",
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const a = new Uint8Array(4096);
+    await disk.readSectors(0, a);
+
+    const first = disk.getTelemetrySnapshot();
+    expect(first.totalSize).toBe(data.byteLength);
+    expect(first.blockSize).toBe(chunkSize);
+    expect(first.cacheLimitBytes).toBeNull();
+    expect(first.blockRequests).toBe(1);
+    expect(first.cacheHits).toBe(0);
+    expect(first.cacheMisses).toBe(1);
+    expect(first.requests).toBe(1);
+    expect(first.bytesDownloaded).toBe(chunkSize);
+    expect(first.cachedBytes).toBe(chunkSize);
+    expect(first.inflightFetches).toBe(0);
+    expect(first.lastFetchRange).toEqual({ start: 0, end: chunkSize });
+    expect(first.lastFetchMs).not.toBeNull();
+    expect(first.lastFetchAtMs).not.toBeNull();
+
+    const b = new Uint8Array(4096);
+    await disk.readSectors(0, b);
+    const second = disk.getTelemetrySnapshot();
+    expect(second.blockRequests).toBe(2);
+    expect(second.cacheHits).toBe(1);
+    expect(second.cacheMisses).toBe(1);
+    expect(second.requests).toBe(1);
+    expect(second.bytesDownloaded).toBe(chunkSize);
   });
 
   it("re-reading cached bytes triggers zero additional network fetches", async () => {

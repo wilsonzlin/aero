@@ -2,6 +2,7 @@ import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk }
 import { opfsGetDisksDir } from "./metadata";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
+import type { ByteRange, RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 
 export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
   // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
@@ -33,6 +34,12 @@ export interface RemoteRangeDiskSparseCache extends AsyncSectorDisk {
   isBlockAllocated(blockIndex: number): boolean;
   writeBlock(blockIndex: number, data: Uint8Array): Promise<void>;
   readBlock(blockIndex: number, dst: Uint8Array): Promise<void>;
+  /**
+   * Returns the number of bytes currently materialized in the sparse file.
+   *
+   * This is intended for telemetry; it may include a partially-written final block.
+   */
+  getAllocatedBytes(): number;
 }
 
 export interface RemoteRangeDiskSparseCacheFactory {
@@ -418,6 +425,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     cacheHitChunks: 0,
     cacheMissChunks: 0,
   };
+  private blockRequests = 0;
+  private inflightJoins = 0;
+  private lastFetchMs: number | null = null;
+  private lastFetchAtMs: number | null = null;
+  private lastFetchRange: ByteRange | null = null;
 
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushPending = false;
@@ -439,6 +451,30 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
   getTelemetry(): RemoteRangeDiskTelemetry {
     return { ...this.telemetry };
+  }
+
+  getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
+    return {
+      url: this.url,
+      totalSize: this.capacityBytesValue,
+      blockSize: this.opts.chunkSize,
+      cacheLimitBytes: null,
+      cachedBytes: this.cache ? this.cache.getAllocatedBytes() : 0,
+
+      blockRequests: this.blockRequests,
+      cacheHits: this.telemetry.cacheHitChunks,
+      cacheMisses: this.telemetry.cacheMissChunks,
+      inflightJoins: this.inflightJoins,
+
+      requests: this.telemetry.rangeRequests,
+      bytesDownloaded: this.telemetry.bytesDownloaded,
+
+      inflightFetches: this.inflightChunks.size,
+
+      lastFetchMs: this.lastFetchMs,
+      lastFetchAtMs: this.lastFetchAtMs,
+      lastFetchRange: this.lastFetchRange ? { ...this.lastFetchRange } : null,
+    };
   }
 
   static async open(url: string, options: RemoteRangeDiskOptions = {}): Promise<RemoteRangeDisk> {
@@ -624,6 +660,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     this.cacheGeneration += 1;
     this.inflightChunks.clear();
+    this.lastReadEnd = null;
+    this.resetTelemetry();
 
     await this.metadataStore.delete(this.cacheId);
 
@@ -684,6 +722,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    const generation = this.cacheGeneration;
     const cache = this.ensureOpen();
 
     const blockStart = chunkIndex * this.opts.chunkSize;
@@ -694,18 +733,21 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       throw new Error("chunkIndex out of range");
     }
 
+    this.blockRequests += 1;
     if (cache.isBlockAllocated(chunkIndex)) {
       this.telemetry.cacheHitChunks += 1;
       return;
     }
 
     const inflight = this.inflightChunks.get(chunkIndex);
-    if (inflight && inflight.generation === this.cacheGeneration) {
+    if (inflight && inflight.generation === generation) {
+      this.inflightJoins += 1;
       return await inflight.promise;
     }
 
     this.telemetry.cacheMissChunks += 1;
-    const generation = this.cacheGeneration;
+    const end = Math.min(blockStart + this.opts.chunkSize, this.capacityBytesValue);
+    this.lastFetchRange = { start: blockStart, end };
     const promise = this.fetchAndStoreChunk(chunkIndex, generation);
     this.inflightChunks.set(chunkIndex, { generation, promise });
     try {
@@ -730,13 +772,18 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       if (cache.isBlockAllocated(chunkIndex)) return;
 
       try {
-        const bytes = await this.downloadChunkWithRetries(chunkIndex);
+        const start = performance.now();
+        const bytes = await this.downloadChunkWithRetries(chunkIndex, generation);
         if (generation !== this.cacheGeneration) {
           // Cache invalidated after download; discard and let the caller retry.
           continue;
         }
 
         await cache.writeBlock(chunkIndex, bytes);
+        if (generation === this.cacheGeneration) {
+          this.lastFetchMs = performance.now() - start;
+          this.lastFetchAtMs = Date.now();
+        }
         this.scheduleBackgroundFlush();
         return;
       } catch (err) {
@@ -750,12 +797,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
   }
 
-  private async downloadChunkWithRetries(chunkIndex: number): Promise<Uint8Array> {
+  private async downloadChunkWithRetries(chunkIndex: number, generation: number): Promise<Uint8Array> {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= this.opts.maxRetries; attempt++) {
       const release = await this.fetchSemaphore.acquire();
       try {
-        return await this.downloadChunkOnce(chunkIndex);
+        return await this.downloadChunkOnce(chunkIndex, generation);
       } catch (err) {
         lastErr = err;
         if (attempt >= this.opts.maxRetries || !isRetryableError(err)) {
@@ -770,7 +817,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
-  private async downloadChunkOnce(chunkIndex: number): Promise<Uint8Array> {
+  private async downloadChunkOnce(chunkIndex: number, generation: number): Promise<Uint8Array> {
     const start = chunkIndex * this.opts.chunkSize;
     const endExclusive = Math.min(start + this.opts.chunkSize, this.capacityBytesValue);
     if (endExclusive <= start) {
@@ -794,7 +841,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     const hasIfRange = "If-Range" in headers;
 
-    this.telemetry.rangeRequests += 1;
+    if (generation === this.cacheGeneration) {
+      this.telemetry.rangeRequests += 1;
+      this.lastFetchRange = { start, end: endExclusive };
+    }
     const resp = await this.opts.fetchFn(this.url, { method: "GET", headers });
 
     if (resp.status === 200 || resp.status === 412) {
@@ -833,7 +883,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
 
     const body = new Uint8Array(await resp.arrayBuffer());
-    this.telemetry.bytesDownloaded += body.byteLength;
+    if (generation === this.cacheGeneration) {
+      this.telemetry.bytesDownloaded += body.byteLength;
+    }
 
     if (body.byteLength !== expectedLen) {
       throw new Error(`short range read: expected=${expectedLen} actual=${body.byteLength}`);
@@ -857,6 +909,20 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const padded = new Uint8Array(this.opts.chunkSize);
     padded.set(body);
     return padded;
+  }
+
+  private resetTelemetry(): void {
+    this.telemetry = {
+      bytesDownloaded: 0,
+      rangeRequests: 0,
+      cacheHitChunks: 0,
+      cacheMissChunks: 0,
+    };
+    this.blockRequests = 0;
+    this.inflightJoins = 0;
+    this.lastFetchMs = null;
+    this.lastFetchAtMs = null;
+    this.lastFetchRange = null;
   }
 
   private scheduleBackgroundFlush(): void {
