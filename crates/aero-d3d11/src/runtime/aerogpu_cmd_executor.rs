@@ -829,67 +829,84 @@ impl AerogpuD3d11Executor {
 
         let mut report = ExecuteReport::default();
 
-        let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
-        while let Some(next) = iter.peek() {
-            let (cmd_size, opcode) = match next {
-                Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
-                Err(err) => {
-                    return Err(anyhow!(
-                        "aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"
-                    ));
-                }
-            };
-            let cmd_end = cursor
-                .checked_add(cmd_size)
-                .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
-            let cmd_bytes = stream_bytes
-                .get(cursor..cmd_end)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
-                    )
-                })?;
+        let result: Result<()> = (|| {
+            let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+            while let Some(next) = iter.peek() {
+                let (cmd_size, opcode) = match next {
+                    Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"
+                        ));
+                    }
+                };
+                let cmd_end = cursor
+                    .checked_add(cmd_size)
+                    .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
+                let cmd_bytes = stream_bytes
+                    .get(cursor..cmd_end)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
+                        )
+                    })?;
 
-            // Commands that need a render-pass boundary are handled by ending any
-            // in-flight pass before processing the opcode.
-            match opcode {
-                OPCODE_DRAW | OPCODE_DRAW_INDEXED => {
-                    self.exec_render_pass_load(
-                        &mut encoder,
-                        &mut iter,
-                        &mut cursor,
-                        stream_bytes,
-                        stream_size,
-                        &alloc_map,
-                        guest_mem,
-                        &mut report,
-                    )?;
-                    continue;
+                // Commands that need a render-pass boundary are handled by ending any
+                // in-flight pass before processing the opcode.
+                match opcode {
+                    OPCODE_DRAW | OPCODE_DRAW_INDEXED => {
+                        self.exec_render_pass_load(
+                            &mut encoder,
+                            &mut iter,
+                            &mut cursor,
+                            stream_bytes,
+                            stream_size,
+                            &alloc_map,
+                            guest_mem,
+                            &mut report,
+                        )?;
+                        continue;
+                    }
+                    _ => {}
                 }
-                _ => {}
+
+                // Non-draw commands are processed directly.
+                iter.next()
+                    .expect("peeked Some")
+                    .map_err(|err| {
+                        anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
+                    })?;
+                self.exec_non_draw_command(
+                    &mut encoder,
+                    opcode,
+                    cmd_bytes,
+                    &alloc_map,
+                    guest_mem,
+                    pending_writebacks,
+                    &mut report,
+                )?;
+
+                report.commands = report.commands.saturating_add(1);
+                cursor = cmd_end;
             }
 
-            // Non-draw commands are processed directly.
-            iter.next()
-                .expect("peeked Some")
-                .map_err(|err| anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"))?;
-            self.exec_non_draw_command(
-                &mut encoder,
-                opcode,
-                cmd_bytes,
-                &alloc_map,
-                guest_mem,
-                pending_writebacks,
-                &mut report,
-            )?;
+            Ok(())
+        })();
 
-            report.commands = report.commands.saturating_add(1);
-            cursor = cmd_end;
+        match result {
+            Ok(()) => {
+                self.queue.submit([encoder.finish()]);
+                self.encoder_has_commands = false;
+                Ok(report)
+            }
+            Err(err) => {
+                // Drop partially-recorded work, but still flush `queue.write_*` uploads so they
+                // don't remain queued indefinitely and reorder with later submissions.
+                self.encoder_has_commands = false;
+                self.queue.submit([]);
+                Err(err)
+            }
         }
-
-        self.queue.submit([encoder.finish()]);
-        self.encoder_has_commands = false;
-        Ok(report)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
