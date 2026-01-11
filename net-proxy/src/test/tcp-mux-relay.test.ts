@@ -805,6 +805,94 @@ test("tcp-mux propagates CLOSE(FIN) as TCP FIN while still allowing server->clie
   }
 });
 
+test("tcp-mux returns PROTOCOL_ERROR for invalid CLOSE payload length without killing the stream", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    ws.send(open);
+
+    const payload1 = Buffer.from("still-open-1");
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload1));
+    await waitForEcho(waiter, 1, payload1);
+
+    // CLOSE payload must be exactly 1 byte. Send an empty payload to trigger a stream-level protocol error.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, Buffer.alloc(0)));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.PROTOCOL_ERROR);
+
+    // Ensure the stream is still usable after the invalid CLOSE.
+    const payload2 = Buffer.from("still-open-2");
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload2));
+    await waitForEcho(waiter, 1, payload2);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("tcp-mux returns PROTOCOL_ERROR for unknown msg_type without closing the websocket", async () => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    // msg_type=99 is not defined by `aero-tcp-mux-v1`.
+    const unknown = Buffer.alloc(9);
+    unknown.writeUInt8(99, 0);
+    unknown.writeUInt32BE(0, 1);
+    unknown.writeUInt32BE(0, 5);
+    ws.send(unknown);
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 0);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.PROTOCOL_ERROR);
+
+    // Ensure the mux WS is still alive.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([3])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+  }
+});
+
 test("tcp-mux rejects DATA after client FIN with PROTOCOL_ERROR", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
