@@ -188,6 +188,22 @@ static int RunD3D101Triangle(int argc, char** argv) {
     if (umd_rc != 0) {
       return umd_rc;
     }
+
+    // This test is explicitly intended to cover the D3D10.1 UMD entrypoint path (`OpenAdapter10_2`).
+    HMODULE umd = GetModuleHandleW(aerogpu_test::ExpectedAeroGpuD3D10UmdModuleBaseName());
+    if (!umd) {
+      return aerogpu_test::Fail(kTestName, "failed to locate loaded AeroGPU D3D10/11 UMD module");
+    }
+    FARPROC open_adapter_10_2 = GetProcAddress(umd, "OpenAdapter10_2");
+    if (!open_adapter_10_2) {
+      // On x86, stdcall decoration may be present depending on how the DLL was linked.
+      open_adapter_10_2 = GetProcAddress(umd, "_OpenAdapter10_2@4");
+    }
+    if (!open_adapter_10_2) {
+      return aerogpu_test::Fail(
+          kTestName,
+          "expected AeroGPU D3D10/11 UMD to export OpenAdapter10_2 (D3D10.1 entrypoint)");
+    }
   }
 
   ComPtr<ID3D10Texture2D> backbuffer;
