@@ -453,6 +453,57 @@ fn cpu_core_bus_translates_legacy32_paging_via_mmu() {
 }
 
 #[test]
+fn cpu_core_bus_translates_legacy32_4mb_page_via_mmu() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    // Exercise 4MB pages (CR4.PSE + PDE.PS) in legacy 32-bit paging mode.
+    //
+    // Map linear 0x0040_0000..0x0080_0000 (PDE index 1) to physical 0x0000_0000..0x0040_0000.
+    let vaddr = 0x0040_5000u64;
+    let pd_phys = 0x1000u64;
+    let phys_addr = 0x5000u64;
+
+    let pde_index = (vaddr >> 22) & 0x3ff;
+    let pde_addr = pd_phys + pde_index * 4;
+
+    const CR4_PSE: u64 = 1 << 4;
+    const PDE_PS: u32 = 1 << 7;
+    const PDE_P: u32 = 1 << 0;
+    const PDE_RW: u32 = 1 << 1;
+    const PDE_US: u32 = 1 << 2;
+
+    memory::MemoryBus::write_u32(
+        &mut bus.platform.memory,
+        pde_addr,
+        PDE_P | PDE_RW | PDE_US | PDE_PS,
+    );
+    bus.platform.memory.write_u8(phys_addr, 0xAA);
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.control.cr0 |= CR0_PE | CR0_PG;
+    cpu.control.cr3 = pd_phys;
+    cpu.control.cr4 = CR4_PSE;
+    cpu.segments.cs.selector = 3;
+    cpu.segments.cs.base = 0;
+    cpu.segments.ss.selector = 3;
+    cpu.segments.ss.base = 0;
+    bus.sync(&cpu);
+
+    // Read should populate the TLB and set accessed on the leaf PDE, but not dirty.
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+    let pde_after_read = memory::MemoryBus::read_u32(&mut bus.platform.memory, pde_addr);
+    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
+    assert_eq!(pde_after_read & (1 << 6), 0, "PDE dirty bit should not be set on read");
+
+    // Write should set the dirty bit even on a TLB hit.
+    bus.write_u8(vaddr, 0xBB).unwrap();
+    assert_eq!(bus.platform.memory.read_u8(phys_addr), 0xBB);
+    let pde_after_write = memory::MemoryBus::read_u32(&mut bus.platform.memory, pde_addr);
+    assert_ne!(pde_after_write & (1 << 6), 0, "PDE dirty bit should be set");
+}
+
+#[test]
 fn cpu_core_bus_translates_pae_paging_via_mmu() {
     let platform = PcPlatform::new(2 * 1024 * 1024);
     let mut bus = PcCpuBus::new(platform);
