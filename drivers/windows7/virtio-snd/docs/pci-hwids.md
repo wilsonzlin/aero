@@ -51,8 +51,8 @@ So, a fully-qualified expected HWID looks like:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
-The Aero driver INFs (`inf/aero-virtio-snd.inf` and the `inf/virtio-snd.inf` alias)
-are intentionally **strict** for `AERO-W7-VIRTIO` v1 and match only:
+The shipped Aero INF (`inf/aero-virtio-snd.inf`) is intentionally **strict** for
+`AERO-W7-VIRTIO` v1 and matches only:
 
 * `PCI\VEN_1AF4&DEV_1059&REV_01`
 
@@ -64,7 +64,13 @@ Note: `docs/windows-device-contract.json` currently lists non-revision-gated
 patterns (`PCI\VEN_1AF4&DEV_1059` and `...&SUBSYS_00191AF4`) for tooling
 convenience. The virtio-snd INF is intentionally stricter and requires `REV_01`.
 
-They do **not** match transitional `DEV_1018` IDs and do not include non-`REV_01` short forms.
+The repository also contains an optional **legacy filename alias** INF
+(`inf/virtio-snd.inf`, checked in as `inf/virtio-snd.inf.disabled` by default).
+That alias exists for compatibility with workflows/tools that still expect
+`virtio-snd.inf`; when enabled, it intentionally matches additional HWIDs:
+
+* `PCI\VEN_1AF4&DEV_1059` (no `REV_01` gate)
+* Transitional virtio-snd: `PCI\VEN_1AF4&DEV_1018`
 
 ## QEMU mapping
 
