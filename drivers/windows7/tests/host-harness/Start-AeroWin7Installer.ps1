@@ -86,10 +86,10 @@ Write-Host "4) After first boot, run: <CD>:\\AERO\\provision\\provision.cmd (as 
 Write-Host "5) Reboot. Then run Invoke-AeroVirtioWin7Tests.ps1 on the host to get deterministic PASS/FAIL via COM1 serial."
 Write-Host ""
 
-$osIsoDrive = "file=$Win7IsoPath,media=cdrom,readonly=on"
+$osIsoDrive = "file=$(Quote-AeroWin7QemuKeyvalValue $Win7IsoPath),media=cdrom,readonly=on"
 
 if ($VirtioTransitional) {
-  $diskDrive = "file=$DiskImagePath,if=virtio,cache=writeback"
+  $diskDrive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=virtio,cache=writeback"
   $netDevice = "virtio-net-pci,netdev=net0"
 
   $qemuArgs = @(
@@ -125,7 +125,7 @@ if ($VirtioTransitional) {
 }
 
 if (-not [string]::IsNullOrEmpty($ProvisioningIsoPath)) {
-  $provIsoDrive = "file=$ProvisioningIsoPath,media=cdrom,readonly=on"
+  $provIsoDrive = "file=$(Quote-AeroWin7QemuKeyvalValue $ProvisioningIsoPath),media=cdrom,readonly=on"
   $qemuArgs += @("-drive", $provIsoDrive)
 } else {
   Write-Warning "No -ProvisioningIsoPath provided. You can still install Win7, but provisioning the drivers/selftest will be harder."
