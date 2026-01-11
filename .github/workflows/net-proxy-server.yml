@@ -1,0 +1,41 @@
+name: Net proxy server CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - tools/net-proxy-server/**
+      - protocol-vectors/**
+      - .github/workflows/net-proxy-server.yml
+  pull_request:
+    paths:
+      - tools/net-proxy-server/**
+      - protocol-vectors/**
+      - .github/workflows/net-proxy-server.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NPM_CONFIG_AUDIT: "false"
+          NPM_CONFIG_FUND: "false"
+
+      - name: Run tests
+        run: npm -w tools/net-proxy-server test
+

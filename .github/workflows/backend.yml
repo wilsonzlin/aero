@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - backend/aero-gateway/**
+      - protocol-vectors/**
       - .github/workflows/backend.yml
     paths-ignore:
       - "**/*.md"
@@ -12,6 +13,7 @@ on:
       - main
     paths:
       - backend/aero-gateway/**
+      - protocol-vectors/**
       - .github/workflows/backend.yml
     paths-ignore:
       - "**/*.md"
