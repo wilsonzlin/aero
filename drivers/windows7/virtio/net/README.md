@@ -15,8 +15,8 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 - Presents a standard Ethernet NIC to Windows (NDIS 6.20)
 - Backs TX/RX using **virtio-net split virtqueues** (virtio 1.0+ **modern** virtio-pci, BAR0 MMIO transport)
-- Uses the shared virtio-pci modern transport helper in `drivers/windows7/virtio/common/`
-- Uses the shared split-ring virtqueue implementation in `drivers/windows7/virtio/common/`
+- Uses the shared virtio-pci modern transport helper in `drivers/windows/virtio/pci-modern/`
+- Uses the shared split-ring engine in `drivers/windows/virtio/common/`
 
 ## Features (minimal bring-up)
 
@@ -40,7 +40,7 @@ CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via t
 For local development you can use either:
 
 - `aerovnet.vcxproj` (Visual Studio / MSBuild + WDK 10), or
-- the legacy WinDDK 7600 `build` utility (`sources`/`makefile` are kept for that workflow).
+- the legacy WDK 7.1 `build` utility (`sources`/`makefile` are kept for that workflow).
 
 ## Installing on Windows 7
 

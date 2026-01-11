@@ -16,10 +16,8 @@ The repository intentionally contains *two* split-ring implementations:
      - drivers/windows7/virtio/common/include/virtqueue_split_legacy.h
      - API surface: `virtqueue_split_*` + `virtio_os_ops_t`
 
-Different in-tree drivers may use different engines (for example, miniports may
-prefer the Win7 `virtio/common` portable stack, while WDM/KMDF drivers may use
-the WDF-free engine under `drivers/windows/virtio/common`). This script encodes
-the current intended wiring and fails on drift.
+Different in-tree drivers may use different engines. This script encodes the
+current intended wiring and fails on drift.
 """
 
 from __future__ import annotations
@@ -118,18 +116,18 @@ def main() -> None:
     # MSBuild projects: enforce the expected split-virtqueue engine per driver.
     # ---------------------------------------------------------------------
     msbuild_projects: dict[str, tuple[Path, str, str, str]] = {
-        # Win7 miniports (StorPort/NDIS) use the portable Win7 virtio common stack.
+        # Win7 miniports (StorPort/NDIS) use the WDF-free canonical split-ring engine.
         "virtio-blk": (
             REPO_ROOT / "drivers/windows7/virtio/blk/aerovblk.vcxproj",
-            "virtqueue_split_legacy.c",
             "virtqueue_split.c",
-            "common/include",
+            "virtqueue_split_legacy.c",
+            "windows/virtio/common",
         ),
         "virtio-net": (
             REPO_ROOT / "drivers/windows7/virtio/net/aerovnet.vcxproj",
-            "virtqueue_split_legacy.c",
             "virtqueue_split.c",
-            "common/include",
+            "virtqueue_split_legacy.c",
+            "windows/virtio/common",
         ),
         # virtio-input lives under drivers/windows but targets Win7 (KMDF 1.9) and
         # uses the WDF-free split virtqueue engine.
@@ -176,15 +174,15 @@ def main() -> None:
     sources_files: dict[str, tuple[Path, str, str, str]] = {
         "virtio-blk": (
             REPO_ROOT / "drivers/windows7/virtio/blk/sources",
-            "virtqueue_split_legacy.c",
             "virtqueue_split.c",
-            "common/include",
+            "virtqueue_split_legacy.c",
+            "windows/virtio/common",
         ),
         "virtio-net": (
             REPO_ROOT / "drivers/windows7/virtio/net/sources",
-            "virtqueue_split_legacy.c",
             "virtqueue_split.c",
-            "common/include",
+            "virtqueue_split_legacy.c",
+            "windows/virtio/common",
         ),
         "virtio-input": (
             REPO_ROOT / "drivers/windows/virtio-input/sources",

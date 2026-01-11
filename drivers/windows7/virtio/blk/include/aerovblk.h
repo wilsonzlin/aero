@@ -5,9 +5,9 @@
 #include <scsi.h>
 #include <ntddscsi.h>
 
-#include "virtio_pci_modern_miniport.h"
-#include "virtqueue_split_legacy.h"
-#include "virtio_os_storport.h"
+#include "virtio_pci_modern_transport.h"
+/* Canonical modern split virtqueue engine (drivers/windows/virtio/common). */
+#include "virtqueue_split.h"
 
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)
@@ -35,15 +35,11 @@
 #define AEROVBLK_PCI_DEVICE_ID 0x1042u
 #define AEROVBLK_VIRTIO_PCI_REVISION_ID 0x01u
 
-#define AEROVBLK_BAR0_MIN_LEN 0x4000u
-
 #define VIRTIO_BLK_F_SEG_MAX 2u
 #define VIRTIO_BLK_F_BLK_SIZE 6u
 #define VIRTIO_BLK_F_FLUSH 9u
 
-#define AEROVBLK_FEATURE_RING_INDIRECT_DESC (1ull << 28)
-#define AEROVBLK_FEATURE_RING_EVENT_IDX (1ull << 29)
-#define AEROVBLK_FEATURE_RING_PACKED (1ull << 34)
+#define AEROVBLK_FEATURE_RING_INDIRECT_DESC (1ull << VIRTIO_F_RING_INDIRECT_DESC)
 #define AEROVBLK_FEATURE_BLK_SEG_MAX (1ull << VIRTIO_BLK_F_SEG_MAX)
 #define AEROVBLK_FEATURE_BLK_BLK_SIZE (1ull << VIRTIO_BLK_F_BLK_SIZE)
 #define AEROVBLK_FEATURE_BLK_FLUSH (1ull << VIRTIO_BLK_F_FLUSH)
@@ -98,14 +94,27 @@ typedef struct _AEROVBLK_REQUEST_CONTEXT {
 } AEROVBLK_REQUEST_CONTEXT, *PAEROVBLK_REQUEST_CONTEXT;
 
 typedef struct _AEROVBLK_DEVICE_EXTENSION {
-    VIRTIO_PCI_DEVICE Vdev;
-    volatile UINT16* QueueNotifyAddrCache[1];
+    VIRTIO_PCI_MODERN_TRANSPORT Transport;
+    VIRTIO_PCI_MODERN_OS_INTERFACE TransportOs;
 
-    virtio_os_ops_t VirtioOps;
-    virtio_os_storport_ctx_t VirtioOpsCtx;
+    /* Cached PCI configuration space for VirtioPciModernTransportInit(). */
+    UCHAR PciCfgSpace[256];
 
-    virtqueue_split_t Vq;
-    virtio_dma_buffer_t RingDma;
+    /* BAR0 mapping parameters for the transport OS callbacks. */
+    INTERFACE_TYPE PciInterfaceType;
+    ULONG PciBusNumber;
+    ULONG PciSlotNumber;
+
+    VIRTQ_SPLIT* Vq;
+    PVOID RingVa;
+    PHYSICAL_ADDRESS RingPa;
+    ULONG RingBytes;
+
+    PVOID IndirectVa;
+    PHYSICAL_ADDRESS IndirectPa;
+    ULONG IndirectBytes;
+    USHORT IndirectTableCount;
+    USHORT IndirectMaxDesc;
 
     ULONGLONG NegotiatedFeatures;
     BOOLEAN SupportsIndirect;
@@ -124,6 +133,7 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     SENSE_DATA LastSense;
 } AEROVBLK_DEVICE_EXTENSION, *PAEROVBLK_DEVICE_EXTENSION;
 
+C_ASSERT(sizeof(VIRTQ_DESC) == 16);
 C_ASSERT(AEROVBLK_QUEUE_SIZE == 128);
 
 #define AEROVBLK_SRBIO_SIG "AEROVBLK"

@@ -12,10 +12,14 @@ Reference code in this repo:
   - `drivers/windows/virtio/common/virtqueue_split.{c,h}`
   - Used by:
     - `drivers/windows/virtio-input/` (KMDF; Win7 target)
+    - `drivers/windows7/virtio/blk/` (StorPort miniport; Win7 target)
+    - `drivers/windows7/virtio/net/` (NDIS miniport; Win7 target)
     - `drivers/windows7/virtio-snd/` (WDM; Win7 target)
     - Host tests: `drivers/windows/virtio/common/tests/` (`CMakeLists.txt`, `Makefile`)
 
   In-tree include sites for `virtqueue_split.h`:
+  - `drivers/windows7/virtio/blk/include/aerovblk.h`
+  - `drivers/windows7/virtio/net/include/aerovnet.h`
   - `drivers/windows7/virtio-snd/include/virtiosnd_queue_split.h`
   - `drivers/windows/virtio-input/src/device.c`
   - `drivers/windows/virtio-input/src/virtio_statusq.c`
@@ -26,13 +30,9 @@ Reference code in this repo:
   - `drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`
   - `drivers/windows7/virtio/common/include/virtqueue_split_legacy.h`
   - Used by:
-    - `drivers/windows7/virtio/blk/` (StorPort miniport)
-    - `drivers/windows7/virtio/net/` (NDIS miniport)
     - Host tests: `drivers/windows7/virtio/common/tests/` (`CMakeLists.txt`)
 
   In-tree include sites for `virtqueue_split_legacy.h`:
-  - `drivers/windows7/virtio/blk/include/aerovblk.h`
-  - `drivers/windows7/virtio/net/include/aerovnet.h`
   - Unit tests: `drivers/windows7/virtio/common/tests/{test_main.c,fake_pci_device.h,fake_pci_device_modern.h}`
 
 Header policy: `drivers/windows/virtio/common/virtqueue_split.h` is the **only**
