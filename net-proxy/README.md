@@ -112,6 +112,8 @@ The WebSocket carries a byte stream of `aero-tcp-mux-v1` frames. Each frame is:
 - 9-byte header: `msg_type u8`, `stream_id u32 BE`, `length u32 BE`
 - followed by `length` bytes of payload
 
+Only **binary** WebSocket messages are supported (text messages are rejected with close code `1003`).
+
 For the canonical spec (including `OPEN`/`DATA`/`CLOSE` payload schemas and error codes), see
 [`docs/backend/01-aero-gateway-api.md`](../docs/backend/01-aero-gateway-api.md).
 
