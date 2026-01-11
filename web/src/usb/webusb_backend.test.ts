@@ -8,6 +8,21 @@ import {
   validateControlTransferDirection,
 } from "./webusb_backend";
 
+function withFakeNavigatorUsb<T>(fn: () => Promise<T>): Promise<T> {
+  const nav = globalThis.navigator as unknown as Record<string, unknown>;
+  const originalUsbDescriptor = Object.getOwnPropertyDescriptor(nav, "usb");
+
+  Object.defineProperty(nav, "usb", { value: {}, configurable: true });
+
+  return fn().finally(() => {
+    if (originalUsbDescriptor) {
+      Object.defineProperty(nav, "usb", originalUsbDescriptor);
+    } else {
+      delete (nav as { usb?: unknown }).usb;
+    }
+  });
+}
+
 function dataViewFromBytes(bytes: number[]): DataView {
   return new DataView(Uint8Array.from(bytes).buffer);
 }
@@ -101,21 +116,6 @@ describe("executeWebUsbControlIn", () => {
 });
 
 describe("WebUsbBackend.ensureOpenAndClaimed", () => {
-  function withFakeNavigatorUsb<T>(fn: () => Promise<T>): Promise<T> {
-    const nav = globalThis.navigator as unknown as Record<string, unknown>;
-    const originalUsbDescriptor = Object.getOwnPropertyDescriptor(nav, "usb");
-
-    Object.defineProperty(nav, "usb", { value: {}, configurable: true });
-
-    return fn().finally(() => {
-      if (originalUsbDescriptor) {
-        Object.defineProperty(nav, "usb", originalUsbDescriptor);
-      } else {
-        delete (nav as { usb?: unknown }).usb;
-      }
-    });
-  }
-
   it("claims available interfaces but tolerates protected/failed claims", async () => {
     await withFakeNavigatorUsb(async () => {
       const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
@@ -214,6 +214,113 @@ describe("WebUsbBackend.ensureOpenAndClaimed", () => {
       iface1.claimed = false;
       await backend.ensureOpenAndClaimed();
       expect((device.claimInterface as any).mock.calls.length).toBe(2);
+    });
+  });
+});
+
+describe("WebUsbBackend.execute controlOut translations", () => {
+  it("translates SET_CONFIGURATION into device.selectConfiguration", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: true, alternates: [], alternate: {} };
+      const config1 = { configurationValue: 1, interfaces: [iface1] };
+      const config2 = { configurationValue: 2, interfaces: [iface1] };
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: config1 as unknown as USBConfiguration,
+        configurations: [config1 as unknown as USBConfiguration, config2 as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async (value: number) => {
+          expect(value).toBe(2);
+          (device as any).configuration = config2;
+        }),
+        controlTransferOut: vi.fn(async () => {
+          throw new Error("controlTransferOut should not be called");
+        }),
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({
+        kind: "controlOut",
+        id: 1,
+        setup: { bmRequestType: 0x00, bRequest: 0x09, wValue: 0x0002, wIndex: 0x0000, wLength: 0x0000 },
+        data: new Uint8Array(),
+      });
+
+      expect(device.selectConfiguration).toHaveBeenCalledTimes(1);
+      expect(device.controlTransferOut).not.toHaveBeenCalled();
+      expect(res).toEqual({ kind: "controlOut", id: 1, status: "success", bytesWritten: 0 });
+    });
+  });
+
+  it("translates SET_INTERFACE into device.selectAlternateInterface", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface3 = { interfaceNumber: 3, claimed: true, alternates: [], alternate: {} };
+      const config = { configurationValue: 1, interfaces: [iface3] };
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: config as unknown as USBConfiguration,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        selectAlternateInterface: vi.fn(async (ifaceNum: number, altSetting: number) => {
+          expect(ifaceNum).toBe(3);
+          expect(altSetting).toBe(2);
+        }),
+        controlTransferOut: vi.fn(async () => {
+          throw new Error("controlTransferOut should not be called");
+        }),
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({
+        kind: "controlOut",
+        id: 2,
+        setup: { bmRequestType: 0x01, bRequest: 0x0b, wValue: 0x0002, wIndex: 0x0003, wLength: 0x0000 },
+        data: new Uint8Array(),
+      });
+
+      expect(device.selectAlternateInterface).toHaveBeenCalledTimes(1);
+      expect(device.controlTransferOut).not.toHaveBeenCalled();
+      expect(res).toEqual({ kind: "controlOut", id: 2, status: "success", bytesWritten: 0 });
+    });
+  });
+
+  it("translates CLEAR_FEATURE(ENDPOINT_HALT) into device.clearHalt", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const iface1 = { interfaceNumber: 1, claimed: true, alternates: [], alternate: {} };
+      const config = { configurationValue: 1, interfaces: [iface1] };
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: config as unknown as USBConfiguration,
+        configurations: [config as unknown as USBConfiguration],
+        open: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        clearHalt: vi.fn(async (direction: USBDirection, endpointNumber: number) => {
+          expect(direction).toBe("in");
+          expect(endpointNumber).toBe(1);
+        }),
+        controlTransferOut: vi.fn(async () => {
+          throw new Error("controlTransferOut should not be called");
+        }),
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const res = await backend.execute({
+        kind: "controlOut",
+        id: 3,
+        setup: { bmRequestType: 0x02, bRequest: 0x01, wValue: 0x0000, wIndex: 0x0081, wLength: 0x0000 },
+        data: new Uint8Array(),
+      });
+
+      expect(device.clearHalt).toHaveBeenCalledTimes(1);
+      expect(device.controlTransferOut).not.toHaveBeenCalled();
+      expect(res).toEqual({ kind: "controlOut", id: 3, status: "success", bytesWritten: 0 });
     });
   });
 });

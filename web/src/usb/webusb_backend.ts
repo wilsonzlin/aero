@@ -145,9 +145,16 @@ function setupPacketToWebUsbParameters(setup: SetupPacket): USBControlTransferPa
 }
 
 const GET_DESCRIPTOR = 0x06;
+const CLEAR_FEATURE = 0x01;
+const SET_CONFIGURATION = 0x09;
+const SET_INTERFACE = 0x0b;
 const DESCRIPTOR_TYPE_CONFIGURATION = 0x02;
 const DESCRIPTOR_TYPE_OTHER_SPEED_CONFIGURATION = 0x07;
 const BM_REQUEST_TYPE_DEVICE_TO_HOST_STANDARD_DEVICE = 0x80;
+const BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_DEVICE = 0x00;
+const BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_INTERFACE = 0x01;
+const BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_ENDPOINT = 0x02;
+const FEATURE_SELECTOR_ENDPOINT_HALT = 0x00;
 
 function shouldTranslateConfigurationDescriptor(setup: SetupPacket): boolean {
   return (
@@ -345,6 +352,86 @@ export class WebUsbBackend {
           const directionCheck = validateControlTransferDirection("controlOut", action.setup.bmRequestType);
           if (!directionCheck.ok) {
             return { kind: "controlOut", id: action.id, status: "error", message: directionCheck.message };
+          }
+
+          const setup = action.setup;
+          const emptyData = action.data.byteLength === 0;
+
+          if (
+            (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_DEVICE &&
+            (setup.bRequest & 0xff) === SET_CONFIGURATION &&
+            (setup.wIndex & 0xffff) === 0 &&
+            (setup.wLength & 0xffff) === 0 &&
+            emptyData
+          ) {
+            const configValue = setup.wValue & 0xff;
+            try {
+              await this.device.selectConfiguration(configValue);
+            } catch (err) {
+              throw wrapWithCause(`Failed to select USB configuration ${configValue}`, err);
+            }
+            // Selecting a configuration resets all claims; keep our local cache coherent.
+            this.claimedInterfaces.clear();
+            this.claimedConfigurationValue = configValue;
+            return { kind: "controlOut", id: action.id, status: "success", bytesWritten: 0 };
+          }
+
+          if (
+            (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_INTERFACE &&
+            (setup.bRequest & 0xff) === SET_INTERFACE &&
+            (setup.wLength & 0xffff) === 0 &&
+            emptyData
+          ) {
+            const interfaceNumber = setup.wIndex & 0xff;
+            const altSetting = setup.wValue & 0xff;
+
+            const configuration = this.device.configuration;
+            if (!configuration) {
+              throw new Error("USB device has no active configuration for SET_INTERFACE");
+            }
+
+            const iface = configuration.interfaces.find((entry) => entry.interfaceNumber === interfaceNumber);
+            const ifaceClaimed = iface?.claimed ?? false;
+            if (!ifaceClaimed) {
+              try {
+                await this.device.claimInterface(interfaceNumber);
+              } catch (err) {
+                throw wrapWithCause(`Failed to claim USB interface ${interfaceNumber} for SET_INTERFACE`, err);
+              }
+              this.claimedInterfaces.add(interfaceNumber);
+            }
+
+            try {
+              await this.device.selectAlternateInterface(interfaceNumber, altSetting);
+            } catch (err) {
+              throw wrapWithCause(
+                `Failed to select alternate setting ${altSetting} for USB interface ${interfaceNumber}`,
+                err,
+              );
+            }
+
+            return { kind: "controlOut", id: action.id, status: "success", bytesWritten: 0 };
+          }
+
+          if (
+            (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_ENDPOINT &&
+            (setup.bRequest & 0xff) === CLEAR_FEATURE &&
+            (setup.wValue & 0xffff) === FEATURE_SELECTOR_ENDPOINT_HALT &&
+            (setup.wLength & 0xffff) === 0 &&
+            emptyData
+          ) {
+            const endpointAddress = setup.wIndex & 0xff;
+            const endpointNumber = endpointAddressToEndpointNumber(endpointAddress);
+            try {
+              const direction: USBDirection = (endpointAddress & 0x80) !== 0 ? "in" : "out";
+              await this.device.clearHalt(direction, endpointNumber);
+            } catch (err) {
+              throw wrapWithCause(
+                `Failed to clear HALT for endpoint 0x${endpointAddress.toString(16)} (ep ${endpointNumber})`,
+                err,
+              );
+            }
+            return { kind: "controlOut", id: action.id, status: "success", bytesWritten: 0 };
           }
 
           const params = setupPacketToWebUsbParameters(action.setup);
