@@ -80,6 +80,17 @@ To identify *which* `CreateResource` calls are swapchain backbuffers:
 1. Find the handles printed by `RotateResourceIdentities`.
 2. Match those handles to the immediately preceding `CreateResource => created tex2d handle=...` lines.
 
+### Optional: automated extraction
+
+For convenience, the repo includes a small host-side parser that scans a captured log and prints the
+backbuffer handles observed via `RotateResourceIdentities` along with their matching `CreateResource`
+descriptors:
+
+```bash
+python scripts/parse_win7_dxgi_swapchain_trace.py aerogpu_d3d10_11_umd.log
+python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json aerogpu_d3d10_11_umd.log
+```
+
 ### Capturing KMD-facing allocation flags (optional but recommended)
 
 To understand which **WDDM allocation flags** are required for `Present` stability, capture what
