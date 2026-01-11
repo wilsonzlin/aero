@@ -14,10 +14,6 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Movzx
             | Mnemonic::Bswap
             | Mnemonic::Xadd
-            | Mnemonic::Lodsb
-            | Mnemonic::Lodsw
-            | Mnemonic::Lodsd
-            | Mnemonic::Lodsq
     ) || is_cmov(m)
         || is_setcc(m)
 }
@@ -109,63 +105,8 @@ pub fn exec<B: CpuBus>(
             state.set_rflags(flags);
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Lodsb | Mnemonic::Lodsw | Mnemonic::Lodsd | Mnemonic::Lodsq => {
-            exec_lods(state, bus, instr)?;
-            Ok(ExecOutcome::Continue)
-        }
         _ => Err(Exception::InvalidOpcode),
     }
-}
-
-fn exec_lods<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) -> Result<(), Exception> {
-    let (elem_bytes, acc) = match instr.mnemonic() {
-        Mnemonic::Lodsb => (1u64, Register::AL),
-        Mnemonic::Lodsw => (2u64, Register::AX),
-        Mnemonic::Lodsd => (4u64, Register::EAX),
-        Mnemonic::Lodsq => (8u64, Register::RAX),
-        _ => return Err(Exception::InvalidOpcode),
-    };
-
-    // Address-size overrides (0x67) are not currently tracked by the Tier-0
-    // interpreter. For now, assume the default address size implied by the
-    // coarse CPU mode / CS.D.
-    let addr_bits = state.bitness();
-    let index = match addr_bits {
-        16 => Register::SI,
-        32 => Register::ESI,
-        64 => Register::RSI,
-        _ => return Err(Exception::InvalidOpcode),
-    };
-
-    let si = state.read_reg(index) & mask_bits(addr_bits);
-    let seg = {
-        let seg = instr.segment_prefix();
-        if seg == Register::None {
-            Register::DS
-        } else {
-            seg
-        }
-    };
-    let addr = state.seg_base_reg(seg).wrapping_add(si);
-
-    let val = match elem_bytes {
-        1 => bus.read_u8(addr)? as u64,
-        2 => bus.read_u16(addr)? as u64,
-        4 => bus.read_u32(addr)? as u64,
-        8 => bus.read_u64(addr)?,
-        _ => return Err(Exception::InvalidOpcode),
-    };
-    state.write_reg(acc, val);
-
-    let df = state.get_flag(crate::state::FLAG_DF);
-    let next_si = if df {
-        si.wrapping_sub(elem_bytes)
-    } else {
-        si.wrapping_add(elem_bytes)
-    } & mask_bits(addr_bits);
-    state.write_reg(index, next_si);
-
-    Ok(())
 }
 
 pub(crate) fn eval_cond(state: &CpuState, m: Mnemonic) -> bool {

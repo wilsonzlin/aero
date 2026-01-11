@@ -405,6 +405,33 @@ fn addr_size_override_16bit_mode_selects_32bit_index_and_count_regs() {
 }
 
 #[test]
+fn addr_size_override_16bit_mode_lodsb_uses_esi_and_updates_esi() {
+    let code = [0x67, 0xAC, 0xF4]; // addr-size override + lodsb; hlt
+    let mut bus = FlatTestBus::new(0x30000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+
+    // Ensure ESI != SI and that incrementing the effective index depends on a 32-bit carry.
+    //
+    // ESI=0x0002_FFFF, SI=0xFFFF
+    state.write_reg(Register::ESI, 0x0002_0000);
+    state.write_reg(Register::SI, 0xFFFF);
+
+    // If Tier-0 incorrectly uses SI, we'd read 0xCD from 0xFFFF and ESI would become 0x0002_0000.
+    bus.write_u8(0x0002_FFFF, 0xAB).unwrap();
+    bus.write_u8(0xFFFF, 0xCD).unwrap();
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(state.read_reg(Register::AL), 0xAB);
+    assert_eq!(state.read_reg(Register::ESI), 0x0003_0000);
+}
+
+#[test]
 fn addr_size_override_32bit_mode_selects_16bit_index_regs() {
     let code = [0x67, 0xA4, 0xF4]; // addr-size override + movsb; hlt
     let mut bus = FlatTestBus::new(0x20000);
@@ -484,4 +511,29 @@ fn segment_override_applies_to_source_only_for_movs() {
 
     assert_eq!(bus.read_u8(0x5000 + 0x20).unwrap(), 0xBB);
     assert_ne!(bus.read_u8(0x1000 + 0x20).unwrap(), 0xBB);
+}
+
+#[test]
+fn rep_lodsb_repeats_and_consumes_ecx() {
+    let code = [0xF3, 0xAC, 0xF4]; // rep lodsb; hlt
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0;
+    state.write_reg(Register::ESI, 0x100);
+    state.write_reg(Register::ECX, 4);
+
+    let bytes = [0x11u8, 0x22, 0x33, 0x44];
+    for (i, b) in bytes.iter().enumerate() {
+        bus.write_u8(0x100 + i as u64, *b).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(state.read_reg(Register::AL), 0x44);
+    assert_eq!(state.read_reg(Register::ESI), 0x104);
+    assert_eq!(state.read_reg(Register::ECX), 0);
 }
