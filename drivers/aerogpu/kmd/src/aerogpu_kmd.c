@@ -1963,6 +1963,12 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
 
     for (UINT i = 0; i < pOpen->NumAllocations; ++i) {
         DXGK_OPENALLOCATIONINFO* info = &pOpen->pOpenAllocation[i];
+        /*
+         * Defensive init: treat hAllocation as an output-only field and clear it
+         * before validation so the cleanup path never attempts to free an
+         * uninitialized value (or an unrelated handle passed in by dxgkrnl).
+         */
+        info->hAllocation = NULL;
 
         if (!info->pPrivateDriverData || info->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_private_data)) {
             AEROGPU_LOG("OpenAllocation: missing/too small private data (have=%lu need=%Iu)",
