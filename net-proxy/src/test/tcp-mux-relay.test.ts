@@ -733,6 +733,78 @@ test("tcp-mux supports CLOSE(RST) without killing the websocket", async () => {
   }
 });
 
+test("tcp-mux propagates CLOSE(FIN) as TCP FIN while still allowing server->client DATA", async () => {
+  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+    socket.on("error", () => {
+      // ignore
+    });
+    socket.on("data", (data) => socket.write(data));
+    socket.on("end", () => {
+      socket.write("bye");
+      socket.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const addr = server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    const connPromise = once(server, "connection") as Promise<[net.Socket]>;
+
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: addr.port })
+    );
+    const payload = Buffer.from("fin-half-close");
+    ws.send(Buffer.concat([open, encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload)]));
+    await waitForEcho(waiter, 1, payload);
+
+    const [serverSocket] = await connPromise;
+    const serverSawFin = once(serverSocket, "end");
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
+
+    // Ensure the FIN reached the TCP server.
+    await Promise.race([
+      serverSawFin,
+      new Promise<never>((_resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout waiting for TCP FIN")), 2_000);
+        timeout.unref();
+      })
+    ]);
+
+    // The TCP server sends "bye" after FIN; ensure we still receive it.
+    const byeFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
+    assert.deepEqual(byeFrame.payload, Buffer.from("bye"));
+
+    // The server also closes its side; ensure we receive CLOSE(FIN).
+    const closeFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1);
+    assert.ok((decodeTcpMuxClosePayload(closeFrame.payload).flags & TcpMuxCloseFlags.FIN) !== 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
 test("tcp-mux rejects DATA after client FIN with PROTOCOL_ERROR", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
