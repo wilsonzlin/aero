@@ -48,11 +48,18 @@ pub fn build_and_write(
     let mut cfg = AcpiConfig::default();
     cfg.cpu_count = cpu_count.max(1);
     cfg.pirq_to_gsi = pirq_to_gsi;
+    // Enable PCIe-friendly config space access via MMCONFIG/ECAM.
+    //
+    // This must match the platform MMIO mapping (see `aero-pc-platform`).
+    cfg.pcie_ecam_base = 0xB000_0000;
+    cfg.pcie_segment = 0;
+    cfg.pcie_start_bus = 0;
+    cfg.pcie_end_bus = 0xFF;
 
     let tables = AcpiTables::build(&cfg, placement);
 
     // Validate everything fits inside guest RAM.
-    for (name, addr, len) in [
+    let mut to_check = vec![
         ("RSDP", tables.addresses.rsdp, tables.rsdp.len()),
         ("RSDT", tables.addresses.rsdt, tables.rsdt.len()),
         ("XSDT", tables.addresses.xsdt, tables.xsdt.len()),
@@ -61,7 +68,11 @@ pub fn build_and_write(
         ("HPET", tables.addresses.hpet, tables.hpet.len()),
         ("DSDT", tables.addresses.dsdt, tables.dsdt.len()),
         ("FACS", tables.addresses.facs, tables.facs.len()),
-    ] {
+    ];
+    if let (Some(addr), Some(table)) = (tables.addresses.mcfg, tables.mcfg.as_ref()) {
+        to_check.push(("MCFG", addr, table.len()));
+    }
+    for (name, addr, len) in to_check {
         let Some(end) = addr.checked_add(len as u64) else {
             eprintln!("BIOS: ACPI {name} address overflow (addr=0x{addr:x} len=0x{len:x})");
             return None;
@@ -110,6 +121,9 @@ fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
     start = start.min(addrs.fadt);
     start = start.min(addrs.madt);
     start = start.min(addrs.hpet);
+    if let Some(mcfg) = addrs.mcfg {
+        start = start.min(mcfg);
+    }
     start = start.min(addrs.rsdt);
     start = start.min(addrs.xsdt);
 
@@ -118,6 +132,9 @@ fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
     end = end.max(addrs.fadt.saturating_add(tables.fadt.len() as u64));
     end = end.max(addrs.madt.saturating_add(tables.madt.len() as u64));
     end = end.max(addrs.hpet.saturating_add(tables.hpet.len() as u64));
+    if let (Some(addr), Some(table)) = (addrs.mcfg, tables.mcfg.as_ref()) {
+        end = end.max(addr.saturating_add(table.len() as u64));
+    }
     end = end.max(addrs.rsdt.saturating_add(tables.rsdt.len() as u64));
     end = end.max(addrs.xsdt.saturating_add(tables.xsdt.len() as u64));
 
