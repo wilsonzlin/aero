@@ -136,6 +136,24 @@ describe("workers/net.worker (worker_threads)", () => {
 
       expect(received).not.toBeNull();
       expect(Array.from(received!)).toEqual(Array.from(inbound));
+
+      // If the tunnel closes unexpectedly, the net worker should reconnect and
+      // resume forwarding frames.
+      worker.postMessage({ type: "ws.close", code: 1000, reason: "test" });
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.created", 10000);
+
+      const frame2 = Uint8Array.of(6, 7, 8);
+      while (!netTxRing.tryPush(frame2)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+
+      const wsSent2 = (await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "ws.sent", 10000)) as {
+        data?: Uint8Array;
+      };
+      expect(wsSent2.data).toBeInstanceOf(Uint8Array);
+      const decoded2 = decodeL2Message(wsSent2.data!);
+      expect(decoded2.type).toBe(L2_TUNNEL_TYPE_FRAME);
+      expect(Array.from(decoded2.payload)).toEqual(Array.from(frame2));
     } finally {
       await worker.terminate();
     }

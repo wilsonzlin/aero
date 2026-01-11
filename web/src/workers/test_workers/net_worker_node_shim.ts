@@ -41,6 +41,7 @@ parentPort?.on("message", (data) => {
 // ---------------------------------------------------------------------------
 
 type WebSocketSentMessage = { type: "ws.sent"; data: Uint8Array };
+type WebSocketCreatedMessage = { type: "ws.created"; url: string; protocol: string };
 
 class FakeWebSocket {
   static CONNECTING = 0;
@@ -68,6 +69,12 @@ class FakeWebSocket {
     this.protocols = protocols;
     this.protocol = typeof protocols === "string" ? protocols : Array.isArray(protocols) ? protocols[0] ?? "" : "";
     FakeWebSocket.last = this;
+
+    parentPort?.postMessage({
+      type: "ws.created",
+      url,
+      protocol: this.protocol,
+    } satisfies WebSocketCreatedMessage);
 
     // Auto-open on the next microtask so `WebSocketL2TunnelClient` sees an async open.
     queueMicrotask(() => this.open());
@@ -114,4 +121,12 @@ parentPort?.on("message", (msg) => {
   if (data?.type !== "ws.inject") return;
   if (!(data.data instanceof Uint8Array)) return;
   FakeWebSocket.last?.emitMessage(data.data);
+});
+
+parentPort?.on("message", (msg) => {
+  const data = msg as { type?: unknown; code?: unknown; reason?: unknown };
+  if (data?.type !== "ws.close") return;
+  const code = typeof data.code === "number" ? data.code : undefined;
+  const reason = typeof data.reason === "string" ? data.reason : undefined;
+  FakeWebSocket.last?.close(code, reason);
 });

@@ -45,6 +45,10 @@ let l2TunnelClient: WebSocketL2TunnelClient | null = null;
 let l2TunnelProxyUrl: string | null = null;
 let l2TunnelTelemetry: L2TunnelTelemetry | null = null;
 
+let l2ReconnectAttempts = 0;
+let l2ReconnectTimer: number | null = null;
+let l2ReconnectGeneration = 0;
+
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
@@ -68,6 +72,10 @@ const NET_PENDING_RX_POLL_MS = 20;
 const NET_TX_BACKPRESSURE_SLEEP_MS = 8;
 const L2_STATS_LOG_INTERVAL_MS = 1000;
 
+const L2_RECONNECT_BASE_DELAY_MS = 250;
+const L2_RECONNECT_MAX_DELAY_MS = 30_000;
+const L2_RECONNECT_JITTER_FRACTION = 0.2;
+
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
@@ -88,6 +96,56 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
   }
 }
 
+function computeBackoffDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number, jitterFraction: number): number {
+  // attempt is 1-based.
+  const unclamped = baseDelayMs * 2 ** Math.max(0, attempt - 1);
+  const delay = Math.min(maxDelayMs, unclamped);
+  const jitter = delay * jitterFraction;
+  const randomized = delay + (Math.random() * 2 - 1) * jitter;
+  return Math.max(0, Math.round(randomized));
+}
+
+function clearReconnectTimer(): void {
+  const timer = l2ReconnectTimer;
+  if (timer === null) return;
+  clearTimeout(timer);
+  l2ReconnectTimer = null;
+}
+
+function scheduleReconnect(): void {
+  if (l2TunnelProxyUrl === null) return;
+  if (!l2Forwarder) return;
+  if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+  if (l2ReconnectTimer !== null) return;
+
+  l2ReconnectAttempts += 1;
+  const generation = ++l2ReconnectGeneration;
+  const proxyUrl = l2TunnelProxyUrl;
+  const delayMs = computeBackoffDelayMs(
+    l2ReconnectAttempts,
+    L2_RECONNECT_BASE_DELAY_MS,
+    L2_RECONNECT_MAX_DELAY_MS,
+    L2_RECONNECT_JITTER_FRACTION,
+  );
+
+  l2ReconnectTimer = setTimeout(() => {
+    l2ReconnectTimer = null;
+    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+    if (generation !== l2ReconnectGeneration) return;
+    if (l2TunnelProxyUrl !== proxyUrl) return;
+
+    // The low-level WebSocketL2TunnelClient does not reconnect after close (it
+    // becomes permanently closed), so create a fresh client.
+    l2TunnelClient = null;
+    try {
+      applyL2TunnelConfig(currentConfig);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      pushEvent({ kind: "log", level: "warn", message: `Failed to reconnect L2 tunnel: ${message}` });
+    }
+  }, delayMs) as unknown as number;
+}
+
 function applyL2TunnelConfig(config: AeroConfig | null): void {
   const proxyUrl = config?.proxyUrl ?? null;
   const forwarder = l2Forwarder;
@@ -96,6 +154,10 @@ function applyL2TunnelConfig(config: AeroConfig | null): void {
 
   // Ensure we stop/close the previous tunnel when the proxy URL changes.
   if (proxyUrl !== l2TunnelProxyUrl) {
+    clearReconnectTimer();
+    l2ReconnectAttempts = 0;
+    l2ReconnectGeneration += 1;
+
     telemetry?.onStopped();
     // Drop the reference early so any late events from the old tunnel are ignored.
     l2TunnelClient = null;
@@ -104,6 +166,10 @@ function applyL2TunnelConfig(config: AeroConfig | null): void {
   }
 
   if (proxyUrl === null) {
+    clearReconnectTimer();
+    l2ReconnectAttempts = 0;
+    l2ReconnectGeneration += 1;
+
     telemetry?.onStopped();
     return;
   }
@@ -304,7 +370,20 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
       l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
-        onTunnelEvent: (ev) => l2TunnelTelemetry?.onTunnelEvent(ev),
+        onTunnelEvent: (ev) => {
+          l2TunnelTelemetry?.onTunnelEvent(ev);
+          if (ev.type === "open") {
+            clearReconnectTimer();
+            l2ReconnectAttempts = 0;
+            return;
+          }
+          if (ev.type === "close" || ev.type === "error") {
+            // Drop the reference early so late events from the closed tunnel
+            // don't race with a new client instance.
+            l2TunnelClient = null;
+            scheduleReconnect();
+          }
+        },
       });
       l2TunnelTelemetry = new L2TunnelTelemetry({
         intervalMs: L2_STATS_LOG_INTERVAL_MS,
