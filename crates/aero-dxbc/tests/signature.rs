@@ -215,6 +215,18 @@ fn signature_chunk_invalid_utf8_is_rejected() {
 }
 
 #[test]
+fn signature_chunk_semantic_name_offset_into_table_is_rejected() {
+    let mut bytes = build_signature_chunk();
+    // Point the first entry's semantic_name_offset at the start of the entry
+    // table (offset 8), which should be rejected.
+    bytes[8..12].copy_from_slice(&8u32.to_le_bytes());
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("points into signature table"));
+}
+
+#[test]
 fn signature_chunk_from_real_dxbc_fixture_parses() {
     let dxbc = DxbcFile::parse(VS_2_0_SIMPLE_DXBC).expect("DXBC fixture should parse");
 

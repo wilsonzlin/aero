@@ -54,6 +54,17 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
     let param_count_usize = param_count as usize;
     let param_offset_usize = param_offset as usize;
 
+    if param_offset_usize < SIGNATURE_HEADER_LEN {
+        return Err(DxbcError::invalid_chunk(format!(
+            "param_offset {param_offset} points into signature header (need >= {SIGNATURE_HEADER_LEN})"
+        )));
+    }
+    if (param_offset_usize % 4) != 0 {
+        return Err(DxbcError::invalid_chunk(format!(
+            "param_offset {param_offset} is not 4-byte aligned"
+        )));
+    }
+
     let table_bytes =
         param_count_usize
             .checked_mul(SIGNATURE_ENTRY_LEN)
@@ -98,6 +109,17 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
             entry_start,
             &format!("entry {entry_index} semantic_name_offset"),
         )?;
+        let semantic_name_offset_usize = semantic_name_offset as usize;
+        if semantic_name_offset_usize < SIGNATURE_HEADER_LEN {
+            return Err(DxbcError::invalid_chunk(format!(
+                "entry {entry_index} semantic_name_offset {semantic_name_offset} points into signature header"
+            )));
+        }
+        if (param_offset_usize..table_end).contains(&semantic_name_offset_usize) {
+            return Err(DxbcError::invalid_chunk(format!(
+                "entry {entry_index} semantic_name_offset {semantic_name_offset} points into signature table ({param_offset_usize}..{table_end})"
+            )));
+        }
         let semantic_index = read_u32_le(
             bytes,
             entry_start + 4,
@@ -135,7 +157,7 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
 
         let semantic_name = read_cstring(
             bytes,
-            semantic_name_offset as usize,
+            semantic_name_offset_usize,
             &format!("entry {entry_index} semantic_name"),
         )?
         .to_owned();
