@@ -212,8 +212,14 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                 break;
             }
 
-            let step = crate::interp::tier0::exec::step(&mut cpu.cpu.state, &mut cpu.bus)
-                .expect("tier0 step failed");
+            let ip = cpu.cpu.state.rip();
+            let step = match crate::interp::tier0::exec::step(&mut cpu.cpu.state, &mut cpu.bus) {
+                Ok(step) => step,
+                Err(e) => {
+                    deliver_tier0_exception(cpu, ip, e);
+                    break;
+                }
+            };
             match step {
                 StepExit::Continue => {
                     cpu.cpu.pending.retire_instruction();
@@ -377,18 +383,25 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     // `handle_assist_decoded` does not implicitly sync paging state (unlike
                     // `handle_assist`), so keep the bus coherent before and after.
                     cpu.bus.sync(&cpu.cpu.state);
-                    handle_assist_decoded(
+                    let res = handle_assist_decoded(
                         &mut self.assist,
                         &mut cpu.cpu.state,
                         &mut cpu.bus,
                         &decoded,
                         addr_size_override,
                     )
-                    .expect("handle tier0 assist");
+                    .map_err(|e| (ip, e));
                     cpu.bus.sync(&cpu.cpu.state);
-                    cpu.cpu.pending.retire_instruction();
-                    if inhibits_interrupt {
-                        cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                    match res {
+                        Ok(()) => {
+                            cpu.cpu.pending.retire_instruction();
+                            if inhibits_interrupt {
+                                cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                            }
+                        }
+                        Err((faulting_rip, e)) => {
+                            deliver_tier0_exception(cpu, faulting_rip, e);
+                        }
                     }
                     break;
                 }
@@ -396,5 +409,52 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
         }
 
         cpu.cpu.state.rip()
+    }
+}
+
+fn deliver_tier0_exception<B: crate::mem::CpuBus>(
+    cpu: &mut Vcpu<B>,
+    faulting_rip: u64,
+    exception: crate::exception::Exception,
+) {
+    use crate::exception::Exception as InterpException;
+    use crate::exceptions::Exception as ArchException;
+
+    let (arch, error_code, cr2) = match exception {
+        InterpException::DivideError => (ArchException::DivideError, None, None),
+        InterpException::GeneralProtection(code) => {
+            (ArchException::GeneralProtection, Some(code as u32), None)
+        }
+        InterpException::PageFault { addr, error_code } => {
+            (ArchException::PageFault, Some(error_code), Some(addr))
+        }
+        InterpException::SegmentNotPresent(code) => {
+            (ArchException::SegmentNotPresent, Some(code as u32), None)
+        }
+        InterpException::StackSegment(code) => (ArchException::StackFault, Some(code as u32), None),
+        InterpException::InvalidTss(code) => (ArchException::InvalidTss, Some(code as u32), None),
+        InterpException::InvalidOpcode => (ArchException::InvalidOpcode, None, None),
+        InterpException::DeviceNotAvailable => (ArchException::DeviceNotAvailable, None, None),
+        InterpException::X87Fpu => (ArchException::X87Fpu, None, None),
+        InterpException::SimdFloatingPointException => {
+            (ArchException::SimdFloatingPoint, None, None)
+        }
+        InterpException::MemoryFault => {
+            panic!("non-architectural memory fault at rip={faulting_rip:#x}")
+        }
+        InterpException::Unimplemented(name) => {
+            panic!("unimplemented instruction at rip={faulting_rip:#x}: {name}")
+        }
+    };
+
+    cpu.cpu.pending.raise_exception_fault(
+        &mut cpu.cpu.state,
+        arch,
+        faulting_rip,
+        error_code,
+        cr2,
+    );
+    if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
+        cpu.exit = Some(exit);
     }
 }
