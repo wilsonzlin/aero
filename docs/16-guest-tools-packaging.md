@@ -368,8 +368,8 @@ Before producing any output, the packager verifies that:
 These checks are driven by a small JSON spec passed via `--spec`.
 
 For Aero packaging profiles, the virtio HWID patterns are expected to match the **Aero virtio
-contract v1** (virtio-pci **modern-only**). Transitional device IDs (e.g. `DEV_1000`, `DEV_1001`,
-`DEV_1011`, `DEV_1018`) are intentionally not accepted in the in-repo specs.
+contract v1** (virtio-pci **modern-only**). Transitional device IDs (the older virtio-pci
+`0x1000..` device ID range) are intentionally not accepted in the in-repo specs.
 
 ### Spec schema: required + optional drivers
 
