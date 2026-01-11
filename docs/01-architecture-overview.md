@@ -189,7 +189,8 @@ To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 │ 0x000F_0000 - 0x000F_FFFF │ 64 KB    │ System BIOS               │
 │ 0x0010_0000 - 0x00EF_FFFF │ 14 MB    │ Extended Memory (ISA hole)│
 │ 0x00F0_0000 - 0x00FF_FFFF │ 1 MB     │ ISA Memory Hole           │
-│ 0x0100_0000 - 0xBFFF_FFFF │ ~3 GB    │ Extended Memory (config-dependent)│
+│ 0x0100_0000 - 0xAFFF_FFFF │ ~2.75 GB │ Extended Memory (config-dependent)│
+│ 0xB000_0000 - 0xBFFF_FFFF │ 256 MiB  │ PCIe ECAM (MMCONFIG, ACPI MCFG)│
 │ 0xC000_0000 - 0xFEBF_FFFF │ ~1 GB    │ PCI MMIO Space            │
 │ 0xFEC0_0000 - 0xFEC0_0FFF │ 4 KB     │ I/O APIC                  │
 │ 0xFED0_0000 - 0xFED0_03FF │ 1 KB     │ HPET                      │
@@ -198,7 +199,7 @@ To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Note: Aero’s baseline browser build uses wasm32 and is therefore constrained to **< 4GiB** of contiguous guest RAM. Supporting guest RAM above 4GiB would require either wasm `memory64` (not assumed) or a segmented/sparse host backing model.
+Note: Aero’s baseline browser build uses wasm32 and is therefore constrained to **< 4GiB** of contiguous guest RAM. With an ECAM window at `0xB000_0000`, the largest contiguous low-RAM window is **< 2.75GiB**; larger RAM configurations require remapping some RAM above 4GiB, which in turn requires a segmented/sparse host backing model (or wasm `memory64`).
 
 ### I/O Port Map (Selected)
 
