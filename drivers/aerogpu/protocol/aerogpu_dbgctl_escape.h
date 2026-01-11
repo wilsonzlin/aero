@@ -32,6 +32,7 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2 7u
 #define AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE 8u
 #define AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION 9u
+#define AEROGPU_ESCAPE_OP_QUERY_SCANOUT 10u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
@@ -240,6 +241,42 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_pe
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_interrupt_type) == 52);
 
 typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
+
+typedef struct aerogpu_escape_query_scanout_out {
+  aerogpu_escape_header hdr;
+  aerogpu_escape_u32 vidpn_source_id;
+  aerogpu_escape_u32 reserved0;
+
+  /* Cached values tracked by the KMD. */
+  aerogpu_escape_u32 cached_enable;
+  aerogpu_escape_u32 cached_width;
+  aerogpu_escape_u32 cached_height;
+  aerogpu_escape_u32 cached_format; /* enum aerogpu_format */
+  aerogpu_escape_u32 cached_pitch_bytes;
+
+  /* MMIO scanout registers (best-effort; 0 if not available). */
+  aerogpu_escape_u32 mmio_enable;
+  aerogpu_escape_u32 mmio_width;
+  aerogpu_escape_u32 mmio_height;
+  aerogpu_escape_u32 mmio_format;
+  aerogpu_escape_u32 mmio_pitch_bytes;
+  aerogpu_escape_u64 mmio_fb_gpa;
+} aerogpu_escape_query_scanout_out;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_scanout_out) == 72);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, vidpn_source_id) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_enable) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_width) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_height) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_format) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_pitch_bytes) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_enable) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_width) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_height) == 52);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_format) == 56);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_pitch_bytes) == 60);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, mmio_fb_gpa) == 64);
 
 /*
  * Recent CreateAllocation trace entry (DxgkDdiCreateAllocation inputs/outputs).

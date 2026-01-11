@@ -2119,13 +2119,73 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
         return STATUS_INVALID_PARAMETER;
     }
 
-    /*
-     * A minimal implementation keeps a cached mode for scanout programming.
-     * Parsing the full VidPN object is possible but intentionally deferred; the
-     * Windows display stack will still provide correct pitch/address via
-     * SetVidPnSourceAddress.
-     */
-    UNREFERENCED_PARAMETER(pCommitVidPn);
+    if (pCommitVidPn->AffectedVidPnSourceId != AEROGPU_VIDPN_SOURCE_ID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!adapter->DxgkInterface.DxgkCbQueryVidPnInterface || !pCommitVidPn->hFunctionalVidPn) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    DXGK_VIDPN_INTERFACE vidpn;
+    RtlZeroMemory(&vidpn, sizeof(vidpn));
+    NTSTATUS status =
+        adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pCommitVidPn->hFunctionalVidPn, &vidpn);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    if (!vidpn.pfnGetSourceModeSet || !vidpn.pfnGetSourceModeSetInterface || !vidpn.pfnReleaseSourceModeSet) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
+    status = vidpn.pfnGetSourceModeSet(pCommitVidPn->hFunctionalVidPn, pCommitVidPn->AffectedVidPnSourceId, &hSourceModeSet);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    DXGK_VIDPNSOURCEMODESET_INTERFACE sms;
+    RtlZeroMemory(&sms, sizeof(sms));
+    status = vidpn.pfnGetSourceModeSetInterface(pCommitVidPn->hFunctionalVidPn, hSourceModeSet, &sms);
+    if (!NT_SUCCESS(status)) {
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return status;
+    }
+
+    if (!sms.pfnAcquirePinnedModeInfo || !sms.pfnReleaseModeInfo) {
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    const D3DKMDT_VIDPN_SOURCE_MODE* pinned = NULL;
+    status = sms.pfnAcquirePinnedModeInfo(hSourceModeSet, &pinned);
+    if (!NT_SUCCESS(status)) {
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return status;
+    }
+
+    if (!pinned) {
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const ULONG width = pinned->Format.Graphics.PrimSurfSize.cx;
+    const ULONG height = pinned->Format.Graphics.PrimSurfSize.cy;
+
+    if (width == 0 || height == 0 || width > (0xFFFFFFFFu / 4u)) {
+        sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    adapter->CurrentWidth = width;
+    adapter->CurrentHeight = height;
+    adapter->CurrentPitch = width * 4u;
+    adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8X8_UNORM;
+
+    sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+    vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
     return STATUS_SUCCESS;
 }
 
@@ -4863,6 +4923,66 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->flags |= AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID;
             out->vblank_interrupt_type = (uint32_t)adapter->VblankInterruptType;
         }
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_SCANOUT) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_scanout_out)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_query_scanout_out* out = (aerogpu_escape_query_scanout_out*)pEscape->pPrivateDriverData;
+
+        /* Only scanout/source 0 is currently implemented. */
+        if (out->vidpn_source_id != AEROGPU_VIDPN_SOURCE_ID) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        out->hdr.version = AEROGPU_ESCAPE_VERSION;
+        out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+        out->hdr.size = sizeof(*out);
+        out->hdr.reserved0 = 0;
+
+        out->reserved0 = 0;
+
+        out->cached_enable = adapter->SourceVisible ? 1u : 0u;
+        out->cached_width = adapter->CurrentWidth;
+        out->cached_height = adapter->CurrentHeight;
+        out->cached_format = adapter->CurrentFormat;
+        out->cached_pitch_bytes = adapter->CurrentPitch;
+
+        out->mmio_enable = 0;
+        out->mmio_width = 0;
+        out->mmio_height = 0;
+        out->mmio_format = 0;
+        out->mmio_pitch_bytes = 0;
+        out->mmio_fb_gpa = 0;
+
+        if (!adapter->Bar0) {
+            return STATUS_SUCCESS;
+        }
+
+        if ((adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+            out->mmio_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE);
+            out->mmio_width = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH);
+            out->mmio_height = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
+            out->mmio_format = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FORMAT);
+            out->mmio_pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
+            const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO);
+            const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
+            out->mmio_fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+        } else if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_FB_HI + sizeof(ULONG))) {
+            out->mmio_enable = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE);
+            out->mmio_width = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_WIDTH);
+            out->mmio_height = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_HEIGHT);
+            out->mmio_format = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FORMAT);
+            out->mmio_pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
+            const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO);
+            const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI);
+            out->mmio_fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+        }
+
         return STATUS_SUCCESS;
     }
 

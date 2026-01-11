@@ -136,13 +136,14 @@ static void PrintUsage() {
            L"  --query-version  (alias: --query-device)\n"
            L"  --query-umd-private\n"
            L"  --query-fence\n"
+           L"  --query-scanout\n"
            L"  --dump-ring\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
-             L"  --dump-vblank  (alias: --query-vblank)\n"
-             L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
-             L"  --query-scanline  (D3DKMTGetScanLine)\n"
-             L"  --map-shared-handle HANDLE\n"
-            L"  --selftest\n");
+              L"  --dump-vblank  (alias: --query-vblank)\n"
+              L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
+              L"  --query-scanline  (D3DKMTGetScanLine)\n"
+              L"  --map-shared-handle HANDLE\n"
+             L"  --selftest\n");
 }
 
 static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS st) {
@@ -562,6 +563,48 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
           (unsigned long long)q.last_completed_fence);
+  return 0;
+}
+
+static int DoQueryScanout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId) {
+  aerogpu_escape_query_scanout_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = vidpnSourceId;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && vidpnSourceId != 0) {
+    // Older KMDs may only support source 0; retry.
+    ZeroMemory(&q, sizeof(q));
+    q.hdr.version = AEROGPU_ESCAPE_VERSION;
+    q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    q.hdr.size = sizeof(q);
+    q.hdr.reserved0 = 0;
+    q.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  }
+  if (!NT_SUCCESS(st)) {
+    PrintNtStatus(L"D3DKMTEscape(query-scanout) failed", f, st);
+    return 2;
+  }
+
+  wprintf(L"Scanout%lu:\n", (unsigned long)q.vidpn_source_id);
+  wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu\n",
+          (unsigned long)q.cached_enable,
+          (unsigned long)q.cached_width,
+          (unsigned long)q.cached_height,
+          (unsigned long)q.cached_format,
+          (unsigned long)q.cached_pitch_bytes);
+  wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+          (unsigned long)q.mmio_enable,
+          (unsigned long)q.mmio_width,
+          (unsigned long)q.mmio_height,
+          (unsigned long)q.mmio_format,
+          (unsigned long)q.mmio_pitch_bytes,
+          (unsigned long long)q.mmio_fb_gpa);
   return 0;
 }
 
@@ -1393,6 +1436,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_VERSION,
     CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_FENCE,
+    CMD_QUERY_SCANOUT,
     CMD_DUMP_RING,
     CMD_DUMP_CREATEALLOCATION,
     CMD_DUMP_VBLANK,
@@ -1512,6 +1556,12 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--query-scanout") == 0) {
+      if (!SetCommand(CMD_QUERY_SCANOUT)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--dump-ring") == 0) {
       if (!SetCommand(CMD_DUMP_RING)) {
         return 1;
@@ -1619,6 +1669,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_QUERY_FENCE:
     rc = DoQueryFence(&f, open.hAdapter);
+    break;
+  case CMD_QUERY_SCANOUT:
+    rc = DoQueryScanout(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
     break;
   case CMD_DUMP_RING:
     rc = DoDumpRing(&f, open.hAdapter, ringId);
