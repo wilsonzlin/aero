@@ -3993,6 +3993,10 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     if (!res || res->mapped) {
       return;
     }
+    if (std::find(resources.begin(), resources.end(), res) != resources.end()) {
+      // Reject duplicates: RotateResourceIdentities expects distinct resources.
+      return;
+    }
     resources.push_back(res);
   }
 
@@ -4009,34 +4013,81 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     }
   }
 
-  const aerogpu_handle_t saved_handle = resources[0]->handle;
-  auto saved_wddm = std::move(resources[0]->wddm);
-  auto saved_storage = std::move(resources[0]->storage);
-  for (UINT i = 0; i + 1 < numResources; i++) {
-    resources[i]->handle = resources[i + 1]->handle;
-    resources[i]->wddm = std::move(resources[i + 1]->wddm);
-    resources[i]->storage = std::move(resources[i + 1]->storage);
+  struct ResourceIdentity {
+    aerogpu_handle_t handle = 0;
+    Resource::WddmIdentity wddm;
+    std::vector<uint8_t> storage;
+    uint64_t last_gpu_write_fence = 0;
+    bool mapped = false;
+    uint32_t mapped_map_type = 0;
+    uint32_t mapped_map_flags = 0;
+    uint64_t mapped_offset = 0;
+    uint64_t mapped_size = 0;
+  };
+
+  auto take_identity = [](Resource* res) -> ResourceIdentity {
+    ResourceIdentity id{};
+    if (!res) {
+      return id;
+    }
+    id.handle = res->handle;
+    id.wddm = std::move(res->wddm);
+    id.storage = std::move(res->storage);
+    id.last_gpu_write_fence = res->last_gpu_write_fence;
+    id.mapped = res->mapped;
+    id.mapped_map_type = res->mapped_map_type;
+    id.mapped_map_flags = res->mapped_map_flags;
+    id.mapped_offset = res->mapped_offset;
+    id.mapped_size = res->mapped_size;
+    return id;
+  };
+
+  auto put_identity = [](Resource* res, ResourceIdentity&& id) {
+    if (!res) {
+      return;
+    }
+    res->handle = id.handle;
+    res->wddm = std::move(id.wddm);
+    res->storage = std::move(id.storage);
+    res->last_gpu_write_fence = id.last_gpu_write_fence;
+    res->mapped = id.mapped;
+    res->mapped_map_type = id.mapped_map_type;
+    res->mapped_map_flags = id.mapped_map_flags;
+    res->mapped_offset = id.mapped_offset;
+    res->mapped_size = id.mapped_size;
+  };
+
+  ResourceIdentity saved = take_identity(resources[0]);
+  for (UINT i = 0; i + 1 < numResources; ++i) {
+    put_identity(resources[i], take_identity(resources[i + 1]));
   }
-  resources[numResources - 1]->handle = saved_handle;
-  resources[numResources - 1]->wddm = std::move(saved_wddm);
-  resources[numResources - 1]->storage = std::move(saved_storage);
+  put_identity(resources[numResources - 1], std::move(saved));
 
-  if (dev->current_rtv_resource) {
-    for (Resource* r : resources) {
-      if (dev->current_rtv_resource == r) {
-        dev->current_rtv = dev->current_rtv_resource->handle;
-
-        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-        cmd->color_count = dev->current_rtv ? 1u : 0u;
-        cmd->depth_stencil = dev->current_dsv;
-        for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-          cmd->colors[i] = 0;
-        }
-        if (dev->current_rtv) {
-          cmd->colors[0] = dev->current_rtv;
-        }
-        break;
+  const bool needs_rebind =
+      dev->current_rtv_resource &&
+      (std::find(resources.begin(), resources.end(), dev->current_rtv_resource) != resources.end());
+  if (needs_rebind) {
+    const aerogpu_handle_t new_rtv = dev->current_rtv_resource ? dev->current_rtv_resource->handle : 0;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!cmd) {
+      // Undo the rotation (rotate right by one).
+      ResourceIdentity undo_saved = take_identity(resources[numResources - 1]);
+      for (UINT i = numResources - 1; i > 0; --i) {
+        put_identity(resources[i], take_identity(resources[i - 1]));
       }
+      put_identity(resources[0], std::move(undo_saved));
+      SetError(dev, E_OUTOFMEMORY);
+      return;
+    }
+
+    dev->current_rtv = new_rtv;
+    cmd->color_count = new_rtv ? 1u : 0u;
+    cmd->depth_stencil = dev->current_dsv;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+      cmd->colors[i] = 0;
+    }
+    if (new_rtv) {
+      cmd->colors[0] = new_rtv;
     }
   }
 

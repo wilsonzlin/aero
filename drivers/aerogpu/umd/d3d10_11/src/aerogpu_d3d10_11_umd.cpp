@@ -5083,21 +5083,25 @@ HRESULT flush_locked(AeroGpuDevice* dev) {
   return hr;
 }
 
-void emit_set_render_targets_locked(AeroGpuDevice* dev) {
+bool emit_set_render_targets_locked(AeroGpuDevice* dev) {
   if (!dev) {
-    return;
+    return false;
   }
 
   const aerogpu_handle_t rtv_handle = dev->current_rtv ? dev->current_rtv->handle : 0;
   const aerogpu_handle_t dsv_handle = dev->current_dsv ? dev->current_dsv->handle : 0;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    return false;
+  }
   cmd->color_count = 1;
   cmd->depth_stencil = dsv_handle;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     cmd->colors[i] = 0;
   }
   cmd->colors[0] = rtv_handle;
+  return true;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -6843,7 +6847,9 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 
   dev->current_rtv = rtv_res;
   dev->current_dsv = dsv_res;
-  emit_set_render_targets_locked(dev);
+  if (!emit_set_render_targets_locked(dev)) {
+    dev->last_error = E_OUTOFMEMORY;
+  }
 }
 
 void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW, const float rgba[4]) {
@@ -7284,8 +7290,20 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
   std::vector<AeroGpuResource*> resources;
   resources.reserve(numResources);
   for (uint32_t i = 0; i < numResources; ++i) {
-    auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]);
-    if (!res || res->mapped) {
+    auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]) : nullptr;
+    if (!res) {
+      return;
+    }
+    if (std::find(resources.begin(), resources.end(), res) != resources.end()) {
+      // Reject duplicates: RotateResourceIdentities expects distinct resources.
+      return;
+    }
+    if (res->mapped) {
+      return;
+    }
+    // Shared resources have stable identities (`share_token`); rotating them is
+    // likely to break EXPORT/IMPORT semantics across processes.
+    if (res->is_shared || res->is_shared_alias || res->share_token != 0) {
       return;
     }
     resources.push_back(res);
@@ -7305,23 +7323,80 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     }
   }
 
-  // Rotate the resource identity (AeroGPU handle + any WDDM allocation identity).
-  // This matches Win7 DXGI's expectation that the *logical* backbuffer resource
-  // (buffer[0]) continues to be used by the app across frames while the
-  // underlying allocation identity flips.
-  const aerogpu_handle_t saved_handle = resources[0]->handle;
-  auto saved_wddm = std::move(resources[0]->wddm);
-  auto saved_storage = std::move(resources[0]->storage);
+  struct ResourceIdentity {
+    aerogpu_handle_t handle = 0;
+    uint32_t backing_alloc_id = 0;
+    uint64_t share_token = 0;
+    bool is_shared = false;
+    bool is_shared_alias = false;
+    AeroGpuResource::WddmIdentity wddm;
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+    uint64_t wddm_allocation = 0;
+#endif
+    std::vector<uint8_t> storage;
+    bool mapped = false;
+    bool mapped_write = false;
+    uint32_t mapped_subresource = 0;
+    uint32_t mapped_map_type = 0;
+    uint64_t mapped_offset_bytes = 0;
+    uint64_t mapped_size_bytes = 0;
+  };
 
+  auto take_identity = [](AeroGpuResource* res) -> ResourceIdentity {
+    ResourceIdentity id{};
+    if (!res) {
+      return id;
+    }
+    id.handle = res->handle;
+    id.backing_alloc_id = res->backing_alloc_id;
+    id.share_token = res->share_token;
+    id.is_shared = res->is_shared;
+    id.is_shared_alias = res->is_shared_alias;
+    id.wddm = std::move(res->wddm);
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+    id.wddm_allocation = res->wddm_allocation;
+#endif
+    id.storage = std::move(res->storage);
+    id.mapped = res->mapped;
+    id.mapped_write = res->mapped_write;
+    id.mapped_subresource = res->mapped_subresource;
+    id.mapped_map_type = res->mapped_map_type;
+    id.mapped_offset_bytes = res->mapped_offset_bytes;
+    id.mapped_size_bytes = res->mapped_size_bytes;
+    return id;
+  };
+
+  auto put_identity = [](AeroGpuResource* res, ResourceIdentity&& id) {
+    if (!res) {
+      return;
+    }
+    res->handle = id.handle;
+    res->backing_alloc_id = id.backing_alloc_id;
+    res->share_token = id.share_token;
+    res->is_shared = id.is_shared;
+    res->is_shared_alias = id.is_shared_alias;
+    res->wddm = std::move(id.wddm);
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+    res->wddm_allocation = id.wddm_allocation;
+#endif
+    res->storage = std::move(id.storage);
+    res->mapped = id.mapped;
+    res->mapped_write = id.mapped_write;
+    res->mapped_subresource = id.mapped_subresource;
+    res->mapped_map_type = id.mapped_map_type;
+    res->mapped_offset_bytes = id.mapped_offset_bytes;
+    res->mapped_size_bytes = id.mapped_size_bytes;
+  };
+
+  // Rotate the full resource identity bundle. This matches Win7 DXGI's
+  // expectation that the *logical* backbuffer resource (buffer[0]) continues to
+  // be used by the app across frames while the underlying allocation identity
+  // flips.
+  ResourceIdentity saved = take_identity(resources[0]);
   for (uint32_t i = 0; i + 1 < numResources; ++i) {
-    resources[i]->handle = resources[i + 1]->handle;
-    resources[i]->wddm = std::move(resources[i + 1]->wddm);
-    resources[i]->storage = std::move(resources[i + 1]->storage);
+    put_identity(resources[i], take_identity(resources[i + 1]));
   }
-
-  resources[numResources - 1]->handle = saved_handle;
-  resources[numResources - 1]->wddm = std::move(saved_wddm);
-  resources[numResources - 1]->storage = std::move(saved_storage);
+  put_identity(resources[numResources - 1], std::move(saved));
 
   // If the current render targets refer to a rotated resource, re-emit the bind
   // command so the next frame targets the new backbuffer identity.
@@ -7333,7 +7408,16 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     }
   }
   if (needs_rebind) {
-    emit_set_render_targets_locked(dev);
+    if (!emit_set_render_targets_locked(dev)) {
+      // Undo the rotation (rotate right by one).
+      ResourceIdentity undo_saved = take_identity(resources[numResources - 1]);
+      for (uint32_t i = numResources - 1; i > 0; --i) {
+        put_identity(resources[i], take_identity(resources[i - 1]));
+      }
+      put_identity(resources[0], std::move(undo_saved));
+      dev->last_error = E_OUTOFMEMORY;
+      return;
+    }
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)

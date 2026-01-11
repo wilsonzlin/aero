@@ -3005,6 +3005,10 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
     if (!res) {
       return;
     }
+    if (std::find(resources.begin(), resources.end(), res) != resources.end()) {
+      // Reject duplicates: RotateResourceIdentities expects distinct resources.
+      return;
+    }
     resources.push_back(res);
   }
 
@@ -3022,33 +3026,63 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
     }
   }
 
-  const aerogpu_handle_t saved_handle = resources[0]->handle;
-  auto saved_wddm = std::move(resources[0]->wddm);
-  auto saved_storage = std::move(resources[0]->storage);
+  struct ResourceIdentity {
+    aerogpu_handle_t handle = 0;
+    AeroGpuResource::WddmIdentity wddm;
+    std::vector<uint8_t> storage;
+  };
 
+  auto take_identity = [](AeroGpuResource* res) -> ResourceIdentity {
+    ResourceIdentity id{};
+    if (!res) {
+      return id;
+    }
+    id.handle = res->handle;
+    id.wddm = std::move(res->wddm);
+    id.storage = std::move(res->storage);
+    return id;
+  };
+
+  auto put_identity = [](AeroGpuResource* res, ResourceIdentity&& id) {
+    if (!res) {
+      return;
+    }
+    res->handle = id.handle;
+    res->wddm = std::move(id.wddm);
+    res->storage = std::move(id.storage);
+  };
+
+  ResourceIdentity saved = take_identity(resources[0]);
   for (UINT i = 0; i + 1 < numResources; ++i) {
-    resources[i]->handle = resources[i + 1]->handle;
-    resources[i]->wddm = std::move(resources[i + 1]->wddm);
-    resources[i]->storage = std::move(resources[i + 1]->storage);
+    put_identity(resources[i], take_identity(resources[i + 1]));
   }
-  resources[numResources - 1]->handle = saved_handle;
-  resources[numResources - 1]->wddm = std::move(saved_wddm);
-  resources[numResources - 1]->storage = std::move(saved_storage);
+  put_identity(resources[numResources - 1], std::move(saved));
 
-  if (dev->current_rtv_res) {
-    for (AeroGpuResource* r : resources) {
-      if (dev->current_rtv_res == r) {
-        dev->current_rtv = dev->current_rtv_res ? dev->current_rtv_res->handle : 0;
-
-        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-        cmd->color_count = dev->current_rtv ? 1u : 0u;
-        cmd->depth_stencil = dev->current_dsv;
-        for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-          cmd->colors[i] = 0;
-        }
-        cmd->colors[0] = dev->current_rtv;
-        break;
+  const bool needs_rebind =
+      dev->current_rtv_res &&
+      (std::find(resources.begin(), resources.end(), dev->current_rtv_res) != resources.end());
+  if (needs_rebind) {
+    const aerogpu_handle_t new_rtv = dev->current_rtv_res ? dev->current_rtv_res->handle : 0;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!cmd) {
+      // Undo the rotation (rotate right by one).
+      ResourceIdentity undo_saved = take_identity(resources[numResources - 1]);
+      for (UINT i = numResources - 1; i > 0; --i) {
+        put_identity(resources[i], take_identity(resources[i - 1]));
       }
+      put_identity(resources[0], std::move(undo_saved));
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+    }
+
+    dev->current_rtv = new_rtv;
+    cmd->color_count = new_rtv ? 1u : 0u;
+    cmd->depth_stencil = dev->current_dsv;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+      cmd->colors[i] = 0;
+    }
+    if (new_rtv) {
+      cmd->colors[0] = new_rtv;
     }
   }
 
