@@ -254,6 +254,18 @@ export function serializeWebUsbError(err: unknown): WebUsbSerializedError {
       stack: typeof err.stack === 'string' ? err.stack : undefined,
     };
   }
+
+  // DOMException is *not* guaranteed to be an `Error` instance in every runtime,
+  // but it usually carries `name` + `message` fields that are important for
+  // troubleshooting (NotAllowedError/NetworkError/etc).
+  if (err && typeof err === 'object') {
+    const maybe = err as { name?: unknown; message?: unknown; stack?: unknown };
+    const name = typeof maybe.name === 'string' ? maybe.name : undefined;
+    const message = typeof maybe.message === 'string' ? maybe.message : String(err);
+    const stack = typeof maybe.stack === 'string' ? maybe.stack : undefined;
+    return { name, message, stack };
+  }
+
   return { message: String(err) };
 }
 
@@ -285,4 +297,3 @@ export function getTransferablesForWebUsbResponse(response: WebUsbResponse): Tra
       return [];
   }
 }
-
