@@ -274,9 +274,11 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                 );
             }
         } else if dev.device == "aero-gpu" {
-            // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI), but Guest Tools
-            // also accept the legacy bring-up identity (vendor 1AED) depending on the emulator
-            // device model.
+            // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI). The deprecated
+            // legacy bring-up identity (vendor 1AED) is intentionally excluded from the canonical
+            // Windows device contract; it requires the legacy INFs under
+            // `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model in the
+            // emulator.
             let hwids = dev
                 .hardware_id_patterns
                 .iter()
@@ -293,12 +295,14 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     "{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"
                 );
             }
+            // Ensure we do not accidentally re-add the legacy AeroGPU ID to the canonical contract.
+            //
             // Avoid embedding the full legacy vendor token (`VEN_` + `1AED`) in the source (there
             // is a repo-wide guard test that tracks where legacy IDs are allowed to appear).
             let legacy_vendor = format!("VEN_{}", "1AED");
             let legacy_fragment = format!("{legacy_vendor}&DEV_0001");
-            if !hwids.iter().any(|p| p.contains(&legacy_fragment)) {
-                bail!("{name}: hardware_id_patterns missing legacy bring-up HWID family (vendor 1AED)");
+            if hwids.iter().any(|p| p.contains(&legacy_fragment)) {
+                bail!("{name}: hardware_id_patterns must not include legacy bring-up HWID family (vendor 1AED); canonical contract is A3A0-only");
             }
         }
     }
@@ -783,13 +787,10 @@ fn validate_packaging_specs(
                     );
                 }
             } else if dev.device == "aero-gpu" {
-                // AeroGPU specs must cover both the canonical (A3A0) and legacy bring-up (1AED)
-                // HWID families, since Guest Tools accept either depending on the emulator/device
-                // model.
+                // AeroGPU specs must cover the canonical (A3A0) HWID family. The deprecated legacy
+                // bring-up identity (vendor 1AED) is intentionally excluded from the canonical
+                // device contract and must not appear in default packaging specs.
                 let mut covers_a3a0 = false;
-                let mut covers_legacy = false;
-                let legacy_vendor = format!("VEN_{}", "1AED");
-                let legacy_fragment = format!("{legacy_vendor}&DEV_0001");
                 for re in &compiled {
                     for hwid in &dev.hardware_id_patterns {
                         if !re.is_match(hwid) {
@@ -798,9 +799,6 @@ fn validate_packaging_specs(
                         let upper = hwid.to_ascii_uppercase();
                         if upper.contains("VEN_A3A0&DEV_0001") {
                             covers_a3a0 = true;
-                        }
-                        if upper.contains(&legacy_fragment) {
-                            covers_legacy = true;
                         }
                     }
                 }
@@ -812,12 +810,15 @@ fn validate_packaging_specs(
                     );
                 }
 
-                if !covers_legacy {
-                    bail!(
-                        "{}: driver '{}': expected_hardware_ids must cover the legacy AeroGPU HWID family (vendor 1AED)",
-                        spec_path.display(),
-                        name
-                    );
+                for pat in &patterns {
+                    if pat.to_ascii_uppercase().contains("1AED") {
+                        bail!(
+                            "{}: driver '{}': expected_hardware_ids must not reference legacy AeroGPU vendor 1AED (canonical contract is A3A0-only); offending pattern: {}",
+                            spec_path.display(),
+                            name,
+                            pat
+                        );
+                    }
                 }
             }
 
