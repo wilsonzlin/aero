@@ -11,15 +11,21 @@ The current suite is intentionally minimal and browser-only:
 
 - `chromium_startup_ms`: time to launch Chromium, create a page, and load the target URL (defaults to an internal `data:` URL)
 - `microbench_ms`: a deterministic JavaScript microbenchmark executed in Chromium
+- `aero_microbench_suite_ms` (opt-in): calls `window.aero.bench.runMicrobenchSuite()` if available and measures wall time (`--include-aero-bench`)
 
 This keeps CI signal stable and avoids GPU/WebGPU dependencies.
 
 In CI, the workflows build the app and run against a Vite `preview` server (`http://127.0.0.1:4173/`) via `--url` so "startup" includes a realistic page load.
 
-The runner also writes `perf_export.json` alongside `raw.json`/`summary.json`:
+The runner also writes `perf_export.json` and `trace.json` alongside `raw.json`/`summary.json`:
 
 - If the page exposes `window.aero.perf` with the capture/export API, it contains a short capture export.
 - Otherwise it contains `null` (so CI artifacts always have a consistent file layout).
+
+Trace capture is opt-in:
+
+- Pass `--trace` (or `--trace-duration-ms <n>`) and, when the page exposes `window.aero.perf.traceStart/traceStop/exportTrace`, the runner writes a Chrome Trace Event JSON file to `trace.json`.
+- Otherwise `trace.json` contains `null` (same “always present” layout as `perf_export.json`).
 
 ## Perf export metadata (PF-006)
 
@@ -35,6 +41,24 @@ Run locally (requires a Playwright Chromium install):
 
 ```bash
 node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
+```
+
+Capture an Aero trace (best-effort; requires the target page to expose the trace API):
+
+```bash
+node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --trace
+```
+
+Capture a fixed-duration trace window (useful when you want more than a single benchmark run in the trace):
+
+```bash
+node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --trace-duration-ms 5000
+```
+
+Include app-provided microbenches (best-effort; requires `window.aero.bench.runMicrobenchSuite`):
+
+```bash
+node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --include-aero-bench
 ```
 
 To benchmark a specific URL instead of the built-in `data:` page:

@@ -252,6 +252,24 @@ node -p "require('./package.json').dependencies['playwright-core']"
 node tools/perf/run.mjs --out-dir perf-results/local --iterations 7
 ```
 
+Capture an Aero trace alongside the run (best-effort; requires the page to expose `window.aero.perf.traceStart/traceStop/exportTrace`):
+
+```bash
+node tools/perf/run.mjs --trace --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/
+```
+
+Capture a fixed-duration trace window (useful when you want a longer trace than a single benchmark run):
+
+```bash
+node tools/perf/run.mjs --trace-duration-ms 5000 --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/
+```
+
+Include app-provided microbenches (best-effort; requires `window.aero.bench.runMicrobenchSuite`):
+
+```bash
+node tools/perf/run.mjs --include-aero-bench --out-dir perf-results/local --iterations 7 --url http://127.0.0.1:4173/
+```
+
 What to expect:
 
 - Results are written to `perf-results/` (raw samples + `summary.json`).
@@ -333,7 +351,7 @@ Where to find artifacts:
 
 - In GitHub Actions, open the workflow run and download artifacts such as:
   - JSON exports (`*.json`)
-  - Trace captures (`trace*.json`)
+  - Trace captures (`trace.json`)
   - Benchmark summaries (`summary.json`, `compare.md`, history dashboards)
 
 What CI currently uploads (subject to change):

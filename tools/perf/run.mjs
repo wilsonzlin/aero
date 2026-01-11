@@ -22,6 +22,10 @@ Options:
   --out-dir <dir>       Output directory (required)
   --iterations <n>      Iterations per benchmark (default: 3)
   --url <url>           URL to load (default: internal data: URL)
+  --trace               Capture an Aero trace to <outDir>/trace.json (best-effort; opt-in)
+  --trace-duration-ms <n>
+                        Capture a trace for a fixed duration instead of running a trace workload
+  --include-aero-bench  Include app-provided microbench suite (window.aero.bench.runMicrobenchSuite), if available
   --help                Show this help
 `;
   console.log(msg.trim());
@@ -33,6 +37,9 @@ function parseArgs(argv) {
     outDir: undefined,
     iterations: 3,
     url: undefined,
+    trace: false,
+    traceDurationMs: undefined,
+    includeAeroBench: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -46,6 +53,16 @@ function parseArgs(argv) {
         break;
       case "--url":
         out.url = argv[++i];
+        break;
+      case "--trace":
+        out.trace = true;
+        break;
+      case "--trace-duration-ms":
+        out.trace = true;
+        out.traceDurationMs = Number.parseInt(argv[++i], 10);
+        break;
+      case "--include-aero-bench":
+        out.includeAeroBench = true;
         break;
       case "--help":
         usage(0);
@@ -65,6 +82,10 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(out.iterations) || out.iterations <= 0) {
     console.error("--iterations must be a positive integer");
+    usage(1);
+  }
+  if (out.traceDurationMs !== undefined && (!Number.isFinite(out.traceDurationMs) || out.traceDurationMs <= 0)) {
+    console.error("--trace-duration-ms must be a positive integer");
     usage(1);
   }
 
@@ -102,6 +123,23 @@ async function withRetries(label, attempts, fn) {
   throw lastErr;
 }
 
+async function withTimeout(label, timeoutMs, promise) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const CHROMIUM_ARGS = [
   "--disable-dev-shm-usage",
   "--disable-gpu",
@@ -133,6 +171,8 @@ async function gotoWithRetries(page, url) {
 }
 
 async function tryCaptureAeroPerfExport(page) {
+  let apiTimedOut = false;
+
   try {
     try {
       await page.waitForFunction(() => {
@@ -140,33 +180,149 @@ async function tryCaptureAeroPerfExport(page) {
         return perf && typeof perf === "object" && typeof perf.export === "function";
       }, null, { timeout: 2_000 });
     } catch {
+      apiTimedOut = true;
       // Best-effort: if the app doesn't expose a perf API we still want the rest of the run to succeed.
     }
 
-    return await page.evaluate(async () => {
+    const res = await page.evaluate(async () => {
       const aero = globalThis.aero;
       const perf = aero && typeof aero === "object" ? aero.perf : undefined;
-      if (!perf || typeof perf !== "object") return null;
-      if (typeof perf.captureStart !== "function" || typeof perf.captureStop !== "function") return null;
-      if (typeof perf.export !== "function") return null;
+      if (!perf || typeof perf !== "object") return { available: false, json: null };
+      if (typeof perf.export !== "function") return { available: false, json: null };
 
-      if (typeof perf.captureReset === "function") {
-        perf.captureReset();
+      // Prefer capturing a short window so the export is meaningful, but fall back
+      // to `export()` if capture APIs aren't present in the build.
+      if (typeof perf.captureStart === "function" && typeof perf.captureStop === "function") {
+        try {
+          if (typeof perf.captureReset === "function") {
+            perf.captureReset();
+          }
+          perf.captureStart();
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          perf.captureStop();
+        } catch {
+          // Ignore capture errors; still attempt export().
+        }
       }
-
-      perf.captureStart();
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      perf.captureStop();
 
       try {
-        return JSON.stringify(perf.export(), null, 2);
+        return { available: true, json: JSON.stringify(perf.export(), null, 2) };
       } catch {
-        return null;
+        return { available: true, json: null };
       }
     });
-  } catch {
-    return null;
+
+    return {
+      available: Boolean(res?.available),
+      apiTimedOut,
+      json: typeof res?.json === "string" ? res.json : null,
+    };
+  } catch (err) {
+    return {
+      available: false,
+      apiTimedOut,
+      json: null,
+      error: err?.message ?? String(err),
+    };
   }
+}
+
+async function hasAeroTraceApi(page) {
+  try {
+    return await page.evaluate(() => {
+      const perf = globalThis.aero?.perf;
+      return Boolean(
+        perf &&
+          typeof perf === "object" &&
+          typeof perf.traceStart === "function" &&
+          typeof perf.traceStop === "function" &&
+          typeof perf.exportTrace === "function",
+      );
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function tryCaptureAeroTrace(page, opts) {
+  const res = {
+    requested: Boolean(opts.trace),
+    durationMs: Number.isFinite(opts.traceDurationMs) ? opts.traceDurationMs : null,
+    available: false,
+    timedOut: false,
+    captured: false,
+    error: null,
+    json: null,
+  };
+
+  res.available = await hasAeroTraceApi(page);
+  if (!res.requested || !res.available) return res;
+
+  let traceStarted = false;
+  try {
+    await withTimeout("aero.perf.traceStart", 5_000, page.evaluate(() => globalThis.aero.perf.traceStart()));
+    traceStarted = true;
+
+    if (Number.isFinite(opts.traceDurationMs)) {
+      await sleep(opts.traceDurationMs);
+    } else if (typeof opts.traceWorkload === "function") {
+      await opts.traceWorkload();
+    }
+
+    await withTimeout("aero.perf.traceStop", 5_000, page.evaluate(() => globalThis.aero.perf.traceStop()));
+    traceStarted = false;
+
+    const traceJson = await withTimeout(
+      "aero.perf.exportTrace",
+      30_000,
+      page.evaluate(async () => {
+        const perf = globalThis.aero?.perf;
+        if (!perf || typeof perf !== "object") return null;
+        if (typeof perf.exportTrace !== "function") return null;
+
+        // Prefer string export to avoid double-encoding.
+        try {
+          const asString = await perf.exportTrace({ asString: true });
+          if (typeof asString === "string") return asString;
+        } catch {
+          // Fall back to object export below.
+        }
+
+        try {
+          const data = await perf.exportTrace();
+          if (typeof data === "string") return data;
+          return JSON.stringify(data);
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    if (typeof traceJson === "string") {
+      res.json = traceJson;
+      res.captured = true;
+    }
+  } catch (err) {
+    const msg = err?.message ?? String(err);
+    res.error = msg;
+    if (msg.includes("timed out")) res.timedOut = true;
+  } finally {
+    if (traceStarted) {
+      try {
+        await page.evaluate(() => {
+          try {
+            globalThis.aero?.perf?.traceStop?.();
+          } catch {
+            // ignored
+          }
+        });
+      } catch {
+        // ignored
+      }
+    }
+  }
+
+  return res;
 }
 
 async function launchChromium() {
@@ -191,7 +347,7 @@ async function runChromiumStartupOnce(url) {
   return performance.now() - t0;
 }
 
-async function runMicrobenchSamples(url, iterations) {
+async function runMicrobenchSamples(url, iterations, opts) {
   const browser = await launchChromium();
   try {
     const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
@@ -199,6 +355,13 @@ async function runMicrobenchSamples(url, iterations) {
     await gotoWithRetries(page, url);
 
     let jit = null;
+    const aeroMicrobenchSuite = {
+      requested: Boolean(opts.includeAeroBench),
+      available: false,
+      status: opts.includeAeroBench ? "skipped" : "disabled",
+      reason: opts.includeAeroBench ? "window.aero.bench.runMicrobenchSuite unavailable" : null,
+      samples: [],
+    };
 
     const microbench = () => {
       const t0 = performance.now();
@@ -220,10 +383,85 @@ async function runMicrobenchSamples(url, iterations) {
       samples.push(result.ms);
     }
 
-    const aeroPerfExportJson = await tryCaptureAeroPerfExport(page);
-    if (typeof aeroPerfExportJson === "string") {
+    if (opts.includeAeroBench) {
+      const runAeroMicrobenchSuiteOnce = async () => {
+        const fn = globalThis.aero?.bench?.runMicrobenchSuite;
+        if (typeof fn !== "function") return null;
+        const t0 = performance.now();
+        await fn();
+        const t1 = performance.now();
+        return t1 - t0;
+      };
+
       try {
-        const parsed = JSON.parse(aeroPerfExportJson);
+        aeroMicrobenchSuite.available = await page.evaluate(() => typeof globalThis.aero?.bench?.runMicrobenchSuite === "function");
+      } catch {
+        aeroMicrobenchSuite.available = false;
+      }
+
+      if (aeroMicrobenchSuite.available) {
+        aeroMicrobenchSuite.status = "ok";
+        aeroMicrobenchSuite.reason = null;
+
+        try {
+          // Warm-up (best-effort) so the first sample isn't dominated by one-time init/JIT.
+          await page.evaluate(runAeroMicrobenchSuiteOnce);
+        } catch (err) {
+          aeroMicrobenchSuite.status = "skipped";
+          aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite warmup failed: ${err?.message ?? String(err)}`;
+        }
+
+        if (aeroMicrobenchSuite.status === "ok") {
+          for (let i = 0; i < iterations; i += 1) {
+            try {
+              const ms = await page.evaluate(runAeroMicrobenchSuiteOnce);
+              if (typeof ms !== "number" || !Number.isFinite(ms)) {
+                aeroMicrobenchSuite.status = "skipped";
+                aeroMicrobenchSuite.reason = "window.aero.bench.runMicrobenchSuite returned a non-finite duration";
+                aeroMicrobenchSuite.samples = [];
+                break;
+              }
+              aeroMicrobenchSuite.samples.push(ms);
+            } catch (err) {
+              aeroMicrobenchSuite.status = "skipped";
+              aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite failed: ${err?.message ?? String(err)}`;
+              aeroMicrobenchSuite.samples = [];
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Trace capture happens after timed benchmarks to keep benchmark numbers stable.
+    const trace = await tryCaptureAeroTrace(page, {
+      trace: opts.trace,
+      traceDurationMs: opts.traceDurationMs,
+      traceWorkload:
+        Number.isFinite(opts.traceDurationMs) || !opts.trace
+          ? undefined
+          : async () => {
+              try {
+                if (opts.includeAeroBench && aeroMicrobenchSuite.available) {
+                  await page.evaluate(async () => {
+                    const fn = globalThis.aero?.bench?.runMicrobenchSuite;
+                    if (typeof fn === "function") {
+                      await fn();
+                    }
+                  });
+                } else {
+                  await page.evaluate(microbench);
+                }
+              } catch {
+                // Best-effort trace capture should not fail the run.
+              }
+            },
+    });
+
+    const aeroPerfExport = await tryCaptureAeroPerfExport(page);
+    if (typeof aeroPerfExport?.json === "string") {
+      try {
+        const parsed = JSON.parse(aeroPerfExport.json);
         if (parsed && typeof parsed === "object") {
           // Most perf exports: `{ jit: ... }`
           if ("jit" in parsed) {
@@ -241,10 +479,22 @@ async function runMicrobenchSamples(url, iterations) {
       }
     }
 
+    const pageUrl = page.url();
+    let pageTimeOrigin = null;
+    try {
+      pageTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+    } catch {
+      // ignored
+    }
+
     return {
       samples,
+      aeroMicrobenchSuite,
       chromiumVersion: browser.version(),
-      aeroPerfExportJson,
+      pageUrl,
+      pageTimeOrigin,
+      aeroPerfExport,
+      trace,
       // PF-006: surface key JIT metrics in the benchmark output so regressions
       // can be attributed without digging through raw exports.
       jit,
@@ -271,7 +521,7 @@ async function main() {
     startupSamples.push(await runChromiumStartupOnce(url));
   }
 
-  const micro = await runMicrobenchSamples(url, iterations);
+  const micro = await runMicrobenchSamples(url, iterations, opts);
 
   const benchmarks = [
     {
@@ -288,6 +538,24 @@ async function main() {
     },
   ];
 
+  if (opts.includeAeroBench) {
+    if (micro.aeroMicrobenchSuite.status === "ok") {
+      benchmarks.push({
+        name: "aero_microbench_suite_ms",
+        unit: "ms",
+        samples: micro.aeroMicrobenchSuite.samples,
+        stats: summarize(micro.aeroMicrobenchSuite.samples),
+      });
+    } else {
+      benchmarks.push({
+        name: "aero_microbench_suite_ms",
+        unit: "ms",
+        skipped: true,
+        reason: micro.aeroMicrobenchSuite.reason,
+      });
+    }
+  }
+
   const meta = {
     collectedAt: new Date().toISOString(),
     gitSha,
@@ -301,23 +569,42 @@ async function main() {
       cpuCount: os.cpus()?.length,
     },
     playwrightCoreVersion,
+    browserId: "chromium",
     chromiumVersion: micro.chromiumVersion,
     chromiumArgs: CHROMIUM_ARGS,
     targetUrl: url,
+    pageUrl: micro.pageUrl,
+    pageTimeOrigin: micro.pageTimeOrigin,
     iterations,
+    runner: {
+      includeAeroBench: opts.includeAeroBench,
+      trace: opts.trace,
+      traceDurationMs: opts.traceDurationMs ?? null,
+    },
     aeroPerf: {
       jit: micro.jit ?? null,
+      exportAvailable: micro.aeroPerfExport?.available ?? false,
+      exportApiTimedOut: micro.aeroPerfExport?.apiTimedOut ?? false,
+      trace: {
+        requested: micro.trace?.requested ?? false,
+        available: micro.trace?.available ?? false,
+        captured: micro.trace?.captured ?? false,
+        timedOut: micro.trace?.timedOut ?? false,
+        durationMs: micro.trace?.durationMs ?? null,
+      },
     },
   };
 
   const raw = { meta, benchmarks };
   const summary = {
     meta,
-    benchmarks: benchmarks.map((b) => ({
-      name: b.name,
-      unit: b.unit,
-      stats: b.stats,
-    })),
+    benchmarks: benchmarks
+      .filter((b) => b.stats && typeof b.stats === "object")
+      .map((b) => ({
+        name: b.name,
+        unit: b.unit,
+        stats: b.stats,
+      })),
   };
 
   const writes = [
@@ -328,8 +615,12 @@ async function main() {
   writes.push(
     fs.writeFile(
       path.join(outDir, "perf_export.json"),
-      typeof micro.aeroPerfExportJson === "string" ? `${micro.aeroPerfExportJson}\n` : "null\n",
+      typeof micro.aeroPerfExport?.json === "string" ? `${micro.aeroPerfExport.json}\n` : "null\n",
     ),
+  );
+
+  writes.push(
+    fs.writeFile(path.join(outDir, "trace.json"), typeof micro.trace?.json === "string" ? `${micro.trace.json}\n` : "null\n"),
   );
 
   await Promise.all(writes);

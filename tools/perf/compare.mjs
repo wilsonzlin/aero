@@ -124,6 +124,19 @@ async function main() {
   const baseline = await readJson(opts.baseline);
   const candidate = await readJson(opts.candidate);
 
+  const fmtTraceStatus = (meta) => {
+    const trace = meta?.aeroPerf?.trace;
+    if (!trace || typeof trace !== "object") return "unknown";
+    const requested = trace.requested === true;
+    const available = trace.available === true;
+    const captured = trace.captured === true;
+    const timedOut = trace.timedOut === true;
+    if (!requested) return available ? "available (not captured)" : "not captured";
+    if (timedOut) return "timed out";
+    if (!available) return "unsupported";
+    return captured ? "captured" : "not captured";
+  };
+
   const baselineMap = new Map((baseline.benchmarks ?? []).map((b) => [b.name, b]));
   const candidateMap = new Map((candidate.benchmarks ?? []).map((b) => [b.name, b]));
 
@@ -178,6 +191,8 @@ async function main() {
   reportLines.push(`- Candidate: \`${candidate.meta?.gitSha ?? "unknown"}\``);
   reportLines.push(`- Threshold: ${opts.regressionThresholdPct}% regression`);
   reportLines.push(`- Iterations: ${candidate.meta?.iterations ?? "?"} (median-of-N)`);
+  reportLines.push(`- Baseline trace: ${fmtTraceStatus(baseline.meta)} (\`${path.join(path.dirname(opts.baseline), "trace.json")}\`)`);
+  reportLines.push(`- Candidate trace: ${fmtTraceStatus(candidate.meta)} (\`${path.join(path.dirname(opts.candidate), "trace.json")}\`)`);
   reportLines.push("");
   reportLines.push("| Benchmark | Baseline (median) | Candidate (median) | Δ | Δ% | Baseline CV | Candidate CV |");
   reportLines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
