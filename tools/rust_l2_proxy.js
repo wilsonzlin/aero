@@ -58,9 +58,11 @@ let buildPromise;
 async function ensureProxyBuilt() {
   if (buildPromise) return buildPromise;
   buildPromise = (async () => {
-    await runCommand("cargo", ["build", "--locked", "-p", "aero-l2-proxy"], {
+    await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
       cwd: REPO_ROOT,
-      timeoutMs: 10 * 60_000,
+      // A cold `cargo build` of the full dependency graph can be slow on CI runners.
+      // Keep this bounded (deterministic) but generous enough to avoid flakes.
+      timeoutMs: 30 * 60_000,
     });
     const binPath = await getProxyBinPath();
     await access(binPath);
