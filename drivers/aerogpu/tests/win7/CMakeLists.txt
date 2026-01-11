@@ -146,7 +146,7 @@ target_link_libraries(d3d11_caps_smoke PRIVATE d3d11 dxgi)
 aerogpu_add_win7_test(d3d11_rs_om_state_sanity
   d3d11_rs_om_state_sanity/main.cpp
 )
-target_link_libraries(d3d11_rs_om_state_sanity PRIVATE user32 gdi32 d3d11 dxgi)
+target_link_libraries(d3d11_rs_om_state_sanity PRIVATE d3d11 dxgi)
 
 aerogpu_add_win7_test(d3d11_geometry_shader_smoke
   d3d11_geometry_shader_smoke/main.cpp

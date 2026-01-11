@@ -7,7 +7,7 @@ if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 echo [d3d11_rs_om_state_sanity] Building...
 
 cl /nologo /W4 /EHsc /O2 /MT "%~dp0main.cpp" ^
-  /link /OUT:"%OUTDIR%\\d3d11_rs_om_state_sanity.exe" user32.lib gdi32.lib d3d11.lib dxgi.lib
+  /link /OUT:"%OUTDIR%\\d3d11_rs_om_state_sanity.exe" d3d11.lib dxgi.lib
 if errorlevel 1 exit /b 1
 
 echo [d3d11_rs_om_state_sanity] OK: %OUTDIR%\\d3d11_rs_om_state_sanity.exe
