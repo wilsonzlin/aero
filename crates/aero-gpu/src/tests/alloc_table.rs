@@ -115,29 +115,29 @@ fn alloc_table_header_size_too_small_for_entry_count_is_rejected() {
 }
 
 #[test]
-fn alloc_table_descriptor_too_large_is_rejected() {
+fn alloc_table_header_size_bytes_too_large_is_rejected() {
     let gpa = 0x1000u64;
-    let too_large = 16 * 1024 * 1024 + 1;
+    let too_large: u32 = 16 * 1024 * 1024 + 1;
 
-    // Only write a header-sized prefix; the decoder should reject based on the descriptor size
-    // before reading beyond the header.
+    // Only write a header-sized prefix; the decoder should reject based on the header's size_bytes
+    // before attempting to allocate or read the full table.
     let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
     buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
     buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    buf[8..12].copy_from_slice(&(AerogpuAllocTableHeader::SIZE_BYTES as u32).to_le_bytes());
+    buf[8..12].copy_from_slice(&too_large.to_le_bytes());
     buf[12..16].copy_from_slice(&0u32.to_le_bytes());
     buf[16..20].copy_from_slice(&(AerogpuAllocEntry::SIZE_BYTES as u32).to_le_bytes());
 
     let mut mem = VecGuestMemory::new(0x2000);
     mem.write(gpa, &buf).unwrap();
 
-    let err = AllocTable::decode_from_guest_memory(&mut mem, gpa, too_large)
-        .expect_err("oversized alloc table descriptor must be rejected");
+    let err = AllocTable::decode_from_guest_memory(&mut mem, gpa, AerogpuAllocTableHeader::SIZE_BYTES as u32)
+        .expect_err("oversized alloc table header size_bytes must be rejected");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
     };
     assert!(
-        msg.contains("alloc table size_bytes too large"),
+        msg.contains("alloc table header size_bytes too large"),
         "unexpected error message: {msg}"
     );
 }
