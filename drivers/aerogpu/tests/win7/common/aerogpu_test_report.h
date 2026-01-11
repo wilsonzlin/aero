@@ -377,6 +377,13 @@ class TestReporter {
 
   void AddArtifactPathW(const std::wstring& path) { report_.artifacts_utf8.push_back(WideToUtf8(path)); }
 
+  void AddArtifactPathIfExistsW(const std::wstring& path) {
+    DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+      AddArtifactPathW(path);
+    }
+  }
+
   void SetTimingSamplesMs(const std::vector<double>& samples_ms) {
     report_.timing.present = true;
     report_.timing.samples_ms = samples_ms;

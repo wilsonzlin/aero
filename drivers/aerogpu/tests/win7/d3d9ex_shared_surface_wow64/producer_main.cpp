@@ -490,10 +490,7 @@ static int RunProducer(int argc, char** argv) {
   CloseHandle(shared);
 
   if (dump) {
-    DWORD bmp_attr = GetFileAttributesW(dump_bmp_path.c_str());
-    if (bmp_attr != INVALID_FILE_ATTRIBUTES && (bmp_attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-      reporter.AddArtifactPathW(dump_bmp_path);
-    }
+    reporter.AddArtifactPathIfExistsW(dump_bmp_path);
   }
 
   if (exit_code != 0) {

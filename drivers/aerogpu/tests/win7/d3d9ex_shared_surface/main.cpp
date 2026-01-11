@@ -1644,10 +1644,7 @@ static int RunParent(aerogpu_test::TestReporter* reporter,
   }
 
   if (dump && reporter) {
-    DWORD attr = GetFileAttributesW(child_bmp_path.c_str());
-    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-      reporter->AddArtifactPathW(child_bmp_path);
-    }
+    reporter->AddArtifactPathIfExistsW(child_bmp_path);
   }
   if (exit_code != 0) {
     if (reporter) {

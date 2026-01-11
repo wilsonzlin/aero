@@ -1055,10 +1055,7 @@ static int RunProducer(int argc, char** argv) {
   }
 
   if (dump) {
-    DWORD attr = GetFileAttributesW(bmp_path.c_str());
-    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-      reporter.AddArtifactPathW(bmp_path);
-    }
+    reporter.AddArtifactPathIfExistsW(bmp_path);
   }
   if (exit_code != 0) {
     return reporter.Fail("consumer failed with exit code %lu", (unsigned long)exit_code);
