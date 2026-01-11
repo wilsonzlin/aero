@@ -32,6 +32,16 @@ function makeSessionCookie({ secret, sid, expUnixSeconds }) {
   return `aero_session=${payloadB64}.${sigB64}`;
 }
 
+function makeJwtHs256({ secret, claims }) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const headerB64 = base64UrlNoPad(Buffer.from(JSON.stringify(header), "utf8"));
+  const payloadB64 = base64UrlNoPad(Buffer.from(JSON.stringify(claims), "utf8"));
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const sig = createHmac("sha256", secret).update(signingInput).digest();
+  const sigB64 = base64UrlNoPad(sig);
+  return `${signingInput}.${sigB64}`;
+}
+
 async function connectOrReject(url, { protocols, ...opts } = {}) {
   return new Promise((resolve, reject) => {
     const protos = protocols ?? [L2_TUNNEL_SUBPROTOCOL];
@@ -296,6 +306,83 @@ test("cookie auth requires a valid aero_session cookie", { timeout: L2_PROXY_TES
     });
     assert.equal(expired.ok, false);
     assert.equal(expired.status, 401);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("api_key auth mode accepts ?apiKey= and subprotocol credentials", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "1",
+    AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_TOKEN: "",
+    AERO_L2_AUTH_MODE: "api_key",
+    AERO_L2_API_KEY: "sekrit",
+    AERO_L2_MAX_CONNECTIONS: "0",
+  });
+
+  try {
+    const missing = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.status, 401);
+
+    const wrong = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2?apiKey=nope`);
+    assert.equal(wrong.ok, false);
+    assert.equal(wrong.status, 401);
+
+    const ok = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2?apiKey=sekrit`);
+    assert.equal(ok.ok, true);
+    ok.ws.close(1000, "done");
+    await waitForClose(ok.ws);
+
+    const protoOk = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      protocols: [L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"],
+    });
+    assert.equal(protoOk.ok, true);
+    protoOk.ws.close(1000, "done");
+    await waitForClose(protoOk.ws);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("jwt auth mode accepts Authorization: Bearer tokens", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const nowUnixSeconds = Math.floor(Date.now() / 1000);
+  const jwt = makeJwtHs256({
+    secret: "sekrit",
+    claims: {
+      iat: nowUnixSeconds,
+      exp: nowUnixSeconds + 3600,
+      sid: "sid-test",
+    },
+  });
+
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "1",
+    AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_TOKEN: "",
+    AERO_L2_AUTH_MODE: "jwt",
+    AERO_L2_JWT_SECRET: "sekrit",
+    AERO_L2_MAX_CONNECTIONS: "0",
+  });
+
+  try {
+    const missing = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.status, 401);
+
+    const invalid = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { authorization: "Bearer not-a-jwt" },
+    });
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.status, 401);
+
+    const ok = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { authorization: `Bearer ${jwt}` },
+    });
+    assert.equal(ok.ok, true);
+    ok.ws.close(1000, "done");
+    await waitForClose(ok.ws);
   } finally {
     await proxy.close();
   }
