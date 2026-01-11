@@ -870,6 +870,11 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
         assert!(state.asserted);
     }
 
+    // Mutate some selector state so reset behavior is observable.
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1); // device_feature_select
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1); // driver_feature_select
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1); // queue_select
+
     // Reset must clear ISR state and deassert INTx even if the guest never read ISR.
     bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, 0);
     {
@@ -889,6 +894,10 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
     assert_eq!((u64::from(desc_hi) << 32) | u64::from(desc_lo), 0);
     assert_eq!((u64::from(avail_hi) << 32) | u64::from(avail_lo), 0);
     assert_eq!((u64::from(used_hi) << 32) | u64::from(used_lo), 0);
+    assert_eq!(bar_read_u8(&mut dev, caps.common + 0x14), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.common + 0x00), 0);
+    assert_eq!(bar_read_u32(&mut dev, caps.common + 0x08), 0);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x16), 0);
     assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
 }
 
