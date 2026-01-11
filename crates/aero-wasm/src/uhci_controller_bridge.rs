@@ -12,10 +12,10 @@
 
 use wasm_bindgen::prelude::*;
 
+use aero_usb::GuestMemory;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::UsbDevice;
-use aero_usb::GuestMemory;
 
 const UHCI_IO_BASE: u16 = 0;
 const UHCI_IRQ_LINE: u8 = 0x0b;
@@ -409,8 +409,7 @@ impl UhciControllerBridge {
         next &= !PORTSC_PR;
         next |= written & PORTSC_PR;
 
-        self.ctrl
-            .port_write(reg, 2, next as u32, &mut self.irq);
+        self.ctrl.port_write(reg, 2, next as u32, &mut self.irq);
     }
 
     fn write_u8(&mut self, offset: u16, value: u8) {
@@ -429,8 +428,7 @@ impl UhciControllerBridge {
             0x02 | 0x03 => {
                 let shift = (offset & 1) * 8;
                 let v = (value as u16) << shift;
-                self.ctrl
-                    .port_write(REG_USBSTS, 2, v as u32, &mut self.irq);
+                self.ctrl.port_write(REG_USBSTS, 2, v as u32, &mut self.irq);
             }
 
             // USBINTR: read/modify/write so high-byte writes don't clear the low-byte enables.
@@ -459,8 +457,7 @@ impl UhciControllerBridge {
                 let shift = (offset - REG_FRBASEADD) * 8;
                 let mask = 0xffu32 << shift;
                 let next = (cur & !mask) | ((value as u32) << shift);
-                self.ctrl
-                    .port_write(REG_FRBASEADD, 4, next, &mut self.irq);
+                self.ctrl.port_write(REG_FRBASEADD, 4, next, &mut self.irq);
             }
 
             // SOFMOD: 8-bit register at 0x0C.
@@ -545,10 +542,7 @@ impl UhciControllerBridge {
                 let b1 = self.read_u8(offset.wrapping_add(1));
                 let b2 = self.read_u8(offset.wrapping_add(2));
                 let b3 = self.read_u8(offset.wrapping_add(3));
-                u32::from(b0)
-                    | (u32::from(b1) << 8)
-                    | (u32::from(b2) << 16)
-                    | (u32::from(b3) << 24)
+                u32::from(b0) | (u32::from(b1) << 8) | (u32::from(b2) << 16) | (u32::from(b3) << 24)
             }
             _ => 0xFFFF_FFFF,
         }
@@ -559,16 +553,12 @@ impl UhciControllerBridge {
 
         match (offset, size) {
             // Use native 16-bit writes for the 16-bit registers.
-            (
-                REG_USBCMD | REG_USBSTS | REG_USBINTR | REG_FRNUM | REG_PORTSC1 | REG_PORTSC2,
-                2,
-            ) => {
+            (REG_USBCMD | REG_USBSTS | REG_USBINTR | REG_FRNUM | REG_PORTSC1 | REG_PORTSC2, 2) => {
                 self.ctrl.port_write(offset, 2, value, &mut self.irq);
             }
             // FRBASEADD is natively 32-bit.
             (REG_FRBASEADD, 4) => {
-                self.ctrl
-                    .port_write(REG_FRBASEADD, 4, value, &mut self.irq);
+                self.ctrl.port_write(REG_FRBASEADD, 4, value, &mut self.irq);
             }
             // Some drivers use 32-bit I/O at offset 0/4 to access paired 16-bit registers.
             (REG_USBCMD, 4) => {
@@ -580,18 +570,14 @@ impl UhciControllerBridge {
             (REG_USBINTR, 4) => {
                 let intr = value & 0xffff;
                 let frnum = (value >> 16) & 0xffff;
-                self.ctrl
-                    .port_write(REG_USBINTR, 2, intr, &mut self.irq);
-                self.ctrl
-                    .port_write(REG_FRNUM, 2, frnum, &mut self.irq);
+                self.ctrl.port_write(REG_USBINTR, 2, intr, &mut self.irq);
+                self.ctrl.port_write(REG_FRNUM, 2, frnum, &mut self.irq);
             }
             (REG_PORTSC1, 4) => {
                 let p0 = value & 0xffff;
                 let p1 = (value >> 16) & 0xffff;
-                self.ctrl
-                    .port_write(REG_PORTSC1, 2, p0, &mut self.irq);
-                self.ctrl
-                    .port_write(REG_PORTSC2, 2, p1, &mut self.irq);
+                self.ctrl.port_write(REG_PORTSC1, 2, p0, &mut self.irq);
+                self.ctrl.port_write(REG_PORTSC2, 2, p1, &mut self.irq);
             }
 
             // Fallback: treat as a sequence of byte writes.
@@ -602,10 +588,7 @@ impl UhciControllerBridge {
             }
             (_, 4) => {
                 for i in 0..4u16 {
-                    self.write_u8(
-                        offset.wrapping_add(i),
-                        ((value >> (i * 8)) & 0xff) as u8,
-                    );
+                    self.write_u8(offset.wrapping_add(i), ((value >> (i * 8)) & 0xff) as u8);
                 }
             }
             _ => {}

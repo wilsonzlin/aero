@@ -5,9 +5,9 @@ use std::fs;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AerogpuSamplerAddressMode, AerogpuSamplerFilter, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuCmdOpcode, AerogpuSamplerAddressMode, AerogpuSamplerFilter, AEROGPU_CLEAR_COLOR,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
@@ -484,4 +484,3 @@ fn aerogpu_cmd_sampler_repeat_address_mode_is_honored() {
         }
     });
 }
-
