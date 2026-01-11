@@ -50,6 +50,14 @@ The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear
   ...
 ```
 
+### Command stream writer
+
+Command serialization uses the shared D3D9 implementation:
+
+- `../d3d9/src/aerogpu_cmd_stream_writer.h`
+
+This provides both a `std::vector`-backed stream (portable bring-up/tests) and a span/DMA-backed stream (`{uint8_t* buf, size_t capacity}`) suitable for writing directly into a WDDM runtime-provided command buffer.
+
 ### Shared surface note
 
 DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` provided by the KMD via preserved WDDM allocation private data (`aerogpu_wddm_alloc_priv`; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). The recommended scheme is `share_token = (uint64_t)alloc_id` (it is **not** a process-local `HANDLE` value).

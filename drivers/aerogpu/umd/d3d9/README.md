@@ -20,6 +20,19 @@ The command stream does **not** reference resources by a per-submission “alloc
   - For **shared** allocations, `alloc_id` should avoid collisions across guest processes: DWM may open and compose many redirected surfaces from different processes in a single submission, and the per-submit allocation table is keyed by `alloc_id`.
   - `backing_alloc_id = 0` means “host allocated” (no guest backing). The current bring-up UMD uses host-allocated resources and typically sets `backing_alloc_id = 0`.
 
+## Command stream writer
+
+UMD command emission uses a small serialization helper in:
+
+- `src/aerogpu_cmd_stream_writer.h`
+
+It supports both:
+
+- a `std::vector`-backed stream (portable builds/tests), and
+- a span/DMA-backed stream (`{uint8_t* buf, size_t capacity}`), suitable for writing directly into a WDDM runtime-provided command buffer.
+
+Packets are always padded to 4-byte alignment and encode `aerogpu_cmd_hdr::size_bytes` accordingly, so unknown opcodes can be skipped safely.
+
 ### Shared surfaces (D3D9Ex / DWM)
 
 Cross-process shared resources are expressed explicitly in the command stream:
