@@ -43,3 +43,7 @@ This directory still contains convenience wrappers for local, repo-relative outp
 
 - `build_all.cmd` builds into `drivers/aerogpu/build/out/win7/<arch>/<fre|chk>/{kmd,umd}` (free/checked map to Release/Debug).
 - `stage_packaging_win7.cmd` copies binaries into `drivers/aerogpu/packaging/win7/` for manual signing/install workflows.
+
+For the recommended CI-style flow (packages staged under `out/packages/` and signed under `out/`), see:
+
+- `drivers/aerogpu/packaging/win7/README.md` (host-signed install flow via `trust_test_cert.cmd` + `pnputil`)
