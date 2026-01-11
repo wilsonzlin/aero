@@ -215,7 +215,7 @@ pub fn demo_render_rgba8888(
 
         // Convert the current memory size (in 64KiB pages) into a byte length.
         // Use `u64` so `65536 pages * 64KiB` doesn't overflow on wasm32.
-        let pages = unsafe { core::arch::wasm32::memory_size(0) } as u64;
+        let pages = core::arch::wasm32::memory_size(0) as u64;
         let mem_bytes = pages.saturating_mul(64 * 1024);
         let dst_offset_u64 = dst_offset as u64;
         if dst_offset_u64 >= mem_bytes {
