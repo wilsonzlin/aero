@@ -11,6 +11,8 @@ Physical device passthrough (optional): on Chromium-based browsers, Aero can als
 - [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md)
 - [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
 
+For the canonical USB stack selection for the browser runtime, see [ADR 0015](./adr/0015-canonical-usb-stack.md).
+
 ---
 
 ## Input Architecture
