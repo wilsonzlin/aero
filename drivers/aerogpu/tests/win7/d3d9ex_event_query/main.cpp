@@ -811,13 +811,6 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                (unsigned)polls);
   }
 
-  if (!saw_immediate_not_ready) {
-    aerogpu_test::PrintfStdout(
-        "INFO: %s: GetData(D3DGETDATA_DONOTFLUSH) returned S_OK immediately for every iteration; "
-        "this is allowed, but it makes the test less sensitive to stalled query/fence behavior",
-        kTestName);
-  }
-
   if (process_stress) {
     // --- Multi-process stress test ---
     aerogpu_test::PrintfStdout("INFO: %s: starting multi-process stress (%u iterations per process)",
