@@ -340,7 +340,7 @@ fn aerogpu_driver_directory_alias_is_accepted() -> anyhow::Result<()> {
         fs::create_dir_all(&driver_dir)?;
         fs::write(
             driver_dir.join("aerogpu.inf"),
-            b"; PCI\\VEN_A3A0&DEV_0001\n",
+            b"PCI\\VEN_A3A0&DEV_0001\n",
         )?;
         fs::write(driver_dir.join("aerogpu.sys"), b"sys\n")?;
         fs::write(driver_dir.join("aerogpu.cat"), b"cat\n")?;
