@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -50,11 +51,13 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   const char* kTestName = "d3d9ex_dwm_ddi_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -69,14 +72,14 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -86,17 +89,17 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExDwmDdiSanity",
                                               L"AeroGPU D3D9Ex DWM DDI Sanity",
-                                              kWidth,
-                                              kHeight,
-                                              !hidden);
+                                               kWidth,
+                                               kHeight,
+                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -124,7 +127,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     }
   }
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
@@ -136,42 +139,36 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(kTestName,
-                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                "Install AeroGPU driver or pass --allow-microsoft.",
-                                (unsigned)ident.VendorId,
-                                (unsigned)ident.DeviceId);
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.VendorId,
-                                (unsigned)require_vid);
+      return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.VendorId,
+                           (unsigned)require_vid);
     }
     if (has_require_did && ident.DeviceId != require_did) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.DeviceId,
-                                (unsigned)require_did);
+      return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.DeviceId,
+                           (unsigned)require_did);
     }
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                                "or use --require-vid/--require-did)",
-                                ident.Description);
+      return reporter.Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+          ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName,
-        "GetAdapterIdentifier (required for --require-vid/--require-did)",
-        hr);
+    return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -179,7 +176,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
@@ -196,10 +193,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetDeviceCaps appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("GetDeviceCaps appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::GetDeviceCaps", hr);
+      return reporter.FailHresult("IDirect3D9Ex::GetDeviceCaps", hr);
     }
   }
 
@@ -308,14 +305,14 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetAdapterLUID appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("GetAdapterLUID appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::GetAdapterLUID", hr);
+      return reporter.FailHresult("IDirect3D9Ex::GetAdapterLUID", hr);
     }
   }
   if (adapter_luid.LowPart == 0 && adapter_luid.HighPart == 0) {
-    return aerogpu_test::Fail(kTestName, "GetAdapterLUID returned 0 (expected nonzero LUID)");
+    return reporter.Fail("GetAdapterLUID returned 0 (expected nonzero LUID)");
   }
 
   D3DDISPLAYMODEEX adapter_mode;
@@ -330,15 +327,14 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetAdapterDisplayModeEx appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("GetAdapterDisplayModeEx appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::GetAdapterDisplayModeEx", hr);
+      return reporter.FailHresult("IDirect3D9Ex::GetAdapterDisplayModeEx", hr);
     }
   }
   if (adapter_mode.Width == 0 || adapter_mode.Height == 0) {
-    return aerogpu_test::Fail(kTestName,
-                              "GetAdapterDisplayModeEx returned %ux%u (expected nonzero mode)",
+    return reporter.Fail("GetAdapterDisplayModeEx returned %ux%u (expected nonzero mode)",
                               (unsigned)adapter_mode.Width,
                               (unsigned)adapter_mode.Height);
   }
@@ -354,10 +350,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckDeviceState appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckDeviceState appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CheckDeviceState", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::CheckDeviceState", hr);
     }
   }
 
@@ -371,10 +367,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "ResetEx appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("ResetEx appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ResetEx", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::ResetEx", hr);
     }
   }
 
@@ -383,7 +379,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   // waiting/polling internally, but never hang.
   hr = dev->SetMaximumFrameLatency(1);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
   }
 
   UINT max_frame_latency = 0;
@@ -395,21 +391,21 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetMaximumFrameLatency appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("GetMaximumFrameLatency appears to block (%.3f ms)", call_ms);
     }
   }
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetMaximumFrameLatency", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::GetMaximumFrameLatency", hr);
   }
   if (max_frame_latency < 1 || max_frame_latency > 16) {
-    return aerogpu_test::Fail(kTestName, "GetMaximumFrameLatency returned %u (expected [1,16])", (unsigned)max_frame_latency);
+    return reporter.Fail("GetMaximumFrameLatency returned %u (expected [1,16])", (unsigned)max_frame_latency);
   }
 
   const int kPresentThrottleIters = 60;
   for (int i = 0; i < kPresentThrottleIters; ++i) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(i & 1 ? 0 : 255, 0, 0), 1.0f, 0);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Clear(present throttle)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::Clear(present throttle)", hr);
     }
 
     LARGE_INTEGER before;
@@ -420,10 +416,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "PresentEx appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("PresentEx appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx(throttle)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::PresentEx(throttle)", hr);
     }
   }
 
@@ -442,10 +438,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetPresentStats appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("GetPresentStats appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetPresentStats", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::GetPresentStats", hr);
     }
 
     QueryPerformanceCounter(&before);
@@ -453,15 +449,14 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double last_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (last_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetLastPresentCount appears to block (%.3f ms)", last_ms);
+      return reporter.Fail("GetLastPresentCount appears to block (%.3f ms)", last_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetLastPresentCount", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::GetLastPresentCount", hr);
     }
 
     if (st.PresentCount < last_present_count) {
-      return aerogpu_test::Fail(kTestName,
-                                "present stats invalid: PresentCount=%u LastPresentCount=%u",
+      return reporter.Fail("present stats invalid: PresentCount=%u LastPresentCount=%u",
                                 (unsigned)st.PresentCount,
                                 (unsigned)last_present_count);
     }
@@ -480,11 +475,11 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetDisplayModeEx appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("GetDisplayModeEx appears to block (%.3f ms)", call_ms);
     }
   }
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetDisplayModeEx", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::GetDisplayModeEx", hr);
   }
 
   // --- ComposeRects: should succeed and not block (some DWM/video paths use this) ---
@@ -500,7 +495,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
                                  src.put(),
                                  NULL);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateRenderTarget(src)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::CreateRenderTarget(src)", hr);
     }
 
     ComPtr<IDirect3DSurface9> dst;
@@ -513,7 +508,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
                                  dst.put(),
                                  NULL);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateRenderTarget(dst)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::CreateRenderTarget(dst)", hr);
     }
 
     ComPtr<IDirect3DVertexBuffer9> src_descs;
@@ -524,7 +519,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
                                  src_descs.put(),
                                  NULL);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateVertexBuffer(src_descs)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::CreateVertexBuffer(src_descs)", hr);
     }
 
     ComPtr<IDirect3DVertexBuffer9> dst_descs;
@@ -535,13 +530,13 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
                                  dst_descs.put(),
                                  NULL);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateVertexBuffer(dst_descs)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::CreateVertexBuffer(dst_descs)", hr);
     }
 
     void* vb_data = NULL;
     hr = src_descs->Lock(0, 0, &vb_data, 0);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "src_descs->Lock", hr);
+      return reporter.FailHresult("src_descs->Lock", hr);
     }
     ZeroMemory(vb_data, sizeof(D3DCOMPOSERECTDESC));
     src_descs->Unlock();
@@ -549,7 +544,7 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     vb_data = NULL;
     hr = dst_descs->Lock(0, 0, &vb_data, 0);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "dst_descs->Lock", hr);
+      return reporter.FailHresult("dst_descs->Lock", hr);
     }
     ZeroMemory(vb_data, sizeof(D3DCOMPOSERECTDEST));
     dst_descs->Unlock();
@@ -568,10 +563,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "ComposeRects appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("ComposeRects appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ComposeRects", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::ComposeRects", hr);
     }
   }
 
@@ -586,10 +581,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
 
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "WaitForVBlank appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("WaitForVBlank appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::WaitForVBlank", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::WaitForVBlank", hr);
     }
   }
 
@@ -604,10 +599,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "SetGPUThreadPriority appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("SetGPUThreadPriority appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetGPUThreadPriority", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::SetGPUThreadPriority", hr);
     }
 
     int got = 0;
@@ -616,14 +611,13 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double get_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (get_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "GetGPUThreadPriority appears to block (%.3f ms)", get_ms);
+      return reporter.Fail("GetGPUThreadPriority appears to block (%.3f ms)", get_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetGPUThreadPriority", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::GetGPUThreadPriority", hr);
     }
     if (got < -7 || got > 7) {
-      return aerogpu_test::Fail(kTestName,
-                                "GetGPUThreadPriority returned %d (expected clamped to [-7, 7])",
+      return reporter.Fail("GetGPUThreadPriority returned %d (expected clamped to [-7, 7])",
                                 got);
     }
   }
@@ -632,13 +626,13 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   ComPtr<IDirect3DTexture9> tex;
   hr = dev->CreateTexture(64, 64, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex.put(), NULL);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateTexture", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::CreateTexture", hr);
   }
 
   ComPtr<IDirect3DVertexBuffer9> vb;
   hr = dev->CreateVertexBuffer(256, 0, 0, D3DPOOL_DEFAULT, vb.put(), NULL);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateVertexBuffer", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::CreateVertexBuffer", hr);
   }
 
   IDirect3DResource9* resources[2] = {tex.get(), vb.get()};
@@ -653,10 +647,10 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "CheckResourceResidency appears to block (%.3f ms)", call_ms);
+      return reporter.Fail("CheckResourceResidency appears to block (%.3f ms)", call_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CheckResourceResidency", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::CheckResourceResidency", hr);
     }
 
     D3DRESOURCERESIDENCY status[2];
@@ -668,25 +662,23 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     QueryPerformanceCounter(&after);
     const double query_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (query_ms > kMaxSingleCallMs) {
-      return aerogpu_test::Fail(kTestName, "QueryResourceResidency appears to block (%.3f ms)", query_ms);
+      return reporter.Fail("QueryResourceResidency appears to block (%.3f ms)", query_ms);
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::QueryResourceResidency", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::QueryResourceResidency", hr);
     }
 
     for (int r = 0; r < 2; ++r) {
       if (status[r] != D3DRESOURCERESIDENCY_FULLY_RESIDENT) {
-        return aerogpu_test::Fail(kTestName,
-                                  "QueryResourceResidency[%d] returned %d (expected FULLY_RESIDENT=%d)",
-                                  r,
-                                  (int)status[r],
-                                  (int)D3DRESOURCERESIDENCY_FULLY_RESIDENT);
+        return reporter.Fail("QueryResourceResidency[%d] returned %d (expected FULLY_RESIDENT=%d)",
+                             r,
+                             (int)status[r],
+                             (int)D3DRESOURCERESIDENCY_FULLY_RESIDENT);
       }
     }
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

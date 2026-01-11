@@ -560,7 +560,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      reporter.SetSkipped("remote session");
+      reporter.SetSkipped("remote_session");
       return reporter.Pass();
     }
     return reporter.Fail("running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
@@ -770,9 +770,9 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       if (last_fence != 0 && issue_fence <= last_fence) {
         CloseKmtAdapter(&kmt, kmt_adapter);
         return reporter.Fail("non-monotonic submit fence: prev=%I64u cur=%I64u (line: %s)",
-                             last_fence,
-                             issue_fence,
-                             issue_line.c_str());
+                              last_fence,
+                              issue_fence,
+                              issue_line.c_str());
       }
       last_fence = issue_fence;
     }
@@ -848,9 +848,9 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       if (present_fence <= last_fence) {
         CloseKmtAdapter(&kmt, kmt_adapter);
         return reporter.Fail("non-monotonic present fence: prev=%I64u cur=%I64u (line: %s)",
-                             last_fence,
-                             present_fence,
-                             present_line.c_str());
+                              last_fence,
+                              present_fence,
+                              present_line.c_str());
       }
       last_fence = present_fence;
     }

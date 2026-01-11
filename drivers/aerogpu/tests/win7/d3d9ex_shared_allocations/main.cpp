@@ -102,41 +102,34 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
                                (unsigned)ident.DeviceId);
     reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(kTestName,
-                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                "Install AeroGPU driver or pass --allow-microsoft.",
-                                (unsigned)ident.VendorId,
-                                (unsigned)ident.DeviceId);
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.VendorId,
-                                (unsigned)require_vid);
+      return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.VendorId,
+                           (unsigned)require_vid);
     }
     if (has_require_did && ident.DeviceId != require_did) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.DeviceId,
-                                (unsigned)require_did);
+      return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.DeviceId,
+                           (unsigned)require_did);
     }
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                                "or use --require-vid/--require-did)",
-                                ident.Description);
+      return reporter.Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+          ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName,
-        "GetAdapterIdentifier (required for --require-vid/--require-did)",
-        hr);
+    return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -180,11 +173,11 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
                                shared_rt_surface.put(),
                                &shared_rt_surface_handle);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRenderTarget(shared)", hr);
+    return reporter.FailHresult("CreateRenderTarget(shared)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: shared RT surface handle=%p", kTestName, shared_rt_surface_handle);
   if (!shared_rt_surface_handle) {
-    return aerogpu_test::Fail(kTestName, "CreateRenderTarget(shared) returned NULL shared handle");
+    return reporter.Fail("CreateRenderTarget(shared) returned NULL shared handle");
   }
 
   ComPtr<IDirect3DSurface9> opened_rt_surface;
@@ -192,7 +185,7 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
                                IID_IDirect3DSurface9,
                                reinterpret_cast<void**>(opened_rt_surface.put()));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "OpenSharedResource(shared render target surface)", hr);
+    return reporter.FailHresult("OpenSharedResource(shared render target surface)", hr);
   }
 
   // ---------------------------------------------------------------------------
@@ -211,7 +204,7 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
   if (SUCCEEDED(hr)) {
     aerogpu_test::PrintfStdout("INFO: %s: shared mip texture handle=%p", kTestName, shared_mip_handle);
     if (!shared_mip_handle) {
-      return aerogpu_test::Fail(kTestName, "CreateTexture(shared mips) succeeded but returned NULL shared handle");
+      return reporter.Fail("CreateTexture(shared mips) succeeded but returned NULL shared handle");
     }
 
     ComPtr<IDirect3DTexture9> opened_mip_tex;
@@ -219,7 +212,7 @@ static int RunD3D9ExSharedAllocations(int argc, char** argv) {
                                  IID_IDirect3DTexture9,
                                  reinterpret_cast<void**>(opened_mip_tex.put()));
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "OpenSharedResource(shared mips)", hr);
+      return reporter.FailHresult("OpenSharedResource(shared mips)", hr);
     }
   } else {
     // This may be rejected by the driver if shared multi-mip resources are not supported.

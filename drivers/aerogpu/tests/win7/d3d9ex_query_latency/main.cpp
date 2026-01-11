@@ -137,41 +137,34 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
                                (unsigned)ident.DeviceId);
     reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(kTestName,
-                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                "Install AeroGPU driver or pass --allow-microsoft.",
-                                (unsigned)ident.VendorId,
-                                (unsigned)ident.DeviceId);
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.VendorId,
-                                (unsigned)require_vid);
+      return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.VendorId,
+                           (unsigned)require_vid);
     }
     if (has_require_did && ident.DeviceId != require_did) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.DeviceId,
-                                (unsigned)require_did);
+      return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.DeviceId,
+                           (unsigned)require_did);
     }
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                                "or use --require-vid/--require-did)",
-                                ident.Description);
+      return reporter.Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+          ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName,
-        "GetAdapterIdentifier (required for --require-vid/--require-did)",
-        hr);
+    return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -194,18 +187,18 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
   ComPtr<IDirect3DQuery9> q;
   hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, q.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateQuery(D3DQUERYTYPE_EVENT)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::CreateQuery(D3DQUERYTYPE_EVENT)", hr);
   }
 
   // Submit a trivial command so there is something for the query to wait behind.
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(10, 20, 30), 1.0f, 0);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Clear", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::Clear", hr);
   }
 
   hr = q->Issue(D3DISSUE_END);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(D3DISSUE_END)", hr);
+    return reporter.FailHresult("IDirect3DQuery9::Issue(D3DISSUE_END)", hr);
   }
 
   const double kQueryTimeoutMs = 2000.0;
@@ -228,8 +221,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
 
     const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
     if (call_ms > kMaxSingleGetDataCallMs) {
-      return aerogpu_test::Fail(kTestName,
-                                "IDirect3DQuery9::GetData appears to block (%.3f ms)",
+      return reporter.Fail("IDirect3DQuery9::GetData appears to block (%.3f ms)",
                                 call_ms);
     }
 
@@ -237,20 +229,19 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
 
     if (hr == S_OK) {
       if (!done) {
-        return aerogpu_test::Fail(kTestName, "EVENT query returned S_OK but done==FALSE");
+        return reporter.Fail("EVENT query returned S_OK but done==FALSE");
       }
       break;
     }
     if (hr != S_FALSE) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::GetData", hr);
+      return reporter.FailHresult("IDirect3DQuery9::GetData", hr);
     }
 
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     const double elapsed_ms = QpcToMs(now.QuadPart - start_qpc.QuadPart, qpc_freq);
     if (elapsed_ms > kQueryTimeoutMs) {
-      return aerogpu_test::Fail(kTestName,
-                                "EVENT query did not complete within %.0f ms (polls=%lu)",
+      return reporter.Fail("EVENT query did not complete within %.0f ms (polls=%lu)",
                                 kQueryTimeoutMs,
                                 (unsigned long)polls);
     }
@@ -269,19 +260,18 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
   // --- Max frame latency API test ---
   hr = dev->SetMaximumFrameLatency(1);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
   }
 
   UINT max_frame_latency = 0;
   hr = dev->GetMaximumFrameLatency(&max_frame_latency);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetMaximumFrameLatency", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::GetMaximumFrameLatency", hr);
   }
 
   // D3D9Ex documentation defines valid range as [1, 16].
   if (max_frame_latency < 1) {
-    return aerogpu_test::Fail(kTestName,
-                              "GetMaximumFrameLatency returned %u (expected >= 1)",
+    return reporter.Fail("GetMaximumFrameLatency returned %u (expected >= 1)",
                               (unsigned)max_frame_latency);
   }
   if (max_frame_latency != 1) {
@@ -306,7 +296,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
   for (int i = 0; i < kPresentIters; ++i) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, i & 1 ? 0 : 255), 1.0f, 0);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Clear(present loop)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::Clear(present loop)", hr);
     }
 
     hr = dev->PresentEx(NULL, NULL, NULL, NULL, D3DPRESENT_DONOTWAIT);
@@ -315,7 +305,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
     } else if (hr == D3DERR_WASSTILLDRAWING) {
       ++present_still_drawing;
     } else {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx(DONOTWAIT)", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::PresentEx(DONOTWAIT)", hr);
     }
   }
 
