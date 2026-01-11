@@ -338,6 +338,12 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPl
     let mut seen_driver_names = HashSet::<String>::new();
     for drv in &spec.drivers {
         let name = drv.name.trim();
+        if drv.name != name {
+            bail!(
+                "packaging spec driver name must not contain leading/trailing whitespace: {:?}",
+                &drv.name
+            );
+        }
         if name.is_empty() {
             bail!("packaging spec contains a driver with an empty name");
         }
