@@ -739,30 +739,36 @@ function Try-AeroQmpQuit {
     [Parameter(Mandatory = $true)] [int]$Port
   )
 
-  $client = $null
-  try {
-    $client = [System.Net.Sockets.TcpClient]::new()
-    $client.ReceiveTimeout = 2000
-    $client.SendTimeout = 2000
-    $client.Connect($Host, $Port)
+  $deadline = [DateTime]::UtcNow.AddSeconds(2)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
 
-    $stream = $client.GetStream()
-    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
-    $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
-    $writer.NewLine = "`n"
-    $writer.AutoFlush = $true
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
 
-    # Greeting.
-    $null = $reader.ReadLine()
-    $writer.WriteLine('{"execute":"qmp_capabilities"}')
-    $null = $reader.ReadLine()
-    $writer.WriteLine('{"execute":"quit"}')
-    return $true
-  } catch {
-    return $false
-  } finally {
-    if ($client) { $client.Close() }
+      # Greeting.
+      $null = $reader.ReadLine()
+      $writer.WriteLine('{"execute":"qmp_capabilities"}')
+      $null = $reader.ReadLine()
+      $writer.WriteLine('{"execute":"quit"}')
+      return $true
+    } catch {
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
   }
+
+  return $false
 }
 
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path

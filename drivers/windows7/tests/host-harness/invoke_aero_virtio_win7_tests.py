@@ -183,36 +183,50 @@ def _qmp_read_json(sock: socket.socket, *, timeout_seconds: float = 2.0) -> dict
                 continue
 
 
-def _try_qmp_quit(endpoint: _QmpEndpoint) -> bool:
+def _try_qmp_quit(endpoint: _QmpEndpoint, *, timeout_seconds: float = 2.0) -> bool:
     """
     Attempt to shut QEMU down gracefully via QMP.
 
     This is primarily to ensure side-effectful devices (notably the `wav` audiodev backend)
     flush/finalize their output files before the host harness verifies them.
     """
-    try:
-        if endpoint.unix_socket is not None:
-            if not endpoint.unix_socket.exists():
-                return False
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.connect(str(endpoint.unix_socket))
-        else:
-            host = endpoint.tcp_host or "127.0.0.1"
-            port = endpoint.tcp_port
-            if port is None:
-                return False
-            s = socket.create_connection((host, port), timeout=2.0)
-
-        with s:
-            # Greeting.
-            _qmp_read_json(s)
-            s.sendall(b'{"execute":"qmp_capabilities"}\n')
-            # Capabilities ack (ignore contents).
-            _qmp_read_json(s)
-            s.sendall(b'{"execute":"quit"}\n')
-            return True
-    except Exception:
+    if endpoint.tcp_port is None and endpoint.unix_socket is None:
         return False
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if endpoint.unix_socket is not None and not endpoint.unix_socket.exists():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+            continue
+
+        try:
+            if endpoint.unix_socket is not None:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                    s.connect(str(endpoint.unix_socket))
+                    # Greeting.
+                    _qmp_read_json(s, timeout_seconds=1.0)
+                    s.sendall(b'{"execute":"qmp_capabilities"}\n')
+                    # Capabilities ack (ignore contents).
+                    _qmp_read_json(s, timeout_seconds=1.0)
+                    s.sendall(b'{"execute":"quit"}\n')
+                    return True
+            else:
+                host = endpoint.tcp_host or "127.0.0.1"
+                port = endpoint.tcp_port
+                if port is None:
+                    return False
+                with socket.create_connection((host, port), timeout=1.0) as s:
+                    _qmp_read_json(s, timeout_seconds=1.0)
+                    s.sendall(b'{"execute":"qmp_capabilities"}\n')
+                    _qmp_read_json(s, timeout_seconds=1.0)
+                    s.sendall(b'{"execute":"quit"}\n')
+                    return True
+        except Exception:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
 
 
 def _find_free_tcp_port() -> Optional[int]:
