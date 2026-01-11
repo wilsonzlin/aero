@@ -34,6 +34,8 @@ npm -w backend/aero-gateway run bench
 
 This writes a JSON report to `backend/aero-gateway/bench/results.json` and prints a human-readable summary to stdout.
 
+The report includes `tool`, `startedAt`, and `finishedAt` fields so other tooling can identify and timestamp runs.
+
 ### Nightly (CI trending)
 
 Runs a configuration intended for nightly perf history dashboards (more stable than the smoke mode, but still designed to finish quickly on CI runners):

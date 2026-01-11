@@ -285,6 +285,9 @@ function normaliseGpuBenchResult(result) {
 }
 
 function isAeroGatewayBenchReport(result) {
+  if (result && typeof result === "object" && "tool" in result) {
+    if (result.tool !== "aero-gateway-bench") return false;
+  }
   return (
     result &&
     typeof result === "object" &&

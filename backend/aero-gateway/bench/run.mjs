@@ -634,6 +634,7 @@ async function main() {
   const mode = args.mode === 'smoke' ? 'smoke' : args.mode === 'nightly' ? 'nightly' : 'local';
   const outputJson = args.json ? path.resolve(process.cwd(), args.json) : path.resolve('bench', 'results.json');
   const shouldAssert = Boolean(args.assert);
+  const startedAt = new Date().toISOString();
 
   const config =
     mode === 'smoke'
@@ -660,6 +661,8 @@ async function main() {
   const gateway = await startGateway({ dnsUpstreamHost: dnsServer.host, dnsUpstreamPort: dnsServer.port });
 
   const results = {
+    tool: 'aero-gateway-bench',
+    startedAt,
     meta: {
       mode,
       outputJson,
@@ -693,6 +696,7 @@ async function main() {
 
     results.doh = await benchDoh({ gatewayPort: gateway.port, ...config.doh });
 
+    results.finishedAt = new Date().toISOString();
     await fs.mkdir(path.dirname(outputJson), { recursive: true });
     await fs.writeFile(outputJson, `${JSON.stringify(results, null, 2)}\n`);
 
