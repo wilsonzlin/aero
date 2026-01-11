@@ -1,4 +1,6 @@
 use emulator::io::usb::hub::UsbHubDevice;
+use emulator::io::usb::hub::UsbHub;
+use emulator::io::usb::core::{UsbInResult, UsbOutResult};
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
 const USB_REQUEST_GET_STATUS: u8 = 0x00;
@@ -256,7 +258,7 @@ fn usb_hub_clear_port_power_disables_routing_and_sets_enable_change() {
         ControlResponse::Ack
     );
     for _ in 0..50 {
-        hub.tick_1ms();
+        UsbHub::tick_1ms(&mut hub);
     }
 
     // Clear any change bits from attach/reset so the power-off change is observable.
@@ -284,6 +286,59 @@ fn usb_hub_clear_port_power_disables_routing_and_sets_enable_change() {
     assert_ne!(change & HUB_PORT_CHANGE_ENABLE, 0);
 
     assert!(hub.child_device_mut_for_address(0).is_none());
+}
+
+#[test]
+fn usb_hub_clear_port_power_resets_downstream_address() {
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    // Power + reset so the downstream device becomes routable.
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_RESET), None),
+        ControlResponse::Ack
+    );
+    for _ in 0..50 {
+        UsbHub::tick_1ms(&mut hub);
+    }
+
+    // Assign a non-zero address to the downstream device.
+    {
+        let dev = hub
+            .child_device_mut_for_address(0)
+            .expect("downstream device should be routable at address 0");
+        let setup = SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 5,
+            w_index: 0,
+            w_length: 0,
+        };
+        assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        assert_eq!(dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
+    }
+    assert!(hub.child_device_mut_for_address(5).is_some());
+
+    // Power off the port: device should be reset back to address 0 even though it remains attached.
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+    assert!(hub.child_device_mut_for_address(5).is_none());
+    assert_eq!(
+        hub.downstream_device_mut(0)
+            .expect("device should still be physically attached")
+            .address(),
+        0
+    );
 }
 
 #[test]
