@@ -590,7 +590,7 @@ fn usb_hub_standard_get_descriptor_accepts_hub_descriptor_type() {
 fn usb_hub_interrupt_bitmap_scales_with_port_count() {
     const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
 
-    let mut hub = UsbHubDevice::new_with_ports(8);
+    let mut hub = UsbHubDevice::with_port_count(8);
     hub.attach(8, Box::new(DummyUsbDevice::default()));
 
     assert_eq!(

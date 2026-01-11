@@ -207,6 +207,10 @@ impl UsbHubDevice {
         Self::new_with_ports(DEFAULT_HUB_NUM_PORTS)
     }
 
+    pub fn with_port_count(num_ports: u8) -> Self {
+        Self::new_with_ports(num_ports as usize)
+    }
+
     pub fn new_with_ports(num_ports: usize) -> Self {
         assert!(
             (1..=u8::MAX as usize).contains(&num_ports),
