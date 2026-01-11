@@ -109,9 +109,16 @@ async function ensureProxyBuilt() {
       }
 
       const targetDir = await getCargoTargetDir();
+      const env = { CARGO_TARGET_DIR: targetDir };
+      // Allow running Node tests with a per-checkout Cargo home without having to
+      // source `scripts/agent-env.sh` first.
+      if (process.env.AERO_ISOLATE_CARGO_HOME && !process.env.CARGO_HOME) {
+        env.CARGO_HOME = path.join(REPO_ROOT, ".cargo-home");
+        await mkdir(env.CARGO_HOME, { recursive: true });
+      }
       await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
         cwd: REPO_ROOT,
-        env: { CARGO_TARGET_DIR: targetDir },
+        env,
         // A cold `cargo build` of the full dependency graph can be slow on CI runners.
         // Keep this bounded (deterministic) but generous enough to avoid flakes.
         timeoutMs: 30 * 60_000,
@@ -241,6 +248,7 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    let timingOut = false;
     const onStdout = (c) => {
       stdout = appendLimitedOutput(stdout, c);
     };
@@ -260,7 +268,24 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
       err ? reject(err) : resolve(result);
     };
 
+    const stopCommand = async (proc) => {
+      if (proc.exitCode !== null || proc.signalCode !== null) return;
+
+      const exitedPromise = once(proc, "exit").catch(() => null);
+      signalProcessTree(proc, "SIGTERM");
+      const exited = await Promise.race([exitedPromise, sleep(2_000).then(() => null)]);
+      if (exited !== null) return;
+
+      const killedPromise = once(proc, "exit").catch(() => null);
+      signalProcessTree(proc, "SIGKILL");
+      await killedPromise;
+    };
+
     const timeout = setTimeout(() => {
+      timingOut = true;
+      child.off("exit", onExit);
+      child.off("error", onError);
+
       const why = `command timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`;
       stopCommand(child)
         .then(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)))
@@ -268,19 +293,13 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
     }, timeoutMs);
     timeout.unref();
 
-    const stopCommand = async (proc) => {
-      if (proc.exitCode !== null || proc.signalCode !== null) return;
-
-      signalProcessTree(proc, "SIGTERM");
-      const exited = await Promise.race([once(proc, "exit"), sleep(2_000).then(() => null)]);
-      if (exited !== null) return;
-
-      signalProcessTree(proc, "SIGKILL");
-      await once(proc, "exit");
+    const onError = (err) => {
+      if (timingOut) return;
+      settle(err);
     };
 
-    child.once("error", (err) => settle(err));
-    child.once("exit", (code, signal) => {
+    const onExit = (code, signal) => {
+      if (timingOut) return;
       if (code === 0) {
         settle(null, { stdout, stderr });
         return;
@@ -290,7 +309,10 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
           `command failed: ${command} ${args.join(" ")} (code=${code}, signal=${signal})\n\n${stdout}${stderr}`,
         ),
       );
-    });
+    };
+
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 }
 
