@@ -24,7 +24,7 @@ l2Proxy:
     limits:
       cpu: "1"
       memory: 512Mi
-  # The chart will automatically set AERO_L2_ALLOWED_ORIGINS to the derived ingress origin
+  # The chart will automatically set ALLOWED_ORIGINS to the derived ingress origin
   # (https://<ingress.host> when TLS is enabled) and route `/l2` to the proxy.
   #
   # Recommended: use cookie auth for same-origin browser clients.

@@ -93,7 +93,7 @@ spec:
             - name: AERO_L2_PROXY_LISTEN_ADDR
               value: {{ printf "0.0.0.0:%v" .Values.l2Proxy.containerPort | quote }}
             {{- if $allowedOriginsCsv }}
-            - name: AERO_L2_ALLOWED_ORIGINS
+            - name: ALLOWED_ORIGINS
               value: {{ $allowedOriginsCsv | quote }}
             {{- end }}
             {{- if .Values.l2Proxy.open }}

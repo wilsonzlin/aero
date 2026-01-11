@@ -59,8 +59,8 @@ The proxy accepts the allowlist via:
 - `ALLOWED_ORIGINS` (shared with `aero-gateway` and `proxy/webrtc-udp-relay`) when
   `AERO_L2_ALLOWED_ORIGINS` is unset.
 
-This chart sets `AERO_L2_ALLOWED_ORIGINS` automatically to match the derived Ingress origin
-(`http(s)://<ingress.host>`), and you can add additional exact origins via:
+This chart sets the L2 proxy Origin allowlist automatically (as `ALLOWED_ORIGINS`) to match the
+derived Ingress origin (`http(s)://<ingress.host>`), and you can add additional exact origins via:
 
 ```yaml
 l2Proxy:
