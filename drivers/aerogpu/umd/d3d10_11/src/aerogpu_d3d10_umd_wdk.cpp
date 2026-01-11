@@ -1123,6 +1123,8 @@ static void InitLockForWrite(D3DDDICB_LOCK* lock) {
   }
 }
 
+static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res);
+
 static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
                              AeroGpuDevice* dev,
                              AeroGpuResource* res,
@@ -1242,6 +1244,8 @@ Unlock:
     SetError(hDevice, copy_hr);
     return;
   }
+
+  TrackWddmAllocForSubmitLocked(dev, res);
 
   auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!dirty) {
@@ -2653,6 +2657,7 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     }
 
     if (res->backing_alloc_id != 0) {
+      TrackWddmAllocForSubmitLocked(dev, res);
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
       if (!cmd) {
         SetError(hDevice, E_FAIL);

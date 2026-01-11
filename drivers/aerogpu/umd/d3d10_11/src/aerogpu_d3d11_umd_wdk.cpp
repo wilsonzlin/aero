@@ -909,6 +909,8 @@ Unlock:
     return;
   }
 
+  TrackWddmAllocForSubmitLocked(dev, res);
+
   auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!dirty) {
     SetError(dev, E_OUTOFMEMORY);
@@ -924,6 +926,8 @@ static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_byt
   if (!dev || !res || !res->handle || size_bytes == 0) {
     return;
   }
+
+  TrackWddmAllocForSubmitLocked(dev, res);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!cmd) {
