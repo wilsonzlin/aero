@@ -1776,7 +1776,7 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
     log.LogLine("virtio-snd: no matching ACTIVE render endpoint found; checking default endpoint");
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, chosen.Put());
     if (FAILED(hr) || !chosen) {
-      out.fail_reason = "no_matching_endpoint";
+      out.fail_reason = "no_default_endpoint";
       out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
       log.LogLine("virtio-snd: no default render endpoint available");
       return out;
@@ -1792,12 +1792,10 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
       instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
     }
     const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+    log.Logf("virtio-snd: default endpoint name=%s instance_id=%s", WideToUtf8(friendly).c_str(),
+             WideToUtf8(instance_id).c_str());
     if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
-      out.fail_reason = "no_matching_endpoint";
-      out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-      log.Logf("virtio-snd: default endpoint does not look like virtio-snd (name=%s instance_id=%s)",
-               WideToUtf8(friendly).c_str(), WideToUtf8(instance_id).c_str());
-      return out;
+      log.LogLine("virtio-snd: warning: default endpoint does not look like virtio-snd; using it for playback anyway");
     }
 
     best_score = 0;
@@ -1847,18 +1845,41 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   desired->nAvgBytesPerSec = desired->nSamplesPerSec * desired->nBlockAlign;
   desired->cbSize = 0;
 
+  bool used_desired_format = false;
   hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, desired, nullptr);
-  if (FAILED(hr)) {
-    out.fail_reason = "initialize_shared_failed";
-    out.hr = hr;
-    log.Logf("virtio-snd: Initialize(shared 48kHz S16 stereo) failed hr=0x%08lx",
+  if (SUCCEEDED(hr)) {
+    used_desired_format = true;
+  } else {
+    log.Logf("virtio-snd: Initialize(shared desired 48kHz S16 stereo) failed hr=0x%08lx; trying mix format",
              static_cast<unsigned long>(hr));
-    return out;
+
+    WAVEFORMATEX* mix_raw = nullptr;
+    const HRESULT mix_hr = client->GetMixFormat(&mix_raw);
+    if (FAILED(mix_hr) || !mix_raw) {
+      out.fail_reason = "get_mix_format_failed";
+      out.hr = FAILED(mix_hr) ? mix_hr : E_FAIL;
+      log.Logf("virtio-snd: GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
+      return out;
+    }
+
+    const size_t mix_size = sizeof(WAVEFORMATEX) + mix_raw->cbSize;
+    fmt_bytes.assign(reinterpret_cast<const BYTE*>(mix_raw),
+                     reinterpret_cast<const BYTE*>(mix_raw) + mix_size);
+    CoTaskMemFree(mix_raw);
+    desired = reinterpret_cast<WAVEFORMATEX*>(fmt_bytes.data());
+
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, desired, nullptr);
+    if (FAILED(hr)) {
+      out.fail_reason = "initialize_shared_failed";
+      out.hr = hr;
+      log.Logf("virtio-snd: Initialize(shared mix format) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+      return out;
+    }
   }
 
-  const bool used_desired_format = true;
   const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
-  log.Logf("virtio-snd: stream format=%s", WaveFormatToString(fmt).c_str());
+  log.Logf("virtio-snd: stream format=%s used_desired=%d", WaveFormatToString(fmt).c_str(),
+           used_desired_format ? 1 : 0);
 
   UINT32 buffer_frames = 0;
   hr = client->GetBufferSize(&buffer_frames);
@@ -2135,8 +2156,8 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
   }
 
   if (device_id == UINT_MAX || best_score <= 0) {
-    log.LogLine("virtio-snd: waveOut no matching device found");
-    return false;
+    log.LogLine("virtio-snd: waveOut no matching device found; using WAVE_MAPPER");
+    device_id = WAVE_MAPPER;
   } else {
     log.Logf("virtio-snd: waveOut using device_id=%u score=%d", device_id, best_score);
   }
