@@ -308,7 +308,7 @@ export class L2TunnelForwarder {
 
       let ok = true;
       try {
-        const res = (tunnel.sendFrame as unknown as (frame: Uint8Array) => void | boolean)(frame);
+        const res = tunnel.sendFrame(frame);
         if (res === false) ok = false;
       } catch {
         ok = false;
@@ -376,4 +376,3 @@ export class L2TunnelForwarder {
     this.pendingRxBytes += frame.byteLength;
   }
 }
-

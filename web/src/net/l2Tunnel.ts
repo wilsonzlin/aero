@@ -129,7 +129,17 @@ export interface L2TunnelClient {
    * `RTCDataChannel` is open, so this method is a no-op there.
    */
   connect(): void;
-  sendFrame(frame: Uint8Array): void;
+  /**
+   * Enqueue an outbound Ethernet frame.
+   *
+   * Returns `true` if the frame was accepted into the tunnel client's outbound
+   * queue, or `false` if it was dropped/refused (e.g. client closed or not
+   * connected).
+   *
+   * Callers that need backpressure telemetry (e.g. `L2TunnelForwarder`) can use
+   * this return value; most callers can ignore it.
+   */
+  sendFrame(frame: Uint8Array): boolean;
   close(): void;
 }
 
@@ -245,11 +255,11 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     // No-op by default; used by WebSocket client.
   }
 
-  sendFrame(frame: Uint8Array): void {
-    if (this.closed || this.closing) return;
+  sendFrame(frame: Uint8Array): boolean {
+    if (this.closed || this.closing) return false;
     if (!this.canEnqueue()) {
       this.emitSessionErrorThrottled(new Error("L2 tunnel is not connected; call connect() first"));
-      return;
+      return false;
     }
 
     if (frame.byteLength > this.opts.maxFrameSize) {
@@ -258,10 +268,10 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       );
       this.emitSessionErrorThrottled(err);
       this.close();
-      return;
+      return false;
     }
 
-    this.enqueue(encodeL2Frame(frame, { maxPayload: this.opts.maxFrameSize }));
+    return this.enqueue(encodeL2Frame(frame, { maxPayload: this.opts.maxFrameSize }));
   }
 
   close(): void {
@@ -359,7 +369,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     this.scheduleFlush();
   }
 
-  private enqueue(msg: Uint8Array): void {
+  private enqueue(msg: Uint8Array): boolean {
     if (this.sendQueueBytes + msg.byteLength > this.opts.maxQueuedBytes) {
       this.emitSessionErrorThrottled(
         new Error(
@@ -367,12 +377,13 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
         ),
       );
       this.close();
-      return;
+      return false;
     }
 
     this.sendQueue.push(msg);
     this.sendQueueBytes += msg.byteLength;
     this.scheduleFlush();
+    return true;
   }
 
   private clearQueue(): void {
