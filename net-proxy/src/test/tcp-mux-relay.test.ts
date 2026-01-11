@@ -676,6 +676,115 @@ test("tcp-mux rejects malformed OPEN payload as PROTOCOL_ERROR without closing t
   }
 });
 
+test("tcp-mux rejects OPEN with invalid port=0 as PROTOCOL_ERROR without closing the websocket", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const hostBytes = Buffer.from("127.0.0.1", "utf8");
+    const openPayload = Buffer.alloc(2 + hostBytes.length + 2 + 2);
+    let off = 0;
+    openPayload.writeUInt16BE(hostBytes.length, off);
+    off += 2;
+    hostBytes.copy(openPayload, off);
+    off += hostBytes.length;
+    openPayload.writeUInt16BE(0, off); // invalid port
+    off += 2;
+    openPayload.writeUInt16BE(0, off); // metadata_len
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, openPayload));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.PROTOCOL_ERROR);
+
+    // Ensure the mux WS remains alive.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([6])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    // Ensure other streams still work.
+    const open2 = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      2,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const payload = Buffer.from("ok");
+    ws.send(Buffer.concat([open2, encodeTcpMuxFrame(TcpMuxMsgType.DATA, 2, payload)]));
+    await waitForEcho(waiter, 2, payload);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("tcp-mux rejects OPEN with empty host as PROTOCOL_ERROR without closing the websocket", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    // OPEN payload with host_len=0.
+    const openPayload = Buffer.alloc(2 + 0 + 2 + 2);
+    openPayload.writeUInt16BE(0, 0); // host_len
+    openPayload.writeUInt16BE(echoServer.port, 2); // port
+    openPayload.writeUInt16BE(0, 4); // metadata_len
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, openPayload));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.PROTOCOL_ERROR);
+
+    // Ensure the mux WS remains alive.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([7])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    // Ensure other streams still work.
+    const open2 = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      2,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const payload = Buffer.from("ok");
+    ws.send(Buffer.concat([open2, encodeTcpMuxFrame(TcpMuxMsgType.DATA, 2, payload)]));
+    await waitForEcho(waiter, 2, payload);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
 test("tcp-mux returns PROTOCOL_ERROR for duplicate OPEN stream_id without breaking the existing stream", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
