@@ -748,9 +748,7 @@ impl UsbBus {
     }
 
     fn device_at_path_mut(&mut self, path: &[usize]) -> Option<&mut dyn UsbDevice> {
-        let Some((&root, rest)) = path.split_first() else {
-            return None;
-        };
+        let (&root, rest) = path.split_first()?;
         let port = self.ports.get_mut(root)?;
         let dev = port.device.as_mut()?.as_mut();
         if rest.is_empty() {

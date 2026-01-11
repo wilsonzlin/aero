@@ -309,7 +309,7 @@ impl UsbHidKeyboard {
             }
             changed = before != self.modifiers;
         } else if pressed {
-            if !self.pressed_keys.iter().any(|&k| k == usage) {
+            if !self.pressed_keys.contains(&usage) {
                 self.pressed_keys.push(usage);
                 changed = true;
             }
@@ -711,15 +711,12 @@ impl UsbDevice for UsbHidKeyboard {
                 self.ep0.out_data.extend_from_slice(data);
                 if self.ep0.out_data.len() >= self.ep0.out_expected {
                     let setup = self.ep0.setup();
-                    match (setup.request_type, setup.request) {
-                        (0x21, REQ_HID_SET_REPORT) => {
-                            // Store LED/output report value if present.
-                            let report_type = (setup.value >> 8) as u8;
-                            if report_type == 2 && !self.ep0.out_data.is_empty() {
-                                self.leds = self.ep0.out_data[0];
-                            }
+                    if let (0x21, REQ_HID_SET_REPORT) = (setup.request_type, setup.request) {
+                        // Store LED/output report value if present.
+                        let report_type = (setup.value >> 8) as u8;
+                        if report_type == 2 && !self.ep0.out_data.is_empty() {
+                            self.leds = self.ep0.out_data[0];
                         }
-                        _ => {}
                     }
                     self.handle_no_data_request(setup);
                     self.ep0.stage = Ep0Stage::StatusIn;
@@ -2374,7 +2371,7 @@ impl UsbHidCompositeInput {
             }
             changed = before != self.keyboard_modifiers;
         } else if pressed {
-            if !self.keyboard_pressed_keys.iter().any(|&k| k == usage) {
+            if !self.keyboard_pressed_keys.contains(&usage) {
                 self.keyboard_pressed_keys.push(usage);
                 changed = true;
             }

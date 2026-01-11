@@ -745,7 +745,7 @@ impl IoSnapshot for UhciController {
             self.bus
                 .port(idx)
                 .and_then(|port| port.device.as_deref())
-                .map_or(true, device_tree_is_snapshotable)
+                .is_none_or(device_tree_is_snapshotable)
         });
 
         if bus_snapshotable {
@@ -1608,7 +1608,7 @@ mod tests {
 
         // TD: invalid PID (0x00), addr0/ep0, maxlen 4, IOC.
         let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
-        let token = 0x00u32 | maxlen_field;
+        let token = maxlen_field;
         mem.write_u32(0x3000, LINK_PTR_T);
         mem.write_u32(0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
         mem.write_u32(0x3008, token);

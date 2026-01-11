@@ -152,6 +152,7 @@ fn write_td(
     mem.write_u32(addr + 12, buffer);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn control_in(
     ctrl: &mut UhciController,
     mem: &mut TestMemory,

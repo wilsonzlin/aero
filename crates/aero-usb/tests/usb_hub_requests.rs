@@ -65,7 +65,7 @@ fn control_in(dev: &mut dyn UsbDevice, setup: SetupPacket, max_packet: usize) ->
 #[test]
 fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
     let mut hub = UsbHubDevice::with_port_count(8);
-    hub.attach(8, Box::new(DummyUsbDevice::default()));
+    hub.attach(8, Box::new(DummyUsbDevice));
 
     // SET_CONFIGURATION(1).
     control_no_data(

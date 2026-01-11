@@ -668,31 +668,26 @@ impl UsbDevice for UsbHidPassthrough {
                 self.ep0.out_data.extend_from_slice(data);
                 if self.ep0.out_data.len() >= self.ep0.out_expected {
                     let setup = self.ep0.setup();
-                    match (setup.request_type, setup.request) {
-                        (0x21, REQ_HID_SET_REPORT) => {
-                            let report_type = (setup.value >> 8) as u8;
-                            let report_id = (setup.value & 0xFF) as u8;
-                            if report_type == 2 || report_type == 3 {
-                                let payload = if report_id != 0 {
-                                    self.report_length(report_type, report_id)
-                                        .filter(|&expected_len| {
-                                            expected_len == self.ep0.out_data.len()
-                                        })
-                                        .and_then(|_| self.ep0.out_data.first().copied())
-                                        .filter(|&first| first == report_id)
-                                        .map(|_| self.ep0.out_data[1..].to_vec())
-                                        .unwrap_or_else(|| self.ep0.out_data.clone())
-                                } else {
-                                    self.ep0.out_data.clone()
-                                };
-                                self.push_output_report(UsbHidPassthroughOutputReport {
-                                    report_type,
-                                    report_id,
-                                    data: payload,
-                                });
-                            }
+                    if let (0x21, REQ_HID_SET_REPORT) = (setup.request_type, setup.request) {
+                        let report_type = (setup.value >> 8) as u8;
+                        let report_id = (setup.value & 0xFF) as u8;
+                        if report_type == 2 || report_type == 3 {
+                            let payload = if report_id != 0 {
+                                self.report_length(report_type, report_id)
+                                    .filter(|&expected_len| expected_len == self.ep0.out_data.len())
+                                    .and_then(|_| self.ep0.out_data.first().copied())
+                                    .filter(|&first| first == report_id)
+                                    .map(|_| self.ep0.out_data[1..].to_vec())
+                                    .unwrap_or_else(|| self.ep0.out_data.clone())
+                            } else {
+                                self.ep0.out_data.clone()
+                            };
+                            self.push_output_report(UsbHidPassthroughOutputReport {
+                                report_type,
+                                report_id,
+                                data: payload,
+                            });
                         }
-                        _ => {}
                     }
                     self.ep0.stage = Ep0Stage::StatusIn;
                 }
@@ -1304,14 +1299,7 @@ fn build_config_descriptor(
     out
 }
 
-fn report_descriptor_report_lengths(
-    report_descriptor_bytes: &[u8],
-) -> (
-    bool,
-    BTreeMap<u8, usize>,
-    BTreeMap<u8, usize>,
-    BTreeMap<u8, usize>,
-) {
+fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLengthMaps {
     let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes)
     else {
         return (
@@ -1344,6 +1332,13 @@ fn report_descriptor_report_lengths(
         bits_to_report_lengths(&feature_bits),
     )
 }
+
+type ReportLengthMaps = (
+    bool,
+    BTreeMap<u8, usize>,
+    BTreeMap<u8, usize>,
+    BTreeMap<u8, usize>,
+);
 
 fn bits_to_report_lengths(bits: &BTreeMap<u8, u64>) -> BTreeMap<u8, usize> {
     let mut out = BTreeMap::new();

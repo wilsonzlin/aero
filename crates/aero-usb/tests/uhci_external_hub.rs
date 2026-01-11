@@ -154,6 +154,7 @@ fn write_td(
     mem.write_u32(addr + 12, buffer);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn control_in(
     ctrl: &mut UhciController,
     mem: &mut TestMemory,
@@ -276,6 +277,7 @@ fn control_no_data(
     ctrl.step_frame(mem, irq);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn interrupt_in(
     ctrl: &mut UhciController,
     mem: &mut TestMemory,
@@ -310,6 +312,7 @@ fn interrupt_in(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn interrupt_out(
     ctrl: &mut UhciController,
     mem: &mut TestMemory,
@@ -510,6 +513,7 @@ fn power_reset_and_clear_hub_port(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enumerate_passthrough_device(
     ctrl: &mut UhciController,
     mem: &mut TestMemory,

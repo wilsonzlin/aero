@@ -546,10 +546,7 @@ fn parse_local_usage(
     Ok(parse_unsigned(data))
 }
 
-fn get_or_create_report<'a>(
-    reports: &'a mut Vec<HidReportInfo>,
-    report_id: u32,
-) -> &'a mut HidReportInfo {
+fn get_or_create_report(reports: &mut Vec<HidReportInfo>, report_id: u32) -> &mut HidReportInfo {
     if let Some(idx) = reports.iter().position(|r| r.report_id == report_id) {
         &mut reports[idx]
     } else {
@@ -692,13 +689,11 @@ pub fn parse_report_descriptor(bytes: &[u8]) -> Result<Vec<HidCollectionInfo>, H
                         }
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
-                        let usage = if let Some(&usage) = local.usages.first() {
-                            usage
-                        } else if let Some(min) = local.usage_minimum {
-                            min
-                        } else {
-                            0
-                        };
+                        let usage = local
+                            .usages
+                            .first()
+                            .copied()
+                            .unwrap_or(local.usage_minimum.unwrap_or_default());
 
                         collection_stack.push(HidCollectionInfo {
                             usage_page,
@@ -1203,7 +1198,7 @@ pub fn report_bytes_for_id(
     report_id: u32,
 ) -> usize {
     let bits = report_bits_for_id(collections, kind, report_id);
-    let bytes = (u64::from(bits) + 7) / 8;
+    let bytes = u64::from(bits).div_ceil(8);
     usize::try_from(bytes).unwrap_or(usize::MAX)
 }
 
@@ -1214,7 +1209,7 @@ fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> u
         .filter(|((k, _), _)| *k == kind)
         .map(|(_, items)| {
             let bits = report_bits(items);
-            let bytes = (u64::from(bits) + 7) / 8;
+            let bytes = u64::from(bits).div_ceil(8);
             usize::try_from(bytes).unwrap_or(usize::MAX)
         })
         .max()
