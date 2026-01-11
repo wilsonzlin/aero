@@ -7,13 +7,17 @@
 use core::mem::{offset_of, size_of};
 
 use super::aerogpu_cmd::{
-    AerogpuCmdClear, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc,
-    AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroyShader,
-    AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdResourceDirtyRange,
-    AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRenderTargets,
-    AerogpuCmdSetScissor, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuHandle, AerogpuIndexFormat, AerogpuPrimitiveTopology,
-    AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_MAX_RENDER_TARGETS,
+    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
+    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
+    AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
+    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
+    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
+    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
+    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuFillMode,
+    AerogpuHandle, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_MAX_RENDER_TARGETS,
 };
 use super::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -68,6 +72,10 @@ impl AerogpuCmdWriter {
 
     fn write_i32_at(&mut self, offset: usize, v: i32) {
         self.write_u32_at(offset, v as u32);
+    }
+
+    fn write_u8_at(&mut self, offset: usize, v: u8) {
+        self.buf[offset] = v;
     }
 
     fn write_u64_at(&mut self, offset: usize, v: u64) {
@@ -318,6 +326,146 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdSetPrimitiveTopology, topology), topology as u32);
     }
 
+    pub fn set_texture(&mut self, shader_stage: AerogpuShaderStage, slot: u32, texture: AerogpuHandle) {
+        let base = self.append_raw(AerogpuCmdOpcode::SetTexture, size_of::<AerogpuCmdSetTexture>());
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, shader_stage), shader_stage as u32);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, slot), slot);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, texture), texture);
+    }
+
+    pub fn set_sampler_state(&mut self, shader_stage: AerogpuShaderStage, slot: u32, state: u32, value: u32) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetSamplerState,
+            size_of::<AerogpuCmdSetSamplerState>(),
+        );
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, shader_stage), shader_stage as u32);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, slot), slot);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, state), state);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplerState, value), value);
+    }
+
+    pub fn set_render_state(&mut self, state: u32, value: u32) {
+        let base = self.append_raw(AerogpuCmdOpcode::SetRenderState, size_of::<AerogpuCmdSetRenderState>());
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetRenderState, state), state);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetRenderState, value), value);
+    }
+
+    pub fn set_shader_constants_f(
+        &mut self,
+        stage: AerogpuShaderStage,
+        start_register: u32,
+        data: &[f32],
+    ) {
+        assert_eq!(
+            data.len() % 4,
+            0,
+            "SET_SHADER_CONSTANTS_F data must be float4-aligned (got {} floats)",
+            data.len()
+        );
+        assert!(data.len() <= u32::MAX as usize);
+
+        let vec4_count = (data.len() / 4) as u32;
+        let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsF>() + data.len() * 4;
+        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsF, unpadded_size);
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetShaderConstantsF, stage), stage as u32);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetShaderConstantsF, start_register),
+            start_register,
+        );
+        self.write_u32_at(base + offset_of!(AerogpuCmdSetShaderConstantsF, vec4_count), vec4_count);
+
+        let payload_base = base + size_of::<AerogpuCmdSetShaderConstantsF>();
+        for (i, &v) in data.iter().enumerate() {
+            self.write_u32_at(payload_base + i * 4, v.to_bits());
+        }
+    }
+
+    pub fn set_blend_state(
+        &mut self,
+        enable: bool,
+        src_factor: AerogpuBlendFactor,
+        dst_factor: AerogpuBlendFactor,
+        blend_op: AerogpuBlendOp,
+        color_write_mask: u8,
+    ) {
+        use super::aerogpu_cmd::AerogpuBlendState;
+
+        let base = self.append_raw(AerogpuCmdOpcode::SetBlendState, size_of::<AerogpuCmdSetBlendState>());
+        let state_base = base + offset_of!(AerogpuCmdSetBlendState, state);
+        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, enable), enable as u32);
+        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, src_factor), src_factor as u32);
+        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, dst_factor), dst_factor as u32);
+        self.write_u32_at(state_base + offset_of!(AerogpuBlendState, blend_op), blend_op as u32);
+        self.write_u8_at(state_base + offset_of!(AerogpuBlendState, color_write_mask), color_write_mask);
+    }
+
+    pub fn set_depth_stencil_state(
+        &mut self,
+        depth_enable: bool,
+        depth_write_enable: bool,
+        depth_func: AerogpuCompareFunc,
+        stencil_enable: bool,
+        stencil_read_mask: u8,
+        stencil_write_mask: u8,
+    ) {
+        use super::aerogpu_cmd::AerogpuDepthStencilState;
+
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetDepthStencilState,
+            size_of::<AerogpuCmdSetDepthStencilState>(),
+        );
+        let state_base = base + offset_of!(AerogpuCmdSetDepthStencilState, state);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuDepthStencilState, depth_enable),
+            depth_enable as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuDepthStencilState, depth_write_enable),
+            depth_write_enable as u32,
+        );
+        self.write_u32_at(state_base + offset_of!(AerogpuDepthStencilState, depth_func), depth_func as u32);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuDepthStencilState, stencil_enable),
+            stencil_enable as u32,
+        );
+        self.write_u8_at(
+            state_base + offset_of!(AerogpuDepthStencilState, stencil_read_mask),
+            stencil_read_mask,
+        );
+        self.write_u8_at(
+            state_base + offset_of!(AerogpuDepthStencilState, stencil_write_mask),
+            stencil_write_mask,
+        );
+    }
+
+    pub fn set_rasterizer_state(
+        &mut self,
+        fill_mode: AerogpuFillMode,
+        cull_mode: AerogpuCullMode,
+        front_ccw: bool,
+        scissor_enable: bool,
+        depth_bias: i32,
+    ) {
+        use super::aerogpu_cmd::AerogpuRasterizerState;
+
+        let base = self.append_raw(
+            AerogpuCmdOpcode::SetRasterizerState,
+            size_of::<AerogpuCmdSetRasterizerState>(),
+        );
+        let state_base = base + offset_of!(AerogpuCmdSetRasterizerState, state);
+        self.write_u32_at(state_base + offset_of!(AerogpuRasterizerState, fill_mode), fill_mode as u32);
+        self.write_u32_at(state_base + offset_of!(AerogpuRasterizerState, cull_mode), cull_mode as u32);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuRasterizerState, front_ccw),
+            front_ccw as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuRasterizerState, scissor_enable),
+            scissor_enable as u32,
+        );
+        self.write_i32_at(state_base + offset_of!(AerogpuRasterizerState, depth_bias), depth_bias);
+    }
+
     pub fn clear(&mut self, flags: u32, color_rgba: [f32; 4], depth: f32, stencil: u32) {
         let base = self.append_raw(AerogpuCmdOpcode::Clear, size_of::<AerogpuCmdClear>());
         self.write_u32_at(base + offset_of!(AerogpuCmdClear, flags), flags);
@@ -361,9 +509,41 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdPresent, flags), flags);
     }
 
-    pub fn flush(&mut self) {
-        use super::aerogpu_cmd::AerogpuCmdFlush;
+    pub fn present_ex(&mut self, scanout_id: u32, flags: u32, d3d9_present_flags: u32) {
+        let base = self.append_raw(AerogpuCmdOpcode::PresentEx, size_of::<AerogpuCmdPresentEx>());
+        self.write_u32_at(base + offset_of!(AerogpuCmdPresentEx, scanout_id), scanout_id);
+        self.write_u32_at(base + offset_of!(AerogpuCmdPresentEx, flags), flags);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdPresentEx, d3d9_present_flags),
+            d3d9_present_flags,
+        );
+    }
 
+    pub fn export_shared_surface(&mut self, resource_handle: AerogpuHandle, share_token: u64) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::ExportSharedSurface,
+            size_of::<AerogpuCmdExportSharedSurface>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdExportSharedSurface, resource_handle),
+            resource_handle,
+        );
+        self.write_u64_at(base + offset_of!(AerogpuCmdExportSharedSurface, share_token), share_token);
+    }
+
+    pub fn import_shared_surface(&mut self, out_resource_handle: AerogpuHandle, share_token: u64) {
+        let base = self.append_raw(
+            AerogpuCmdOpcode::ImportSharedSurface,
+            size_of::<AerogpuCmdImportSharedSurface>(),
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdImportSharedSurface, out_resource_handle),
+            out_resource_handle,
+        );
+        self.write_u64_at(base + offset_of!(AerogpuCmdImportSharedSurface, share_token), share_token);
+    }
+
+    pub fn flush(&mut self) {
         let _base = self.append_raw(AerogpuCmdOpcode::Flush, size_of::<AerogpuCmdFlush>());
     }
 }

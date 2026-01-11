@@ -393,6 +393,54 @@ export class AerogpuCmdWriter {
     new Uint8Array(this.buf, base + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE, data.byteLength).set(data);
   }
 
+  copyBuffer(
+    dstBuffer: AerogpuHandle,
+    srcBuffer: AerogpuHandle,
+    dstOffsetBytes: bigint,
+    srcOffsetBytes: bigint,
+    sizeBytes: bigint,
+    flags: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.CopyBuffer, AEROGPU_CMD_COPY_BUFFER_SIZE);
+    this.view.setUint32(base + 8, dstBuffer, true);
+    this.view.setUint32(base + 12, srcBuffer, true);
+    this.view.setBigUint64(base + 16, dstOffsetBytes, true);
+    this.view.setBigUint64(base + 24, srcOffsetBytes, true);
+    this.view.setBigUint64(base + 32, sizeBytes, true);
+    this.view.setUint32(base + 40, flags, true);
+  }
+
+  copyTexture2d(
+    dstTexture: AerogpuHandle,
+    srcTexture: AerogpuHandle,
+    dstMipLevel: number,
+    dstArrayLayer: number,
+    srcMipLevel: number,
+    srcArrayLayer: number,
+    dstX: number,
+    dstY: number,
+    srcX: number,
+    srcY: number,
+    width: number,
+    height: number,
+    flags: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.CopyTexture2d, AEROGPU_CMD_COPY_TEXTURE2D_SIZE);
+    this.view.setUint32(base + 8, dstTexture, true);
+    this.view.setUint32(base + 12, srcTexture, true);
+    this.view.setUint32(base + 16, dstMipLevel, true);
+    this.view.setUint32(base + 20, dstArrayLayer, true);
+    this.view.setUint32(base + 24, srcMipLevel, true);
+    this.view.setUint32(base + 28, srcArrayLayer, true);
+    this.view.setUint32(base + 32, dstX, true);
+    this.view.setUint32(base + 36, dstY, true);
+    this.view.setUint32(base + 40, srcX, true);
+    this.view.setUint32(base + 44, srcY, true);
+    this.view.setUint32(base + 48, width, true);
+    this.view.setUint32(base + 52, height, true);
+    this.view.setUint32(base + 56, flags, true);
+  }
+
   createShaderDxbc(shaderHandle: AerogpuHandle, stage: AerogpuShaderStage, dxbcBytes: Uint8Array): void {
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
@@ -414,6 +462,22 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 16, cs, true);
   }
 
+  setShaderConstantsF(stage: AerogpuShaderStage, startRegister: number, data: Float32Array | readonly number[]): void {
+    if (data.length % 4 !== 0) {
+      throw new Error(`SET_SHADER_CONSTANTS_F data must be float4-aligned (got ${data.length} floats)`);
+    }
+
+    const vec4Count = data.length / 4;
+    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + data.length * 4;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsF, unpadded);
+    this.view.setUint32(base + 8, stage, true);
+    this.view.setUint32(base + 12, startRegister, true);
+    this.view.setUint32(base + 16, vec4Count, true);
+    for (let i = 0; i < data.length; i++) {
+      this.view.setFloat32(base + AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + i * 4, data[i]!, true);
+    }
+  }
+
   createInputLayout(inputLayoutHandle: AerogpuHandle, blob: Uint8Array): void {
     const unpadded = AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE + blob.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateInputLayout, unpadded);
@@ -430,6 +494,53 @@ export class AerogpuCmdWriter {
   setInputLayout(inputLayoutHandle: AerogpuHandle): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetInputLayout, AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE);
     this.view.setUint32(base + 8, inputLayoutHandle, true);
+  }
+
+  setBlendState(
+    enable: boolean | number,
+    srcFactor: AerogpuBlendFactor,
+    dstFactor: AerogpuBlendFactor,
+    blendOp: AerogpuBlendOp,
+    colorWriteMask: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetBlendState, AEROGPU_CMD_SET_BLEND_STATE_SIZE);
+    this.view.setUint32(base + 8, enable ? 1 : 0, true);
+    this.view.setUint32(base + 12, srcFactor, true);
+    this.view.setUint32(base + 16, dstFactor, true);
+    this.view.setUint32(base + 20, blendOp, true);
+    this.view.setUint8(base + 24, colorWriteMask);
+  }
+
+  setDepthStencilState(
+    depthEnable: boolean | number,
+    depthWriteEnable: boolean | number,
+    depthFunc: AerogpuCompareFunc,
+    stencilEnable: boolean | number,
+    stencilReadMask: number,
+    stencilWriteMask: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetDepthStencilState, AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE);
+    this.view.setUint32(base + 8, depthEnable ? 1 : 0, true);
+    this.view.setUint32(base + 12, depthWriteEnable ? 1 : 0, true);
+    this.view.setUint32(base + 16, depthFunc, true);
+    this.view.setUint32(base + 20, stencilEnable ? 1 : 0, true);
+    this.view.setUint8(base + 24, stencilReadMask);
+    this.view.setUint8(base + 25, stencilWriteMask);
+  }
+
+  setRasterizerState(
+    fillMode: AerogpuFillMode,
+    cullMode: AerogpuCullMode,
+    frontCcw: boolean | number,
+    scissorEnable: boolean | number,
+    depthBias: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetRasterizerState, AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE);
+    this.view.setUint32(base + 8, fillMode, true);
+    this.view.setUint32(base + 12, cullMode, true);
+    this.view.setUint32(base + 16, frontCcw ? 1 : 0, true);
+    this.view.setUint32(base + 20, scissorEnable ? 1 : 0, true);
+    this.view.setInt32(base + 24, depthBias, true);
   }
 
   setRenderTargets(colors: readonly AerogpuHandle[], depthStencil: AerogpuHandle): void {
@@ -488,6 +599,27 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 8, topology, true);
   }
 
+  setTexture(shaderStage: AerogpuShaderStage, slot: number, texture: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE);
+    this.view.setUint32(base + 8, shaderStage, true);
+    this.view.setUint32(base + 12, slot, true);
+    this.view.setUint32(base + 16, texture, true);
+  }
+
+  setSamplerState(shaderStage: AerogpuShaderStage, slot: number, state: number, value: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetSamplerState, AEROGPU_CMD_SET_SAMPLER_STATE_SIZE);
+    this.view.setUint32(base + 8, shaderStage, true);
+    this.view.setUint32(base + 12, slot, true);
+    this.view.setUint32(base + 16, state, true);
+    this.view.setUint32(base + 20, value, true);
+  }
+
+  setRenderState(state: number, value: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetRenderState, AEROGPU_CMD_SET_RENDER_STATE_SIZE);
+    this.view.setUint32(base + 8, state, true);
+    this.view.setUint32(base + 12, value, true);
+  }
+
   clear(flags: number, colorRgba: [number, number, number, number], depth: number, stencil: number): void {
     const base = this.appendRaw(AerogpuCmdOpcode.Clear, AEROGPU_CMD_CLEAR_SIZE);
     this.view.setUint32(base + 8, flags, true);
@@ -525,6 +657,25 @@ export class AerogpuCmdWriter {
     const base = this.appendRaw(AerogpuCmdOpcode.Present, AEROGPU_CMD_PRESENT_SIZE);
     this.view.setUint32(base + 8, scanoutId, true);
     this.view.setUint32(base + 12, flags, true);
+  }
+
+  presentEx(scanoutId: number, flags: number, d3d9PresentFlags: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.PresentEx, AEROGPU_CMD_PRESENT_EX_SIZE);
+    this.view.setUint32(base + 8, scanoutId, true);
+    this.view.setUint32(base + 12, flags, true);
+    this.view.setUint32(base + 16, d3d9PresentFlags, true);
+  }
+
+  exportSharedSurface(resourceHandle: AerogpuHandle, shareToken: bigint): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.ExportSharedSurface, AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE);
+    this.view.setUint32(base + 8, resourceHandle, true);
+    this.view.setBigUint64(base + 16, shareToken, true);
+  }
+
+  importSharedSurface(outResourceHandle: AerogpuHandle, shareToken: bigint): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.ImportSharedSurface, AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE);
+    this.view.setUint32(base + 8, outResourceHandle, true);
+    this.view.setBigUint64(base + 16, shareToken, true);
   }
 
   flush(): void {

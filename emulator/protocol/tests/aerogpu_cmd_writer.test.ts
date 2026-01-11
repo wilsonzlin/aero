@@ -5,10 +5,25 @@ import {
   AEROGPU_CMD_HDR_OFF_OPCODE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
+  AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
+  AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
+  AEROGPU_CMD_PRESENT_EX_SIZE,
+  AEROGPU_CMD_SET_BLEND_STATE_SIZE,
+  AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE,
+  AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE,
+  AEROGPU_CMD_SET_RENDER_STATE_SIZE,
+  AEROGPU_CMD_SET_SAMPLER_STATE_SIZE,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
+  AEROGPU_CMD_SET_TEXTURE_SIZE,
   AerogpuCmdOpcode,
   AerogpuCmdWriter,
+  AerogpuBlendFactor,
+  AerogpuBlendOp,
+  AerogpuCompareFunc,
+  AerogpuCullMode,
+  AerogpuFillMode,
   AerogpuShaderStage,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -80,3 +95,63 @@ test("AerogpuCmdWriter emits aligned packets and updates stream header size", ()
   );
 });
 
+test("AerogpuCmdWriter emits pipeline and binding packets", () => {
+  const w = new AerogpuCmdWriter();
+
+  w.setShaderConstantsF(AerogpuShaderStage.Pixel, 4, new Float32Array([1, 2, 3, 4]));
+  w.setTexture(AerogpuShaderStage.Pixel, 0, 99);
+  w.setSamplerState(AerogpuShaderStage.Pixel, 0, 7, 42);
+  w.setRenderState(10, 20);
+  w.setBlendState(true, AerogpuBlendFactor.One, AerogpuBlendFactor.Zero, AerogpuBlendOp.Add, 0xf);
+  w.setDepthStencilState(true, true, AerogpuCompareFunc.LessEqual, false, 0xaa, 0xbb);
+  w.setRasterizerState(AerogpuFillMode.Solid, AerogpuCullMode.Back, false, true, -1);
+  w.presentEx(0, 0, 0x12345678);
+  w.exportSharedSurface(55, 0x0102030405060708n);
+  w.importSharedSurface(56, 0x0102030405060708n);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdStreamHeader(view, 0);
+  assert.equal(hdr.sizeBytes, bytes.byteLength);
+
+  const expected: Array<[number, number]> = [
+    [AerogpuCmdOpcode.SetShaderConstantsF, AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16],
+    [AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE],
+    [AerogpuCmdOpcode.SetSamplerState, AEROGPU_CMD_SET_SAMPLER_STATE_SIZE],
+    [AerogpuCmdOpcode.SetRenderState, AEROGPU_CMD_SET_RENDER_STATE_SIZE],
+    [AerogpuCmdOpcode.SetBlendState, AEROGPU_CMD_SET_BLEND_STATE_SIZE],
+    [AerogpuCmdOpcode.SetDepthStencilState, AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE],
+    [AerogpuCmdOpcode.SetRasterizerState, AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE],
+    [AerogpuCmdOpcode.PresentEx, AEROGPU_CMD_PRESENT_EX_SIZE],
+    [AerogpuCmdOpcode.ExportSharedSurface, AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE],
+    [AerogpuCmdOpcode.ImportSharedSurface, AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE],
+    [AerogpuCmdOpcode.Flush, 16],
+  ];
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  for (const [expectedOpcode, expectedSize] of expected) {
+    const opcode = view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true);
+    const sizeBytes = view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
+    assert.equal(opcode, expectedOpcode);
+    assert.equal(sizeBytes, expectedSize);
+    cursor += expectedSize;
+  }
+  assert.equal(cursor, bytes.byteLength);
+
+  // Validate variable-length constants packet.
+  const pkt0Base = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0Base + 16, true), 1);
+  assert.equal(view.getFloat32(pkt0Base + AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE, true), 1);
+
+  // Validate byte-sized fields within nested state structs.
+  const blendBase = pkt0Base + expected[0][1] + expected[1][1] + expected[2][1] + expected[3][1];
+  assert.equal(view.getUint8(blendBase + 24), 0xf);
+
+  const depthBase = blendBase + expected[4][1];
+  assert.equal(view.getUint8(depthBase + 24), 0xaa);
+  assert.equal(view.getUint8(depthBase + 25), 0xbb);
+
+  const rastBase = depthBase + expected[5][1];
+  assert.equal(view.getInt32(rastBase + 24, true), -1);
+});
