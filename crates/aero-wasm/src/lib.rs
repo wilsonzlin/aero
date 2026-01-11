@@ -599,9 +599,10 @@ impl WebHidPassthroughBridge {
         serial: Option<String>,
         collections: JsValue,
     ) -> Result<Self, JsValue> {
-        let collections: Vec<webhid::HidCollectionInfo> =
-            serde_wasm_bindgen::from_value(collections)
-                .map_err(|e| js_error(&format!("invalid WebHID collections metadata: {e}")))?;
+        let collections: Vec<webhid::HidCollectionInfo> = serde_path_to_error::deserialize(
+            serde_wasm_bindgen::Deserializer::from(collections),
+        )
+        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
         let report_descriptor = webhid::synthesize_report_descriptor(&collections)
             .map_err(|e| js_error(&format!("failed to synthesize HID report descriptor: {e}")))?;
