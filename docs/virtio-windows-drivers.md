@@ -218,7 +218,8 @@ python3 tools/driver-iso/build.py \
 
 ### Build an ISO from an upstream virtio-win ISO (recommended flow)
 
-On a Windows machine (or Windows VM) where you downloaded `virtio-win.iso`:
+On Windows you can mount `virtio-win.iso` directly. On Linux/macOS, extract it first with
+`tools/virtio-win/extract.py` and then pass `-VirtioWinRoot` to the PowerShell scripts.
 
 Quick one-liner wrapper (does both steps):
 
@@ -240,6 +241,20 @@ By default this requires `viostor` + `netkvm` and attempts to include `vioinput`
 
 - Minimal pack: `-Drivers viostor,netkvm`
 - Strict optional (fail if audio/input are missing): `-StrictOptional`
+
+On Linux/macOS:
+
+```bash
+python3 tools/virtio-win/extract.py \
+  --virtio-win-iso virtio-win.iso \
+  --out-root /tmp/virtio-win-root
+
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root -NoZip
+```
+
+`tools/virtio-win/extract.py` also writes a machine-readable provenance file to:
+
+- `/tmp/virtio-win-root/virtio-win-provenance.json`
 
 This produces a staging directory (by default) at:
 
@@ -263,13 +278,27 @@ Notes:
 
 This produces a Guest Tools ISO that includes virtio drivers plus install scripts/certs.
 
-On a Windows machine with Rust (`cargo`) installed:
+On a machine with Rust (`cargo`) installed:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
+  -BuildId local
+```
+
+On Linux/macOS, extract first and pass `-VirtioWinRoot`:
+
+```bash
+python3 tools/virtio-win/extract.py \
+  --virtio-win-iso virtio-win.iso \
+  --out-root /tmp/virtio-win-root
+
+pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
+  -VirtioWinRoot /tmp/virtio-win-root \
+  -OutDir ./dist/guest-tools \
+  -Version 0.0.0 \
   -BuildId local
 ```
 

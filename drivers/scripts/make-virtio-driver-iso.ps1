@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory = $true, ParameterSetName = "FromRoot")]
   [string]$VirtioWinRoot,
 
-  [string]$OutIso = (Join-Path $PSScriptRoot "..\out\aero-virtio-win7-drivers.iso"),
+  [string]$OutIso = (Join-Path (Join-Path (Join-Path $PSScriptRoot "..") "out") "aero-virtio-win7-drivers.iso"),
 
   # Optional: override which driver packages are extracted from virtio-win.
   [string[]]$Drivers,
@@ -30,9 +30,15 @@ function Resolve-Python {
   return $null
 }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+function Resolve-WindowsPowerShell {
+  $cmd = Get-Command "powershell" -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  return $null
+}
+
+$repoRoot = (Resolve-Path (Join-Path (Join-Path $PSScriptRoot "..") "..")).Path
 $packScript = Join-Path $PSScriptRoot "make-driver-pack.ps1"
-$driversOut = Join-Path $PSScriptRoot "..\out"
+$driversOut = Join-Path (Join-Path $PSScriptRoot "..") "out"
 $null = New-Item -ItemType Directory -Force -Path $driversOut
 $driversOut = (Resolve-Path -LiteralPath $driversOut).Path
 $packRoot = Join-Path $driversOut "aero-win7-driver-pack"
@@ -62,7 +68,16 @@ if ($PSCmdlet.ParameterSetName -eq "FromIso") {
   $packArgs += @("-VirtioWinRoot", $VirtioWinRoot)
 }
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File $packScript @packArgs
+if ($PSCmdlet.ParameterSetName -eq "FromIso") {
+  $winPs = Resolve-WindowsPowerShell
+  if ($winPs) {
+    & $winPs -NoProfile -ExecutionPolicy Bypass -File $packScript @packArgs
+  } else {
+    & $packScript @packArgs
+  }
+} else {
+  & $packScript @packArgs
+}
 if ($LASTEXITCODE -ne 0) {
   throw "make-driver-pack.ps1 failed (exit $LASTEXITCODE)."
 }
@@ -76,7 +91,7 @@ if (-not $python) {
   throw "Python not found on PATH. Install Python 3 and re-run."
 }
 
-$isoBuilder = Join-Path $repoRoot "tools\driver-iso\build.py"
+$isoBuilder = Join-Path (Join-Path (Join-Path $repoRoot "tools") "driver-iso") "build.py"
 if (-not (Test-Path -LiteralPath $isoBuilder -PathType Leaf)) {
   throw "Expected ISO builder not found: $isoBuilder"
 }

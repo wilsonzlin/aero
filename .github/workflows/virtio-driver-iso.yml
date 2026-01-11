@@ -19,7 +19,7 @@ jobs:
       - name: Install ISO tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y xorriso
+          sudo apt-get install -y xorriso p7zip-full
 
       - name: Build sample virtio drivers ISO
         run: |
@@ -33,6 +33,10 @@ jobs:
           python3 tools/driver-iso/verify_iso.py \
             --require-arch both \
             --iso dist/aero-virtio-win7-drivers-sample.iso
+
+      - name: Smoke test virtio-win extractor (synthetic ISO)
+        run: |
+          python3 tools/virtio-win/tests/test_extract.py
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4

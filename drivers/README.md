@@ -19,10 +19,12 @@ This repo **does not commit** `.sys` binaries. Instead, we provide scripts that 
 
 ## Quickstart: build an Aero driver pack ZIP
 
-1. Download a **virtio-win ISO** (stable) on a Windows build machine (Windows 10/11 recommended).
+1. Download a **virtio-win ISO** (stable) on a build machine.
    - Example: `virtio-win.iso` from the virtio-win project’s “stable-virtio” direct downloads.
 
-2. Run:
+2. Build the driver pack:
+
+### Windows host (mount ISO directly)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 `
@@ -36,6 +38,18 @@ Notes:
   - `-Drivers viostor,netkvm`
 - To fail if optional drivers are requested but missing:
   - `-StrictOptional` (typically used together with `-Drivers viostor,netkvm,viosnd,vioinput`)
+### Linux/macOS host (extract ISO, then use `-VirtioWinRoot`)
+
+`drivers/scripts/make-driver-pack.ps1` can run under PowerShell 7 (`pwsh`), but ISO mounting is Windows-only.
+First extract the ISO using the cross-platform extractor (prefers `7z` if present):
+
+```bash
+python3 tools/virtio-win/extract.py \
+  --virtio-win-iso virtio-win.iso \
+  --out-root /tmp/virtio-win-root
+
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
+```
 
 Output:
 
@@ -57,6 +71,8 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-virtio-driver-is
   -OutIso .\dist\aero-virtio-win7-drivers.iso
 ```
 
+On non-Windows hosts, extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot` instead.
+
 See also: `docs/virtio-windows-drivers.md`.
 
 Note: the resulting drivers ISO includes `THIRD_PARTY_NOTICES.md` at the ISO root
@@ -71,6 +87,8 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -VirtioWinIso C:\path\to\virtio-win.iso `
   -OutDir .\dist\guest-tools
 ```
+
+On non-Windows hosts, extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot` instead.
 
 This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
 

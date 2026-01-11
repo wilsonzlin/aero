@@ -27,7 +27,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Resolve-RepoRoot {
-  return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+  return (Resolve-Path (Join-Path (Join-Path $PSScriptRoot "..") "..")).Path
 }
 
 function Ensure-EmptyDirectory {
@@ -57,15 +57,15 @@ function Require-Command {
 $repoRoot = Resolve-RepoRoot
 
 if (-not $OutDir) {
-  $OutDir = Join-Path $repoRoot "dist\guest-tools"
+  $OutDir = Join-Path (Join-Path $repoRoot "dist") "guest-tools"
 }
 if (-not $SpecPath) {
-  $SpecPath = Join-Path $repoRoot "tools\packaging\specs\win7-virtio-win.json"
+  $SpecPath = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot "tools") "packaging") "specs") "win7-virtio-win.json"
 }
 
 $guestToolsDir = Join-Path $repoRoot "guest-tools"
-$packScript = Join-Path $repoRoot "drivers\scripts\make-driver-pack.ps1"
-$driversOutDir = Join-Path $repoRoot "drivers\out"
+$packScript = Join-Path (Join-Path (Join-Path $repoRoot "drivers") "scripts") "make-driver-pack.ps1"
+$driversOutDir = Join-Path (Join-Path $repoRoot "drivers") "out"
 $driverPackRoot = Join-Path $driversOutDir "aero-win7-driver-pack"
 $packagerDriversRoot = Join-Path $driversOutDir "aero-guest-tools-drivers"
 
@@ -104,7 +104,16 @@ if ($PSCmdlet.ParameterSetName -eq "FromIso") {
 }
 
 Write-Host "Building driver pack staging directory..."
-& powershell -NoProfile -ExecutionPolicy Bypass -File $packScript @packArgs
+if ($PSCmdlet.ParameterSetName -eq "FromIso") {
+  $winPs = Get-Command "powershell" -ErrorAction SilentlyContinue
+  if ($winPs) {
+    & $winPs.Source -NoProfile -ExecutionPolicy Bypass -File $packScript @packArgs
+  } else {
+    & $packScript @packArgs
+  }
+} else {
+  & $packScript @packArgs
+}
 if ($LASTEXITCODE -ne 0) {
   throw "make-driver-pack.ps1 failed (exit $LASTEXITCODE)."
 }
@@ -134,8 +143,9 @@ function Copy-DriverTree {
   }
 }
 
-Copy-DriverTree -SourceArchDir (Join-Path $driverPackRoot "win7\\x86") -DestArchDir (Join-Path $packagerDriversRoot "x86")
-Copy-DriverTree -SourceArchDir (Join-Path $driverPackRoot "win7\\amd64") -DestArchDir (Join-Path $packagerDriversRoot "amd64")
+$driverPackWin7Root = Join-Path $driverPackRoot "win7"
+Copy-DriverTree -SourceArchDir (Join-Path $driverPackWin7Root "x86") -DestArchDir (Join-Path $packagerDriversRoot "x86")
+Copy-DriverTree -SourceArchDir (Join-Path $driverPackWin7Root "amd64") -DestArchDir (Join-Path $packagerDriversRoot "amd64")
 
 Write-Host "Packager input prepared:"
 Write-Host "  $packagerDriversRoot"
@@ -143,7 +153,7 @@ Write-Host "  $packagerDriversRoot"
 # 3) Build the actual Guest Tools ISO/zip using the in-repo packager.
 Require-Command -Name "cargo" | Out-Null
 
-$packagerManifest = Join-Path $repoRoot "tools\\packaging\\aero_packager\\Cargo.toml"
+$packagerManifest = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot "tools") "packaging") "aero_packager") "Cargo.toml"
 if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
   throw "Expected packager manifest not found: $packagerManifest"
 }

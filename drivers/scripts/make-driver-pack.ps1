@@ -1,3 +1,26 @@
+<#
+.SYNOPSIS
+Build an Aero Windows 7 driver pack from an upstream virtio-win ISO (or extracted root).
+
+.DESCRIPTION
+On Windows, this script can mount `virtio-win.iso` directly via `Mount-DiskImage` by
+passing `-VirtioWinIso`.
+
+On Linux/macOS, `Mount-DiskImage` is not available. Use the cross-platform extractor
+(`python3 tools/virtio-win/extract.py --virtio-win-iso … --out-root …`) and then pass
+`-VirtioWinRoot` to the extracted directory.
+
+.EXAMPLE
+# Windows:
+powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 `
+  -VirtioWinIso C:\path\to\virtio-win.iso
+
+.EXAMPLE
+# Linux/macOS:
+python3 tools/virtio-win/extract.py --virtio-win-iso virtio-win.iso --out-root /tmp/virtio-win-root
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
+#>
+
 [CmdletBinding(DefaultParameterSetName = "FromRoot")]
 param(
   [Parameter(Mandatory = $true, ParameterSetName = "FromIso")]
@@ -6,7 +29,7 @@ param(
   [Parameter(Mandatory = $true, ParameterSetName = "FromRoot")]
   [string]$VirtioWinRoot,
 
-  [string]$OutDir = (Join-Path $PSScriptRoot "..\out"),
+  [string]$OutDir = (Join-Path (Join-Path $PSScriptRoot "..") "out"),
 
   [string[]]$OsFolderCandidates = @("w7", "w7.1", "win7"),
 
@@ -186,8 +209,9 @@ try {
     Remove-Item -Path $packRoot -Recurse -Force
   }
 
-  $win7Amd64 = Join-Path $packRoot "win7\amd64"
-  $win7X86 = Join-Path $packRoot "win7\x86"
+  $win7Root = Join-Path $packRoot "win7"
+  $win7Amd64 = Join-Path $win7Root "amd64"
+  $win7X86 = Join-Path $win7Root "x86"
 
   New-Item -ItemType Directory -Path $win7Amd64 -Force | Out-Null
   New-Item -ItemType Directory -Path $win7X86 -Force | Out-Null
@@ -195,13 +219,13 @@ try {
   Copy-Item -Path (Join-Path $PSScriptRoot "install.cmd") -Destination (Join-Path $packRoot "install.cmd") -Force
   Copy-Item -Path (Join-Path $PSScriptRoot "enable-testsigning.cmd") -Destination (Join-Path $packRoot "enable-testsigning.cmd") -Force
 
-  $noticesSrc = Join-Path $PSScriptRoot "..\virtio\THIRD_PARTY_NOTICES.md"
+  $noticesSrc = Join-Path (Join-Path (Join-Path $PSScriptRoot "..") "virtio") "THIRD_PARTY_NOTICES.md"
   if (-not (Test-Path -LiteralPath $noticesSrc -PathType Leaf)) {
     throw "Expected third-party notices file not found: $noticesSrc"
   }
   Copy-Item -LiteralPath $noticesSrc -Destination (Join-Path $packRoot "THIRD_PARTY_NOTICES.md") -Force
 
-  $virtioReadmeSrc = Join-Path $PSScriptRoot "..\virtio\README.md"
+  $virtioReadmeSrc = Join-Path (Join-Path (Join-Path $PSScriptRoot "..") "virtio") "README.md"
   if (Test-Path -LiteralPath $virtioReadmeSrc -PathType Leaf) {
     Copy-Item -LiteralPath $virtioReadmeSrc -Destination (Join-Path $packRoot "README.md") -Force
   }
