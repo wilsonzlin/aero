@@ -4,7 +4,6 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-
 use crate::hub::UsbHub;
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
@@ -434,6 +433,21 @@ impl UsbHubDevice {
             hub_descriptor: build_hub_descriptor(num_ports),
             ep0: Ep0Control::new(),
         }
+    }
+
+    pub(crate) fn snapshot_port_count(bytes: &[u8]) -> SnapshotResult<usize> {
+        const TAG_NUM_PORTS: u16 = 7;
+
+        let r = SnapshotReader::parse(bytes, <Self as IoSnapshot>::DEVICE_ID)?;
+        r.ensure_device_major(<Self as IoSnapshot>::DEVICE_VERSION.major)?;
+        let count = r
+            .u32(TAG_NUM_PORTS)?
+            .ok_or(SnapshotError::InvalidFieldEncoding("missing hub port count"))?
+            as usize;
+        if count == 0 || count > u8::MAX as usize {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid hub port count"));
+        }
+        Ok(count)
     }
 
     /// Attaches `device` to downstream hub port `port` (1-based, as per USB hub spec).
@@ -916,6 +930,10 @@ impl UsbHub for UsbHubDevice {
         None
     }
 
+    fn downstream_device(&self, port: usize) -> Option<&dyn UsbDevice> {
+        self.ports.get(port)?.device.as_deref()
+    }
+
     fn downstream_device_mut(&mut self, port: usize) -> Option<&mut dyn UsbDevice> {
         Some(self.ports.get_mut(port)?.device.as_mut()?.as_mut())
     }
@@ -1022,6 +1040,10 @@ impl IoSnapshot for UsbHubDevice {
         const TAG_PORTS: u16 = 8;
         const TAG_EP0: u16 = 9;
 
+        const MAX_PORTS: usize = u8::MAX as usize;
+        const MAX_PORT_RECORD_BYTES: usize = 64;
+        const MAX_EP0_DATA_BYTES: usize = 128 * 1024;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -1035,7 +1057,11 @@ impl IoSnapshot for UsbHubDevice {
         self.ep0 = Ep0Control::new();
 
         if let Some(num_ports) = r.u32(TAG_NUM_PORTS)? {
-            if num_ports as usize != self.ports.len() {
+            let num_ports = num_ports as usize;
+            if num_ports == 0 || num_ports > MAX_PORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("hub port count"));
+            }
+            if num_ports != self.ports.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("hub port count"));
             }
         }
@@ -1047,15 +1073,36 @@ impl IoSnapshot for UsbHubDevice {
         self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
         self.interrupt_ep_halted = r.bool(TAG_INTERRUPT_HALTED)?.unwrap_or(false);
 
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
+        if self.configuration > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
+        }
+        if self.pending_configuration.is_some_and(|v| v > 1) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending configuration",
+            ));
+        }
+
         if let Some(buf) = r.bytes(TAG_PORTS) {
             let mut d = Decoder::new(buf);
-            let port_records = d.vec_bytes()?;
-            d.finish()?;
-            if port_records.len() != self.ports.len() {
+            let count = d.u32()? as usize;
+            if count != self.ports.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("hub ports"));
             }
-            for (port, rec) in self.ports.iter_mut().zip(port_records) {
-                let mut pd = Decoder::new(&rec);
+            for port in self.ports.iter_mut() {
+                let rec_len = d.u32()? as usize;
+                if rec_len > MAX_PORT_RECORD_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("hub port record too large"));
+                }
+                let rec = d.bytes(rec_len)?;
+                let mut pd = Decoder::new(rec);
                 port.connected = pd.bool()?;
                 port.connect_change = pd.bool()?;
                 port.enabled = pd.bool()?;
@@ -1067,7 +1114,31 @@ impl IoSnapshot for UsbHubDevice {
                 port.reset_countdown_ms = pd.u8()?;
                 port.reset_change = pd.bool()?;
                 pd.finish()?;
+
+                let has_dev = port.device.is_some();
+                if has_dev && !port.connected {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "hub port device presence mismatch",
+                    ));
+                }
+
+                if port.suspended && !port.enabled {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "hub port suspended while disabled",
+                    ));
+                }
+
+                if !port.reset && port.reset_countdown_ms != 0 {
+                    // Countdown only has meaning while reset is active; tolerate forward versions by
+                    // treating a stale countdown as 0.
+                    port.reset_countdown_ms = 0;
+                }
+
+                if has_dev && !port.powered {
+                    port.enabled = false;
+                }
             }
+            d.finish()?;
         }
 
         if let Some(buf) = r.bytes(TAG_EP0) {
@@ -1092,7 +1163,11 @@ impl IoSnapshot for UsbHubDevice {
             } else {
                 None
             };
-            let in_data = d.vec_u8()?;
+            let in_len = d.u32()? as usize;
+            if in_len > MAX_EP0_DATA_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 in_data too large"));
+            }
+            let in_data = d.bytes(in_len)?.to_vec();
             let in_offset = d.u32()? as usize;
             if in_offset > in_data.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
@@ -1101,7 +1176,11 @@ impl IoSnapshot for UsbHubDevice {
                 return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
             }
             let out_expected = d.u32()? as usize;
-            let out_data = d.vec_u8()?;
+            let out_len = d.u32()? as usize;
+            if out_len > MAX_EP0_DATA_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+            }
+            let out_data = d.bytes(out_len)?.to_vec();
             let stalled = d.bool()?;
             d.finish()?;
 

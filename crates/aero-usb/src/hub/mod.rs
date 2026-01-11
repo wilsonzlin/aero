@@ -32,6 +32,12 @@ pub trait UsbHub {
     ///
     /// This accessor is used by topology configuration helpers (e.g. attaching devices behind
     /// nested hubs) and does not need to apply reachability rules.
+    fn downstream_device(&self, port: usize) -> Option<&dyn UsbDevice>;
+
+    /// Returns the device currently attached to `port`, if any.
+    ///
+    /// This accessor is used by topology configuration helpers (e.g. attaching devices behind
+    /// nested hubs) and does not need to apply reachability rules.
     fn downstream_device_mut(&mut self, port: usize) -> Option<&mut dyn UsbDevice>;
 
     /// Attaches a new device to the given downstream port.

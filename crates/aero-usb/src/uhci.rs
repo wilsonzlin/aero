@@ -1,6 +1,5 @@
 use crate::memory::GuestMemory;
 use crate::usb::{SetupPacket, UsbBus, UsbHandshake, UsbPid, UsbSpeed};
-
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -685,6 +684,7 @@ impl IoSnapshot for UhciController {
         const TAG_FRBASEADD: u16 = 8;
         const TAG_SOFMOD: u16 = 9;
         const TAG_PORTS: u16 = 10;
+        const TAG_BUS: u16 = 11;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u16(TAG_IO_BASE, self.io_base);
@@ -713,6 +713,46 @@ impl IoSnapshot for UhciController {
         }
         w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
 
+        fn device_is_snapshotable(dev: &dyn crate::usb::UsbDevice) -> bool {
+            dev.as_any()
+                .is::<crate::hub::UsbHubDevice>()
+                || dev.as_any().is::<crate::hid::UsbHidKeyboard>()
+                || dev.as_any().is::<crate::hid::UsbHidMouse>()
+                || dev.as_any().is::<crate::hid::UsbHidGamepad>()
+                || dev.as_any().is::<crate::hid::UsbHidCompositeInput>()
+                || dev
+                    .as_any()
+                    .is::<crate::hid::passthrough::UsbHidPassthrough>()
+                || dev.as_any().is::<crate::UsbWebUsbPassthroughDevice>()
+        }
+
+        fn device_tree_is_snapshotable(dev: &dyn crate::usb::UsbDevice) -> bool {
+            if !device_is_snapshotable(dev) {
+                return false;
+            }
+            if let Some(hub) = dev.as_hub() {
+                for port in 0..hub.num_ports() {
+                    if let Some(child) = hub.downstream_device(port) {
+                        if !device_tree_is_snapshotable(child) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        }
+
+        let bus_snapshotable = (0..self.bus.num_ports()).all(|idx| {
+            self.bus
+                .port(idx)
+                .and_then(|port| port.device.as_deref())
+                .map_or(true, device_tree_is_snapshotable)
+        });
+
+        if bus_snapshotable {
+            w.field_bytes(TAG_BUS, self.bus.save_state());
+        }
+
         w.finish()
     }
 
@@ -727,64 +767,91 @@ impl IoSnapshot for UhciController {
         const TAG_FRBASEADD: u16 = 8;
         const TAG_SOFMOD: u16 = 9;
         const TAG_PORTS: u16 = 10;
+        const TAG_BUS: u16 = 11;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        if let Some(io_base) = r.u16(TAG_IO_BASE)? {
-            self.io_base = io_base;
+        self.io_base = r.u16(TAG_IO_BASE)?.unwrap_or(0);
+        self.irq_line = r.u8(TAG_IRQ_LINE)?.unwrap_or(0);
+        self.usbcmd = r.u16(TAG_USBCMD)?.unwrap_or(0);
+        self.usbsts = r.u16(TAG_USBSTS)?.unwrap_or(USBSTS_HC_HALT);
+        self.usbintr = r.u16(TAG_USBINTR)?.unwrap_or(0);
+        self.usbint_causes = r.u16(TAG_USBINT_CAUSES)?.unwrap_or(0);
+        self.frnum = r.u16(TAG_FRNUM)?.unwrap_or(0);
+        self.frbaseadd = r.u32(TAG_FRBASEADD)?.unwrap_or(0);
+        self.sofmod = r.u8(TAG_SOFMOD)?.unwrap_or(0x40);
+
+        let has_bus = r.bytes(TAG_BUS).is_some();
+        if let Some(buf) = r.bytes(TAG_BUS) {
+            self.bus.load_state(buf)?;
+        } else {
+            self.bus = UsbBus::new(self.ports.len());
         }
-        if let Some(irq_line) = r.u8(TAG_IRQ_LINE)? {
-            self.irq_line = irq_line;
-        }
-        if let Some(usbcmd) = r.u16(TAG_USBCMD)? {
-            self.usbcmd = usbcmd;
-        }
-        if let Some(usbsts) = r.u16(TAG_USBSTS)? {
-            self.usbsts = usbsts;
-        }
-        if let Some(usbintr) = r.u16(TAG_USBINTR)? {
-            self.usbintr = usbintr;
-        }
-        if let Some(causes) = r.u16(TAG_USBINT_CAUSES)? {
-            self.usbint_causes = causes;
-        }
-        if let Some(frnum) = r.u16(TAG_FRNUM)? {
-            self.frnum = frnum;
-        }
-        if let Some(frbaseadd) = r.u32(TAG_FRBASEADD)? {
-            self.frbaseadd = frbaseadd;
-        }
-        if let Some(sofmod) = r.u8(TAG_SOFMOD)? {
-            self.sofmod = sofmod;
+
+        if self.bus.num_ports() != self.ports.len() {
+            return Err(SnapshotError::InvalidFieldEncoding("UHCI bus port count mismatch"));
         }
 
         if let Some(buf) = r.bytes(TAG_PORTS) {
+            const MAX_PORT_RECORD_BYTES: usize = 64;
+
             let mut d = Decoder::new(buf);
-            let port_records = d.vec_bytes()?;
-            d.finish()?;
-            if port_records.len() != self.ports.len() {
-                return Err(SnapshotError::InvalidFieldEncoding("uhci ports"));
+            let count = d.u32()? as usize;
+            if count != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("UHCI port count mismatch"));
             }
 
-            for (idx, (port, rec)) in self
-                .ports
-                .iter_mut()
-                .zip(port_records.into_iter())
-                .enumerate()
-            {
-                let mut pd = Decoder::new(&rec);
-                port.reg = pd.u16()?;
-                port.reset_timer_ms = pd.u8()?;
+            for idx in 0..count {
+                let rec_len = d.u32()? as usize;
+                if rec_len > MAX_PORT_RECORD_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("UHCI port record too large"));
+                }
+                let rec = d.bytes(rec_len)?;
+                let mut pd = Decoder::new(rec);
+                self.ports[idx].reg = pd.u16()?;
+                self.ports[idx].reset_timer_ms = pd.u8()?;
                 let connected = pd.bool()?;
                 let enabled = pd.bool()?;
                 pd.finish()?;
 
-                let Some(bus_port) = self.bus.port_mut(idx) else {
-                    return Err(SnapshotError::InvalidFieldEncoding("uhci bus port"));
-                };
-                bus_port.connected = connected;
-                bus_port.enabled = enabled;
+                if has_bus {
+                    if let Some(bus_port) = self.bus.port(idx) {
+                        if bus_port.connected != connected || bus_port.enabled != enabled {
+                            return Err(SnapshotError::InvalidFieldEncoding(
+                                "UHCI bus port state mismatch",
+                            ));
+                        }
+                    } else {
+                        return Err(SnapshotError::InvalidFieldEncoding("UHCI bus port missing"));
+                    }
+                } else {
+                    let Some(bus_port) = self.bus.port_mut(idx) else {
+                        return Err(SnapshotError::InvalidFieldEncoding("UHCI bus port missing"));
+                    };
+                    bus_port.connected = connected;
+                    bus_port.enabled = enabled;
+                }
+            }
+            d.finish()?;
+        } else {
+            self.ports = [PortState::default(), PortState::default()];
+        }
+
+        // Keep CCS/PED bits coherent with the restored bus port state to avoid drift in change-bit
+        // generation.
+        for idx in 0..self.ports.len() {
+            if let Some(port) = self.bus.port(idx) {
+                if port.connected {
+                    self.ports[idx].reg |= PORTSC_CCS;
+                } else {
+                    self.ports[idx].reg &= !PORTSC_CCS;
+                }
+                if port.enabled {
+                    self.ports[idx].reg |= PORTSC_PED;
+                } else {
+                    self.ports[idx].reg &= !PORTSC_PED;
+                }
             }
         }
 

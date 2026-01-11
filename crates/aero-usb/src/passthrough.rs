@@ -12,10 +12,10 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,6 +274,221 @@ impl UsbPassthroughDevice {
         self.completions.clear();
         self.control_inflight = None;
         self.ep_inflight.clear();
+    }
+
+    pub(crate) fn snapshot_save(&self) -> Vec<u8> {
+        fn enc_setup(enc: Encoder, setup: SetupPacket) -> Encoder {
+            enc.u8(setup.bm_request_type)
+                .u8(setup.b_request)
+                .u16(setup.w_value)
+                .u16(setup.w_index)
+                .u16(setup.w_length)
+        }
+
+        fn enc_action(enc: Encoder, action: &UsbHostAction) -> Encoder {
+            match action {
+                UsbHostAction::ControlIn { id, setup } => enc_setup(enc.u8(1).u32(*id), *setup),
+                UsbHostAction::ControlOut { id, setup, data } => {
+                    let enc = enc_setup(enc.u8(2).u32(*id), *setup).u32(data.len() as u32);
+                    enc.bytes(data)
+                }
+                UsbHostAction::BulkIn {
+                    id,
+                    endpoint,
+                    length,
+                } => enc.u8(3).u32(*id).u8(*endpoint).u32(*length),
+                UsbHostAction::BulkOut { id, endpoint, data } => {
+                    enc.u8(4)
+                        .u32(*id)
+                        .u8(*endpoint)
+                        .u32(data.len() as u32)
+                        .bytes(data)
+                }
+            }
+        }
+
+        fn enc_result(enc: Encoder, result: &UsbHostResult) -> Encoder {
+            match result {
+                UsbHostResult::OkIn { data } => enc.u8(1).u32(data.len() as u32).bytes(data),
+                UsbHostResult::OkOut { bytes_written } => enc.u8(2).u32(*bytes_written as u32),
+                UsbHostResult::Stall => enc.u8(3),
+                UsbHostResult::Error(msg) => enc.u8(4).u32(msg.len() as u32).bytes(msg.as_bytes()),
+            }
+        }
+
+        // Deterministic encoding: all HashMap-backed collections are sorted.
+        let mut enc = Encoder::new().u32(self.next_id).u32(self.actions.len() as u32);
+        for action in &self.actions {
+            enc = enc_action(enc, action);
+        }
+
+        let mut completion_ids: Vec<u32> = self.completions.keys().copied().collect();
+        completion_ids.sort_unstable();
+        enc = enc.u32(completion_ids.len() as u32);
+        for id in completion_ids {
+            let result = self.completions.get(&id).expect("completion id exists");
+            enc = enc.u32(id);
+            enc = enc_result(enc, result);
+        }
+
+        if let Some(ctl) = self.control_inflight.as_ref() {
+            enc = enc.bool(true);
+            enc = enc.u32(ctl.id);
+            enc = enc_setup(enc, ctl.setup);
+            match ctl.data.as_ref() {
+                Some(data) => enc = enc.bool(true).u32(data.len() as u32).bytes(data),
+                None => enc = enc.bool(false),
+            }
+        } else {
+            enc = enc.bool(false);
+        }
+
+        let mut eps: Vec<(u8, &EpInflight)> =
+            self.ep_inflight.iter().map(|(&k, v)| (k, v)).collect();
+        eps.sort_by_key(|(ep, _)| *ep);
+        enc = enc.u32(eps.len() as u32);
+        for (endpoint, inflight) in eps {
+            enc = enc
+                .u8(endpoint)
+                .u32(inflight.id)
+                .u32(inflight.len as u32);
+        }
+
+        enc.finish()
+    }
+
+    pub(crate) fn snapshot_load(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const MAX_ACTIONS: usize = 1024;
+        const MAX_COMPLETIONS: usize = 1024;
+        const MAX_EP_INFLIGHT: usize = 64;
+        const MAX_DATA_BYTES: usize = 4 * 1024 * 1024; // 4MiB
+        const MAX_ERROR_BYTES: usize = 16 * 1024;
+        const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024; // 16MiB
+
+        fn dec_setup(d: &mut Decoder<'_>) -> SnapshotResult<SetupPacket> {
+            Ok(SetupPacket {
+                bm_request_type: d.u8()?,
+                b_request: d.u8()?,
+                w_value: d.u16()?,
+                w_index: d.u16()?,
+                w_length: d.u16()?,
+            })
+        }
+
+        fn dec_bytes_limited(
+            d: &mut Decoder<'_>,
+            max: usize,
+            total: &mut usize,
+            max_total: usize,
+        ) -> SnapshotResult<Vec<u8>> {
+            let len = d.u32()? as usize;
+            if len > max {
+                return Err(SnapshotError::InvalidFieldEncoding("buffer too large"));
+            }
+            let next_total = total
+                .checked_add(len)
+                .ok_or(SnapshotError::InvalidFieldEncoding("buffer too large"))?;
+            if next_total > max_total {
+                return Err(SnapshotError::InvalidFieldEncoding("snapshot buffers too large"));
+            }
+            *total = next_total;
+            Ok(d.bytes(len)?.to_vec())
+        }
+
+        let mut d = Decoder::new(bytes);
+
+        self.next_id = d.u32()?;
+        let mut total_bytes = 0usize;
+
+        self.actions.clear();
+        let action_count = d.u32()? as usize;
+        if action_count > MAX_ACTIONS {
+            return Err(SnapshotError::InvalidFieldEncoding("too many queued actions"));
+        }
+        for _ in 0..action_count {
+            let kind = d.u8()?;
+            let id = d.u32()?;
+            let action = match kind {
+                1 => UsbHostAction::ControlIn {
+                    id,
+                    setup: dec_setup(&mut d)?,
+                },
+                2 => {
+                    let setup = dec_setup(&mut d)?;
+                    let data =
+                        dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?;
+                    UsbHostAction::ControlOut { id, setup, data }
+                }
+                3 => UsbHostAction::BulkIn {
+                    id,
+                    endpoint: d.u8()?,
+                    length: d.u32()?,
+                },
+                4 => {
+                    let endpoint = d.u8()?;
+                    let data =
+                        dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?;
+                    UsbHostAction::BulkOut { id, endpoint, data }
+                }
+                _ => return Err(SnapshotError::InvalidFieldEncoding("invalid action kind")),
+            };
+            self.actions.push_back(action);
+        }
+
+        self.completions.clear();
+        let completion_count = d.u32()? as usize;
+        if completion_count > MAX_COMPLETIONS {
+            return Err(SnapshotError::InvalidFieldEncoding("too many queued completions"));
+        }
+        for _ in 0..completion_count {
+            let id = d.u32()?;
+            let kind = d.u8()?;
+            let result = match kind {
+                1 => UsbHostResult::OkIn {
+                    data: dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?,
+                },
+                2 => UsbHostResult::OkOut {
+                    bytes_written: d.u32()? as usize,
+                },
+                3 => UsbHostResult::Stall,
+                4 => {
+                    let msg_bytes =
+                        dec_bytes_limited(&mut d, MAX_ERROR_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)?;
+                    let msg = String::from_utf8(msg_bytes)
+                        .map_err(|_| SnapshotError::InvalidFieldEncoding("invalid utf-8"))?;
+                    UsbHostResult::Error(msg)
+                }
+                _ => return Err(SnapshotError::InvalidFieldEncoding("invalid completion kind")),
+            };
+            self.completions.insert(id, result);
+        }
+
+        let has_control = d.bool()?;
+        self.control_inflight = if has_control {
+            let id = d.u32()?;
+            let setup = dec_setup(&mut d)?;
+            let has_data = d.bool()?;
+            let data = has_data
+                .then(|| dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES))
+                .transpose()?;
+            Some(ControlInflight { id, setup, data })
+        } else {
+            None
+        };
+
+        self.ep_inflight.clear();
+        let ep_count = d.u32()? as usize;
+        if ep_count > MAX_EP_INFLIGHT {
+            return Err(SnapshotError::InvalidFieldEncoding("too many inflight endpoints"));
+        }
+        for _ in 0..ep_count {
+            let endpoint = d.u8()?;
+            let id = d.u32()?;
+            let len = d.u32()? as usize;
+            self.ep_inflight.insert(endpoint, EpInflight { id, len });
+        }
+
+        d.finish()
     }
 
     /// Cancel any in-flight control transfer.

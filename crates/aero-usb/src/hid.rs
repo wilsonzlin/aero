@@ -133,6 +133,8 @@ fn encode_ep0(ep0: &Ep0Control) -> Vec<u8> {
 }
 
 fn decode_ep0(ep0: &mut Ep0Control, buf: &[u8]) -> SnapshotResult<()> {
+    const MAX_EP0_DATA_BYTES: usize = 128 * 1024;
+
     let mut d = Decoder::new(buf);
     let stage = match d.u8()? {
         0 => Ep0Stage::Idle,
@@ -154,7 +156,11 @@ fn decode_ep0(ep0: &mut Ep0Control, buf: &[u8]) -> SnapshotResult<()> {
     } else {
         None
     };
-    let in_data = d.vec_u8()?;
+    let in_len = d.u32()? as usize;
+    if in_len > MAX_EP0_DATA_BYTES {
+        return Err(SnapshotError::InvalidFieldEncoding("ep0 in_data too large"));
+    }
+    let in_data = d.bytes(in_len)?.to_vec();
     let in_offset = d.u32()? as usize;
     if in_offset > in_data.len() {
         return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
@@ -163,7 +169,11 @@ fn decode_ep0(ep0: &mut Ep0Control, buf: &[u8]) -> SnapshotResult<()> {
         return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
     }
     let out_expected = d.u32()? as usize;
-    let out_data = d.vec_u8()?;
+    let out_len = d.u32()? as usize;
+    if out_len > MAX_EP0_DATA_BYTES {
+        return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+    }
+    let out_data = d.bytes(out_len)?.to_vec();
     let stalled = d.bool()?;
     d.finish()?;
 
@@ -842,6 +852,9 @@ impl IoSnapshot for UsbHidKeyboard {
         const TAG_LAST_REPORT: u16 = 13;
         const TAG_PENDING_REPORTS: u16 = 14;
 
+        const MAX_PRESSED_KEYS: usize = 64;
+        const MAX_REPORTS: usize = 4096;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -857,6 +870,26 @@ impl IoSnapshot for UsbHidKeyboard {
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
         self.leds = r.u8(TAG_LEDS)?.unwrap_or(0);
 
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
+        if self.configuration > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
+        }
+        if self.pending_configuration.is_some_and(|v| v > 1) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending configuration",
+            ));
+        }
+        if self.protocol > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid protocol"));
+        }
+
         if let Some(buf) = r.bytes(TAG_EP0) {
             decode_ep0(&mut self.ep0, buf)?;
         }
@@ -865,7 +898,11 @@ impl IoSnapshot for UsbHidKeyboard {
 
         if let Some(buf) = r.bytes(TAG_PRESSED_KEYS) {
             let mut d = Decoder::new(buf);
-            self.pressed_keys = d.vec_u8()?;
+            let len = d.u32()? as usize;
+            if len > MAX_PRESSED_KEYS {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard pressed_keys"));
+            }
+            self.pressed_keys = d.bytes(len)?.to_vec();
             d.finish()?;
         }
 
@@ -879,12 +916,22 @@ impl IoSnapshot for UsbHidKeyboard {
         self.pending_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                if report.len() != 8 {
+            let count = d.u32()? as usize;
+            if count > MAX_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("too many keyboard reports"));
+            }
+            let drop = count.saturating_sub(MAX_PENDING_REPORTS_KEYBOARD);
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len != 8 {
                     return Err(SnapshotError::InvalidFieldEncoding("keyboard report"));
                 }
+                let report = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
                 let mut arr = [0u8; 8];
-                arr.copy_from_slice(&report);
+                arr.copy_from_slice(report);
                 self.pending_reports.push_back(arr);
             }
             d.finish()?;
@@ -1470,6 +1517,8 @@ impl IoSnapshot for UsbHidMouse {
         const TAG_WHEEL: u16 = 13;
         const TAG_PENDING_REPORTS: u16 = 14;
 
+        const MAX_REPORTS: usize = 4096;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -1484,6 +1533,26 @@ impl IoSnapshot for UsbHidMouse {
         self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
 
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
+        if self.configuration > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
+        }
+        if self.pending_configuration.is_some_and(|v| v > 1) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending configuration",
+            ));
+        }
+        if self.protocol > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid protocol"));
+        }
+
         if let Some(buf) = r.bytes(TAG_EP0) {
             decode_ep0(&mut self.ep0, buf)?;
         }
@@ -1496,12 +1565,22 @@ impl IoSnapshot for UsbHidMouse {
         self.pending_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                if report.len() != 4 {
+            let count = d.u32()? as usize;
+            if count > MAX_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("too many mouse reports"));
+            }
+            let drop = count.saturating_sub(MAX_PENDING_REPORTS_MOUSE);
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len != 4 {
                     return Err(SnapshotError::InvalidFieldEncoding("mouse report"));
                 }
+                let report = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
                 let mut arr = [0u8; 4];
-                arr.copy_from_slice(&report);
+                arr.copy_from_slice(report);
                 self.pending_reports.push_back(arr);
             }
             d.finish()?;
@@ -2135,6 +2214,8 @@ impl IoSnapshot for UsbHidGamepad {
         const TAG_REPORT: u16 = 10;
         const TAG_PENDING_REPORTS: u16 = 11;
 
+        const MAX_REPORTS: usize = 4096;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -2148,6 +2229,26 @@ impl IoSnapshot for UsbHidGamepad {
         self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
         self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
+        if self.configuration > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
+        }
+        if self.pending_configuration.is_some_and(|v| v > 1) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending configuration",
+            ));
+        }
+        if self.protocol > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid protocol"));
+        }
 
         if let Some(buf) = r.bytes(TAG_EP0) {
             decode_ep0(&mut self.ep0, buf)?;
@@ -2175,14 +2276,24 @@ impl IoSnapshot for UsbHidGamepad {
         self.pending_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                if report.len() != 8 {
+            let count = d.u32()? as usize;
+            if count > MAX_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("too many gamepad reports"));
+            }
+            let drop = count.saturating_sub(MAX_PENDING_REPORTS_GAMEPAD);
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len != 8 {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "gamepad pending report",
                     ));
                 }
+                let report = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
                 let mut arr = [0u8; 8];
-                arr.copy_from_slice(&report);
+                arr.copy_from_slice(report);
                 self.pending_reports.push_back(arr);
             }
             d.finish()?;
@@ -3015,6 +3126,9 @@ impl IoSnapshot for UsbHidCompositeInput {
         const TAG_GAMEPAD_REPORT: u16 = 17;
         const TAG_PENDING_GAMEPAD_REPORTS: u16 = 18;
 
+        const MAX_PRESSED_KEYS: usize = 64;
+        const MAX_REPORTS: usize = 4096;
+
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
@@ -3025,6 +3139,23 @@ impl IoSnapshot for UsbHidCompositeInput {
         self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
         self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
         self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
+        if self.configuration > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
+        }
+        if self.pending_configuration.is_some_and(|v| v > 1) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending configuration",
+            ));
+        }
 
         if let Some(buf) = r.bytes(TAG_INTERRUPT_IN_HALTED) {
             let mut d = Decoder::new(buf);
@@ -3039,6 +3170,9 @@ impl IoSnapshot for UsbHidCompositeInput {
                 return Err(SnapshotError::InvalidFieldEncoding("composite protocols"));
             }
             self.protocols.copy_from_slice(buf);
+            if self.protocols.iter().any(|&p| p > 1) {
+                return Err(SnapshotError::InvalidFieldEncoding("invalid composite protocol"));
+            }
         }
 
         if let Some(buf) = r.bytes(TAG_IDLE_RATES) {
@@ -3055,7 +3189,13 @@ impl IoSnapshot for UsbHidCompositeInput {
         self.keyboard_modifiers = r.u8(TAG_KEYBOARD_MODIFIERS)?.unwrap_or(0);
         if let Some(buf) = r.bytes(TAG_KEYBOARD_PRESSED_KEYS) {
             let mut d = Decoder::new(buf);
-            self.keyboard_pressed_keys = d.vec_u8()?;
+            let len = d.u32()? as usize;
+            if len > MAX_PRESSED_KEYS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "composite pressed_keys",
+                ));
+            }
+            self.keyboard_pressed_keys = d.bytes(len)?.to_vec();
             d.finish()?;
         }
         if let Some(buf) = r.bytes(TAG_KEYBOARD_LAST_REPORT) {
@@ -3071,14 +3211,26 @@ impl IoSnapshot for UsbHidCompositeInput {
         self.pending_keyboard_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_KEYBOARD_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                if report.len() != 8 {
+            let count = d.u32()? as usize;
+            if count > MAX_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many composite keyboard reports",
+                ));
+            }
+            let drop = count.saturating_sub(MAX_PENDING_REPORTS_KEYBOARD);
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len != 8 {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "composite pending keyboard report",
                     ));
                 }
+                let report = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
                 let mut arr = [0u8; 8];
-                arr.copy_from_slice(&report);
+                arr.copy_from_slice(report);
                 self.pending_keyboard_reports.push_back(arr);
             }
             d.finish()?;
@@ -3088,14 +3240,26 @@ impl IoSnapshot for UsbHidCompositeInput {
         self.pending_mouse_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_MOUSE_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                if report.len() != 4 {
+            let count = d.u32()? as usize;
+            if count > MAX_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many composite mouse reports",
+                ));
+            }
+            let drop = count.saturating_sub(MAX_PENDING_REPORTS_MOUSE);
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len != 4 {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "composite pending mouse report",
                     ));
                 }
+                let report = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
                 let mut arr = [0u8; 4];
-                arr.copy_from_slice(&report);
+                arr.copy_from_slice(report);
                 self.pending_mouse_reports.push_back(arr);
             }
             d.finish()?;
@@ -3125,14 +3289,26 @@ impl IoSnapshot for UsbHidCompositeInput {
         self.pending_gamepad_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_GAMEPAD_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                if report.len() != 8 {
+            let count = d.u32()? as usize;
+            if count > MAX_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "too many composite gamepad reports",
+                ));
+            }
+            let drop = count.saturating_sub(MAX_PENDING_REPORTS_GAMEPAD);
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len != 8 {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "composite pending gamepad report",
                     ));
                 }
+                let report = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
                 let mut arr = [0u8; 8];
-                arr.copy_from_slice(&report);
+                arr.copy_from_slice(report);
                 self.pending_gamepad_reports.push_back(arr);
             }
             d.finish()?;

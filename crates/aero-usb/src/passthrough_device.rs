@@ -95,9 +95,8 @@ impl UsbWebUsbPassthroughDevice {
     /// Clears host-side WebUSB bookkeeping without changing guest-visible USB state.
     ///
     /// WebUSB host actions are backed by JS Promises that cannot be resumed after a VM snapshot
-    /// restore. On restore we drop queued actions, completions, and in-flight maps so that the next
-    /// UHCI TD retry re-emits host actions instead of deadlocking on a completion that will never
-    /// arrive.
+    /// restore. Host/wasm glue should call this after restore so the next UHCI TD retry re-emits
+    /// fresh host actions instead of deadlocking on a completion that will never arrive.
     pub fn reset_host_state_for_restore(&mut self) {
         self.passthrough.reset();
     }
@@ -443,13 +442,14 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
 
 impl IoSnapshot for UsbWebUsbPassthroughDevice {
     const DEVICE_ID: [u8; 4] = *b"WUSB";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
         const TAG_PENDING_ADDRESS: u16 = 2;
         const TAG_CONTROL: u16 = 3;
         const TAG_PASSTHROUGH: u16 = 4;
+        const TAG_PASSTHROUGH_FULL: u16 = 5;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -459,6 +459,7 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
         }
 
         w.field_bytes(TAG_PASSTHROUGH, self.passthrough.save_state());
+        w.field_bytes(TAG_PASSTHROUGH_FULL, self.passthrough.snapshot_save());
 
         if let Some(control) = &self.control {
             let setup = control.setup;
@@ -508,6 +509,9 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
         const TAG_PENDING_ADDRESS: u16 = 2;
         const TAG_CONTROL: u16 = 3;
         const TAG_PASSTHROUGH: u16 = 4;
+        const TAG_PASSTHROUGH_FULL: u16 = 5;
+
+        const MAX_CONTROL_DATA_BYTES: usize = 128 * 1024;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -516,12 +520,32 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
 
         self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
         self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
 
-        if let Some(buf) = r.bytes(TAG_PASSTHROUGH) {
+        if let Some(buf) = r.bytes(TAG_PASSTHROUGH_FULL) {
+            self.passthrough.snapshot_load(buf)?;
+        } else if let Some(buf) = r.bytes(TAG_PASSTHROUGH) {
             self.passthrough.load_state(buf)?;
+        } else {
+            self.passthrough.reset();
         }
 
         if let Some(buf) = r.bytes(TAG_CONTROL) {
+            fn dec_vec_u8_limited(d: &mut Decoder<'_>, max: usize) -> SnapshotResult<Vec<u8>> {
+                let len = d.u32()? as usize;
+                if len > max {
+                    return Err(SnapshotError::InvalidFieldEncoding("wusb buffer too large"));
+                }
+                Ok(d.bytes(len)?.to_vec())
+            }
+
             let mut d = Decoder::new(buf);
 
             let stalled = d.bool()?;
@@ -535,7 +559,7 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
 
             let stage = match d.u8()? {
                 0 => {
-                    let data = d.vec_u8()?;
+                    let data = dec_vec_u8_limited(&mut d, MAX_CONTROL_DATA_BYTES)?;
                     let offset = d.u32()? as usize;
                     if offset > data.len() {
                         return Err(SnapshotError::InvalidFieldEncoding("wusb indata offset"));
@@ -545,7 +569,10 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
                 1 => ControlStage::InDataPending,
                 2 => {
                     let expected = d.u32()? as usize;
-                    let received = d.vec_u8()?;
+                    if expected > MAX_CONTROL_DATA_BYTES {
+                        return Err(SnapshotError::InvalidFieldEncoding("wusb outdata len"));
+                    }
+                    let received = dec_vec_u8_limited(&mut d, MAX_CONTROL_DATA_BYTES)?;
                     if received.len() > expected {
                         return Err(SnapshotError::InvalidFieldEncoding("wusb outdata len"));
                     }
@@ -554,7 +581,11 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
                 3 => ControlStage::StatusIn,
                 4 => {
                     let has_data = d.bool()?;
-                    let data = if has_data { Some(d.vec_u8()?) } else { None };
+                    let data = if has_data {
+                        Some(dec_vec_u8_limited(&mut d, MAX_CONTROL_DATA_BYTES)?)
+                    } else {
+                        None
+                    };
                     ControlStage::StatusInPending { data }
                 }
                 5 => ControlStage::StatusOut,

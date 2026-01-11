@@ -1,5 +1,5 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError};
-use aero_usb::hid::passthrough::UsbHidPassthrough;
+use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
@@ -254,11 +254,16 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
     assert_eq!(&buf[..2], [0x33, 0x44]);
     assert!(matches!(restored.handle_in(1, &mut buf), UsbHandshake::Nak));
 
-    // Pending output reports are dropped on restore to avoid replaying side effects.
-    assert!(
-        restored.pop_output_report().is_none(),
-        "pending output reports must be cleared on restore"
+    // Pending output reports should survive snapshot/restore so host integrations can drain them.
+    assert_eq!(
+        restored.pop_output_report(),
+        Some(UsbHidPassthroughOutputReport {
+            report_type: 2,
+            report_id: 2,
+            data: vec![0xAA, 0xBB],
+        })
     );
+    assert!(restored.pop_output_report().is_none());
 
     // The guest-visible "last output report" state should still be preserved for GET_REPORT.
     let out_report = control_in(
@@ -756,6 +761,7 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
     restored
         .load_state(&snapshot)
         .expect("webusb snapshot restore should succeed");
+    restored.reset_host_state_for_restore();
 
     // First poll should NAK and re-queue a fresh host action.
     let mut buf = [0u8; 4];

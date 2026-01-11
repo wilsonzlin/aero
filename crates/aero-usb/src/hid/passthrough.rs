@@ -5,7 +5,6 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 
 use super::report_descriptor;
@@ -758,7 +757,7 @@ impl UsbDevice for UsbHidPassthrough {
 
 impl IoSnapshot for UsbHidPassthrough {
     const DEVICE_ID: [u8; 4] = *b"HIDP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -775,6 +774,11 @@ impl IoSnapshot for UsbHidPassthrough {
         const TAG_LAST_INPUT_REPORTS: u16 = 12;
         const TAG_LAST_OUTPUT_REPORTS: u16 = 13;
         const TAG_LAST_FEATURE_REPORTS: u16 = 14;
+        const TAG_HAS_INTERRUPT_OUT: u16 = 15;
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 16;
+        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 17;
+        const TAG_DESCRIPTORS: u16 = 18;
+        const TAG_PENDING_OUTPUT_REPORTS: u16 = 19;
 
         fn encode_report_map(map: &BTreeMap<u8, Vec<u8>>) -> Vec<u8> {
             let mut enc = Encoder::new().u32(map.len() as u32);
@@ -843,6 +847,51 @@ impl IoSnapshot for UsbHidPassthrough {
             encode_report_map(&self.last_feature_reports),
         );
 
+        w.field_bool(TAG_HAS_INTERRUPT_OUT, self.has_interrupt_out);
+        w.field_u32(
+            TAG_MAX_PENDING_INPUT_REPORTS,
+            self.max_pending_input_reports as u32,
+        );
+        w.field_u32(
+            TAG_MAX_PENDING_OUTPUT_REPORTS,
+            self.max_pending_output_reports as u32,
+        );
+
+        w.field_bytes(
+            TAG_DESCRIPTORS,
+            Encoder::new()
+                .u32(self.device_descriptor.len() as u32)
+                .bytes(&self.device_descriptor)
+                .u32(self.config_descriptor.len() as u32)
+                .bytes(&self.config_descriptor)
+                .u32(self.hid_descriptor.len() as u32)
+                .bytes(&self.hid_descriptor)
+                .u32(self.hid_report_descriptor.len() as u32)
+                .bytes(&self.hid_report_descriptor)
+                .u32(self.manufacturer_string_descriptor.len() as u32)
+                .bytes(&self.manufacturer_string_descriptor)
+                .u32(self.product_string_descriptor.len() as u32)
+                .bytes(&self.product_string_descriptor)
+                .bool(self.serial_string_descriptor.is_some())
+                .u32(
+                    self.serial_string_descriptor
+                        .as_deref()
+                        .map_or(0, |v| v.len()) as u32,
+                )
+                .bytes(self.serial_string_descriptor.as_deref().unwrap_or_default())
+                .finish(),
+        );
+
+        let mut pending_out = Encoder::new().u32(self.pending_output_reports.len() as u32);
+        for report in &self.pending_output_reports {
+            pending_out = pending_out
+                .u8(report.report_type)
+                .u8(report.report_id)
+                .u32(report.data.len() as u32)
+                .bytes(&report.data);
+        }
+        w.field_bytes(TAG_PENDING_OUTPUT_REPORTS, pending_out.finish());
+
         w.finish()
     }
 
@@ -861,19 +910,48 @@ impl IoSnapshot for UsbHidPassthrough {
         const TAG_LAST_INPUT_REPORTS: u16 = 12;
         const TAG_LAST_OUTPUT_REPORTS: u16 = 13;
         const TAG_LAST_FEATURE_REPORTS: u16 = 14;
+        const TAG_HAS_INTERRUPT_OUT: u16 = 15;
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 16;
+        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 17;
+        const TAG_DESCRIPTORS: u16 = 18;
+        const TAG_PENDING_OUTPUT_REPORTS: u16 = 19;
+
+        const MAX_DESCRIPTOR_BYTES: usize = 256 * 1024;
+        const MAX_REPORT_DESCRIPTOR_BYTES: usize = 128 * 1024;
+        const MAX_STRING_DESCRIPTOR_BYTES: usize = 16 * 1024;
+        const MAX_EP0_DATA_BYTES: usize = 128 * 1024;
+        const MAX_REPORT_QUEUE_BYTES: usize = 256 * 1024;
+        const MAX_PENDING_REPORTS: usize = 4096;
 
         fn decode_report_map(map: &mut BTreeMap<u8, Vec<u8>>, buf: &[u8]) -> SnapshotResult<()> {
+            const MAX_ENTRIES: usize = 256;
+            const MAX_REPORT_BYTES: usize = 128 * 1024;
+
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_ENTRIES {
+                return Err(SnapshotError::InvalidFieldEncoding("too many report entries"));
+            }
             map.clear();
             for _ in 0..count {
                 let report_id = d.u8()?;
                 let len = d.u32()? as usize;
+                if len > MAX_REPORT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("report too large"));
+                }
                 let data = d.bytes(len)?.to_vec();
                 map.insert(report_id, data);
             }
             d.finish()?;
             Ok(())
+        }
+
+        fn dec_blob(d: &mut Decoder<'_>, max: usize) -> SnapshotResult<Vec<u8>> {
+            let len = d.u32()? as usize;
+            if len > max {
+                return Err(SnapshotError::InvalidFieldEncoding("descriptor too large"));
+            }
+            Ok(d.bytes(len)?.to_vec())
         }
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
@@ -891,6 +969,61 @@ impl IoSnapshot for UsbHidPassthrough {
         self.interrupt_out_halted = r.bool(TAG_INTERRUPT_OUT_HALTED)?.unwrap_or(false);
         self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if self.address > 127 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
+        }
+        if self.pending_address.is_some_and(|v| v > 127) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb address",
+            ));
+        }
+        if self.configuration > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
+        }
+        if self.pending_configuration.is_some_and(|v| v > 1) {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "invalid pending usb configuration",
+            ));
+        }
+        if self.protocol > 1 {
+            return Err(SnapshotError::InvalidFieldEncoding("invalid protocol"));
+        }
+
+        if let Some(v) = r.bool(TAG_HAS_INTERRUPT_OUT)? {
+            self.has_interrupt_out = v;
+        }
+        if let Some(v) = r.u32(TAG_MAX_PENDING_INPUT_REPORTS)? {
+            self.max_pending_input_reports = (v as usize).clamp(1, MAX_PENDING_REPORTS);
+        }
+        if let Some(v) = r.u32(TAG_MAX_PENDING_OUTPUT_REPORTS)? {
+            self.max_pending_output_reports = (v as usize).clamp(1, MAX_PENDING_REPORTS);
+        }
+
+        if let Some(buf) = r.bytes(TAG_DESCRIPTORS) {
+            let mut d = Decoder::new(buf);
+            self.device_descriptor = dec_blob(&mut d, MAX_DESCRIPTOR_BYTES.min(1024))?;
+            self.config_descriptor = dec_blob(&mut d, MAX_DESCRIPTOR_BYTES)?;
+            self.hid_descriptor = dec_blob(&mut d, MAX_DESCRIPTOR_BYTES.min(1024))?;
+            self.hid_report_descriptor = dec_blob(&mut d, MAX_REPORT_DESCRIPTOR_BYTES)?;
+            self.manufacturer_string_descriptor = dec_blob(&mut d, MAX_STRING_DESCRIPTOR_BYTES)?;
+            self.product_string_descriptor = dec_blob(&mut d, MAX_STRING_DESCRIPTOR_BYTES)?;
+            let has_serial = d.bool()?;
+            let serial = dec_blob(&mut d, MAX_STRING_DESCRIPTOR_BYTES)?;
+            self.serial_string_descriptor = has_serial.then_some(serial);
+            d.finish()?;
+
+            let (
+                report_ids_in_use,
+                input_report_lengths,
+                output_report_lengths,
+                feature_report_lengths,
+            ) = report_descriptor_report_lengths(&self.hid_report_descriptor);
+            self.report_ids_in_use = report_ids_in_use;
+            self.input_report_lengths = input_report_lengths;
+            self.output_report_lengths = output_report_lengths;
+            self.feature_report_lengths = feature_report_lengths;
+        }
 
         if let Some(buf) = r.bytes(TAG_EP0) {
             let mut d = Decoder::new(buf);
@@ -914,7 +1047,11 @@ impl IoSnapshot for UsbHidPassthrough {
             } else {
                 None
             };
-            let in_data = d.vec_u8()?;
+            let in_len = d.u32()? as usize;
+            if in_len > MAX_EP0_DATA_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 in_data too large"));
+            }
+            let in_data = d.bytes(in_len)?.to_vec();
             let in_offset = d.u32()? as usize;
             if in_offset > in_data.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
@@ -923,7 +1060,17 @@ impl IoSnapshot for UsbHidPassthrough {
                 return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
             }
             let out_expected = d.u32()? as usize;
-            let out_data = d.vec_u8()?;
+            if out_expected > MAX_EP0_DATA_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_expected too large"));
+            }
+            let out_len = d.u32()? as usize;
+            if out_len > MAX_EP0_DATA_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+            }
+            let out_data = d.bytes(out_len)?.to_vec();
+            if out_data.len() > out_expected {
+                return Err(SnapshotError::InvalidFieldEncoding("ep0 out_data too large"));
+            }
             let stalled = d.bool()?;
             d.finish()?;
 
@@ -939,8 +1086,62 @@ impl IoSnapshot for UsbHidPassthrough {
         self.pending_input_reports.clear();
         if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
             let mut d = Decoder::new(buf);
-            for report in d.vec_bytes()? {
-                self.pending_input_reports.push_back(report);
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("too many input reports"));
+            }
+
+            let drop = count.saturating_sub(self.max_pending_input_reports);
+            let mut total_bytes = 0usize;
+            for idx in 0..count {
+                let len = d.u32()? as usize;
+                if len > MAX_EP0_DATA_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("input report too large"));
+                }
+                let bytes = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
+                total_bytes = total_bytes.saturating_add(len);
+                if total_bytes > MAX_REPORT_QUEUE_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("input report queue too large"));
+                }
+                self.pending_input_reports.push_back(bytes.to_vec());
+            }
+            d.finish()?;
+        }
+
+        self.pending_output_reports.clear();
+        if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("too many output reports"));
+            }
+
+            let drop = count.saturating_sub(self.max_pending_output_reports);
+            let mut total_bytes = 0usize;
+            for idx in 0..count {
+                let report_type = d.u8()?;
+                let report_id = d.u8()?;
+                let len = d.u32()? as usize;
+                if len > MAX_EP0_DATA_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("output report too large"));
+                }
+                let data = d.bytes(len)?;
+                if idx < drop {
+                    continue;
+                }
+                total_bytes = total_bytes.saturating_add(len);
+                if total_bytes > MAX_REPORT_QUEUE_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("output report queue too large"));
+                }
+                self.pending_output_reports
+                    .push_back(UsbHidPassthroughOutputReport {
+                        report_type,
+                        report_id,
+                        data: data.to_vec(),
+                    });
             }
             d.finish()?;
         }
@@ -954,10 +1155,6 @@ impl IoSnapshot for UsbHidPassthrough {
         if let Some(buf) = r.bytes(TAG_LAST_FEATURE_REPORTS) {
             decode_report_map(&mut self.last_feature_reports, buf)?;
         }
-
-        // Output/feature reports may have host-visible side effects. To avoid replaying side
-        // effects on restore, do not preserve the pending output queue across snapshots.
-        self.pending_output_reports.clear();
 
         Ok(())
     }
