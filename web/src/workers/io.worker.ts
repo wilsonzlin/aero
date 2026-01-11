@@ -551,7 +551,9 @@ function maybeInitWasmHidGuestBridge(): void {
   // initialize the bridge before the UHCI controller exists, devices would never be visible to the
   // guest OS (PCI hotplug isn't modeled yet).
   maybeInitUhciDevice();
-  if (api.UhciControllerBridge && !uhciControllerBridge) return;
+  if (api.UhciControllerBridge && !uhciControllerBridge) {
+    return;
+  }
 
   try {
     wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);

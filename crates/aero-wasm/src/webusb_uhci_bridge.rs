@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::{GuestMemory as UsbGuestMemory, UsbWebUsbPassthroughDevice};
@@ -20,6 +21,11 @@ const PORTSC_PEDC: u16 = 1 << 3;
 const PORTSC_PR: u16 = 1 << 9;
 
 const USBCMD_HCRESET: u32 = 1 << 1;
+
+const ROOT_PORT_EXTERNAL_HUB: usize = 0;
+const ROOT_PORT_WEBUSB: usize = 1;
+// Must match `web/src/platform/webhid_passthrough.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
+const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 
 #[derive(Debug, Default)]
 struct WasmIrqCapture {
@@ -118,9 +124,14 @@ pub struct WebUsbUhciBridge {
 impl WebUsbUhciBridge {
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32) -> Self {
+        let mut controller = UhciController::new(0, 11);
+        controller.connect_device(
+            ROOT_PORT_EXTERNAL_HUB,
+            Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+        );
         Self {
             guest_base,
-            controller: UhciController::new(0, 11),
+            controller,
             irq: WasmIrqCapture::default(),
         }
     }
@@ -227,16 +238,20 @@ impl WebUsbUhciBridge {
     }
 
     pub fn set_connected(&mut self, connected: bool) {
-        let was_connected = self.controller.bus().port(0).is_some_and(|p| p.connected);
+        let was_connected = self
+            .controller
+            .bus()
+            .port(ROOT_PORT_WEBUSB)
+            .is_some_and(|p| p.connected);
 
         match (was_connected, connected) {
             (true, true) | (false, false) => {}
             (false, true) => {
                 self.controller
-                    .connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
+                    .connect_device(ROOT_PORT_WEBUSB, Box::new(UsbWebUsbPassthroughDevice::new()));
             }
             (true, false) => {
-                self.controller.disconnect_device(0);
+                self.controller.disconnect_device(ROOT_PORT_WEBUSB);
             }
         }
     }
@@ -281,6 +296,49 @@ impl WebUsbUhciBridge {
             return Ok(JsValue::NULL);
         };
         serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Detach any USB device attached at the given topology path.
+    ///
+    /// Path numbering follows `aero_usb::usb::UsbBus`:
+    /// - `path[0]` is the root port index (0-based).
+    /// - `path[1..]` are hub ports (1-based).
+    pub fn detach_at_path(&mut self, path: JsValue) -> Result<(), JsValue> {
+        let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
+        if path.len() == 1 && path[0] == ROOT_PORT_EXTERNAL_HUB {
+            return Err(js_sys::Error::new("Cannot detach the external USB hub from root port 0").into());
+        }
+        crate::uhci_controller_bridge::detach_device_at_path(&mut self.controller, &path)
+    }
+
+    /// Attach a WebHID-backed USB HID device at the given topology path.
+    pub fn attach_webhid_device(
+        &mut self,
+        path: JsValue,
+        device: &crate::WebHidPassthroughBridge,
+    ) -> Result<(), JsValue> {
+        let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
+        validate_webhid_attach_path(&path)?;
+        crate::uhci_controller_bridge::attach_device_at_path(
+            &mut self.controller,
+            &path,
+            Box::new(device.as_usb_device()),
+        )
+    }
+
+    /// Attach a generic USB HID passthrough device at the given topology path.
+    pub fn attach_usb_hid_passthrough_device(
+        &mut self,
+        path: JsValue,
+        device: &crate::UsbHidPassthroughBridge,
+    ) -> Result<(), JsValue> {
+        let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
+        validate_webhid_attach_path(&path)?;
+        crate::uhci_controller_bridge::attach_device_at_path(
+            &mut self.controller,
+            &path,
+            Box::new(device.as_usb_device()),
+        )
     }
 }
 
@@ -436,15 +494,26 @@ impl WebUsbUhciBridge {
     }
 
     fn passthrough_device(&self) -> Option<&UsbWebUsbPassthroughDevice> {
-        let port = self.controller.bus().port(0)?;
+        let port = self.controller.bus().port(ROOT_PORT_WEBUSB)?;
         let dev = port.device.as_ref()?;
         dev.as_any().downcast_ref::<UsbWebUsbPassthroughDevice>()
     }
 
     fn passthrough_device_mut(&mut self) -> Option<&mut UsbWebUsbPassthroughDevice> {
-        let port = self.controller.bus_mut().port_mut(0)?;
+        let port = self.controller.bus_mut().port_mut(ROOT_PORT_WEBUSB)?;
         let dev = port.device.as_mut()?;
         dev.as_any_mut()
             .downcast_mut::<UsbWebUsbPassthroughDevice>()
     }
+}
+
+fn validate_webhid_attach_path(path: &[usize]) -> Result<(), JsValue> {
+    if path.len() < 2 {
+        return Err(js_sys::Error::new("WebHID devices must attach behind the external hub (expected path like [0, <hubPort>])").into());
+    }
+    if path[0] != ROOT_PORT_EXTERNAL_HUB {
+        return Err(js_sys::Error::new("WebHID devices must attach behind the external hub on root port 0").into());
+    }
+    // Root port 0 is reserved for the hub itself; root port 1 is reserved for WebUSB.
+    Ok(())
 }

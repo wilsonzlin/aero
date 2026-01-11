@@ -9,7 +9,7 @@ export type WebUsbUhciHotplugBridgeLike = {
  * Apply a `usb.selected` broadcast to a UHCI WebUSB bridge.
  *
  * Contract:
- * - `ok:true` means a host device is available; attach the passthrough device to the emulated bus.
+ * - `ok:true` means a host device is available; attach the passthrough device at root port 1.
  * - `ok:false` means the device is unavailable (disconnect/chooser error); detach and reset.
  */
 export function applyUsbSelectedToWebUsbUhciBridge(bridge: WebUsbUhciHotplugBridgeLike, msg: UsbSelectedMessage): void {

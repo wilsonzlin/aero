@@ -67,9 +67,9 @@ describe("hid/WasmHidGuestBridge", () => {
       undefined,
     );
 
-    // Attach remaps `[0]` to `[1]` because root port 0 is reserved for the external hub.
+    // Attach remaps `[0]` to `[0,1]` (first downstream hub port) because root port 0 hosts the external hub.
     expect(detachSpy).toHaveBeenCalledWith(attach.deviceId);
-    expect(attachSpy).toHaveBeenCalledWith(attach.deviceId, [1], "usb-hid-passthrough", bridgeInstance);
+    expect(attachSpy).toHaveBeenCalledWith(attach.deviceId, [0, 1], "usb-hid-passthrough", bridgeInstance);
 
     const input: HidInputReportMessage = {
       type: "hid.inputReport",
@@ -131,7 +131,7 @@ describe("hid/WasmHidGuestBridge", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Demo",
-      guestPath: [1],
+      guestPath: [0, 2],
       collections: [{ some: "collection" }] as any,
       hasInterruptOut: false,
     };
@@ -149,4 +149,3 @@ describe("hid/WasmHidGuestBridge", () => {
     expect(attachSpy).toHaveBeenCalledWith(attach.deviceId, attach.guestPath, "webhid", bridgeInstance);
   });
 });
-

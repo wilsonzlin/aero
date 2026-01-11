@@ -26,8 +26,7 @@ const DEFAULT_NUMERIC_DEVICE_ID_BASE = 0x4000_0000;
 
 export function getNoFreeGuestUsbPortsMessage(options: { externalHubPortCount?: number } = {}): string {
   const hubPortCount = options.externalHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT;
-  const total = hubPortCount >>> 0;
-  return `No free guest USB attachment paths (${total} total: ${hubPortCount} hub-backed). Detach an existing device first.`;
+  return `No free guest USB attachment paths (${hubPortCount} total behind the external hub). Detach an existing device first.`;
 }
 
 export type WebHidPassthroughAttachment = {

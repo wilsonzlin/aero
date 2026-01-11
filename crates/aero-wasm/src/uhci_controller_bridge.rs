@@ -154,7 +154,7 @@ fn validate_port_size(size: u8) -> usize {
     }
 }
 
-fn parse_usb_path(path: JsValue) -> Result<Vec<usize>, JsValue> {
+pub(crate) fn parse_usb_path(path: JsValue) -> Result<Vec<usize>, JsValue> {
     let parts: Vec<u32> = serde_wasm_bindgen::from_value(path)
         .map_err(|e| js_error(format!("Invalid USB topology path: {e}")))?;
     if parts.is_empty() {
@@ -178,7 +178,7 @@ fn parse_usb_path(path: JsValue) -> Result<Vec<usize>, JsValue> {
     Ok(out)
 }
 
-fn attach_device_at_path(
+pub(crate) fn attach_device_at_path(
     ctrl: &mut UhciController,
     path: &[usize],
     device: Box<dyn UsbDevice>,
@@ -250,7 +250,7 @@ fn attach_device_at_path(
     Ok(())
 }
 
-fn detach_device_at_path(ctrl: &mut UhciController, path: &[usize]) -> Result<(), JsValue> {
+pub(crate) fn detach_device_at_path(ctrl: &mut UhciController, path: &[usize]) -> Result<(), JsValue> {
     let Some((&root, rest)) = path.split_first() else {
         return Err(js_error("USB topology path must not be empty"));
     };

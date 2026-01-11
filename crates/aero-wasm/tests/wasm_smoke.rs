@@ -4,6 +4,7 @@ use aero_usb::passthrough::UsbHostAction;
 use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
 use aero_wasm::UhciControllerBridge;
 use aero_wasm::WebUsbUhciPassthroughHarness;
+use aero_wasm::{UsbHidPassthroughBridge, WebUsbUhciBridge};
 use aero_wasm::{add, demo_render_rgba8888};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -182,4 +183,46 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
         !ctrl.irq_asserted(),
         "irq should deassert after clearing USBSTS.USBINT"
     );
+}
+
+#[wasm_bindgen_test]
+fn webusb_uhci_bridge_can_attach_and_detach_usb_hid_passthrough_device() {
+    // Minimal (but valid) USB HID report descriptor: a single 8-bit input.
+    // Ref: HID 1.11 spec, Example "Vendor-defined" input report.
+    let report_descriptor = vec![
+        0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
+        0x09, 0x01, // Usage (0x01)
+        0xa1, 0x01, // Collection (Application)
+        0x09, 0x02, //   Usage (0x02)
+        0x15, 0x00, //   Logical Minimum (0)
+        0x26, 0xff, 0x00, //   Logical Maximum (255)
+        0x75, 0x08, //   Report Size (8)
+        0x95, 0x01, //   Report Count (1)
+        0x81, 0x02, //   Input (Data,Var,Abs)
+        0xc0, // End Collection
+    ];
+
+    let dev = UsbHidPassthroughBridge::new(
+        0x1234,
+        0x5678,
+        None,
+        Some("Test HID".to_string()),
+        None,
+        report_descriptor,
+        false,
+        None,
+        None,
+    );
+
+    let mut bridge = WebUsbUhciBridge::new(0);
+
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
+    bridge
+        .attach_usb_hid_passthrough_device(path, &dev)
+        .expect("attach_usb_hid_passthrough_device ok");
+
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32]).expect("path to_value");
+    bridge
+        .detach_at_path(path)
+        .expect("detach_at_path ok");
 }

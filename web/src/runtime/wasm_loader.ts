@@ -222,17 +222,23 @@ export interface WasmApi {
     };
 
     /**
-     * Worker-side UHCI controller + WebUSB passthrough bridge.
-     *
-     * This exports a guest-visible UHCI controller (PIO registers + TD/QH traversal)
-     * and a host-action passthrough device attached at root port 0.
-     */
+      * Worker-side UHCI controller + WebUSB passthrough bridge.
+      *
+      * This exports a guest-visible UHCI controller (PIO registers + TD/QH traversal)
+      * with:
+      * - root port 0 hosting an emulated external USB hub (for WebHID passthrough devices)
+      * - root port 1 reserved for the WebUSB passthrough device (`set_connected`)
+      */
     WebUsbUhciBridge?: new (guestBase: number) => {
         io_read(offset: number, size: number): number;
         io_write(offset: number, size: number, value: number): void;
         step_frames(frames: number): void;
         irq_level(): boolean;
         set_connected(connected: boolean): void;
+
+        detach_at_path(path: number[]): void;
+        attach_webhid_device(path: number[], device: unknown): void;
+        attach_usb_hid_passthrough_device(path: number[], device: unknown): void;
 
         drain_actions(): UsbHostAction[] | null;
         push_completion(completion: UsbHostCompletion): void;

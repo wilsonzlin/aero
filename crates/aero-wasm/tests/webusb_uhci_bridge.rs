@@ -123,9 +123,9 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
     // Some UHCI drivers use 32-bit I/O to program paired 16-bit registers (USBINTR+FRNUM).
     bridge.io_write(REG_USBINTR, 4, USBINTR_IOC);
 
-    // Reset + enable port 1.
+    // Reset + enable port 2 (root port 1).
     // Similarly, allow 32-bit I/O at PORTSC1 to reach both PORTSC registers.
-    bridge.io_write(REG_PORTSC1, 4, PORTSC_PR);
+    bridge.io_write(REG_PORTSC1, 4, PORTSC_PR << 16);
     bridge.step_frames(50);
 
     // Some drivers use 32-bit I/O at 0x00 to update USBCMD+USBSTS simultaneously.
