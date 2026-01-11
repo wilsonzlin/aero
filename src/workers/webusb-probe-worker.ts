@@ -24,6 +24,15 @@ function serializeError(err: unknown): { name: string; message: string } {
   return { name: 'Error', message: String(err) };
 }
 
+type RequestDeviceProbeResult = {
+  ok: boolean;
+  device?: Record<string, unknown> | null;
+  error?: { name: string; message: string };
+  timeoutMs?: number;
+};
+
+let requestDeviceProbe: Promise<RequestDeviceProbeResult> | null = null;
+
 function summarizeUsbDevice(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   device: any,
@@ -37,6 +46,40 @@ function summarizeUsbDevice(
     productId: device.productId,
     opened: device.opened,
   };
+}
+
+async function runRequestDeviceProbe(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  usb: any,
+  timeoutMs = 500,
+): Promise<RequestDeviceProbeResult> {
+  if (requestDeviceProbe) return await requestDeviceProbe;
+
+  requestDeviceProbe = (async () => {
+    const settle = Promise.resolve()
+      .then(() => usb.requestDevice({ filters: [{ vendorId: 0 }] }))
+      .then((device: unknown) => ({ ok: true, device: summarizeUsbDevice(device) } as RequestDeviceProbeResult))
+      .catch((err: unknown) => ({ ok: false, error: serializeError(err) } as RequestDeviceProbeResult));
+
+    const timeout = new Promise<RequestDeviceProbeResult>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          ok: false,
+          timeoutMs,
+          error: {
+            name: 'TimeoutError',
+            message:
+              `navigator.usb.requestDevice() did not settle within ${timeoutMs}ms. ` +
+              'If a chooser prompt appeared in the worker context, dismiss it to allow the promise to settle.',
+          },
+        });
+      }, timeoutMs);
+    });
+
+    return await Promise.race([settle, timeout]);
+  })();
+
+  return await requestDeviceProbe;
 }
 
 async function probe(): Promise<unknown> {
@@ -68,14 +111,9 @@ async function probe(): Promise<unknown> {
   }
 
   if (typeof usb?.requestDevice === 'function') {
-    try {
-      // In specs/Chromium, this is expected to reject in workers due to missing transient user activation.
-      // Use a dummy filter so the call reaches the user-activation check rather than failing validation.
-      const device = await usb.requestDevice({ filters: [{ vendorId: 0 }] });
-      report.requestDevice = { ok: true, device: summarizeUsbDevice(device) };
-    } catch (err) {
-      report.requestDevice = { ok: false, error: serializeError(err) };
-    }
+    // In specs/Chromium, this is expected to reject in workers due to missing transient user activation.
+    // Use a short timeout so the probe doesn't hang if a chooser prompt appears.
+    report.requestDevice = await runRequestDeviceProbe(usb);
   }
 
   return report;
