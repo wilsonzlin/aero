@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_d3d10_11_wddm_submit.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
@@ -419,6 +420,7 @@ struct AeroGpuDevice {
   D3D10DDI_HRTDEVICE hrt_device{};
   SetErrorFn pfn_set_error = nullptr;
   const D3DDDI_DEVICECALLBACKS* callbacks = nullptr;
+  aerogpu::d3d10_11::WddmSubmit wddm_submit;
 
   aerogpu::CmdWriter cmd;
 
@@ -803,57 +805,15 @@ void DestroyKernelDeviceContext(AeroGpuDevice* dev) {
     return;
   }
 
-  const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
-
-  if (dev->kmt_fence_syncobj) {
-    __if_exists(D3DDDI_DEVICECALLBACKS::pfnDestroySynchronizationObjectCb) {
-      if (cb && cb->pfnDestroySynchronizationObjectCb) {
-        __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT) {
-          D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT args{};
-          __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT::hSyncObject) {
-            args.hSyncObject = UintPtrToD3dHandle<decltype(args.hSyncObject)>(
-                static_cast<std::uintptr_t>(dev->kmt_fence_syncobj));
-          }
-          (void)CallCbMaybeHandle(cb->pfnDestroySynchronizationObjectCb, dev->hrt_device, &args);
-        }
-      }
-    }
-    dev->kmt_fence_syncobj = 0;
-  }
-
-  if (dev->kmt_context) {
-    __if_exists(D3DDDI_DEVICECALLBACKS::pfnDestroyContextCb) {
-      if (cb && cb->pfnDestroyContextCb) {
-        __if_exists(D3DDDICB_DESTROYCONTEXT) {
-          D3DDDICB_DESTROYCONTEXT args{};
-          __if_exists(D3DDDICB_DESTROYCONTEXT::hContext) {
-            args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
-          }
-          (void)CallCbMaybeHandle(cb->pfnDestroyContextCb, dev->hrt_device, &args);
-        }
-      }
-    }
-    dev->kmt_context = 0;
-  }
-
-  if (dev->kmt_device) {
-    __if_exists(D3DDDI_DEVICECALLBACKS::pfnDestroyDeviceCb) {
-      if (cb && cb->pfnDestroyDeviceCb) {
-        __if_exists(D3DDDICB_DESTROYDEVICE) {
-          D3DDDICB_DESTROYDEVICE args{};
-          __if_exists(D3DDDICB_DESTROYDEVICE::hDevice) {
-            args.hDevice = UintPtrToD3dHandle<decltype(args.hDevice)>(static_cast<std::uintptr_t>(dev->kmt_device));
-          }
-          (void)CallCbMaybeHandle(cb->pfnDestroyDeviceCb, dev->hrt_device, &args);
-        }
-      }
-    }
-    dev->kmt_device = 0;
-  }
-
+  dev->wddm_submit.Shutdown();
+  dev->kmt_fence_syncobj = 0;
+  dev->kmt_context = 0;
+  dev->kmt_device = 0;
   dev->dma_buffer_private_data = nullptr;
   dev->dma_buffer_private_data_size = 0;
   dev->monitored_fence_value = nullptr;
+  dev->last_submitted_fence.store(0, std::memory_order_relaxed);
+  dev->last_completed_fence.store(0, std::memory_order_relaxed);
 }
 
 HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) {
@@ -869,110 +829,17 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
   if (!cb) {
     return S_OK;
   }
-
-  bool have_create_device = false;
-  __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateDeviceCb) {
-    have_create_device = (cb->pfnCreateDeviceCb != nullptr);
-  }
-  if (!have_create_device) {
-    return S_OK;
+  const HRESULT hr =
+      dev->wddm_submit.Init(cb, hAdapter.pDrvPrivate, dev->hrt_device.pDrvPrivate, dev->kmt_adapter);
+  if (FAILED(hr)) {
+    DestroyKernelDeviceContext(dev);
+    return hr;
   }
 
-  bool have_create_context = false;
-  bool use_create_context2 = false;
-  __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb2) {
-    if (cb->pfnCreateContextCb2) {
-      have_create_context = true;
-      use_create_context2 = true;
-    }
-  }
-  __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb) {
-    if (!have_create_context && cb->pfnCreateContextCb) {
-      have_create_context = true;
-      use_create_context2 = false;
-    }
-  }
-  if (!have_create_context) {
-    return S_OK;
-  }
-
-  __if_exists(D3DDDICB_CREATEDEVICE) {
-    D3DDDICB_CREATEDEVICE create_device{};
-    __if_exists(D3DDDICB_CREATEDEVICE::hAdapter) {
-      create_device.hAdapter =
-          UintPtrToD3dHandle<decltype(create_device.hAdapter)>(reinterpret_cast<std::uintptr_t>(hAdapter.pDrvPrivate));
-    }
-    HRESULT hr = CallCbMaybeHandle(cb->pfnCreateDeviceCb, dev->hrt_device, &create_device);
-    if (FAILED(hr) || !create_device.hDevice) {
-      return FAILED(hr) ? hr : E_FAIL;
-    }
-    dev->kmt_device = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_device.hDevice));
-  }
-  __if_not_exists(D3DDDICB_CREATEDEVICE) {
-    return S_OK;
-  }
-
-  __if_exists(D3DDDICB_CREATECONTEXT) {
-    D3DDDICB_CREATECONTEXT create_ctx{};
-    __if_exists(D3DDDICB_CREATECONTEXT::hDevice) {
-      create_ctx.hDevice = UintPtrToD3dHandle<decltype(create_ctx.hDevice)>(static_cast<std::uintptr_t>(dev->kmt_device));
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::NodeOrdinal) {
-      create_ctx.NodeOrdinal = 0;
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::EngineAffinity) {
-      create_ctx.EngineAffinity = 0;
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::pPrivateDriverData) {
-      create_ctx.pPrivateDriverData = nullptr;
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::PrivateDriverDataSize) {
-      create_ctx.PrivateDriverDataSize = 0;
-    }
-
-    HRESULT hr = E_FAIL;
-    if (use_create_context2) {
-      __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb2) {
-        hr = CallCbMaybeHandle(cb->pfnCreateContextCb2, dev->hrt_device, &create_ctx);
-      }
-    } else {
-      __if_exists(D3DDDI_DEVICECALLBACKS::pfnCreateContextCb) {
-        hr = CallCbMaybeHandle(cb->pfnCreateContextCb, dev->hrt_device, &create_ctx);
-      }
-    }
-    dev->kmt_context = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hContext));
-    dev->kmt_fence_syncobj = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hSyncObject));
-    dev->monitored_fence_value = nullptr;
-    __if_exists(D3DDDICB_CREATECONTEXT::pMonitoredFenceValue) {
-      dev->monitored_fence_value = reinterpret_cast<volatile uint64_t*>(create_ctx.pMonitoredFenceValue);
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::pFenceValue) {
-      if (!dev->monitored_fence_value) {
-        dev->monitored_fence_value = reinterpret_cast<volatile uint64_t*>(create_ctx.pFenceValue);
-      }
-    }
-    if (FAILED(hr) || dev->kmt_context == 0 || dev->kmt_fence_syncobj == 0) {
-      // Even on failure, attempt to tear down any partially-created objects.
-      DestroyKernelDeviceContext(dev);
-      return FAILED(hr) ? hr : E_FAIL;
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::pDmaBufferPrivateData) {
-      dev->dma_buffer_private_data = create_ctx.pDmaBufferPrivateData;
-    }
-    __if_exists(D3DDDICB_CREATECONTEXT::DmaBufferPrivateDataSize) {
-      dev->dma_buffer_private_data_size = create_ctx.DmaBufferPrivateDataSize;
-    }
-    if (dev->dma_buffer_private_data && dev->dma_buffer_private_data_size == 0) {
-      dev->dma_buffer_private_data_size = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
-    }
-    if (!dev->dma_buffer_private_data || dev->dma_buffer_private_data_size < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
-      AEROGPU_D3D10_11_LOG("wddm_submit: D3D10.1 CreateContext did not provide usable dma private data ptr=%p bytes=%u (need >=%u)",
-                           dev->dma_buffer_private_data,
-                           static_cast<unsigned>(dev->dma_buffer_private_data_size),
-                           static_cast<unsigned>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES));
-    }
-  }
-  __if_not_exists(D3DDDICB_CREATECONTEXT) {
+  dev->kmt_device = dev->wddm_submit.hDevice();
+  dev->kmt_context = dev->wddm_submit.hContext();
+  dev->kmt_fence_syncobj = dev->wddm_submit.hSyncObject();
+  if (!dev->kmt_device || !dev->kmt_context || !dev->kmt_fence_syncobj) {
     DestroyKernelDeviceContext(dev);
     return E_FAIL;
   }
@@ -1005,49 +872,8 @@ uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
   if (!dev) {
     return 0;
   }
-
-  if (dev->monitored_fence_value) {
-    const uint64_t completed = *dev->monitored_fence_value;
-    UpdateCompletedFence(dev, completed);
-    return completed;
-  }
-
-  // Dev-only fallback: ask the KMD for its fence tracking state via Escape.
-  if (dev->kmt_adapter) {
-    const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
-    if (procs.pfn_escape) {
-      aerogpu_escape_query_fence_out q{};
-      q.hdr.version = AEROGPU_ESCAPE_VERSION;
-      q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
-      q.hdr.size = sizeof(q);
-      q.hdr.reserved0 = 0;
-
-      D3DKMT_ESCAPE e{};
-      e.hAdapter = dev->kmt_adapter;
-      e.hDevice = 0;
-      e.hContext = 0;
-      e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-      e.Flags.Value = 0;
-      e.pPrivateDriverData = &q;
-      e.PrivateDriverDataSize = sizeof(q);
-
-      const NTSTATUS st = procs.pfn_escape(&e);
-      if (NT_SUCCESS(st)) {
-        atomic_max_u64(&dev->last_submitted_fence, static_cast<uint64_t>(q.last_submitted_fence));
-        UpdateCompletedFence(dev, static_cast<uint64_t>(q.last_completed_fence));
-      }
-    }
-  }
-
-  if (dev->adapter) {
-    uint64_t completed = 0;
-    {
-      std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
-      completed = dev->adapter->completed_fence;
-    }
-    UpdateCompletedFence(dev, completed);
-  }
-
+  const uint64_t completed = dev->wddm_submit.QueryCompletedFence();
+  UpdateCompletedFence(dev, completed);
   return dev->last_completed_fence.load(std::memory_order_relaxed);
 }
 
@@ -1070,82 +896,13 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
     return S_OK;
   }
 
-  if (dev->kmt_fence_syncobj) {
-    D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
-    UINT64 fence_values[1] = {fence};
-    const UINT64 timeout = (timeout_ms == kAeroGpuTimeoutMsInfinite) ? ~0ull : static_cast<UINT64>(timeout_ms);
-
-    // Prefer the runtime's wait callback when available; it matches the Win7 DDI
-    // contract and avoids direct-thunk WOW64 quirks.
-    const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
-    bool have_wait_cb = false;
-    __if_exists(D3DDDI_DEVICECALLBACKS::pfnWaitForSynchronizationObjectCb) {
-      have_wait_cb = (cb && cb->pfnWaitForSynchronizationObjectCb);
-    }
-    if (have_wait_cb) {
-      D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-      FillWaitForSyncObjectArgs(&args, dev->kmt_context, /*hAdapter=*/0, handles, fence_values, fence, timeout);
-
-      const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb, dev->hrt_device, &args);
-      if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-          hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
-        return kDxgiErrorWasStillDrawing;
-      }
-      if (FAILED(hr)) {
-        return E_FAIL;
-      }
-
-      UpdateCompletedFence(dev, fence);
-      (void)AeroGpuQueryCompletedFence(dev);
-      return S_OK;
-    }
-
-    const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
-    if (procs.pfn_wait_for_syncobj) {
-      D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-      FillWaitForSyncObjectArgs(&args, dev->kmt_context, dev->kmt_adapter, handles, fence_values, fence, timeout);
-
-      const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
-      if (st == STATUS_TIMEOUT) {
-        return kDxgiErrorWasStillDrawing;
-      }
-      if (!NT_SUCCESS(st)) {
-        return E_FAIL;
-      }
-
-      UpdateCompletedFence(dev, fence);
-      (void)AeroGpuQueryCompletedFence(dev);
-      return S_OK;
-    }
-
-    return E_FAIL;
+  const HRESULT hr = dev->wddm_submit.WaitForFenceWithTimeout(fence, timeout_ms);
+  if (FAILED(hr)) {
+    return hr;
   }
 
-  // Fallback for bring-up: treat submissions as synchronous and wait on the local CV.
-  if (!dev->adapter) {
-    return E_FAIL;
-  }
-
-  AeroGpuAdapter* adapter = dev->adapter;
-  std::unique_lock<std::mutex> lock(adapter->fence_mutex);
-  auto ready = [&] { return adapter->completed_fence >= fence; };
-
-  if (ready()) {
-    atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
-    return S_OK;
-  }
-
-  if (timeout_ms == 0) {
-    return kDxgiErrorWasStillDrawing;
-  }
-
-  if (timeout_ms == kAeroGpuTimeoutMsInfinite) {
-    adapter->fence_cv.wait(lock, ready);
-  } else if (!adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
-    return kDxgiErrorWasStillDrawing;
-  }
-
-  atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
+  UpdateCompletedFence(dev, fence);
+  (void)AeroGpuQueryCompletedFence(dev);
   return S_OK;
 }
 
@@ -1156,422 +913,31 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   if (!dev || dev->cmd.empty()) {
     return 0;
   }
-
-  AeroGpuAdapter* adapter = dev->adapter;
-  if (!adapter) {
+  if (!dev->adapter) {
+    if (out_hr) {
+      *out_hr = E_FAIL;
+    }
+    dev->cmd.reset();
     return 0;
   }
 
   dev->cmd.finalize();
 
-  const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
-  if (!cb || !cb->pfnAllocateCb || !cb->pfnRenderCb || !cb->pfnDeallocateCb) {
-    if (out_hr) {
-      *out_hr = E_FAIL;
-    }
-    dev->cmd.reset();
-    return 0;
-  }
-
-  const uint8_t* src = dev->cmd.data();
-  const size_t src_size = dev->cmd.size();
-  if (src_size < sizeof(aerogpu_cmd_stream_header)) {
-    if (out_hr) {
-      *out_hr = E_FAIL;
-    }
-    dev->cmd.reset();
-    return 0;
-  }
-
-  uint64_t last_fence = 0;
-  std::uintptr_t wddm_context = static_cast<std::uintptr_t>(dev->kmt_context);
-  auto log_missing_context_once = [&] {
-    static std::atomic<bool> logged = false;
-    bool expected = false;
-    if (logged.compare_exchange_strong(expected, true)) {
-      AEROGPU_D3D10_11_LOG(
-          "wddm_submit: D3DDDICB_* exposes hContext but the callback returned hContext=0; "
-          "this may require creating a WDDM context via pfnCreateContextCb2");
-    }
-  };
-
-  auto deallocate_buffers = [&](const D3DDDICB_ALLOCATE& alloc, void* dma_priv_ptr, size_t dma_priv_size) {
-    D3DDDICB_DEALLOCATE dealloc = {};
-    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
-      dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(wddm_context);
-    }
-    __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
-      __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
-        dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      }
-    }
-    __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
-      __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
-        dealloc.pCommandBuffer = alloc.pCommandBuffer;
-      }
-    }
-    __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
-      __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
-        dealloc.pAllocationList = alloc.pAllocationList;
-      }
-    }
-    __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
-      __if_exists(D3DDDICB_ALLOCATE::pPatchLocationList) {
-        dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      }
-    }
-    __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
-      dealloc.pDmaBufferPrivateData = dma_priv_ptr;
-    }
-    __if_exists(D3DDDICB_DEALLOCATE::DmaBufferPrivateDataSize) {
-      dealloc.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
-    }
-    CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
-  };
-
-  // Chunk at packet boundaries if the runtime returns a smaller-than-requested DMA buffer.
-  size_t cur = sizeof(aerogpu_cmd_stream_header);
-  while (cur < src_size) {
-    const size_t remaining_packets_bytes = src_size - cur;
-    const UINT request_bytes =
-        static_cast<UINT>(remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header));
-
-    D3DDDICB_ALLOCATE alloc = {};
-    __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
-      alloc.DmaBufferSize = request_bytes;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
-      alloc.CommandBufferSize = request_bytes;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::AllocationListSize) {
-      alloc.AllocationListSize = 0;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::PatchLocationListSize) {
-      alloc.PatchLocationListSize = 0;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::hContext) {
-      alloc.hContext = UintPtrToD3dHandle<decltype(alloc.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
-    }
-
-    HRESULT alloc_hr = CallCbMaybeHandle(cb->pfnAllocateCb, dev->hrt_device, &alloc);
-
-    void* dma_ptr = nullptr;
-    UINT dma_cap = 0;
-    void* dma_priv_ptr = nullptr;
-    size_t dma_priv_size = 0;
-    size_t dma_priv_size_submit = 0;
-    void* dma_priv_ptr_dealloc = nullptr;
-    size_t dma_priv_size_dealloc = 0;
-    bool dma_priv_ptr_present = false;
-    bool dma_priv_size_present = false;
-    __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
-      dma_ptr = alloc.pDmaBuffer;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
-      dma_ptr = alloc.pCommandBuffer;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
-      dma_cap = alloc.DmaBufferSize;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
-      dma_cap = alloc.CommandBufferSize;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
-      dma_priv_ptr = alloc.pDmaBufferPrivateData;
-      dma_priv_ptr_present = true;
-    }
-    __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
-      dma_priv_size = static_cast<size_t>(alloc.DmaBufferPrivateDataSize);
-      dma_priv_size_present = true;
-    }
-
-    __if_exists(D3DDDICB_ALLOCATE::hContext) {
-      const std::uintptr_t ctx = D3dHandleToUintPtr(alloc.hContext);
-      if (ctx) {
-        wddm_context = ctx;
-      } else {
-        log_missing_context_once();
-      }
-    }
-
-    if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
-      if (out_hr) {
-        *out_hr = FAILED(alloc_hr) ? alloc_hr : E_OUTOFMEMORY;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    dma_priv_ptr_dealloc = dma_priv_ptr;
-    dma_priv_size_dealloc = dma_priv_size;
-    if (!dma_priv_ptr_dealloc && dev->dma_buffer_private_data) {
-      // Some WDK/runtime combinations expose per-DMA-buffer private data via
-      // CreateContext rather than AllocateCb. Use it as a fallback for submit,
-      // but keep the AllocateCb pointer/size for DeallocateCb.
-      static std::atomic<bool> logged_fallback{false};
-      bool expected = false;
-      if (logged_fallback.compare_exchange_strong(expected, true)) {
-        AEROGPU_D3D10_11_LOG("wddm_submit: D3D10.1 falling back to CreateContext dma private data ptr=%p bytes=%u",
-                             dev->dma_buffer_private_data,
-                             static_cast<unsigned>(dev->dma_buffer_private_data_size));
-      }
-      dma_priv_ptr = dev->dma_buffer_private_data;
-      dma_priv_ptr_present = true;
-      if (dma_priv_size == 0 && dev->dma_buffer_private_data_size != 0) {
-        dma_priv_size = static_cast<size_t>(dev->dma_buffer_private_data_size);
-      }
-    }
-    const size_t expected_dma_priv_bytes = static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
-    if (dma_priv_ptr_dealloc && dma_priv_size_dealloc == 0) {
-      dma_priv_size_dealloc = expected_dma_priv_bytes;
-    }
-
-    if (dma_priv_size_present) {
-      if (dma_priv_ptr_present && dma_priv_ptr == nullptr) {
-        deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
-
-        if (out_hr) {
-          *out_hr = E_FAIL;
-        }
-        dev->cmd.reset();
-        return 0;
-      }
-
-      const size_t expected_dma_priv_bytes = static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
-      if (dma_priv_size == 0 && dma_priv_ptr != nullptr) {
-        // Some header/runtime combinations carry the size field but leave it as
-        // 0. Use the fixed AeroGPU Win7 contract size instead.
-        dma_priv_size = expected_dma_priv_bytes;
-      }
-
-      if (dma_priv_size < expected_dma_priv_bytes) {
-        deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
-
-        if (out_hr) {
-          *out_hr = E_FAIL;
-        }
-        dev->cmd.reset();
-        return 0;
-      }
-      dma_priv_size_submit = dma_priv_size;
-      if (dma_priv_size_submit != expected_dma_priv_bytes) {
-        static std::atomic<bool> logged_dma_priv_mismatch{false};
-        bool expected = false;
-        if (logged_dma_priv_mismatch.compare_exchange_strong(expected, true)) {
-          AEROGPU_D3D10_11_LOG("wddm_submit: D3D10.1 AllocateCb returned dma private data size=%u (expected=%u)",
-                               static_cast<unsigned>(dma_priv_size_submit),
-                               static_cast<unsigned>(expected_dma_priv_bytes));
-        }
-      }
-      if (dma_priv_size_submit > expected_dma_priv_bytes) {
-        dma_priv_size_submit = expected_dma_priv_bytes;
-      }
-    } else if (dma_priv_ptr_present) {
-      if (dma_priv_ptr == nullptr) {
-        deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
-
-        if (out_hr) {
-          *out_hr = E_FAIL;
-        }
-        dev->cmd.reset();
-        return 0;
-      }
-      dma_priv_size = static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
-      dma_priv_size_submit = dma_priv_size;
-    }
-
-    if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
-      deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
-
-      if (out_hr) {
-        *out_hr = E_OUTOFMEMORY;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    // Build chunk within dma_cap.
-    const size_t chunk_begin = cur;
-    size_t chunk_end = cur;
-    size_t chunk_size = sizeof(aerogpu_cmd_stream_header);
-
-    while (chunk_end < src_size) {
-      const auto* pkt = reinterpret_cast<const aerogpu_cmd_hdr*>(src + chunk_end);
-      const size_t pkt_size = static_cast<size_t>(pkt->size_bytes);
-      if (pkt_size < sizeof(aerogpu_cmd_hdr) || (pkt_size & 3u) != 0 || chunk_end + pkt_size > src_size) {
-        assert(false && "AeroGPU command stream contains an invalid packet");
-        break;
-      }
-      if (chunk_size + pkt_size > dma_cap) {
-        break;
-      }
-      chunk_end += pkt_size;
-      chunk_size += pkt_size;
-    }
-
-    if (chunk_end == chunk_begin) {
-      deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
-
-      if (out_hr) {
-        *out_hr = E_OUTOFMEMORY;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    auto* dst = static_cast<uint8_t*>(dma_ptr);
-    std::memcpy(dst, src, sizeof(aerogpu_cmd_stream_header));
-    std::memcpy(dst + sizeof(aerogpu_cmd_stream_header),
-                src + chunk_begin,
-                chunk_size - sizeof(aerogpu_cmd_stream_header));
-    auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
-    hdr->size_bytes = static_cast<uint32_t>(chunk_size);
-
-    const bool is_last_chunk = (chunk_end == src_size);
-    const bool do_present = want_present && is_last_chunk && cb->pfnPresentCb != nullptr;
-
-    if (dma_priv_ptr && dma_priv_size_submit) {
-      std::memset(dma_priv_ptr, 0, dma_priv_size_submit);
-    }
-
-    HRESULT submit_hr = S_OK;
-    uint64_t submission_fence = 0;
-    if (do_present) {
-      D3DDDICB_PRESENT present = {};
-      uint64_t fence_value_tmp = 0;
-      uint64_t fence_id_tmp = 0;
-      __if_exists(D3DDDICB_PRESENT::hContext) {
-        present.hContext = UintPtrToD3dHandle<decltype(present.hContext)>(wddm_context);
-        if (!wddm_context) {
-          log_missing_context_once();
-        }
-      }
-      __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
-        present.pDmaBuffer = alloc.pDmaBuffer;
-      }
-      __if_exists(D3DDDICB_PRESENT::pCommandBuffer) {
-        present.pCommandBuffer = dma_ptr;
-      }
-      __if_exists(D3DDDICB_PRESENT::DmaBufferSize) {
-        present.DmaBufferSize = static_cast<UINT>(chunk_size);
-      }
-      __if_exists(D3DDDICB_PRESENT::CommandLength) {
-        present.CommandLength = static_cast<UINT>(chunk_size);
-      }
-      __if_exists(D3DDDICB_PRESENT::pAllocationList) {
-        present.pAllocationList = alloc.pAllocationList;
-      }
-      __if_exists(D3DDDICB_PRESENT::AllocationListSize) {
-        present.AllocationListSize = 0;
-      }
-      __if_exists(D3DDDICB_PRESENT::pPatchLocationList) {
-        present.pPatchLocationList = alloc.pPatchLocationList;
-      }
-      __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
-        present.PatchLocationListSize = 0;
-      }
-      __if_exists(D3DDDICB_PRESENT::CommandBufferSize) {
-        present.CommandBufferSize = dma_cap;
-      }
-      __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
-        present.pDmaBufferPrivateData = dma_priv_ptr;
-      }
-      __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
-        present.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size_submit);
-      }
-      __if_exists(D3DDDICB_PRESENT::pFenceValue) {
-        present.pFenceValue = reinterpret_cast<decltype(present.pFenceValue)>(&fence_value_tmp);
-      }
-      __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) {
-        present.pSubmissionFenceId = reinterpret_cast<decltype(present.pSubmissionFenceId)>(&fence_id_tmp);
-      }
-
-      submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, dev->hrt_device, &present);
-      submission_fence = ExtractSubmitFence(present);
-    } else {
-      D3DDDICB_RENDER render = {};
-      uint64_t fence_value_tmp = 0;
-      uint64_t fence_id_tmp = 0;
-      __if_exists(D3DDDICB_RENDER::hContext) {
-        render.hContext = UintPtrToD3dHandle<decltype(render.hContext)>(wddm_context);
-        if (!wddm_context) {
-          log_missing_context_once();
-        }
-      }
-      __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
-        render.pDmaBuffer = alloc.pDmaBuffer;
-      }
-      __if_exists(D3DDDICB_RENDER::pCommandBuffer) {
-        render.pCommandBuffer = dma_ptr;
-      }
-      __if_exists(D3DDDICB_RENDER::DmaBufferSize) {
-        render.DmaBufferSize = static_cast<UINT>(chunk_size);
-      }
-      __if_exists(D3DDDICB_RENDER::CommandLength) {
-        render.CommandLength = static_cast<UINT>(chunk_size);
-      }
-      __if_exists(D3DDDICB_RENDER::pAllocationList) {
-        render.pAllocationList = alloc.pAllocationList;
-      }
-      __if_exists(D3DDDICB_RENDER::AllocationListSize) {
-        render.AllocationListSize = 0;
-      }
-      __if_exists(D3DDDICB_RENDER::pPatchLocationList) {
-        render.pPatchLocationList = alloc.pPatchLocationList;
-      }
-      __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
-        render.PatchLocationListSize = 0;
-      }
-      __if_exists(D3DDDICB_RENDER::CommandBufferSize) {
-        render.CommandBufferSize = dma_cap;
-      }
-      __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
-        render.pDmaBufferPrivateData = dma_priv_ptr;
-      }
-      __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
-        render.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size_submit);
-      }
-      __if_exists(D3DDDICB_RENDER::pFenceValue) {
-        render.pFenceValue = reinterpret_cast<decltype(render.pFenceValue)>(&fence_value_tmp);
-      }
-      __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) {
-        render.pSubmissionFenceId = reinterpret_cast<decltype(render.pSubmissionFenceId)>(&fence_id_tmp);
-      }
-
-      submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, dev->hrt_device, &render);
-      submission_fence = ExtractSubmitFence(render);
-    }
-
-    // Always return submission buffers to the runtime.
-    {
-      deallocate_buffers(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
-    }
-
-    if (FAILED(submit_hr)) {
-      if (out_hr) {
-        *out_hr = submit_hr;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    if (submission_fence != 0) {
-      last_fence = submission_fence;
-    }
-
-    cur = chunk_end;
-  }
-
-  const bool complete_immediately = (dev->kmt_fence_syncobj == 0 && dev->monitored_fence_value == nullptr);
-  if (last_fence != 0) {
-    atomic_max_u64(&dev->last_submitted_fence, last_fence);
-  }
-  if (complete_immediately && last_fence != 0) {
-    UpdateCompletedFence(dev, last_fence);
-  }
-
+  uint64_t fence = 0;
+  const HRESULT hr =
+      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
   dev->cmd.reset();
-  return last_fence;
+  if (FAILED(hr)) {
+    if (out_hr) {
+      *out_hr = hr;
+    }
+    return 0;
+  }
+
+  if (fence != 0) {
+    atomic_max_u64(&dev->last_submitted_fence, fence);
+  }
+  return fence;
 }
 
 void set_error(AeroGpuDevice* dev, HRESULT hr);
