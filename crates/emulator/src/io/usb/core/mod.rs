@@ -184,6 +184,9 @@ impl AttachedUsbDevice {
         UsbOutResult::Ack
     }
 
+    /// Handle an OUT transaction to endpoint number `endpoint`.
+    ///
+    /// `endpoint` is the endpoint **number** (0..=15), not the endpoint address (e.g. not `0x01`).
     pub fn handle_out(&mut self, endpoint: u8, data: &[u8]) -> UsbOutResult {
         debug_assert!(
             (endpoint & 0xF0) == 0,
@@ -254,6 +257,9 @@ impl AttachedUsbDevice {
         }
     }
 
+    /// Handle an IN transaction to endpoint number `endpoint`.
+    ///
+    /// `endpoint` is the endpoint **number** (0..=15), not the endpoint address (e.g. not `0x81`).
     pub fn handle_in(&mut self, endpoint: u8, max_len: usize) -> UsbInResult {
         debug_assert!(
             (endpoint & 0xF0) == 0,
