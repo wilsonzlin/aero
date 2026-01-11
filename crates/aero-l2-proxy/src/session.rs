@@ -1130,10 +1130,20 @@ async fn resolve_host_port(host: &str, port: u16) -> std::io::Result<SocketAddr>
         return Ok(SocketAddr::new(ip, port));
     }
 
-    let mut addrs = tokio::net::lookup_host((host, port)).await?;
-    addrs
-        .next()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses found"))
+    let addrs = tokio::net::lookup_host((host, port)).await?;
+    // The proxy stack is IPv4-only today (guest addresses and policy enforcement), so prefer IPv4
+    // results when available. This avoids surprises where `localhost` resolves to `::1` first and
+    // a service is bound only on `127.0.0.1`.
+    let mut first = None;
+    for addr in addrs {
+        if first.is_none() {
+            first = Some(addr);
+        }
+        if addr.is_ipv4() {
+            return Ok(addr);
+        }
+    }
+    first.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses found"))
 }
 
 #[cfg(test)]
@@ -1199,5 +1209,34 @@ mod tests {
         .expect(
             "close_policy_violation should not hang when the outbound channel is backpressured",
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_host_port_prefers_ipv4_when_available() {
+        let port = 12345;
+        let addrs: Vec<SocketAddr> = tokio::net::lookup_host(("localhost", port))
+            .await
+            .expect("lookup localhost")
+            .collect();
+        assert!(
+            !addrs.is_empty(),
+            "localhost must resolve to at least one address"
+        );
+
+        let resolved = resolve_host_port("localhost", port)
+            .await
+            .expect("resolve_host_port");
+
+        if addrs.iter().any(|addr| addr.is_ipv4()) {
+            assert!(
+                resolved.is_ipv4(),
+                "expected resolve_host_port to prefer IPv4 when available (got {resolved:?})",
+            );
+        } else {
+            assert_eq!(
+                resolved, addrs[0],
+                "expected resolve_host_port to return the first address when no IPv4 is available",
+            );
+        }
     }
 }
