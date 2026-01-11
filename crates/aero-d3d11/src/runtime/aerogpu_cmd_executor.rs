@@ -4,7 +4,7 @@ use std::ops::Range;
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
 use aero_gpu::GpuCapabilities;
-use aero_gpu_device::guest_memory::{GuestMemory, GuestMemoryError};
+use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdStreamHeader, AEROGPU_CLEAR_COLOR,
     AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
