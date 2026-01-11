@@ -83,6 +83,18 @@ impl AudioCaptureSource for aero_platform::audio::mic_bridge::MonoRingBuffer {
     }
 }
 
+impl AudioCaptureSource for aero_audio::capture::SilenceCaptureSource {
+    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
+        aero_audio::capture::AudioCaptureSource::read_mono_f32(self, dst)
+    }
+}
+
+impl AudioCaptureSource for aero_audio::capture::VecDequeCaptureSource {
+    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
+        aero_audio::capture::AudioCaptureSource::read_mono_f32(self, dst)
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub struct MicCaptureSource {
