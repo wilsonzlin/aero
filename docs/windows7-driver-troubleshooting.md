@@ -355,7 +355,11 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 2. Switch input back to **PS/2**.
 3. Boot Windows.
 4. Re-run `setup.cmd` as Administrator (so the virtio-input driver package is staged).
-5. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
+5. Verify the virtio-input PCI device matches the Aero Win7 virtio contract v1 identity:
+   - In Device Manager → the virtio-input PCI device → Properties → Details → **Hardware Ids**
+   - The list should include `PCI\VEN_1AF4&DEV_1052&REV_01` (and possibly `...&SUBSYS_...&REV_01`).
+   - If the device reports `REV_00`, the in-tree Aero `virtio-input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
+6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
 ## Issue: Device Manager Code 28 (drivers not installed)
 
@@ -384,6 +388,7 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 - Wrong driver (x86 vs x64, or the wrong device class).
 - Driver is present but blocked by signing/trust (sometimes appears as Code 10 or Code 52 depending on the device).
 - Incomplete/mismatched driver package (mixed versions).
+- Driver bound but refused to start due to a contract/runtime mismatch (for example a virtio device reporting the wrong `REV_..`).
 
 **Fix**
 
