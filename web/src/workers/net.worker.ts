@@ -377,7 +377,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             l2ReconnectAttempts = 0;
             return;
           }
-          if (ev.type === "close" || ev.type === "error") {
+          if (ev.type === "close") {
             // Drop the reference early so late events from the closed tunnel
             // don't race with a new client instance.
             l2TunnelClient = null;
