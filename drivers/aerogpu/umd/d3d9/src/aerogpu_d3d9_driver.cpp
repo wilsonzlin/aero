@@ -1946,7 +1946,6 @@ uint64_t submit(Device* dev, bool is_present) {
       const uint64_t prev_submitted = adapter->last_submitted_fence;
       adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
       adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
-      fence = adapter->last_submitted_fence;
       updated = (adapter->last_submitted_fence != prev_submitted);
     }
   }
@@ -1967,7 +1966,7 @@ uint64_t submit(Device* dev, bool is_present) {
       // callbacks).
       adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, stub_fence);
       adapter->completed_fence = std::max(adapter->completed_fence, stub_fence);
-      fence = adapter->last_submitted_fence;
+      fence = stub_fence;
       updated = updated || (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
     }
   }
