@@ -1319,6 +1319,10 @@ function renderRemoteDiskPanel(): HTMLElement {
       const hitRate = hitRateDenom > 0 ? remote.cacheHits / hitRateDenom : 0;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
       const downloadAmplification = res.io.bytesRead > 0 ? remote.bytesDownloaded / res.io.bytesRead : 0;
+      const lastFetchRangeText = remote.lastFetchRange
+        ? `${formatByteSize(remote.lastFetchRange.start)}-${formatByteSize(remote.lastFetchRange.end - 1)}`
+        : '—';
+      const lastFetchAtText = remote.lastFetchAtMs === null ? '—' : new Date(remote.lastFetchAtMs).toLocaleTimeString();
 
       stats.textContent =
         `imageSize=${formatByteSize(remote.totalSize)}\n` +
@@ -1328,7 +1332,7 @@ function renderRemoteDiskPanel(): HTMLElement {
         `ioBytesRead=${formatByteSize(res.io.bytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
         `requests=${remote.requests} bytesDownloaded=${formatByteSize(remote.bytesDownloaded)}\n` +
         `blockRequests=${remote.blockRequests} hits=${remote.cacheHits} misses=${remote.cacheMisses} inflightJoins=${remote.inflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
-        `inflightFetches=${remote.inflightFetches} lastFetchMs=${remote.lastFetchMs === null ? '—' : remote.lastFetchMs.toFixed(1)}\n`;
+        `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? '—' : remote.lastFetchMs.toFixed(1)}ms)\n`;
     } catch (err) {
       stats.textContent = err instanceof Error ? err.message : String(err);
     } finally {
