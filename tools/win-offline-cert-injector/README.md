@@ -37,7 +37,7 @@ Inject into the default stores (`ROOT` + `TrustedPublisher`) using an explicit h
 ```powershell
 win-offline-cert-injector `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
-  .\aero-root.cer .\aero-publisher.cer
+  .\aero-test.cer
 ```
 
 Inject into `TrustedPeople` only:
@@ -55,7 +55,7 @@ Verify-only (does not modify the hive):
 win-offline-cert-injector `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
   --verify-only `
-  .\aero-root.cer
+  .\aero-test.cer
 ```
 
 ## Manual verification
