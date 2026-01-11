@@ -4,7 +4,7 @@ use std::io::{Seek, Write};
 
 use aero_snapshot::{
     CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, RamWriteOptions,
-    SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
+    DiskOverlayRef, SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -366,6 +366,133 @@ fn snapshot_validate_rejects_truncated_devices_section() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("device count: truncated section"));
+}
+
+struct DiskSource;
+
+impl SnapshotSource for DiskSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        SnapshotMeta {
+            snapshot_id: 4,
+            parent_snapshot_id: Some(3),
+            created_unix_ms: 0,
+            label: Some("xtask-disks".to_string()),
+        }
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        CpuState::default()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        MmuState::default()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        Vec::new()
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: 0,
+                base_image: "base.img".to_string(),
+                overlay_image: "overlay.img".to_string(),
+            }],
+        }
+    }
+
+    fn ram_len(&self) -> usize {
+        4096
+    }
+
+    fn read_ram(&self, _offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        buf.fill(0);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+fn write_disk_snapshot(path: &std::path::Path) -> Vec<u8> {
+    let mut source = DiskSource;
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let bytes = cursor.into_inner();
+    fs::write(path, &bytes).unwrap();
+    bytes
+}
+
+fn corrupt_disks_base_image_first_byte(snapshot: &mut [u8]) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let disks = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DISKS)
+        .expect("DISKS section missing");
+
+    let mut off = disks.offset as usize;
+    let count = read_u32_le(&snapshot[off..off + 4]);
+    assert!(count > 0);
+    off += 4;
+
+    // First disk entry.
+    off += 4; // disk_id
+    let base_len = read_u32_le(&snapshot[off..off + 4]) as usize;
+    off += 4;
+    assert!(base_len > 0);
+    snapshot[off] = 0xFF;
+}
+
+fn corrupt_disks_base_image_len(snapshot: &mut [u8], new_len: u32) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let disks = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::DISKS)
+        .expect("DISKS section missing");
+
+    let mut off = disks.offset as usize;
+    let count = read_u32_le(&snapshot[off..off + 4]);
+    assert!(count > 0);
+    off += 4;
+
+    // First disk entry.
+    off += 4; // disk_id
+    snapshot[off..off + 4].copy_from_slice(&new_len.to_le_bytes());
+}
+
+#[test]
+fn snapshot_validate_rejects_disks_invalid_utf8() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("disks_invalid_utf8.aerosnap");
+    let mut bytes = write_disk_snapshot(&snap);
+    corrupt_disks_base_image_first_byte(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("disk base_image: invalid utf-8"));
+}
+
+#[test]
+fn snapshot_validate_rejects_disks_path_too_long() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("disks_path_too_long.aerosnap");
+    let mut bytes = write_disk_snapshot(&snap);
+    // > 64KiB
+    corrupt_disks_base_image_len(&mut bytes, 64 * 1024 + 1);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("disk base_image too long"));
 }
 
 struct LargeDirtySource;
