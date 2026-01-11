@@ -356,6 +356,78 @@ async fn upgrade_rejection_metrics_increment_on_missing_origin() {
 }
 
 #[tokio::test]
+async fn upgrade_rejection_metrics_increment_on_origin_not_allowed() {
+    let stack_defaults = StackConfig::default();
+    let cfg = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+        l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+        l2_max_control_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
+        shutdown_grace: Duration::from_millis(3000),
+        ping_interval: None,
+        idle_timeout: None,
+        tcp_connect_timeout: Duration::from_millis(200),
+        tcp_send_buffer: 8,
+        ws_send_buffer: 8,
+        max_udp_flows_per_tunnel: 256,
+        udp_flow_idle_timeout: Some(Duration::from_secs(60)),
+        stack_max_tcp_connections: stack_defaults.max_tcp_connections,
+        stack_max_pending_dns: stack_defaults.max_pending_dns,
+        stack_max_dns_cache_entries: stack_defaults.max_dns_cache_entries,
+        stack_max_buffered_tcp_bytes_per_conn: stack_defaults.max_buffered_tcp_bytes_per_conn,
+        dns_default_ttl_secs: 60,
+        dns_max_ttl_secs: 300,
+        capture_dir: None,
+        security: SecurityConfig {
+            open: false,
+            allowed_origins: AllowedOrigins::List(vec!["https://allowed.test".to_string()]),
+            ..Default::default()
+        },
+        policy: EgressPolicy::default(),
+        test_overrides: Default::default(),
+    };
+
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let ws_url = format!("ws://{addr}/l2");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://denied.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected disallowed Origin to be rejected");
+
+    match err {
+        WsError::Http(resp) => assert_eq!(resp.status(), StatusCode::FORBIDDEN),
+        other => panic!("expected http error, got {other:?}"),
+    }
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let rejected = parse_metric(&body, "l2_upgrade_reject_origin_not_allowed_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected origin-not-allowed reject counter >= 1, got {rejected}"
+    );
+    let total = parse_metric(&body, "l2_upgrade_rejected_total").unwrap();
+    assert!(
+        total >= 1,
+        "expected upgrade rejected total >= 1, got {total}"
+    );
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn version_endpoint_returns_json() {
     let server = TestServer::start(None, None).await;
 
