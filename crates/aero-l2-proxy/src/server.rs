@@ -53,7 +53,7 @@ pub(crate) struct AppState {
     pub(crate) metrics: Metrics,
     pub(crate) capture: CaptureManager,
     pub(crate) connections: Option<Arc<Semaphore>>,
-    pub(crate) connections_per_ip: Option<Arc<IpConnectionLimiter>>,
+    connections_per_ip: Option<Arc<IpConnectionLimiter>>,
     pub(crate) session_tunnels: Option<Arc<SessionTunnelTracker>>,
     pub(crate) shutting_down: Arc<AtomicBool>,
     pub(crate) shutdown_rx: watch::Receiver<bool>,
