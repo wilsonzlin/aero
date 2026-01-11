@@ -76,17 +76,26 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
   - WebUSB/WebHID handles and permission UX (user gesture requirement)
   - async execution of host transfers
   - main thread ↔ worker proxying (default: `postMessage` with transferred `ArrayBuffer`s).
-    When `globalThis.crossOriginIsolated === true` and `SharedArrayBuffer`/`Atomics` are available,
-    the WebHID passthrough stack uses SAB ring buffers to avoid per-report messaging overhead:
-    - **Input reports (main → worker):** IPC `RingBuffer` initialized via `hid.ring.init` and filled
-      with compact, versioned `"HIDR"` input report records.
-    - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`.
-    - Implementation:
-      - `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
-      - `web/src/hid/hid_input_report_ring.ts` (record codec + writer)
-      - `web/src/hid/hid_proxy_protocol.ts` (`hid.ring.init`, `hid.ringAttach`)
-      - `web/src/hid/webhid_broker.ts` (runtime selection + producers)
-      - `web/src/workers/io_hid_input_ring.ts` (worker drain helper)
+    When `globalThis.crossOriginIsolated === true` and `SharedArrayBuffer`/`Atomics` are available:
+    - WebHID passthrough uses SAB ring buffers to avoid per-report messaging overhead:
+      - **Input reports (main → worker):** IPC `RingBuffer` initialized via `hid.ring.init` and filled
+        with compact, versioned `"HIDR"` input report records.
+      - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`.
+      - Implementation:
+        - `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
+        - `web/src/hid/hid_input_report_ring.ts` (record codec + writer)
+        - `web/src/hid/hid_proxy_protocol.ts` (`hid.ring.init`, `hid.ringAttach`)
+        - `web/src/hid/webhid_broker.ts` (runtime selection + producers)
+        - `web/src/workers/io_hid_input_ring.ts` (worker drain helper)
+    - WebUSB passthrough supports a SAB ring-buffer fast path for host action/completion proxying,
+      negotiated by `usb.ringAttach`:
+      - **Actions (worker → main):** `UsbHostAction` records.
+      - **Completions (main → worker):** `UsbHostCompletion` records.
+      - Implementation:
+        - `web/src/usb/usb_proxy_ring.ts`
+        - `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`)
+        - `web/src/usb/usb_broker.ts`
+        - `web/src/usb/webusb_passthrough_runtime.ts`
 - Long-term, the UHCI controller should be integrated into the canonical VM wiring described by
   [ADR 0014](./0014-canonical-machine-stack.md):
   - `aero_machine::Machine` (in the I/O worker) owns the UHCI controller device model.

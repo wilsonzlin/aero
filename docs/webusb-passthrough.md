@@ -18,14 +18,18 @@ Implementation references (current repo):
 - Rust wire contract + action/completion queue (`UsbPassthroughDevice`): `crates/aero-usb/src/passthrough.rs`
 - Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci.rs`
 - WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
+- WASM guest-visible UHCI controller (`UhciControllerBridge`) + WebUSB passthrough device (root port 1): `crates/aero-wasm/src/uhci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
+- (Dev/harness) WASM standalone WebUSB UHCI bridge (`WebUsbUhciBridge`): `crates/aero-wasm/src/webusb_uhci_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - WASM demo driver (`UsbPassthroughDemo`; queues GET_DESCRIPTOR requests to validate the action↔completion contract end-to-end): `crates/aero-wasm/src/lib.rs`
 - WASM UHCI enumeration harness (dev smoke; `WebUsbUhciPassthroughHarness`): `crates/aero-wasm/src/webusb_uhci_passthrough_harness.rs`
 - TS canonical wire types (`SetupPacket`/`UsbHostAction`/`UsbHostCompletion`): `web/src/usb/usb_passthrough_types.ts`
 - TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
-- TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`)
+- TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`)
 - TS worker-side passthrough runtime (action/completion pump): `web/src/usb/webusb_passthrough_runtime.ts`
 - TS worker-side demo runtime (drains `UsbPassthroughDemo` actions, pushes completions, defines `usb.demo.run`, emits `usb.demoResult`): `web/src/usb/usb_passthrough_demo_runtime.ts`
 - TS worker-side UHCI harness runner (dev smoke): `web/src/usb/webusb_harness_runtime.ts`
+- TS guest-visible UHCI PCI device (I/O worker): `web/src/io/devices/uhci.ts`
+- (Dev/harness) TS standalone WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
 - TS UI harness panels:
   - WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts`
   - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
@@ -530,9 +534,41 @@ Assume WebUSB calls must run on the main thread:
 - **Worker (WASM):** UHCI + `UsbPassthroughDevice` emits actions via a queue/ring buffer.
 - **Main thread:** broker/executor receives actions, calls WebUSB, and returns completions.
 
+#### Default / legacy path: `postMessage` + transferred `ArrayBuffer`s
+
 This pattern is implemented by `UsbBroker` (main thread) using a `postMessage` protocol
-(`web/src/usb/usb_broker.ts`, `web/src/usb/usb_proxy_protocol.ts`). (A legacy broker/client RPC
-implementation also exists under `src/platform/webusb_*`.)
+(`web/src/usb/usb_broker.ts`, `web/src/usb/usb_proxy_protocol.ts`):
+
+- worker → main thread: `{ type: "usb.action", action: UsbHostAction }`
+- main thread → worker: `{ type: "usb.completion", completion: UsbHostCompletion }`
+
+Byte payloads (`Uint8Array`) are transferred where possible to avoid copies. (A legacy broker/client RPC
+implementation also exists under `src/platform/webusb_*`, but it is not the canonical passthrough wire contract.)
+
+#### Fast path: SharedArrayBuffer ring buffers (`usb.ringAttach`)
+
+When `globalThis.crossOriginIsolated === true` (COOP/COEP enabled) and `SharedArrayBuffer`/`Atomics`
+are available, the broker/worker proxy enables an optional SharedArrayBuffer-backed ring-buffer fast path
+negotiated by `{ type: "usb.ringAttach", actionRing, completionRing }`:
+
+- **`actionRing` (worker → main thread):**
+  - the worker-side passthrough runtime writes `UsbHostAction` records into the ring (SPSC producer).
+  - the main thread drains actions on a timer and executes them via `WebUsbBackend`.
+- **`completionRing` (main thread → worker):**
+  - the main thread writes `UsbHostCompletion` records into the ring (SPSC producer).
+  - the worker drains completions (timer + opportunistic drain during polling) and pushes them into the WASM bridge.
+
+The fast path is opportunistic: when a ring is full (or a record is too large to fit), the sender falls back
+to `postMessage` (`usb.action` / `usb.completion`) so passthrough continues to make forward progress even under
+temporary backpressure.
+
+Implementation pointers (current code):
+
+- Ring buffer: `web/src/usb/usb_proxy_ring.ts` (`UsbProxyRing`)
+- Protocol schema: `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`)
+- Main thread setup + action-ring drain: `web/src/usb/usb_broker.ts` (`attachRings`, `drainActionRing`)
+- Worker-side attach + action/completion forwarding: `web/src/usb/webusb_passthrough_runtime.ts` (`attachRings`, `pollOnce`, `drainCompletionRing`)
+- Integration tests: `web/src/usb/usb_proxy_ring_integration.test.ts`
 
 #### SharedArrayBuffer ring fast path (optional)
 

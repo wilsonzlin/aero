@@ -108,6 +108,7 @@ Because Aero prefers worker-side I/O, there are two viable integration patterns:
 - **B) Main thread proxies all WebUSB I/O (fallback):**
   - If worker access is unavailable, or the `USBDevice` handle cannot be moved/shared, keep all WebUSB calls on the main thread and proxy operations over Aero’s existing main↔worker IPC.
   - In the production web runtime (`web/`), this is implemented by `UsbBroker` (main thread) + `WebUsbPassthroughRuntime` (worker) using a `MessagePort` protocol (`web/src/usb/{usb_broker,webusb_passthrough_runtime,usb_proxy_protocol}.ts`).
+  - When `crossOriginIsolated` and `SharedArrayBuffer`/`Atomics` are available, the same proxy can enable an optional SharedArrayBuffer ring fast path negotiated by `usb.ringAttach` (`web/src/usb/usb_proxy_ring.ts`), falling back to typed `postMessage` otherwise.
   - The repo-root Vite harness also contains a **generic WebUSB demo RPC** under `src/platform/webusb_{broker,client,protocol}.ts` (direct `navigator.usb` operations). It is not the canonical passthrough `UsbHostAction` contract.
 
 > `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime via the production WebUSB smoke-test panel (`web/src/usb/webusb_panel.ts`) or the dedicated diagnostics page (`/webusb_diagnostics.html`).

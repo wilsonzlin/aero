@@ -30,37 +30,36 @@ Why WebHID is the MVP for passthrough:
 - **Safer default:** compared to raw USB access, HID is more constrained (though
   still security-sensitive; see below).
 
-### WebUSB (experimental)
+### WebUSB (experimental; general USB devices)
 
 WebUSB is a general USB API that can expose non-HID devices and arbitrary USB
 transfers (control/bulk/interrupt, multiple interfaces, etc).
 
-It is out of scope for the first implementation because it requires a much
-larger passthrough bridge:
+Aero includes an end-to-end **guest-visible WebUSB passthrough** stack, using the same “main thread owns
+the `USBDevice`, worker owns the UHCI + device model” split as WebHID:
 
-- endpoint scheduling and transfer completion semantics
-- error mapping, timeouts, cancellation
-- device reset/configuration state tracking
+- **WASM UHCI controller with WebUSB passthrough device:** `crates/aero-wasm::UhciControllerBridge`
+  (`crates/aero-wasm/src/uhci_controller_bridge.rs`, re-exported from `crates/aero-wasm/src/lib.rs`)
+  - the passthrough device is attached on **UHCI root port 1** (root port 0 is typically used for the
+    WebHID external hub).
+- **Worker-side proxy/runtime:** `web/src/usb/webusb_passthrough_runtime.ts` (`WebUsbPassthroughRuntime`)
+  - proxies `UsbHostAction`/`UsbHostCompletion` traffic to the main thread broker
+  - supports an optional SharedArrayBuffer ring fast path negotiated by `usb.ringAttach` when
+    `crossOriginIsolated`
+- **Main-thread broker/executor:** `web/src/usb/usb_broker.ts` (`UsbBroker`) +
+  `web/src/usb/webusb_backend.ts` (`WebUsbBackend`)
 
-Implementation status note:
+Dev/harness note: the repo also contains a standalone WebUSB UHCI bridge (`crates/aero-wasm::WebUsbUhciBridge`)
+and a matching PCI device wrapper (`web/src/io/devices/uhci_webusb.ts`) used by tests/panels, but the
+production guest-visible passthrough path is via `UhciControllerBridge`.
 
-- The repo already contains early scaffolding for WebUSB passthrough:
-  - Rust-side `UsbPassthroughDevice` (`crates/aero-usb/src/passthrough.rs`), exported to JS as
-    `UsbPassthroughBridge` (`crates/aero-wasm/src/lib.rs`)
-  - host-side WebUSB broker/executor + RPC (`web/src/usb/*`)
-  - descriptor fixups (where possible)
-  - a small end-to-end demo driver (`UsbPassthroughDemo` + `usb.demoResult`) that queues
-    GET_DESCRIPTOR requests via the broker to validate the action↔completion wiring (rerun via
-    `usb.demo.run` in the Web UI)
-    (`crates/aero-wasm/src/lib.rs`, `web/src/usb/usb_passthrough_demo_runtime.ts`, `web/src/main.ts`)
-  - Guest-visible WebUSB passthrough is now wired through the canonical UHCI controller
-    (`UhciControllerBridge`) with a passthrough device attached on **UHCI root port 1**.
-    The I/O worker hotplugs it based on `usb.selected` broadcasts from the main-thread broker.
-  - …but it is still not treated as the MVP path compared to WebHID.
+Compared to WebHID, WebUSB passthrough has a larger surface area and is more sensitive to device/OS/browser
+quirks (interface claiming, protected interface classes, full-speed UHCI constraints). WebHID remains the
+recommended path for HID peripherals.
 
-The intended end-state is to use the same “main-thread owns the handle, worker
-models the USB device” architecture described below, but with a richer transfer
-bridge.
+The repo also includes a small end-to-end demo driver (`UsbPassthroughDemo` + `usb.demoResult`) that queues
+GET_DESCRIPTOR requests via the broker to validate the action↔completion wiring (rerun via `usb.demo.run`
+in the Web UI) (`crates/aero-wasm/src/lib.rs`, `web/src/usb/usb_passthrough_demo_runtime.ts`, `web/src/main.ts`).
 
 For the detailed UHCI ↔ WebUSB transfer/TD mapping (including TD-level NAK pending
 semantics), see:
@@ -101,18 +100,22 @@ Guest Windows USB/HID stack
 
 ## Current status
 
-The repo has the core building blocks for passthrough, and the “main thread owns
-`HIDDevice`, I/O worker owns the USB device model” split is wired end-to-end for
-**main↔worker report forwarding** in the web runtime via a small broker/proxy protocol.
+The repo has the core building blocks for passthrough, and the “main thread owns the device handle,
+I/O worker owns the USB device model” split is wired end-to-end in the web runtime for:
+
+- **WebHID:** main↔worker report forwarding (`hid.*`)
+- **WebUSB:** main↔worker host action/completion forwarding (`usb.*`) for guest-visible UHCI passthrough
 
 Already implemented:
 
 - **Rust device models (`aero-usb`)**
   - `UsbHidPassthrough` (generic USB HID device with bounded input/output report queues)
   - WebHID metadata → HID report descriptor synthesis (`aero_usb::hid::webhid`)
+  - `UsbPassthroughDevice` (WebUSB host action/completion queue)
 - **WASM exports (`aero-wasm`)**
   - `WebHidPassthroughBridge` (wraps `UsbHidPassthrough` for JS/WASM interop)
   - `UsbPassthroughBridge` (wraps `UsbPassthroughDevice` for WebUSB host action/completion RPC)
+  - `UhciControllerBridge` (guest-visible UHCI controller; also exposes the WebUSB passthrough device on root port 1)
 - **Main-thread WebHID UX / bookkeeping (TypeScript)**
   - `WebHidPassthroughManager` + the debug panel UI
 - **Main-thread ↔ I/O worker WebHID broker (TypeScript)**
@@ -126,9 +129,18 @@ Already implemented:
 - **Worker-side WASM bridge (TypeScript)**
   - `web/src/workers/io.worker.ts` creates a WASM `WebHidPassthroughBridge` per attached device and
     drains output reports back to the broker.
+- **Main-thread ↔ I/O worker WebUSB broker (TypeScript)**
+  - `UsbBroker` (`web/src/usb/usb_broker.ts`) + protocol (`web/src/usb/usb_proxy_protocol.ts`)
+    forward `UsbHostAction`/`UsbHostCompletion` traffic:
+    - Preferred fast path (when `crossOriginIsolated`): SharedArrayBuffer rings negotiated by
+      `usb.ringAttach` (`web/src/usb/usb_proxy_ring.ts`)
+    - Fallback path: typed `postMessage` (`usb.action` / `usb.completion`)
+- **Worker-side WebUSB passthrough runtime (TypeScript)**
+  - `WebUsbPassthroughRuntime` (`web/src/usb/webusb_passthrough_runtime.ts`) drains actions from
+    the guest-visible WebUSB passthrough device (via `UhciControllerBridge`) and applies completions.
 - **Guest-visible UHCI controller + topology wiring (TypeScript + WASM)**
   - `web/src/io/devices/uhci.ts` exposes a guest-visible UHCI PCI function backed by the WASM
-    `UhciControllerBridge` export.
+    `UhciControllerBridge` export (including the WebUSB passthrough device on root port 1).
   - `web/src/hid/uhci_hid_topology.ts` wires WebHID passthrough bridges into the UHCI USB topology
     (including attaching an external hub when a `guestPath` requires it).
 
@@ -164,6 +176,8 @@ In the current TypeScript runtime this role is split between:
   open/close lifecycle, and guest-path allocation bookkeeping.
 - `WebHidBroker` (`web/src/hid/webhid_broker.ts`) for attaching to the I/O worker port and proxying
   input/output report traffic.
+- `UsbBroker` (`web/src/usb/usb_broker.ts`) for WebUSB device selection + open/claim, and proxying
+  `UsbHostAction`/`UsbHostCompletion` traffic to the I/O worker.
 
 1. **User-initiated selection**
    - Trigger a chooser from an explicit UI action (“Connect device…”).
@@ -176,6 +190,9 @@ In the current TypeScript runtime this role is split between:
 4. **Output report execution**
    - Receive worker requests to send an output/feature report.
    - Call `device.sendReport(...)` / `device.sendFeatureReport(...)`.
+5. **WebUSB transfer execution** (if using WebUSB passthrough)
+   - Receive `UsbHostAction` requests from the worker (control/bulk transfers).
+   - Execute the corresponding WebUSB call and return a `UsbHostCompletion`.
 
 ### Forwarding mechanism
 
@@ -397,12 +414,14 @@ Recommended guardrails:
   - The canonical UHCI controller (`UhciControllerBridge`) exposes a guest-visible WebUSB passthrough
     device on root port 1.
   - The I/O worker runs `WebUsbPassthroughRuntime` to proxy host actions/completions between the
-    WASM device model and the main-thread WebUSB broker.
+    WASM device model and the main-thread WebUSB broker (`UsbBroker`).
+    - Optional SharedArrayBuffer ring fast path (`usb.ringAttach`) when `crossOriginIsolated`,
+      falling back to typed `postMessage` otherwise.
   - WebUSB cannot access many common USB classes in Chromium (protected interface classes), so it is
     not a replacement for WebHID for HID peripherals.
   - See:
-    - [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
-    - [`docs/webusb.md`](./webusb.md)
+    - [`docs/webusb-passthrough.md`](./webusb-passthrough.md) (UHCI TD ↔ WebUSB transfer mapping)
+    - [`docs/webusb.md`](./webusb.md) (Chromium limits, WinUSB/udev, troubleshooting)
 
 ## Testing strategy
 
@@ -435,15 +454,21 @@ Recommended guardrails:
     - `WebHidPassthroughBridge`
     - `UsbPassthroughBridge`
     - `UhciControllerBridge` (guest-visible UHCI controller; also exposes the WebUSB passthrough device lifecycle)
+    - `WebUsbUhciBridge` (standalone UHCI + WebUSB passthrough bridge used by harness/tests)
 - **Rust device models**
   - WebHID → HID report descriptor synthesis: `crates/aero-usb/src/hid/webhid.rs`
   - Generic USB HID passthrough device model: `crates/aero-usb/src/hid/passthrough.rs`
   - WebUSB host action/completion queue: `crates/aero-usb/src/passthrough.rs` (`UsbPassthroughDevice`)
+  - UHCI-visible WebUSB passthrough device wrapper: `crates/aero-usb/src/passthrough_device.rs` (`UsbWebUsbPassthroughDevice`)
 - **Host-side (TypeScript)**
   - WebHID attach/detach + debug UI: `web/src/platform/webhid_passthrough.ts`
   - Main↔worker report proxying broker: `web/src/hid/webhid_broker.ts`
   - Main↔worker report proxying protocol: `web/src/hid/hid_proxy_protocol.ts`
   - SharedArrayBuffer report ring: `web/src/usb/hid_report_ring.ts`
+  - WebUSB broker/executor: `web/src/usb/usb_broker.ts`, `web/src/usb/webusb_backend.ts`
+  - WebUSB proxy protocol + SAB ring fast path: `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`
+  - Worker-side WebUSB passthrough runtime: `web/src/usb/webusb_passthrough_runtime.ts`
+  - Guest-visible WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
   - Guest USB attachment path schema (UHCI root port + downstream hub ports): `web/src/platform/hid_passthrough_protocol.ts`
   - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
   - Dev-only main-thread runtime wiring WebHID ↔ WASM bridge: `web/src/usb/webhid_passthrough_runtime.ts`
