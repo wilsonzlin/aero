@@ -78,8 +78,8 @@ typedef VOID EVT_VIRTIOSND_QUEUE_SPLIT_USED(
  */
 VOID
 VirtioSndQueueSplitDrainUsed(_Inout_ VIRTIOSND_QUEUE_SPLIT* qs,
-                             _In_ EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
-                             _In_opt_ void* Context);
+                              _In_ EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
+                              _In_opt_ void* Context);
 
 #ifdef __cplusplus
 } /* extern "C" */
