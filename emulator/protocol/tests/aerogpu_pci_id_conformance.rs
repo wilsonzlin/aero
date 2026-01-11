@@ -33,6 +33,13 @@ fn assert_file_not_contains(path: &Path, needle: &str) {
     );
 }
 
+fn file_contains_in_non_comment_lines(path: &Path, needle: &str) -> bool {
+    read_file(path)
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(';'))
+        .any(|line| line.contains(needle))
+}
+
 fn parse_u16_literal(lit: &str, path: &Path, define: &str) -> u16 {
     let lit = lit.trim();
     let lit = lit.trim_end_matches(&['u', 'U', 'l', 'L'][..]);
@@ -114,7 +121,12 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
     ] {
         let path = repo_root.join(relative_path);
-        assert_file_contains(&path, &new_hwid);
+        assert!(
+            file_contains_in_non_comment_lines(&path, &new_hwid),
+            "{} is out of sync: expected to bind to `{new_hwid}` (in a non-comment line)",
+            path.display()
+        );
+
         assert_file_not_contains(&path, &legacy_hwid);
     }
 
