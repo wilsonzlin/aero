@@ -67,7 +67,10 @@ The output `virtioinput.sys` will be placed under the WDK `objfre_*` output dire
    - Reboot
 3. In Device Manager, locate the matching PCI device and use **Update Driver → Have Disk**, pointing at `virtio-input.inf`.
 
-After installation, Device Manager should show the device using `virtioinput.sys`.
+After installation:
+
+- Device Manager should show the device using `virtioinput.sys`.
+- The installed driver service name should be `virtioinput` (check with `sc query virtioinput`).
 
 ## Quick user-mode validation (hidtest)
 

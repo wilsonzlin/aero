@@ -1658,7 +1658,7 @@ try {
     $pnp = Invoke-Capture "pnputil.exe" @("-e")
     $raw = $pnp.output
 
-    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","viosnd","aerosnd","virtiosnd","aeroviosnd")
+    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","virtioinput","viosnd","aerosnd","virtiosnd","aeroviosnd")
     foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
         if ($s -and ("" + $s).Trim().Length -gt 0) {
             $kw = ("" + $s).Trim().ToLower()
@@ -1777,7 +1777,7 @@ try {
     $devconDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $devconPath = Join-Path $devconDir "devcon.exe"
 
-    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput")
+    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput","virtioinput")
     foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
         if ($s -and ("" + $s).Trim().Length -gt 0) { $svcCandidates = @((("" + $s).Trim())) + $svcCandidates }
     }
@@ -1930,7 +1930,7 @@ try {
     if ($cfgGpuService) { $graphicsServiceCandidates = @($cfgGpuService) + $graphicsServiceCandidates }
     $audioServiceCandidates = @("viosnd","aerosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
-    $inputServiceCandidates = @("vioinput","aeroinput")
+    $inputServiceCandidates = @("virtioinput","vioinput","aeroinput")
     if ($cfgVirtioInputService) { $inputServiceCandidates = @($cfgVirtioInputService) + $inputServiceCandidates }
 
     Add-DeviceBindingCheck `
