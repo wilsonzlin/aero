@@ -6,6 +6,7 @@
 //! It supports only a tiny subset of SM4/SM5:
 //! - `mov` between input/output registers
 //! - `ret`
+//! - ignores `nop` and comment custom-data blocks
 //!
 //! New code should prefer [`crate::shader_translate`] + a proper SM4/SM5 IR
 //! decoder.
@@ -211,10 +212,30 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
             ));
         }
 
+        // NOTE: opcode numeric ranges:
+        // - executable instructions: < 0x100
+        // - declarations: >= 0x100
+        const DECL_OPCODE_MIN: u32 = 0x100;
         const OPCODE_MOV: u32 = 0x01;
         const OPCODE_RET: u32 = 0x3e;
+        const OPCODE_NOP: u32 = 0x00;
+        const OPCODE_CUSTOMDATA: u32 = 0x1f;
+        const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 
         match opcode {
+            OPCODE_NOP => {
+                // Ignore.
+            }
+            OPCODE_CUSTOMDATA => {
+                // Ignore comment blocks; other custom-data classes are not supported by the
+                // bootstrap translator because they can affect shader semantics (e.g. immediate
+                // constant buffers).
+                if len >= 2 && toks[i + 1] == CUSTOMDATA_CLASS_COMMENT {
+                    // Ignore.
+                } else {
+                    return Err(WgslBootstrapError::UnsupportedInstruction { opcode });
+                }
+            }
             OPCODE_MOV => {
                 if len != 5 {
                     return Err(WgslBootstrapError::BadInstructionLength { opcode, len });
@@ -233,7 +254,11 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
                 break;
             }
             _ => {
-                // Ignore declarations/other opcodes for now.
+                // Ignore declarations, but fail on unsupported executable instructions so we don't
+                // silently generate incorrect shaders.
+                if opcode < DECL_OPCODE_MIN {
+                    return Err(WgslBootstrapError::UnsupportedInstruction { opcode });
+                }
             }
         }
 

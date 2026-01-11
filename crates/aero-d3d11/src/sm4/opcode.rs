@@ -28,6 +28,11 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
+/// Non-executable custom data / comment block.
+///
+/// Used for embedded comments, debug data, and immediate constant buffers.
+pub const OPCODE_CUSTOMDATA: u32 = 0x1f;
+
 pub const OPCODE_RET: u32 = 0x3e;
 
 // Texture ops are not used by the bootstrap translator yet; include likely

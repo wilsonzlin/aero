@@ -97,6 +97,7 @@ impl fmt::Display for Sm4DecodeError {
 impl std::error::Error for Sm4DecodeError {}
 
 const DECLARATION_OPCODE_MIN: u32 = 0x100;
+const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 
 pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError> {
     let declared_len = *program.tokens.get(1).unwrap_or(&0) as usize;
@@ -139,6 +140,15 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         }
 
         let inst_toks = &toks[i..i + len];
+
+        // Comment blocks can be emitted via the `customdata` opcode. They have no impact on shader
+        // semantics and can appear in both the declaration and executable sections.
+        if opcode == OPCODE_CUSTOMDATA {
+            if inst_toks.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT) {
+                i += len;
+                continue;
+            }
+        }
 
         // `nop` can appear in both the declaration section and the executable instruction stream.
         // It has no effect and should not influence where we split declarations from

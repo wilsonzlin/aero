@@ -557,6 +557,40 @@ fn skips_nop_without_ending_decl_section() {
 }
 
 #[test]
+fn skips_customdata_comment_without_ending_decl_section() {
+    const DCL_DUMMY: u32 = 0x100;
+
+    let mut body = Vec::<u32>::new();
+
+    // Custom-data comment block: opcode + customdata class token.
+    body.extend_from_slice(&[opcode_token(OPCODE_CUSTOMDATA, 2), 0]);
+
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 3)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
+
+    // mov r0, v0
+    let mut mov = vec![opcode_token(OPCODE_MOV, 5)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&mov);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert_eq!(module.decls.len(), 1);
+    assert_eq!(module.instructions.len(), 2);
+}
+
+#[test]
 fn decodes_sample_and_sample_l() {
     const DCL_DUMMY: u32 = 0x200;
     let mut body = Vec::<u32>::new();
