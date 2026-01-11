@@ -81,6 +81,19 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_hdr", struct aerogpu_cmd_hdr, opcode);
   PRINT_OFF("aerogpu_cmd_hdr", struct aerogpu_cmd_hdr, size_bytes);
 
+  PRINT_OFF("aerogpu_input_layout_blob_header", struct aerogpu_input_layout_blob_header, magic);
+  PRINT_OFF("aerogpu_input_layout_blob_header", struct aerogpu_input_layout_blob_header, version);
+  PRINT_OFF("aerogpu_input_layout_blob_header", struct aerogpu_input_layout_blob_header, element_count);
+  PRINT_OFF("aerogpu_input_layout_blob_header", struct aerogpu_input_layout_blob_header, reserved0);
+
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, semantic_name_hash);
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, semantic_index);
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, dxgi_format);
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, input_slot);
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, aligned_byte_offset);
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, input_slot_class);
+  PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, instance_data_step_rate);
+
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, magic);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, abi_version);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, size_bytes);

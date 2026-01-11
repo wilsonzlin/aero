@@ -47,12 +47,24 @@ import {
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_STREAM_MAGIC,
   AEROGPU_CMD_UPLOAD_RESOURCE_SIZE,
+  AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_ELEMENT_COUNT,
+  AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_MAGIC,
+  AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_RESERVED0,
+  AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_VERSION,
   AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE,
   AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
   AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_ALIGNED_BYTE_OFFSET,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_DXGI_FORMAT,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INPUT_SLOT,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INPUT_SLOT_CLASS,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INSTANCE_DATA_STEP_RATE,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_INDEX,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_NAME_HASH,
   AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE,
-  AerogpuCmdOpcode,
   AerogpuPrimitiveTopology,
+  AerogpuCmdOpcode,
+  decodeCmdHdr,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
 import {
@@ -255,6 +267,40 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(off("aerogpu_cmd_hdr", "opcode"), AEROGPU_CMD_HDR_OFF_OPCODE);
   assert.equal(off("aerogpu_cmd_hdr", "size_bytes"), AEROGPU_CMD_HDR_OFF_SIZE_BYTES);
+
+  assert.equal(off("aerogpu_input_layout_blob_header", "magic"), AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_MAGIC);
+  assert.equal(off("aerogpu_input_layout_blob_header", "version"), AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_VERSION);
+  assert.equal(
+    off("aerogpu_input_layout_blob_header", "element_count"),
+    AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_ELEMENT_COUNT,
+  );
+  assert.equal(
+    off("aerogpu_input_layout_blob_header", "reserved0"),
+    AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_RESERVED0,
+  );
+
+  assert.equal(
+    off("aerogpu_input_layout_element_dxgi", "semantic_name_hash"),
+    AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_NAME_HASH,
+  );
+  assert.equal(
+    off("aerogpu_input_layout_element_dxgi", "semantic_index"),
+    AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_INDEX,
+  );
+  assert.equal(off("aerogpu_input_layout_element_dxgi", "dxgi_format"), AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_DXGI_FORMAT);
+  assert.equal(off("aerogpu_input_layout_element_dxgi", "input_slot"), AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INPUT_SLOT);
+  assert.equal(
+    off("aerogpu_input_layout_element_dxgi", "aligned_byte_offset"),
+    AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_ALIGNED_BYTE_OFFSET,
+  );
+  assert.equal(
+    off("aerogpu_input_layout_element_dxgi", "input_slot_class"),
+    AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INPUT_SLOT_CLASS,
+  );
+  assert.equal(
+    off("aerogpu_input_layout_element_dxgi", "instance_data_step_rate"),
+    AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INSTANCE_DATA_STEP_RATE,
+  );
 
   assert.equal(off("aerogpu_alloc_table_header", "magic"), AEROGPU_ALLOC_TABLE_HEADER_OFF_MAGIC);
   assert.equal(
@@ -573,4 +619,25 @@ test("decodeCmdStreamHeader rejects unknown major versions", () => {
   view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, AEROGPU_CMD_STREAM_HEADER_SIZE, true);
   view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_FLAGS, 0, true);
   assert.throws(() => decodeCmdStreamHeader(view, 0), /Unsupported major/);
+});
+
+test("decodeCmdHdr enforces size_bytes invariants", () => {
+  const buf = new ArrayBuffer(AEROGPU_CMD_HDR_SIZE);
+  const view = new DataView(buf);
+
+  view.setUint32(AEROGPU_CMD_HDR_OFF_OPCODE, 0xffffffff, true);
+
+  // Too small.
+  view.setUint32(AEROGPU_CMD_HDR_OFF_SIZE_BYTES, 4, true);
+  assert.throws(() => decodeCmdHdr(view, 0), /too small/);
+
+  // Not 4-byte aligned.
+  view.setUint32(AEROGPU_CMD_HDR_OFF_SIZE_BYTES, 10, true);
+  assert.throws(() => decodeCmdHdr(view, 0), /aligned/);
+
+  // Unknown opcode is OK as long as size is valid.
+  view.setUint32(AEROGPU_CMD_HDR_OFF_SIZE_BYTES, AEROGPU_CMD_HDR_SIZE, true);
+  const hdr = decodeCmdHdr(view, 0);
+  assert.equal(hdr.opcode, 0xffffffff);
+  assert.equal(hdr.sizeBytes, AEROGPU_CMD_HDR_SIZE);
 });

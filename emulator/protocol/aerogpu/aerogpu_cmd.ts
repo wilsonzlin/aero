@@ -97,7 +97,20 @@ export const AerogpuCmdOpcode = {
 } as const;
 
 export type AerogpuCmdOpcode = (typeof AerogpuCmdOpcode)[keyof typeof AerogpuCmdOpcode];
+export const AerogpuShaderStage = {
+  Vertex: 0,
+  Pixel: 1,
+  Compute: 2,
+} as const;
 
+export type AerogpuShaderStage = (typeof AerogpuShaderStage)[keyof typeof AerogpuShaderStage];
+
+export const AerogpuIndexFormat = {
+  Uint16: 0,
+  Uint32: 1,
+} as const;
+
+export type AerogpuIndexFormat = (typeof AerogpuIndexFormat)[keyof typeof AerogpuIndexFormat];
 export const AerogpuPrimitiveTopology = {
   PointList: 1,
   LineList: 2,
@@ -113,6 +126,28 @@ export type AerogpuPrimitiveTopology =
 export const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC = 0x59414c49; // "ILAY" LE
 export const AEROGPU_INPUT_LAYOUT_BLOB_VERSION = 1;
 
+export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;
+export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_MAGIC = 0;
+export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_VERSION = 4;
+export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_ELEMENT_COUNT = 8;
+export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_RESERVED0 = 12;
+
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_NAME_HASH = 0;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_INDEX = 4;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_DXGI_FORMAT = 8;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INPUT_SLOT = 12;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_ALIGNED_BYTE_OFFSET = 16;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INPUT_SLOT_CLASS = 20;
+export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_INSTANCE_DATA_STEP_RATE = 24;
+
+export const AEROGPU_CLEAR_COLOR = 1 << 0;
+export const AEROGPU_CLEAR_DEPTH = 1 << 1;
+export const AEROGPU_CLEAR_STENCIL = 1 << 2;
+
+export const AEROGPU_PRESENT_FLAG_NONE = 0;
+export const AEROGPU_PRESENT_FLAG_VSYNC = 1 << 0;
+
 // Selected packet sizes (in bytes) from the C header for layout conformance tests.
 export const AEROGPU_CMD_CREATE_BUFFER_SIZE = 40;
 export const AEROGPU_CMD_CREATE_TEXTURE2D_SIZE = 56;
@@ -123,8 +158,6 @@ export const AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE = 24;
 export const AEROGPU_CMD_DESTROY_SHADER_SIZE = 16;
 export const AEROGPU_CMD_BIND_SHADERS_SIZE = 24;
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE = 24;
-export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;
-export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
 export const AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE = 20;
 export const AEROGPU_CMD_DESTROY_INPUT_LAYOUT_SIZE = 16;
 export const AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE = 16;

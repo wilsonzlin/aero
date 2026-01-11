@@ -4,17 +4,18 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuBlendState, AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
-    AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
-    AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
-    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
-    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuDepthStencilState, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
-    AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    decode_cmd_hdr_le, AerogpuBlendState, AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCreateBuffer,
+    AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
+    AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed,
+    AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
+    AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
+    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology,
+    AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
+    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers,
+    AerogpuCmdSetViewport, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuDepthStencilState,
+    AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState,
+    AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR,
@@ -163,6 +164,64 @@ fn rust_layout_matches_c_headers() {
     assert_off!(AerogpuCmdStreamHeader, flags, "aerogpu_cmd_stream_header", "flags");
     assert_off!(AerogpuCmdHdr, opcode, "aerogpu_cmd_hdr", "opcode");
     assert_off!(AerogpuCmdHdr, size_bytes, "aerogpu_cmd_hdr", "size_bytes");
+
+    assert_off!(AerogpuInputLayoutBlobHeader, magic, "aerogpu_input_layout_blob_header", "magic");
+    assert_off!(AerogpuInputLayoutBlobHeader, version, "aerogpu_input_layout_blob_header", "version");
+    assert_off!(
+        AerogpuInputLayoutBlobHeader,
+        element_count,
+        "aerogpu_input_layout_blob_header",
+        "element_count"
+    );
+    assert_off!(
+        AerogpuInputLayoutBlobHeader,
+        reserved0,
+        "aerogpu_input_layout_blob_header",
+        "reserved0"
+    );
+
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        semantic_name_hash,
+        "aerogpu_input_layout_element_dxgi",
+        "semantic_name_hash"
+    );
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        semantic_index,
+        "aerogpu_input_layout_element_dxgi",
+        "semantic_index"
+    );
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        dxgi_format,
+        "aerogpu_input_layout_element_dxgi",
+        "dxgi_format"
+    );
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        input_slot,
+        "aerogpu_input_layout_element_dxgi",
+        "input_slot"
+    );
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        aligned_byte_offset,
+        "aerogpu_input_layout_element_dxgi",
+        "aligned_byte_offset"
+    );
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        input_slot_class,
+        "aerogpu_input_layout_element_dxgi",
+        "input_slot_class"
+    );
+    assert_off!(
+        AerogpuInputLayoutElementDxgi,
+        instance_data_step_rate,
+        "aerogpu_input_layout_element_dxgi",
+        "instance_data_step_rate"
+    );
 
     // Command packet sizes.
     assert_size!(AerogpuCmdCreateBuffer, "aerogpu_cmd_create_buffer");
@@ -337,10 +396,7 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_CMD_RESOURCE_DIRTY_RANGE"),
         AerogpuCmdOpcode::ResourceDirtyRange as u64
     );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_UPLOAD_RESOURCE"),
-        AerogpuCmdOpcode::UploadResource as u64
-    );
+    assert_eq!(abi.konst("AEROGPU_CMD_UPLOAD_RESOURCE"), AerogpuCmdOpcode::UploadResource as u64);
     assert_eq!(
         abi.konst("AEROGPU_CMD_CREATE_SHADER_DXBC"),
         AerogpuCmdOpcode::CreateShaderDxbc as u64
@@ -411,10 +467,7 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.konst("AEROGPU_CMD_FLUSH"), AerogpuCmdOpcode::Flush as u64);
 
-    assert_eq!(
-        abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"),
-        AEROGPU_INPUT_LAYOUT_BLOB_MAGIC as u64
-    );
+    assert_eq!(abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"), AEROGPU_INPUT_LAYOUT_BLOB_MAGIC as u64);
     assert_eq!(
         abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_VERSION"),
         AEROGPU_INPUT_LAYOUT_BLOB_VERSION as u64
@@ -503,6 +556,34 @@ fn rust_layout_matches_c_headers() {
 
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1u64 << 31);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1);
+}
+
+#[test]
+fn cmd_hdr_rejects_bad_size_bytes() {
+    let mut buf = [0u8; AerogpuCmdHdr::SIZE_BYTES];
+
+    // Too small (must be >= sizeof(aerogpu_cmd_hdr)).
+    buf[4..8].copy_from_slice(&4u32.to_le_bytes());
+    let err = decode_cmd_hdr_le(&buf).err().expect("expected decode error");
+    assert!(matches!(
+        err,
+        aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdDecodeError::BadSizeBytes { found: 4 }
+    ));
+
+    // Not 4-byte aligned.
+    buf[4..8].copy_from_slice(&10u32.to_le_bytes());
+    let err = decode_cmd_hdr_le(&buf).err().expect("expected decode error");
+    assert!(matches!(
+        err,
+        aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdDecodeError::SizeNotAligned { found: 10 }
+    ));
+
+    // Unknown opcode is OK as long as the size is valid.
+    buf[0..4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+    buf[4..8].copy_from_slice(&(AerogpuCmdHdr::SIZE_BYTES as u32).to_le_bytes());
+    let hdr = decode_cmd_hdr_le(&buf).expect("unknown opcodes should be decodable");
+    let opcode = hdr.opcode;
+    assert_eq!(opcode, 0xFFFF_FFFF);
 }
 
 #[test]
