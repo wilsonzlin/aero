@@ -13,6 +13,8 @@
 use memory::MemoryBus;
 use std::time::{Duration, Instant};
 
+use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
+
 use crate::devices::aerogpu_scanout::{AeroGpuFormat, AeroGpuScanoutConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 
@@ -181,9 +183,13 @@ impl AeroGpuLegacyPciDevice {
         config_space.set_u16(0x02, cfg.device_id);
 
         // Class code: display controller (0x03) / VGA-compatible (0x00).
-        config_space.write(0x09, 1, 0x00);
-        config_space.write(0x0a, 1, 0x00);
-        config_space.write(0x0b, 1, 0x03);
+        config_space.write(0x09, 1, protocol_pci::AEROGPU_PCI_PROG_IF as u32);
+        config_space.write(0x0a, 1, protocol_pci::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE as u32);
+        config_space.write(
+            0x0b,
+            1,
+            protocol_pci::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER as u32,
+        );
 
         // BAR0 (MMIO regs), non-prefetchable 32-bit.
         config_space.set_u32(0x10, bar0 & 0xffff_fff0);

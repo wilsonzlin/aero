@@ -1,7 +1,13 @@
+use aero_protocol::aerogpu::aerogpu_pci as proto;
 use emulator::devices::pci::aerogpu_legacy::{AeroGpuLegacyDeviceConfig, AeroGpuLegacyPciDevice};
+use emulator::io::pci::PciDevice;
 use emulator::io::pci::MmioDevice;
 use memory::MemoryBus;
 use std::time::{Duration, Instant};
+
+fn read_u8(dev: &dyn PciDevice, offset: u16) -> u8 {
+    dev.config_read(offset, 1) as u8
+}
 
 #[derive(Clone, Debug)]
 struct VecMemory {
@@ -62,6 +68,17 @@ mod mmio {
     pub const SCANOUT0_VBLANK_SEQ_HI: u64 = 0x0424;
     pub const SCANOUT0_VBLANK_TIME_NS_LO: u64 = 0x0428;
     pub const SCANOUT0_VBLANK_TIME_NS_HI: u64 = 0x042c;
+}
+
+#[test]
+fn pci_identity_class_codes_match_aero_protocol() {
+    let dev = AeroGpuLegacyPciDevice::new(AeroGpuLegacyDeviceConfig::default(), 0);
+    assert_eq!(read_u8(&dev, 0x09), proto::AEROGPU_PCI_PROG_IF);
+    assert_eq!(read_u8(&dev, 0x0a), proto::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE);
+    assert_eq!(
+        read_u8(&dev, 0x0b),
+        proto::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER
+    );
 }
 
 #[test]
