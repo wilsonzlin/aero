@@ -114,10 +114,12 @@ async function waitForClose(ws, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error("timeout waiting for websocket close"));
+      const suffix = lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : "";
+      reject(new Error(`timeout waiting for websocket close${suffix}`));
     }, timeoutMs);
     timeout.unref();
 
+    let lastErr = null;
     let settled = false;
     const cleanup = () => {
       if (settled) return;
@@ -133,8 +135,10 @@ async function waitForClose(ws, timeoutMs = 2_000) {
     };
 
     const onError = (err) => {
-      cleanup();
-      reject(err);
+      lastErr = err;
+      // Some servers reset the TCP socket immediately after sending a WebSocket close frame.
+      // The client may observe `ECONNRESET` while attempting to write the close response.
+      // Treat this as non-fatal as long as we still receive a `close` event.
     };
 
     ws.on("close", onClose);
