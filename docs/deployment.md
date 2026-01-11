@@ -43,7 +43,15 @@ unacceptably slow without threads.
 
 ## Local verification (preview server)
 
-The Vite preview server is configured to send COOP/COEP headers.
+The Vite preview server is configured to send COOP/COEP (and the rest of the recommended hardening set).
+
+Canonical header values live in:
+
+- `scripts/headers.json`
+
+CI validates that Vite servers + deployment templates stay in sync via:
+
+- `scripts/ci/check-security-headers.mjs`
 
 ```bash
 cd web
@@ -63,6 +71,13 @@ Then open the printed URL (usually `http://localhost:4173`) and verify:
 
 If `crossOriginIsolated` is `false`, inspect the **Network** tab and confirm the
 main document response includes the required headers.
+
+This repo also includes a Playwright integration test that asserts headers are
+present on HTML + JS + worker + WASM responses:
+
+```bash
+npm run test:security-headers
+```
 
 ### Testing the fallback path (no COOP/COEP)
 

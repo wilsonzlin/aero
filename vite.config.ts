@@ -1,33 +1,29 @@
 import { defineConfig } from 'vite';
 
-const crossOriginIsolationHeaders: Record<string, string> = {
-  // Required for SharedArrayBuffer / WASM threads (crossOriginIsolated === true)
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp',
-  'Cross-Origin-Resource-Policy': 'same-origin',
-  'Origin-Agent-Cluster': '?1',
-};
+import {
+  baselineSecurityHeaders,
+  crossOriginIsolationHeaders,
+  cspHeaders,
+} from './scripts/security_headers.mjs';
 
-const commonSecurityHeaders: Record<string, string> = {
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-};
-
-const previewOnlyHeaders: Record<string, string> = {
-  // CSP is enabled for `vite preview` so production builds can be validated under
-  // the same secure-by-default policy used in deployment templates.
-  //
-  // Note: do not set a strict CSP on the dev server; it can interfere with HMR.
-  'Content-Security-Policy':
-    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
-};
+const coopCoepDisabled =
+  process.env.VITE_DISABLE_COOP_COEP === '1' || process.env.VITE_DISABLE_COOP_COEP === 'true';
 
 export default defineConfig({
+  // Reuse `web/public` across the repo so test assets and `_headers` templates
+  // are consistently available in `vite preview` runs.
+  publicDir: 'web/public',
   server: {
-    headers: { ...crossOriginIsolationHeaders, ...commonSecurityHeaders },
+    headers: {
+      ...(coopCoepDisabled ? {} : crossOriginIsolationHeaders),
+      ...baselineSecurityHeaders,
+    },
   },
   preview: {
-    headers: { ...crossOriginIsolationHeaders, ...commonSecurityHeaders, ...previewOnlyHeaders },
+    headers: {
+      ...(coopCoepDisabled ? {} : crossOriginIsolationHeaders),
+      ...baselineSecurityHeaders,
+      ...cspHeaders,
+    },
   },
 });

@@ -27,6 +27,8 @@
     "test:e2e:update": "playwright test --update-snapshots",
     "test:e2e:report": "playwright show-report",
     "test:coi": "playwright test tests/e2e/coi.spec.ts",
+    "test:security-headers": "playwright test tests/e2e/security-headers.spec.ts",
+    "check:security-headers": "node scripts/ci/check-security-headers.mjs",
     "test:webgpu": "playwright test --project=chromium-webgpu",
     "generate:goldens": "node tests/golden/generate_goldens.cjs",
     "test:gpu": "playwright test -c playwright.gpu.config.ts tests/playwright/gpu_golden.spec.ts",

@@ -91,6 +91,9 @@ jobs:
       - name: Check repository policy
         run: scripts/ci/check-repo-policy.sh
 
+      - name: Check security header templates
+        run: node scripts/ci/check-security-headers.mjs
+
   rust:
     name: Rust (fmt, clippy, test)
     needs: policy

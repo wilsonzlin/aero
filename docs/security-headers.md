@@ -120,9 +120,17 @@ These templates apply headers to **all paths** so they cover HTML, JS, WASM, and
 
 ### Netlify / Cloudflare Pages (Vite `_headers`)
 
-The canonical header set for the Vite frontend lives in:
+The canonical header values for the frontend live in:
 
-- `web/public/_headers`
+- `scripts/headers.json`
+
+CI validates that all hosting/proxy templates and Vite servers match this canonical set:
+
+- `scripts/ci/check-security-headers.mjs`
+
+The `_headers` file shipped with the built frontend lives at:
+
+- `web/public/_headers` (copied to `web/dist/_headers` by Vite)
 
 Vite copies `public/` into `dist/`, so production builds automatically contain:
 
@@ -169,6 +177,7 @@ This repo includes an automated browser PoC and Playwright coverage to prevent r
 - CSP/COOP/COEP PoC app: `web/public/wasm-jit-csp/`
 - CSP test server (sets COOP/COEP + CSP variants): `server/poc-server.mjs`
 - Playwright spec: `tests/e2e/csp-fallback.spec.ts`
+- Playwright spec (preview server headers): `tests/e2e/security-headers.spec.ts`
 
 Run locally:
 
@@ -183,6 +192,12 @@ Or run the automated check:
 
 ```bash
 npx playwright test tests/e2e/csp-fallback.spec.ts
+```
+
+And validate the canonical preview server header set:
+
+```bash
+npm run test:security-headers
 ```
 
 The host-side capability bit that gates Tier-1/2 WASM JIT is exposed as:
