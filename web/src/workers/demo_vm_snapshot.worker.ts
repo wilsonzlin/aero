@@ -209,7 +209,11 @@ async function handleRestoreFromOpfs(path: string): Promise<{ serialBytes: numbe
       stepsTotal = maybeLen;
       serialBytes = maybeLen;
     } else {
-      serialBytes = savedSerialBytesByPath.get(path) ?? null;
+      const saved = savedSerialBytesByPath.get(path);
+      serialBytes = saved ?? null;
+      if (typeof saved === "number") {
+        stepsTotal = saved;
+      }
     }
   } finally {
     startStepLoop();
