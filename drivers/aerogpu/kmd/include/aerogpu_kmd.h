@@ -107,6 +107,12 @@ typedef struct _AEROGPU_ADAPTER {
     PUCHAR Bar0;
     ULONG Bar0Length;
 
+    /* Device feature bits (AEROGPU_MMIO_REG_FEATURES_* from aerogpu_pci.h). */
+    ULONGLONG DeviceFeatures;
+    BOOLEAN SupportsVblank;
+    DXGK_INTERRUPT_TYPE VblankInterruptType;
+    BOOLEAN VblankInterruptTypeValid;
+
     PVOID RingVa;
     PHYSICAL_ADDRESS RingPa;
     ULONG RingSizeBytes;
