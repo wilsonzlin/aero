@@ -511,7 +511,9 @@ static NDIS_STATUS AerovNetAllocateRxResources(_Inout_ AEROVNET_ADAPTER* Adapter
   High.QuadPart = ~0ull;
 
   InitializeListHead(&Adapter->RxFreeList);
-  Adapter->RxBufferCount = Adapter->RxVq.QueueSize;
+  // Allocate more buffers than the ring can hold so we can keep rxq full even
+  // while NDIS is still holding previously indicated NBLs.
+  Adapter->RxBufferCount = (ULONG)Adapter->RxVq.QueueSize * 2;
 
   Adapter->RxBuffers = (AEROVNET_RX_BUFFER*)ExAllocatePoolWithTag(NonPagedPool, sizeof(AEROVNET_RX_BUFFER) * Adapter->RxBufferCount, AEROVNET_TAG);
   if (!Adapter->RxBuffers) {
