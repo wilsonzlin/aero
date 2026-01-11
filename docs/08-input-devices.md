@@ -771,7 +771,7 @@ impl UsbHidKeyboard {
 
 In addition to synthesizing PS/2 or USB HID events from browser input events,
 the host can optionally pass through a **real, host-connected HID device** into
-the guest using browser device APIs (WebHID for MVP; WebUSB later).
+the guest using browser device APIs (WebHID for MVP; WebUSB is available but more limited/experimental).
 
 See [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) for the
 intended architecture, security model, and current limitations.
