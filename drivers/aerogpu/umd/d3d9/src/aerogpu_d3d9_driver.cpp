@@ -7430,6 +7430,19 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   return trace.ret(S_OK);
 }
 
+static bool SupportsTransfer(const AeroGpuDevice* dev) {
+  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
+    return false;
+  }
+  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
+  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
+    return false;
+  }
+  const uint32_t major = blob.device_abi_version_u32 >> 16;
+  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
+  return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
+}
+
 HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     D3DDDI_HDEVICE hDevice,
     const D3D9DDIARG_GETRENDERTARGETDATA* pGetRenderTargetData) {
@@ -7474,9 +7487,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     return trace.ret(kD3DErrInvalidCall);
   }
 
-  const bool transfer_supported =
-      dev->adapter && dev->adapter->umd_private_valid &&
-      (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0;
+  const bool transfer_supported = SupportsTransfer(dev);
 
   if (!transfer_supported) {
     // Fallback: when the device does not advertise transfer/copy support, avoid
@@ -7609,8 +7620,7 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
   // WRITEBACK_DST so the bytes land in guest memory for CPU LockRect.
   if (dst->pool == kD3DPOOL_SYSTEMMEM &&
       dst->backing_alloc_id != 0 &&
-      dev->adapter && dev->adapter->umd_private_valid &&
-      (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0 &&
+      SupportsTransfer(dev) &&
       src->handle != 0 &&
       dst->handle != 0 &&
       src->format == dst->format &&
