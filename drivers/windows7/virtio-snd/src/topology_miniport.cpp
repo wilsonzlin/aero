@@ -4,6 +4,8 @@
 
 #include "topology_miniport.h"
 
+#undef INITGUID
+
 #include "trace.h"
 #include "virtiosnd.h"
 
