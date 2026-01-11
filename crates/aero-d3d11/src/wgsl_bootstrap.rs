@@ -100,7 +100,7 @@ fn translate_vs(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
     }
     s.push_str("};\n\n");
 
-    s.push_str("@vertex\nfn main(input: VsIn) -> VsOut {\n");
+    s.push_str("@vertex\nfn vs_main(input: VsIn) -> VsOut {\n");
     s.push_str("  var out: VsOut;\n");
 
     for mov in movs {
@@ -148,7 +148,7 @@ fn translate_ps(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
     }
     s.push_str("};\n\n");
 
-    s.push_str("@fragment\nfn main(input: PsIn) -> @location(0) vec4<f32> {\n");
+    s.push_str("@fragment\nfn fs_main(input: PsIn) -> @location(0) vec4<f32> {\n");
     s.push_str(&format!("  return input.v{};\n", mov.src.index));
     s.push_str("}\n");
 
@@ -255,4 +255,3 @@ fn parse_reg_operand(tokens: &[u32]) -> Result<RegRef, WgslBootstrapError> {
         index: tokens[1],
     })
 }
-

@@ -463,13 +463,13 @@ impl AerogpuCmdRuntime {
                         layout: Some(&pipeline_layout),
                         vertex: wgpu::VertexState {
                             module: vs_module,
-                            entry_point: "main",
+                            entry_point: "vs_main",
                             buffers: &vertex_buffers,
                             compilation_options: wgpu::PipelineCompilationOptions::default(),
                         },
                         fragment: Some(wgpu::FragmentState {
                             module: fs_module,
-                            entry_point: "main",
+                            entry_point: "fs_main",
                             targets: &color_target_states,
                             compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),

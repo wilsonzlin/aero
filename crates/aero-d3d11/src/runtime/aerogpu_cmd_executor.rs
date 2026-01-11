@@ -1916,13 +1916,13 @@ fn get_or_create_render_pipeline_for_state<'a>(
                 layout: Some(pipeline_layout_empty),
                 vertex: wgpu::VertexState {
                     module: vs,
-                    entry_point: "main",
+                    entry_point: "vs_main",
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &vb_layouts,
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: fs,
-                    entry_point: "main",
+                    entry_point: "fs_main",
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &color_target_states,
                 }),
