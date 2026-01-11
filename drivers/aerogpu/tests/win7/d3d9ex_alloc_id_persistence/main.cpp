@@ -252,12 +252,13 @@ static int CreateD3D9ExDevice(const char* test_name,
 }
 
 static int ValidateAdapter(const char* test_name,
-                           IDirect3D9Ex* d3d,
-                           bool allow_microsoft,
-                           bool allow_non_aerogpu,
-                           bool has_require_vid,
-                           uint32_t require_vid,
-                           bool has_require_did,
+                            IDirect3D9Ex* d3d,
+                            aerogpu_test::TestReporter* reporter,
+                            bool allow_microsoft,
+                            bool allow_non_aerogpu,
+                            bool has_require_vid,
+                            uint32_t require_vid,
+                            bool has_require_did,
                            uint32_t require_did) {
   if (!d3d) {
     return aerogpu_test::Fail(test_name, "ValidateAdapter: d3d == NULL");
@@ -280,6 +281,9 @@ static int ValidateAdapter(const char* test_name,
                              ident.Description,
                              (unsigned)ident.VendorId,
                              (unsigned)ident.DeviceId);
+  if (reporter) {
+    reporter->SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
+  }
 
   if (!allow_microsoft && ident.VendorId == 0x1414) {
     return aerogpu_test::Fail(test_name,
@@ -558,6 +562,7 @@ static int RunChild(int argc, char** argv) {
 
   rc = ValidateAdapter(kTestName,
                        d3d.get(),
+                       /*reporter=*/nullptr,
                        allow_microsoft,
                        allow_non_aerogpu,
                        has_require_vid,
@@ -823,6 +828,7 @@ static int RunParent(int argc, char** argv) {
 
   rc = ValidateAdapter(kTestName,
                        d3d.get(),
+                       &reporter,
                        allow_microsoft,
                        allow_non_aerogpu,
                        has_require_vid,
@@ -834,7 +840,7 @@ static int RunParent(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
