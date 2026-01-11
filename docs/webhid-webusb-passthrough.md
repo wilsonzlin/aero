@@ -117,6 +117,11 @@ Already implemented:
 - **Worker-side WASM bridge (TypeScript)**
   - `web/src/workers/io.worker.ts` creates a WASM `WebHidPassthroughBridge` per attached device and
     drains output reports back to the broker.
+- **Guest-visible UHCI controller + topology wiring (TypeScript + WASM)**
+  - `web/src/io/devices/uhci.ts` exposes a guest-visible UHCI PCI function backed by the WASM
+    `UhciControllerBridge` export.
+  - `web/src/hid/uhci_hid_topology.ts` wires WebHID passthrough bridges into the UHCI USB topology
+    (including attaching an external hub when a `guestPath` requires it).
 
 Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target architecture):
 
@@ -125,10 +130,6 @@ Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target
 
 Still missing / in progress (guest-visible USB integration):
 
-- Worker-side guest USB topology ownership / guest-visible UHCI integration (UHCI controller + hub +
-  hotplug policy + port allocation beyond the 2 root hub ports). The worker still needs to attach
-  the `UsbHidPassthrough` device model into the emulated UHCI + hub topology so the guest can
-  enumerate the device at the `guestPath`/port chosen by the UI.
 - Snapshot/restore integration for passthrough device state (queued reports, USB configuration
   state, etc).
 
