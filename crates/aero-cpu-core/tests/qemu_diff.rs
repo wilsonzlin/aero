@@ -148,7 +148,7 @@ fn qemu_diff_randomized_smoke() {
 /// Demonstrates the value of the harness: it fails when there is a semantic mismatch.
 ///
 /// Run manually with:
-/// `cargo test -p aero-cpu-core --features qemu-diff -- --ignored`
+/// `cargo test --locked -p aero-cpu-core --features qemu-diff -- --ignored`
 #[test]
 #[ignore]
 fn demonstrate_seeded_bug_is_caught() {
