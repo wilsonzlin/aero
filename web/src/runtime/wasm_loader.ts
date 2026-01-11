@@ -49,6 +49,19 @@ export interface WasmApi {
         drain_next_gamepad_report(): Uint8Array | null;
         free(): void;
     };
+
+    CpuWorkerDemo?: new (
+        ramSizeBytes: number,
+        framebufferOffsetBytes: number,
+        width: number,
+        height: number,
+        tileSize: number,
+        guestCounterOffsetBytes: number,
+    ) => {
+        tick(nowMs: number): number;
+        render_frame(frameSeq: number, nowMs: number): number;
+        free(): void;
+    };
     AeroApi: new () => { version(): string; free(): void };
     DemoVm: new (ramSizeBytes: number) => {
         run_steps(steps: number): void;
@@ -229,6 +242,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_load_u32: mod.mem_load_u32,
         demo_render_rgba8888: mod.demo_render_rgba8888,
         UsbHidBridge: mod.UsbHidBridge,
+        CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
         WorkletBridge: mod.WorkletBridge,

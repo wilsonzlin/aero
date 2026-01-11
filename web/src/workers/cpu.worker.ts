@@ -30,6 +30,12 @@ import {
   wrapSharedFramebuffer,
 } from "../display/framebuffer_protocol";
 import {
+  CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+  CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
+  CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+  CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+  CPU_WORKER_DEMO_GUEST_COUNTER_INDEX,
+  CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES,
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
   StatusIndex,
@@ -202,10 +208,15 @@ let loopbackScratch = new Float32Array();
 let wasmMicBridge: WasmMicBridgeHandle | null = null;
 
 let wasmApi: WasmApi | null = null;
+type CpuWorkerDemoCtor = NonNullable<WasmApi["CpuWorkerDemo"]>;
+type CpuWorkerDemoInstance = InstanceType<CpuWorkerDemoCtor>;
+let cpuDemo: CpuWorkerDemoInstance | null = null;
 
 // Demo framebuffer region inside guest RAM. The worker drives a tiny JS→WASM→SAB
 // render path by asking WASM to fill pixels here and then bulk-copying them into the VGA SAB.
-const DEMO_FB_OFFSET = 0x200000;
+// NOTE: Keep this disjoint from the shared framebuffer demo region starting at
+// `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES`.
+const DEMO_FB_OFFSET = 0x500000;
 const DEMO_FB_MAX_BYTES = 1024 * 768 * 4;
 
 let audioRingBuffer: SharedArrayBuffer | null = null;
@@ -720,6 +731,26 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         memView.setUint32(memProbeLinearOffset, prev, true);
 
         wasmApi = api;
+        cpuDemo = null;
+        const CpuWorkerDemo = api.CpuWorkerDemo;
+        if (CpuWorkerDemo) {
+          try {
+            const ramSizeBytes = segments.guestMemory.buffer.byteLength >>> 0;
+            const framebufferLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES) >>> 0;
+            const guestCounterLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES) >>> 0;
+            cpuDemo = new CpuWorkerDemo(
+              ramSizeBytes,
+              framebufferLinearOffset,
+              CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+              CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+              CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+              guestCounterLinearOffset,
+            );
+          } catch (err) {
+            console.warn("Failed to init CpuWorkerDemo wasm export:", err);
+            cpuDemo = null;
+          }
+        }
         maybeInitAudioOutput();
         maybeInitMicBridge();
         const value = api.add(20, 22);
@@ -732,6 +763,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         console.error("WASM init failed in CPU worker:", err);
         pushEvent({ kind: "log", level: "error", message: `WASM init failed: ${message}` });
         wasmApi = null;
+        cpuDemo = null;
         maybeInitAudioOutput();
       }
 
@@ -780,6 +812,7 @@ function runLoopInner(): void {
   let mode: (typeof modes)[number] = modes[0];
   let demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + mode.width * mode.height * 4);
   const demoFbLinearOffset = guestU8.byteOffset + DEMO_FB_OFFSET;
+  const instructionsPerSharedFrame = BigInt(CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH * CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT);
 
   const maybeEmitPerfSample = () => {
     if (!perfWriter || !perfFrameHeader) return;
@@ -913,45 +946,63 @@ function runLoopInner(): void {
 
       if (now >= nextHeartbeatMs) {
         const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
-        Atomics.add(guestI32, 0, 1);
+        if (cpuDemo) {
+          cpuDemo.tick(now);
+        } else {
+          Atomics.add(guestI32, CPU_WORKER_DEMO_GUEST_COUNTER_INDEX, 1);
+        }
         perf.counter("heartbeatCounter", counter);
         // Best-effort: heartbeat events are allowed to drop if the ring is full.
         pushEvent({ kind: "ack", seq: counter });
         nextHeartbeatMs = now + heartbeatIntervalMs;
       }
 
-      if (vgaFramebuffer && now >= nextFrameMs) {
-        if (now >= nextModeSwitchMs) {
-          modeIndex = (modeIndex + 1) % modes.length;
-          mode = modes[modeIndex];
+      if (now >= nextFrameMs) {
+        const t0 = performance.now();
+
+        if (vgaFramebuffer) {
+          if (now >= nextModeSwitchMs) {
+            modeIndex = (modeIndex + 1) % modes.length;
+            mode = modes[modeIndex];
+
+            const strideBytes = mode.width * 4;
+            storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
+            storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
+            storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
+            addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
+
+            demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
+            nextModeSwitchMs = now + modeSwitchIntervalMs;
+          }
 
           const strideBytes = mode.width * 4;
-          storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
-          storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
-          storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
-          addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
+          const wasmRender = wasmApi?.demo_render_rgba8888;
+          if (typeof wasmRender === "function") {
+            const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
+            vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
+            perfInstructions += BigInt(instructions);
+          } else {
+            // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
+            renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+            perfInstructions += BigInt(mode.width * mode.height);
+          }
 
-          demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
-          nextModeSwitchMs = now + modeSwitchIntervalMs;
+          addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
         }
 
-        const t0 = performance.now();
-        const strideBytes = mode.width * 4;
-
-        const wasmRender = wasmApi?.demo_render_rgba8888;
-        if (typeof wasmRender === "function") {
-          const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
-          vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
-          perfInstructions += BigInt(instructions);
+        // Shared framebuffer demo: prefer the WASM-side publisher, fall back to the JS implementation.
+        if (cpuDemo) {
+          const seq = cpuDemo.render_frame(0, now);
+          perfInstructions += instructionsPerSharedFrame;
+          if (frameState) {
+            Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
+            Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+          }
         } else {
-          // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
-          renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
-          perfInstructions += BigInt(mode.width * mode.height);
+          publishSharedFramebufferFrame();
         }
 
         perfCpuMs += performance.now() - t0;
-        addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
-        publishSharedFramebufferFrame();
         nextFrameMs = now + frameIntervalMs;
       }
 
@@ -973,6 +1024,10 @@ function runLoopInner(): void {
   setReadyFlag(status, role, false);
   detachMicBridge();
   detachAudioOutput();
+  if (cpuDemo) {
+    cpuDemo.free();
+    cpuDemo = null;
+  }
   ctx.close();
 }
 

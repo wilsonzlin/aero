@@ -9,6 +9,7 @@ import type { PlatformFeatureReport } from "../platform/features";
 import {
   WORKER_ROLES,
   type WorkerRole,
+  CPU_WORKER_DEMO_GUEST_COUNTER_INDEX,
   StatusIndex,
   allocateSharedMemorySegments,
   checkSharedMemorySupport,
@@ -533,7 +534,7 @@ export class WorkerCoordinator {
 
   getGuestCounter0(): number {
     if (!this.shared) return 0;
-    return Atomics.load(this.shared.guestI32, 0);
+    return Atomics.load(this.shared.guestI32, CPU_WORKER_DEMO_GUEST_COUNTER_INDEX);
   }
 
   getIoInputBatchCounter(): number {
@@ -573,6 +574,10 @@ export class WorkerCoordinator {
     const shared = this.shared;
     if (!shared) return null;
     return { sab: shared.sharedFramebuffer, offsetBytes: shared.sharedFramebufferOffsetBytes };
+  }
+
+  getGuestMemory(): WebAssembly.Memory | null {
+    return this.shared?.segments.guestMemory ?? null;
   }
 
   setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate: number): void {

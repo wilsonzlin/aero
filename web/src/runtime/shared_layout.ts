@@ -133,6 +133,29 @@ export interface GuestRamLayout {
   wasm_pages: number;
 }
 
+// -----------------------------------------------------------------------------
+// Demo guest-memory layout (temporary)
+// -----------------------------------------------------------------------------
+
+// Offset (in bytes) of a shared counter incremented by the CPU worker demo.
+//
+// Note: keep this non-zero; in Rust/WASM a raw pointer of 0 is a null pointer
+// and must not be dereferenced.
+//
+// This is expressed as a guest-physical offset; to convert to a wasm linear
+// address, add `guest_base` from [`GuestRamLayout`].
+export const CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES = 0x200;
+export const CPU_WORKER_DEMO_GUEST_COUNTER_INDEX = CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES / 4;
+
+// Offset (in bytes) of the shared framebuffer used by the CPU worker demo.
+//
+// This is expressed as a guest-physical offset; to convert to a wasm linear
+// address, add `guest_base` from [`GuestRamLayout`].
+export const CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES = 0x20_0000; // 2 MiB (64-byte aligned)
+export const CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH = 640;
+export const CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT = 480;
+export const CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE = 32;
+
 // Early VGA/VBE framebuffer sizing. The buffer is reused across mode changes;
 // the active dimensions live in the framebuffer header.
 const VGA_FRAMEBUFFER_MAX_WIDTH = 1024;
@@ -155,7 +178,8 @@ export interface SharedMemorySegments {
   /**
    * Byte offset within `sharedFramebuffer` where the header begins.
    *
-   * Kept as a field so we can later embed the framebuffer into guest memory.
+   * Note: `sharedFramebuffer` may alias `guestMemory.buffer` (embedded in WASM
+   * linear memory), so this is not necessarily 0.
    */
   sharedFramebufferOffsetBytes: number;
 }
@@ -321,15 +345,24 @@ export function allocateSharedMemorySegments(options?: {
   initControlRings(control);
 
   // Shared CPU→GPU framebuffer demo region.
-  const sharedFramebufferOffsetBytes = 0;
+  //
+  // This is embedded directly in the shared guest `WebAssembly.Memory` so the
+  // CPU worker's WASM code can write/publish frames without any JS-side copies.
+  const sharedFramebuffer = guestMemory.buffer as unknown as SharedArrayBuffer;
+  const sharedFramebufferOffsetBytes = layout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
   const sharedFramebufferLayout = computeSharedFramebufferLayout(
-    /* width */ 640,
-    /* height */ 480,
-    /* strideBytes */ 640 * 4,
+    CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+    CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+    CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH * 4,
     FramebufferFormat.RGBA8,
-    /* tileSize */ 32,
+    CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
   );
-  const sharedFramebuffer = new SharedArrayBuffer(sharedFramebufferLayout.totalBytes);
+  const requiredBytes = sharedFramebufferOffsetBytes + sharedFramebufferLayout.totalBytes;
+  if (requiredBytes > guestMemory.buffer.byteLength) {
+    throw new Error(
+      `Guest memory too small for shared framebuffer: need >= ${requiredBytes} bytes, got ${guestMemory.buffer.byteLength} bytes`,
+    );
+  }
   const sharedHeader = new Int32Array(sharedFramebuffer, sharedFramebufferOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);

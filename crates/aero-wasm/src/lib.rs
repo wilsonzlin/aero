@@ -8,6 +8,9 @@ mod demo_renderer;
 #[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+use aero_shared::shared_framebuffer::{SharedFramebuffer, SharedFramebufferLayout, SharedFramebufferWriter};
+
 #[cfg(target_arch = "wasm32")]
 use aero_opfs::OpfsSyncFile;
 
@@ -31,6 +34,9 @@ use aero_usb::{
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     usb::{UsbDevice, UsbHandshake},
 };
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
 // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
@@ -782,5 +788,172 @@ impl DemoVm {
         file.close()
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CPU worker demo harness (WASM-side render + counters)
+// -----------------------------------------------------------------------------
+
+/// A tiny WASM-side harness intended to be driven by `web/src/workers/cpu.worker.ts`.
+///
+/// This is a stepping stone towards moving the full emulator stepping loop into
+/// WASM: it exercises shared imported `WebAssembly.Memory`, the shared
+/// framebuffer publish protocol, and an Atomics-visible counter in guest memory.
+#[wasm_bindgen]
+pub struct CpuWorkerDemo {
+    guest_counter_offset_bytes: u32,
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    framebuffer: SharedFramebufferWriter,
+}
+
+#[wasm_bindgen]
+impl CpuWorkerDemo {
+    /// Create a new CPU worker demo harness.
+    ///
+    /// The framebuffer region must live inside the module's linear memory
+    /// (imported `WebAssembly.Memory`), starting at `framebuffer_offset_bytes`.
+    ///
+    /// `ram_size_bytes` is used for a bounds sanity check. Note that wasm32 can
+    /// have up to 4GiB of memory; `4GiB` cannot be represented in a `u32`, so a
+    /// value of `0` is treated as `4GiB`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        ram_size_bytes: u32,
+        framebuffer_offset_bytes: u32,
+        width: u32,
+        height: u32,
+        tile_size: u32,
+        guest_counter_offset_bytes: u32,
+    ) -> Result<Self, JsValue> {
+        let _ = (framebuffer_offset_bytes, width, height, tile_size, guest_counter_offset_bytes);
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            if guest_counter_offset_bytes == 0 || guest_counter_offset_bytes % 4 != 0 {
+                return Err(JsValue::from_str(
+                    "guest_counter_offset_bytes must be a non-zero multiple of 4",
+                ));
+            }
+
+            // wasm32 can address at most 4GiB; represent that as 0 in the u32 ABI.
+            let ram_size_bytes_u64 = if ram_size_bytes == 0 {
+                4u64 * 1024 * 1024 * 1024
+            } else {
+                ram_size_bytes as u64
+            };
+
+            if framebuffer_offset_bytes == 0 || framebuffer_offset_bytes % 4 != 0 {
+                return Err(JsValue::from_str(
+                    "framebuffer_offset_bytes must be a non-zero multiple of 4",
+                ));
+            }
+
+            let counter_end = guest_counter_offset_bytes as u64 + 4;
+            if counter_end > ram_size_bytes_u64 {
+                return Err(JsValue::from_str(&format!(
+                    "guest_counter_offset_bytes out of bounds: offset=0x{guest_counter_offset_bytes:x} ram_size_bytes=0x{ram_size_bytes_u64:x}"
+                )));
+            }
+
+            let layout =
+                SharedFramebufferLayout::new_rgba8(width, height, tile_size).map_err(|e| {
+                    JsValue::from_str(&format!("Invalid shared framebuffer layout: {e}"))
+                })?;
+            let total_bytes = layout.total_byte_len() as u64;
+            let end = framebuffer_offset_bytes as u64 + total_bytes;
+            if end > ram_size_bytes_u64 {
+                return Err(JsValue::from_str(&format!(
+                    "Shared framebuffer region out of bounds: offset=0x{framebuffer_offset_bytes:x} size=0x{total_bytes:x} end=0x{end:x} ram_size_bytes=0x{ram_size_bytes_u64:x}"
+                )));
+            }
+
+            // Safety: the caller provides an in-bounds region in linear memory.
+            let shared =
+                unsafe { SharedFramebuffer::from_raw_parts(framebuffer_offset_bytes as *mut u8, layout) }
+                    .map_err(|e| JsValue::from_str(&format!("Invalid shared framebuffer base: {e}")))?;
+            shared.header().init(layout);
+
+            // Reset the demo guest counter so tests can make deterministic assertions.
+            unsafe {
+                let counter_ptr = guest_counter_offset_bytes as *mut AtomicU32;
+                (*counter_ptr).store(0, Ordering::SeqCst);
+            }
+
+            Ok(Self {
+                guest_counter_offset_bytes,
+                framebuffer: SharedFramebufferWriter::new(shared),
+            })
+        }
+
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            let _ = ram_size_bytes;
+            Err(JsValue::from_str(
+                "CpuWorkerDemo requires the threaded WASM build (+atomics + shared memory).",
+            ))
+        }
+    }
+
+    /// Increment a shared guest-memory counter (Atomics-visible from JS).
+    ///
+    /// Returns the incremented value.
+    pub fn tick(&self, _now_ms: f64) -> u32 {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        unsafe {
+            let counter_ptr = self.guest_counter_offset_bytes as *const AtomicU32;
+            (*counter_ptr)
+                .fetch_add(1, Ordering::SeqCst)
+                .wrapping_add(1)
+        }
+
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            let _ = self.guest_counter_offset_bytes;
+            0
+        }
+    }
+
+    /// Render a moving RGB test pattern into the shared framebuffer and publish it.
+    ///
+    /// Returns the published `frame_seq`.
+    pub fn render_frame(&self, _frame_seq: u32, now_ms: f64) -> u32 {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            self.framebuffer.write_frame(|buf, dirty, layout| {
+                let width = layout.width as usize;
+                let height = layout.height as usize;
+                let stride = layout.stride_bytes as usize;
+
+                let dx = (now_ms * 0.06) as u32;
+                let dy = (now_ms * 0.035) as u32;
+                let dz = (now_ms * 0.02) as u32;
+
+                for y in 0..height {
+                    let base = y * stride;
+                    let y_u32 = y as u32;
+                    for x in 0..width {
+                        let i = base + x * 4;
+                        let x_u32 = x as u32;
+                        buf[i] = x_u32.wrapping_add(dx) as u8;
+                        buf[i + 1] = y_u32.wrapping_add(dy) as u8;
+                        buf[i + 2] = (x_u32 ^ y_u32).wrapping_add(dz) as u8;
+                        buf[i + 3] = 0xFF;
+                    }
+                }
+
+                if let Some(words) = dirty {
+                    // Demo uses full-frame dirty tracking.
+                    words.fill(u32::MAX);
+                }
+            })
+        }
+
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            let _ = now_ms;
+            0
+        }
     }
 }
