@@ -201,6 +201,18 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if msgType != websocket.BinaryMessage {
+			// Be tolerant: some clients may send an auth message even when already
+			// authenticated (e.g. query-string auth with a first-message auth
+			// fallback). Ignore redundant auth messages; reject any other non-binary
+			// payloads to keep the data plane simple.
+			if msgType == websocket.TextMessage {
+				var envelope struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal(msg, &envelope); err == nil && envelope.Type == "auth" {
+					continue
+				}
+			}
 			closeConn(websocket.CloseUnsupportedData, "expected binary message")
 			return
 		}
