@@ -546,6 +546,45 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned long)expected_red);
     }
 
+    // Next: CullMode = NONE should draw regardless of winding/front-face config.
+    context->RSSetState(rs_no_cull.get());
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [cull none]", hr, device.get());
+    }
+
+    const uint32_t center_no_cull = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_none.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: cull(none) BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_green = 0xFF00FF00u;
+    if ((center_no_cull & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      return aerogpu_test::Fail(kTestName,
+                                "cull failed (expected visible with CullMode=NONE): center(%d,%d)=0x%08lX expected ~0x%08lX",
+                                cx,
+                                cy,
+                                (unsigned long)center_no_cull,
+                                (unsigned long)expected_green);
+    }
+
     // Second: FrontCounterClockwise=TRUE, same CCW triangle should render (center becomes green).
     context->RSSetState(rs_cull_front_ccw.get());
     context->ClearRenderTargetView(rtv.get(), clear_red);
@@ -575,7 +614,6 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     context->Unmap(staging.get(), 0);
 
-    const uint32_t expected_green = 0xFF00FF00u;
     if ((center_drawn & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
       return aerogpu_test::Fail(kTestName,
                                 "cull failed (expected visible): center(%d,%d)=0x%08lX expected ~0x%08lX",
@@ -651,6 +689,49 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned)exp_g,
                                 (unsigned)exp_b,
                                 (unsigned)tol);
+    }
+
+    // Verify that disabling blending returns to unblended rendering.
+    context->OMSetBlendState(NULL, blend_factor, 0xFFFFFFFFu);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [blend disabled]", hr, device.get());
+    }
+
+    const uint32_t center_disabled = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend_disabled.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: blend-disabled BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint8_t b2 = (uint8_t)(center_disabled & 0xFFu);
+    const uint8_t g2 = (uint8_t)((center_disabled >> 8) & 0xFFu);
+    const uint8_t r2 = (uint8_t)((center_disabled >> 16) & 0xFFu);
+    if (r2 != 0 || g2 != 0xFFu || b2 != 0) {
+      return aerogpu_test::Fail(kTestName,
+                                "blend disable failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0xFF00FF00",
+                                cx,
+                                cy,
+                                (unsigned long)center_disabled,
+                                (unsigned)r2,
+                                (unsigned)g2,
+                                (unsigned)b2);
     }
   }
 
