@@ -20,12 +20,14 @@ fn new_bus_with_vga() -> (MemoryBus, Rc<RefCell<VgaDevice>>) {
         VGA_BANK_WINDOW_PADDR,
         VGA_BANK_WINDOW_SIZE,
         Box::new(VgaMmio::new(vga.clone(), VgaMmioRegion::BankedWindowA)),
-    );
+    )
+    .unwrap();
     bus.add_mmio_region(
         VBE_LFB_BASE as u64,
         VBE_LFB_SIZE as u64,
         Box::new(VgaMmio::new(vga.clone(), VgaMmioRegion::Lfb)),
-    );
+    )
+    .unwrap();
 
     // Populate the conventional-memory blob referenced by `VbeControllerInfo`.
     vga.borrow_mut()

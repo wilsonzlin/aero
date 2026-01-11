@@ -7,12 +7,11 @@ use aero_devices::apic::{
 use emulator::devices::ioapic::IoApicMmio;
 use emulator::devices::lapic::LapicMmio;
 use emulator::memory_bus::MemoryBus;
+use memory::bus::MemoryBus as _;
 use memory::DenseMemory;
 
 fn write_u32(bus: &mut MemoryBus, paddr: u64, value: u32) {
-    for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
-        bus.write_physical_u8(paddr + i as u64, byte).unwrap();
-    }
+    bus.write_u32(paddr, value);
 }
 
 #[test]
@@ -32,12 +31,14 @@ fn ioapic_mmio_programming_via_system_bus() {
         LAPIC_MMIO_BASE,
         LAPIC_MMIO_SIZE,
         Box::new(LapicMmio::new(lapic.clone())),
-    );
+    )
+    .unwrap();
     bus.add_mmio_region(
         IOAPIC_MMIO_BASE,
         IOAPIC_MMIO_SIZE,
         Box::new(IoApicMmio::new(ioapic.clone())),
-    );
+    )
+    .unwrap();
 
     // Enable the LAPIC (SVR[8] = 1).
     write_u32(&mut bus, LAPIC_MMIO_BASE + 0xF0, 1 << 8);

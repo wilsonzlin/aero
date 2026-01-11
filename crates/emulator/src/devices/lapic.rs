@@ -1,15 +1,9 @@
 use aero_devices::apic::LocalApic;
 use std::sync::Arc;
 
-use crate::memory_bus::MmioHandler;
+use memory::MmioHandler;
 
-/// Byte-addressable MMIO wrapper for [`LocalApic`].
-///
-/// The emulator's minimal memory bus routes MMIO via per-byte callbacks, but the LAPIC
-/// specification is register-oriented with 32-bit accesses being the common case.
-///
-/// [`LocalApic`] itself already implements a byte-granular MMIO slice interface, so this
-/// wrapper simply adapts it to the `read_u8` / `write_u8` bus trait.
+/// MMIO adapter for [`LocalApic`] compatible with `memory::PhysicalMemoryBus`.
 pub struct LapicMmio {
     lapic: Arc<LocalApic>,
 }
@@ -21,14 +15,22 @@ impl LapicMmio {
 }
 
 impl MmioHandler for LapicMmio {
-    fn read_u8(&mut self, offset: u64) -> u8 {
-        let mut buf = [0u8; 1];
-        self.lapic.mmio_read(offset, &mut buf);
-        buf[0]
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        let size = size.min(8);
+        let mut buf = [0u8; 8];
+        self.lapic.mmio_read(offset, &mut buf[..size]);
+        u64::from_le_bytes(buf)
     }
 
-    fn write_u8(&mut self, offset: u64, value: u8) {
-        self.lapic.mmio_write(offset, &[value]);
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
+        let size = size.min(8);
+        let bytes = value.to_le_bytes();
+        self.lapic.mmio_write(offset, &bytes[..size]);
     }
 }
-

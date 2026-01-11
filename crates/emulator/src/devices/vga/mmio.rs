@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::memory_bus::MmioHandler;
+use memory::MmioHandler;
 
 use super::{VgaDevice, VBE_LFB_SIZE};
 
@@ -15,9 +15,6 @@ pub enum VgaMmioRegion {
 }
 
 /// MMIO handler that exposes the VGA/VBE framebuffer apertures.
-///
-/// This is designed to plug into [`crate::memory_bus::MemoryBus`] via
-/// `add_mmio_region`.
 pub struct VgaMmio {
     vga: Rc<RefCell<VgaDevice>>,
     region: VgaMmioRegion,
@@ -37,24 +34,40 @@ impl VgaMmio {
 }
 
 impl MmioHandler for VgaMmio {
-    fn read_u8(&mut self, offset: u64) -> u8 {
-        let mut buf = [0u8; 1];
-        match self.region {
-            VgaMmioRegion::Lfb => self.vga.borrow().lfb_read(offset as usize, &mut buf),
-            VgaMmioRegion::BankedWindowA => {
-                self.vga.borrow().banked_read(offset as usize, &mut buf)
-            }
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
         }
-        buf[0]
+        let size = size.min(8);
+        let mut buf = [0u8; 8];
+        match self.region {
+            VgaMmioRegion::Lfb => self
+                .vga
+                .borrow()
+                .lfb_read(offset as usize, &mut buf[..size]),
+            VgaMmioRegion::BankedWindowA => self
+                .vga
+                .borrow()
+                .banked_read(offset as usize, &mut buf[..size]),
+        }
+        u64::from_le_bytes(buf)
     }
 
-    fn write_u8(&mut self, offset: u64, value: u8) {
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
+        let size = size.min(8);
+        let bytes = value.to_le_bytes();
         match self.region {
-            VgaMmioRegion::Lfb => self.vga.borrow_mut().lfb_write(offset as usize, &[value]),
+            VgaMmioRegion::Lfb => self
+                .vga
+                .borrow_mut()
+                .lfb_write(offset as usize, &bytes[..size]),
             VgaMmioRegion::BankedWindowA => {
                 self.vga
                     .borrow_mut()
-                    .banked_write(offset as usize, &[value]);
+                    .banked_write(offset as usize, &bytes[..size]);
             }
         }
     }
