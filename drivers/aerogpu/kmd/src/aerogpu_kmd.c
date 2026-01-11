@@ -2014,10 +2014,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         ULONGLONG completedFence = adapter->LastCompletedFence;
         if (adapter->Bar0) {
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-                completedFence = adapter->FencePageVa
-                                     ? adapter->FencePageVa->completed_fence
-                                     : ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO) |
-                                        ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI) << 32));
+                completedFence = AeroGpuReadRegU64HiLoHi(adapter,
+                                                        AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+                                                        AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
             } else {
                 completedFence = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
             }
@@ -2095,12 +2094,15 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
                 struct aerogpu_submit_desc* ring =
                     (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
+                const uint64_t ringGpa = (uint64_t)adapter->RingPa.QuadPart;
+                const uint64_t stride = (uint64_t)sizeof(struct aerogpu_submit_desc);
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) & (adapter->RingEntryCount - 1);
                     const struct aerogpu_submit_desc entry = ring[idx];
+                    const uint64_t descGpa = ringGpa + (uint64_t)sizeof(struct aerogpu_ring_header) + ((uint64_t)idx * stride);
                     io->desc[i].fence = (uint64_t)entry.signal_fence;
-                    io->desc[i].desc_gpa = (uint64_t)entry.cmd_gpa;
-                    io->desc[i].desc_size_bytes = entry.cmd_size_bytes;
+                    io->desc[i].desc_gpa = descGpa;
+                    io->desc[i].desc_size_bytes = (uint32_t)sizeof(struct aerogpu_submit_desc);
                     io->desc[i].flags = entry.flags;
                 }
             } else {

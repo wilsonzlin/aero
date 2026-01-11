@@ -4,6 +4,17 @@
 
 It talks to the installed AeroGPU driver via **`DxgkDdiEscape`** using `D3DKMTEscape` (driver-private escape packets).
 
+## Supported device models / ABIs
+
+The AeroGPU Win7 driver can bind to **either** of the following PCI IDs:
+
+- **New ABI device**: `PCI\\VEN_A3A0&DEV_0001`  
+  Versioned AeroGPU ABI (ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots).
+- **Legacy device**: `PCI\\VEN_1AED&DEV_0001`  
+  Legacy bring-up ABI (ring = `aerogpu_ring_entry`).
+
+`--query-version`, `--query-fence`, `--dump-ring`, and `--selftest` are expected to work on both devices as long as the installed KMD implements the ABI-aware escape paths.
+
 ## Features
 
 Minimum supported commands:
