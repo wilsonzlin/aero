@@ -59,7 +59,7 @@ runs:
         # Aero pins stable via rust-toolchain.toml. When callers request "stable"
         # we resolve it to the pinned version to keep CI reproducible.
         if [[ "$requested" == "stable" && -f rust-toolchain.toml ]]; then
-          pinned="$(python3 -c 'import pathlib,tomllib; data=tomllib.loads(pathlib.Path("rust-toolchain.toml").read_text(encoding="utf-8")); print((data.get("toolchain") or {}).get("channel",""))')"
+          pinned="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
           if [[ -n "$pinned" ]]; then
             resolved="$pinned"
           fi
