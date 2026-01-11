@@ -154,6 +154,41 @@ static void probe_createallocation_flag_masks() {
 #endif
 }
 
+static void probe_commitvidpn() {
+  print_header("DXGKARG_COMMITVIDPN");
+  print_sizeof("DXGKARG_COMMITVIDPN", sizeof(DXGKARG_COMMITVIDPN));
+
+#if defined(_MSC_VER)
+  __if_exists(DXGKARG_COMMITVIDPN::hFunctionalVidPn) {
+    print_offsetof("DXGKARG_COMMITVIDPN", "hFunctionalVidPn", offsetof(DXGKARG_COMMITVIDPN, hFunctionalVidPn));
+  }
+  __if_not_exists(DXGKARG_COMMITVIDPN::hFunctionalVidPn) { printf("  offsetof(DXGKARG_COMMITVIDPN, hFunctionalVidPn) = <n/a>\n"); }
+
+  __if_exists(DXGKARG_COMMITVIDPN::AffectedVidPnSourceId) {
+    print_offsetof("DXGKARG_COMMITVIDPN", "AffectedVidPnSourceId", offsetof(DXGKARG_COMMITVIDPN, AffectedVidPnSourceId));
+  }
+  __if_not_exists(DXGKARG_COMMITVIDPN::AffectedVidPnSourceId) {
+    printf("  offsetof(DXGKARG_COMMITVIDPN, AffectedVidPnSourceId) = <n/a>\n");
+  }
+#else
+  print_offsetof("DXGKARG_COMMITVIDPN", "hFunctionalVidPn", offsetof(DXGKARG_COMMITVIDPN, hFunctionalVidPn));
+  print_offsetof("DXGKARG_COMMITVIDPN", "AffectedVidPnSourceId", offsetof(DXGKARG_COMMITVIDPN, AffectedVidPnSourceId));
+#endif
+}
+
+static void probe_vidpn_source_mode() {
+  print_header("D3DKMDT_VIDPN_SOURCE_MODE");
+  print_sizeof("D3DKMDT_VIDPN_SOURCE_MODE", sizeof(D3DKMDT_VIDPN_SOURCE_MODE));
+  print_offsetof("D3DKMDT_VIDPN_SOURCE_MODE", "Type", offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Type));
+  print_offsetof("D3DKMDT_VIDPN_SOURCE_MODE", "Format", offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format));
+  print_offsetof("D3DKMDT_VIDPN_SOURCE_MODE", "Format.Graphics.PrimSurfSize",
+                 offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize));
+  print_offsetof("D3DKMDT_VIDPN_SOURCE_MODE", "Format.Graphics.PrimSurfSize.cx",
+                 offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize.cx));
+  print_offsetof("D3DKMDT_VIDPN_SOURCE_MODE", "Format.Graphics.PrimSurfSize.cy",
+                 offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize.cy));
+}
+
 int main() {
   printf("AeroGPU KMD WDK ABI probe\n");
 
@@ -179,6 +214,8 @@ int main() {
   probe_notify_interrupt();
   probe_allocation_flag_masks();
   probe_createallocation_flag_masks();
+  probe_commitvidpn();
+  probe_vidpn_source_mode();
 
   return 0;
 }
