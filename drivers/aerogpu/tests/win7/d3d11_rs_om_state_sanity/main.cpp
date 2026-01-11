@@ -31,7 +31,7 @@ VSOut vs_main(VSIn input) {
 
 VSOut vs_depth_clip_main(VSIn input) {
   VSOut o;
-  o.pos = float4(input.pos.xy, 2.0f, 1.0f);
+  o.pos = float4(input.pos.xy, -0.5f, 1.0f);
   o.color = input.color;
   return o;
 }

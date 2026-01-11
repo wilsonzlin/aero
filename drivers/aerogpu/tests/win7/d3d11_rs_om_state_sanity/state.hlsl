@@ -19,7 +19,8 @@ VSOut vs_main(VSIn input) {
 // With DepthClipEnable=TRUE this should be clipped, and with DepthClipEnable=FALSE it should render.
 VSOut vs_depth_clip_main(VSIn input) {
   VSOut o;
-  o.pos = float4(input.pos.xy, 2.0f, 1.0f);
+  // z < 0 is outside the D3D clip volume when depth clipping is enabled (0 <= z <= w).
+  o.pos = float4(input.pos.xy, -0.5f, 1.0f);
   o.color = input.color;
   return o;
 }
