@@ -68,6 +68,12 @@ contains an opt-in compatibility driver package:
 - `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018`)
 - `virtiosnd_legacy.sys` (build with MSBuild `Configuration=Legacy`)
 
+For older bring-up scenarios where a legacy **I/O-port** virtio-pci transport is required (not part of the Aero virtio
+contract and not packaged by default), the repo also contains an opt-in I/O-port package:
+
+- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-ioport.inf` (binds `PCI\VEN_1AF4&DEV_1018&REV_00`; installs service `aeroviosnd_ioport`)
+- `virtiosnd_ioport.sys` (build with MSBuild `virtio-snd-ioport-legacy.vcxproj`)
+
 ## Device Configuration
 
 The device reports two PCM streams:
