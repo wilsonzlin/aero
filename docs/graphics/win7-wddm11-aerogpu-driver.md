@@ -105,10 +105,10 @@ For a minimal D3D10/D3D11 UMD bring-up checklist (DDI entrypoints, FL10_0 target
  - `aerogpu_d3d9_x64.dll` / `aerogpu_d3d9.dll` — D3D9 UMDs (x64 + WOW64/x86)
   
  **INF essentials (Win7 WDDM):**
- 
-- Device is class `Display` (`{4d36e968-e325-11ce-bfc1-08002be10318}`)
-- Bind by PCI vendor/device ID (AeroGPU’s virtual PCI IDs)
-- Register UMD(s) via the expected OpenGL/D3D registry keys for WDDM 1.1 (exact key names are per-WDK docs and must match the D3D9 runtime’s expectations).
+  
+ - Device is class `Display` (`{4d36e968-e325-11ce-bfc1-08002be10318}`)
+ - Bind by PCI vendor/device ID (`0xA3A0:0x0001`; see `drivers/aerogpu/protocol/aerogpu_pci.h` for `AEROGPU_PCI_VENDOR_ID` / `AEROGPU_PCI_DEVICE_ID`)
+ - Register UMD(s) via the expected OpenGL/D3D registry keys for WDDM 1.1 (exact key names are per-WDK docs and must match the D3D9 runtime’s expectations).
  
 **Clean-room note:** do not copy an existing vendor INF. Use the WDK documentation to build the required sections from scratch.
  
