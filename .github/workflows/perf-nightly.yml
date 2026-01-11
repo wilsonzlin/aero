@@ -31,12 +31,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Determine Node workspace directory
+        id: node-dir
+        run: node scripts/ci/detect_node_workspace.mjs >> "$GITHUB_OUTPUT"
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
 
       - name: Install dependencies (npm ci)
         run: npm ci
@@ -48,33 +51,8 @@ jobs:
           working-directory: tools/perf
           lockfile: package-lock.json
 
-      - name: Build app (nightly)
-        run: npm run build
-
       - name: Run browser perf (nightly)
-        run: |
-          set -euo pipefail
-          PORT=4173
-          setsid npm run preview -- --host 127.0.0.1 --port "$PORT" --strictPort &
-          server_pid=$!
-          cleanup() {
-            kill -- "-$server_pid" || true
-            sleep 1
-            kill -9 -- "-$server_pid" || true
-            wait "$server_pid" || true
-          }
-          trap cleanup EXIT
-
-          for i in {1..60}; do
-            curl -fsS "http://127.0.0.1:$PORT/" >/dev/null && break
-            sleep 1
-          done
-          curl -fsS "http://127.0.0.1:$PORT/" >/dev/null
-
-          node "$GITHUB_WORKSPACE/tools/perf/run.mjs" \
-            --url "http://127.0.0.1:$PORT/" \
-            --out-dir "$GITHUB_WORKSPACE/perf-results/nightly" \
-            --iterations ${{ env.PERF_ITERATIONS }}
+        run: node scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-dir.outputs.dir }}" --preview --preview-port 4173 --out-dir perf-results/nightly
 
       - name: Write GPU perf scenario params
         run: |
@@ -109,18 +87,61 @@ jobs:
             echo "### Perf (nightly)"
             echo ""
             echo "- Iterations: ${{ env.PERF_ITERATIONS }}"
+            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "- Artifacts:"
+            echo "  - perf-nightly-${{ github.run_id }} (\`perf-results/nightly\`)"
+            echo "  - perf-history-dashboard (\`dist/perf-dashboard\`)"
             if [[ -f perf-results/storage_io/storage_bench.json ]]; then
-              echo "- Storage: perf-results/storage_io/storage_bench.json"
+              echo "- Storage: \`perf-results/storage_io/storage_bench.json\`"
             fi
+            echo ""
             if [[ -f perf-results/nightly/summary.json ]]; then
-              echo ""
-              echo "Raw summary:"
-              echo ""
-              echo '```json'
-              cat perf-results/nightly/summary.json
-              echo '```'
+              node - <<'NODE'
+              const fs = require("node:fs");
+              const path = require("node:path");
+
+              const summaryPath = path.join(process.env.GITHUB_WORKSPACE, "perf-results", "nightly", "summary.json");
+              const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+
+              const meta = summary.meta ?? {};
+              if (typeof meta.gitSha === "string") {
+                console.log(`Commit: \`${meta.gitSha}\``);
+                console.log("");
+              }
+              if (typeof meta.chromiumVersion === "string") {
+                console.log(`Chromium: \`${meta.chromiumVersion}\``);
+                console.log("");
+              }
+
+              const benches = Array.isArray(summary.benchmarks) ? summary.benchmarks : [];
+              if (benches.length === 0) {
+                console.log("_No benchmarks found in summary.json._");
+                process.exit(0);
+              }
+
+              const fmtNumber = (n) => {
+                if (!Number.isFinite(n)) return "n/a";
+                const abs = Math.abs(n);
+                if (abs >= 1000) return n.toFixed(0);
+                if (abs >= 10) return n.toFixed(2);
+                return n.toFixed(3);
+              };
+              const fmtCv = (n) => (Number.isFinite(n) ? `${(n * 100).toFixed(2)}%` : "n/a");
+              const fmtN = (n) => (Number.isFinite(n) ? Math.round(n).toString() : "n/a");
+
+              console.log("| Benchmark | Median | CV | n |");
+              console.log("| --- | ---: | ---: | ---: |");
+              for (const b of benches) {
+                const name = String(b.name ?? "");
+                const unit = String(b.unit ?? "");
+                const median = b.stats?.median;
+                const cv = b.stats?.cv;
+                const n = b.stats?.n;
+                const medianText = `${fmtNumber(median)} ${unit}`.trim();
+                console.log(`| \`${name}\` | ${medianText} | ${fmtCv(cv)} | ${fmtN(n)} |`);
+              }
+          NODE
             else
-              echo ""
               echo "_No summary.json produced._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

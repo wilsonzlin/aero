@@ -40,89 +40,43 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
+      - name: Determine Node workspace directory (candidate)
+        id: node-dir-head
+        run: node base/scripts/ci/detect_node_workspace.mjs --root head >> "$GITHUB_OUTPUT"
+
+      - name: Determine Node workspace directory (baseline)
+        id: node-dir-base
+        run: node base/scripts/ci/detect_node_workspace.mjs --root base >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: head/.nvmrc
+          node-version-file: base/.nvmrc
           cache: npm
           cache-dependency-path: |
-            head/package-lock.json
-            base/package-lock.json
+            ${{ steps.node-dir-head.outputs.lockfile }}
+            ${{ steps.node-dir-base.outputs.lockfile }}
 
       - name: Install app dependencies (baseline)
         run: npm ci
-        working-directory: base
-
-      - name: Build app (baseline)
-        run: npm run build
-        working-directory: base
+        working-directory: ${{ steps.node-dir-base.outputs.dir }}
 
       - name: Install app dependencies (candidate)
         run: npm ci
-        working-directory: head
+        working-directory: ${{ steps.node-dir-head.outputs.dir }}
 
       - name: Setup Playwright (cached)
-        uses: ./head/.github/actions/setup-playwright
+        uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
           working-directory: head/tools/perf
           lockfile: head/package-lock.json
 
       - name: Run perf smoke (baseline)
-        working-directory: base
-        run: |
-          set -euo pipefail
-          PORT=4173
-          setsid npm run preview -- --host 127.0.0.1 --port "$PORT" --strictPort &
-          server_pid=$!
-          cleanup() {
-            kill -- "-$server_pid" || true
-            sleep 1
-            kill -9 -- "-$server_pid" || true
-            wait "$server_pid" || true
-          }
-          trap cleanup EXIT
-
-          for i in {1..60}; do
-            curl -fsS "http://127.0.0.1:$PORT/" >/dev/null && break
-            sleep 1
-          done
-          curl -fsS "http://127.0.0.1:$PORT/" >/dev/null
-
-          node "$GITHUB_WORKSPACE/head/tools/perf/run.mjs" \
-            --url "http://127.0.0.1:$PORT/" \
-            --out-dir "$GITHUB_WORKSPACE/head/perf-results/base" \
-            --iterations ${{ env.PERF_ITERATIONS }}
-
-      - name: Build app (candidate)
-        run: npm run build
-        working-directory: head
+        run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-dir-base.outputs.dir }}" --preview --preview-port 4173 --out-dir head/perf-results/base --perf-runner head/tools/perf/run.mjs
 
       - name: Run perf smoke (candidate)
-        working-directory: head
-        run: |
-          set -euo pipefail
-          PORT=4174
-          setsid npm run preview -- --host 127.0.0.1 --port "$PORT" --strictPort &
-          server_pid=$!
-          cleanup() {
-            kill -- "-$server_pid" || true
-            sleep 1
-            kill -9 -- "-$server_pid" || true
-            wait "$server_pid" || true
-          }
-          trap cleanup EXIT
-
-          for i in {1..60}; do
-            curl -fsS "http://127.0.0.1:$PORT/" >/dev/null && break
-            sleep 1
-          done
-          curl -fsS "http://127.0.0.1:$PORT/" >/dev/null
-
-          node "$GITHUB_WORKSPACE/head/tools/perf/run.mjs" \
-            --url "http://127.0.0.1:$PORT/" \
-            --out-dir "$GITHUB_WORKSPACE/head/perf-results/head" \
-            --iterations ${{ env.PERF_ITERATIONS }}
+        run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-dir-head.outputs.dir }}" --preview --preview-port 4174 --out-dir head/perf-results/head --perf-runner head/tools/perf/run.mjs
 
       - name: Compare (fail on regression)
         run: |
@@ -141,7 +95,17 @@ jobs:
           if [[ -f perf-results/compare.md ]]; then
             cat perf-results/compare.md >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No perf comparison produced (compare.md missing)." >> "$GITHUB_STEP_SUMMARY"
+            echo "No perf comparison produced (\`perf-results/compare.md\` missing)." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            if [[ -f perf-results/summary.json ]]; then
+              echo "compare summary.json:" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo '```json' >> "$GITHUB_STEP_SUMMARY"
+              cat perf-results/summary.json >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "_No compare summary produced._" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
       - name: Upload perf artifacts
