@@ -131,7 +131,7 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     // The shipped driver package + guest-tools target the canonical, versioned ABI (A3A0:0001).
     // The legacy bring-up device model still exists for debugging, but requires enabling the
     // legacy emulator device model feature (`emulator/aerogpu-legacy`) and using the legacy INFs
-    // under `drivers/aerogpu/packaging/win7/legacy/` (or an equivalent custom INF).
+    // under `drivers/aerogpu/packaging/win7/legacy/` (or another INF that matches the legacy HWID).
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
