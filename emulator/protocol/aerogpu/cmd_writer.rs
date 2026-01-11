@@ -751,8 +751,12 @@ impl AerogpuCmdWriter {
         samplers: &[AerogpuHandle],
     ) {
         assert!(samplers.len() <= u32::MAX as usize);
-        let unpadded_size =
-            size_of::<AerogpuCmdSetSamplers>() + samplers.len() * size_of::<AerogpuHandle>();
+        let samplers_size = size_of::<AerogpuHandle>()
+            .checked_mul(samplers.len())
+            .expect("SET_SAMPLERS packet too large (usize overflow)");
+        let unpadded_size = size_of::<AerogpuCmdSetSamplers>()
+            .checked_add(samplers_size)
+            .expect("SET_SAMPLERS packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::SetSamplers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetSamplers, shader_stage),
@@ -799,8 +803,12 @@ impl AerogpuCmdWriter {
         bindings: &[AerogpuConstantBufferBinding],
     ) {
         assert!(bindings.len() <= u32::MAX as usize);
+        let bindings_size = size_of::<AerogpuConstantBufferBinding>()
+            .checked_mul(bindings.len())
+            .expect("SET_CONSTANT_BUFFERS packet too large (usize overflow)");
         let unpadded_size = size_of::<AerogpuCmdSetConstantBuffers>()
-            + bindings.len() * size_of::<AerogpuConstantBufferBinding>();
+            .checked_add(bindings_size)
+            .expect("SET_CONSTANT_BUFFERS packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::SetConstantBuffers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetConstantBuffers, shader_stage),
