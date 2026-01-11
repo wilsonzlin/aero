@@ -37,6 +37,27 @@ constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
 
+uint64_t ReadMonitoredFenceValue(volatile uint64_t* ptr) {
+  if (!ptr) {
+    return 0;
+  }
+#if defined(_M_IX86)
+  // 32-bit UMDs can observe torn 64-bit reads if the monitored fence value is
+  // updated concurrently. Use an interlocked compare-exchange as an atomic read.
+  //
+  // Important: some stacks may map the fence page as read-only. Use a sentinel
+  // comparand value that should never occur in practice (all bits set) so the
+  // compare-exchange doesn't attempt to write.
+  if ((reinterpret_cast<std::uintptr_t>(ptr) & 7u) == 0) {
+    constexpr LONG64 kSentinelNeverMatches = static_cast<LONG64>(-1);
+    return static_cast<uint64_t>(InterlockedCompareExchange64(reinterpret_cast<volatile LONG64*>(ptr),
+                                                              kSentinelNeverMatches,
+                                                              kSentinelNeverMatches));
+  }
+#endif
+  return static_cast<uint64_t>(*ptr);
+}
+
 #ifndef STATUS_TIMEOUT
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
 #endif
@@ -1758,7 +1779,7 @@ uint64_t WddmSubmit::QueryCompletedFence() {
   uint64_t completed = last_completed_fence_;
 
   if (monitored_fence_value_) {
-    completed = std::max(completed, static_cast<uint64_t>(*monitored_fence_value_));
+    completed = std::max(completed, ReadMonitoredFenceValue(monitored_fence_value_));
   } else if (kmt_adapter_for_debug_) {
     // Debug-only fallback: ask the KMD for its fence tracking state via Escape.
     const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
