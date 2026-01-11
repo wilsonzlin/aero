@@ -50,6 +50,18 @@
           "message": "bad",
           "payloadHex": "00030003626164",
           "frameHex": "040000002a0000000700030003626164"
+        },
+        "ping": {
+          "msgType": 5,
+          "streamId": 0,
+          "payloadHex": "010203",
+          "frameHex": "050000000000000003010203"
+        },
+        "pong": {
+          "msgType": 6,
+          "streamId": 0,
+          "payloadHex": "010203",
+          "frameHex": "060000000000000003010203"
         }
       }
     }

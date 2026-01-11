@@ -51,6 +51,16 @@ test("tools/net-proxy-server tcp-mux framing matches shared protocol vectors", (
   assert.deepEqual(decodeTcpMuxErrorPayload(errorPayload), { code: error.code, message: error.message });
   const errorFrame = encodeTcpMuxFrame(TcpMuxMsgType.ERROR, error.streamId, errorPayload);
   assert.equal(errorFrame.toString("hex"), error.frameHex);
+
+  const ping = v.frames.ping;
+  const pingPayload = Buffer.from(ping.payloadHex, "hex");
+  const pingFrame = encodeTcpMuxFrame(TcpMuxMsgType.PING, ping.streamId, pingPayload);
+  assert.equal(pingFrame.toString("hex"), ping.frameHex);
+
+  const pong = v.frames.pong;
+  const pongPayload = Buffer.from(pong.payloadHex, "hex");
+  const pongFrame = encodeTcpMuxFrame(TcpMuxMsgType.PONG, pong.streamId, pongPayload);
+  assert.equal(pongFrame.toString("hex"), pong.frameHex);
 });
 
 test("tools/net-proxy-server tcp-mux parser handles shared vectors across chunk boundaries", () => {
@@ -60,6 +70,8 @@ test("tools/net-proxy-server tcp-mux parser handles shared vectors across chunk 
     Buffer.from(v.data.frameHex, "hex"),
     Buffer.from(v.close.frameHex, "hex"),
     Buffer.from(v.error.frameHex, "hex"),
+    Buffer.from(v.ping.frameHex, "hex"),
+    Buffer.from(v.pong.frameHex, "hex"),
   ]);
 
   const parser = new TcpMuxFrameParser();
@@ -80,6 +92,7 @@ test("tools/net-proxy-server tcp-mux parser handles shared vectors across chunk 
     { msgType: TcpMuxMsgType.DATA, streamId: v.data.streamId, payloadHex: v.data.payloadHex },
     { msgType: TcpMuxMsgType.CLOSE, streamId: v.close.streamId, payloadHex: v.close.payloadHex },
     { msgType: TcpMuxMsgType.ERROR, streamId: v.error.streamId, payloadHex: v.error.payloadHex },
+    { msgType: TcpMuxMsgType.PING, streamId: v.ping.streamId, payloadHex: v.ping.payloadHex },
+    { msgType: TcpMuxMsgType.PONG, streamId: v.pong.streamId, payloadHex: v.pong.payloadHex },
   ]);
 });
-

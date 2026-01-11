@@ -31,6 +31,8 @@ type NetworkingVectors = {
         data: { msgType: number; streamId: number; payloadHex: string; frameHex: string };
         close: { msgType: number; streamId: number; flags: number; payloadHex: string; frameHex: string };
         error: { msgType: number; streamId: number; code: number; message: string; payloadHex: string; frameHex: string };
+        ping: { msgType: number; streamId: number; payloadHex: string; frameHex: string };
+        pong: { msgType: number; streamId: number; payloadHex: string; frameHex: string };
       };
     };
   };
@@ -75,6 +77,16 @@ test("web tcp-mux codec matches shared protocol vectors", () => {
   assert.deepEqual(decodeTcpMuxErrorPayload(errPayload), { code: err.code, message: err.message });
   const errFrame = encodeTcpMuxFrame(TcpMuxMsgType.ERROR, err.streamId, errPayload);
   assert.deepEqual(errFrame, hexToBytes(err.frameHex));
+
+  const ping = v.frames.ping;
+  const pingPayload = hexToBytes(ping.payloadHex);
+  const pingFrame = encodeTcpMuxFrame(TcpMuxMsgType.PING, ping.streamId, pingPayload);
+  assert.deepEqual(pingFrame, hexToBytes(ping.frameHex));
+
+  const pong = v.frames.pong;
+  const pongPayload = hexToBytes(pong.payloadHex);
+  const pongFrame = encodeTcpMuxFrame(TcpMuxMsgType.PONG, pong.streamId, pongPayload);
+  assert.deepEqual(pongFrame, hexToBytes(pong.frameHex));
 });
 
 test("web TcpMuxFrameParser handles shared vectors across chunk boundaries", () => {
@@ -84,6 +96,8 @@ test("web TcpMuxFrameParser handles shared vectors across chunk boundaries", () 
     ...hexToBytes(v.data.frameHex),
     ...hexToBytes(v.close.frameHex),
     ...hexToBytes(v.error.frameHex),
+    ...hexToBytes(v.ping.frameHex),
+    ...hexToBytes(v.pong.frameHex),
   ]);
 
   const parser = new TcpMuxFrameParser();
@@ -108,6 +122,7 @@ test("web TcpMuxFrameParser handles shared vectors across chunk boundaries", () 
     { msgType: TcpMuxMsgType.DATA, streamId: v.data.streamId, payloadHex: v.data.payloadHex },
     { msgType: TcpMuxMsgType.CLOSE, streamId: v.close.streamId, payloadHex: v.close.payloadHex },
     { msgType: TcpMuxMsgType.ERROR, streamId: v.error.streamId, payloadHex: v.error.payloadHex },
+    { msgType: TcpMuxMsgType.PING, streamId: v.ping.streamId, payloadHex: v.ping.payloadHex },
+    { msgType: TcpMuxMsgType.PONG, streamId: v.pong.streamId, payloadHex: v.pong.payloadHex },
   ]);
 });
-
