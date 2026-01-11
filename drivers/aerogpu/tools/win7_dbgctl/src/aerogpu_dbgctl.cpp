@@ -646,15 +646,23 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     return 1;
   }
 
-  WaitThreadCtx waiter;
-  if (!StartWaitThread(&waiter, f, hAdapter, vidpnSourceId)) {
+  // Allocate on heap so we can safely leak on timeout (the wait thread may be
+  // blocked inside the kernel thunk; tearing it down can deadlock).
+  WaitThreadCtx *waiter = (WaitThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(WaitThreadCtx));
+  if (!waiter) {
+    fwprintf(stderr, L"HeapAlloc failed\n");
+    return 1;
+  }
+
+  if (!StartWaitThread(waiter, f, hAdapter, vidpnSourceId)) {
     fwprintf(stderr, L"Failed to start wait thread\n");
+    HeapFree(GetProcessHeap(), 0, waiter);
     return 1;
   }
 
   // Prime: perform one wait so subsequent deltas represent full vblank periods.
-  SetEvent(waiter.request_event);
-  DWORD w = WaitForSingleObject(waiter.done_event, timeoutMs);
+  SetEvent(waiter->request_event);
+  DWORD w = WaitForSingleObject(waiter->done_event, timeoutMs);
   if (w == WAIT_TIMEOUT) {
     fwprintf(stderr, L"vblank wait timed out after %lu ms (sample 1/%lu)\n", (unsigned long)timeoutMs,
              (unsigned long)samples);
@@ -667,14 +675,16 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   }
   if (w != WAIT_OBJECT_0) {
     fwprintf(stderr, L"WaitForSingleObject failed (rc=%lu)\n", (unsigned long)w);
-    StopWaitThread(&waiter);
+    StopWaitThread(waiter);
+    HeapFree(GetProcessHeap(), 0, waiter);
     return 2;
   }
 
-  NTSTATUS st = (NTSTATUS)InterlockedCompareExchange(&waiter.last_status, 0, 0);
+  NTSTATUS st = (NTSTATUS)InterlockedCompareExchange(&waiter->last_status, 0, 0);
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTWaitForVerticalBlankEvent failed", f, st);
-    StopWaitThread(&waiter);
+    StopWaitThread(waiter);
+    HeapFree(GetProcessHeap(), 0, waiter);
     return 2;
   }
 
@@ -687,8 +697,8 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   uint32_t deltas = 0;
 
   for (uint32_t i = 1; i < samples; ++i) {
-    SetEvent(waiter.request_event);
-    w = WaitForSingleObject(waiter.done_event, timeoutMs);
+    SetEvent(waiter->request_event);
+    w = WaitForSingleObject(waiter->done_event, timeoutMs);
     if (w == WAIT_TIMEOUT) {
       fwprintf(stderr, L"vblank wait timed out after %lu ms (sample %lu/%lu)\n", (unsigned long)timeoutMs,
                (unsigned long)(i + 1), (unsigned long)samples);
@@ -701,14 +711,16 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     }
     if (w != WAIT_OBJECT_0) {
       fwprintf(stderr, L"WaitForSingleObject failed (rc=%lu)\n", (unsigned long)w);
-      StopWaitThread(&waiter);
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
       return 2;
     }
 
-    st = (NTSTATUS)InterlockedCompareExchange(&waiter.last_status, 0, 0);
+    st = (NTSTATUS)InterlockedCompareExchange(&waiter->last_status, 0, 0);
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"D3DKMTWaitForVerticalBlankEvent failed", f, st);
-      StopWaitThread(&waiter);
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
       return 2;
     }
 
@@ -729,7 +741,8 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     wprintf(L"vblank[%lu/%lu]: %.3f ms\n", (unsigned long)(i + 1), (unsigned long)samples, dt_ms);
   }
 
-  StopWaitThread(&waiter);
+  StopWaitThread(waiter);
+  HeapFree(GetProcessHeap(), 0, waiter);
 
   if (deltas != 0) {
     const double avg_ms = sum_ms / (double)deltas;
