@@ -7,6 +7,18 @@
 ;
 ; If MSI cannot be allocated, Windows falls back to legacy INTx and the driver
 ; remains functional.
+;
+; Device identity / driver binding:
+; This INF matches the Aero Windows 7 virtio device contract v1 (AERO-W7-VIRTIO):
+;   - virtio-input modern PCI ID (`DEV_1052`)
+;   - contract major version encoded in PCI Revision ID (`REV_01`)
+; It intentionally matches only `...&REV_01` hardware IDs to avoid binding to
+; non-contract virtio-input devices (which would otherwise install but fail to
+; start, e.g. Code 10).
+;
+; Preferred (most specific) matches are subsystem-qualified:
+;   - keyboard: `...&SUBSYS_00101AF4&REV_01`
+;   - mouse:    `...&SUBSYS_00111AF4&REV_01`
 
 [Version]
 Signature="$Windows NT$"
