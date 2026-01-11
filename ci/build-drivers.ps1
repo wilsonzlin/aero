@@ -9,7 +9,7 @@ Discovers CI-buildable driver projects under `drivers/` and builds each driver f
 platforms/configuration using MSBuild (command-line only).
 
 Discovery conventions (encoded here for CI determinism):
-  - Drivers may live at any depth under `drivers/` (example: `drivers/windows7/virtio/net`).
+  - Drivers must live at depth <= 2 under `drivers/` (example: `drivers/win7/virtio-net`).
   - Each driver directory provides either:
       - a solution file `<dir>/<dirName>.sln`, OR
       - exactly one project file `<dir>/*.vcxproj`.
@@ -361,6 +361,28 @@ function Try-GetDriverBuildTargetFromDirectory {
     [Parameter(Mandatory = $true)][string]$DriversRootResolved
   )
 
+  $sep = [IO.Path]::DirectorySeparatorChar
+  $altSep = [IO.Path]::AltDirectorySeparatorChar
+  $driversRootNormalized = $DriversRootResolved.TrimEnd($sep, $altSep)
+  $dirResolved = (Resolve-Path -LiteralPath $Directory.FullName).Path.TrimEnd($sep, $altSep)
+  $prefix = $driversRootNormalized + $sep
+
+  if (-not $dirResolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Internal error: expected '$dirResolved' to be under '$driversRootNormalized'."
+  }
+
+  $relativePath = $dirResolved.Substring($prefix.Length)
+  $displayName = $relativePath.Replace($sep, '/')
+  if ($altSep -ne $sep) {
+    $displayName = $displayName.Replace($altSep, '/')
+  }
+
+  # Keep discovery deterministic: CI only considers driver roots at depth <= 2
+  # under drivers/ (drivers/<name>/... or drivers/<group>/<name>/...).
+  if (($displayName -split '/').Count -gt 2) {
+    return $null
+  }
+
   $name = $Directory.Name
   $sln = Join-Path $Directory.FullName ("{0}.sln" -f $name)
   $buildPath = $null
@@ -384,22 +406,6 @@ function Try-GetDriverBuildTargetFromDirectory {
   # Require an INF in the same directory tree so downstream catalog/sign/package steps can run.
   if (-not (Test-HasInfInTree -DirectoryPath $Directory.FullName)) {
     return $null
-  }
-
-  $sep = [IO.Path]::DirectorySeparatorChar
-  $altSep = [IO.Path]::AltDirectorySeparatorChar
-  $driversRootNormalized = $DriversRootResolved.TrimEnd($sep, $altSep)
-  $dirResolved = (Resolve-Path -LiteralPath $Directory.FullName).Path.TrimEnd($sep, $altSep)
-  $prefix = $driversRootNormalized + $sep
-
-  if (-not $dirResolved.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Internal error: expected '$dirResolved' to be under '$driversRootNormalized'."
-  }
-
-  $relativePath = $dirResolved.Substring($prefix.Length)
-  $displayName = $relativePath.Replace($sep, '/')
-  if ($altSep -ne $sep) {
-    $displayName = $displayName.Replace($altSep, '/')
   }
 
   return [pscustomobject]@{
@@ -426,7 +432,7 @@ function Discover-DriverBuildTargets {
 
   $targets = New-Object System.Collections.Generic.List[object]
 
-  # Discover driver roots at any depth under drivers/. A directory is considered a
+  # Discover driver roots at depth <= 2 under drivers/. A directory is considered a
   # build target if it contains:
   #   - <dirName>.sln, OR
   #   - exactly one *.vcxproj
