@@ -3401,9 +3401,9 @@ impl AerogpuD3d9Executor {
         depth: f32,
         stencil: u32,
     ) -> Result<(), AerogpuD3d9Error> {
-        let clear_color_enabled = (flags & 0x1) != 0;
-        let clear_depth_enabled = (flags & 0x2) != 0;
-        let clear_stencil_enabled = (flags & 0x4) != 0;
+        let clear_color_enabled = (flags & cmd::AEROGPU_CLEAR_COLOR) != 0;
+        let clear_depth_enabled = (flags & cmd::AEROGPU_CLEAR_DEPTH) != 0;
+        let clear_stencil_enabled = (flags & cmd::AEROGPU_CLEAR_STENCIL) != 0;
 
         let rt = self.state.render_targets;
 
