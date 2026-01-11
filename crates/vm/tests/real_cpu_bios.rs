@@ -580,6 +580,63 @@ fn aero_cpu_core_int16_read_key_returns_scancode_and_ascii() {
 }
 
 #[test]
+fn aero_cpu_core_int16_check_key_does_not_consume_and_sets_zf_correctly() {
+    let mut bios = Bios::new(test_bios_config());
+    bios.push_key(0x2C5A); // scan=0x2C, ascii='Z'
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 16h; INT 16h; HLT
+    vm.mem
+        .write_physical(0x7C00, &[0xCD, 0x16, 0xCD, 0x16, 0xF4]);
+
+    // AH=01h Check for keystroke (does not consume).
+    vm.cpu.gpr[gpr::RAX] = 0x0100;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x16)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x2C5A);
+    assert!(!vm.cpu.get_flag(FLAG_ZF));
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+
+    // AH=00h Read keystroke (consumes).
+    vm.cpu.gpr[gpr::RAX] = 0x0000;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x16)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x2C5A);
+    assert!(!vm.cpu.get_flag(FLAG_ZF));
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+
+    assert!(matches!(vm.step(), StepExit::Halted));
+}
+
+#[test]
+fn aero_cpu_core_int16_check_key_sets_zf_when_queue_empty() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 16h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x16, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0100;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x16)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_ZF));
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+}
+
+#[test]
 fn aero_cpu_core_int1a_get_system_time_returns_bda_ticks() {
     let bios = Bios::new_with_rtc(
         test_bios_config(),
@@ -641,6 +698,196 @@ fn aero_cpu_core_int1a_midnight_flag_is_reported_and_cleared() {
     assert_eq!((vm.cpu.gpr[gpr::RAX] & 0xFF) as u8, 1);
     assert_eq!(vm.mem.read_u8(BDA_MIDNIGHT_FLAG_ADDR), 0);
     assert!(!vm.cpu.get_flag(FLAG_CF));
+}
+
+#[test]
+fn aero_cpu_core_int1a_read_rtc_time_returns_bcd_time_fields() {
+    let bios = Bios::new_with_rtc(
+        test_bios_config(),
+        CmosRtc::new(DateTime::new(2026, 12, 31, 12, 34, 56)),
+    );
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 1Ah; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x1A, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0200; // AH=02h Read RTC time
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RCX] as u16, 0x1234);
+    assert_eq!(vm.cpu.gpr[gpr::RDX] as u16, 0x5600);
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+}
+
+#[test]
+fn aero_cpu_core_int1a_set_rtc_time_updates_rtc_and_bda_tick_count() {
+    let bios = Bios::new_with_rtc(
+        test_bios_config(),
+        CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)),
+    );
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 1Ah; INT 1Ah; HLT
+    vm.mem
+        .write_physical(0x7C00, &[0xCD, 0x1A, 0xCD, 0x1A, 0xF4]);
+
+    // AH=03h Set RTC time.
+    vm.cpu.gpr[gpr::RAX] = 0x0300;
+    vm.cpu.gpr[gpr::RCX] = 0x0102; // 01:02
+    vm.cpu.gpr[gpr::RDX] = 0x0300; // 03 + DST=0
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+
+    let seconds = 1u64 * 3600 + 2u64 * 60 + 3u64;
+    let expected_ticks = (u64::from(TICKS_PER_DAY) * seconds / 86_400) as u32;
+    assert_eq!(vm.mem.read_u32(BDA_TICK_COUNT_ADDR), expected_ticks);
+
+    // AH=02h Read RTC time.
+    vm.cpu.gpr[gpr::RAX] = 0x0200;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RCX] as u16, 0x0102);
+    assert_eq!(vm.cpu.gpr[gpr::RDX] as u16, 0x0300);
+    assert_eq!(vm.bios.rtc.datetime().hour, 1);
+    assert_eq!(vm.bios.rtc.datetime().minute, 2);
+    assert_eq!(vm.bios.rtc.datetime().second, 3);
+}
+
+#[test]
+fn aero_cpu_core_int1a_set_rtc_time_rejects_invalid_bcd_fields() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 1Ah; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x1A, 0xF4]);
+
+    // Hour 0x25 is invalid in 24-hour BCD mode.
+    vm.cpu.gpr[gpr::RAX] = 0x0300;
+    vm.cpu.gpr[gpr::RCX] = 0x2500;
+    vm.cpu.gpr[gpr::RDX] = 0x0000;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 1);
+}
+
+#[test]
+fn aero_cpu_core_int1a_read_rtc_date_returns_bcd_date_fields() {
+    let bios = Bios::new_with_rtc(
+        test_bios_config(),
+        CmosRtc::new(DateTime::new(2026, 12, 31, 0, 0, 0)),
+    );
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 1Ah; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x1A, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0400; // AH=04h Read RTC date
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RCX] as u16, 0x2026);
+    assert_eq!(vm.cpu.gpr[gpr::RDX] as u16, 0x1231);
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+}
+
+#[test]
+fn aero_cpu_core_int1a_set_rtc_date_updates_rtc() {
+    let bios = Bios::new_with_rtc(
+        test_bios_config(),
+        CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)),
+    );
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 1Ah; INT 1Ah; HLT
+    vm.mem
+        .write_physical(0x7C00, &[0xCD, 0x1A, 0xCD, 0x1A, 0xF4]);
+
+    // AH=05h Set RTC date to 2027-02-03.
+    vm.cpu.gpr[gpr::RAX] = 0x0500;
+    vm.cpu.gpr[gpr::RCX] = 0x2027;
+    vm.cpu.gpr[gpr::RDX] = 0x0203;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+
+    // AH=04h Read RTC date.
+    vm.cpu.gpr[gpr::RAX] = 0x0400;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RCX] as u16, 0x2027);
+    assert_eq!(vm.cpu.gpr[gpr::RDX] as u16, 0x0203);
+    assert_eq!(vm.bios.rtc.datetime().year, 2027);
+    assert_eq!(vm.bios.rtc.datetime().month, 2);
+    assert_eq!(vm.bios.rtc.datetime().day, 3);
+}
+
+#[test]
+fn aero_cpu_core_int1a_set_rtc_date_rejects_invalid_bcd_fields() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 1Ah; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x1A, 0xF4]);
+
+    // Month 0x13 is invalid in BCD mode.
+    vm.cpu.gpr[gpr::RAX] = 0x0500;
+    vm.cpu.gpr[gpr::RCX] = 0x2027;
+    vm.cpu.gpr[gpr::RDX] = 0x1301;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x1A)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 1);
 }
 
 #[test]
