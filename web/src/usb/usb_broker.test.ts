@@ -204,6 +204,30 @@ describe("usb/UsbBroker", () => {
     });
   });
 
+  it("broadcasts usb.guest.status to attached ports and replays the latest snapshot to newly attached ports", async () => {
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const portA = new FakePort();
+    const portB = new FakePort();
+    broker.attachWorkerPort(portA as unknown as MessagePort);
+    broker.attachWorkerPort(portB as unknown as MessagePort);
+
+    portA.posted.length = 0;
+    portB.posted.length = 0;
+
+    const snapshot = { available: true, attached: true, blocked: false, rootPort: 0, lastError: null };
+    portA.emit({ type: "usb.guest.status", snapshot });
+
+    expect(portA.posted).toContainEqual({ type: "usb.guest.status", snapshot });
+    expect(portB.posted).toContainEqual({ type: "usb.guest.status", snapshot });
+
+    const portC = new FakePort();
+    broker.attachWorkerPort(portC as unknown as MessagePort);
+    const guestMsgs = portC.posted.filter((m) => (m as { type?: unknown }).type === "usb.guest.status");
+    expect(guestMsgs).toEqual([{ type: "usb.guest.status", snapshot }]);
+  });
+
   it("serializes actions via FIFO queue", async () => {
     const callOrder: number[] = [];
     const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
