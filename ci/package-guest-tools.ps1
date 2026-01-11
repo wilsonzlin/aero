@@ -472,16 +472,32 @@ function New-PackagerSpecFromStagedDrivers {
     throw "No driver directories were staged for BOTH x86 and amd64; refusing to package Guest Tools. x86=[$x86Names] amd64=[$amd64Names]"
   }
 
-  $required = @()
-  foreach ($name in ($common | Sort-Object)) {
-    $required += @{
+  # Emit a packager spec that lists:
+  # - drivers present for both x86+amd64 as required=true
+  # - drivers present for only one architecture as required=false (best-effort; packager will warn + skip missing arch)
+  $allKeys = @{}
+  foreach ($k in $setX86.Keys) { $allKeys[$k] = $true }
+  foreach ($k in $setAmd64.Keys) { $allKeys[$k] = $true }
+
+  $drivers = @()
+  foreach ($k in ($allKeys.Keys | Sort-Object)) {
+    $name = $null
+    if ($setX86.ContainsKey($k)) {
+      $name = $setX86[$k]
+    } else {
+      $name = $setAmd64[$k]
+    }
+    $isRequired = $setX86.ContainsKey($k) -and $setAmd64.ContainsKey($k)
+
+    $drivers += @{
       name = $name
+      required = $isRequired
       expected_hardware_ids = @()
     }
   }
 
   $spec = @{
-    required_drivers = $required
+    drivers = $drivers
   }
 
   $json = $spec | ConvertTo-Json -Depth 10
@@ -585,7 +601,7 @@ try {
   Write-Host "  epoch  : $epoch"
   Write-Host "  out    : $outDirResolved"
 
-  & cargo run --manifest-path $packagerManifest --release -- `
+  & cargo run --manifest-path $packagerManifest --release --locked -- `
     --drivers-dir $stageDriversRoot `
     --guest-tools-dir $stageGuestTools `
     --spec $stageSpec `
