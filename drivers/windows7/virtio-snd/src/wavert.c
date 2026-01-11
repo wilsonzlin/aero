@@ -1794,7 +1794,64 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     return STATUS_INVALID_DEVICE_STATE;
                 }
                 if (!stream->HwPrepared) {
-                    return STATUS_INVALID_DEVICE_STATE;
+                    BOOLEAN prepared;
+
+                    prepared = TRUE;
+
+                    if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
+                        VIRTIOSND_STREAM_STATE streamState;
+
+                        prepared = FALSE;
+
+                        if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
+                            status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
+                            if (!NT_SUCCESS(status)) {
+#ifdef STATUS_ALREADY_INITIALIZED
+                                if (status != STATUS_ALREADY_INITIALIZED) {
+                                    return status;
+                                }
+#else
+                                return status;
+#endif
+                            }
+                        }
+
+                        VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
+
+                        /*
+                         * If the cyclic buffer was allocated/reallocated while paused,
+                         * (re)issue SET_PARAMS1/PREPARE1 so START1 can succeed.
+                         */
+                        streamState = dx->Control.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID];
+                        if (streamState == VirtioSndStreamStateRunning) {
+                            (VOID)VirtioSndCtrlStop1(&dx->Control);
+                            streamState = dx->Control.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID];
+                        }
+                        if (streamState != VirtioSndStreamStateIdle && streamState != VirtioSndStreamStateParamsSet) {
+                            (VOID)VirtioSndCtrlRelease1(&dx->Control);
+                        }
+
+                        status = VirtioSndCtrlSetParams1(&dx->Control, bufferSize, periodBytes);
+                        if (!NT_SUCCESS(status)) {
+                            return status;
+                        }
+
+                        status = VirtioSndCtrlPrepare1(&dx->Control);
+                        if (!NT_SUCCESS(status)) {
+                            (VOID)VirtioSndCtrlRelease1(&dx->Control);
+                            return status;
+                        }
+
+                        prepared = TRUE;
+                    }
+
+                    KeAcquireSpinLock(&stream->Lock, &oldIrql);
+                    stream->HwPrepared = prepared;
+                    KeReleaseSpinLock(&stream->Lock, oldIrql);
+
+                    if (!prepared) {
+                        return STATUS_INVALID_DEVICE_STATE;
+                    }
                 }
 
                 if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
@@ -2458,71 +2515,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
         if (state != KSSTATE_STOP) {
             (VOID)VirtIoSndBackend_Prepare(stream->Miniport->Backend);
         }
-    }
-
-    if (stream->Capture && state != KSSTATE_STOP) {
-        BOOLEAN prepared;
-
-        prepared = TRUE;
-
-#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-        if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend) {
-            VIRTIOSND_PORTCLS_DX dx;
-
-            dx = stream->Miniport->Dx;
-            if (dx != NULL && dx->Started && !dx->Removed) {
-                VIRTIOSND_STREAM_STATE streamState;
-
-                prepared = FALSE;
-
-                if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
-                    status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
-                    if (!NT_SUCCESS(status)) {
-#ifdef STATUS_ALREADY_INITIALIZED
-                        if (status != STATUS_ALREADY_INITIALIZED) {
-                            return status;
-                        }
-#else
-                        return status;
-#endif
-                    }
-                }
-
-                VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
-
-                /*
-                 * Re-initializing the cyclic buffer while ACQUIRE/PAUSE can occur
-                 * without a STOP transition. Ensure the virtio-snd capture stream
-                 * is back in Idle/ParamsSet before issuing SET_PARAMS1.
-                 */
-                streamState = dx->Control.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID];
-                if (streamState == VirtioSndStreamStateRunning) {
-                    (VOID)VirtioSndCtrlStop1(&dx->Control);
-                    streamState = dx->Control.StreamState[VIRTIO_SND_CAPTURE_STREAM_ID];
-                }
-                if (streamState != VirtioSndStreamStateIdle && streamState != VirtioSndStreamStateParamsSet) {
-                    (VOID)VirtioSndCtrlRelease1(&dx->Control);
-                }
-
-                status = VirtioSndCtrlSetParams1(&dx->Control, size, periodBytes);
-                if (!NT_SUCCESS(status)) {
-                    return status;
-                }
-
-                status = VirtioSndCtrlPrepare1(&dx->Control);
-                if (!NT_SUCCESS(status)) {
-                    (VOID)VirtioSndCtrlRelease1(&dx->Control);
-                    return status;
-                }
-
-                prepared = TRUE;
-            }
-        }
-#endif
-
-        KeAcquireSpinLock(&stream->Lock, &oldIrql);
-        stream->HwPrepared = prepared;
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
     }
 
     *ActualBufferSize = size;
