@@ -380,8 +380,9 @@ struct AeroGpuAdapter {
 
   aerogpu_umd_private_v1 umd_private = {};
   bool umd_private_valid = false;
-  // Optional kernel adapter handle opened via D3DKMTOpenAdapterFromHdc. This is
-  // used only for D3DKMT thunk fallbacks and debug Escapes.
+  // Optional kernel adapter handle opened via D3DKMTOpenAdapterFromHdc. Used for
+  // D3DKMT thunk fallback paths (e.g. fence waits) and debug Escapes. Best-effort:
+  // if this fails, WddmSubmit still prefers runtime callbacks and monitored fences.
   D3DKMT_HANDLE kmt_adapter = 0;
 
   std::mutex fence_mutex;
@@ -992,11 +993,12 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
     return S_OK;
   }
 
+  const D3DKMT_HANDLE kmt_adapter = dev->adapter ? dev->adapter->kmt_adapter : 0;
   const HRESULT hr =
       dev->wddm_submit.Init(cb,
                             hAdapter.pDrvPrivate,
                             dev->hrt_device.pDrvPrivate,
-                            dev->adapter ? dev->adapter->kmt_adapter : 0);
+                            kmt_adapter);
   if (FAILED(hr)) {
     DestroyKernelDeviceContext(dev);
     return hr;
