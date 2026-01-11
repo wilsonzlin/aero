@@ -49,20 +49,13 @@ cargo run --locked -p aero-l2-proxy
 
 Expected behavior:
 
-- Rust proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
-- Node harness listens on `AERO_L2_LISTEN_HOST` + `AERO_L2_PORT` (default: `127.0.0.1:8082`).
+- Proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
 - Operational endpoints:
-  - Rust proxy:
-    - `GET /healthz` – liveness
-    - `GET /readyz` – readiness
-    - `GET /version` – build/version info
-    - `GET /metrics` – Prometheus metrics
-  - Node harness:
-    - `GET /healthz` – liveness
-    - `GET /readyz` – readiness
-    - `GET /version` – build/version info
-    - `GET /metrics` – Prometheus metrics (quota/upgrade harness stats)
-- The Rust proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
+  - `GET /healthz` – liveness
+  - `GET /readyz` – readiness
+  - `GET /version` – build/version info
+  - `GET /metrics` – Prometheus metrics
+- The proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 
