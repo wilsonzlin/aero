@@ -425,6 +425,59 @@ function Try-GetDriverBuildTargetFromDirectory {
   }
 }
 
+function Find-DriverRootCandidatesMissingManifest {
+  param(
+    [Parameter(Mandatory = $true)][string]$DriversRoot
+  )
+
+  if (-not (Test-Path -LiteralPath $DriversRoot -PathType Container)) {
+    return @()
+  }
+
+  $seen = @{}
+  $candidates = New-Object System.Collections.Generic.List[System.IO.DirectoryInfo]
+
+  # Candidate via solution convention: <dir>/<dirName>.sln
+  $slnFiles = @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.sln' -ErrorAction SilentlyContinue)
+  foreach ($sln in $slnFiles) {
+    if (-not $sln.Directory) { continue }
+    $dir = $sln.Directory
+    $baseName = [IO.Path]::GetFileNameWithoutExtension($sln.Name)
+    if ($baseName -ine $dir.Name) { continue }
+
+    $manifestPath = Join-Path $dir.FullName 'ci-package.json'
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) { continue }
+
+    $key = $dir.FullName.ToLowerInvariant()
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+    [void]$candidates.Add($dir)
+  }
+
+  # Candidate via project convention: exactly one *.vcxproj at the driver root and no matching <dirName>.sln.
+  $vcxprojs = @(Get-ChildItem -LiteralPath $DriversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue)
+  $groups = @($vcxprojs | Group-Object { $_.Directory.FullName.ToLowerInvariant() })
+  foreach ($g in $groups) {
+    if ($g.Count -ne 1) { continue }
+    $proj = $g.Group[0]
+    if (-not $proj.Directory) { continue }
+    $dir = $proj.Directory
+
+    $sln = Join-Path $dir.FullName ("{0}.sln" -f $dir.Name)
+    if (Test-Path -LiteralPath $sln -PathType Leaf) { continue }
+
+    $manifestPath = Join-Path $dir.FullName 'ci-package.json'
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) { continue }
+
+    $key = $dir.FullName.ToLowerInvariant()
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+    [void]$candidates.Add($dir)
+  }
+
+  return ($candidates | Sort-Object -Property FullName)
+}
+
 function Discover-DriverBuildTargets {
   param(
     [Parameter(Mandatory = $true)][string]$DriversRoot,
@@ -438,6 +491,21 @@ function Discover-DriverBuildTargets {
   $driversRootResolved = (Resolve-Path -LiteralPath $DriversRoot).Path
 
   $targets = New-Object System.Collections.Generic.List[object]
+
+  # Emit clear logs for "driver-like" directories that are intentionally excluded from CI packaging
+  # because they do not opt in via `ci-package.json`.
+  #
+  # This is a convenience for developers looking at CI logs: the authoritative selection rule is
+  # still "must have ci-package.json", but without this scan it can be unclear why a directory
+  # containing an INF + build target was not built.
+  if (-not $AllowList -or $AllowList.Count -eq 0) {
+    $missingManifestRoots = Find-DriverRootCandidatesMissingManifest -DriversRoot $DriversRoot
+    foreach ($dir in $missingManifestRoots) {
+      # This prints a deterministic skip message when the directory also contains at least one
+      # INF (excluding build-output dirs), and otherwise returns $null silently.
+      Try-GetDriverBuildTargetFromDirectory -Directory $dir -DriversRootResolved $driversRootResolved | Out-Null
+    }
+  }
 
   # CI only builds drivers that explicitly opt in via `ci-package.json` at the driver root.
   # We enumerate candidate driver roots by scanning for these manifests, then validate that each
