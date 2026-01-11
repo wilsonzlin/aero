@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,54 @@ const wasmBuildScriptPath = path.join(repoRoot, "web/scripts/build_wasm.mjs");
 const justfilePath = path.join(repoRoot, "justfile");
 const devcontainerDockerfilePath = path.join(repoRoot, ".devcontainer/Dockerfile");
 const fuzzWorkflowPath = path.join(repoRoot, ".github/workflows/fuzz.yml");
+
+function listFilesRecursive(dirPath) {
+    const entries = readdirSync(dirPath, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...listFilesRecursive(fullPath));
+            continue;
+        }
+        if (entry.isFile()) {
+            files.push(fullPath);
+        } else if (entry.isSymbolicLink()) {
+            // Ignore symlinks in CI checks to avoid surprising traversal.
+            // (GitHub checkouts typically do not contain symlinks here anyway.)
+            continue;
+        } else {
+            // Ignore sockets/etc.
+            continue;
+        }
+    }
+    return files;
+}
+
+function assertNoFloatingNightlyInWorkflows(workflowsDir) {
+    if (!statSync(workflowsDir, { throwIfNoEntry: false })?.isDirectory()) {
+        return;
+    }
+    const workflowFiles = listFilesRecursive(workflowsDir).filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"));
+    const forbiddenPatterns = [
+        { pattern: /\brust-toolchain@nightly\b/, message: "installs Rust via dtolnay/rust-toolchain@nightly" },
+        { pattern: /\btoolchain:\s*nightly\b/, message: "uses floating toolchain: nightly" },
+        { pattern: /\bcargo\s+\+nightly\b/, message: "uses floating cargo +nightly" },
+        { pattern: /\brustc\s+\+nightly\b/, message: "uses floating rustc +nightly" },
+        { pattern: /\brustup\s+toolchain\s+install\s+nightly\b/, message: "installs floating rustup nightly" },
+        { pattern: /--toolchain\s+nightly\b/, message: "references --toolchain nightly" },
+    ];
+
+    for (const filePath of workflowFiles) {
+        const rel = path.relative(repoRoot, filePath).replaceAll("\\", "/");
+        const content = readFileSync(filePath, "utf8");
+        for (const { pattern, message } of forbiddenPatterns) {
+            if (pattern.test(content)) {
+                fail(`${rel} ${message}; use scripts/toolchains.json (rust.nightlyWasm) instead.`);
+            }
+        }
+    }
+}
 
 const rustToolchainToml = readFileSync(rustToolchainTomlPath, "utf8");
 const channelMatch = rustToolchainToml.match(/^\s*channel\s*=\s*"([^"]+)"\s*$/m);
@@ -121,6 +169,8 @@ if (/\bcargo\s+\+nightly\b/.test(fuzzWorkflow)) {
 if (/\brust-toolchain@nightly\b/.test(fuzzWorkflow)) {
     fail(".github/workflows/fuzz.yml installs Rust via dtolnay/rust-toolchain@nightly; it must use the pinned nightly toolchain.");
 }
+
+assertNoFloatingNightlyInWorkflows(path.join(repoRoot, ".github/workflows"));
 
 process.stdout.write(
     [
