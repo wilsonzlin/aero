@@ -335,7 +335,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
             }
             ExecOutcome::Assist(_reason) => {
                 // Execute the instruction via the assist layer using the already decoded form.
-                if let Err(e) = handle_assist_decoded(ctx, state, bus, &decoded) {
+                if let Err(e) = handle_assist_decoded(ctx, state, bus, &decoded, addr_size_override) {
                     return BatchResult {
                         executed,
                         exit: BatchExit::Exception(e),

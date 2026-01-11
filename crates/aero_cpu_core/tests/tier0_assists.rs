@@ -4,12 +4,99 @@ use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
 use aero_cpu_core::state::{CpuMode, CpuState, RFLAGS_IF};
 use aero_cpu_core::CpuBus;
+use aero_cpu_core::Exception;
 use aero_x86::Register;
 
 const BUS_SIZE: usize = 0x10000;
 const CODE_BASE: u64 = 0x0700;
 const STACK_TOP: u64 = 0x9000;
 const RETURN_IP: u32 = 0xDEAD_BEEF;
+
+#[derive(Debug)]
+struct IoRecorderBus {
+    mem: FlatTestBus,
+    io_reads: Vec<(u16, u32)>,
+    io_writes: Vec<(u16, u32, u64)>,
+    next_read: u64,
+    max_reads: Option<usize>,
+}
+
+impl IoRecorderBus {
+    fn new(size: usize) -> Self {
+        Self {
+            mem: FlatTestBus::new(size),
+            io_reads: Vec::new(),
+            io_writes: Vec::new(),
+            next_read: 0,
+            max_reads: None,
+        }
+    }
+
+    fn load(&mut self, addr: u64, data: &[u8]) {
+        self.mem.load(addr, data);
+    }
+}
+
+impl CpuBus for IoRecorderBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.mem.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        self.mem.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        self.mem.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        self.mem.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        self.mem.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.mem.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.mem.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.mem.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        self.mem.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        self.mem.write_u128(vaddr, val)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.mem.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        if let Some(max) = self.max_reads {
+            if self.io_reads.len() >= max {
+                return Err(Exception::MemoryFault);
+            }
+        }
+        self.io_reads.push((port, size));
+        Ok(self.next_read)
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.io_writes.push((port, size, val));
+        Ok(())
+    }
+}
 
 #[test]
 fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
@@ -99,6 +186,94 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
 
     // CLI/STI should leave IF set.
     assert!(state.get_flag(RFLAGS_IF));
+}
+
+#[test]
+fn tier0_assists_outsb_respects_addr_size_override_and_segment_prefix() {
+    let mut bus = IoRecorderBus::new(BUS_SIZE);
+    // fs + addr32 outsb; hlt
+    let code: [u8; 4] = [0x64, 0x67, 0x6E, 0xF4];
+    bus.load(CODE_BASE, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.set_rip(CODE_BASE);
+    state.segments.cs.selector = 0x08; // CPL0 for OUTSB/HLT
+    state.set_rflags(0x2);
+
+    state.msr.fs_base = 0x1000;
+    state.segments.fs.base = 0x1000;
+
+    state.write_reg(Register::RSI, 0xAAAA_BBBB_0000_0010);
+    state.write_reg(Register::DX, 0x3F8);
+
+    // Put distinct bytes in DS:[ESI] and FS:[ESI] so we can tell which segment is used.
+    bus.write_u8(0x10, 0xCD).unwrap();
+    bus.write_u8(0x1000 + 0x10, 0xAB).unwrap();
+
+    let mut ctx = AssistContext::default();
+    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 16);
+    assert_eq!(res.exit, BatchExit::Halted);
+
+    assert_eq!(bus.io_writes, vec![(0x3F8, 1, 0xAB)]);
+    // Addr-size override should use ESI (32-bit) and zero-extend into RSI.
+    assert_eq!(state.read_reg(Register::RSI), 0x0000_0000_0000_0011);
+}
+
+#[test]
+fn tier0_assists_insb_respects_addr_size_override_in_long_mode() {
+    let mut bus = IoRecorderBus::new(BUS_SIZE);
+    bus.next_read = 0x5A;
+    // addr32 insb; hlt
+    let code: [u8; 3] = [0x67, 0x6C, 0xF4];
+    bus.load(CODE_BASE, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.set_rip(CODE_BASE);
+    state.segments.cs.selector = 0x08; // CPL0
+    state.set_rflags(0x2);
+    state.write_reg(Register::RDI, 0xAAAA_BBBB_0000_0020);
+    state.write_reg(Register::DX, 0x3F8);
+
+    let mut ctx = AssistContext::default();
+    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 16);
+    assert_eq!(res.exit, BatchExit::Halted);
+
+    assert_eq!(bus.io_reads, vec![(0x3F8, 1)]);
+    assert_eq!(bus.read_u8(0x20).unwrap(), 0x5A);
+    // Addr-size override should use EDI and zero-extend into RDI.
+    assert_eq!(state.read_reg(Register::RDI), 0x0000_0000_0000_0021);
+}
+
+#[test]
+fn tier0_assists_rep_insb_with_addr_size_override_uses_ecx_and_noops_when_zero() {
+    let mut bus = IoRecorderBus::new(BUS_SIZE);
+    // Any unexpected IO read should fail the test quickly.
+    bus.max_reads = Some(0);
+    // addr32 rep insb; hlt
+    let code: [u8; 4] = [0x67, 0xF3, 0x6C, 0xF4];
+    bus.load(CODE_BASE, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.set_rip(CODE_BASE);
+    state.segments.cs.selector = 0x08; // CPL0
+    state.set_rflags(0x2);
+
+    // RCX has high bits set but ECX=0. In long mode with address-size override,
+    // REP should use ECX as the counter and treat this as a no-op.
+    state.write_reg(Register::RCX, 0x1_0000_0000);
+    state.write_reg(Register::RDI, 0xAAAA_BBBB_0000_0020);
+    state.write_reg(Register::DX, 0x3F8);
+
+    bus.write_u8(0x20, 0xAA).unwrap();
+
+    let mut ctx = AssistContext::default();
+    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 16);
+    assert_eq!(res.exit, BatchExit::Halted);
+
+    assert!(bus.io_reads.is_empty());
+    assert_eq!(bus.read_u8(0x20).unwrap(), 0xAA);
+    assert_eq!(state.read_reg(Register::RCX), 0x1_0000_0000);
+    assert_eq!(state.read_reg(Register::RDI), 0xAAAA_BBBB_0000_0020);
 }
 
 #[test]

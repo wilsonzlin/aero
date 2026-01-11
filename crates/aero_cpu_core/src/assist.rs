@@ -57,6 +57,7 @@ pub fn handle_assist<B: CpuBus>(
         state.apply_exception_side_effects(&e);
         e
     })?;
+    let addr_size_override = has_addr_size_override(&bytes, state.bitness());
     let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
         Ok(decoded) => decoded,
         Err(_) => {
@@ -66,7 +67,7 @@ pub fn handle_assist<B: CpuBus>(
         }
     };
 
-    exec_decoded(ctx, state, bus, &decoded).map_err(|e| {
+    exec_decoded(ctx, state, bus, &decoded, addr_size_override).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
     })?;
@@ -80,14 +81,17 @@ pub fn handle_assist<B: CpuBus>(
 /// Execute an assist using a pre-decoded instruction.
 ///
 /// This is used by Tier-0 execution glue that already fetched/decoded the
-/// instruction bytes and wants to avoid an extra decode pass.
+/// instruction bytes and wants to avoid an extra decode pass. Callers should
+/// also supply the already-parsed address-size override prefix state so assists
+/// like `INS*`/`OUTS*` can pick the correct implicit index/counter registers.
 pub fn handle_assist_decoded<B: CpuBus>(
     ctx: &mut AssistContext,
     state: &mut CpuState,
     bus: &mut B,
     decoded: &DecodedInst,
+    addr_size_override: bool,
 ) -> Result<(), Exception> {
-    exec_decoded(ctx, state, bus, decoded).map_err(|e| {
+    exec_decoded(ctx, state, bus, decoded, addr_size_override).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
     })
@@ -98,6 +102,7 @@ fn exec_decoded<B: CpuBus>(
     state: &mut CpuState,
     bus: &mut B,
     decoded: &DecodedInst,
+    addr_size_override: bool,
 ) -> Result<(), Exception> {
     let instr = &decoded.instr;
     let ip = state.rip();
@@ -147,12 +152,12 @@ fn exec_decoded<B: CpuBus>(
             Ok(())
         }
         Mnemonic::Insb | Mnemonic::Insw | Mnemonic::Insd => {
-            instr_ins(state, bus, instr)?;
+            instr_ins(state, bus, instr, addr_size_override)?;
             state.set_rip(next_ip_raw);
             Ok(())
         }
         Mnemonic::Outsb | Mnemonic::Outsw | Mnemonic::Outsd => {
-            instr_outs(state, bus, instr)?;
+            instr_outs(state, bus, instr, addr_size_override)?;
             state.set_rip(next_ip_raw);
             Ok(())
         }
@@ -648,37 +653,78 @@ fn instr_in_out<B: CpuBus>(
     }
 }
 
-fn rep_count_reg(state: &CpuState) -> Register {
-    match state.bitness() {
+fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
+    let mut i = 0usize;
+    let mut seen = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let is_legacy_prefix = matches!(
+            b,
+            0xF0 | 0xF2 | 0xF3 // lock/rep
+                | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65 // segment overrides
+                | 0x66 // operand-size override
+                | 0x67 // address-size override
+        );
+        let is_rex = bitness == 64 && (0x40..=0x4F).contains(&b);
+        if !(is_legacy_prefix || is_rex) {
+            break;
+        }
+        if b == 0x67 {
+            seen = true;
+        }
+        i += 1;
+    }
+    seen
+}
+
+fn effective_addr_size(state: &CpuState, addr_size_override: bool) -> Result<u32, Exception> {
+    Ok(match state.bitness() {
+        16 => {
+            if addr_size_override {
+                32
+            } else {
+                16
+            }
+        }
+        32 => {
+            if addr_size_override {
+                16
+            } else {
+                32
+            }
+        }
+        64 => {
+            if addr_size_override {
+                32
+            } else {
+                64
+            }
+        }
+        _ => return Err(Exception::InvalidOpcode),
+    })
+}
+
+fn string_count_reg(addr_bits: u32) -> Register {
+    match addr_bits {
         16 => Register::CX,
         32 => Register::ECX,
         _ => Register::RCX,
     }
 }
 
-fn index_reg_for_mode(state: &CpuState, is_dest: bool) -> Register {
-    match state.bitness() {
-        16 => {
-            if is_dest {
-                Register::DI
-            } else {
-                Register::SI
-            }
-        }
-        32 => {
-            if is_dest {
-                Register::EDI
-            } else {
-                Register::ESI
-            }
-        }
-        _ => {
-            if is_dest {
-                Register::RDI
-            } else {
-                Register::RSI
-            }
-        }
+fn string_src_index_reg(addr_bits: u32) -> Register {
+    match addr_bits {
+        16 => Register::SI,
+        32 => Register::ESI,
+        _ => Register::RSI,
+    }
+}
+
+fn string_dst_index_reg(addr_bits: u32) -> Register {
+    match addr_bits {
+        16 => Register::DI,
+        32 => Register::EDI,
+        _ => Register::RDI,
     }
 }
 
@@ -686,6 +732,7 @@ fn instr_ins<B: CpuBus>(
     state: &mut CpuState,
     bus: &mut B,
     instr: &Instruction,
+    addr_size_override: bool,
 ) -> Result<(), Exception> {
     require_iopl(state)?;
     let size = match instr.mnemonic() {
@@ -699,22 +746,22 @@ fn instr_ins<B: CpuBus>(
     let df = state.get_flag(crate::state::RFLAGS_DF);
     let step: i64 = if df { -(size as i64) } else { size as i64 };
 
-    let count_reg = rep_count_reg(state);
-    let mut count = if instr.has_rep_prefix() {
-        state.read_reg(count_reg)
-    } else {
-        1
-    };
-    let mut di = state.read_reg(index_reg_for_mode(state, true));
-    let addr_mask = mask_bits(state.bitness());
+    let addr_size = effective_addr_size(state, addr_size_override)?;
+    let count_reg = string_count_reg(addr_size);
+    let index_reg = string_dst_index_reg(addr_size);
+    let addr_mask = mask_bits(addr_size);
+
+    let has_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
+    let mut count = if has_rep { state.read_reg(count_reg) } else { 1 };
+    if has_rep && count == 0 {
+        return Ok(());
+    }
+    let mut di = state.read_reg(index_reg) & addr_mask;
+    let seg_base = state.seg_base_reg(Register::ES);
 
     while count != 0 {
         let val = bus.io_read(port, size)?;
-        let addr = state.apply_a20(
-            state
-                .seg_base_reg(Register::ES)
-                .wrapping_add(di & addr_mask),
-        );
+        let addr = state.apply_a20(seg_base.wrapping_add(di & addr_mask));
         match size {
             1 => bus.write_u8(addr, val as u8)?,
             2 => bus.write_u16(addr, val as u16)?,
@@ -723,15 +770,15 @@ fn instr_ins<B: CpuBus>(
         }
         di = (di as i64).wrapping_add(step) as u64;
         di &= addr_mask;
-        if instr.has_rep_prefix() {
+        if has_rep {
             count = count.wrapping_sub(1);
         } else {
             break;
         }
     }
 
-    state.write_reg(index_reg_for_mode(state, true), di);
-    if instr.has_rep_prefix() {
+    state.write_reg(index_reg, di);
+    if has_rep {
         state.write_reg(count_reg, count);
     }
     Ok(())
@@ -741,6 +788,7 @@ fn instr_outs<B: CpuBus>(
     state: &mut CpuState,
     bus: &mut B,
     instr: &Instruction,
+    addr_size_override: bool,
 ) -> Result<(), Exception> {
     require_iopl(state)?;
     let size = match instr.mnemonic() {
@@ -754,21 +802,23 @@ fn instr_outs<B: CpuBus>(
     let df = state.get_flag(crate::state::RFLAGS_DF);
     let step: i64 = if df { -(size as i64) } else { size as i64 };
 
-    let count_reg = rep_count_reg(state);
-    let mut count = if instr.has_rep_prefix() {
-        state.read_reg(count_reg)
-    } else {
-        1
-    };
-    let mut si = state.read_reg(index_reg_for_mode(state, false));
-    let addr_mask = mask_bits(state.bitness());
+    let addr_size = effective_addr_size(state, addr_size_override)?;
+    let count_reg = string_count_reg(addr_size);
+    let index_reg = string_src_index_reg(addr_size);
+    let addr_mask = mask_bits(addr_size);
+
+    let has_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
+    let mut count = if has_rep { state.read_reg(count_reg) } else { 1 };
+    if has_rep && count == 0 {
+        return Ok(());
+    }
+    let mut si = state.read_reg(index_reg) & addr_mask;
+    let seg = instr.segment_prefix();
+    let seg_reg = if seg == Register::None { Register::DS } else { seg };
+    let seg_base = state.seg_base_reg(seg_reg);
 
     while count != 0 {
-        let addr = state.apply_a20(
-            state
-                .seg_base_reg(Register::DS)
-                .wrapping_add(si & addr_mask),
-        );
+        let addr = state.apply_a20(seg_base.wrapping_add(si & addr_mask));
         let val: u64 = match size {
             1 => bus.read_u8(addr)? as u64,
             2 => bus.read_u16(addr)? as u64,
@@ -778,15 +828,15 @@ fn instr_outs<B: CpuBus>(
         bus.io_write(port, size, val)?;
         si = (si as i64).wrapping_add(step) as u64;
         si &= addr_mask;
-        if instr.has_rep_prefix() {
+        if has_rep {
             count = count.wrapping_sub(1);
         } else {
             break;
         }
     }
 
-    state.write_reg(index_reg_for_mode(state, false), si);
-    if instr.has_rep_prefix() {
+    state.write_reg(index_reg, si);
+    if has_rep {
         state.write_reg(count_reg, count);
     }
     Ok(())
