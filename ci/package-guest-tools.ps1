@@ -39,8 +39,6 @@ param(
   [string] $CertPath = "out/certs/aero-test.cer",
 
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
-  # Machine-readable device contract used to generate Guest Tools `config/devices.cmd`.
-  [string] $WindowsDeviceContractPath = "docs/windows-device-contract.json",
   [string] $DriverNameMapJson,
   [string] $OutDir = "out/artifacts",
   [string] $Version,
@@ -969,7 +967,7 @@ try {
   Write-Host "  epoch   : $epoch"
   Write-Host "  policy  : $SigningPolicy"
   Write-Host "  spec    : $specPathResolved"
-  Write-Host "  contract: $windowsDeviceContractResolved"
+  Write-Host "  contract: $stageDeviceContract"
   Write-Host "  out     : $outDirResolved"
 
   & cargo run --manifest-path $packagerManifest --release --locked -- `
