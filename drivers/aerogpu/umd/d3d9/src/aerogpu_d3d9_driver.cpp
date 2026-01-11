@@ -4736,6 +4736,41 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     }
   }
 
+  auto is_rotated = [&resources](const Resource* res) -> bool {
+    if (!res) {
+      return false;
+    }
+    return std::find(resources.begin(), resources.end(), res) != resources.end();
+  };
+
+  // Rotating resource identities swaps the host handles/backing allocations
+  // attached to the affected Resource objects. If any of those resources are
+  // currently bound via device state, we must re-emit the corresponding binds
+  // using the *new* handles so the host does not keep referencing the old
+  // handles.
+  size_t needed_bytes = align_up(sizeof(aerogpu_cmd_set_render_targets), 4);
+  for (uint32_t stage = 0; stage < 16; ++stage) {
+    if (is_rotated(dev->textures[stage])) {
+      needed_bytes += align_up(sizeof(aerogpu_cmd_set_texture), 4);
+    }
+  }
+  for (uint32_t stream = 0; stream < 16; ++stream) {
+    if (is_rotated(dev->streams[stream].vb)) {
+      needed_bytes += align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4);
+    }
+  }
+  if (is_rotated(dev->index_buffer)) {
+    needed_bytes += align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
+  }
+
+  // Ensure the DMA buffer has enough space for all rebinding packets before we
+  // rotate identities and track allocations; tracking may force a submission
+  // split, and command-buffer splits must not occur after tracking or the
+  // allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, needed_bytes)) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
   struct ResourceIdentity {
     aerogpu_handle_t handle = 0;
     uint32_t backing_alloc_id = 0;
@@ -4786,42 +4821,76 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     res->shared_private_driver_data = std::move(id.shared_private_driver_data);
   };
 
-  ResourceIdentity saved = take_identity(resources[0]);
-  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
-    put_identity(resources[i], take_identity(resources[i + 1]));
-  }
-  put_identity(resources[resource_count - 1], std::move(saved));
-
-  if (!emit_set_render_targets_locked(dev)) {
+  auto undo_rotation = [&resources, resource_count, &take_identity, &put_identity]() {
     // Undo the rotation (rotate right by one).
     ResourceIdentity undo_saved = take_identity(resources[resource_count - 1]);
     for (uint32_t i = resource_count - 1; i > 0; --i) {
       put_identity(resources[i], take_identity(resources[i - 1]));
     }
     put_identity(resources[0], std::move(undo_saved));
-    return trace.ret(E_OUTOFMEMORY);
-  }
-
-  auto is_rotated = [&resources](const Resource* res) -> bool {
-    if (!res) {
-      return false;
-    }
-    return std::find(resources.begin(), resources.end(), res) != resources.end();
   };
 
+  // Perform the identity rotation (rotate left by one).
+  ResourceIdentity saved = take_identity(resources[0]);
+  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
+    put_identity(resources[i], take_identity(resources[i + 1]));
+  }
+  put_identity(resources[resource_count - 1], std::move(saved));
+
+  // Track allocations referenced by the rebinding commands so the KMD/emulator
+  // can resolve alloc_id -> GPA even if the submission contains only state
+  // updates (no draw).
+  HRESULT hr = track_render_targets_locked(dev);
+  if (FAILED(hr)) {
+    undo_rotation();
+    return trace.ret(hr);
+  }
   for (uint32_t stage = 0; stage < 16; ++stage) {
     if (!is_rotated(dev->textures[stage])) {
       continue;
     }
-    if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE)) {
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-      cmd->slot = stage;
-      cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
-      cmd->reserved0 = 0;
+    const HRESULT track_hr = track_resource_allocation_locked(dev, dev->textures[stage], /*write=*/false);
+    if (FAILED(track_hr)) {
+      undo_rotation();
+      return trace.ret(track_hr);
+    }
+  }
+  for (uint32_t stream = 0; stream < 16; ++stream) {
+    if (!is_rotated(dev->streams[stream].vb)) {
+      continue;
+    }
+    const HRESULT track_hr = track_resource_allocation_locked(dev, dev->streams[stream].vb, /*write=*/false);
+    if (FAILED(track_hr)) {
+      undo_rotation();
+      return trace.ret(track_hr);
+    }
+  }
+  if (is_rotated(dev->index_buffer)) {
+    const HRESULT track_hr = track_resource_allocation_locked(dev, dev->index_buffer, /*write=*/false);
+    if (FAILED(track_hr)) {
+      undo_rotation();
+      return trace.ret(track_hr);
     }
   }
 
-  for (uint32_t stream = 0; stream < 16; ++stream) {
+  // Re-emit binds so the host observes the updated handles.
+  bool ok = emit_set_render_targets_locked(dev);
+  for (uint32_t stage = 0; ok && stage < 16; ++stage) {
+    if (!is_rotated(dev->textures[stage])) {
+      continue;
+    }
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
+    if (!cmd) {
+      ok = false;
+      break;
+    }
+    cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+    cmd->slot = stage;
+    cmd->texture = dev->textures[stage] ? dev->textures[stage]->handle : 0;
+    cmd->reserved0 = 0;
+  }
+
+  for (uint32_t stream = 0; ok && stream < 16; ++stream) {
     if (!is_rotated(dev->streams[stream].vb)) {
       continue;
     }
@@ -4832,20 +4901,34 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     binding.offset_bytes = dev->streams[stream].offset_bytes;
     binding.reserved0 = 0;
 
-    if (auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
-            dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding))) {
-      cmd->start_slot = stream;
-      cmd->buffer_count = 1;
+    auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+        dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+    if (!cmd) {
+      ok = false;
+      break;
     }
+    cmd->start_slot = stream;
+    cmd->buffer_count = 1;
   }
 
-  if (is_rotated(dev->index_buffer)) {
-    if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER)) {
+  if (ok && is_rotated(dev->index_buffer)) {
+    auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!cmd) {
+      ok = false;
+    } else {
       cmd->buffer = dev->index_buffer ? dev->index_buffer->handle : 0;
       cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
       cmd->offset_bytes = dev->index_offset_bytes;
       cmd->reserved0 = 0;
     }
+  }
+
+  if (!ok) {
+    // Preserve device/host state consistency: if we cannot emit the rebinding
+    // commands (command buffer too small), undo the rotation so future draws
+    // still target the host's current bindings.
+    undo_rotation();
+    return trace.ret(E_OUTOFMEMORY);
   }
 
   return trace.ret(S_OK);
