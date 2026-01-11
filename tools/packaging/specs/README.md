@@ -7,15 +7,21 @@ driver artifacts before producing `aero-guest-tools.iso` / `aero-guest-tools.zip
 `drivers/{x86,amd64}/<name>/`.
 
 All virtio HWID patterns in these specs are expected to follow the **Aero virtio contract v1**
-(virtio-pci **modern-only**), i.e.:
+(`AERO-W7-VIRTIO`, virtio-pci **modern-only**).
 
-- virtio-net: `PCI\VEN_1AF4&DEV_1041`
-- virtio-blk: `PCI\VEN_1AF4&DEV_1042`
-- virtio-input: `PCI\VEN_1AF4&DEV_1052`
-- virtio-snd: `PCI\VEN_1AF4&DEV_1059`
+Canonical (revision-gated) contract-v1 HWIDs are:
+
+- virtio-net: `PCI\VEN_1AF4&DEV_1041&REV_01`
+- virtio-blk: `PCI\VEN_1AF4&DEV_1042&REV_01`
+- virtio-input: `PCI\VEN_1AF4&DEV_1052&REV_01`
+- virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`
+
+Note: Windows also enumerates less-specific forms (without `&REV_01` / `SUBSYS_...`). Some packaging
+specs validate only the `PCI\VEN_....&DEV_....` prefix for compatibility with virtio-win INFs; the
+device contract still requires `REV_01`.
 
 Note: these specs are JSON, so backslashes are escaped in the file itself. For example, the literal string in JSON is
-`"PCI\\VEN_1AF4&DEV_1041"` but it represents the Windows HWID `PCI\VEN_1AF4&DEV_1041`.
+`"PCI\\VEN_1AF4&DEV_1041&REV_01"` but it represents the Windows HWID `PCI\VEN_1AF4&DEV_1041&REV_01`.
 
 To sanity-check drift between `guest-tools/config/devices.cmd` and these specs, run:
 

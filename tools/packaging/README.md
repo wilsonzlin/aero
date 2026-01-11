@@ -175,6 +175,12 @@ The current schema uses a unified `drivers` list:
 }
 ```
 
+Note: `AERO-W7-VIRTIO` v1 devices report PCI Revision `REV_01`, and some in-tree INFs (for example
+virtio-snd) are revision-gated (they match `...&REV_01` only). Because `expected_hardware_ids`
+entries are regex matches, using a prefix like `PCI\\VEN_1AF4&DEV_1059` will still match an INF
+that contains `PCI\VEN_1AF4&DEV_1059&REV_01`. If you want to enforce revision gating at packaging
+time, include `&REV_01` in the pattern.
+
 Drivers can also set `expected_hardware_ids_from_devices_cmd_var` to source expected hardware IDs
 from `guest-tools/config/devices.cmd`. Each token is normalized down to the base
 `PCI\VEN_....&DEV_....` form and regex-escaped before being appended to `expected_hardware_ids`.
