@@ -12,7 +12,14 @@ static __forceinline KINTERRUPT_MODE VirtioIntxInterruptModeFromDescriptor(_In_ 
 
 static __forceinline BOOLEAN VirtioIntxShareVectorFromDescriptor(_In_ const CM_PARTIAL_RESOURCE_DESCRIPTOR* Desc)
 {
+#if defined(CmResourceShareShared)
     return (Desc->ShareDisposition == CmResourceShareShared) ? TRUE : FALSE;
+#elif defined(CmShareShared)
+    return (Desc->ShareDisposition == CmShareShared) ? TRUE : FALSE;
+#else
+    UNREFERENCED_PARAMETER(Desc);
+    return TRUE;
+#endif
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)

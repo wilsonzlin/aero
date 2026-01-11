@@ -18,6 +18,10 @@
 
 #include <ntddk.h>
 
+#ifndef CM_RESOURCE_INTERRUPT_MESSAGE
+#define CM_RESOURCE_INTERRUPT_MESSAGE 0x0004
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -89,4 +93,3 @@ VOID VirtioIntxDisconnect(_Inout_ PVIRTIO_INTX Intx);
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
