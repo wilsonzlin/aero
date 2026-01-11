@@ -1,6 +1,14 @@
+#[cfg(feature = "aerogpu-native")]
+use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use memory::MemoryBus;
+
+#[cfg(feature = "aerogpu-native")]
+use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
+
+#[cfg(feature = "aerogpu-native")]
+use aero_protocol::aerogpu::aerogpu_ring;
 
 #[derive(Debug, Clone)]
 pub struct AeroGpuBackendSubmission {
@@ -136,6 +144,33 @@ pub struct NativeAeroGpuBackend {
 }
 
 #[cfg(feature = "aerogpu-native")]
+struct MemoryBusGuestMemory<'a> {
+    mem: RefCell<&'a mut dyn MemoryBus>,
+}
+
+#[cfg(feature = "aerogpu-native")]
+impl<'a> MemoryBusGuestMemory<'a> {
+    fn new(mem: &'a mut dyn MemoryBus) -> Self {
+        Self {
+            mem: RefCell::new(mem),
+        }
+    }
+}
+
+#[cfg(feature = "aerogpu-native")]
+impl aero_gpu::GuestMemory for MemoryBusGuestMemory<'_> {
+    fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), aero_gpu::GuestMemoryError> {
+        let len = dst.len();
+        let _end = gpa
+            .checked_add(len as u64)
+            .ok_or(aero_gpu::GuestMemoryError { gpa, len })?;
+        // `MemoryBus` reads are infallible; unmapped accesses yield 0xFF.
+        self.mem.borrow_mut().read_physical(gpa, dst);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "aerogpu-native")]
 impl NativeAeroGpuBackend {
     pub fn new_headless() -> Result<Self, String> {
         let exec = pollster::block_on(aero_gpu::AerogpuD3d9Executor::new_headless())
@@ -156,10 +191,33 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
 
     fn submit(
         &mut self,
-        _mem: &mut dyn MemoryBus,
+        mem: &mut dyn MemoryBus,
         submission: AeroGpuBackendSubmission,
     ) -> Result<(), String> {
-        let result = self.exec.execute_cmd_stream(&submission.cmd_stream);
+        let guest_mem = MemoryBusGuestMemory::new(mem);
+        let alloc_table = submission
+            .alloc_table
+            .as_deref()
+            .map(|bytes| {
+                let view = aerogpu_ring::decode_alloc_table_le(bytes)
+                    .map_err(|err| format!("failed to decode alloc table: {err:?}"))?;
+                Ok::<_, String>(AllocTable::new(view.entries.iter().map(|entry| {
+                    (
+                        entry.alloc_id,
+                        AllocEntry {
+                            gpa: entry.gpa,
+                            size_bytes: entry.size_bytes,
+                        },
+                    )
+                })))
+            })
+            .transpose()?;
+
+        let result = self.exec.execute_cmd_stream_with_guest_memory(
+            &submission.cmd_stream,
+            &guest_mem,
+            alloc_table.as_ref(),
+        );
 
         // Block until GPU work is complete so guest fences match execution progress.
         self.exec.poll();
