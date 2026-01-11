@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -207,6 +208,37 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	// WebSocket upgrades typically bypass WriteHeader, so track 101 explicitly to
+	// avoid logging these requests as 200 OK.
+	if w.status == http.StatusOK {
+		w.status = http.StatusSwitchingProtocols
+	}
+	return hijacker.Hijack()
+}
+
+func (w *statusWriter) Push(target string, opts *http.PushOptions) error {
+	pusher, ok := w.ResponseWriter.(http.Pusher)
+	if !ok {
+		return http.ErrNotSupported
+	}
+	return pusher.Push(target, opts)
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func requestLoggerMiddleware(logger *slog.Logger) Middleware {
