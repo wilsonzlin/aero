@@ -221,6 +221,9 @@ func canonicalizeHostname(hostname string) (string, bool) {
 	if hostname == "" {
 		return "", false
 	}
+	if strings.ContainsAny(hostname, "[]<>") {
+		return "", false
+	}
 
 	// Bracketed IPv6 literals are stripped of brackets by splitHostPort but will
 	// still contain ":".
