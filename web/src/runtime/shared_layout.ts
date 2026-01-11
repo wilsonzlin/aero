@@ -294,7 +294,11 @@ export function allocateSharedMemorySegments(options?: {
 
   let guestMemory: WebAssembly.Memory;
   try {
-    guestMemory = new WebAssembly.Memory({ initial: pages, maximum: MAX_WASM32_PAGES, shared: true });
+    // Keep the guest memory fixed-size for the life of the VM. Growing a shared
+    // `WebAssembly.Memory` can replace the underlying SharedArrayBuffer in some
+    // runtimes, which would invalidate existing typed array views and break the
+    // shared-memory contract across workers.
+    guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
