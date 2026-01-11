@@ -930,13 +930,16 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
   let bytesOut = 0;
   let closed = false;
   let gcTimer: NodeJS.Timeout | null = null;
+  let clientSupportsV2 = false;
 
+  const remoteAllowlistEnabled = config.udpRelayInboundFilterMode === "address_and_port";
   const remoteAllowlistIdleTimeoutMs = config.udpRelayBindingIdleTimeoutMs;
   const maxAllowedRemotesBeforePrune = 1024;
 
   const remoteKey = (ipBytes: Uint8Array, port: number): string => `${Buffer.from(ipBytes).toString("hex")}:${port}`;
 
   const pruneAllowedRemotes = (binding: UdpRelayBinding, now: number) => {
+    if (!remoteAllowlistEnabled) return;
     if (remoteAllowlistIdleTimeoutMs > 0) {
       if (
         binding.allowedRemotes.size <= maxAllowedRemotesBeforePrune &&
@@ -964,11 +967,13 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
   };
 
   const allowRemote = (binding: UdpRelayBinding, ipBytes: Uint8Array, port: number, now: number) => {
+    if (!remoteAllowlistEnabled) return;
     pruneAllowedRemotes(binding, now);
     binding.allowedRemotes.set(remoteKey(ipBytes, port), now);
   };
 
   const remoteAllowed = (binding: UdpRelayBinding, ipBytes: Uint8Array, port: number, now: number): boolean => {
+    if (!remoteAllowlistEnabled) return true;
     const key = remoteKey(ipBytes, port);
     const last = binding.allowedRemotes.get(key);
     if (last === undefined) return false;
@@ -1118,15 +1123,27 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
         if (addressFamily === 4) {
           if (ipBytes.length !== 4) return;
           if (!remoteAllowed(binding, ipBytes, rinfo.port, now)) return;
-          frame = encodeUdpRelayV1Datagram(
-            {
-              guestPort,
-              remoteIpv4: [ipBytes[0]!, ipBytes[1]!, ipBytes[2]!, ipBytes[3]!],
-              remotePort: rinfo.port,
-              payload: msg
-            },
-            { maxPayload: config.udpRelayMaxPayloadBytes }
-          );
+          if (config.udpRelayPreferV2 && clientSupportsV2) {
+            frame = encodeUdpRelayV2Datagram(
+              {
+                guestPort,
+                remoteIp: ipBytes,
+                remotePort: rinfo.port,
+                payload: msg
+              },
+              { maxPayload: config.udpRelayMaxPayloadBytes }
+            );
+          } else {
+            frame = encodeUdpRelayV1Datagram(
+              {
+                guestPort,
+                remoteIpv4: [ipBytes[0]!, ipBytes[1]!, ipBytes[2]!, ipBytes[3]!],
+                remotePort: rinfo.port,
+                payload: msg
+              },
+              { maxPayload: config.udpRelayMaxPayloadBytes }
+            );
+          }
         } else {
           if (ipBytes.length !== 16) return;
           if (!remoteAllowed(binding, ipBytes, rinfo.port, now)) return;
@@ -1185,6 +1202,7 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
           remoteIpBytes = Uint8Array.from(decoded.remoteIpv4);
           payload = decoded.payload;
         } else {
+          clientSupportsV2 = true;
           guestPort = decoded.guestPort;
           remotePort = decoded.remotePort;
           addressFamily = decoded.addressFamily;

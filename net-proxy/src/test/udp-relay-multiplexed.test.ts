@@ -221,6 +221,54 @@ test("udp multiplexed relay: echoes framed datagrams (v1 IPv4)", async () => {
   }
 });
 
+test("udp multiplexed relay: can emit v2 frames for IPv4 once the client sends v2", async () => {
+  const udpServer = await startUdpEchoServer("udp4", "127.0.0.1");
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    udpRelayPreferV2: true
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+  let ws: WebSocket | null = null;
+
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/udp`);
+
+    const payload = Buffer.from([9, 9, 9]);
+    const guestPort = 23456;
+    const remoteIp = Buffer.from([127, 0, 0, 1]);
+    const frame = encodeUdpRelayV2Datagram({
+      guestPort,
+      remoteIp,
+      remotePort: udpServer.port,
+      payload
+    });
+
+    const receivedPromise = waitForBinaryMessage(ws);
+    ws.send(frame);
+
+    const received = await receivedPromise;
+    const decoded = decodeUdpRelayFrame(received);
+    assert.equal(decoded.version, 2);
+    assert.equal(decoded.addressFamily, 4);
+    assert.equal(decoded.guestPort, guestPort);
+    assert.deepEqual(Buffer.from(decoded.remoteIp), remoteIp);
+    assert.equal(decoded.remotePort, udpServer.port);
+    assert.deepEqual(decoded.payload, payload);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+    ws = null;
+  } finally {
+    ws?.terminate();
+    await proxy.close();
+    await udpServer.close();
+  }
+});
+
 test("udp multiplexed relay: drops packets from unexpected remote ports", async () => {
   const server = await startUdpReplyFromDifferentPortServer("127.0.0.1");
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });

@@ -49,6 +49,8 @@ Environment variables:
 | `AERO_PROXY_UDP_RELAY_MAX_PAYLOAD_BYTES` | `1200` | Max UDP payload bytes per framed datagram in multiplexed `/udp` mode (v1/v2 framing) |
 | `AERO_PROXY_UDP_RELAY_MAX_BINDINGS` | `128` | Max UDP bindings per WebSocket connection in multiplexed `/udp` mode |
 | `AERO_PROXY_UDP_RELAY_BINDING_IDLE_TIMEOUT_MS` | `60000` | Idle timeout for UDP bindings in multiplexed `/udp` mode |
+| `AERO_PROXY_UDP_RELAY_PREFER_V2` | `0` | Prefer emitting v2 frames for IPv4 once the client has sent at least one v2 frame (IPv6 always uses v2) |
+| `AERO_PROXY_UDP_RELAY_INBOUND_FILTER_MODE` | `address_and_port` | In multiplexed `/udp` mode, accept inbound UDP packets from `any` remote, or only from previously-contacted `address_and_port` remotes |
 
 Allowlist rules are `hostOrCidr:port` (port can be `*` or a range like `8000-9000`). Domains can use `*.example.com`.
 
@@ -156,4 +158,4 @@ Security caveat:
 
 - In multiplexed mode, allowlist checks are applied **per datagram** based on the decoded destination **IP:port**.
 - Domain allowlist rules like `example.com:53` cannot be applied because frames contain IP addresses (use IP/CIDR rules like `127.0.0.1:*` / `10.0.0.0/8:*`, or run with `AERO_PROXY_OPEN=1`).
-- The proxy only forwards inbound UDP packets from remote endpoints that the guest has previously sent a packet to (address+port), to avoid acting as a full-cone UDP forwarder.
+- By default, the proxy only forwards inbound UDP packets from remote endpoints that the guest has previously sent a packet to (address+port). Set `AERO_PROXY_UDP_RELAY_INBOUND_FILTER_MODE=any` to disable this.
