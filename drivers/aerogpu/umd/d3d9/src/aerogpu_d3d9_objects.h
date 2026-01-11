@@ -319,6 +319,14 @@ struct Device {
   // transformed vertex uploads.
   Resource* up_vertex_buffer = nullptr;
 
+  // Scratch index buffer used to emulate DrawIndexedPrimitiveUP-style paths.
+  Resource* up_index_buffer = nullptr;
+
+  // Scene bracketing (BeginScene/EndScene). Depth allows the runtime to nest
+  // scenes in some edge cases; we treat BeginScene/EndScene as a no-op beyond
+  // tracking nesting.
+  uint32_t scene_depth = 0;
+
   AEROGPU_D3D9DDI_VIEWPORT viewport = {0, 0, 0, 0, 0.0f, 1.0f};
   RECT scissor_rect = {0, 0, 0, 0};
   BOOL scissor_enabled = FALSE;
