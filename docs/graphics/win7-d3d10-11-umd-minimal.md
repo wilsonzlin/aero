@@ -256,6 +256,29 @@ See also:
 Command submission
 * `pfnFlush` (or equivalent submit/flush entrypoint in the DDI) to ensure GPU work reaches the KMD/host.
 
+#### 2.1.4 AeroGPU allocation-backed resources (alloc_id semantics + dirty ranges)
+
+For AeroGPU’s command stream, D3D10/11 resources (buffers, textures) are expected to be **backed by real WDDM allocations** so the emulator/host can:
+
+* read CPU-written contents directly from guest memory (uploads), and
+* write GPU results back into guest allocations (staging readback / correctness).
+
+**Key decision:** the AeroGPU allocation table `alloc_id` is the **WDDM allocation handle**:
+
+* `alloc_id == (u32)D3DKMT_HANDLE` (aka `DXGK_ALLOCATIONINFO.hAllocation`, returned by `pfnAllocateCb`).
+* The UMD sets:
+  * `AEROGPU_CMD_CREATE_BUFFER.backing_alloc_id = alloc_handle`
+  * `AEROGPU_CMD_CREATE_TEXTURE2D.backing_alloc_id = alloc_handle`
+* This keeps IDs stable across submissions and avoids any per-submit remapping.
+
+**Dirty range notifications (MVP):**
+
+* Any `Map` that permits CPU writing (`WRITE`, `WRITE_DISCARD`, `WRITE_NO_OVERWRITE`) must emit `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` on `Unmap`.
+* For MVP, mark the entire allocation dirty:
+  * `offset_bytes = 0`
+  * `size_bytes = allocation_size`
+* If `CreateResource` copies initial data into the allocation, emit one `RESOURCE_DIRTY_RANGE` after the upload.
+
 ### 2.2 D3D11: adapter + device/context entrypoints (D3D11DDI)
 
 For a **table-by-table** checklist of which `d3d11umddi.h` function pointers must be non-null vs safely stubbable for a crash-free Win7 bring-up (FL10_0), see:

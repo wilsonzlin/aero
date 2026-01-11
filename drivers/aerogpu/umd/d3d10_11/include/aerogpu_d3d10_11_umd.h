@@ -54,6 +54,12 @@
   #ifndef E_OUTOFMEMORY
     #define E_OUTOFMEMORY ((HRESULT)0x8007000EL)
   #endif
+  #ifndef SUCCEEDED
+    #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
+  #endif
+  #ifndef FAILED
+    #define FAILED(hr) (((HRESULT)(hr)) < 0)
+  #endif
 #endif
 
 // DXGI error codes used by Map/Unmap (values from dxgi.h).
@@ -186,10 +192,17 @@ struct D3D10DDIARG_OPENADAPTER {
 
 // Device ABI subset.
 typedef struct AEROGPU_D3D10_11_DEVICEFUNCS AEROGPU_D3D10_11_DEVICEFUNCS;
+typedef struct AEROGPU_D3D10_11_DEVICECALLBACKS AEROGPU_D3D10_11_DEVICECALLBACKS;
 
 struct D3D10DDIARG_CREATEDEVICE {
   D3D10DDI_HDEVICE hDevice;
   AEROGPU_D3D10_11_DEVICEFUNCS *pDeviceFuncs;
+  // Optional callback table supplied by the harness/real runtime.
+  //
+  // In a real WDDM UMD this would be the D3D10/11 runtime callback table
+  // (including submission + allocation management entrypoints). For repository
+  // builds we keep it as a narrow AeroGPU-specific hook.
+  const AEROGPU_D3D10_11_DEVICECALLBACKS *pDeviceCallbacks;
 };
 #endif // !_WIN32 || !AEROGPU_UMD_USE_WDK_HEADERS
 
@@ -357,6 +370,50 @@ typedef struct AEROGPU_DDIARG_PRESENT {
   D3D10DDI_HRESOURCE hBackBuffer;
   uint32_t SyncInterval;
 } AEROGPU_DDIARG_PRESENT;
+
+// -------------------------------------------------------------------------------------------------
+// Optional device callback table (allocation-backed resources + submission plumbing)
+// -------------------------------------------------------------------------------------------------
+
+// WDDM allocation handle (D3DKMT_HANDLE / DXGK_ALLOCATIONINFO.hAllocation).
+// Stored as u32 so it can be used directly as `aerogpu_alloc_entry.alloc_id`.
+typedef uint32_t AEROGPU_WDDM_ALLOCATION_HANDLE;
+
+// Allocate backing storage for a resource and return the WDDM allocation handle.
+// For Texture2D allocations, the callback may also provide the linear row pitch.
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_ALLOCATE_BACKING)(
+    void *pUserContext,
+    const AEROGPU_DDIARG_CREATERESOURCE *pDesc,
+    AEROGPU_WDDM_ALLOCATION_HANDLE *out_alloc_handle,
+    uint64_t *out_alloc_size_bytes,
+    uint32_t *out_row_pitch_bytes);
+
+// Map/unmap a WDDM allocation for CPU access.
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_MAP_ALLOCATION)(void *pUserContext,
+                                                                 AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle,
+                                                                 void **out_cpu_ptr);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_UNMAP_ALLOCATION)(void *pUserContext,
+                                                                AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle);
+
+// Submit a command buffer and its referenced allocations.
+// The real Win7/WDDM implementation will ensure the allocation handles are
+// included in the runtime's allocation list so the KMD can build an
+// `aerogpu_alloc_table` for the host.
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SUBMIT_CMD_STREAM)(
+    void *pUserContext,
+    const void *cmd_stream,
+    uint32_t cmd_stream_size_bytes,
+    const AEROGPU_WDDM_ALLOCATION_HANDLE *alloc_handles,
+    uint32_t alloc_count,
+    uint64_t *out_fence);
+
+struct AEROGPU_D3D10_11_DEVICECALLBACKS {
+  void *pUserContext;
+  PFNAEROGPU_DDI_ALLOCATE_BACKING pfnAllocateBacking;
+  PFNAEROGPU_DDI_MAP_ALLOCATION pfnMapAllocation;
+  PFNAEROGPU_DDI_UNMAP_ALLOCATION pfnUnmapAllocation;
+  PFNAEROGPU_DDI_SUBMIT_CMD_STREAM pfnSubmitCmdStream;
+};
 
 // Resource update/copy DDI structs (minimal).
 typedef struct AEROGPU_DDI_MAPPED_SUBRESOURCE {
