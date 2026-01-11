@@ -99,6 +99,32 @@ test("normalizeCollections: WebHID normalized metadata JSON contract", () => {
   assert.deepStrictEqual(normalizeCollections(MOCK_COLLECTIONS), expected);
 });
 
+test("normalizeCollections: derives usageMinimum/Maximum from usages for small ranges", () => {
+  const collections: HidCollectionInfo[] = [
+    {
+      ...MOCK_COLLECTIONS[0]!,
+      inputReports: [
+        {
+          reportId: 0,
+          items: [
+            {
+              ...BUTTONS_ITEM,
+              usageMinimum: 0,
+              usageMaximum: 0,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const normalized = normalizeCollections(collections);
+  const item = normalized[0]!.inputReports[0]!.items[0]!;
+  assert.equal(item.usageMinimum, 1);
+  assert.equal(item.usageMaximum, 3);
+  assert.deepStrictEqual(item.usages, [1, 3]);
+});
+
 test("normalizeCollections: expanded usages lists are canonicalized to compact [min, max]", () => {
   const expandedButtonsItem: HidReportItem = {
     ...BUTTONS_ITEM,

@@ -125,6 +125,8 @@ function isContiguousUsageRange(usages: readonly number[]): boolean {
 }
 
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
+  const rawUsages = item.usages;
+
   // WebHID uses `isRange` + expanded `usages` lists. For normalized metadata we emit
   // compact ranges (`[min, max]`) to keep the JSON contract bounded and deterministic.
   //
@@ -134,19 +136,35 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   // IMPORTANT: When the list is huge, do not clone/copy it just to check contiguity.
   const isRange =
     item.isRange &&
-    (item.usages.length > MAX_RANGE_CONTIGUITY_CHECK_LEN || isContiguousUsageRange(item.usages));
+    (rawUsages.length > MAX_RANGE_CONTIGUITY_CHECK_LEN || isContiguousUsageRange(rawUsages));
+
+  let usageMinimum = item.usageMinimum;
+  let usageMaximum = item.usageMaximum;
+
+  if (isRange && rawUsages.length > 0 && rawUsages.length <= MAX_RANGE_CONTIGUITY_CHECK_LEN) {
+    // Derive min/max from the explicit usage list so we don't depend on the browser's bookkeeping
+    // (or on hand-authored metadata) for small ranges.
+    let min = rawUsages[0]!;
+    let max = rawUsages[0]!;
+    for (const u of rawUsages) {
+      if (u < min) min = u;
+      if (u > max) max = u;
+    }
+    usageMinimum = min;
+    usageMaximum = max;
+  }
 
   const usages = isRange
-    ? item.usageMinimum === item.usageMaximum
-      ? [item.usageMinimum]
-      : [item.usageMinimum, item.usageMaximum]
-    : Array.from(item.usages);
+    ? usageMinimum === usageMaximum
+      ? [usageMinimum]
+      : [usageMinimum, usageMaximum]
+    : Array.from(rawUsages);
 
   return {
     usagePage: item.usagePage,
     usages,
-    usageMinimum: item.usageMinimum,
-    usageMaximum: item.usageMaximum,
+    usageMinimum,
+    usageMaximum,
     reportSize: item.reportSize,
     reportCount: item.reportCount,
     unitExponent: item.unitExponent,
