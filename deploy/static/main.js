@@ -114,8 +114,8 @@ try {
   // `/l2` auth is deployment-dependent:
   // - Canonical compose (`deploy/docker-compose.yml`) defaults to `AERO_L2_AUTH_MODE=none`, so
   //   `/l2` should succeed even if `POST /session` failed.
-  // - If your deployment uses cookie auth (`AERO_L2_AUTH_MODE=cookie`), `POST /session` is still
-  //   required to mint the `aero_session` cookie.
+  // - If your deployment uses session-cookie auth (`AERO_L2_AUTH_MODE=session`; legacy alias: `cookie`),
+  //   `POST /session` is required to mint the `aero_session` cookie.
   const noSessionSuffix = sessionOk ? "" : " (no session)";
 
   // Prefer URL fragment params (`#l2Token=...`) over query params (`?l2Token=...`) so secrets
