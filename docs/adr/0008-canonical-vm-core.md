@@ -9,8 +9,8 @@
 The repository historically contained multiple partially-overlapping "VM" / "emulator" implementations:
 
 - `crates/emulator` — large device + I/O stack (PCI/VGA/VBE/USB/storage/net/etc).
-- `crates/aero-emulator` — prototype emulator implementation (VBE/VGA/AeroGPU experiments).
-- `crates/vm` — "Minimal VM wiring for the BIOS firmware tests" (machine + firmware + snapshot glue).
+- `crates/legacy/aero-emulator` (formerly `crates/aero-emulator`) — prototype emulator implementation (VBE/VGA/AeroGPU experiments).
+- `crates/legacy/vm` (formerly `crates/vm`) — "Minimal VM wiring for the BIOS firmware tests" (machine + firmware + snapshot glue).
 - `crates/aero-vm` — toy snapshot VM used by `crates/aero-wasm` for demo panels.
 - `crates/aero-machine` — full-system machine wiring (CPU + memory + port I/O + firmware) introduced to make the canonical VM core explicit.
 

@@ -46,8 +46,9 @@ For a concise mapping of PCI IDs ↔ ABI ↔ device model, see `docs/abi/aerogpu
 
 This repository previously contained a minimal, self-contained paravirtual GPU used for early
 bring-up and small smoke tests (ring mechanics, MMIO doorbell/IRQ plumbing, deterministic “draw
-a triangle”). That implementation lived in `crates/aero-emulator`, but it has since been
-removed in favor of the canonical Win7/WDDM path.
+a triangle”). That implementation originally lived in `crates/aero-emulator` and is now archived
+under `crates/legacy/aero-emulator` (excluded from the default Cargo workspace) in favor of the
+canonical Win7/WDDM path.
 
 The protocol is still documented for reference, but it is archived:
 
