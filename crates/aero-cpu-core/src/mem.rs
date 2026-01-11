@@ -134,6 +134,10 @@ pub trait CpuBus {
     /// This is a hint/fast-path only; the default implementation safely falls
     /// back to scalar `write_u8` accesses.
     fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
+        // Preflight the full range (when supported by the bus) so callers can
+        // rely on "no partial commits on failure" semantics even when the bus
+        // does not provide a custom `write_bytes` implementation.
+        self.preflight_write_bytes(vaddr, src.len())?;
         for (i, byte) in src.iter().copied().enumerate() {
             let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
             self.write_u8(addr, byte)?;
