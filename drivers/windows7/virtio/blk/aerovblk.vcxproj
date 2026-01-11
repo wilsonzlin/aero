@@ -46,7 +46,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -59,7 +59,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -70,12 +70,10 @@
 
   <ItemGroup>
     <ClCompile Include="src\aerovblk.c" />
-    <ClCompile Include="..\common\src\virtio_pci_legacy.c" />
-    <ClCompile Include="..\common\src\virtio_queue.c" />
+    <ClCompile Include="..\..\..\windows\virtio\common\virtqueue_split.c" />
     <ClInclude Include="include\aerovblk.h" />
     <None Include="aerovblk.inf" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
-
