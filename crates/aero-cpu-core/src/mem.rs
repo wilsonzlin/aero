@@ -356,6 +356,10 @@ impl CpuBus for FlatTestBus {
         Ok(())
     }
 
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        self.range(vaddr, len).map(|_| ())
+    }
+
     fn supports_bulk_copy(&self) -> bool {
         true
     }

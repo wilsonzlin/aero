@@ -156,6 +156,11 @@ impl CpuBus for WasmBus {
         Ok(())
     }
 
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        let _ = self.ptr_mut(vaddr, len)?;
+        Ok(())
+    }
+
     fn supports_bulk_copy(&self) -> bool {
         true
     }
