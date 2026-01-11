@@ -285,6 +285,58 @@ function Normalize-PathComponent {
   return $Value
 }
 
+function Normalize-DriverRel {
+  param([Parameter(Mandatory = $true)][string] $Value)
+
+  $normalized = $Value.Replace([System.IO.Path]::DirectorySeparatorChar, "/").Replace([System.IO.Path]::AltDirectorySeparatorChar, "/")
+  $normalized = ($normalized -replace "/+", "/").Trim("/")
+  return $normalized
+}
+
+function Get-GuestToolsDriverNameFromDriverRel {
+  param([Parameter(Mandatory = $true)][string] $DriverRel)
+
+  # Map `<driverRel>` (from `out/packages/<driverRel>/<arch>/...`) to a stable,
+  # Guest Tools-facing directory name.
+  #
+  # Default: last path segment of <driverRel>
+  # Overrides: known non-leaf driverRel where the leaf is ambiguous.
+  $overrides = @{
+    "windows7/virtio/blk" = "virtio-blk"
+    "windows7/virtio/net" = "virtio-net"
+    # Canonical Guest Tools-facing name keeps the dash to match guest-tools/ skeleton.
+    "aerogpu"             = "aero-gpu"
+  }
+
+  $relNorm = Normalize-DriverRel -Value $DriverRel
+  $key = $relNorm.ToLowerInvariant()
+  if ($overrides.ContainsKey($key)) {
+    return $overrides[$key]
+  }
+
+  $parts = @($relNorm -split "/+")
+  if (-not $parts -or $parts.Count -eq 0) {
+    throw "Invalid driverRel: '$DriverRel'"
+  }
+  return $parts[$parts.Count - 1]
+}
+
+function Normalize-GuestToolsDriverName {
+  param([Parameter(Mandatory = $true)][string] $Name)
+
+  $normalized = (Normalize-PathComponent -Value $Name.Trim()).ToLowerInvariant()
+  $overrides = @{
+    # Support staging from legacy driver bundle layouts (ci/package-drivers.ps1) that use leaf names.
+    "aerogpu" = "aero-gpu"
+    "blk"     = "virtio-blk"
+    "net"     = "virtio-net"
+  }
+  if ($overrides.ContainsKey($normalized)) {
+    return $overrides[$normalized]
+  }
+  return $normalized
+}
+
 function Get-DevicesCmdVariable {
   param(
     [Parameter(Mandatory = $true)][string] $DevicesCmdPath,
@@ -529,57 +581,87 @@ function Copy-DriversToPackagerLayout {
 
   $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
 
-  # Note: on Linux, `-Filter "*.inf"` is case-sensitive. Use a case-insensitive match so
-  # we don't miss `*.INF` files coming from Windows build artifacts.
-  $infFiles = @(
-    Get-ChildItem -Path $InputRoot -Recurse -File -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -match '(?i)\.inf$' } |
-      Sort-Object -Property FullName
-  )
-  if (-not $infFiles) {
-    throw "No '.inf' files found under '$InputRoot'."
+  # CI packages layout produced by `ci/make-catalogs.ps1`:
+  #   out/packages/<driverRel>/{x86,x64}/...
+  #
+  # Identify driver roots by scanning for directories containing architecture subdirectories.
+  $archDirNames = @("x86", "x64", "amd64", "win32", "i386", "x86_64", "x86-64")
+  $driverRoots = New-Object System.Collections.Generic.List[string]
+  $seenRoots = @{}
+
+  # Include InputRoot itself in case it directly contains architecture subdirectories
+  # (e.g. when staging from a single extracted driver root).
+  $dirs = @()
+  try {
+    $dirs += (Get-Item -LiteralPath $InputRoot -ErrorAction Stop)
+  } catch {
+    # fall through; Get-ChildItem below will surface the missing path
+  }
+  $dirs += @(Get-ChildItem -LiteralPath $InputRoot -Directory -Recurse -ErrorAction SilentlyContinue)
+  foreach ($dir in $dirs) {
+    $children = @(Get-ChildItem -LiteralPath $dir.FullName -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+    if (-not $children -or $children.Count -eq 0) { continue }
+
+    $hasArchChild = $false
+    foreach ($child in $children) {
+      if ($archDirNames -contains $child) {
+        $hasArchChild = $true
+        break
+      }
+    }
+    if (-not $hasArchChild) { continue }
+
+    $k = $dir.FullName.ToLowerInvariant()
+    if ($seenRoots.ContainsKey($k)) { continue }
+    $seenRoots[$k] = $true
+    [void]$driverRoots.Add($dir.FullName)
   }
 
-  $seen = New-Object "System.Collections.Generic.HashSet[string]"
-  $copied = 0
+  if ($driverRoots.Count -eq 0) {
+    throw "No driver packages found under '$InputRoot'. Expected: out/packages/<driverRel>/{x86,x64}/..."
+  }
 
-  foreach ($inf in $infFiles) {
-    $arch = Get-PackagerArchFromPath -Path $inf.FullName
-    if (-not $arch) {
-      continue
-    }
+  $nameToRel = @{}
+  $stagedArchKeys = @{}
 
-    $srcDir = Split-Path -Parent $inf.FullName
+  foreach ($driverRoot in ($driverRoots | Sort-Object)) {
     $relative = ""
-    if ($srcDir.Length -ge $inputRootTrimmed.Length -and $srcDir.StartsWith($inputRootTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
-      $relative = $srcDir.Substring($inputRootTrimmed.Length).TrimStart("\", "/")
+    if ($driverRoot.Length -ge $inputRootTrimmed.Length -and $driverRoot.StartsWith($inputRootTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $relative = $driverRoot.Substring($inputRootTrimmed.Length).TrimStart("\", "/")
+    } else {
+      $relative = Split-Path -Leaf $driverRoot
     }
-    $segments = @()
-    if (-not [string]::IsNullOrWhiteSpace($relative)) {
-      $segments = $relative -split "[\\/]+"
+    if ([string]::IsNullOrWhiteSpace($relative)) {
+      $relative = Split-Path -Leaf $driverRoot
     }
 
-    $driverName = Get-DriverNameFromRelativeSegments -Segments $segments -Fallback $inf.BaseName
-    $driverName = $driverName.Trim()
-    if ([string]::IsNullOrWhiteSpace($driverName)) {
-      $driverName = $inf.BaseName
-    }
+    $driverRel = Normalize-DriverRel -Value $relative
+    $driverName = Get-GuestToolsDriverNameFromDriverRel -DriverRel $driverRel
     $driverName = (Normalize-PathComponent -Value $driverName).ToLowerInvariant()
 
-    $key = "$arch|$driverName|$srcDir"
-    if ($seen.Contains($key)) {
-      continue
+    $nameKey = $driverName.ToLowerInvariant()
+    if ($nameToRel.ContainsKey($nameKey) -and $nameToRel[$nameKey] -ne $driverRel) {
+      throw "Driver name collision: '$driverName' maps from both '$($nameToRel[$nameKey])' and '$driverRel'. Add an explicit override mapping to disambiguate."
     }
-    $null = $seen.Add($key)
+    $nameToRel[$nameKey] = $driverRel
 
-    $destDir = Join-Path $StageDriversRoot (Join-Path $arch $driverName)
-    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-    Copy-Item -Path (Join-Path $srcDir "*") -Destination $destDir -Recurse -Force
-    $copied++
-  }
+    Write-Host ("  Staging driver: {0} -> {1}" -f $driverRel, $driverName)
 
-  if ($copied -eq 0) {
-    throw "No driver packages found under '$InputRoot' for known architectures (x86/amd64)."
+    $archDirs = @(Get-ChildItem -LiteralPath $driverRoot -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+    foreach ($archDir in $archDirs) {
+      $arch = Get-PackagerArchFromPath -Path $archDir.Name
+      if (-not $arch) { continue }
+
+      $archKey = ("{0}|{1}" -f $driverName, $arch)
+      if ($stagedArchKeys.ContainsKey($archKey)) {
+        throw "Duplicate arch mapping for driver '$driverName': '$($stagedArchKeys[$archKey])' and '$($archDir.Name)' both map to '$arch'."
+      }
+      $stagedArchKeys[$archKey] = $archDir.Name
+
+      $destDir = Join-Path $StageDriversRoot (Join-Path $arch $driverName)
+      New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+      Copy-Item -Path (Join-Path $archDir.FullName "*") -Destination $destDir -Recurse -Force
+    }
   }
 }
 
@@ -625,7 +707,7 @@ function Stage-DriversFromPackagerLayout {
 
     $driverDirs = Get-ChildItem -LiteralPath $arch.Src -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
     foreach ($d in $driverDirs) {
-      $dst = Join-Path $destArchDir $d.Name.ToLowerInvariant()
+      $dst = Join-Path $destArchDir (Normalize-GuestToolsDriverName -Name $d.Name)
       Copy-Item -LiteralPath $d.FullName -Destination $dst -Recurse -Force
     }
   }
@@ -649,7 +731,7 @@ function Stage-DriversFromBundleLayout {
 
   $driverDirs = Get-ChildItem -LiteralPath $driversRoot -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name
   foreach ($d in $driverDirs) {
-    $driverName = $d.Name.ToLowerInvariant()
+    $driverName = Normalize-GuestToolsDriverName -Name $d.Name
 
     $srcX86 = Join-Path $d.FullName "x86"
     if (Test-Path -LiteralPath $srcX86 -PathType Container) {

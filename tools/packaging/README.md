@@ -79,6 +79,14 @@ propagate upstream license/notice files into the packaged outputs under:
 
 - `licenses/virtio-win/` (including `driver-pack-manifest.json` for provenance)
 
+## Building Guest Tools from CI-built driver packages (`out/packages/**`)
+
+When the Win7 driver CI pipeline stages signed driver packages under `out/packages/**`, you can
+produce the Guest Tools ISO/zip from those artifacts using:
+
+- `ci/package-guest-tools.ps1`
+- `tools/packaging/specs/win7-aero-guest-tools.json`
+
 ## Determinism / reproducible builds
 
 The packager aims to be reproducible: **same inputs → bit-identical outputs**.

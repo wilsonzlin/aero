@@ -1,7 +1,7 @@
 {
   "drivers": [
     {
-      "name": "aerogpu",
+      "name": "aero-gpu",
       "required": true,
       "expected_hardware_ids": [
         "PCI\\\\VEN_A3A0&DEV_0001",

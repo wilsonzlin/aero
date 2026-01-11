@@ -370,7 +370,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     if spec_path.name in ("win7-virtio-win.json", "win7-virtio-full.json"):
         required_names = ("viostor", "netkvm")
     elif spec_path.name == "win7-aero-guest-tools.json":
-        required_names = ("aerogpu", "virtio-blk", "virtio-net", "virtio-input")
+        required_names = ("aero-gpu", "virtio-blk", "virtio-net", "virtio-input")
     else:
         required_names = ()
 
@@ -470,7 +470,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         driver_kind="virtio-snd",
     )
     maybe_validate(
-        "aerogpu",
+        "aero-gpu",
         devices_var="AERO_GPU_HWIDS",
         hwids=devices.aero_gpu_hwids,
         driver_kind="aero-gpu",
@@ -486,7 +486,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "virtio-net",
             "virtio-input",
             "virtio-snd",
-            "aerogpu",
+            "aero-gpu",
         ]
         raise ValidationError(
             f"Spec {spec_path} does not contain any driver entries that this validator knows how to check.\n"
