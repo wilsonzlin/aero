@@ -126,6 +126,7 @@ npm -w tools/net-proxy-server test
 
 ## Docker
 ```bash
-docker build -t aero-net-proxy-server .
+# From the repo root (npm workspaces; shared lockfile)
+docker build -f tools/net-proxy-server/Dockerfile -t aero-net-proxy-server .
 docker run --rm -p 8080:8080 -e AERO_PROXY_AUTH_TOKEN=dev-token aero-net-proxy-server
 ```
