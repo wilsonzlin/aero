@@ -456,6 +456,8 @@ CI performance jobs are split by intent:
 - **Nightly perf (non-gating + data collection):** [`/.github/workflows/perf-nightly.yml`](../.github/workflows/perf-nightly.yml) runs more iterations and publishes history/dashboard artifacts.
 - **PR GPU perf (gating):** [`/.github/workflows/gpu-perf.yml`](../.github/workflows/gpu-perf.yml) runs a small GPU scenario set and compares PR vs base commit.
 - **PR storage perf (gating):** [`/.github/workflows/storage-perf.yml`](../.github/workflows/storage-perf.yml) runs the storage bench and compares PR vs base commit.
+- **PR gateway perf (gating):** [`/.github/workflows/gateway-perf.yml`](../.github/workflows/gateway-perf.yml) runs the Aero Gateway bench and compares PR vs base commit.
+- **PR CPU microbenches (gating):** [`/.github/workflows/bench.yml`](../.github/workflows/bench.yml) runs Criterion benchmarks and compares PR vs base commit.
 
 Where to find artifacts:
 
