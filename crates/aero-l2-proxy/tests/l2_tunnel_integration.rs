@@ -31,6 +31,14 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     };
 
     std::env::set_var("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    // Ensure security/keepalive knobs are deterministic for this end-to-end probe test (do not
+    // inherit developer environment overrides).
+    std::env::set_var("AERO_L2_OPEN", "0");
+    std::env::remove_var("AERO_L2_TOKEN");
+    std::env::set_var("AERO_L2_MAX_CONNECTIONS", "0");
+    std::env::set_var("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
+    std::env::set_var("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
+    std::env::set_var("AERO_L2_PING_INTERVAL_MS", "0");
     std::env::set_var("AERO_L2_ALLOWED_ORIGINS", "*");
     std::env::set_var("AERO_L2_DNS_A", "echo.local=203.0.113.10");
     std::env::set_var("AERO_L2_ALLOWED_TCP_PORTS", tcp_allowed_port.to_string());
