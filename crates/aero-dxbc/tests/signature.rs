@@ -211,6 +211,23 @@ fn dxbc_get_signature_falls_back_to_v1_chunk_id() {
 }
 
 #[test]
+fn dxbc_get_signature_parses_v1_entry_layout() {
+    let sig_bytes = build_signature_chunk_v1();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISG1"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Ensure both the `ISG1` chunk lookup and the 32-byte entry layout are handled.
+    let sig = dxbc
+        .get_signature(FourCC(*b"ISG1"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[1].semantic_name, "TEXCOORD");
+}
+
+#[test]
 fn dxbc_get_signature_falls_back_from_v1_to_base_chunk_id() {
     let sig_bytes = build_signature_chunk();
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);

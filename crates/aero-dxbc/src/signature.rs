@@ -79,16 +79,27 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
     // Most DXBC signatures use 24-byte entries, but some toolchains emit a 32-byte
     // variant (carrying stream/min-precision as DWORDs). Try the common format
     // first, then fall back to the larger entry size if needed.
-    parse_signature_chunk_with_entry_size(bytes, param_count, param_offset, SIGNATURE_ENTRY_LEN_V0)
-        .or_else(|err_v0| {
-            parse_signature_chunk_with_entry_size(
-                bytes,
-                param_count,
-                param_offset,
-                SIGNATURE_ENTRY_LEN_V1,
-            )
-            .or(Err(err_v0))
-        })
+    match parse_signature_chunk_with_entry_size(
+        bytes,
+        param_count,
+        param_offset,
+        SIGNATURE_ENTRY_LEN_V0,
+    ) {
+        Ok(chunk) => Ok(chunk),
+        Err(err_v0) => match parse_signature_chunk_with_entry_size(
+            bytes,
+            param_count,
+            param_offset,
+            SIGNATURE_ENTRY_LEN_V1,
+        ) {
+            Ok(chunk) => Ok(chunk),
+            Err(err_v1) => Err(DxbcError::invalid_chunk(format!(
+                "failed to parse signature entries (v0 24-byte layout: {}; v1 32-byte layout: {})",
+                err_v0.context(),
+                err_v1.context()
+            ))),
+        },
+    }
 }
 
 fn parse_signature_chunk_with_entry_size(
