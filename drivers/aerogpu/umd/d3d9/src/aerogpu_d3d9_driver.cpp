@@ -2358,7 +2358,10 @@ void update_context_from_submit_args(Device* dev, const ArgsT& args) {
 
   bool updated_patch_list = false;
   if constexpr (has_member_pNewPatchLocationList<ArgsT>::value && has_member_NewPatchLocationListSize<ArgsT>::value) {
-    if (args.pNewPatchLocationList && args.NewPatchLocationListSize) {
+    // Some runtimes can legitimately provide a 0-sized patch list. Treat the
+    // pointer as the authoritative signal that a new patch list is being rotated
+    // in, and always copy the size (even if it is 0).
+    if (args.pNewPatchLocationList) {
       dev->wddm_context.pPatchLocationList = args.pNewPatchLocationList;
       dev->wddm_context.PatchLocationListSize = args.NewPatchLocationListSize;
       updated_patch_list = true;
@@ -2367,14 +2370,10 @@ void update_context_from_submit_args(Device* dev, const ArgsT& args) {
 
   if (!updated_patch_list) {
     if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
-      if (args.pPatchLocationList) {
-        dev->wddm_context.pPatchLocationList = args.pPatchLocationList;
-      }
+      dev->wddm_context.pPatchLocationList = args.pPatchLocationList;
     }
     if constexpr (has_member_PatchLocationListSize<ArgsT>::value && has_member_NumPatchLocations<ArgsT>::value) {
-      if (args.PatchLocationListSize) {
-        dev->wddm_context.PatchLocationListSize = args.PatchLocationListSize;
-      }
+      dev->wddm_context.PatchLocationListSize = args.PatchLocationListSize;
     }
   }
 
