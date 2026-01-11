@@ -653,6 +653,11 @@ This repository also contains a guest-side test harness you can use as a startin
 * `IASet*`, `VSSetShader`, `PSSetShader`, `OMSetRenderTargets`
 * `Draw`, `Present`
 
+**Existing in repo:**
+
+* `drivers/aerogpu/tests/win7/d3d10_triangle/` — swapchain triangle + present.
+* `drivers/aerogpu/tests/win7/d3d10_map_do_not_wait/` — validates `Map(READ, DO_NOT_WAIT)` behaves like a non-blocking poll for staging readback.
+
 ### 7.2 D3D11 triangle (device at FL10_0)
 
 **Covers:**
@@ -665,6 +670,17 @@ This repository also contains a guest-side test harness you can use as a startin
 
 * `drivers/aerogpu/tests/win7/d3d11_triangle/` — swapchain triangle + present; validates pixels via staging readback.
 * `drivers/aerogpu/tests/win7/readback_sanity/` — offscreen render-to-texture + staging readback (no present).
+* `drivers/aerogpu/tests/win7/d3d11_map_do_not_wait/` — validates `Map(READ, DO_NOT_WAIT)` behaves like a non-blocking poll for staging readback.
+
+### 7.2.1 D3D10.1 coverage (optional, still useful on Win7)
+
+The Windows 7 D3D10.1 runtime can route some Map/Unmap patterns through slightly different DDIs.
+Having a dedicated D3D10.1 test helps catch regressions in those entrypoints.
+
+**Existing in repo:**
+
+* `drivers/aerogpu/tests/win7/d3d10_1_triangle/` — swapchain triangle + present via the D3D10.1 runtime.
+* `drivers/aerogpu/tests/win7/d3d10_1_map_do_not_wait/` — D3D10.1 variant of the `Map(READ, DO_NOT_WAIT)` non-blocking poll test.
 
 ### 7.3 Texture sampling test (2D)
 
