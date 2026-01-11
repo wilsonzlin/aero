@@ -53,6 +53,7 @@ drivers/aerogpu/tests/win7/
   d3d10_triangle/
   d3d10_1_triangle/
   d3d11_triangle/
+  d3d11_rs_om_state_sanity/
   d3d11_geometry_shader_smoke/
   d3d11_swapchain_rotate_sanity/
   d3d11_map_dynamic_buffer_sanity/
@@ -171,6 +172,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d11_rs_om_state_sanity` validates D3D11 rasterizer/blend state correctness (scissor, cull mode, alpha blending) via readback
 * `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
 * `d3d11_swapchain_rotate_sanity` creates a 2-buffer swapchain, clears buffer0 red + buffer1 green, presents, then validates that DXGI rotated buffer identities (expects **buffer0 green + buffer1 red**)
 * `d3d11_map_dynamic_buffer_sanity` writes a dynamic buffer via `Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)` and verifies the bytes via `CopyResource` + staging readback

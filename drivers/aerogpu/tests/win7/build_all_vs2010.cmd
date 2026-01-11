@@ -22,6 +22,7 @@ call "%~dp0d3d9ex_shared_allocations\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d10_triangle\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d10_1_triangle\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_triangle\\build_vs2010.cmd" || exit /b 1
+call "%~dp0d3d11_rs_om_state_sanity\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_geometry_shader_smoke\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_swapchain_rotate_sanity\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_map_dynamic_buffer_sanity\\build_vs2010.cmd" || exit /b 1
