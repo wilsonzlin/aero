@@ -261,8 +261,9 @@ driver pack `manifest.json` can record the original ISO hash/volume label even w
 `-VirtioWinRoot`.
 
 The extractor also copies common root-level license/notice files (e.g. `LICENSE*`, `NOTICE*`,
-`README*`) into the extracted root so subsequent packaging can propagate them into
-`licenses/virtio-win/`.
+`README*`) and small metadata files like `VERSION` into the extracted root so subsequent
+packaging can propagate them (and derive a best-effort virtio-win version string) even on
+non-Windows hosts.
 
 This produces a staging directory (by default) at:
 
