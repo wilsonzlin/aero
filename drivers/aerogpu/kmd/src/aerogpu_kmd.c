@@ -1,6 +1,7 @@
 #include "aerogpu_ring.h"
 
 #include "aerogpu_kmd.h"
+#include "aerogpu_kmd_wdk_abi_asserts.h"
 #include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_cmd.h"
 #include "aerogpu_umd_private.h"
@@ -22,13 +23,22 @@ NTSTATUS APIENTRY DxgkInitialize(_In_ PDRIVER_OBJECT DriverObject,
                                  _In_ PUNICODE_STRING RegistryPath,
                                  _Inout_ PDXGK_INITIALIZATION_DATA InitializationData);
 
-/* ---- WDDM interrupt type plumbing --------------------------------------- */
+/* ---- WDDM vblank interrupt plumbing ------------------------------------- */
 
 /*
- * Dxgkrnl tells the miniport which DXGK_INTERRUPT_TYPE it expects for vblank
- * delivery via DxgkDdiControlInterrupt. Record that type at runtime and use it
- * when notifying vblank interrupts from the ISR. This avoids hard-coding the
- * enum constant name and union member layout across WDK variants.
+ * Win7 (WDDM 1.1) vblank delivery contract:
+ *
+ * - dxgkrnl enables/disables vblank interrupts via DxgkDdiControlInterrupt with
+ *   InterruptType = DXGK_INTERRUPT_TYPE_CRTC_VSYNC.
+ * - When a vblank occurs for VidPn source N, the miniport must notify dxgkrnl
+ *   via DxgkCbNotifyInterrupt with:
+ *     notify.InterruptType = DXGK_INTERRUPT_TYPE_CRTC_VSYNC
+ *     notify.CrtcVsync.VidPnSourceId = N
+ *
+ * Historically this driver used a "best effort" anonymous-union write to stuff
+ * VidPnSourceId into DXGKARGCB_NOTIFY_INTERRUPT, but that is brittle across WDK
+ * header variants and can break Win7's D3DKMTWaitForVerticalBlankEvent /
+ * IDirect3DDevice9::GetRasterStatus paths. Keep this code ABI-explicit.
  */
 
 /* ---- EDID (single virtual monitor) ------------------------------------- */
@@ -2595,13 +2605,24 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 notify.InterruptType = vblankType;
 
                 /*
-                 * DXGKARGCB_NOTIFY_INTERRUPT uses an anonymous union. For vblank-style
-                 * interrupts, the payload begins with VidPnSourceId at offset 0 of that
-                 * union. Use the known union offset (DmaCompleted) and fill in source 0.
+                 * ABI-critical: for DXGK_INTERRUPT_TYPE_CRTC_VSYNC, dxgkrnl expects
+                 * DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId to identify the
+                 * VidPn source that vblanked.
                  */
-                *(ULONG*)((PUCHAR)&notify + FIELD_OFFSET(DXGKARGCB_NOTIFY_INTERRUPT, DmaCompleted)) =
-                    AEROGPU_VIDPN_SOURCE_ID;
-                adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                if (notify.InterruptType != DXGK_INTERRUPT_TYPE_CRTC_VSYNC) {
+#if DBG
+                    static volatile LONG g_UnexpectedVblankNotifyTypeLogs = 0;
+                    const LONG n = InterlockedIncrement(&g_UnexpectedVblankNotifyTypeLogs);
+                    if ((n <= 8) || ((n & 1023) == 0)) {
+                        AEROGPU_LOG(
+                            "InterruptRoutine: vblank uses unexpected InterruptType=%lu; expected DXGK_INTERRUPT_TYPE_CRTC_VSYNC",
+                            (ULONG)notify.InterruptType);
+                    }
+#endif
+                } else {
+                    notify.CrtcVsync.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+                    adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                }
             }
         }
     } else {
@@ -2709,9 +2730,26 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                         DXGKARGCB_NOTIFY_INTERRUPT notify;
                         RtlZeroMemory(&notify, sizeof(notify));
                         notify.InterruptType = vblankType;
-                        *(ULONG*)((PUCHAR)&notify + FIELD_OFFSET(DXGKARGCB_NOTIFY_INTERRUPT, DmaCompleted)) =
-                            AEROGPU_VIDPN_SOURCE_ID;
-                        adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+
+                        /*
+                         * ABI-critical: for DXGK_INTERRUPT_TYPE_CRTC_VSYNC, dxgkrnl expects
+                         * DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId to identify the
+                         * VidPn source that vblanked.
+                         */
+                        if (notify.InterruptType != DXGK_INTERRUPT_TYPE_CRTC_VSYNC) {
+#if DBG
+                            static volatile LONG g_UnexpectedLegacyVblankNotifyTypeLogs = 0;
+                            const LONG n = InterlockedIncrement(&g_UnexpectedLegacyVblankNotifyTypeLogs);
+                            if ((n <= 8) || ((n & 1023) == 0)) {
+                                AEROGPU_LOG(
+                                    "InterruptRoutine: legacy vblank uses unexpected InterruptType=%lu; expected DXGK_INTERRUPT_TYPE_CRTC_VSYNC",
+                                    (ULONG)notify.InterruptType);
+                            }
+#endif
+                        } else {
+                            notify.CrtcVsync.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+                            adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                        }
                     }
                 }
             }
@@ -2738,6 +2776,33 @@ static VOID APIENTRY AeroGpuDdiDpcRoutine(_In_ const PVOID MiniportDeviceContext
 
     AeroGpuRetireSubmissionsUpToFence(adapter, adapter->LastCompletedFence);
 }
+
+static __forceinline BOOLEAN AeroGpuIsVblankControlInterruptType(_In_ DXGK_INTERRUPT_TYPE InterruptType)
+{
+    /*
+     * Win7 WDDM 1.1 uses DXGK_INTERRUPT_TYPE_CRTC_VSYNC for vblank/vsync control
+     * and delivery (see file header comment).
+     */
+    return (InterruptType == DXGK_INTERRUPT_TYPE_CRTC_VSYNC);
+}
+
+#if DBG
+static __forceinline BOOLEAN AeroGpuShouldLogUnexpectedControlInterruptType()
+{
+    /*
+     * Dxgkrnl can call DxgkDdiControlInterrupt repeatedly (per waiter, per
+     * modeset, etc). Keep unexpected-type logging rate-limited so a misbehaving
+     * guest doesn't spam the kernel debugger.
+     *
+     * Log:
+     *  - the first handful of occurrences, then
+     *  - every ~1024th call thereafter.
+     */
+    static volatile LONG g_UnexpectedControlInterruptTypeLogs = 0;
+    const LONG n = InterlockedIncrement(&g_UnexpectedControlInterruptTypeLogs);
+    return (n <= 8) || ((n & 1023) == 0);
+}
+#endif
 
 static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                                                     _In_ const DXGK_INTERRUPT_TYPE InterruptType,
@@ -2777,78 +2842,76 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
         return STATUS_SUCCESS;
     }
 
-    /*
-     * On Win7, dxgkrnl uses this mechanism to enable/disable vblank delivery for
-     * D3DKMTWaitForVerticalBlankEvent and DWM pacing.
-     */
-    /*
-     * Avoid accidentally treating other (non-vblank) interrupt types as vblank.
-     *
-     * On Windows 7, the vblank interrupt type is ordered before
-     * DXGK_INTERRUPT_TYPE_DMA_COMPLETED; other DMA-related interrupt types (e.g.
-     * preemption/fault) are ordered after it. Filter based on that ordering to
-     * ensure we only ever capture/act on the vblank type here.
-     */
-    if (InterruptType >= DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
-        return STATUS_SUCCESS;
-    }
-
-    if (!adapter->SupportsVblank) {
-        return STATUS_NOT_SUPPORTED;
-    }
-    if (adapter->Bar0Length < (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    /*
-     * Record the vblank interrupt type that dxgkrnl expects and ignore other
-     * non-DMA interrupt types (if any) to avoid misprogramming vblank IRQ state.
-     */
-    if (!adapter->VblankInterruptTypeValid) {
-        if (!EnableInterrupt) {
-            return STATUS_SUCCESS;
+    /* VBlank / vsync interrupt gating. */
+    if (AeroGpuIsVblankControlInterruptType(InterruptType)) {
+        if (!adapter->SupportsVblank) {
+            return STATUS_NOT_SUPPORTED;
         }
+        if (adapter->Bar0Length < (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         /*
-         * Publish the interrupt type with proper ordering so the ISR can safely
-         * consume it without racing a partially-initialized value.
+         * Record the vblank interrupt type that dxgkrnl expects.
+         *
+         * Note: dxgkrnl may call ControlInterrupt during initialization to
+         * disable the interrupt before ever enabling it. Treat that as a no-op.
          */
-        adapter->VblankInterruptType = InterruptType;
-        KeMemoryBarrier();
-        adapter->VblankInterruptTypeValid = TRUE;
-    } else if (InterruptType != adapter->VblankInterruptType) {
+        if (!adapter->VblankInterruptTypeValid) {
+            if (!EnableInterrupt) {
+                return STATUS_SUCCESS;
+            }
+            adapter->VblankInterruptType = InterruptType;
+            KeMemoryBarrier();
+            adapter->VblankInterruptTypeValid = TRUE;
+        } else if (adapter->VblankInterruptType != InterruptType) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+
+            ULONG enable = 0;
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                enable = adapter->IrqEnableMask;
+                if (EnableInterrupt) {
+                    enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+                } else {
+                    enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                }
+                adapter->IrqEnableMask = enable;
+            } else {
+                enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+                if (EnableInterrupt) {
+                    enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+                } else {
+                    enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                }
+            }
+
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+
+            /* Be robust against stale pending bits when disabling. */
+            if (!EnableInterrupt) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            }
+
+            KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+        }
+
         return STATUS_SUCCESS;
     }
 
-    {
-        KIRQL oldIrql;
-        KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-        ULONG enable = 0;
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            enable = adapter->IrqEnableMask;
-            if (EnableInterrupt) {
-                enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
-            } else {
-                enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
-            }
-            adapter->IrqEnableMask = enable;
-        } else {
-            enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
-            if (EnableInterrupt) {
-                enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
-            } else {
-                enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
-            }
-        }
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
-
-        /* Be robust against stale pending bits when disabling. */
-        if (!EnableInterrupt) {
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
-        }
-        KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+#if DBG
+    if (AeroGpuShouldLogUnexpectedControlInterruptType()) {
+        AEROGPU_LOG("ControlInterrupt: unsupported InterruptType=%lu EnableInterrupt=%lu",
+                    (ULONG)InterruptType,
+                    EnableInterrupt ? 1ul : 0ul);
     }
+#endif
 
-    return STATUS_SUCCESS;
+    return STATUS_NOT_SUPPORTED;
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
