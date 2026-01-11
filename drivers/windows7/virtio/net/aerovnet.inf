@@ -17,10 +17,10 @@ CatalogFile = aerovnet.cat
 %Aero% = Aero,NTx86,NTamd64
 
 [Aero.NTx86]
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
+%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
 
 [Aero.NTamd64]
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
+%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
 
 [DestinationDirs]
 AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS

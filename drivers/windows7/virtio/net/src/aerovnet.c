@@ -57,6 +57,18 @@ static __forceinline ULONG AerovNetReceiveIndicationFlagsForCurrentIrql(VOID) {
   return (KeGetCurrentIrql() == DISPATCH_LEVEL) ? NDIS_RECEIVE_FLAGS_DISPATCH_LEVEL : 0;
 }
 
+static USHORT AerovNetReadLe16FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg, _In_ ULONG Offset) {
+  USHORT V;
+
+  V = 0;
+  if (Offset + sizeof(V) > 256u) {
+    return 0;
+  }
+
+  RtlCopyMemory(&V, Cfg + Offset, sizeof(V));
+  return V;
+}
+
 static ULONG AerovNetReadLe32FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg, _In_ ULONG Offset) {
   ULONG V;
 
@@ -90,6 +102,11 @@ static NDIS_STATUS AerovNetValidateVirtioPciCaps(_Inout_ AEROVNET_ADAPTER* Adapt
   BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0, Cfg, sizeof(Cfg));
   if (BytesRead != sizeof(Cfg)) {
     return NDIS_STATUS_FAILURE;
+  }
+
+  if (AerovNetReadLe16FromPciCfg(Cfg, 0x00) != AEROVNET_VENDOR_ID || AerovNetReadLe16FromPciCfg(Cfg, 0x02) != 0x1041 ||
+      Cfg[0x08] != AEROVNET_PCI_REVISION_ID) {
+    return NDIS_STATUS_NOT_SUPPORTED;
   }
 
   // Parse BARs (type 0 header).
@@ -285,20 +302,6 @@ static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_rea
   }
 
   return AerovNetMacEqual(Dst, Adapter->CurrentMac) ? TRUE : FALSE;
-}
-
-static VOID AerovNetGenerateFallbackMac(_Out_writes_(ETH_LENGTH_OF_ADDRESS) UCHAR* Mac) {
-  LARGE_INTEGER T;
-
-  KeQuerySystemTime(&T);
-
-  // Locally administered, unicast.
-  Mac[0] = 0x02;
-  Mac[1] = (UCHAR)(T.LowPart & 0xFF);
-  Mac[2] = (UCHAR)((T.LowPart >> 8) & 0xFF);
-  Mac[3] = (UCHAR)((T.LowPart >> 16) & 0xFF);
-  Mac[4] = (UCHAR)((T.LowPart >> 24) & 0xFF);
-  Mac[5] = (UCHAR)(T.HighPart & 0xFF);
 }
 
 static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ PNDIS_RESOURCE_LIST Resources) {
@@ -734,6 +737,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   PHYSICAL_ADDRESS High;
   PHYSICAL_ADDRESS Skip = {0};
   NTSTATUS NtStatus;
+  BOOLEAN UseIndirect;
 
   High.QuadPart = ~0ull;
 
@@ -780,9 +784,9 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   RtlZeroMemory(Vq->RingVa, Vq->RingBytes);
   Vq->RingPa = (UINT64)MmGetPhysicalAddress(Vq->RingVa).QuadPart;
 
+  UseIndirect = FALSE;
   if (IndirectMaxDesc != 0) {
-    const UINT16 TableCount = QueueSize;
-    size_t IndirectBytes = sizeof(VIRTQ_DESC) * (size_t)TableCount * (size_t)IndirectMaxDesc;
+    size_t IndirectBytes = sizeof(VIRTQ_DESC) * (size_t)QueueSize * (size_t)IndirectMaxDesc;
 
     if (IndirectBytes == 0 || IndirectBytes > 0xFFFFFFFFu) {
       IndirectMaxDesc = 0;
@@ -795,28 +799,27 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
       if (Vq->IndirectVa) {
         RtlZeroMemory(Vq->IndirectVa, Vq->IndirectBytes);
         Vq->IndirectPa = (UINT64)MmGetPhysicalAddress(Vq->IndirectVa).QuadPart;
+        UseIndirect = TRUE;
       } else {
-        // Indirect is negotiated but optional. Fall back to direct descriptors.
+        // Indirect is optional; fall back to direct descriptors.
         Vq->IndirectBytes = 0;
         Vq->IndirectPa = 0;
         IndirectMaxDesc = 0;
       }
     }
-
-    NtStatus = VirtqSplitInit(Vq->Vq,
-                             QueueSize,
-                             FALSE,
-                             TRUE,
-                             Vq->RingVa,
-                              Vq->RingPa,
-                              4,
-                              Vq->IndirectVa,
-                              Vq->IndirectPa,
-                              (Vq->IndirectVa != NULL) ? TableCount : 0,
-                              (Vq->IndirectVa != NULL) ? IndirectMaxDesc : 0);
-  } else {
-    NtStatus = VirtqSplitInit(Vq->Vq, QueueSize, FALSE, TRUE, Vq->RingVa, Vq->RingPa, 4, NULL, 0, 0, 0);
   }
+
+  NtStatus = VirtqSplitInit(Vq->Vq,
+                           QueueSize,
+                           FALSE,
+                           UseIndirect,
+                           Vq->RingVa,
+                           Vq->RingPa,
+                           4,
+                           UseIndirect ? Vq->IndirectVa : NULL,
+                           UseIndirect ? Vq->IndirectPa : 0,
+                           UseIndirect ? QueueSize : 0,
+                           UseIndirect ? IndirectMaxDesc : 0);
 
   if (!NT_SUCCESS(NtStatus)) {
     return NDIS_STATUS_FAILURE;
@@ -842,12 +845,15 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   NDIS_STATUS Status;
   UCHAR Mac[ETH_LENGTH_OF_ADDRESS];
   USHORT LinkStatus;
+  USHORT MaxPairs;
   ULONGLONG RequiredFeatures;
   ULONGLONG WantedFeatures;
   ULONGLONG NegotiatedFeatures;
   UCHAR RevisionId;
   ULONG BytesRead;
   NTSTATUS NtStatus;
+  USHORT RxIndirectMaxDesc;
+  USHORT TxIndirectMaxDesc;
 
   if (!Adapter || !Adapter->Vdev.CommonCfg || !Adapter->Vdev.DeviceCfg || !Adapter->Vdev.IsrStatus || !Adapter->Vdev.NotifyBase) {
     return NDIS_STATUS_FAILURE;
@@ -865,8 +871,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return Status;
   }
 
-  RequiredFeatures = VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
-  WantedFeatures = RequiredFeatures;
+  RequiredFeatures = (ULONGLONG)VIRTIO_NET_F_MAC | (ULONGLONG)VIRTIO_NET_F_STATUS;
+  WantedFeatures = (ULONGLONG)VIRTIO_F_RING_INDIRECT_DESC;
   NegotiatedFeatures = 0;
 
   NtStatus = AeroVirtioNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -900,6 +906,15 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     Adapter->LinkUp = TRUE;
   }
 
+  MaxPairs = 0;
+  NtStatus = AeroVirtioReadDeviceConfig(&Adapter->Vdev, 0x08, &MaxPairs, sizeof(MaxPairs));
+  if (NT_SUCCESS(NtStatus) && MaxPairs != 1) {
+    DbgPrint("aerovnet: max_virtqueue_pairs=%hu (expected 1)\n", MaxPairs);
+  }
+
+  RxIndirectMaxDesc = (Adapter->GuestFeatures & VIRTIO_F_RING_INDIRECT_DESC) ? 2 : 0;
+  TxIndirectMaxDesc = (Adapter->GuestFeatures & VIRTIO_F_RING_INDIRECT_DESC) ? (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1) : 0;
+
   // Virtqueues: 0 = RX, 1 = TX.
   if (AeroVirtioGetNumQueues(&Adapter->Vdev) < 2) {
     AeroVirtioFailDevice(&Adapter->Vdev);
@@ -907,14 +922,14 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  Status = AerovNetSetupVq(Adapter, &Adapter->RxVq, 0, 256, 2);
+  Status = AerovNetSetupVq(Adapter, &Adapter->RxVq, 0, 256, RxIndirectMaxDesc);
   if (Status != NDIS_STATUS_SUCCESS) {
     AeroVirtioFailDevice(&Adapter->Vdev);
     AeroVirtioResetDevice(&Adapter->Vdev);
     return Status;
   }
 
-  Status = AerovNetSetupVq(Adapter, &Adapter->TxVq, 1, 256, (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1));
+  Status = AerovNetSetupVq(Adapter, &Adapter->TxVq, 1, 256, TxIndirectMaxDesc);
   if (Status != NDIS_STATUS_SUCCESS) {
     AeroVirtioFailDevice(&Adapter->Vdev);
     AeroVirtioResetDevice(&Adapter->Vdev);
@@ -1243,8 +1258,8 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     AerovNetFillRxQueueLocked(Adapter);
   }
 
-  // Link state change handling (config interrupt). Keep it cheap: read status only if supported.
-  if ((Isr & 0x2) != 0 && (Adapter->GuestFeatures & VIRTIO_NET_F_STATUS) != 0) {
+  // Link state change handling (config interrupt).
+  if ((Isr & 0x2) != 0) {
     USHORT LinkStatus;
     NTSTATUS NtStatus;
 
@@ -2270,7 +2285,7 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
     return Status;
   }
 
-  // Interrupt registration (legacy INTx).
+  // Interrupt registration (INTx).
   RtlZeroMemory(&Intr, sizeof(Intr));
   Intr.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_INTERRUPT;
   Intr.Header.Revision = NDIS_MINIPORT_INTERRUPT_CHARACTERISTICS_REVISION_1;

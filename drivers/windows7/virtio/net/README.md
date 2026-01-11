@@ -2,12 +2,14 @@
 
 This directory contains a clean-room, spec-based **virtio-net** driver for **Windows 7 SP1** implemented as an **NDIS 6.20** miniport.
 
-> **AERO-W7-VIRTIO contract v1:** this driver binds to the virtio-net **modern-only**
-> PCI ID `PCI\\VEN_1AF4&DEV_1041` and validates `REV_01` at runtime.
+> **AERO-W7-VIRTIO contract v1:** this driver supports **virtio-pci modern** (virtio 1.0+) using a fixed **BAR0 MMIO** layout and **INTx**
+> interrupts and binds to `PCI\\VEN_1AF4&DEV_1041&REV_01`.
 >
 > When using QEMU, pass:
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)
 > - `x-pci-revision=0x01` (ensures the device enumerates as `REV_01`)
+>
+> See `docs/windows7-virtio-driver-contract.md`.
 
 ## What it provides
 
@@ -21,9 +23,8 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 - Virtio handshake: `RESET → ACK → DRIVER → FEATURES_OK → DRIVER_OK`
 - Feature negotiation (minimal):
   - `VIRTIO_F_VERSION_1`
-  - `VIRTIO_F_RING_INDIRECT_DESC`
-  - `VIRTIO_NET_F_MAC`
-  - `VIRTIO_NET_F_STATUS` (link state)
+  - Required: `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS` (link state)
+  - Optional: `VIRTIO_F_RING_INDIRECT_DESC`
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
 - INTx interrupt path (via virtio ISR register; read-to-ack). MSI-X is intentionally disabled; INTx is required.
 - No checksum offloads / TSO / LRO
@@ -51,6 +52,6 @@ For local development you can use either:
 
 Hardware IDs matched by `aerovnet.inf`:
 
-- `PCI\\VEN_1AF4&DEV_1041` (modern-only virtio-net; requires `disable-legacy=on`)
+- `PCI\\VEN_1AF4&DEV_1041&REV_01` (virtio-net modern, Aero contract v1)
 
 Note: This driver uses the virtio-pci **modern MMIO** transport and does not implement the legacy I/O-port register map.

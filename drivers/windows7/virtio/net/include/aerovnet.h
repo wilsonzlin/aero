@@ -17,7 +17,7 @@
 #define AEROVNET_BAR0_MIN_LEN AERO_VIRTIO_PCI_MODERN_BAR0_REQUIRED_SIZE
 
 // Virtio feature bits.
-#define VIRTIO_F_RING_INDIRECT_DESC (1ui64 << 28)
+#define VIRTIO_F_RING_INDIRECT_DESC (1ull << 28)
 
 // Virtio-net feature bits (lower 32 bits).
 #define VIRTIO_NET_F_CSUM      (1u << 0)
@@ -60,6 +60,7 @@ C_ASSERT(sizeof(VIRTIO_NET_HDR) == 10);
 typedef struct _VIRTIO_NET_CONFIG {
   UCHAR Mac[6];
   USHORT Status;
+  USHORT MaxVirtqueuePairs;
 } VIRTIO_NET_CONFIG;
 #pragma pack(pop)
 
