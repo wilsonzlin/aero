@@ -214,6 +214,7 @@ Required behavior:
 
 Practical Win7 note: different WDK/runtime combinations do not always return `DXGI_ERROR_WAS_STILL_DRAWING` directly from `pfnLockCb`/fence waits when `DO_NOT_WAIT` is set. Treat the common "would block" variants as equivalent to still-drawing and return `DXGI_ERROR_WAS_STILL_DRAWING` to the API:
 
+* `HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)`
 * `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`
 * `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`
 * `HRESULT_FROM_NT(STATUS_TIMEOUT)` (`0x10000102`; note that this is `SUCCEEDED()` and must be checked explicitly)

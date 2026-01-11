@@ -513,6 +513,7 @@ Important fields:
 Practical Win7 note: the wait callback does not always report "not ready" as `DXGI_ERROR_WAS_STILL_DRAWING`. Depending on header/runtime vintage, a poll (`Timeout = 0`) may yield one of several timeout/pending HRESULTs; treat them as still-drawing for `Map(DO_NOT_WAIT)`:
 
 - `DXGI_ERROR_WAS_STILL_DRAWING`
+- `HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)`
 - `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`
 - `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`
 - `HRESULT_FROM_NT(STATUS_TIMEOUT)` (`0x10000102`; `SUCCEEDED()`, so don't rely solely on `FAILED(hr)`)
