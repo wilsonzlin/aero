@@ -118,6 +118,32 @@ func TestCredentialFromRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("api_key accepts X-API-Key header", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		req.Header.Set("X-API-Key", "k")
+
+		cred, err := CredentialFromRequest(config.AuthModeAPIKey, req)
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if cred != "k" {
+			t.Fatalf("cred=%q, want %q", cred, "k")
+		}
+	})
+
+	t.Run("api_key accepts Authorization apikey header", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		req.Header.Set("Authorization", "ApiKey k")
+
+		cred, err := CredentialFromRequest(config.AuthModeAPIKey, req)
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if cred != "k" {
+			t.Fatalf("cred=%q, want %q", cred, "k")
+		}
+	})
+
 	t.Run("api_key accepts Authorization bearer header", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
 		req.Header.Set("Authorization", "Bearer k")
