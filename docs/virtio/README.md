@@ -37,7 +37,7 @@ Reference code in this repo:
   - `drivers/windows7/virtio-snd/src/virtiosnd_backend_virtio.c` (experimental backend; not compiled by default)
 
 Header policy: `drivers/windows/virtio/common/virtqueue_split.h` is the **only**
-header named `virtqueue_split.h` in-tree. The Win7 portable header is named
+header named `virtqueue_split.h` in-tree. The legacy portable header is named
 `virtqueue_split_legacy.h` to avoid include-path ambiguity.
 
 With this policy in place, every in-tree `#include "virtqueue_split.h"` resolves
