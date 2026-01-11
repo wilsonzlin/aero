@@ -17,13 +17,13 @@ CatalogFile = aero_virtio_net.cat
 %Aero% = Aero,NTx86,NTamd64
 
 [Aero.NTx86]
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
+%AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
 
 [Aero.NTamd64]
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
+%AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
 
 [DestinationDirs]
-AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS
+AeroVirtioNet.CopyFiles = 12  ; DIRID_DRIVERS
 
 [SourceDisksNames]
 1 = %DiskName%,,,
@@ -31,34 +31,34 @@ AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS
 [SourceDisksFiles]
 aero_virtio_net.sys = 1
 
-[AeroVNet_Install.NT]
+[AeroVirtioNet_Install.NT]
 Characteristics = 0x84 ; NCF_PHYSICAL | NCF_HAS_UI
 BusType         = 5    ; PCI
-CopyFiles       = AeroVNet.CopyFiles
-AddReg          = AeroVNet.AddReg
+CopyFiles       = AeroVirtioNet.CopyFiles
+AddReg          = AeroVirtioNet.AddReg
 
-[AeroVNet_Install.NT.Services]
-AddService = aero_virtio_net, 2, AeroVNet.Service, AeroVNet.EventLog
+[AeroVirtioNet_Install.NT.Services]
+AddService = aero_virtio_net, 2, AeroVirtioNet.Service, AeroVirtioNet.EventLog
 
-[AeroVNet.CopyFiles]
+[AeroVirtioNet.CopyFiles]
 aero_virtio_net.sys,,,2
 
-[AeroVNet.Service]
-DisplayName    = %AeroVNet.ServiceDesc%
+[AeroVirtioNet.Service]
+DisplayName    = %AeroVirtioNet.ServiceDesc%
 ServiceType    = 1 ; SERVICE_KERNEL_DRIVER
 StartType      = 3 ; SERVICE_DEMAND_START
 ErrorControl   = 1 ; SERVICE_ERROR_NORMAL
 ServiceBinary  = %12%\aero_virtio_net.sys
 LoadOrderGroup = NDIS
 
-[AeroVNet.EventLog]
-AddReg = AeroVNet.EventLog.AddReg
+[AeroVirtioNet.EventLog]
+AddReg = AeroVirtioNet.EventLog.AddReg
 
-[AeroVNet.EventLog.AddReg]
+[AeroVirtioNet.EventLog.AddReg]
 HKR,,EventMessageFile,0x20000,"%SystemRoot%\System32\IoLogMsg.dll"
 HKR,,TypesSupported,0x10001,7
 
-[AeroVNet.AddReg]
+[AeroVirtioNet.AddReg]
 ; Bind to our service
 HKR, Ndi, Service, 0, "aero_virtio_net"
 ; NDIS 6.x miniport
@@ -68,5 +68,5 @@ HKR, Ndi\Interfaces, LowerRange, 0, "ethernet"
 [Strings]
 Aero = "Aero Project"
 DiskName = "Aero VirtIO Network Driver"
-AeroVNet.DeviceDesc = "Aero VirtIO Ethernet Adapter"
-AeroVNet.ServiceDesc = "Aero VirtIO Ethernet Adapter"
+AeroVirtioNet.DeviceDesc = "Aero VirtIO Ethernet Adapter"
+AeroVirtioNet.ServiceDesc = "Aero VirtIO Ethernet Adapter"
