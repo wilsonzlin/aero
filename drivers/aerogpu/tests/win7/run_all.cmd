@@ -61,6 +61,8 @@ call :run_test d3d9ex_shared_allocations !TEST_ARGS!
 call :run_test d3d10_triangle !TEST_ARGS!
 call :run_test d3d10_1_triangle !TEST_ARGS!
 call :run_test d3d11_triangle !TEST_ARGS!
+call :run_test d3d11_map_dynamic_buffer_sanity !TEST_ARGS!
+call :run_test d3d11_update_subresource_texture_sanity !TEST_ARGS!
 call :run_test readback_sanity !TEST_ARGS!
 
 echo.
