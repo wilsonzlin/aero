@@ -30,9 +30,20 @@
 /* Virtio feature bits (64-bit modern negotiation). */
 #define VIRTIO_F_RING_INDIRECT_DESC (1ui64 << 28)
 #define VIRTIO_F_RING_EVENT_IDX (1ui64 << 29)
+#define VIRTIO_F_RING_PACKED (1ui64 << 34)
 
 /* virtio-net feature bits (low 32). */
+#define VIRTIO_NET_F_CSUM (1ui64 << 0)
+#define VIRTIO_NET_F_GUEST_CSUM (1ui64 << 1)
 #define VIRTIO_NET_F_MAC (1ui64 << 5)
+#define VIRTIO_NET_F_GUEST_TSO4 (1ui64 << 7)
+#define VIRTIO_NET_F_GUEST_TSO6 (1ui64 << 8)
+#define VIRTIO_NET_F_GUEST_ECN (1ui64 << 9)
+#define VIRTIO_NET_F_GUEST_UFO (1ui64 << 10)
+#define VIRTIO_NET_F_HOST_TSO4 (1ui64 << 11)
+#define VIRTIO_NET_F_HOST_TSO6 (1ui64 << 12)
+#define VIRTIO_NET_F_HOST_ECN (1ui64 << 13)
+#define VIRTIO_NET_F_HOST_UFO (1ui64 << 14)
 #define VIRTIO_NET_F_MRG_RXBUF (1ui64 << 15)
 #define VIRTIO_NET_F_STATUS (1ui64 << 16)
 #define VIRTIO_NET_F_CTRL_VQ (1ui64 << 17)

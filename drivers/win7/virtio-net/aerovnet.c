@@ -4,6 +4,8 @@
 #include <wdmguid.h>
 #undef INITGUID
 
+#include "../virtio/virtio-core/portable/virtio_pci_aero_layout.h"
+
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
 
 static const NDIS_OID g_SupportedOids[] = {
@@ -488,26 +490,20 @@ static NTSTATUS AerovNetInitModernTransport(_Inout_ AEROVNET_ADAPTER* Adapter)
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
-    /* Contract checks: fixed notify multiplier and BAR0-only layout. */
-    if (caps.notify_off_multiplier != 4u) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
+    /* Contract v1: fixed BAR0 MMIO capability layout. */
+    {
+        virtio_pci_bar_info_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+        virtio_pci_aero_layout_validate_result_t layoutRes;
 
-    if (caps.common_cfg.bar != 0 || caps.notify_cfg.bar != 0 || caps.isr_cfg.bar != 0 || caps.device_cfg.bar != 0) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
+        RtlZeroMemory(bars, sizeof(bars));
+        bars[0].present = 1;
+        bars[0].is_memory = 1;
+        bars[0].length = (uint64_t)Adapter->Bar0Length;
 
-    if ((ULONGLONG)caps.common_cfg.offset + (ULONGLONG)caps.common_cfg.length > (ULONGLONG)Adapter->Bar0Length) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-    if ((ULONGLONG)caps.notify_cfg.offset + (ULONGLONG)caps.notify_cfg.length > (ULONGLONG)Adapter->Bar0Length) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-    if ((ULONGLONG)caps.isr_cfg.offset + (ULONGLONG)caps.isr_cfg.length > (ULONGLONG)Adapter->Bar0Length) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-    if ((ULONGLONG)caps.device_cfg.offset + (ULONGLONG)caps.device_cfg.length > (ULONGLONG)Adapter->Bar0Length) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
+        layoutRes = virtio_pci_validate_aero_pci_layout(&caps, bars, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+        if (layoutRes != VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK) {
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
     }
 
     Adapter->CommonCfg = (volatile virtio_pci_common_cfg*)(Adapter->Bar0Va + caps.common_cfg.offset);
@@ -573,10 +569,16 @@ static UINT64 AerovNetVirtioReadDeviceFeatures(_Inout_ AEROVNET_ADAPTER* Adapter
         return 0;
     }
 
+    /*
+     * Selector registers are global state and must be serialized (contract §1.5.0).
+     * Use the adapter lock since it is already used to serialize all device access.
+     */
+    NdisAcquireSpinLock(&Adapter->Lock);
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->device_feature_select, 0);
     lo = READ_REGISTER_ULONG(&Adapter->CommonCfg->device_feature);
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->device_feature_select, 1);
     hi = READ_REGISTER_ULONG(&Adapter->CommonCfg->device_feature);
+    NdisReleaseSpinLock(&Adapter->Lock);
 
     return ((UINT64)hi << 32) | (UINT64)lo;
 }
@@ -593,10 +595,13 @@ static VOID AerovNetVirtioWriteDriverFeatures(_Inout_ AEROVNET_ADAPTER* Adapter,
     lo = (UINT32)(Features & 0xFFFFFFFFull);
     hi = (UINT32)((Features >> 32) & 0xFFFFFFFFull);
 
+    /* Selector registers are global state and must be serialized (contract §1.5.0). */
+    NdisAcquireSpinLock(&Adapter->Lock);
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->driver_feature_select, 0);
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->driver_feature, lo);
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->driver_feature_select, 1);
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->driver_feature, hi);
+    NdisReleaseSpinLock(&Adapter->Lock);
 }
 
 static NTSTATUS AerovNetVirtioReadDeviceConfigStable(
@@ -1104,15 +1109,18 @@ static NDIS_STATUS AerovNetSetupQueue(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_
     Q->QueueIndex = QueueIndex;
 
     /* Queue selector operations must be serialized. We use the adapter lock. */
+    NdisAcquireSpinLock(&Adapter->Lock);
     WRITE_REGISTER_USHORT(&Adapter->CommonCfg->queue_select, QueueIndex);
     (VOID)READ_REGISTER_USHORT(&Adapter->CommonCfg->queue_select);
 
     qsz = READ_REGISTER_USHORT(&Adapter->CommonCfg->queue_size);
+    notifyOff = READ_REGISTER_USHORT(&Adapter->CommonCfg->queue_notify_off);
+    NdisReleaseSpinLock(&Adapter->Lock);
+
     if (qsz != AEROVNET_QUEUE_SIZE) {
         return NDIS_STATUS_NOT_SUPPORTED;
     }
 
-    notifyOff = READ_REGISTER_USHORT(&Adapter->CommonCfg->queue_notify_off);
     if (notifyOff != QueueIndex) {
         return NDIS_STATUS_NOT_SUPPORTED;
     }
@@ -1178,6 +1186,7 @@ static NDIS_STATUS AerovNetSetupQueue(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_
     }
 
     /* Program queue addresses and enable. */
+    NdisAcquireSpinLock(&Adapter->Lock);
     WRITE_REGISTER_USHORT(&Adapter->CommonCfg->queue_select, QueueIndex);
     (VOID)READ_REGISTER_USHORT(&Adapter->CommonCfg->queue_select);
 
@@ -1192,7 +1201,11 @@ static NDIS_STATUS AerovNetSetupQueue(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->queue_used_lo, (ULONG)(Q->Vq->used_pa & 0xFFFFFFFFull));
     WRITE_REGISTER_ULONG(&Adapter->CommonCfg->queue_used_hi, (ULONG)((Q->Vq->used_pa >> 32) & 0xFFFFFFFFull));
 
+    /* Ensure ring addresses are visible before enabling the queue. */
+    KeMemoryBarrier();
+
     WRITE_REGISTER_USHORT(&Adapter->CommonCfg->queue_enable, 1);
+    NdisReleaseSpinLock(&Adapter->Lock);
 
     return NDIS_STATUS_SUCCESS;
 }
@@ -1225,6 +1238,24 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter)
     if ((Adapter->HostFeatures & requiredFeatures) != requiredFeatures) {
         AerovNetVirtioFailDevice(Adapter);
         return NDIS_STATUS_NOT_SUPPORTED;
+    }
+
+    /*
+     * Contract v1: devices must not advertise features outside the supported subset.
+     * Refuse initialization to catch contract violations early.
+     */
+    {
+        const UINT64 forbiddenFeatures =
+            VIRTIO_F_RING_EVENT_IDX | VIRTIO_F_RING_PACKED |
+            VIRTIO_NET_F_MRG_RXBUF | VIRTIO_NET_F_CTRL_VQ |
+            VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM |
+            VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6 | VIRTIO_NET_F_GUEST_ECN | VIRTIO_NET_F_GUEST_UFO |
+            VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_HOST_UFO;
+
+        if ((Adapter->HostFeatures & forbiddenFeatures) != 0) {
+            AerovNetVirtioFailDevice(Adapter);
+            return NDIS_STATUS_NOT_SUPPORTED;
+        }
     }
 
     /*
