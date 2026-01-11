@@ -751,7 +751,13 @@ struct AeroGpuSampler {
 
 struct AeroGpuImmediateContext;
 
+// Used to make DestroyDevice11 idempotent in the face of create-path failures.
+// (The Win7 runtime typically does not invoke DestroyDevice on a failed CreateDevice,
+// but keeping this crash-proof is cheap.)
+constexpr uint32_t kAeroGpuDeviceMagic = 0x31444741u; // "AGD1"
+
 struct AeroGpuDevice {
+  uint32_t magic = kAeroGpuDeviceMagic;
   AeroGpuAdapter* adapter = nullptr;
   std::mutex mutex;
 
@@ -1895,10 +1901,19 @@ void AEROGPU_APIENTRY DestroyDevice11(D3D11DDI_HDEVICE hDevice) {
     return;
   }
 
+  uint32_t magic = 0;
+  std::memcpy(&magic, hDevice.pDrvPrivate, sizeof(magic));
+  if (magic != kAeroGpuDeviceMagic) {
+    return;
+  }
+
   auto* dev = FromHandle<D3D11DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     return;
   }
+
+  // Mark destroyed early so a re-entrant or duplicate DestroyDevice call becomes a no-op.
+  dev->magic = 0;
 
   // Immediate context is owned by the device allocation (allocated via new below).
   if (dev->immediate) {
