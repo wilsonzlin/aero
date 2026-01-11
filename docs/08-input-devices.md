@@ -836,14 +836,14 @@ Virtio-input uses two virtqueues:
 
 For Aero, we should handle LED output events even if we don’t initially surface them to the browser UI. Keeping the round-trip correct avoids subtle guest driver behavior differences (e.g., toggling Caps Lock producing output reports that must be acknowledged).
 
-### Recommended device model: 2 virtio-input devices
+### Recommended device model: multi-function PCI virtio-input (2 functions)
 
-Emulate **two separate virtio-input devices**:
+Contract v1 exposes virtio-input as a **single multi-function PCI device** with two virtio-input **functions**:
 
-1. A virtio-input **keyboard** that maps cleanly to a single HID keyboard top-level collection.
-2. A virtio-input **mouse** (relative) that maps cleanly to a single HID mouse top-level collection.
+1. Function 0: virtio-input **keyboard** (`SUBSYS 0x0010`, `header_type = 0x80` to advertise multi-function)
+2. Function 1: virtio-input **mouse** (relative pointer, `SUBSYS 0x0011`)
 
-This avoids composite HID device complexity and lets Windows naturally bind the inbox `kbdhid.sys` and `mouhid.sys` clients.
+This still avoids composite HID device complexity and lets Windows naturally bind the inbox `kbdhid.sys` and `mouhid.sys` clients, while keeping the PCI topology stable for driver matching.
 
 ### Testing notes
 

@@ -9,12 +9,12 @@ See also:
 - [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide for Windows 7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
 
-This repo implements **two virtio-input devices**:
+This repo implements virtio-input as a **single multi-function PCI device** (AERO-W7-VIRTIO contract v1):
 
-- `Aero Virtio Keyboard`
-- `Aero Virtio Mouse` (relative pointer)
+- Function 0: `Aero Virtio Keyboard` (`SUBSYS 0x0010`, `header_type = 0x80`)
+- Function 1: `Aero Virtio Mouse` (relative pointer, `SUBSYS 0x0011`)
 
-Each device is a standard virtio 1.1 device (`VIRTIO_ID_INPUT`).
+Each function is a standard virtio 1.1 device (`VIRTIO_ID_INPUT`) with its own virtqueues.
 
 ---
 

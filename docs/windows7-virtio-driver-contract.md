@@ -658,10 +658,10 @@ Receive behavior (device):
 
 ### 3.3 virtio-input (keyboard/mouse)
 
-Contract v1 exposes **two virtio-input PCI functions**:
+Contract v1 exposes virtio-input as a **single multi-function PCI device** with **two PCI functions**:
 
-- one keyboard virtio-input device
-- one mouse virtio-input device
+- Function 0: one keyboard virtio-input device (**must** advertise multi-function via `header_type = 0x80`)
+- Function 1: one mouse virtio-input device
 
 Both share the same Vendor/Device ID (`0x1AF4:0x1052`) and are distinguished by subsystem ID and config strings.
 

@@ -1,6 +1,6 @@
 use super::capabilities::VendorSpecificCapability;
 use super::irq_router::{PciIntxRouter, PciIntxRouterConfig};
-use super::{PciBdf, PciConfigSpace, PciInterruptPin};
+use super::{PciBdf, PciBus, PciConfigSpace, PciDevice, PciInterruptPin, PciPlatform};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciClassCode {
@@ -143,6 +143,28 @@ impl PciDeviceProfile {
         router.configure_device_intx(self.bdf, self.interrupt_pin, &mut config);
 
         config
+    }
+}
+
+struct ProfiledPciDevice {
+    config: PciConfigSpace,
+}
+
+impl ProfiledPciDevice {
+    fn new(profile: PciDeviceProfile) -> Self {
+        Self {
+            config: profile.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for ProfiledPciDevice {
+    fn config(&self) -> &PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut PciConfigSpace {
+        &mut self.config
     }
 }
 
@@ -441,6 +463,16 @@ pub const CANONICAL_IO_DEVICES: &[PciDeviceProfile] = &[
     VIRTIO_INPUT_MOUSE,
     VIRTIO_SND,
 ];
+
+/// Builds a PCI bus containing the minimal chipset devices (host bridge + ISA/LPC bridge) plus the
+/// canonical IO device set used by Aero's Windows driver contract.
+pub fn build_canonical_io_bus() -> PciBus {
+    let mut bus = PciPlatform::build_bus();
+    for profile in CANONICAL_IO_DEVICES {
+        bus.add_device(profile.bdf, Box::new(ProfiledPciDevice::new(*profile)));
+    }
+    bus
+}
 
 pub fn pci_dump(profiles: &[PciDeviceProfile]) -> String {
     let mut rows: Vec<PciDeviceProfile> = profiles.to_vec();
