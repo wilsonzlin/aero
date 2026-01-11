@@ -160,4 +160,3 @@ impl UhciControllerBridge {
         self.irq.asserted
     }
 }
-
