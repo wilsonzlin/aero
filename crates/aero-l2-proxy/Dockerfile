@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 
 ARG RUST_VERSION=1.92.0
+ARG GIT_SHA=dev
+ARG VERSION=$GIT_SHA
+ARG BUILD_TIMESTAMP=unknown
 FROM rust:${RUST_VERSION}-bookworm AS builder
 
 WORKDIR /workspace
@@ -16,6 +19,10 @@ COPY xtask ./xtask
 RUN cargo build --release --locked -p aero-l2-proxy
 
 FROM debian:bookworm-slim AS runtime
+
+ARG GIT_SHA=dev
+ARG VERSION=$GIT_SHA
+ARG BUILD_TIMESTAMP=unknown
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -34,6 +41,9 @@ WORKDIR /app
 COPY --from=builder /workspace/target/release/aero-l2-proxy /usr/local/bin/aero-l2-proxy
 
 ENV AERO_L2_PROXY_LISTEN_ADDR=0.0.0.0:8090
+ENV AERO_L2_PROXY_VERSION=$VERSION
+ENV AERO_L2_PROXY_GIT_SHA=$GIT_SHA
+ENV AERO_L2_PROXY_BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 
 EXPOSE 8090
 

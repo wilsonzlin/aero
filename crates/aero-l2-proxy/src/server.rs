@@ -113,6 +113,7 @@ fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/version", get(version))
         .route("/metrics", get(metrics))
         .route("/l2", get(l2_ws_handler))
         .with_state(state)
@@ -124,6 +125,42 @@ async fn healthz() -> impl IntoResponse {
 
 async fn readyz() -> impl IntoResponse {
     StatusCode::OK
+}
+
+async fn version() -> impl IntoResponse {
+    let version = std::env::var("AERO_L2_PROXY_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+    let git_sha = std::env::var("AERO_L2_PROXY_GIT_SHA")
+        .or_else(|_| std::env::var("GIT_SHA"))
+        .unwrap_or_else(|_| "dev".to_string());
+    let built_at = std::env::var("AERO_L2_PROXY_BUILD_TIMESTAMP")
+        .or_else(|_| std::env::var("BUILD_TIMESTAMP"))
+        .unwrap_or_default();
+
+    // Keep dependencies minimal: emit a tiny JSON object without pulling in serde/serde_json.
+    fn escape_json_string(input: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        for ch in input.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    let body = format!(
+        "{{\"version\":\"{}\",\"gitSha\":\"{}\",\"builtAt\":\"{}\"}}",
+        escape_json_string(&version),
+        escape_json_string(&git_sha),
+        escape_json_string(&built_at)
+    );
+
+    ([(axum::http::header::CONTENT_TYPE, "application/json")], body)
 }
 
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {

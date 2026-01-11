@@ -87,6 +87,25 @@ async fn metrics_increment_after_frames() {
 }
 
 #[tokio::test]
+async fn version_endpoint_returns_json() {
+    let server = TestServer::start(None).await;
+
+    let body = reqwest::get(server.http_url("/version"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(body.trim_start().starts_with('{'), "expected JSON object, got: {body}");
+    assert!(body.contains("\"version\""), "missing version field: {body}");
+    assert!(body.contains("\"gitSha\""), "missing gitSha field: {body}");
+    assert!(body.contains("\"builtAt\""), "missing builtAt field: {body}");
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn capture_creates_non_empty_file() {
     let dir = tempfile::tempdir().unwrap();
     let server = TestServer::start(Some(dir.path().to_path_buf()), None).await;

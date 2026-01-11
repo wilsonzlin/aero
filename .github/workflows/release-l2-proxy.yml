@@ -38,6 +38,20 @@ jobs:
           fi
           echo "rust_version=${rust_version}" >> "$GITHUB_OUTPUT"
 
+      - name: Compute build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "BUILD_TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # Prefer semver without the leading v inside the container.
+            echo "AERO_L2_PROXY_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            # For non-tag publishes (main + workflow_dispatch), keep the image self-describing.
+            echo "AERO_L2_PROXY_VERSION=sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -72,4 +86,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             RUST_VERSION=${{ steps.rust.outputs.rust_version }}
-
+            VERSION=${{ env.AERO_L2_PROXY_VERSION }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ env.BUILD_TIMESTAMP }}
