@@ -232,7 +232,8 @@ runtime does not provide an AeroGPU private-data blob. See
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
-**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` to exercise this exact cross-process “create shared → open shared” path. Use `--validate-sharing` (or `--dump`) to additionally validate pixel sharing via readback.
+**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` to exercise this exact cross-process “create shared → open shared” path.
+By default it validates cross-process pixel sharing via readback; pass `--no-validate-sharing` to focus on open + submit only (`--dump` always validates).
 
 ##### MVP limitation: shared surfaces must be single-allocation
 

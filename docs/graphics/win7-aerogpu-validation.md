@@ -271,7 +271,8 @@ For quick guest-side sanity checks:
 * DWM pacing (end-to-end compositor path): `drivers/aerogpu/tests/win7/dwm_flush_pacing`
 * Direct vblank interrupt/wait path (independent of DWM): `drivers/aerogpu/tests/win7/wait_vblank_pacing` (targets VidPn source 0; tune hang detection via `--wait-timeout-ms`)
 * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
-* Cross-process shared surface open (validates `DxgkDdiOpenAllocation` path): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` (pass `--validate-sharing` or `--dump` to also validate pixel sharing)
+* Cross-process shared surface open (validates `DxgkDdiOpenAllocation` path): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface`
+  * Validates cross-process pixel sharing via readback by default; pass `--no-validate-sharing` to focus on open + submit only (`--dump` always validates).
 
 ### 3.1 Recommended options (ranked by bring-up stability)
 
