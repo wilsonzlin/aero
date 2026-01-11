@@ -504,11 +504,15 @@ def main() -> int:
         try:
             pos = 0
             tail = b""
+            saw_virtio_blk_pass = False
+            saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
             saw_virtio_input_fail = False
             saw_virtio_snd_pass = False
             saw_virtio_snd_skip = False
             saw_virtio_snd_fail = False
+            saw_virtio_net_pass = False
+            saw_virtio_net_fail = False
             require_per_test_markers = not args.virtio_transitional
             deadline = time.monotonic() + args.timeout_seconds
 
@@ -523,6 +527,10 @@ def main() -> int:
                     if len(tail) > 131072:
                         tail = tail[-131072:]
 
+                    if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
+                        saw_virtio_blk_pass = True
+                    if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
+                        saw_virtio_blk_fail = True
                     if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                         saw_virtio_input_pass = True
                     if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
@@ -533,11 +541,31 @@ def main() -> int:
                         saw_virtio_snd_skip = True
                     if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
                         saw_virtio_snd_fail = True
+                    if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
+                        saw_virtio_net_pass = True
+                    if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
+                        saw_virtio_net_fail = True
 
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                         if require_per_test_markers:
                             # Require per-test markers so older selftest binaries cannot
                             # accidentally pass the host harness.
+                            if saw_virtio_blk_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-blk test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_blk_pass:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but did not emit virtio-blk test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                             if saw_virtio_input_fail:
                                 print(
                                     "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
@@ -601,6 +629,22 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                            if saw_virtio_net_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-net test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_net_pass:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but did not emit virtio-net test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         elif args.enable_virtio_snd:
                             # Transitional mode: don't require virtio-input markers, but if the caller
                             # explicitly attached virtio-snd, require the virtio-snd marker to avoid
@@ -643,6 +687,10 @@ def main() -> int:
                     chunk2, pos = _read_new_bytes(serial_log, pos)
                     if chunk2:
                         tail += chunk2
+                        if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
+                            saw_virtio_blk_pass = True
+                        if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
+                            saw_virtio_blk_fail = True
                         if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                             saw_virtio_input_pass = True
                         if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
@@ -653,8 +701,28 @@ def main() -> int:
                             saw_virtio_snd_skip = True
                         if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
                             saw_virtio_snd_fail = True
+                        if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
+                            saw_virtio_net_pass = True
+                        if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
+                            saw_virtio_net_fail = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                             if require_per_test_markers:
+                                if saw_virtio_blk_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-blk test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_blk_pass:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but did not emit virtio-blk test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                                 if saw_virtio_input_fail:
                                     print(
                                         "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
@@ -718,6 +786,22 @@ def main() -> int:
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
+                                if saw_virtio_net_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-net test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_net_pass:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but did not emit virtio-net test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             elif args.enable_virtio_snd:
                                 if saw_virtio_snd_fail:
                                     print(

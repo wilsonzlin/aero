@@ -219,8 +219,10 @@ only if you explicitly want the base image to be mutated.
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
 
 ### Why `x-pci-revision=0x01`?
 
