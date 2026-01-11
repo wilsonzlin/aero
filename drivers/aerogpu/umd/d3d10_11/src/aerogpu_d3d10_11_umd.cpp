@@ -4072,6 +4072,27 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
   const uint32_t data_size = static_cast<uint32_t>(pGetCaps->DataSize);
   CAPS_LOG("aerogpu-d3d10_11: GetCaps11 type=%u size=%u\n", (unsigned)type, (unsigned)data_size);
 
+  auto log_unknown_type_once = [&](uint32_t unknown_type) {
+    if (!aerogpu_d3d10_11_log_enabled()) {
+      return;
+    }
+
+    // Track a small, common range of D3D11DDICAPS_TYPE values without any heap
+    // allocations (UMD-friendly).
+    static std::atomic<uint64_t> logged[4] = {}; // 256 bits.
+    if (unknown_type < 256) {
+      const uint32_t idx = unknown_type / 64;
+      const uint64_t bit = 1ull << (unknown_type % 64);
+      const uint64_t prev = logged[idx].fetch_or(bit, std::memory_order_relaxed);
+      if ((prev & bit) != 0) {
+        return;
+      }
+    }
+    AEROGPU_D3D10_11_LOG("GetCaps11 unknown type=%u (size=%u) -> zero-fill + S_OK",
+                         (unsigned)unknown_type,
+                         (unsigned)data_size);
+  };
+
   // Mirror the non-WDK bring-up behavior: unknown cap types are treated as
   // "supported but with everything disabled" to avoid runtime crashes.
   //
@@ -4152,9 +4173,7 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
     }
 
     default:
-      AEROGPU_D3D10_11_LOG("GetCaps11 unknown type=%u (size=%u) -> zero-fill + S_OK",
-                           (unsigned)type,
-                           (unsigned)data_size);
+      log_unknown_type_once(type);
       std::memset(data, 0, data_size);
       return S_OK;
   }
