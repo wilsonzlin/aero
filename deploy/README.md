@@ -183,7 +183,8 @@ cp deploy/.env.example deploy/.env
   - Optional token required by `crates/aero-l2-proxy` during the WebSocket upgrade to `/l2`.
   - If set, clients must provide the token via:
     - `?token=<value>` query param, or
-    - `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`).
+    - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
+      `aero-l2-tunnel-v1`).
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)
@@ -442,8 +443,8 @@ WebSocket:
 - The connection uses subprotocol: `aero-l2-tunnel-v1`
 
 Auth note: `/l2` enforces an Origin allowlist by default. For internet-exposed deployments, set
-`AERO_L2_TOKEN` and provide it as `?token=...` (or via `aero-l2-token.<token>` in
-`Sec-WebSocket-Protocol`).
+`AERO_L2_TOKEN` and provide it as `?token=...` (or offer an additional `Sec-WebSocket-Protocol`
+entry `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`).
 
 Endpoint discovery note: browser clients should treat the gateway as the canonical bootstrap API and
 avoid hardcoding `/l2`. The `POST /session` response includes `endpoints.l2` (a same-origin path)
@@ -452,8 +453,8 @@ paths or protocol constants.
 
 For cross-origin deployments or non-browser clients, `aero-l2-proxy` can alternatively enforce
 token-based auth (JWT or API key; see `deploy/.env.example`). For internal bridges, prefer
-forwarding the credential via `Sec-WebSocket-Protocol: aero-l2-token.<token>` to avoid putting
-secrets in URLs.
+forwarding the credential via an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<token>`
+(alongside `aero-l2-tunnel-v1`) to avoid putting secrets in URLs.
 
 This endpoint is intended for the “Option C” architecture (tunneling Ethernet frames to a server-side
 network stack / NAT / policy layer).
