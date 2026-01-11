@@ -117,19 +117,17 @@ impl<Cpu> WasmtimeBackend<Cpu> {
     }
 
     fn sync_cpu_to_wasm(&mut self, cpu: &CpuState) {
-        let mut buf = vec![0u8; abi::CPU_STATE_SIZE as usize];
+        let mem = self.memory.data_mut(&mut self.store);
+        let base = self.cpu_ptr as usize;
         for (i, v) in cpu.gpr.iter().enumerate() {
-            write_u64_le(&mut buf, abi::CPU_GPR_OFF[i] as usize, *v);
+            write_u64_le(mem, base + (abi::CPU_GPR_OFF[i] as usize), *v);
         }
-        write_u64_le(&mut buf, abi::CPU_RIP_OFF as usize, cpu.rip);
+        write_u64_le(mem, base + (abi::CPU_RIP_OFF as usize), cpu.rip);
         write_u64_le(
-            &mut buf,
-            abi::CPU_RFLAGS_OFF as usize,
+            mem,
+            base + (abi::CPU_RFLAGS_OFF as usize),
             cpu.rflags | abi::RFLAGS_RESERVED1,
         );
-        self.memory
-            .write(&mut self.store, self.cpu_ptr as usize, &buf)
-            .expect("write CpuState into linear memory");
 
         // Keep the Tier-1 JIT context fields initialized even when running with the minimal
         // `aero_cpu::CpuState` prefix.
@@ -137,8 +135,6 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         // The inline-TLB fast-path expects these fields at offsets derived from the
         // `aero_cpu_core::state::CpuState` ABI; we treat the region between the minimal CpuState
         // and the JIT context as reserved padding.
-        let mem = self.memory.data_mut(&mut self.store);
-        let base = self.cpu_ptr as usize;
         mem[base + JIT_CTX_RAM_BASE_OFFSET as usize..base + JIT_CTX_RAM_BASE_OFFSET as usize + 8]
             .copy_from_slice(&0u64.to_le_bytes()); // guest RAM begins at linear address 0
         mem[base + JIT_CTX_TLB_SALT_OFFSET as usize..base + JIT_CTX_TLB_SALT_OFFSET as usize + 8]
@@ -146,15 +142,14 @@ impl<Cpu> WasmtimeBackend<Cpu> {
     }
 
     fn sync_cpu_from_wasm(&mut self, cpu: &mut CpuState) {
-        let mut buf = vec![0u8; abi::CPU_STATE_SIZE as usize];
-        self.memory
-            .read(&self.store, self.cpu_ptr as usize, &mut buf)
-            .expect("read CpuState from linear memory");
+        let buf = self.memory.data(&self.store);
+        let base = self.cpu_ptr as usize;
         for (i, slot) in cpu.gpr.iter_mut().enumerate() {
-            *slot = read_u64_le(&buf, abi::CPU_GPR_OFF[i] as usize);
+            *slot = read_u64_le(buf, base + (abi::CPU_GPR_OFF[i] as usize));
         }
-        cpu.rip = read_u64_le(&buf, abi::CPU_RIP_OFF as usize);
-        cpu.rflags = read_u64_le(&buf, abi::CPU_RFLAGS_OFF as usize) | abi::RFLAGS_RESERVED1;
+        cpu.rip = read_u64_le(buf, base + (abi::CPU_RIP_OFF as usize));
+        cpu.rflags =
+            read_u64_le(buf, base + (abi::CPU_RFLAGS_OFF as usize)) | abi::RFLAGS_RESERVED1;
     }
 }
 
