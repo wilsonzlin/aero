@@ -26,7 +26,7 @@ pub use protocol::{
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
 };
 
-use protocol::{decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdDecodeError};
+use protocol::{decode_cmd_stream_header_le, AerogpuCmdDecodeError, AerogpuCmdStreamIter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AeroGpuBlendState {
@@ -462,9 +462,11 @@ pub fn parse_cmd_stream(
 
     let mut cmds = Vec::new();
     let mut offset = AeroGpuCmdStreamHeader::SIZE_BYTES;
-    while offset < size_bytes_usize {
-        let cmd_hdr =
-            decode_cmd_hdr_le(&bytes[offset..size_bytes_usize]).map_err(map_cmd_hdr_error)?;
+    let iter = AerogpuCmdStreamIter::new(&bytes[..size_bytes_usize])
+        .map_err(|err| map_cmd_stream_header_error(bytes, err))?;
+    for pkt in iter {
+        let pkt = pkt.map_err(map_cmd_hdr_error)?;
+        let cmd_hdr = pkt.hdr;
         let cmd_size_usize = cmd_hdr.size_bytes as usize;
         let end = offset.checked_add(cmd_size_usize).ok_or(
             AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_hdr.size_bytes),
@@ -474,7 +476,7 @@ pub fn parse_cmd_stream(
         }
 
         let packet = &bytes[offset..end];
-        let payload = &bytes[offset + AeroGpuCmdHdr::SIZE_BYTES..end];
+        let payload = pkt.payload;
 
         let cmd = match AeroGpuOpcode::from_u32(cmd_hdr.opcode) {
             Some(AeroGpuOpcode::Nop) => AeroGpuCmd::Nop,
@@ -520,21 +522,12 @@ pub fn parse_cmd_stream(
                 }
             }
             Some(AeroGpuOpcode::UploadResource) => {
-                let cmd: protocol::AerogpuCmdUploadResource = read_packed_prefix(packet)?;
-                let size_bytes = u64::from_le(cmd.size_bytes);
-                let data_len = usize::try_from(size_bytes)
+                let (cmd, data) = protocol::decode_cmd_upload_resource_payload_le(packet)
                     .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let data_start = size_of::<protocol::AerogpuCmdUploadResource>();
-                let data_end = data_start
-                    .checked_add(data_len)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let data = packet
-                    .get(data_start..data_end)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::UploadResource {
-                    resource_handle: u32::from_le(cmd.resource_handle),
-                    offset_bytes: u64::from_le(cmd.offset_bytes),
-                    size_bytes,
+                    resource_handle: cmd.resource_handle,
+                    offset_bytes: cmd.offset_bytes,
+                    size_bytes: cmd.size_bytes,
                     data,
                 }
             }
@@ -569,20 +562,12 @@ pub fn parse_cmd_stream(
             }
 
             Some(AeroGpuOpcode::CreateShaderDxbc) => {
-                let cmd: protocol::AerogpuCmdCreateShaderDxbc = read_packed_prefix(packet)?;
-                let dxbc_size_bytes = u32::from_le(cmd.dxbc_size_bytes);
-                let dxbc_len = dxbc_size_bytes as usize;
-                let dxbc_start = size_of::<protocol::AerogpuCmdCreateShaderDxbc>();
-                let dxbc_end = dxbc_start
-                    .checked_add(dxbc_len)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let dxbc_bytes = packet
-                    .get(dxbc_start..dxbc_end)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let (cmd, dxbc_bytes) = protocol::decode_cmd_create_shader_dxbc_payload_le(packet)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::CreateShaderDxbc {
-                    shader_handle: u32::from_le(cmd.shader_handle),
-                    stage: u32::from_le(cmd.stage),
-                    dxbc_size_bytes,
+                    shader_handle: cmd.shader_handle,
+                    stage: cmd.stage,
+                    dxbc_size_bytes: cmd.dxbc_size_bytes,
                     dxbc_bytes,
                 }
             }
@@ -622,19 +607,11 @@ pub fn parse_cmd_stream(
             }
 
             Some(AeroGpuOpcode::CreateInputLayout) => {
-                let cmd: protocol::AerogpuCmdCreateInputLayout = read_packed_prefix(packet)?;
-                let blob_size_bytes = u32::from_le(cmd.blob_size_bytes);
-                let blob_len = blob_size_bytes as usize;
-                let blob_start = size_of::<protocol::AerogpuCmdCreateInputLayout>();
-                let blob_end = blob_start
-                    .checked_add(blob_len)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let blob_bytes = packet
-                    .get(blob_start..blob_end)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let (cmd, blob_bytes) = protocol::decode_cmd_create_input_layout_blob_le(packet)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::CreateInputLayout {
-                    input_layout_handle: u32::from_le(cmd.input_layout_handle),
-                    blob_size_bytes,
+                    input_layout_handle: cmd.input_layout_handle,
+                    blob_size_bytes: cmd.blob_size_bytes,
                     blob_bytes,
                 }
             }
@@ -722,12 +699,11 @@ pub fn parse_cmd_stream(
             }
 
             Some(AeroGpuOpcode::SetVertexBuffers) => {
-                let cmd: protocol::AerogpuCmdSetVertexBuffers = read_packed_prefix(packet)?;
-                let buffer_count = u32::from_le(cmd.buffer_count);
+                let (cmd, bindings) = protocol::decode_cmd_set_vertex_buffers_bindings_le(packet)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let bindings_start = size_of::<protocol::AerogpuCmdSetVertexBuffers>();
-                let bindings_len = (buffer_count as usize)
-                    .checked_mul(protocol::AerogpuVertexBufferBinding::SIZE_BYTES)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let bindings_len =
+                    bindings.len() * protocol::AerogpuVertexBufferBinding::SIZE_BYTES;
                 let bindings_end = bindings_start
                     .checked_add(bindings_len)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
@@ -735,8 +711,8 @@ pub fn parse_cmd_stream(
                     .get(bindings_start..bindings_end)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::SetVertexBuffers {
-                    start_slot: u32::from_le(cmd.start_slot),
-                    buffer_count,
+                    start_slot: cmd.start_slot,
+                    buffer_count: cmd.buffer_count,
                     bindings_bytes,
                 }
             }
