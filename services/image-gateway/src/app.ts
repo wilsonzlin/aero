@@ -709,7 +709,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
               expiresAt,
             })
           : stableUrl;
-      reply.redirect(url, 307);
+      reply.header("cache-control", "no-store").redirect(url, 307);
       return;
     }
 
@@ -787,7 +787,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
               expiresAt,
             })
           : stableUrl;
-      reply.redirect(url, 307);
+      reply.header("cache-control", "no-store").redirect(url, 307);
       return;
     }
 
@@ -854,7 +854,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
               expiresAt,
             })
           : stableUrl;
-      reply.redirect(url, 307);
+      reply.header("cache-control", "no-store").redirect(url, 307);
       return;
     }
 
@@ -934,7 +934,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
               expiresAt,
             })
           : stableUrl;
-      reply.redirect(url, 307);
+      reply.header("cache-control", "no-store").redirect(url, 307);
       return;
     }
 

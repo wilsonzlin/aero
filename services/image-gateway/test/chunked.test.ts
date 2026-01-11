@@ -591,6 +591,7 @@ describe("chunked delivery", () => {
       headers: { "x-user-id": ownerId },
     });
     expect(manifestRes.statusCode).toBe(307);
+    expect(manifestRes.headers["cache-control"]).toBe("no-store");
     expect(manifestRes.headers.location).toBe(
       "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/manifest.json"
     );
@@ -601,6 +602,7 @@ describe("chunked delivery", () => {
       headers: { "x-user-id": ownerId },
     });
     expect(chunkRes.statusCode).toBe(307);
+    expect(chunkRes.headers["cache-control"]).toBe("no-store");
     expect(chunkRes.headers.location).toBe(
       "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/chunks/00000000.bin"
     );
@@ -644,6 +646,7 @@ describe("chunked delivery", () => {
       headers: { "x-user-id": ownerId },
     });
     expect(manifestRes.statusCode).toBe(307);
+    expect(manifestRes.headers["cache-control"]).toBe("no-store");
     expect(manifestRes.headers.location).toContain(
       "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/manifest.json"
     );
@@ -656,6 +659,7 @@ describe("chunked delivery", () => {
       headers: { "x-user-id": ownerId },
     });
     expect(chunkRes.statusCode).toBe(307);
+    expect(chunkRes.headers["cache-control"]).toBe("no-store");
     expect(chunkRes.headers.location).toContain(
       "https://d111111abcdef8.cloudfront.net/images/user-1/image-1/v1/chunks/00000000.bin"
     );
