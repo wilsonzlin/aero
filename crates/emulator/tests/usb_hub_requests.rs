@@ -14,6 +14,7 @@ const USB_REQUEST_SET_INTERFACE: u8 = 0x0b;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u16 = 0x02;
 
 const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
+const USB_FEATURE_DEVICE_REMOTE_WAKEUP: u16 = 1;
 
 const HUB_PORT_FEATURE_ENABLE: u16 = 1;
 const HUB_PORT_FEATURE_RESET: u16 = 4;
@@ -121,6 +122,60 @@ fn usb_hub_standard_get_status_interface_returns_zeroes() {
         panic!("expected Data response");
     };
     assert_eq!(data, [0, 0]);
+}
+
+#[test]
+fn usb_hub_standard_device_remote_wakeup_feature_roundtrips() {
+    let mut hub = UsbHubDevice::new();
+
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None)
+    else {
+        panic!("expected Data response");
+    };
+    assert_eq!(st, [0, 0]);
+
+    assert_eq!(
+        hub.handle_control_request(
+            setup(
+                0x00,
+                USB_REQUEST_SET_FEATURE,
+                USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                0,
+                0,
+            ),
+            None,
+        ),
+        ControlResponse::Ack
+    );
+
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None)
+    else {
+        panic!("expected Data response");
+    };
+    assert_eq!(st, [0x02, 0x00]);
+
+    assert_eq!(
+        hub.handle_control_request(
+            setup(
+                0x00,
+                USB_REQUEST_CLEAR_FEATURE,
+                USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                0,
+                0,
+            ),
+            None,
+        ),
+        ControlResponse::Ack
+    );
+
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None)
+    else {
+        panic!("expected Data response");
+    };
+    assert_eq!(st, [0, 0]);
 }
 
 #[test]

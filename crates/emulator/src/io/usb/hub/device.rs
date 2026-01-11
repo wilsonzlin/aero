@@ -22,6 +22,7 @@ const USB_REQUEST_GET_INTERFACE: u8 = 0x0a;
 const USB_REQUEST_SET_INTERFACE: u8 = 0x0b;
 
 const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
+const USB_FEATURE_DEVICE_REMOTE_WAKEUP: u16 = 1;
 
 const HUB_FEATURE_C_HUB_LOCAL_POWER: u16 = 0;
 const HUB_FEATURE_C_HUB_OVER_CURRENT: u16 = 1;
@@ -194,6 +195,7 @@ impl HubPort {
 /// locate devices attached behind hubs.
 pub struct UsbHubDevice {
     configuration: u8,
+    remote_wakeup_enabled: bool,
     ports: Vec<HubPort>,
     interrupt_bitmap_len: usize,
     interrupt_ep_halted: bool,
@@ -215,6 +217,7 @@ impl UsbHubDevice {
         let interrupt_bitmap_len = hub_bitmap_len(num_ports);
         Self {
             configuration: 0,
+            remote_wakeup_enabled: false,
             ports: (0..num_ports).map(|_| HubPort::new()).collect(),
             interrupt_bitmap_len,
             interrupt_ep_halted: false,
@@ -322,6 +325,7 @@ impl UsbDeviceModel for UsbHubDevice {
 
     fn reset(&mut self) {
         self.configuration = 0;
+        self.remote_wakeup_enabled = false;
         self.interrupt_ep_halted = false;
 
         for port in &mut self.ports {
@@ -359,7 +363,35 @@ impl UsbDeviceModel for UsbHubDevice {
                     {
                         return ControlResponse::Stall;
                     }
-                    ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
+                    // USB 2.0 spec 9.4.5: bit1 is Remote Wakeup.
+                    let status: u16 = u16::from(self.remote_wakeup_enabled) << 1;
+                    ControlResponse::Data(clamp_response(status.to_le_bytes().to_vec(), setup.w_length))
+                }
+                USB_REQUEST_CLEAR_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                        || setup.w_length != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value != USB_FEATURE_DEVICE_REMOTE_WAKEUP {
+                        return ControlResponse::Stall;
+                    }
+                    self.remote_wakeup_enabled = false;
+                    ControlResponse::Ack
+                }
+                USB_REQUEST_SET_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                        || setup.w_length != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value != USB_FEATURE_DEVICE_REMOTE_WAKEUP {
+                        return ControlResponse::Stall;
+                    }
+                    self.remote_wakeup_enabled = true;
+                    ControlResponse::Ack
                 }
                 USB_REQUEST_GET_DESCRIPTOR => {
                     if setup.request_direction() != RequestDirection::DeviceToHost {
@@ -699,7 +731,7 @@ fn build_hub_config_descriptor(interrupt_bitmap_len: usize) -> Vec<u8> {
         0x01, // bNumInterfaces
         0x01, // bConfigurationValue
         0x00, // iConfiguration
-        0x80, // bmAttributes (bus powered)
+        0xa0, // bmAttributes (bus powered + remote wake)
         50,   // bMaxPower (100mA)
         // Interface descriptor
         0x09, // bLength
