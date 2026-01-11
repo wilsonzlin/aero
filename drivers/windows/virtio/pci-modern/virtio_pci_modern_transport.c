@@ -5,6 +5,9 @@
 #include "../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h"
 
 enum {
+	AERO_W7_VIRTIO_PCI_VENDOR_ID = 0x1AF4,
+	AERO_W7_VIRTIO_PCI_DEVICE_MODERN_BASE = 0x1040,
+
 	AERO_W7_VIRTIO_PCI_REVISION = 0x01,
 
 	AERO_W7_VIRTIO_BAR0_REQUIRED_LEN = 0x4000,
@@ -29,6 +32,8 @@ enum {
 	VIRTIO_PCI_CONFIG_MAX_READ_RETRIES = 10u,
 
 	/* Standard PCI config offsets */
+	PCI_CFG_VENDOR_OFF = 0x00,
+	PCI_CFG_DEVICE_OFF = 0x02,
 	PCI_CFG_STATUS_OFF = 0x06,
 	PCI_CFG_REVISION_OFF = 0x08,
 	PCI_CFG_BAR0_OFF = 0x10,
@@ -258,6 +263,10 @@ const char *VirtioPciModernTransportInitErrorStr(VIRTIO_PCI_MODERN_TRANSPORT_INI
 			return "OK";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAD_ARGUMENT:
 			return "BAD_ARGUMENT";
+		case VIRTIO_PCI_MODERN_INIT_ERR_VENDOR_MISMATCH:
+			return "VENDOR_MISMATCH";
+		case VIRTIO_PCI_MODERN_INIT_ERR_DEVICE_ID_NOT_MODERN:
+			return "DEVICE_ID_NOT_MODERN";
 		case VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION:
 			return "UNSUPPORTED_REVISION";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO:
@@ -296,6 +305,8 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 				     VIRTIO_PCI_MODERN_TRANSPORT_MODE mode, UINT64 bar0_pa, UINT32 bar0_len)
 {
 	UINT8 cfg_space[256];
+	UINT16 vendor;
+	UINT16 device;
 	UINT8 revision;
 	UINT16 status;
 	UINT32 bar0_low;
@@ -335,8 +346,28 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 		return STATUS_BUFFER_TOO_SMALL;
 	}
 
-	/* Enforce AERO-W7-VIRTIO v1 revision ID. */
+	/* Enforce AERO-W7-VIRTIO v1 PCI identity (vendor/device/revision). */
+	vendor = os->PciRead16(t->OsContext, PCI_CFG_VENDOR_OFF);
+	device = os->PciRead16(t->OsContext, PCI_CFG_DEVICE_OFF);
 	revision = os->PciRead8(t->OsContext, PCI_CFG_REVISION_OFF);
+
+	t->PciVendorId = vendor;
+	t->PciDeviceId = device;
+	t->PciRevisionId = revision;
+
+	if (vendor != (UINT16)AERO_W7_VIRTIO_PCI_VENDOR_ID) {
+		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_VENDOR_MISMATCH;
+		VirtioPciModernLog(t, "virtio_pci_modern_transport: unsupported PCI vendor id");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	if (device < (UINT16)AERO_W7_VIRTIO_PCI_DEVICE_MODERN_BASE) {
+		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_DEVICE_ID_NOT_MODERN;
+		VirtioPciModernLog(t, "virtio_pci_modern_transport: PCI device id not in modern-only range");
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	/* Enforce AERO-W7-VIRTIO v1 revision ID. */
 	if (revision != AERO_W7_VIRTIO_PCI_REVISION) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION;
 		return STATUS_NOT_SUPPORTED;

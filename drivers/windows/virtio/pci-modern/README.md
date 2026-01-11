@@ -29,6 +29,8 @@ It is designed to be linked into:
 
 `VirtioPciModernTransportInit(..., STRICT, ...)` rejects devices that do not match the Aero Windows 7 virtio contract:
 
+- PCI Vendor ID **MUST** be `0x1AF4`
+- PCI Device ID **MUST** be in the modern-only virtio-pci ID space (`>= 0x1040`)
 - PCI Revision ID **MUST** be `0x01`
 - BAR0 **MUST** be a 64-bit memory BAR (MMIO), not I/O space
 - PCI capability list **MUST** be present (Status bit 4 set)
@@ -57,6 +59,7 @@ This module is **transport-only**. Drivers integrating it must provide:
   - microsecond stall for reset polling
   - spinlock primitives for CommonCfg selector serialization
 - BAR0 physical address + length (from the driver’s resource discovery path)
+- Per-driver device ID filtering (e.g. `0x1042` for virtio-blk) if required by the driver package
 - DMA allocations for virtqueues and request buffers (device sees guest physical addresses)
 - Interrupt wiring (INTx + ISR polling/ack)
 

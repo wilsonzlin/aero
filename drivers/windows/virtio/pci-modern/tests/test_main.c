@@ -25,6 +25,8 @@
 	} while (0)
 
 enum {
+	PCI_VENDOR_OFF = 0x00,
+	PCI_DEVICE_OFF = 0x02,
 	PCI_STATUS_OFF = 0x06,
 	PCI_REVISION_OFF = 0x08,
 	PCI_BAR0_OFF = 0x10,
@@ -83,6 +85,8 @@ static void FakeDevInitValid(FAKE_DEV *dev)
 	memset(dev, 0, sizeof(*dev));
 
 	/* PCI header */
+	WriteLe16(&dev->Cfg[PCI_VENDOR_OFF], 0x1AF4);
+	WriteLe16(&dev->Cfg[PCI_DEVICE_OFF], 0x1052);
 	WriteLe16(&dev->Cfg[PCI_STATUS_OFF], PCI_STATUS_CAP_LIST);
 	dev->Cfg[PCI_REVISION_OFF] = 0x01;
 	/* BAR0: memory, 64-bit indicator (bits 2:1 = 2) */
@@ -246,8 +250,31 @@ static void TestInitOk(void)
 	assert(t.DeviceCfg != NULL);
 	assert(t.NotifyOffMultiplier == 4);
 	assert(t.InitError == VIRTIO_PCI_MODERN_INIT_OK);
+	assert(t.PciVendorId == 0x1AF4);
+	assert(t.PciDeviceId == 0x1052);
+	assert(t.PciRevisionId == 0x01);
 
 	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestRejectBadVendor(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	WriteLe16(&dev.Cfg[PCI_VENDOR_OFF], 0x1234);
+
+	ExpectInitFail("bad_vendor", &dev, VIRTIO_PCI_MODERN_INIT_ERR_VENDOR_MISMATCH);
+}
+
+static void TestRejectNonModernDeviceId(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	WriteLe16(&dev.Cfg[PCI_DEVICE_OFF], 0x1000);
+
+	ExpectInitFail("device_id_not_modern", &dev, VIRTIO_PCI_MODERN_INIT_ERR_DEVICE_ID_NOT_MODERN);
 }
 
 static void TestRejectBadRevision(void)
@@ -529,6 +556,8 @@ static void TestNotifyRejectInvalidQueue(void)
 int main(void)
 {
 	TestInitOk();
+	TestRejectBadVendor();
+	TestRejectNonModernDeviceId();
 	TestRejectBadRevision();
 	TestRejectBar0IoSpace();
 	TestRejectBar0Not64BitMmio();
