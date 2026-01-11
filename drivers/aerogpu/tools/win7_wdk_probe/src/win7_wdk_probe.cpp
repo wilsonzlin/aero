@@ -37,6 +37,24 @@ int main() {
   PRINT_SIZE(D3DKMT_HANDLE);
   PrintSeparator();
 
+  // Runtime callback table (function pointers) that the UMD uses for submission/sync.
+  PRINT_SIZE(D3DDDI_DEVICECALLBACKS);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnGetCommandBufferCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnRenderCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnPresentCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnWaitForSynchronizationObjectCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnSetErrorCb);
+  PrintSeparator();
+
+  // D3D10/11-specific callback wrappers (contain at least pfnSetErrorCb and may embed D3DDDI_DEVICECALLBACKS).
+  PRINT_SIZE(D3D10DDI_DEVICECALLBACKS);
+  PRINT_OFF_OPT(D3D10DDI_DEVICECALLBACKS, pfnSetErrorCb);
+  PrintSeparator();
+
+  PRINT_SIZE(D3D11DDI_DEVICECALLBACKS);
+  PRINT_OFF_OPT(D3D11DDI_DEVICECALLBACKS, pfnSetErrorCb);
+  PrintSeparator();
+
   // Core submission/wait CB structs used by D3D10/D3D11 UMDs on WDDM 1.1.
   PRINT_SIZE(D3DDDICB_GETCOMMANDINFO);
   PRINT_OFF_OPT(D3DDDICB_GETCOMMANDINFO, hContext);

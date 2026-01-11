@@ -168,6 +168,14 @@ followed by dxgkrnl scheduling and eventual KMD `DxgkDdiSubmitCommand`.
 
 The *shared* WDDM 1.x CB structs used by D3D10/11 are declared in `d3dumddi.h`:
 
+The corresponding **function pointers** are in the shared runtime callback table:
+
+- `D3DDDI_DEVICECALLBACKS`
+  - `pfnGetCommandBufferCb`
+  - `pfnRenderCb`
+  - `pfnPresentCb`
+  - `pfnWaitForSynchronizationObjectCb`
+
 #### Acquire / allocate a command buffer
 
 Callback:
