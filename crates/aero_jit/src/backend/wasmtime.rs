@@ -10,6 +10,7 @@ use crate::abi::{
     self, CPU_AND_JIT_CTX_BYTE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET,
     JIT_CTX_TLB_SALT_OFFSET,
 };
+use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -209,6 +210,12 @@ where
             next_rip,
             exit_to_interpreter,
         }
+    }
+}
+
+impl<Cpu> Tier1WasmRegistry for WasmtimeBackend<Cpu> {
+    fn register_tier1_block(&mut self, wasm: Vec<u8>, _exit_to_interpreter: bool) -> u32 {
+        self.add_compiled_block(&wasm)
     }
 }
 
