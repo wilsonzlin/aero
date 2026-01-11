@@ -359,7 +359,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   const char* kTestName = "d3d9ex_event_query";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--show] [--show-window] [--hidden] [--iterations=N] [--stress-iterations=N] "
+        "Usage: %s.exe [--show] [--show-window] [--hidden] [--iterations=N] [--stress-iterations=N] [--process-stress] "
         "[--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
@@ -431,6 +431,56 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   }
   if (stress_iterations > 2000) {
     stress_iterations = 2000;
+  }
+
+  const bool child_stress = aerogpu_test::HasArg(argc, argv, "--child-stress");
+  const bool process_stress = aerogpu_test::HasArg(argc, argv, "--process-stress");
+
+  if (child_stress) {
+    uint32_t child_index = 0;
+    (void)aerogpu_test::GetArgUint32(argc, argv, "--child-index", &child_index);
+    if (child_index > 1) {
+      return aerogpu_test::Fail(kTestName, "invalid --child-index=%u (expected 0 or 1)", (unsigned)child_index);
+    }
+
+    std::string start_event_str;
+    if (!aerogpu_test::GetArgValue(argc, argv, "--start-event", &start_event_str) || start_event_str.empty()) {
+      return aerogpu_test::Fail(kTestName, "missing --start-event for --child-stress");
+    }
+
+    const std::wstring start_event_w(start_event_str.begin(), start_event_str.end());
+    HANDLE start_event = OpenEventW(SYNCHRONIZE, FALSE, start_event_w.c_str());
+    if (!start_event) {
+      return aerogpu_test::Fail(kTestName,
+                                "OpenEvent(%ls) failed: %s",
+                                start_event_w.c_str(),
+                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    }
+
+    volatile LONG any_failed = 0;
+    volatile LONG saw_was_still_drawing = 0;
+    StressWorkerParams params;
+    ZeroMemory(&params, sizeof(params));
+    params.index = (int)child_index;
+    params.iterations = (int)stress_iterations;
+    params.show_window = show_window && !hidden;
+    params.start_event = start_event;
+    params.any_failed = &any_failed;
+    params.saw_was_still_drawing = &saw_was_still_drawing;
+
+    const DWORD worker_rc = StressWorkerThreadProc(&params);
+    CloseHandle(start_event);
+
+    if (worker_rc != 0 || any_failed != 0) {
+      return aerogpu_test::Fail(kTestName, "child stress failed (index=%u)", (unsigned)child_index);
+    }
+
+    aerogpu_test::PrintfStdout("INFO: %s: child %u: PresentEx(DONOTWAIT) observed WASSTILLDRAWING=%s",
+                               kTestName,
+                               (unsigned)child_index,
+                               saw_was_still_drawing != 0 ? "yes" : "no");
+    aerogpu_test::PrintfStdout("PASS: %s", kTestName);
+    return 0;
   }
 
   LARGE_INTEGER qpc_freq_li;
@@ -717,74 +767,253 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
         kTestName);
   }
 
-  // --- Multi-device stress test ---
-  aerogpu_test::PrintfStdout("INFO: %s: starting multi-device stress (%u iterations per device)",
-                             kTestName,
-                             (unsigned)stress_iterations);
+  if (process_stress) {
+    // --- Multi-process stress test ---
+    aerogpu_test::PrintfStdout("INFO: %s: starting multi-process stress (%u iterations per process)",
+                               kTestName,
+                               (unsigned)stress_iterations);
 
-  HANDLE start_event = CreateEventW(NULL, TRUE, FALSE, NULL);
-  if (!start_event) {
-    return aerogpu_test::Fail(kTestName, "CreateEvent failed");
-  }
-
-  volatile LONG any_failed = 0;
-  volatile LONG saw_was_still_drawing = 0;
-
-  StressWorkerParams params[2];
-  ZeroMemory(params, sizeof(params));
-  for (int i = 0; i < 2; ++i) {
-    params[i].index = i;
-    params[i].iterations = (int)stress_iterations;
-    params[i].show_window = show_window && !hidden;
-    params[i].start_event = start_event;
-    params[i].any_failed = &any_failed;
-    params[i].saw_was_still_drawing = &saw_was_still_drawing;
-  }
-
-  HANDLE threads[2];
-  threads[0] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[0], 0, NULL);
-  threads[1] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[1], 0, NULL);
-  if (!threads[0] || !threads[1]) {
-    if (threads[0]) {
-      CloseHandle(threads[0]);
+    std::wstring exe_path;
+    std::string exe_err;
+    HMODULE self = GetModuleHandleW(NULL);
+    if (!self || !aerogpu_test::TryGetModuleFileNameW(self, &exe_path, &exe_err) || exe_path.empty()) {
+      if (exe_err.empty()) {
+        exe_err = "GetModuleFileNameW failed";
+      }
+      return aerogpu_test::Fail(kTestName, "failed to resolve executable path: %s", exe_err.c_str());
     }
-    if (threads[1]) {
-      CloseHandle(threads[1]);
+
+    char event_name_a[128];
+    sprintf(event_name_a,
+            "AeroGPU_D3D9ExEventQuery_Start_%lu_%lu",
+            (unsigned long)GetCurrentProcessId(),
+            (unsigned long)GetTickCount());
+    const std::wstring event_name_w(event_name_a, event_name_a + strlen(event_name_a));
+
+    HANDLE start_event = CreateEventW(NULL, TRUE, FALSE, event_name_w.c_str());
+    if (!start_event) {
+      return aerogpu_test::Fail(kTestName,
+                                "CreateEvent(start_event) failed: %s",
+                                aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    }
+
+    HANDLE job = CreateJobObjectW(NULL, NULL);
+    if (job) {
+      JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+      ZeroMemory(&info, sizeof(info));
+      info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+      if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info))) {
+        aerogpu_test::PrintfStdout("INFO: %s: SetInformationJobObject(KILL_ON_JOB_CLOSE) failed: %s",
+                                   kTestName,
+                                   aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+        CloseHandle(job);
+        job = NULL;
+      }
+    }
+
+    HANDLE procs[2] = {NULL, NULL};
+    HANDLE threads[2] = {NULL, NULL};
+    for (int i = 0; i < 2; ++i) {
+      std::wstring cmdline = L"\"";
+      cmdline += exe_path;
+      cmdline += L"\" --child-stress";
+      cmdline += L" --child-index=";
+      wchar_t idx_buf[16];
+      wsprintfW(idx_buf, L"%d", i);
+      cmdline += idx_buf;
+      cmdline += L" --start-event=";
+      cmdline += event_name_w;
+      cmdline += L" --stress-iterations=";
+      wchar_t iter_buf[32];
+      wsprintfW(iter_buf, L"%u", (unsigned)stress_iterations);
+      cmdline += iter_buf;
+      if (show_window && !hidden) {
+        cmdline += L" --show";
+      } else {
+        cmdline += L" --hidden";
+      }
+      if (has_require_vid) {
+        cmdline += L" --require-vid=";
+        cmdline += std::wstring(require_vid_str.begin(), require_vid_str.end());
+      }
+      if (has_require_did) {
+        cmdline += L" --require-did=";
+        cmdline += std::wstring(require_did_str.begin(), require_did_str.end());
+      }
+      if (allow_microsoft) {
+        cmdline += L" --allow-microsoft";
+      }
+      if (allow_non_aerogpu) {
+        cmdline += L" --allow-non-aerogpu";
+      }
+      if (require_umd) {
+        cmdline += L" --require-umd";
+      }
+
+      std::vector<wchar_t> cmdline_buf(cmdline.begin(), cmdline.end());
+      cmdline_buf.push_back(0);
+
+      STARTUPINFOW si;
+      ZeroMemory(&si, sizeof(si));
+      si.cb = sizeof(si);
+
+      PROCESS_INFORMATION pi;
+      ZeroMemory(&pi, sizeof(pi));
+
+      BOOL ok = CreateProcessW(exe_path.c_str(),
+                               &cmdline_buf[0],
+                               NULL,
+                               NULL,
+                               FALSE,
+                               0,
+                               NULL,
+                               NULL,
+                               &si,
+                               &pi);
+      if (!ok) {
+        DWORD werr = GetLastError();
+        if (job) {
+          CloseHandle(job);
+          job = NULL;
+        }
+        CloseHandle(start_event);
+        for (int j = 0; j < 2; ++j) {
+          if (threads[j]) {
+            CloseHandle(threads[j]);
+          }
+          if (procs[j]) {
+            CloseHandle(procs[j]);
+          }
+        }
+        return aerogpu_test::Fail(kTestName,
+                                  "CreateProcessW failed: %s",
+                                  aerogpu_test::Win32ErrorToString(werr).c_str());
+      }
+
+      procs[i] = pi.hProcess;
+      threads[i] = pi.hThread;
+      if (job && !AssignProcessToJobObject(job, pi.hProcess)) {
+        aerogpu_test::PrintfStdout("INFO: %s: AssignProcessToJobObject failed: %s",
+                                   kTestName,
+                                   aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      }
+    }
+
+    SetEvent(start_event);
+
+    // Scale the join timeout with iteration count so manual runs with large
+    // --stress-iterations values don't spuriously fail, while still bounding the
+    // wait in case a child hangs.
+    DWORD stress_timeout_ms = 30000;
+    const DWORD scaled_timeout_ms = (DWORD)stress_iterations * 200;
+    if (scaled_timeout_ms > stress_timeout_ms) {
+      stress_timeout_ms = scaled_timeout_ms;
+    }
+    if (stress_timeout_ms > 300000) {
+      stress_timeout_ms = 300000;
+    }
+
+    DWORD w = WaitForMultipleObjects(2, procs, TRUE, stress_timeout_ms);
+    if (w != WAIT_OBJECT_0) {
+      FailFast(kTestName, "multi-process stress timed out waiting for child processes");
+    }
+
+    bool ok = true;
+    for (int i = 0; i < 2; ++i) {
+      DWORD exit_code = 1;
+      if (!GetExitCodeProcess(procs[i], &exit_code)) {
+        ok = false;
+      } else if (exit_code != 0) {
+        ok = false;
+      }
+    }
+
+    for (int i = 0; i < 2; ++i) {
+      if (threads[i]) {
+        CloseHandle(threads[i]);
+      }
+      if (procs[i]) {
+        CloseHandle(procs[i]);
+      }
     }
     CloseHandle(start_event);
-    return aerogpu_test::Fail(kTestName, "CreateThread failed");
+    if (job) {
+      CloseHandle(job);
+    }
+
+    if (!ok) {
+      return aerogpu_test::Fail(kTestName, "multi-process stress child failed");
+    }
+  } else {
+    // --- Multi-device stress test ---
+    aerogpu_test::PrintfStdout("INFO: %s: starting multi-device stress (%u iterations per device)",
+                               kTestName,
+                               (unsigned)stress_iterations);
+
+    HANDLE start_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!start_event) {
+      return aerogpu_test::Fail(kTestName, "CreateEvent failed");
+    }
+
+    volatile LONG any_failed = 0;
+    volatile LONG saw_was_still_drawing = 0;
+
+    StressWorkerParams params[2];
+    ZeroMemory(params, sizeof(params));
+    for (int i = 0; i < 2; ++i) {
+      params[i].index = i;
+      params[i].iterations = (int)stress_iterations;
+      params[i].show_window = show_window && !hidden;
+      params[i].start_event = start_event;
+      params[i].any_failed = &any_failed;
+      params[i].saw_was_still_drawing = &saw_was_still_drawing;
+    }
+
+    HANDLE threads[2];
+    threads[0] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[0], 0, NULL);
+    threads[1] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[1], 0, NULL);
+    if (!threads[0] || !threads[1]) {
+      if (threads[0]) {
+        CloseHandle(threads[0]);
+      }
+      if (threads[1]) {
+        CloseHandle(threads[1]);
+      }
+      CloseHandle(start_event);
+      return aerogpu_test::Fail(kTestName, "CreateThread failed");
+    }
+
+    SetEvent(start_event);
+
+    // Scale the join timeout with iteration count so manual runs with large
+    // --stress-iterations values don't spuriously fail, while still bounding the
+    // wait in case a worker thread hangs.
+    DWORD stress_timeout_ms = 30000;
+    const DWORD scaled_timeout_ms = (DWORD)stress_iterations * 100;
+    if (scaled_timeout_ms > stress_timeout_ms) {
+      stress_timeout_ms = scaled_timeout_ms;
+    }
+    if (stress_timeout_ms > 300000) {
+      stress_timeout_ms = 300000;
+    }
+
+    DWORD w = WaitForMultipleObjects(2, threads, TRUE, stress_timeout_ms);
+    CloseHandle(threads[0]);
+    CloseHandle(threads[1]);
+    CloseHandle(start_event);
+
+    if (w != WAIT_OBJECT_0) {
+      FailFast(kTestName, "multi-device stress timed out waiting for worker threads");
+    }
+
+    if (any_failed != 0) {
+      return aerogpu_test::Fail(kTestName, "multi-device stress worker failed");
+    }
+
+    aerogpu_test::PrintfStdout("INFO: %s: PresentEx(DONOTWAIT) observed WASSTILLDRAWING=%s",
+                               kTestName,
+                               saw_was_still_drawing != 0 ? "yes" : "no");
   }
-
-  SetEvent(start_event);
-
-  // Scale the join timeout with iteration count so manual runs with large
-  // --stress-iterations values don't spuriously fail, while still bounding the
-  // wait in case a worker thread hangs.
-  DWORD stress_timeout_ms = 30000;
-  const DWORD scaled_timeout_ms = (DWORD)stress_iterations * 100;
-  if (scaled_timeout_ms > stress_timeout_ms) {
-    stress_timeout_ms = scaled_timeout_ms;
-  }
-  if (stress_timeout_ms > 300000) {
-    stress_timeout_ms = 300000;
-  }
-
-  DWORD w = WaitForMultipleObjects(2, threads, TRUE, stress_timeout_ms);
-  CloseHandle(threads[0]);
-  CloseHandle(threads[1]);
-  CloseHandle(start_event);
-
-  if (w != WAIT_OBJECT_0) {
-    FailFast(kTestName, "multi-device stress timed out waiting for worker threads");
-  }
-
-  if (any_failed != 0) {
-    return aerogpu_test::Fail(kTestName, "multi-device stress worker failed");
-  }
-
-  aerogpu_test::PrintfStdout("INFO: %s: PresentEx(DONOTWAIT) observed WASSTILLDRAWING=%s",
-                             kTestName,
-                             saw_was_still_drawing != 0 ? "yes" : "no");
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
