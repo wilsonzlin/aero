@@ -403,6 +403,7 @@ Follow-up check:
 - Run `aerogpu_dbgctl --dump-vblank` and look at `IRQ_ENABLE` and `vblank_interrupt_type`.
   - If `vblank_interrupt_type` is `(not enabled or not reported)` even after calling `--wait-vblank`, dxgkrnl may not be enabling vblank interrupts for the adapter (or the KMD is not seeing `DxgkDdiControlInterrupt` calls / is too old to report it).
   - If `vblank_interrupt_type` is set but `IRQ_ENABLE` does not include `VBLANK`, the KMD is likely not programming the device IRQ enable mask correctly.
+  - On Win7/WDDM 1.1, the vblank interrupt type should correspond to `DXGK_INTERRUPT_TYPE_CRTC_VSYNC` (see `drivers/aerogpu/kmd/tools/wdk_abi_probe` if you need the numeric enum value).
 
 And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetScanLine`:
 
