@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 nt-packetlib = { path = "../nt-packetlib" }
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 futures-util = "0.3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = "0.26"
