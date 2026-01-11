@@ -118,7 +118,11 @@ fn session_cookie_vectors() {
         "bad signature token must differ from a properly minted token"
     );
     assert_eq!(
-        verify_session_token(&vectors.aero_session.tokens.bad_signature.token, secret, now_ms),
+        verify_session_token(
+            &vectors.aero_session.tokens.bad_signature.token,
+            secret,
+            now_ms
+        ),
         Err(SessionVerifyError::InvalidSignature),
         "verify bad signature token"
     );
@@ -178,7 +182,11 @@ fn relay_jwt_vectors() {
         "bad signature token must differ from a properly minted jwt"
     );
     assert_eq!(
-        verify_relay_jwt_hs256(&vectors.relay_jwt.tokens.bad_signature.token, secret, now_unix),
+        verify_relay_jwt_hs256(
+            &vectors.relay_jwt.tokens.bad_signature.token,
+            secret,
+            now_unix
+        ),
         Err(JwtVerifyError::InvalidSignature),
         "verify bad signature jwt"
     );

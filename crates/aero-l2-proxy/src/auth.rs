@@ -53,7 +53,9 @@ pub fn verify_session_token(
     secret: &[u8],
     now_ms: u64,
 ) -> Result<SessionClaims, SessionVerifyError> {
-    let (payload_b64, sig_b64) = token.split_once('.').ok_or(SessionVerifyError::InvalidFormat)?;
+    let (payload_b64, sig_b64) = token
+        .split_once('.')
+        .ok_or(SessionVerifyError::InvalidFormat)?;
     if payload_b64.is_empty() || sig_b64.is_empty() {
         return Err(SessionVerifyError::InvalidFormat);
     }

@@ -1,4 +1,6 @@
-use aero_l2_protocol::{decode_message, encode_with_limits, DecodeError, Limits, L2_TUNNEL_VERSION};
+use aero_l2_protocol::{
+    decode_message, encode_with_limits, DecodeError, Limits, L2_TUNNEL_VERSION,
+};
 use serde::Deserialize;
 
 const VECTORS_JSON: &str = include_str!("../../conformance/test-vectors/aero-vectors-v1.json");
@@ -91,12 +93,10 @@ fn l2_tunnel_vectors_roundtrip() {
         assert_eq!(decoded.flags, vector.flags, "{}", vector.name);
         assert_eq!(decoded.payload, payload.as_slice(), "{}", vector.name);
 
-        let encoded =
-            encode_with_limits(vector.msg_type, vector.flags, &payload, &limits).unwrap_or_else(
-                |err| {
-                    panic!("encode failed for {}: {err:?}", vector.name);
-                },
-            );
+        let encoded = encode_with_limits(vector.msg_type, vector.flags, &payload, &limits)
+            .unwrap_or_else(|err| {
+                panic!("encode failed for {}: {err:?}", vector.name);
+            });
         assert_eq!(encoded, wire, "{}", vector.name);
     }
 }
@@ -111,7 +111,11 @@ fn l2_tunnel_vectors_invalid() {
     for vector in vectors.l2.invalid {
         let wire = decode_hex(&vector.wire_hex);
         let err = aero_l2_protocol::decode_with_limits(&wire, &limits).expect_err(&vector.name);
-        assert_eq!(decode_error_code(&err), vector.error_code, "{}", vector.name);
+        assert_eq!(
+            decode_error_code(&err),
+            vector.error_code,
+            "{}",
+            vector.name
+        );
     }
 }
-

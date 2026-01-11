@@ -2499,7 +2499,10 @@ fn get_or_create_render_pipeline_for_state<'a>(
         let depth_write_enabled = state.depth_enable && state.depth_write_enable;
 
         let (read_mask, write_mask) = if state.stencil_enable {
-            (state.stencil_read_mask as u32, state.stencil_write_mask as u32)
+            (
+                state.stencil_read_mask as u32,
+                state.stencil_write_mask as u32,
+            )
         } else {
             (0, 0)
         };
@@ -2936,7 +2939,10 @@ fn read_u64_le(buf: &[u8], offset: usize) -> Result<u64> {
 fn read_packed_unaligned<T: Copy>(bytes: &[u8]) -> Result<T> {
     let size = std::mem::size_of::<T>();
     if bytes.len() < size {
-        bail!("truncated packet: expected {size} bytes, got {}", bytes.len());
+        bail!(
+            "truncated packet: expected {size} bytes, got {}",
+            bytes.len()
+        );
     }
 
     // SAFETY: Bounds checked above and `read_unaligned` avoids alignment requirements.
