@@ -45,6 +45,15 @@ function normalizeErrorChain(err: unknown, maxDepth = 5): Array<{ name?: string;
       .split("<-")
       .map((p) => p.trim())
       .filter((p) => p.length > 0);
+    if (parts.length === 1) {
+      const match = /^([A-Za-z]+Error):\s*(.*)$/.exec(parts[0]);
+      if (!match) return null;
+      const [, parsedName, parsedMessage] = match;
+      // Ignore the generic "Error: ..." prefix, but accept DOMException-style names
+      // like "NetworkError: ...".
+      if (parsedName === "Error") return null;
+      return [{ name: parsedName, message: parsedMessage || undefined }];
+    }
     if (parts.length <= 1) return null;
     return parts.map((part) => {
       const match = /^([A-Za-z]+Error):\s*(.*)$/.exec(part);

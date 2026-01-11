@@ -76,6 +76,13 @@ test("explainWebUsbError: parses formatted '<-' error chains in strings", () => 
   assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
 });
 
+test("explainWebUsbError: parses single 'NetworkError: ...' prefixes inside Error.message", () => {
+  const err = new Error("NetworkError: Transfer failed.");
+  const res = withUserAgent("Node.js/25", () => explainWebUsbError(err));
+  assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+});
+
 test("explainWebUsbError: Windows driver hints omit Linux udev guidance", () => {
   const res = withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", () =>
     explainWebUsbError("NetworkError: Unable to claim interface."),
