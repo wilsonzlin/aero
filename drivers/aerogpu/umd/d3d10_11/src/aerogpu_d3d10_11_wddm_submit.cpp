@@ -614,6 +614,16 @@ template <typename T>
 struct has_member_NewCommandBufferSize<T, std::void_t<decltype(std::declval<T>().NewCommandBufferSize)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_pNewDmaBufferPrivateData : std::false_type {};
+template <typename T>
+struct has_member_pNewDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pNewDmaBufferPrivateData)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NewDmaBufferPrivateDataSize : std::false_type {};
+template <typename T>
+struct has_member_NewDmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<T>().NewDmaBufferPrivateDataSize)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pNewAllocationList : std::false_type {};
 template <typename T>
 struct has_member_pNewAllocationList<T, std::void_t<decltype(std::declval<T>().pNewAllocationList)>> : std::true_type {};
@@ -738,14 +748,25 @@ void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& 
   // pDmaBufferPrivateData is required by the AeroGPU Win7 KMD (DxgkDdiRender /
   // DxgkDdiPresent validate it). The runtime may rotate it alongside the command
   // buffer, so treat it as an in/out field.
-  if constexpr (has_member_pDmaBufferPrivateData<SubmitArgsT>::value) {
-    if (args.pDmaBufferPrivateData) {
-      buf->dma_private_data = args.pDmaBufferPrivateData;
+  bool updated_dma_priv = false;
+  if constexpr (has_member_pNewDmaBufferPrivateData<SubmitArgsT>::value &&
+                has_member_NewDmaBufferPrivateDataSize<SubmitArgsT>::value) {
+    if (args.pNewDmaBufferPrivateData && args.NewDmaBufferPrivateDataSize) {
+      buf->dma_private_data = args.pNewDmaBufferPrivateData;
+      buf->dma_private_data_bytes = args.NewDmaBufferPrivateDataSize;
+      updated_dma_priv = true;
     }
   }
-  if constexpr (has_member_DmaBufferPrivateDataSize<SubmitArgsT>::value) {
-    if (args.DmaBufferPrivateDataSize) {
-      buf->dma_private_data_bytes = args.DmaBufferPrivateDataSize;
+  if (!updated_dma_priv) {
+    if constexpr (has_member_pDmaBufferPrivateData<SubmitArgsT>::value) {
+      if (args.pDmaBufferPrivateData) {
+        buf->dma_private_data = args.pDmaBufferPrivateData;
+      }
+    }
+    if constexpr (has_member_DmaBufferPrivateDataSize<SubmitArgsT>::value) {
+      if (args.DmaBufferPrivateDataSize) {
+        buf->dma_private_data_bytes = args.DmaBufferPrivateDataSize;
+      }
     }
   }
 }
