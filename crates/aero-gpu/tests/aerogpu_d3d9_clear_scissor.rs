@@ -297,6 +297,199 @@ fn d3d9_cmd_stream_clear_respects_scissor_rect() {
 }
 
 #[test]
+fn d3d9_cmd_stream_draw_skips_when_scissor_rect_has_no_intersection() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::d3d9_cmd_stream_draw_skips_when_scissor_rect_has_no_intersection"
+                ),
+                "wgpu adapter not found",
+            );
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const RT_HANDLE: u32 = 1;
+    const VB_HANDLE: u32 = 2;
+    const VS_HANDLE: u32 = 3;
+    const PS_HANDLE: u32 = 4;
+    const IL_HANDLE: u32 = 5;
+
+    let width = 32u32;
+    let height = 32u32;
+
+    // Full-screen triangle (POSITION float4).
+    let vertices: [f32; 12] = [
+        -1.0, -1.0, 0.0, 1.0, //
+        3.0, -1.0, 0.0, 1.0, //
+        -1.0, 3.0, 0.0, 1.0, //
+    ];
+    let vb_bytes: &[u8] = bytemuck::cast_slice(&vertices);
+
+    let vs_bytes = assemble_vs_passthrough_pos();
+    let ps_bytes = assemble_ps_solid_color_c0();
+    let vertex_decl = vertex_decl_pos4();
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+            push_u64(out, vb_bytes.len() as u64);
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, vb_bytes.len() as u64);
+            out.extend_from_slice(vb_bytes);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateShaderDxbc as u32, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, 0); // AEROGPU_SHADER_STAGE_VERTEX
+            push_u32(out, vs_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vs_bytes);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateShaderDxbc as u32, |out| {
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+            push_u32(out, ps_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&ps_bytes);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::BindShaders as u32, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 0); // cs
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateInputLayout as u32, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, vertex_decl.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vertex_decl);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetInputLayout as u32, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 16); // stride_bytes
+            push_u32(out, 0); // offset_bytes
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetPrimitiveTopology as u32, |out| {
+            push_u32(out, AerogpuPrimitiveTopology::TriangleList as u32);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetViewport as u32, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+
+        // Clear to red.
+        emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0);
+            push_u32(out, 0);
+        });
+
+        // Enable scissor testing but set an out-of-bounds rect that has no intersection.
+        emit_packet(out, AerogpuCmdOpcode::SetRenderState as u32, |out| {
+            push_u32(out, D3DRS_SCISSORTESTENABLE);
+            push_u32(out, 1);
+        });
+        emit_packet(out, AerogpuCmdOpcode::SetScissor as u32, |out| {
+            push_i32(out, width as i32); // x (at the right edge, outside)
+            push_i32(out, 0);
+            push_i32(out, 1);
+            push_i32(out, 1);
+        });
+
+        // c0 = green.
+        emit_packet(out, AerogpuCmdOpcode::SetShaderConstantsF as u32, |out| {
+            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
+            push_u32(out, 0); // start_register
+            push_u32(out, 1); // vec4_count
+            push_u32(out, 0); // reserved0
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+            push_u32(out, 3); // vertex_count
+            push_u32(out, 1); // instance_count
+            push_u32(out, 0); // first_vertex
+            push_u32(out, 0); // first_instance
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+
+    // Scissor is completely out of bounds; draw should have produced no fragments.
+    assert_eq!(pixel_at(&rgba, width, width / 2, height / 2), [255, 0, 0, 255]);
+}
+
+#[test]
 fn d3d9_cmd_stream_clear_respects_scissor_rect_mrt() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
