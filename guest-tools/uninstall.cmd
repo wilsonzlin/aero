@@ -49,7 +49,11 @@ if errorlevel 1 (
   exit /b %RC%
 )
 
-call :init_logging || goto :fail
+call :init_logging
+if errorlevel 1 (
+  popd >nul 2>&1
+  exit /b 1
+)
 call :log "Aero Guest Tools uninstall starting..."
 call :log "Script dir: %SCRIPT_DIR%"
 call :log "Logs: %LOG%"
