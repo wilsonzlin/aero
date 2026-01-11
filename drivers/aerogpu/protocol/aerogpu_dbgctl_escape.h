@@ -60,10 +60,16 @@ typedef struct aerogpu_escape_query_fence_out {
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_fence_out) == 32);
 
+/*
+ * Must remain stable across x86/x64.
+ *
+ * Represents the most interesting fields of a `struct aerogpu_submit_desc`
+ * entry (see `aerogpu_ring.h`).
+ */
 typedef struct aerogpu_dbgctl_ring_desc {
-  uint64_t fence;
-  uint64_t desc_gpa;
-  uint32_t desc_size_bytes;
+  uint64_t signal_fence;
+  uint64_t cmd_gpa;
+  uint32_t cmd_size_bytes;
   uint32_t flags;
 } aerogpu_dbgctl_ring_desc;
 
@@ -73,6 +79,12 @@ typedef struct aerogpu_escape_dump_ring_inout {
   aerogpu_escape_header hdr;
   uint32_t ring_id;
   uint32_t ring_size_bytes;
+  /*
+   * Ring indices.
+   *
+   * `head` and `tail` are monotonically increasing indices (not masked).
+   * The slot is `(index % entry_count)`.
+   */
   uint32_t head;
   uint32_t tail;
   uint32_t desc_count;

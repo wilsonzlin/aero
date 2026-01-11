@@ -32,9 +32,11 @@ Minimum supported commands:
   Prints the last submitted fence and last completed fence.
 
 - `aerogpu_dbgctl --dump-ring`  
-  Dumps ring head/tail + recent descriptors. Supports both:
-  - legacy ARGP ring entries (descriptor GPA/size)
-  - new AGPU ring entries (`aerogpu_submit_desc`: cmd GPA/size, alloc table, signal fence)
+  Dumps ring head/tail + recent submissions. Fields include:
+  - `signal_fence`
+  - `cmd_gpa` / `cmd_size_bytes`
+  - `flags`
+  - (AGPU only) `alloc_table_gpa` / `alloc_table_size_bytes`
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
@@ -109,6 +111,7 @@ Outputs:
 
 Packet definitions consumed by this tool live in:
 
+- `drivers/aerogpu/protocol/aerogpu_escape.h` (base Escape header + query-device)
 - `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`
 
 The AeroGPU KMD is expected to implement `DxgkDdiEscape` handling for these packets (driver-private escape).

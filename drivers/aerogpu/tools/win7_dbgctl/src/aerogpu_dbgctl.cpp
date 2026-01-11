@@ -291,7 +291,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     const uint32_t major = (uint32_t)(q1.mmio_version >> 16);
     const uint32_t minor = (uint32_t)(q1.mmio_version & 0xFFFFu);
     wprintf(L"AeroGPU escape ABI: %lu\n", (unsigned long)q1.hdr.version);
-    wprintf(L"AeroGPU device version: 0x%08lx (%lu.%lu)\n",
+    wprintf(L"AeroGPU ABI version: 0x%08lx (%lu.%lu)\n",
             (unsigned long)q1.mmio_version,
             (unsigned long)major,
             (unsigned long)minor);
@@ -487,12 +487,12 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
     for (uint32_t i = 0; i < count; ++i) {
       const aerogpu_dbgctl_ring_desc_v2 *d = &q2.desc[i];
       if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-        wprintf(L"    [%lu] fence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx allocTableGpa=0x%I64x allocTableBytes=%lu\n",
+        wprintf(L"    [%lu] signalFence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx allocTableGpa=0x%I64x allocTableBytes=%lu\n",
                 (unsigned long)i, (unsigned long long)d->fence, (unsigned long long)d->cmd_gpa,
                 (unsigned long)d->cmd_size_bytes, (unsigned long)d->flags,
                 (unsigned long long)d->alloc_table_gpa, (unsigned long)d->alloc_table_size_bytes);
       } else {
-        wprintf(L"    [%lu] fence=0x%I64x descGpa=0x%I64x descBytes=%lu flags=0x%08lx\n",
+        wprintf(L"    [%lu] signalFence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx\n",
                 (unsigned long)i, (unsigned long long)d->fence, (unsigned long long)d->cmd_gpa,
                 (unsigned long)d->cmd_size_bytes, (unsigned long)d->flags);
       }
@@ -529,8 +529,8 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
 
   for (uint32_t i = 0; i < count; ++i) {
     const aerogpu_dbgctl_ring_desc *d = &q.desc[i];
-    wprintf(L"    [%lu] fence=0x%I64x descGpa=0x%I64x descBytes=%lu flags=0x%08lx\n", (unsigned long)i,
-            (unsigned long long)d->fence, (unsigned long long)d->desc_gpa, (unsigned long)d->desc_size_bytes,
+    wprintf(L"    [%lu] signalFence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx\n", (unsigned long)i,
+            (unsigned long long)d->signal_fence, (unsigned long long)d->cmd_gpa, (unsigned long)d->cmd_size_bytes,
             (unsigned long)d->flags);
   }
 

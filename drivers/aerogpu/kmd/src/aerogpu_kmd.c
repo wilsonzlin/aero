@@ -2333,15 +2333,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
                 struct aerogpu_submit_desc* ring =
                     (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
-                const uint64_t ringGpa = (uint64_t)adapter->RingPa.QuadPart;
-                const uint64_t stride = (uint64_t)sizeof(struct aerogpu_submit_desc);
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) & (adapter->RingEntryCount - 1);
                     const struct aerogpu_submit_desc entry = ring[idx];
-                    const uint64_t descGpa = ringGpa + (uint64_t)sizeof(struct aerogpu_ring_header) + ((uint64_t)idx * stride);
-                    io->desc[i].fence = (uint64_t)entry.signal_fence;
-                    io->desc[i].desc_gpa = descGpa;
-                    io->desc[i].desc_size_bytes = (uint32_t)sizeof(struct aerogpu_submit_desc);
+                    io->desc[i].signal_fence = (uint64_t)entry.signal_fence;
+                    io->desc[i].cmd_gpa = (uint64_t)entry.cmd_gpa;
+                    io->desc[i].cmd_size_bytes = entry.cmd_size_bytes;
                     io->desc[i].flags = entry.flags;
                 }
             } else {
@@ -2352,10 +2349,31 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     if (entry.type != AEROGPU_LEGACY_RING_ENTRY_SUBMIT) {
                         continue;
                     }
-                    io->desc[i].fence = (uint64_t)entry.submit.fence;
-                    io->desc[i].desc_gpa = (uint64_t)entry.submit.desc_gpa;
-                    io->desc[i].desc_size_bytes = entry.submit.desc_size;
+                    io->desc[i].signal_fence = (uint64_t)entry.submit.fence;
+                    io->desc[i].cmd_gpa = 0;
+                    io->desc[i].cmd_size_bytes = 0;
                     io->desc[i].flags = entry.submit.flags;
+
+                    /*
+                     * Legacy ring entries point at a submission descriptor.
+                     * Translate to canonical-ish cmd_gpa/cmd_size_bytes by
+                     * peeking the legacy descriptor header.
+                     */
+                    {
+                        PHYSICAL_ADDRESS descPa;
+                        descPa.QuadPart = (LONGLONG)entry.submit.desc_gpa;
+                        const aerogpu_legacy_submission_desc_header* desc =
+                            (const aerogpu_legacy_submission_desc_header*)MmGetVirtualForPhysical(descPa);
+                        if (desc) {
+                            io->desc[i].signal_fence = (uint64_t)desc->fence;
+                            io->desc[i].cmd_gpa = (uint64_t)desc->dma_buffer_gpa;
+                            io->desc[i].cmd_size_bytes = desc->dma_buffer_size;
+                        } else {
+                            /* Fallback: expose the descriptor pointer itself. */
+                            io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
+                            io->desc[i].cmd_size_bytes = entry.submit.desc_size;
+                        }
+                    }
                 }
             }
         }
@@ -2455,12 +2473,33 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         continue;
                     }
                     io->desc[i].fence = (uint64_t)entry.submit.fence;
-                    io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
-                    io->desc[i].cmd_size_bytes = entry.submit.desc_size;
+                    io->desc[i].cmd_gpa = 0;
+                    io->desc[i].cmd_size_bytes = 0;
                     io->desc[i].flags = entry.submit.flags;
                     io->desc[i].alloc_table_gpa = 0;
                     io->desc[i].alloc_table_size_bytes = 0;
                     io->desc[i].reserved0 = 0;
+
+                    /*
+                     * Legacy ring entries point at a submission descriptor.
+                     * Translate to canonical-ish cmd_gpa/cmd_size_bytes by
+                     * peeking the legacy descriptor header.
+                     */
+                    {
+                        PHYSICAL_ADDRESS descPa;
+                        descPa.QuadPart = (LONGLONG)entry.submit.desc_gpa;
+                        const aerogpu_legacy_submission_desc_header* desc =
+                            (const aerogpu_legacy_submission_desc_header*)MmGetVirtualForPhysical(descPa);
+                        if (desc) {
+                            io->desc[i].fence = (uint64_t)desc->fence;
+                            io->desc[i].cmd_gpa = (uint64_t)desc->dma_buffer_gpa;
+                            io->desc[i].cmd_size_bytes = desc->dma_buffer_size;
+                        } else {
+                            /* Fallback: expose the descriptor pointer itself. */
+                            io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
+                            io->desc[i].cmd_size_bytes = entry.submit.desc_size;
+                        }
+                    }
                 }
             }
         }

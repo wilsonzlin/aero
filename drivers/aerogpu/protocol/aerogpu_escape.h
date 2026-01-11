@@ -33,8 +33,8 @@ extern "C" {
 
 enum aerogpu_escape_op {
   /*
-   * Legacy query-device operation retained for backwards compatibility with
-   * early bring-up tools. New tools should prefer QUERY_DEVICE_V2.
+   * Query-device operation retained for backwards compatibility with early
+   * bring-up tools.
    */
   AEROGPU_ESCAPE_OP_QUERY_DEVICE = 1u,
 
@@ -55,7 +55,19 @@ AEROGPU_ESCAPE_STATIC_ASSERT(sizeof(aerogpu_escape_header) == 16);
 
 /* ---------------------------- Query device -------------------------------- */
 
-/* Legacy v1 response. */
+/*
+ * Output for AEROGPU_ESCAPE_OP_QUERY_DEVICE.
+ *
+ * `mmio_version` is the device's canonical MMIO ABI version, i.e. the 32-bit
+ * value read from MMIO register `AEROGPU_MMIO_REG_ABI_VERSION` on AGPU devices.
+ *
+ * It uses a major.minor encoding:
+ *   major = (mmio_version >> 16)
+ *   minor = (mmio_version & 0xFFFF)
+ *
+ * The field name is kept as `mmio_version` for backwards compatibility with
+ * existing dbgctl tooling.
+ */
 typedef struct aerogpu_escape_query_device_out {
   aerogpu_escape_header hdr;
   uint32_t mmio_version;

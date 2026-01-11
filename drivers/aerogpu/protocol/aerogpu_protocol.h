@@ -379,21 +379,7 @@ typedef struct aerogpu_submission_desc_allocation {
  *
  * Input and output share the same header; operations define additional payload.
  */
-#define AEROGPU_ESCAPE_VERSION 1u
-#define AEROGPU_ESCAPE_OP_QUERY_DEVICE 1u
-
-typedef struct aerogpu_escape_header {
-  aerogpu_u32 version; /* AEROGPU_ESCAPE_VERSION */
-  aerogpu_u32 op;      /* AEROGPU_ESCAPE_OP_* */
-  aerogpu_u32 size;    /* total size including this header */
-  aerogpu_u32 reserved0;
-} aerogpu_escape_header;
-
-typedef struct aerogpu_escape_query_device_out {
-  aerogpu_escape_header hdr;
-  aerogpu_u32 mmio_version;
-  aerogpu_u32 reserved0;
-} aerogpu_escape_query_device_out;
+#include "aerogpu_escape.h"
 
 #ifdef __cplusplus
 } // extern "C"
