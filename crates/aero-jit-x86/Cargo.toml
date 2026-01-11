@@ -18,7 +18,9 @@ aero-types = { path = "../aero-types" }
 aero-x86 = { path = "../aero-x86" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wasmtime = "40.0.1"
+# Wasmtime is only used as a reference backend for executing Tier-1 WASM blocks on native targets.
+# Disable its default feature set to keep compile times and dependency size manageable.
+wasmtime = { version = "40.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
 
 [dev-dependencies]
 memoffset = "0.9"
