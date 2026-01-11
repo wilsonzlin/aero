@@ -1,4 +1,4 @@
-import { initWasm, type WasmApi, type WasmVariant } from "./wasm_loader";
+import { initWasm, type WasmApi, type WasmInitOptions, type WasmVariant } from "./wasm_loader";
 
 export type { WasmApi, WasmVariant };
 
@@ -13,13 +13,13 @@ const initPromiseByMemory = new WeakMap<WebAssembly.Memory, Promise<InitResult>>
  *
  * This function must not reference `window`, since workers don't have it.
  */
-export async function initWasmForContext(options: { memory?: WebAssembly.Memory } = {}): Promise<InitResult> {
+export async function initWasmForContext(options: WasmInitOptions = {}): Promise<InitResult> {
   const memory = options.memory;
   if (memory) {
     const cached = initPromiseByMemory.get(memory);
     if (cached) return cached;
 
-    const promise = initWasm({ memory })
+    const promise = initWasm(options)
       .then(({ api, variant }) => ({ api, variant }))
       .catch((err) => {
         // Allow retries if initialization fails (e.g. missing assets during dev).
@@ -31,7 +31,7 @@ export async function initWasmForContext(options: { memory?: WebAssembly.Memory 
   }
 
   if (!initPromise) {
-    initPromise = initWasm()
+    initPromise = initWasm(options)
       .then(({ api, variant }) => ({ api, variant }))
       .catch((err) => {
         // Allow retries if initialization fails (e.g. missing assets during dev).

@@ -20,7 +20,8 @@ import { VgaPresenter } from "./display/vga_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
-import { initWasm, type WasmApi } from "./runtime/wasm_loader";
+import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
+import { precompileWasm } from "./runtime/wasm_preload";
 import type { WorkerRole } from "./runtime/shared_layout";
 import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
@@ -50,7 +51,31 @@ const workerCoordinator = new WorkerCoordinator();
 configManager.subscribe((state) => {
   workerCoordinator.updateConfig(state.effective);
 });
-const wasmInitPromise = perf.spanAsync("wasm:init", () => initWasm());
+const wasmInitPromise = perf.spanAsync("wasm:init", async () => {
+  const preferThreaded = (() => {
+    if (!(globalThis as any).crossOriginIsolated) return false;
+    if (typeof SharedArrayBuffer === "undefined") return false;
+    if (typeof Atomics === "undefined") return false;
+    if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") return false;
+    try {
+      // eslint-disable-next-line no-new
+      new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  const preferredVariant: WasmVariant = preferThreaded ? "threaded" : "single";
+  try {
+    const { module } = await precompileWasm(preferredVariant);
+    return await initWasm({ variant: preferredVariant, module });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[wasm] Precompile (${preferredVariant}) failed; falling back to default init. Error: ${message}`);
+    return await initWasm();
+  }
+});
 let frameScheduler: FrameSchedulerHandle | null = null;
 
 // Updated by the microphone UI and read by the worker coordinator so that

@@ -203,7 +203,11 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 
       try {
         const { api, variant } = await perf.spanAsync("wasm:init", () =>
-          initWasmForContext({ memory: segments.guestMemory }),
+          initWasmForContext({
+            variant: init.wasmVariant,
+            memory: segments.guestMemory,
+            module: init.wasmModule,
+          }),
         );
 
         // Sanity-check that the provided `guestMemory` is actually wired up as

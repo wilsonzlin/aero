@@ -101,6 +101,10 @@ export type WorkerInitMessage = {
   controlSab: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
+  /** Optional precompiled WASM module (structured-cloneable in modern browsers). */
+  wasmModule?: WebAssembly.Module;
+  /** Variant corresponding to `wasmModule` (or the preferred variant when no module is sent). */
+  wasmVariant?: WasmVariant;
   /**
    * CPU<->I/O AIPC buffer used for high-frequency device operations (disk I/O,
    * etc). Contains at least a command queue and an event queue.

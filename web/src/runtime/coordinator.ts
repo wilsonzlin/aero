@@ -28,6 +28,7 @@ import {
   encodeProtocolMessage,
 } from "./protocol";
 import type { WasmVariant } from "./wasm_context";
+import { precompileWasm } from "./wasm_preload";
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
@@ -181,37 +182,14 @@ export class WorkerCoordinator {
         info.status = { state: "failed", error: "worker message deserialization failed" };
         setReadyFlag(shared.status, role, false);
       };
-
-      const initMessage: WorkerInitMessage = {
-        kind: "init",
-        role,
-        controlSab: segments.control,
-        guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.vgaFramebuffer,
-        ioIpcSab: segments.ioIpc,
-        frameStateSab: this.frameStateSab,
-        platformFeatures: this.platformFeatures ?? undefined,
-      };
-
-      if (perfChannel) {
-        const workerKind = workerRoleToPerfWorkerKind(role);
-        const buffer = perfChannel.buffers[workerKind];
-        if (perfChannel.frameHeader instanceof SharedArrayBuffer && buffer instanceof SharedArrayBuffer) {
-          initMessage.perfChannel = {
-            runStartEpochMs: perfChannel.runStartEpochMs,
-            frameHeader: perfChannel.frameHeader,
-            buffer,
-            workerKind,
-          };
-        }
-      }
-      worker.postMessage(initMessage);
     }
 
     this.broadcastConfig(config);
     for (const role of WORKER_ROLES) {
       void this.eventLoop(role, runId);
     }
+
+    void this.postWorkerInitMessages({ runId, segments, perfChannel });
   }
 
   updateConfig(config: AeroConfig): void {
@@ -415,6 +393,85 @@ export class WorkerCoordinator {
     }
   }
 
+  private async postWorkerInitMessages(opts: {
+    runId: number;
+    segments: SharedMemoryViews["segments"];
+    perfChannel: PerfChannel | null;
+  }): Promise<void> {
+    const { runId, segments, perfChannel } = opts;
+
+    const tryVariantOrder: WasmVariant[] = ["threaded", "single"];
+    let precompiled: { variant: WasmVariant; module: WebAssembly.Module } | null = null;
+
+    for (const variant of tryVariantOrder) {
+      try {
+        const compiled = await precompileWasm(variant);
+        if (!isWasmModuleCloneable(compiled.module)) {
+          console.warn(
+            "[wasm] WebAssembly.Module is not structured-cloneable in this environment; falling back to per-worker compilation.",
+          );
+          precompiled = null;
+          break;
+        }
+        precompiled = { variant, module: compiled.module };
+        break;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[wasm] Precompile (${variant}) failed; falling back. Error: ${message}`);
+      }
+    }
+
+    // The coordinator may have been stopped/restarted while we were precompiling.
+    if (!this.shared || this.runId !== runId) return;
+
+    let moduleToSend: WebAssembly.Module | undefined = precompiled?.module;
+    let variantToSend: WasmVariant | undefined = precompiled?.variant;
+
+    for (const role of WORKER_ROLES) {
+      const info = this.workers[role];
+      if (!info) continue;
+
+      const baseInit: WorkerInitMessage = {
+        kind: "init",
+        role,
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        vgaFramebuffer: segments.vgaFramebuffer,
+        ioIpcSab: segments.ioIpc,
+        frameStateSab: this.frameStateSab,
+        platformFeatures: this.platformFeatures ?? undefined,
+      };
+
+      if (perfChannel) {
+        const workerKind = workerRoleToPerfWorkerKind(role);
+        const buffer = perfChannel.buffers[workerKind];
+        if (perfChannel.frameHeader instanceof SharedArrayBuffer && buffer instanceof SharedArrayBuffer) {
+          baseInit.perfChannel = {
+            runStartEpochMs: perfChannel.runStartEpochMs,
+            frameHeader: perfChannel.frameHeader,
+            buffer,
+            workerKind,
+          };
+        }
+      }
+
+      try {
+        if (moduleToSend) {
+          info.worker.postMessage({ ...baseInit, wasmModule: moduleToSend, wasmVariant: variantToSend });
+        } else {
+          info.worker.postMessage(baseInit);
+        }
+      } catch (err) {
+        // Older browsers may not support structured cloning WebAssembly.Module.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[wasm] Failed to send precompiled module to worker (${role}); falling back. Error: ${msg}`);
+        moduleToSend = undefined;
+        variantToSend = undefined;
+        info.worker.postMessage(baseInit);
+      }
+    }
+  }
+
   private onWorkerMessage(role: WorkerRole, data: unknown): void {
     const info = this.workers[role];
     const shared = this.shared;
@@ -499,6 +556,27 @@ export class WorkerCoordinator {
       if (!this.shared || this.runId !== runId) return;
       await info.eventRing.waitForDataAsync(1000);
     }
+  }
+}
+
+function isWasmModuleCloneable(module: WebAssembly.Module): boolean {
+  try {
+    if (typeof structuredClone === "function") {
+      structuredClone(module);
+      return true;
+    }
+  } catch {
+    // Fall through to MessageChannel test below.
+  }
+
+  try {
+    const channel = new MessageChannel();
+    channel.port1.postMessage(module);
+    channel.port1.close();
+    channel.port2.close();
+    return true;
+  } catch {
+    return false;
   }
 }
 
