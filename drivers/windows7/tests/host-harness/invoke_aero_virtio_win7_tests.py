@@ -566,30 +566,37 @@ def main() -> int:
 
     # QMP endpoint used to request a graceful shutdown (so the wav audiodev can flush/finalize).
     #
-    # - On POSIX hosts prefer a UNIX domain socket (avoids picking a TCP port).
-    # - Fall back to a loopback TCP socket on Windows (and when the unix socket path is unsafe).
+    # Only enable QMP when we actually need a graceful exit for `-audiodev wav` output, so we
+    # don't introduce extra host port/socket dependencies in non-audio harness runs.
+    use_qmp = args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav"
     qmp_endpoint: Optional[_QmpEndpoint] = None
     qmp_socket: Optional[Path] = None
-    if os.name != "nt":
-        qmp_socket = serial_log.with_name(serial_log.stem + ".qmp.sock")
-        # UNIX domain sockets have a small path length limit (typically ~108 bytes). Avoid failing
-        # QEMU startup if the user provided an unusually long serial log path.
-        qmp_path_str = str(qmp_socket)
-        if len(qmp_path_str) >= 100 or "," in qmp_path_str or len(qmp_path_str.encode("utf-8")) >= 100:
-            qmp_socket = None
-        else:
-            try:
-                qmp_socket.unlink()
-            except FileNotFoundError:
-                pass
-            qmp_endpoint = _QmpEndpoint(unix_socket=qmp_socket)
+    if use_qmp:
+        # - On POSIX hosts prefer a UNIX domain socket (avoids picking a TCP port).
+        # - Fall back to a loopback TCP socket on Windows (and when the unix socket path is unsafe).
+        if os.name != "nt":
+            qmp_socket = serial_log.with_name(serial_log.stem + ".qmp.sock")
+            # UNIX domain sockets have a small path length limit (typically ~108 bytes). Avoid failing
+            # QEMU startup if the user provided an unusually long serial log path.
+            qmp_path_str = str(qmp_socket)
+            if len(qmp_path_str) >= 100 or "," in qmp_path_str or len(qmp_path_str.encode("utf-8")) >= 100:
+                qmp_socket = None
+            else:
+                try:
+                    qmp_socket.unlink()
+                except FileNotFoundError:
+                    pass
+                qmp_endpoint = _QmpEndpoint(unix_socket=qmp_socket)
 
-    if qmp_endpoint is None:
-        port = _find_free_tcp_port()
-        if port is None:
-            print("WARNING: disabling QMP shutdown because a free TCP port could not be allocated", file=sys.stderr)
-        else:
-            qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
+        if qmp_endpoint is None:
+            port = _find_free_tcp_port()
+            if port is None:
+                print(
+                    "WARNING: disabling QMP shutdown because a free TCP port could not be allocated",
+                    file=sys.stderr,
+                )
+            else:
+                qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
 
     http_log_path: Optional[Path] = None
     if args.http_log:
