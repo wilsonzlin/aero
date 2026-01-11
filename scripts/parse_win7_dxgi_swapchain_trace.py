@@ -45,6 +45,9 @@ class CreateResourceDesc:
     sample_quality: int = 0
     rflags: int = 0
     rflags_size: int = 0
+    num_alloc: int = 0
+    alloc_info: str = ""
+    primary_desc: str = ""
     created_kind: str = ""
     created_row_pitch: int = 0
     created_size: int = 0
@@ -63,6 +66,13 @@ def _parse_hex(line: str, key: str) -> Optional[int]:
     if not m:
         return None
     return int(m.group(1), 16)
+
+
+def _parse_token(line: str, key: str) -> Optional[str]:
+    m = re.search(rf"{re.escape(key)}=([^\s]+)", line)
+    if not m:
+        return None
+    return m.group(1)
 
 
 def _parse_dim(line: str) -> Optional[int]:
@@ -162,6 +172,18 @@ def parse_create_resource(line: str) -> Optional[CreateResourceDesc]:
     rflags_size = _parse_int(line, "rflags_size")
     if rflags_size is not None:
         d.rflags_size = rflags_size
+
+    num_alloc = _parse_int(line, "num_alloc")
+    if num_alloc is not None:
+        d.num_alloc = num_alloc
+
+    alloc_info = _parse_token(line, "alloc_info")
+    if alloc_info is not None:
+        d.alloc_info = alloc_info
+
+    primary_desc = _parse_token(line, "primary_desc")
+    if primary_desc is not None:
+        d.primary_desc = primary_desc
 
     return d
 
@@ -286,6 +308,7 @@ def main(argv: List[str]) -> int:
             f"handle {h}: {d.api} dim={d.dim} fmt={d.fmt} bind=0x{d.bind:08X} usage={d.usage} "
             f"cpu=0x{d.cpu:08X} misc=0x{d.misc:08X} w={d.width} h={d.height} mips={d.mips} array={d.array} "
             f"sample=({d.sample_count},{d.sample_quality}) rflags=0x{d.rflags:X} rflags_size={d.rflags_size} "
+            f"num_alloc={d.num_alloc} primary_desc={d.primary_desc or 'n/a'} "
             f"created={d.created_kind or '?'}"
         )
         if d.created_kind == "tex2d":
@@ -305,4 +328,3 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

@@ -80,6 +80,12 @@ To identify *which* `CreateResource` calls are swapchain backbuffers:
 1. Find the handles printed by `RotateResourceIdentities`.
 2. Match those handles to the immediately preceding `CreateResource => created tex2d handle=...` lines.
 
+When using the WDK-backed DDI path, `CreateResource` descriptors also log:
+
+* `primary_desc=<ptr>` (mirrors `D3D10DDIARG_CREATERESOURCE::pPrimaryDesc` / `D3D11DDIARG_CREATERESOURCE::pPrimaryDesc`)
+
+`primary_desc != NULL` is a strong signal that the resource is a **DXGI primary/backbuffer** allocation, which is useful when scanning logs manually.
+
 ### Optional: automated extraction
 
 For convenience, the repo includes a small host-side parser that scans a captured log and prints the
