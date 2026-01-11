@@ -66,24 +66,24 @@ AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 # (either, depending on flags/device):
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set
 # (capture is reported separately):
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
  # or:
  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
  # or:
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|...
- AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
- AERO_VIRTIO_SELFTEST|RESULT|PASS
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing
+  AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+  AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 Notes:
 - If virtio-snd playback is not enabled via `--test-snd` / `--require-snd` (and no capture flags are set), the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - If virtio-snd playback is enabled via `--test-snd` / `--require-snd` and the PCI device is missing, the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing`.
   (In this case, the capture marker uses `...|device_missing` and is `SKIP` by default unless `--require-snd-capture` is set.)
 - If the virtio-snd PCI device is present but not bound to the expected driver, the tool emits a reason code:
   - `wrong_service` (bound to an unexpected service)
@@ -96,7 +96,7 @@ Notes:
   extra diagnostics such as `method=...`, `frames=...`, and whether any non-silence was observed. If `--require-non-silence`
   is set and only silence is captured, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence`.
 - If the virtio-snd test is disabled via `--disable-snd`, the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
 
 ## Building
 
