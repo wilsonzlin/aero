@@ -294,8 +294,32 @@ def main(argv: List[str]) -> int:
     # If CreateResource was seen but we never observed a "created handle" line, keep it as dangling.
     dangling = pending
 
+    present_handles: List[int] = []
+    present_handle_set: Set[int] = set()
+    for (_api, _sync, src) in presents:
+        if src and src not in present_handle_set:
+            present_handle_set.add(src)
+            present_handles.append(src)
+
+    primary_handles: List[int] = []
+    primary_handle_set: Set[int] = set()
+    for (h, desc) in resources.items():
+        if desc.primary and h not in primary_handle_set:
+            primary_handle_set.add(h)
+            primary_handles.append(h)
+
+    candidate_handles: List[int] = []
+    candidate_handle_set: Set[int] = set()
+    for h in rotate_handles + present_handles + primary_handles:
+        if h and h not in candidate_handle_set:
+            candidate_handle_set.add(h)
+            candidate_handles.append(h)
+
     output = {
         "swapchain_handles": rotate_handles,
+        "present_handles": present_handles,
+        "primary_handles": primary_handles,
+        "candidate_handles": candidate_handles,
         "resources_by_handle": {str(k): asdict(v) for (k, v) in resources.items()},
         "present_events": [{"api": api, "sync": sync, "src_handle": src} for (api, sync, src) in presents],
     }
@@ -313,14 +337,24 @@ def main(argv: List[str]) -> int:
                 f.write("\n")
         return 0
 
-    print("swapchain backbuffer handles (from RotateResourceIdentities):")
     if rotate_handles:
+        print("swapchain backbuffer handles (from RotateResourceIdentities):")
         print("  " + ", ".join(str(h) for h in rotate_handles))
+    elif present_handles:
+        # Single-buffer swapchains may not rotate identities; fall back to the
+        # handle observed in Present calls.
+        print("swapchain backbuffer handles (from Present):")
+        print("  " + ", ".join(str(h) for h in present_handles))
+    elif primary_handles:
+        # As a last resort, use CreateResource primary markers.
+        print("swapchain backbuffer handles (from CreateResource primary marker):")
+        print("  " + ", ".join(str(h) for h in primary_handles))
     else:
+        print("swapchain backbuffer handles:")
         print("  (none found)")
 
     print("")
-    for h in rotate_handles:
+    for h in candidate_handles if candidate_handles else rotate_handles:
         d = resources.get(h)
         if not d:
             print(f"handle {h}: (no CreateResource descriptor captured)")
