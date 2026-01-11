@@ -7,9 +7,8 @@
   repository `drivers/<driver>` directories with built binaries from `out/drivers/<driver>`
   and runs Inf2Cat to produce catalog files in a stable staging layout under `out/packages`.
 
-  `<driver>` is a path relative to the `drivers/` directory. This supports both layouts:
-    - `drivers/<name>/...`
-    - `drivers/<group>/<name>/...` (e.g. `drivers/windows7/virtio/net/...`)
+  `<driver>` is a path relative to the `drivers/` directory (it may be nested,
+  e.g. `drivers/windows7/virtio/net/...`).
 
   If enabled (default), it stamps DriverVer in the staged INF(s) using `ci/stamp-infs.ps1`
   before running Inf2Cat. Catalogs hash INF contents, so stamping must happen first.

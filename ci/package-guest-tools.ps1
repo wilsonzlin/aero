@@ -946,7 +946,7 @@ try {
     Write-Host "  Detected input layout: packager (x86/ + amd64/)"
     Stage-DriversFromPackagerLayout -InputDriversRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   } elseif ($looksLikeBundle) {
-    Write-Host "  Detected input layout: driver bundle (drivers/<name>/(x86|x64)/...)"
+    Write-Host "  Detected input layout: driver bundle (drivers/<driver>/(x86|x64)/...)"
     Stage-DriversFromBundleLayout -BundleRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   } else {
     Write-Host "  Detected input layout: CI packages (out/packages/<driver>/<arch>/...)"
