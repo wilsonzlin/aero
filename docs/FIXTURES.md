@@ -29,6 +29,15 @@ small, deterministic test fixtures:
 
 These paths are explicitly allowlisted by `scripts/ci/check-repo-policy.sh` and must remain small and reproducible.
 
+In addition, a handful of **tiny text placeholders** with normally-forbidden Windows driver extensions are kept
+in-repo for packaging tests:
+
+- `tools/packaging/aero_packager/testdata/drivers/**/test.sys`
+- `tools/packaging/aero_packager/testdata/drivers/**/test.dll`
+
+These are **not real Windows binaries**; CI pins their blob hashes in `scripts/ci/check-repo-policy.sh` to prevent
+silent drift into proprietary artifacts.
+
 ## Size limits
 
 New/changed blobs should generally stay **under 20MB**. If you need larger assets for tests, prefer:
