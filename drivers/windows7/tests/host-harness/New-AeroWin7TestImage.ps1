@@ -222,7 +222,7 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
 
     if ($matches.Count -gt 1 -and -not $isRelative -and $allowListSource -eq "default allowlist") {
       # If multiple INFs share the same basename (common when staging driver packs),
-      # prefer the contract-v1 modern IDs used by the harness (`disable-legacy=on`).
+      # prefer the contract-v1 IDs used by the harness (`disable-legacy=on,x-pci-revision=0x01`).
       # If still ambiguous after filtering, require an explicit relative path.
       $preferPattern = $null
       switch ($entryWin.ToLowerInvariant()) {

@@ -38,8 +38,10 @@ param(
   [int]$Smp = 2,
 
   # If set, use QEMU's transitional virtio-pci devices (legacy + modern).
-  # By default this script uses modern-only (disable-legacy=on) virtio-pci devices so
-  # Win7 drivers can bind to virtio 1.0+ IDs (DEV_1041/DEV_1042).
+  # By default this script uses the Aero contract v1 virtio-pci identity:
+  # - modern-only enumeration (`disable-legacy=on` => `DEV_1041`/`DEV_1042`)
+  # - contract Revision ID (`x-pci-revision=0x01` => `REV_01`)
+  # so strict Win7 driver packages can bind under QEMU.
   [Parameter(Mandatory = $false)]
   [switch]$VirtioTransitional,
 
