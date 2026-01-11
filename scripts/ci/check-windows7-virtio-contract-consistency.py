@@ -316,6 +316,7 @@ class WindowsDeviceContractRow:
 @dataclass(frozen=True)
 class EmulatorPciProfile:
     identity: PciIdentity
+    bdf: tuple[int, int, int]
     class_code: tuple[int, int, int]
     header_type: int
 
@@ -846,6 +847,22 @@ def parse_emulator_pci_profiles(path: Path) -> Mapping[str, EmulatorPciProfile]:
             eval_u8(class_m.group("sub")),
             eval_u8(class_m.group("prog")),
         )
+
+        bdf_expr = field("bdf")
+        bdf_m = re.search(
+            r"^PciBdf::new\(\s*(?P<bus>[^,]+)\s*,\s*(?P<dev>[^,]+)\s*,\s*(?P<fun>[^)]+)\s*\)$",
+            bdf_expr,
+        )
+        if not bdf_m:
+            fail(
+                f"{path.as_posix()}: profile {profile_name} has unsupported bdf expression {bdf_expr!r} "
+                "(expected PciBdf::new(bus, device, function))"
+            )
+        bdf = (
+            eval_u8(bdf_m.group("bus")),
+            eval_u8(bdf_m.group("dev")),
+            eval_u8(bdf_m.group("fun")),
+        )
         profiles[profile_name] = EmulatorPciProfile(
             identity=PciIdentity(
                 vendor_id=eval_u16(field("vendor_id")),
@@ -854,6 +871,7 @@ def parse_emulator_pci_profiles(path: Path) -> Mapping[str, EmulatorPciProfile]:
                 subsystem_device_id=eval_u16(field("subsystem_id")),
                 revision_id=eval_u8(field("revision_id")),
             ),
+            bdf=bdf,
             class_code=class_code,
             header_type=eval_u8(field("header_type")),
         )
@@ -1912,6 +1930,38 @@ def main() -> None:
                         [
                             f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {format_pci_class_code(doc.class_code)}",
                             f"{AERO_DEVICES_PCI_PROFILE_RS.as_posix()}: {format_pci_class_code(prof.class_code)}",
+                        ],
+                    )
+                )
+
+            expected_header = 0x80 if name == "virtio-input (keyboard)" else 0x00
+            if prof.header_type != expected_header:
+                errors.append(
+                    format_error(
+                        f"{name}: PCI header_type mismatch in emulator PCI profile:",
+                        [
+                            f"expected: 0x{expected_header:02X}",
+                            f"got: 0x{prof.header_type:02X}",
+                            f"file: {AERO_DEVICES_PCI_PROFILE_RS.as_posix()}",
+                        ],
+                    )
+                )
+
+        # virtio-input must be exposed as a multi-function PCI device: keyboard on function 0
+        # (with the multi-function bit set) and mouse on function 1.
+        kbd = profile_map.get("virtio-input (keyboard)")
+        mouse = profile_map.get("virtio-input (mouse)")
+        if kbd and mouse:
+            kb_bus, kb_dev, kb_fun = kbd.bdf
+            ms_bus, ms_dev, ms_fun = mouse.bdf
+            if (kb_bus, kb_dev) != (ms_bus, ms_dev) or kb_fun != 0 or ms_fun != 1:
+                errors.append(
+                    format_error(
+                        "virtio-input: emulator PCI profiles must be multi-function (same bus/device; keyboard fn0; mouse fn1):",
+                        [
+                            f"keyboard bdf: {kb_bus:02x}:{kb_dev:02x}.{kb_fun}",
+                            f"mouse bdf:    {ms_bus:02x}:{ms_dev:02x}.{ms_fun}",
+                            f"file: {AERO_DEVICES_PCI_PROFILE_RS.as_posix()}",
                         ],
                     )
                 )
