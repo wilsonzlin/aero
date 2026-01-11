@@ -224,7 +224,14 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
     if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= this.table.length) {
       throw new Error(`blockIndex out of range: ${blockIndex}`);
     }
-    return this.table[blockIndex] !== 0;
+    // A block can be "logically present" even if it hasn't been flushed to the sparse
+    // file yet (e.g. newly-written overlay blocks, or freshly downloaded remote-cache
+    // blocks). Those blocks live only in the in-memory cache until `flush()` (or an
+    // eviction) writes them out and assigns a physical offset in `table`.
+    //
+    // Callers like `OpfsCowDisk` need to treat dirty cached blocks as allocated so
+    // reads observe writes immediately without requiring an explicit flush.
+    return this.table[blockIndex] !== 0 || this.cache.get(blockIndex)?.dirty === true;
   }
 
   private touchCacheKey(key: number, entry: CacheEntry): void {

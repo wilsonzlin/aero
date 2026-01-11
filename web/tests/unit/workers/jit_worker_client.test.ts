@@ -50,8 +50,11 @@ describe("JitWorkerClient", () => {
       const client = new JitWorkerClient(worker as unknown as Worker);
 
       const promise = client.compile(new ArrayBuffer(8), { timeoutMs: 10 });
+      // Attach the rejection handler *before* advancing timers so Node doesn't
+      // treat the timeout rejection as an unhandled promise rejection.
+      const assertion = expect(promise).rejects.toThrow(/Timed out/i);
       await vi.advanceTimersByTimeAsync(50);
-      await expect(promise).rejects.toThrow(/Timed out/i);
+      await assertion;
     } finally {
       vi.useRealTimers();
     }
@@ -69,4 +72,3 @@ describe("JitWorkerClient", () => {
     await expect(client.compile(new ArrayBuffer(8), { timeoutMs: 1000 })).rejects.toThrow("boom");
   });
 });
-

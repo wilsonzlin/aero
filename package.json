@@ -54,6 +54,7 @@
     "@types/pngjs": "^6.0.5",
     "@vitest/coverage-v8": "^1.6.0",
     "esbuild": "^0.21.3",
+    "fake-indexeddb": "^6.2.5",
     "pixelmatch": "^5.3.0",
     "pngjs": "^7.0.0",
     "typescript": "^5.3.3",
