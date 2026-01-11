@@ -42,6 +42,8 @@ jobs:
 
       - name: Check Cargo.lock syntax (no duplicates / no conflict markers)
         run: python3 scripts/ci/check-cargo-lockfile-syntax.py
+      - name: Check Cargo config syntax (no duplicate keys / no conflict markers)
+        run: python3 scripts/ci/check-cargo-config-syntax.py
 
       - name: Detect docs-only changes
         id: changes
