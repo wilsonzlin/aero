@@ -464,6 +464,17 @@ fn corrupt_disks_base_image_len(snapshot: &mut [u8], new_len: u32) {
     snapshot[off..off + 4].copy_from_slice(&new_len.to_le_bytes());
 }
 
+fn corrupt_cpus_count_to_zero(snapshot: &mut [u8]) {
+    let index = aero_snapshot::inspect_snapshot(&mut Cursor::new(&snapshot)).unwrap();
+    let cpus = index
+        .sections
+        .iter()
+        .find(|s| s.id == SectionId::CPUS)
+        .expect("CPUS section missing");
+    let off = cpus.offset as usize;
+    snapshot[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
+}
+
 #[test]
 fn snapshot_validate_rejects_disks_invalid_utf8() {
     let tmp = tempfile::tempdir().unwrap();
@@ -511,6 +522,25 @@ fn snapshot_validate_rejects_disks_truncated_string_bytes() {
         .stderr(predicate::str::contains(
             "disk base_image: truncated string bytes",
         ));
+}
+
+#[test]
+fn snapshot_validate_rejects_zero_cpu_count() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = tmp.path().join("zero_cpu_count.aerosnap");
+
+    let mut source = MultiCpuSource::new(4096);
+    let mut cursor = Cursor::new(Vec::new());
+    aero_snapshot::save_snapshot(&mut cursor, &mut source, SaveOptions::default()).unwrap();
+    let mut bytes = cursor.into_inner();
+    corrupt_cpus_count_to_zero(&mut bytes);
+    fs::write(&snap, &bytes).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["snapshot", "validate", snap.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing CPU entry"));
 }
 
 struct LargeDirtySource;

@@ -275,8 +275,11 @@ impl SnapshotTarget for DeepValidateTarget {
 
     fn restore_cpu_states(
         &mut self,
-        _states: Vec<aero_snapshot::VcpuSnapshot>,
+        states: Vec<aero_snapshot::VcpuSnapshot>,
     ) -> aero_snapshot::Result<()> {
+        if states.is_empty() {
+            return Err(SnapshotError::Corrupt("missing CPU entry"));
+        }
         Ok(())
     }
 
@@ -340,6 +343,9 @@ fn validate_cpus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> 
 
     let mut section_reader = file.take(section.len);
     let count = read_u32_le(&mut section_reader)?;
+    if count == 0 {
+        return Err(XtaskError::Message("missing CPU entry".to_string()));
+    }
     if count > MAX_CPU_COUNT {
         return Err(XtaskError::Message("too many CPUs".to_string()));
     }
