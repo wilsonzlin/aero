@@ -153,7 +153,7 @@ MSBuild properties:
 
 * `/p:AeroGpuUseWdkHeaders=0` (use the repo-local compat ABI subset instead)
 * `/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (optional; WinDDK-style root with `inc\api` / `inc\ddk`,
-  typically `%WINDDK%` or `%WDK_ROOT%`)
+  typically `%WINDDK%`, `%WDK_ROOT%`, or `%WDKROOT%` when they point at a WinDDK-style layout)
 
 If `AeroGpuUseWdkHeaders=1` and `AeroGpuWdkRoot` is set, the project adds
 `$(AeroGpuWdkRoot)\inc\{api,ddk}` to the include path and validates the expected

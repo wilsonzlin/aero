@@ -34,16 +34,21 @@ rem
 rem Note: do not clobber the standard WDKROOT environment variable; it may be set by modern
 rem Windows Kits installations.
 set "AEROGPU_WDKROOT="
-if defined WINDDK set "AEROGPU_WDKROOT=%WINDDK%"
-if not defined AEROGPU_WDKROOT if defined WDK_ROOT set "AEROGPU_WDKROOT=%WDK_ROOT%"
-rem Some setups define WDKROOT; only treat it as WinDDK root if it has the expected inc\api layout.
+if defined WINDDK (
+  if exist "%WINDDK%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WINDDK%"
+  if not defined AEROGPU_WDKROOT if exist "%WINDDK%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WINDDK%"
+)
+if not defined AEROGPU_WDKROOT if defined WDK_ROOT (
+  if exist "%WDK_ROOT%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDK_ROOT%"
+  if not defined AEROGPU_WDKROOT if exist "%WDK_ROOT%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDK_ROOT%"
+)
 if not defined AEROGPU_WDKROOT if defined WDKROOT (
   if exist "%WDKROOT%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
-  if exist "%WDKROOT%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
+  if not defined AEROGPU_WDKROOT if exist "%WDKROOT%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
 )
 if not defined AEROGPU_WDKROOT (
-  if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
   if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
+  if not defined AEROGPU_WDKROOT if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
 )
 
 set "D3D10_11_WDK_MSBUILD_ARGS="

@@ -54,9 +54,10 @@ The D3D10/11 UMD is intended to be built against the official Win7 D3D10/11 DDI
 headers (`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`) provided by a Windows
 SDK/WDK install.
 
-The repo-local `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WDK root via
-`WINDDK` / `WDK_ROOT` (and `WDKROOT` only if it looks like a WinDDK-style layout) and,
-when present, passes these MSBuild properties for the D3D10/11 UMD build:
+The repo-local `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WinDDK-style
+WDK root via `WINDDK` / `WDK_ROOT` / `WDKROOT` (only if it contains the expected
+`inc\\{api,ddk}` headers) and, when present, passes these MSBuild properties for the
+D3D10/11 UMD build:
 
 * `/p:AeroGpuUseWdkHeaders=1`
 * `/p:AeroGpuWdkRoot="C:\\WinDDK\\7600.16385.1"` (or `%WINDDK%`)
