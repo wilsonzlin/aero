@@ -102,7 +102,7 @@ aerogpu_dbgctl --selftest --timeout-ms 2000
 Notes:
 - `IRQ_ACTIVE` is `IRQ_STATUS & IRQ_ENABLE` (i.e. causes that can currently assert the interrupt line).
 - Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; dbgctl retries `--dump-vblank`, `--wait-vblank`, and `--query-scanline` with source 0 if needed (AeroGPU currently implements a single source).
-- If `vblank_interrupt_type` prints `(not enabled)`, dxgkrnl has not yet enabled vblank interrupt delivery for the adapter (it should become valid after DWM starts or after a successful `--wait-vblank`).
+- If `vblank_interrupt_type` prints `(not enabled or not reported)`, either dxgkrnl has not enabled vblank interrupt delivery for the adapter yet *or* the installed KMD predates `vblank_interrupt_type` reporting.
 
 ## Build (Windows 7)
 

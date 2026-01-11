@@ -328,7 +328,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       if ((qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID) != 0) {
         wprintf(L"  vblank_interrupt_type: %lu\n", (unsigned long)qv.vblank_interrupt_type);
       } else {
-        wprintf(L"  vblank_interrupt_type: (not enabled)\n");
+        wprintf(L"  vblank_interrupt_type: (not enabled or not reported)\n");
       }
     }
     if (!supported) {
@@ -749,7 +749,7 @@ static void PrintVblankSnapshot(const aerogpu_escape_query_vblank_out *q, bool s
     if ((q->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID) != 0) {
       wprintf(L"  vblank_interrupt_type: %lu\n", (unsigned long)q->vblank_interrupt_type);
     } else {
-      wprintf(L"  vblank_interrupt_type: (not enabled)\n");
+      wprintf(L"  vblank_interrupt_type: (not enabled or not reported)\n");
     }
   }
 
