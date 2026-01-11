@@ -162,3 +162,162 @@ fn domain_matches(name: &str, suffix: &str) -> bool {
     }
     name.ends_with(&format!(".{suffix}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prior: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prior = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prior }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prior = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prior }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.prior.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn base_env() -> (
+        EnvVarGuard,
+        EnvVarGuard,
+        EnvVarGuard,
+        EnvVarGuard,
+        EnvVarGuard,
+    ) {
+        (
+            EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS"),
+            EnvVarGuard::unset("AERO_L2_ALLOWED_TCP_PORTS"),
+            EnvVarGuard::unset("AERO_L2_ALLOWED_UDP_PORTS"),
+            EnvVarGuard::unset("AERO_L2_ALLOWED_DOMAINS"),
+            EnvVarGuard::unset("AERO_L2_BLOCKED_DOMAINS"),
+        )
+    }
+
+    #[test]
+    fn allow_private_ips_overrides_default_deny_list() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(
+            !policy.allows_ip(Ipv4Addr::new(10, 0, 0, 1)),
+            "expected private IPs to be denied by default"
+        );
+
+        let _allow_private = EnvVarGuard::set("AERO_L2_ALLOW_PRIVATE_IPS", "1");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(
+            policy.allows_ip(Ipv4Addr::new(10, 0, 0, 1)),
+            "expected allow_private_ips to permit private IPs"
+        );
+    }
+
+    #[test]
+    fn tcp_port_allowlist_is_deny_by_default_when_set() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_tcp_port(80));
+
+        // When set to the empty string, the allowlist is enabled but contains zero ports, so all
+        // ports should be denied.
+        let _tcp = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(!policy.allows_tcp_port(80));
+
+        // When set to a list, only those ports are allowed.
+        let _tcp = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "80,443");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_tcp_port(80));
+        assert!(policy.allows_tcp_port(443));
+        assert!(!policy.allows_tcp_port(22));
+    }
+
+    #[test]
+    fn invalid_port_allowlist_entry_is_rejected() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        let _tcp = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "nope");
+        let err = EgressPolicy::from_env().expect_err("expected invalid port list");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("AERO_L2_ALLOWED_TCP_PORTS") && msg.contains("tcp port allowlist"),
+            "expected error to mention env var and include context, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn domain_allow_and_block_lists_use_suffix_matching() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        // Default: allow all domains.
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_domain("example.com"));
+
+        // Allowlist enabled: only matching suffixes pass.
+        {
+            let _allowed_domains = EnvVarGuard::set("AERO_L2_ALLOWED_DOMAINS", "Example.COM");
+            let policy = EgressPolicy::from_env().expect("policy from env");
+            assert!(policy.allows_domain("example.com"));
+            assert!(policy.allows_domain("sub.example.com."));
+            assert!(
+                !policy.allows_domain("notexample.com"),
+                "expected boundary-aware suffix matching"
+            );
+            assert!(!policy.allows_domain("other.test"));
+
+            // Blocklist overrides allowlist: blocked domains should be rejected even if the domain
+            // is otherwise permitted by the allowlist.
+            let _blocked_domains = EnvVarGuard::set("AERO_L2_BLOCKED_DOMAINS", "example.com");
+            let policy = EgressPolicy::from_env().expect("policy from env");
+            assert!(!policy.allows_domain("example.com"));
+            assert!(!policy.allows_domain("sub.example.com"));
+            // Allowlist is still in effect for unrelated domains.
+            assert!(!policy.allows_domain("other.test"));
+        }
+
+        // Without an allowlist, a blocklist should only reject the matching suffixes.
+        {
+            let _allowed_domains = EnvVarGuard::unset("AERO_L2_ALLOWED_DOMAINS");
+            let _blocked_domains = EnvVarGuard::set("AERO_L2_BLOCKED_DOMAINS", "example.com");
+            let policy = EgressPolicy::from_env().expect("policy from env");
+            assert!(!policy.allows_domain("example.com"));
+            assert!(!policy.allows_domain("sub.example.com"));
+            assert!(policy.allows_domain("other.test"));
+        }
+
+        // More specific blocklist entries should not block siblings.
+        {
+            let _allowed_domains = EnvVarGuard::set("AERO_L2_ALLOWED_DOMAINS", "example.com");
+            let _blocked_domains = EnvVarGuard::set("AERO_L2_BLOCKED_DOMAINS", "bad.example.com");
+            let policy = EgressPolicy::from_env().expect("policy from env");
+            assert!(policy.allows_domain("example.com"));
+            assert!(!policy.allows_domain("bad.example.com"));
+            assert!(!policy.allows_domain("sub.bad.example.com"));
+            assert!(policy.allows_domain("good.example.com"));
+        }
+    }
+}
