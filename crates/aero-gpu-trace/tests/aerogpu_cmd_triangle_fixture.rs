@@ -2,6 +2,7 @@ use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceReader, TraceWri
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
 };
@@ -9,7 +10,6 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-const AEROGPU_ABI_VERSION_U32: u32 = 0x0001_0000;
 const AEROGPU_CMD_STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD"
 
 // Submission flags (see drivers/aerogpu/protocol/aerogpu_ring.h)
