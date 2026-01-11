@@ -225,16 +225,19 @@ impl CaptureManagerInner {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
+    let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
+        .as_millis();
+    ms.min(u64::MAX as u128) as u64
 }
 
 fn system_time_ms(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
+    let ms = time
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
+        .as_millis();
+    ms.min(u64::MAX as u128) as u64
 }
 
 fn hash_session(session_secret: &str) -> String {
