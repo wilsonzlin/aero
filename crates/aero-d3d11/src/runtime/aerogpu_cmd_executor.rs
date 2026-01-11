@@ -19,7 +19,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
-use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
+use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::input_layout::{
@@ -1504,14 +1504,11 @@ impl AerogpuD3d11Executor {
                     bail!("COPY_BUFFER: internal error: missing staging buffer for writeback");
                 };
 
-                allocs.validate_range(
-                    dst_backing.alloc_id,
-                    dst_backing
-                        .offset_bytes
-                        .checked_add(dst_offset_bytes)
-                        .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?,
-                    size_bytes,
-                )?;
+                let dst_offset = dst_backing
+                    .offset_bytes
+                    .checked_add(dst_offset_bytes)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?;
+                let dst_gpa = allocs.validate_write_range(dst_backing.alloc_id, dst_offset, size_bytes)?;
 
                 let new_encoder =
                     self.device
@@ -1545,11 +1542,6 @@ impl AerogpuD3d11Executor {
                     .map_err(|e| anyhow!("COPY_BUFFER: writeback map_async failed: {e:?}"))?;
 
                 let mapped = slice.get_mapped_range();
-                let base = allocs.gpa(dst_backing.alloc_id)?;
-                let dst_gpa = base
-                    .checked_add(dst_backing.offset_bytes)
-                    .and_then(|v| v.checked_add(dst_offset_bytes))
-                    .ok_or_else(|| anyhow!("COPY_BUFFER: dst GPA overflow"))?;
                 guest_mem
                     .write(dst_gpa, &mapped)
                     .map_err(anyhow_guest_mem)?;
@@ -1829,7 +1821,8 @@ impl AerogpuD3d11Executor {
                 let required = (dst_row_pitch_bytes as u64)
                     .checked_mul(mip_h as u64)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size overflow"))?;
-                allocs.validate_range(dst_backing.alloc_id, dst_backing.offset_bytes, required)?;
+                let base_gpa =
+                    allocs.validate_write_range(dst_backing.alloc_id, dst_backing.offset_bytes, required)?;
 
                 let new_encoder =
                     self.device
@@ -1863,15 +1856,11 @@ impl AerogpuD3d11Executor {
                     .map_err(|e| anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}"))?;
 
                 let mapped = slice.get_mapped_range();
-                let base = allocs.gpa(dst_backing.alloc_id)?;
-                let base = base
-                    .checked_add(dst_backing.offset_bytes)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst GPA overflow"))?;
                 let row_pitch = dst_row_pitch_bytes as u64;
                 for row in 0..mip_h as u64 {
                     let src_start = row as usize * padded_bpr as usize;
                     let src_end = src_start + unpadded_bpr as usize;
-                    let dst_gpa = base
+                    let dst_gpa = base_gpa
                         .checked_add(row.checked_mul(row_pitch).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
                         })?)
@@ -3574,21 +3563,21 @@ impl AllocTable {
         Ok(Self { entries: map })
     }
 
-    fn gpa(&self, alloc_id: u32) -> Result<u64> {
+    fn entry(&self, alloc_id: u32) -> Result<&AerogpuAllocEntry> {
         self.entries
             .get(&alloc_id)
-            .map(|e| e.gpa)
             .ok_or_else(|| anyhow!("unknown alloc_id {alloc_id}"))
+    }
+
+    fn gpa(&self, alloc_id: u32) -> Result<u64> {
+        self.entry(alloc_id).map(|e| e.gpa)
     }
 
     fn validate_range(&self, alloc_id: u32, offset: u64, size: u64) -> Result<()> {
         if alloc_id == 0 {
             return Ok(());
         }
-        let entry = self
-            .entries
-            .get(&alloc_id)
-            .ok_or_else(|| anyhow!("unknown alloc_id {alloc_id}"))?;
+        let entry = self.entry(alloc_id)?;
         let end = offset
             .checked_add(size)
             .ok_or_else(|| anyhow!("alloc range overflow"))?;
@@ -3602,6 +3591,21 @@ impl AllocTable {
             );
         }
         Ok(())
+    }
+
+    fn validate_write_range(&self, alloc_id: u32, offset: u64, size: u64) -> Result<u64> {
+        if alloc_id == 0 {
+            bail!("alloc_id must be non-zero for writeback");
+        }
+        let entry = self.entry(alloc_id)?;
+        if (entry.flags & AEROGPU_ALLOC_FLAG_READONLY) != 0 {
+            bail!("alloc {alloc_id} is READONLY");
+        }
+        self.validate_range(alloc_id, offset, size)?;
+        entry
+            .gpa
+            .checked_add(offset)
+            .ok_or_else(|| anyhow!("alloc gpa overflow"))
     }
 }
 
