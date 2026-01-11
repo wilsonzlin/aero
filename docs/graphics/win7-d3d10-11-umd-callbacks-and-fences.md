@@ -16,6 +16,13 @@ It is intended to be used *together with* the Win7-era D3D UMD headers shipped w
 
 Clean-room note: this document **does not** include sample-driver code. It references only the public WDK DDI contracts and describes call flow and field usage.
 
+Implementation note (AeroGPU):
+
+- The in-repo Win7/WDDM 1.1 submission + fence wait implementation lives in
+  `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wddm_submit.{h,cpp}` and is
+  wired up by the WDK UMD entrypoints (`aerogpu_d3d10_1_umd_wdk.cpp` /
+  `aerogpu_d3d11_umd_wdk.cpp`).
+
 Related docs:
 
 - High-level bring-up checklist: `docs/graphics/win7-d3d10-11-umd-minimal.md`
@@ -551,6 +558,33 @@ Important fields (header names):
 The “target fence value” is specified via `FenceValueArray[i]` for each sync object handle in `ObjectHandleArray[i]`.
 
 **Recommendation:** in a real UMD, prefer the runtime callback if available; it keeps the driver insulated from some OS-version quirks and ensures WOW64 thunking is correct.
+
+### 4.4 Getting a kernel `hAdapter` (`D3DKMT_HANDLE`) for direct KMT calls
+
+`D3DKMTWaitForSynchronizationObject` (and other `D3DKMT*` thunks such as
+`D3DKMTEscape`) operate on **kernel object handles** like `D3DKMT_HANDLE hAdapter`,
+not the UMD’s `D3D10DDI_HADAPTER`/`D3D11DDI_HADAPTER` `.pDrvPrivate` pointer.
+
+In particular:
+
+- `D3DDDICB_CREATEDEVICE::hAdapter` is the adapter handle you returned from
+  `OpenAdapter*` (typically your adapter object pointer), *not* a `D3DKMT_HANDLE`.
+- The wait callback form (`pfnWaitForSynchronizationObjectCb`) usually does not
+  require a kernel `hAdapter`, but some Win7-era header variants include an
+  `hAdapter` field in the wait args; if present, fill it with a real
+  `D3DKMT_HANDLE`.
+
+Common approach in user mode:
+
+1. Create a display DC (e.g. `CreateDCW(L"DISPLAY", L"\\\\.\\DISPLAY1", ...)` or
+   enumerate the primary display).
+2. Call `D3DKMTOpenAdapterFromHdc` (exported from `gdi32.dll` on Win7) to obtain
+   a `D3DKMT_HANDLE`.
+3. Close the DC.
+4. Close the adapter handle at teardown with `D3DKMTCloseAdapter`.
+
+This gives you the kernel adapter handle needed for direct thunk calls and for
+debug-only escape plumbing.
 
 ---
 
