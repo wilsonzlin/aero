@@ -1,4 +1,4 @@
-//! Guest↔host GPU command ABI.
+//! Prototype guest↔host GPU command ABI (AGRN/AGPC).
 //!
 //! The ABI is intentionally simple:
 //! - Commands are written by the guest into a byte ring (`GpuRingHeader` + data).

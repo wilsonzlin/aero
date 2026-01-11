@@ -1,4 +1,4 @@
-//! Emulator-side GPU device model.
+//! Prototype emulator-side GPU device model.
 //!
 //! The real Aero emulator will expose this as a PCI device with a single MMIO
 //! BAR. The guest driver allocates shared memory in guest RAM for rings and

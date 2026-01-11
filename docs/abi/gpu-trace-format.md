@@ -174,6 +174,9 @@ triangle trace fixture and replay it in CI.
 > defined by [`drivers/aerogpu/protocol`](../../drivers/aerogpu/protocol/README.md)
 > (and mirrored in [`emulator/protocol`](../../emulator/protocol)).
 > The ABI below exists only to validate the trace container + replayer plumbing.
+>
+> (The Win7/WDDM AeroGPU ABI lives in `drivers/aerogpu/protocol/*`; this appendix is about the
+> trace container format, not a particular guest driver ABI.)
 
 ### Packet encoding
 
@@ -204,7 +207,7 @@ All IDs are `u32`. Blob IDs are `u64` split into `(lo: u32, hi: u32)`.
 
 ---
 
-## Appendix B: Recording packets from the experimental `aero-gpu-device` ABI
+## Appendix B: Recording packets from the experimental `aero-gpu-device` ABI (AGRN/AGPC)
 
 The canonical Windows 7 WDDM AeroGPU PCI/MMIO/ring/command ABI is defined in:
 
@@ -212,9 +215,12 @@ The canonical Windows 7 WDDM AeroGPU PCI/MMIO/ring/command ABI is defined in:
   (`aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
 - [`emulator/protocol`](../../emulator/protocol) (Rust/TypeScript mirror)
 
-`crates/aero-gpu-device` implements a **separate**, standalone ring/opcode ABI that is used
-for deterministic host-side tests and for validating gpu-trace plumbing. It is not the
-WDDM AeroGPU ABI used by the Windows drivers.
+`crates/aero-gpu-device` implements a **separate**, standalone ring/opcode ABI (FourCC
+`"AGRN"`/`"AGPC"`) that is used for deterministic host-side tests and for validating gpu-trace
+plumbing. It is not the WDDM AeroGPU ABI used by the Windows drivers.
+
+See [`docs/graphics/aerogpu-protocols.md`](../../docs/graphics/aerogpu-protocols.md) for an
+overview of similarly named in-tree protocols.
 
 When `aero-gpu-device` records traces, it writes `RecordType::Packet` payloads that are
 the exact `GpuCmdHeader + payload` bytes consumed by the command processor.

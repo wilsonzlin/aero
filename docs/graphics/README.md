@@ -4,6 +4,7 @@ This directory contains “graphics stack” implementation notes and bring-up c
 
 ## Windows 7 / AeroGPU driver stack
 
+- `aerogpu-protocols.md` — overview of the different “AeroGPU” ABIs in-tree and which one is the Win7/WDDM target.
 - `win7-wddm11-aerogpu-driver.md` — WDDM 1.1 KMD+UMD architecture (adapter bring-up, memory model, submission rings, fences/interrupts, scanout/vblank).
 - `win7-aerogpu-validation.md` — Win7 driver stability checklist (TDR avoidance, vblank pacing expectations, debug playbook).
 - `win7-vblank-present-requirements.md` — minimal vblank/present timing contract needed to keep DWM (Aero) stable.
@@ -17,4 +18,3 @@ This directory contains “graphics stack” implementation notes and bring-up c
 
 - `guest-gpu-driver-strategy.md` — options for Windows guest GPU drivers (virtio reuse vs custom WDDM).
 - `virtio-gpu-proto-proof.md` — early prototype notes for virtio-style GPU paths.
-

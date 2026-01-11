@@ -15,6 +15,10 @@ The contract is expressed as C/C++ headers suitable for **WDK** builds and for h
 >
 > Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`), while the Win7 KMD transport is still in transition and continues to use the legacy ring/MMIO submission ABI in `aerogpu_protocol.h` (see `drivers/aerogpu/kmd/README.md`).
 
+> Note: The repository also contains older/prototype GPU ABIs with similar “AeroGPU” naming.
+> New work intended for Windows 7 should target the protocol in this directory.
+> See `docs/graphics/aerogpu-protocols.md` for an overview of the in-tree protocols.
+
 ## Files
 
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.

@@ -1,8 +1,13 @@
-# AeroGPU Command Protocol (v0.1)
+# AeroGPU Command Protocol (toy/prototype, v0.1)
 
-This document specifies the **guest ↔ host** command ABI for AeroGPU, the paravirtual GPU device used by Aero’s Windows 7 emulator.
+This document specifies a **toy/prototype** guest ↔ host command ABI (commands like
+`CREATE_SURFACE`/`PRESENT`) that was used during early bring-up.
 
-The intent is to provide a *stable transport* layer that later DirectX/WDDM translation components can target, without baking in Direct3D details yet.
+The in-tree implementation previously lived under `crates/aero-emulator`, but it has since
+been removed in favor of the canonical Win7/WDDM path.
+
+It is **not** the Windows 7 / WDDM AeroGPU protocol. For the Win7/WDDM target ABI, see
+`drivers/aerogpu/protocol/*` and `docs/graphics/aerogpu-protocols.md`.
 
 ## 1. Wire rules
 

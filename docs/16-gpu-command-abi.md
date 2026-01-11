@@ -7,19 +7,21 @@
 >
 > It is **NOT** the canonical Windows 7 WDDM AeroGPU guest↔emulator protocol.
 
-This document defines an **experimental** emulator-side virtual GPU device model and a
-guest↔host GPU command ABI.
+This document defines an **experimental** emulator-side virtual GPU device model and a guest↔host GPU command ABI.
 
 ## Canonical AeroGPU WDDM ABI (source of truth)
 
-Contributors working on the real Windows 7 WDDM AeroGPU path should use the protocol
-headers under:
+Contributors working on the real Windows 7 WDDM AeroGPU path should use the protocol headers under:
 
 - [`drivers/aerogpu/protocol/README.md`](../drivers/aerogpu/protocol/README.md)
   - `aerogpu_pci.h` (PCI IDs + BAR/MMIO)
   - `aerogpu_ring.h` (submission ring + fences)
   - `aerogpu_cmd.h` (command stream packets)
 - [`emulator/protocol`](../emulator/protocol) (Rust/TypeScript mirror of the headers)
+- `crates/emulator/src/devices/pci/aerogpu.rs` (emulator implementation)
+
+See [`docs/graphics/aerogpu-protocols.md`](./graphics/aerogpu-protocols.md) for an overview of similarly named
+in-tree protocols.
 
 The canonical WDDM AeroGPU device models use project-specific (non-PCI-SIG) PCI IDs.
 For the full rationale (why there are two) and the mapping to ABIs/device models, see:
@@ -31,7 +33,7 @@ For the full rationale (why there are two) and the mapping to ABIs/device models
 
 ## Source of truth (this experimental ABI)
 
-- `crates/aero-gpu-device/src/abi.rs`
+- `crates/aero-gpu-device/src/abi.rs` (FourCC `"AGRN"`/`"AGPC"`)
 
 ---
 
