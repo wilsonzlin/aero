@@ -1068,25 +1068,29 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t b = (uint8_t)(center & 0xFFu);
     const uint8_t g = (uint8_t)((center >> 8) & 0xFFu);
     const uint8_t r = (uint8_t)((center >> 16) & 0xFFu);
+    const uint8_t a = (uint8_t)((center >> 24) & 0xFFu);
 
     const uint8_t exp_r = 0x80;
     const uint8_t exp_g = 0x80;
     const uint8_t exp_b = 0x00;
+    const uint8_t exp_a = 0x80;
     const uint8_t tol = 2;
 
     if ((r < exp_r - tol || r > exp_r + tol) || (g < exp_g - tol || g > exp_g + tol) ||
-        (b < exp_b - tol || b > exp_b + tol)) {
+        (b < exp_b - tol || b > exp_b + tol) || (a < exp_a - tol || a > exp_a + tol)) {
       return reporter.Fail(
-          "blend failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~(r=%u g=%u b=%u) tol=%u",
+          "blend failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~(r=%u g=%u b=%u a=%u) tol=%u",
           cx,
           cy,
           (unsigned long)center,
           (unsigned)r,
           (unsigned)g,
           (unsigned)b,
+          (unsigned)a,
           (unsigned)exp_r,
           (unsigned)exp_g,
           (unsigned)exp_b,
+          (unsigned)exp_a,
           (unsigned)tol);
     }
 
@@ -1130,15 +1134,20 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t b2 = (uint8_t)(center_disabled & 0xFFu);
     const uint8_t g2 = (uint8_t)((center_disabled >> 8) & 0xFFu);
     const uint8_t r2 = (uint8_t)((center_disabled >> 16) & 0xFFu);
-    if (r2 != 0 || g2 != 0xFFu || b2 != 0) {
+    const uint8_t a2 = (uint8_t)((center_disabled >> 24) & 0xFFu);
+    const uint8_t exp_a2 = 0x80;
+    if (r2 != 0 || g2 != 0xFFu || b2 != 0 || (a2 < exp_a2 - tol || a2 > exp_a2 + tol)) {
       return reporter.Fail(
-          "blend disable failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0xFF00FF00",
+          "blend disable failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~(r=0 g=255 b=0 a=%u) tol=%u",
           cx,
           cy,
           (unsigned long)center_disabled,
           (unsigned)r2,
           (unsigned)g2,
-          (unsigned)b2);
+          (unsigned)b2,
+          (unsigned)a2,
+          (unsigned)exp_a2,
+          (unsigned)tol);
     }
 
     // Verify that RenderTargetWriteMask in the bound blend state is respected.
@@ -1186,15 +1195,23 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       const uint8_t b3 = (uint8_t)(center_mask & 0xFFu);
       const uint8_t g3 = (uint8_t)((center_mask >> 8) & 0xFFu);
       const uint8_t r3 = (uint8_t)((center_mask >> 16) & 0xFFu);
+      const uint8_t a3 = (uint8_t)((center_mask >> 24) & 0xFFu);
       return reporter.Fail(
-          "write mask failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0x%08lX",
+          "write mask failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~0x%08lX",
           cx,
           cy,
           (unsigned long)center_mask,
           (unsigned)r3,
           (unsigned)g3,
           (unsigned)b3,
+          (unsigned)a3,
           (unsigned long)expected_yellow);
+    }
+    const uint8_t a3 = (uint8_t)((center_mask >> 24) & 0xFFu);
+    if (a3 != 0xFFu) {
+      return reporter.Fail("write mask failed: expected alpha preserved (0xFF), got a=%u (center=0x%08lX)",
+                           (unsigned)a3,
+                           (unsigned long)center_mask);
     }
 
     // Verify that OMSetBlendState's blend-factor parameter is honored.
@@ -1238,24 +1255,28 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t b4 = (uint8_t)(center_bf & 0xFFu);
     const uint8_t g4 = (uint8_t)((center_bf >> 8) & 0xFFu);
     const uint8_t r4 = (uint8_t)((center_bf >> 16) & 0xFFu);
+    const uint8_t a4 = (uint8_t)((center_bf >> 24) & 0xFFu);
     // With BF=0.25, output should be ~0.75*red + 0.25*green => R~0xBF, G~0x40, B~0.
     const uint8_t exp_r2 = 0xBF;
     const uint8_t exp_g2 = 0x40;
     const uint8_t exp_b2 = 0x00;
+    const uint8_t exp_a3 = 0x80;
     const uint8_t tol2 = 2;
     if ((r4 < exp_r2 - tol2 || r4 > exp_r2 + tol2) || (g4 < exp_g2 - tol2 || g4 > exp_g2 + tol2) ||
-        (b4 < exp_b2 - tol2 || b4 > exp_b2 + tol2)) {
+        (b4 < exp_b2 - tol2 || b4 > exp_b2 + tol2) || (a4 < exp_a3 - tol2 || a4 > exp_a3 + tol2)) {
       return reporter.Fail(
-          "blend factor failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~(r=%u g=%u b=%u) tol=%u",
+          "blend factor failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~(r=%u g=%u b=%u a=%u) tol=%u",
           cx,
           cy,
           (unsigned long)center_bf,
           (unsigned)r4,
           (unsigned)g4,
           (unsigned)b4,
+          (unsigned)a4,
           (unsigned)exp_r2,
           (unsigned)exp_g2,
           (unsigned)exp_b2,
+          (unsigned)exp_a3,
           (unsigned)tol2);
     }
 
@@ -1298,6 +1319,12 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
+    const uint8_t a5 = (uint8_t)((center_sm0 >> 24) & 0xFFu);
+    if (a5 != 0xFFu) {
+      return reporter.Fail("sample mask failed: expected alpha preserved (0xFF), got a=%u (center=0x%08lX)",
+                           (unsigned)a5,
+                           (unsigned long)center_sm0);
+    }
     if ((center_sm0 & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
       return reporter.Fail("sample mask failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
                            cx,
