@@ -220,12 +220,15 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_in
 typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
 typedef struct aerogpu_escape_map_shared_handle_inout {
   aerogpu_escape_header hdr;
-  uint64_t shared_handle;
-  uint32_t share_token;
-  uint32_t reserved0;
+  aerogpu_escape_u64 shared_handle;
+  aerogpu_escape_u32 share_token;
+  aerogpu_escape_u32 reserved0;
 } aerogpu_escape_map_shared_handle_inout;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_map_shared_handle_inout) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, shared_handle) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, share_token) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_map_shared_handle_inout, reserved0) == 28);
 
 #pragma pack(pop)
 
