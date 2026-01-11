@@ -216,9 +216,9 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
         [-1.0f32, -1.0, 0.0, 1.0],
         [-1.0, 1.0, 0.0, 1.0],
         [1.0, -1.0, 0.0, 1.0],
-        [1.0, -1.0, 0.0, 1.0],
         [-1.0, 1.0, 0.0, 1.0],
         [1.0, 1.0, 0.0, 1.0],
+        [1.0, -1.0, 0.0, 1.0],
     ];
 
     // Quad A: UVs span [0, 1] (for alpha-blend test).
@@ -226,9 +226,9 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
         [0.0f32, 0.0],
         [0.0, 1.0],
         [1.0, 0.0],
-        [1.0, 0.0],
         [0.0, 1.0],
         [1.0, 1.0],
+        [1.0, 0.0],
     ];
 
     // Quad B: constant UV near the boundary between two texels (for filter test).
