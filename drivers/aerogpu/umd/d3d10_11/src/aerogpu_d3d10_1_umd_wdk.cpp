@@ -2485,7 +2485,12 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
     const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
     if (total_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
       if (res->storage.size() < static_cast<size_t>(total_bytes)) {
-        res->storage.resize(static_cast<size_t>(total_bytes));
+        try {
+          res->storage.resize(static_cast<size_t>(total_bytes));
+        } catch (...) {
+          set_error(dev, E_OUTOFMEMORY);
+          return;
+        }
       }
 
       const uint32_t row_bytes = res->width * 4;
@@ -2795,7 +2800,12 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
       }
       const uint64_t rt_bytes = static_cast<uint64_t>(rt->row_pitch_bytes) * static_cast<uint64_t>(rt->height);
       if (rt_bytes <= static_cast<uint64_t>(SIZE_MAX) && rt->storage.size() < static_cast<size_t>(rt_bytes)) {
-        rt->storage.resize(static_cast<size_t>(rt_bytes));
+        try {
+          rt->storage.resize(static_cast<size_t>(rt_bytes));
+        } catch (...) {
+          set_error(dev, E_OUTOFMEMORY);
+          return;
+        }
       }
 
       auto read_f32 = [](const uint8_t* p) -> float {
