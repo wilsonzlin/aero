@@ -1,6 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const DEV_PORT = 5173;
+const REUSE_SERVER_SETTING = (process.env.AERO_PLAYWRIGHT_REUSE_SERVER ?? '').toLowerCase();
+const REUSE_EXISTING_SERVER =
+  !process.env.CI && (REUSE_SERVER_SETTING === '1' || REUSE_SERVER_SETTING === 'true');
 
 /**
  * Golden-image GPU correctness tests.
@@ -21,7 +24,7 @@ export default defineConfig({
   webServer: {
     command: `npm run dev:harness -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
     port: DEV_PORT,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: REUSE_EXISTING_SERVER,
   },
   use: {
     headless: true,

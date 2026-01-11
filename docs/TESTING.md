@@ -301,6 +301,13 @@ Run headless E2E tests:
 npm run test:e2e
 ```
 
+Notes:
+
+- Playwright starts the **repo-root Vite harness** (`npm run dev:harness`) on `127.0.0.1:5173` and a COI preview server on `127.0.0.1:4173`.
+  If you already have another server on those ports (for example `npm run dev` for the `web/` app), stop it before running Playwright.
+- To reuse an already-running harness server while iterating locally:
+  `AERO_PLAYWRIGHT_REUSE_SERVER=1 npm run test:e2e`
+
 Run a specific browser project:
 
 ```bash

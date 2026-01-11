@@ -5,6 +5,9 @@ const PREVIEW_PORT = 4173;
 const CSP_POC_PORT = 4180;
 const DEV_ORIGIN = `http://127.0.0.1:${DEV_PORT}`;
 const EXPOSE_GC = process.env.AERO_PLAYWRIGHT_EXPOSE_GC === '1';
+const REUSE_SERVER_SETTING = (process.env.AERO_PLAYWRIGHT_REUSE_SERVER ?? '').toLowerCase();
+const REUSE_EXISTING_SERVER =
+  !process.env.CI && (REUSE_SERVER_SETTING === '1' || REUSE_SERVER_SETTING === 'true');
 const CHROMIUM_ARGS = [
   '--enable-unsafe-webgpu',
   // Keep screenshot colors deterministic across environments.
@@ -116,19 +119,22 @@ export default defineConfig({
     {
       command: `npm run dev:harness -- --host 127.0.0.1 --port ${DEV_PORT} --strictPort`,
       port: DEV_PORT,
-      reuseExistingServer: !process.env.CI,
+      // Default to `false` locally to avoid accidentally reusing a different Vite
+      // server on the same port (e.g. `npm run dev` in `web/`). Opt in explicitly
+      // when iterating on E2E: `AERO_PLAYWRIGHT_REUSE_SERVER=1 npm run test:e2e`.
+      reuseExistingServer: REUSE_EXISTING_SERVER,
     },
     {
       command: 'npm run serve:coi:harness',
       port: PREVIEW_PORT,
       timeout: 300_000,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: REUSE_EXISTING_SERVER,
     },
     {
       // Dedicated server for CSP (wasm-unsafe-eval) matrix tests.
       command: `node server/poc-server.mjs --port ${CSP_POC_PORT}`,
       port: CSP_POC_PORT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: REUSE_EXISTING_SERVER,
     },
   ],
 });
