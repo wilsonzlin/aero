@@ -631,6 +631,26 @@ fn validate_driver_dir(
         );
     }
 
+    // INF files often contain commented-out HWID lines from previous iterations or debugging.
+    // When validating expected HWID patterns, ignore comment-only matches (anything after `;`)
+    // so packaging fails if the HWID only appears in comments.
+    fn inf_text_matches_expected_hwid(text: &str, re: &regex::Regex) -> bool {
+        for raw_line in text.lines() {
+            let line = raw_line
+                .split_once(';')
+                .map(|(before, _comment)| before)
+                .unwrap_or(raw_line)
+                .trim();
+            if line.is_empty() {
+                continue;
+            }
+            if re.is_match(line) {
+                return true;
+            }
+        }
+        false
+    }
+
     let mut expected_hardware_ids = driver.expected_hardware_ids.clone();
     if let Some(var) = &driver.expected_hardware_ids_from_devices_cmd_var {
         let key = var.to_ascii_uppercase();
@@ -677,7 +697,10 @@ fn validate_driver_dir(
             .case_insensitive(true)
             .build()
             .with_context(|| format!("compile regex for hardware ID: {hwid_re}"))?;
-        if !infs.iter().any(|(_path, text)| re.is_match(text)) {
+        if !infs
+            .iter()
+            .any(|(_path, text)| inf_text_matches_expected_hwid(text, &re))
+        {
             bail!(
                 "driver {} ({}) INF files missing expected hardware ID pattern: {hwid_re}",
                 driver.name,

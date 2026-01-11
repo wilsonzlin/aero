@@ -581,7 +581,7 @@ fn optional_drivers_are_validated_when_present() -> anyhow::Result<()> {
         fs::create_dir_all(&opt_dir)?;
         fs::write(
             opt_dir.join("opt.inf"),
-            b"[Version]\n; PCI\\VEN_BEEF&DEV_CAFE\n",
+            b"[Version]\nPCI\\VEN_BEEF&DEV_CAFE\n",
         )?;
         fs::write(opt_dir.join("opt.cat"), b"dummy cat\n")?;
     }
@@ -1154,6 +1154,78 @@ fn wdfcoinstaller_mentioned_only_in_comment_does_not_require_payload() -> anyhow
     let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
     assert!(!tree.contains("drivers/x86/testdrv/WdfCoInstaller01009.dll"));
     assert!(!tree.contains("drivers/amd64/testdrv/WdfCoInstaller01009.dll"));
+
+    Ok(())
+}
+
+#[test]
+fn expected_hardware_id_patterns_in_comments_do_not_satisfy_spec() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    for arch in ["x86", "amd64"] {
+        let driver_dir = drivers_tmp.path().join(arch).join("commenthwid");
+        fs::create_dir_all(&driver_dir)?;
+        fs::write(
+            driver_dir.join("commenthwid.inf"),
+            concat!(
+                "; PCI\\VEN_1234&DEV_5678\n",
+                "[Version]\n",
+                "Signature=\"$Windows NT$\"\n",
+                "\n",
+                "[Manufacturer]\n",
+                "%Mfg%=Mfg,NTx86,NTamd64\n",
+                "\n",
+                "[Mfg.NTx86]\n",
+                "%Dev%=Install, PCI\\VEN_1234&DEV_9999\n",
+                "\n",
+                "[Mfg.NTamd64]\n",
+                "%Dev%=Install, PCI\\VEN_1234&DEV_9999\n",
+                "\n",
+                "[Strings]\n",
+                "Mfg=\"Aero\"\n",
+                "Dev=\"Test\"\n",
+            ),
+        )?;
+        fs::write(driver_dir.join("commenthwid.sys"), b"dummy sys\n")?;
+        fs::write(driver_dir.join("commenthwid.cat"), b"dummy cat\n")?;
+    }
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "commenthwid",
+                "required": true,
+                "expected_hardware_ids": [r"PCI\\VEN_1234&DEV_5678"],
+            }
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let out_dir = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out_dir.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing expected hardware ID pattern") && msg.contains("PCI\\\\VEN_1234&DEV_5678"),
+        "unexpected error: {msg}"
+    );
 
     Ok(())
 }
