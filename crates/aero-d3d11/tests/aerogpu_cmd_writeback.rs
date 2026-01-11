@@ -9,7 +9,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
-use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
+use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -1112,6 +1112,253 @@ fn copy_texture2d_clears_dst_dirty_after_copy() {
         assert_eq!(
             &mem[out_base..out_base + texture_bytes_len],
             src_bytes.as_slice()
+        );
+    });
+}
+
+#[test]
+fn copy_buffer_writeback_requires_alloc_table_each_submit() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const SRC: u32 = 1;
+        const DST: u32 = 2;
+
+        let alloc = AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        };
+        let allocs = [alloc];
+
+        let buf_size = 64u64;
+        let dst_backing_offset = 0x200u32;
+
+        let mut guest_mem = VecGuestMemory::new(0x2000);
+        let dst_init = vec![0xEEu8; buf_size as usize];
+        guest_mem
+            .write(alloc.gpa + dst_backing_offset as u64, &dst_init)
+            .expect("write dst init");
+
+        let src_pattern: Vec<u8> = (0u8..(buf_size as u8)).collect();
+
+        // First submission: create SRC/DST and upload SRC data.
+        {
+            let mut stream = Vec::new();
+            stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+            stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+            // CREATE_BUFFER SRC (host-owned)
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+            stream.extend_from_slice(&SRC.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+            stream.extend_from_slice(&buf_size.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // CREATE_BUFFER DST (guest-backed)
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+            stream.extend_from_slice(&DST.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+            stream.extend_from_slice(&buf_size.to_le_bytes());
+            stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+            stream.extend_from_slice(&dst_backing_offset.to_le_bytes());
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+
+            // UPLOAD_RESOURCE SRC data.
+            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+            stream.extend_from_slice(&SRC.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+            stream.extend_from_slice(&buf_size.to_le_bytes());
+            stream.extend_from_slice(&src_pattern);
+            end_cmd(&mut stream, start);
+
+            // Patch stream size in header.
+            let total_size = stream.len() as u32;
+            stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&total_size.to_le_bytes());
+
+            exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+                .expect("execute_cmd_stream should succeed");
+            exec.poll_wait();
+        }
+
+        // Second submission: COPY_BUFFER with WRITEBACK_DST but no alloc table.
+        let mut copy_stream = Vec::new();
+        copy_stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        copy_stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        copy_stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        copy_stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        copy_stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        copy_stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        let start = begin_cmd(&mut copy_stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        copy_stream.extend_from_slice(&DST.to_le_bytes());
+        copy_stream.extend_from_slice(&SRC.to_le_bytes());
+        copy_stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        copy_stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        copy_stream.extend_from_slice(&buf_size.to_le_bytes());
+        copy_stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        copy_stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut copy_stream, start);
+
+        let total_size = copy_stream.len() as u32;
+        copy_stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&copy_stream, None, &mut guest_mem)
+            .expect_err("expected missing alloc table error");
+        exec.poll_wait();
+
+        let dst_base = (alloc.gpa + dst_backing_offset as u64) as usize;
+        let mem = guest_mem.as_slice();
+        assert_eq!(
+            &mem[dst_base..dst_base + buf_size as usize],
+            dst_init.as_slice()
+        );
+
+        // Third submission: alloc table present but missing the required alloc_id.
+        let missing = AerogpuAllocEntry {
+            alloc_id: 2,
+            flags: 0,
+            gpa: 0x1000,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        };
+        let missing_allocs = [missing];
+        exec.execute_cmd_stream(&copy_stream, Some(&missing_allocs), &mut guest_mem)
+            .expect_err("expected missing alloc_id error");
+        exec.poll_wait();
+        let mem = guest_mem.as_slice();
+        assert_eq!(
+            &mem[dst_base..dst_base + buf_size as usize],
+            dst_init.as_slice()
+        );
+
+        // Fourth submission: provide the correct alloc table; writeback should succeed.
+        exec.execute_cmd_stream(&copy_stream, Some(&allocs), &mut guest_mem)
+            .expect("writeback should succeed with alloc table");
+        exec.poll_wait();
+        let mem = guest_mem.as_slice();
+        assert_eq!(
+            &mem[dst_base..dst_base + buf_size as usize],
+            src_pattern.as_slice()
+        );
+    });
+}
+
+#[test]
+fn copy_buffer_writeback_rejects_readonly_alloc() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const SRC: u32 = 1;
+        const DST: u32 = 2;
+
+        let alloc = AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: AEROGPU_ALLOC_FLAG_READONLY,
+            gpa: 0x100,
+            size_bytes: 0x1000,
+            reserved0: 0,
+        };
+        let allocs = [alloc];
+
+        let buf_size = 64u64;
+        let dst_backing_offset = 0x200u32;
+
+        let mut guest_mem = VecGuestMemory::new(0x2000);
+        let dst_init = vec![0xEEu8; buf_size as usize];
+        guest_mem
+            .write(alloc.gpa + dst_backing_offset as u64, &dst_init)
+            .expect("write dst init");
+
+        let src_pattern: Vec<u8> = (0u8..(buf_size as u8)).collect();
+
+        // Create SRC/DST and upload SRC data.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_BUFFER SRC (host-owned)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_BUFFER DST (guest-backed; alloc is READONLY)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateBuffer as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&dst_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // UPLOAD_RESOURCE SRC data.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::UploadResource as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&src_pattern);
+        end_cmd(&mut stream, start);
+
+        // COPY_BUFFER (WRITEBACK_DST) should be rejected due to READONLY alloc.
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyBuffer as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // dst_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // src_offset_bytes
+        stream.extend_from_slice(&buf_size.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+            .expect_err("expected READONLY writeback error");
+        exec.poll_wait();
+
+        let dst_base = (alloc.gpa + dst_backing_offset as u64) as usize;
+        let mem = guest_mem.as_slice();
+        assert_eq!(
+            &mem[dst_base..dst_base + buf_size as usize],
+            dst_init.as_slice()
         );
     });
 }

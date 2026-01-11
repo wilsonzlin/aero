@@ -849,7 +849,7 @@ impl AerogpuD3d11Executor {
         let stream_size = iter.header().size_bytes as usize;
         let mut iter = iter.peekable();
 
-        let alloc_map = AllocTable::new(allocs.unwrap_or(&[]))?;
+        let alloc_map = AllocTable::new(allocs)?;
 
         let mut encoder = self
             .device
@@ -2820,52 +2820,104 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        let dst_copy_end = dst_offset_bytes
+        let (src_size, src_gpu_size, dst_size, dst_gpu_size, dst_dirty, dst_backing) = {
+            let src = self
+                .resources
+                .buffers
+                .get(&src_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown src buffer {src_buffer}"))?;
+            let dst = self
+                .resources
+                .buffers
+                .get(&dst_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
+            (
+                src.size,
+                src.gpu_size,
+                dst.size,
+                dst.gpu_size,
+                dst.dirty.clone(),
+                dst.backing,
+            )
+        };
+
+        let src_end = src_offset_bytes
+            .checked_add(size_bytes)
+            .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows u64"))?;
+        let dst_end = dst_offset_bytes
             .checked_add(size_bytes)
             .ok_or_else(|| anyhow!("COPY_BUFFER: dst range overflows u64"))?;
+        if src_end > src_size {
+            bail!(
+                "COPY_BUFFER: src out of bounds: offset=0x{:x} size=0x{:x} buffer_size=0x{:x}",
+                src_offset_bytes,
+                size_bytes,
+                src_size
+            );
+        }
+        if dst_end > dst_size {
+            bail!(
+                "COPY_BUFFER: dst out of bounds: offset=0x{:x} size=0x{:x} buffer_size=0x{:x}",
+                dst_offset_bytes,
+                size_bytes,
+                dst_size
+            );
+        }
+
+        let mut copy_size_aligned = size_bytes;
+        if size_bytes % alignment != 0 {
+            if src_end != src_size || dst_end != dst_size {
+                bail!(
+                    "COPY_BUFFER: size_bytes must be a multiple of {alignment} unless copying to the end of both buffers (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes} dst_size={dst_size} src_size={src_size})"
+                );
+            }
+            copy_size_aligned = align_copy_buffer_size(size_bytes)?;
+        }
+        let src_end_aligned = src_offset_bytes
+            .checked_add(copy_size_aligned)
+            .ok_or_else(|| anyhow!("COPY_BUFFER: aligned src range overflows u64"))?;
+        let dst_end_aligned = dst_offset_bytes
+            .checked_add(copy_size_aligned)
+            .ok_or_else(|| anyhow!("COPY_BUFFER: aligned dst range overflows u64"))?;
+        if src_end_aligned > src_gpu_size || dst_end_aligned > dst_gpu_size {
+            bail!("COPY_BUFFER: aligned copy range overruns wgpu buffer allocation");
+        }
+
+        let dst_writeback_gpa = if writeback {
+            let dst_backing = dst_backing.ok_or_else(|| {
+                anyhow!(
+                    "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
+                )
+            })?;
+            let backing_offset = dst_backing
+                .offset_bytes
+                .checked_add(dst_offset_bytes)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?;
+            Some(
+                allocs
+                    .validate_write_range(dst_backing.alloc_id, backing_offset, size_bytes)
+                    .context("COPY_BUFFER: WRITEBACK_DST alloc table validation failed")?,
+            )
+        } else {
+            None
+        };
 
         // Ensure the source buffer reflects any CPU writes from guest memory before copying.
         self.ensure_buffer_uploaded(encoder, src_buffer, allocs, guest_mem)?;
 
-        let dst_backing = if writeback {
-            let dst = self
-                .resources
-                .buffers
-                .get(&dst_buffer)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
-            dst.backing.ok_or_else(|| {
-                anyhow!(
-                    "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
-                )
-            })?
-        } else {
-            ResourceBacking {
-                alloc_id: 0,
-                offset_bytes: 0,
-            }
-        };
-
         // If the destination is guest-backed and has pending uploads outside the copied region,
         // upload them now so untouched bytes remain correct.
-        let needs_dst_upload = {
-            let dst = self
-                .resources
-                .buffers
-                .get(&dst_buffer)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
-            match dst.dirty.as_ref() {
-                Some(dirty) if dst.backing.is_some() => {
-                    dirty.start < dst_offset_bytes || dirty.end > dst_copy_end
-                }
-                _ => false,
+        let needs_dst_upload = match dst_dirty.as_ref() {
+            Some(dirty) if dst_backing.is_some() => {
+                dirty.start < dst_offset_bytes || dirty.end > dst_end
             }
+            _ => false,
         };
         if needs_dst_upload {
             self.ensure_buffer_uploaded(encoder, dst_buffer, allocs, guest_mem)?;
         }
 
         let mut staging: Option<wgpu::Buffer> = None;
-        let mut copy_size_aligned = size_bytes;
 
         // Encode the copy.
         {
@@ -2879,46 +2931,6 @@ impl AerogpuD3d11Executor {
                 .buffers
                 .get(&dst_buffer)
                 .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
-
-            let src_end = src_offset_bytes
-                .checked_add(size_bytes)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows u64"))?;
-            if src_end > src.size {
-                bail!(
-                    "COPY_BUFFER: src out of bounds: offset=0x{:x} size=0x{:x} buffer_size=0x{:x}",
-                    src_offset_bytes,
-                    size_bytes,
-                    src.size
-                );
-            }
-            if dst_copy_end > dst.size {
-                bail!(
-                    "COPY_BUFFER: dst out of bounds: offset=0x{:x} size=0x{:x} buffer_size=0x{:x}",
-                    dst_offset_bytes,
-                    size_bytes,
-                    dst.size
-                );
-            }
-
-            if size_bytes % alignment != 0 {
-                if src_end != src.size || dst_copy_end != dst.size {
-                    bail!(
-                        "COPY_BUFFER: size_bytes must be a multiple of {alignment} unless copying to the end of both buffers (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes} dst_size={} src_size={})",
-                        dst.size,
-                        src.size
-                    );
-                }
-                copy_size_aligned = align_copy_buffer_size(size_bytes)?;
-            }
-            let src_copy_end_aligned = src_offset_bytes
-                .checked_add(copy_size_aligned)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: aligned src range overflows u64"))?;
-            let dst_copy_end_aligned = dst_offset_bytes
-                .checked_add(copy_size_aligned)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: aligned dst range overflows u64"))?;
-            if src_copy_end_aligned > src.gpu_size || dst_copy_end_aligned > dst.gpu_size {
-                bail!("COPY_BUFFER: aligned copy range overruns wgpu buffer allocation");
-            }
 
             encoder.copy_buffer_to_buffer(
                 &src.buffer,
@@ -2948,19 +2960,10 @@ impl AerogpuD3d11Executor {
 
         self.encoder_has_commands = true;
 
-        if writeback {
+        if let Some(dst_gpa) = dst_writeback_gpa {
             let Some(staging) = staging else {
                 bail!("COPY_BUFFER: internal error: missing staging buffer for writeback");
             };
-
-            let dst_gpa = allocs.validate_write_range(
-                dst_backing.alloc_id,
-                dst_backing
-                    .offset_bytes
-                    .checked_add(dst_offset_bytes)
-                    .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?,
-                size_bytes,
-            )?;
             pending_writebacks.push(PendingWriteback::Buffer {
                 staging,
                 dst_gpa,
@@ -3024,60 +3027,182 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        // Ensure the source texture reflects any CPU writes from guest memory before copying.
-        self.ensure_texture_uploaded(encoder, src_texture, allocs, guest_mem)?;
+        let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
+
+        let (src_desc, dst_desc, dst_backing, dst_row_pitch_bytes, dst_dirty) =
+            {
+                let src =
+                    self.resources.textures.get(&src_texture).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: unknown src texture {src_texture}")
+                    })?;
+                let dst =
+                    self.resources.textures.get(&dst_texture).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}")
+                    })?;
+                (
+                    src.desc,
+                    dst.desc,
+                    dst.backing,
+                    dst.row_pitch_bytes,
+                    dst.dirty,
+                )
+            };
+
+        if src_mip_level >= src_desc.mip_level_count {
+            bail!(
+                "COPY_TEXTURE2D: src_mip_level {src_mip_level} out of range (mip_levels={})",
+                src_desc.mip_level_count
+            );
+        }
+        if dst_mip_level >= dst_desc.mip_level_count {
+            bail!(
+                "COPY_TEXTURE2D: dst_mip_level {dst_mip_level} out of range (mip_levels={})",
+                dst_desc.mip_level_count
+            );
+        }
+        if src_array_layer >= src_desc.array_layers {
+            bail!(
+                "COPY_TEXTURE2D: src_array_layer {src_array_layer} out of range (array_layers={})",
+                src_desc.array_layers
+            );
+        }
+        if dst_array_layer >= dst_desc.array_layers {
+            bail!(
+                "COPY_TEXTURE2D: dst_array_layer {dst_array_layer} out of range (array_layers={})",
+                dst_desc.array_layers
+            );
+        }
+
+        if src_desc.format != dst_desc.format {
+            bail!(
+                "COPY_TEXTURE2D: format mismatch: src={:?} dst={:?}",
+                src_desc.format,
+                dst_desc.format
+            );
+        }
+
+        let src_w = mip_extent(src_desc.width, src_mip_level);
+        let src_h = mip_extent(src_desc.height, src_mip_level);
+        let dst_w = mip_extent(dst_desc.width, dst_mip_level);
+        let dst_h = mip_extent(dst_desc.height, dst_mip_level);
+
+        let src_x_end = src_x
+            .checked_add(width)
+            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src_x+width overflows u32"))?;
+        let src_y_end = src_y
+            .checked_add(height)
+            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src_y+height overflows u32"))?;
+        let dst_x_end = dst_x
+            .checked_add(width)
+            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x+width overflows u32"))?;
+        let dst_y_end = dst_y
+            .checked_add(height)
+            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y+height overflows u32"))?;
+
+        if src_x_end > src_w || src_y_end > src_h {
+            bail!("COPY_TEXTURE2D: src rect out of bounds");
+        }
+        if dst_x_end > dst_w || dst_y_end > dst_h {
+            bail!("COPY_TEXTURE2D: dst rect out of bounds");
+        }
 
         // If the destination is guest-backed and dirty and we're only overwriting a sub-rectangle,
         // upload it now so the untouched pixels remain correct.
-        let needs_dst_upload = {
-            let dst = self
-                .resources
-                .textures
-                .get(&dst_texture)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
-            if dst.backing.is_none() || !dst.dirty {
-                false
-            } else {
-                let dst_is_base = dst_mip_level == 0 && dst_array_layer == 0;
-                let covers_full = dst_x == 0
-                    && dst_y == 0
-                    && width == dst.desc.width
-                    && height == dst.desc.height;
-                dst_is_base && !covers_full
+        let needs_dst_upload = dst_backing.is_some()
+            && dst_dirty
+            && dst_mip_level == 0
+            && dst_array_layer == 0
+            && !(dst_x == 0 && dst_y == 0 && width == dst_desc.width && height == dst_desc.height);
+
+        let writeback_plan = if writeback {
+            let dst_backing = dst_backing.ok_or_else(|| {
+                anyhow!(
+                    "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed (handle={dst_texture})"
+                )
+            })?;
+            if dst_row_pitch_bytes == 0 {
+                bail!("COPY_TEXTURE2D: WRITEBACK_DST requires non-zero dst row_pitch_bytes");
             }
+            let row_pitch = dst_row_pitch_bytes as u64;
+            let bytes_per_pixel = bytes_per_texel(dst_desc.format)? as u64;
+
+            let dst_x_bytes = (dst_x as u64)
+                .checked_mul(bytes_per_pixel)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
+
+            let row_bytes_u32 = width
+                .checked_mul(bytes_per_pixel as u32)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: bytes_per_row overflow"))?;
+            let row_bytes = row_bytes_u32 as u64;
+            if dst_x_bytes
+                .checked_add(row_bytes)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst row byte range overflow"))?
+                > row_pitch
+            {
+                bail!("COPY_TEXTURE2D: dst row_pitch_bytes too small for writeback region");
+            }
+
+            let start_offset = dst_backing
+                .offset_bytes
+                .checked_add(
+                    (dst_y as u64)
+                        .checked_mul(row_pitch)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y row_pitch overflow"))?,
+                )
+                .and_then(|v| v.checked_add(dst_x_bytes))
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
+
+            let last_row_start = start_offset
+                .checked_add(
+                    (height as u64)
+                        .checked_sub(1)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: height underflow"))?
+                        .checked_mul(row_pitch)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row offset overflow"))?,
+                )
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row start overflow"))?;
+
+            let end_offset = last_row_start
+                .checked_add(row_bytes)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing end overflow"))?;
+
+            let validate_size = end_offset
+                .checked_sub(start_offset)
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
+
+            let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let padded_bpr = row_bytes_u32
+                .checked_add(align - 1)
+                .map(|v| v / align)
+                .and_then(|v| v.checked_mul(align))
+                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: padded bytes_per_row overflow"))?;
+
+            let base_gpa = allocs
+                .validate_write_range(dst_backing.alloc_id, start_offset, validate_size)
+                .context("COPY_TEXTURE2D: WRITEBACK_DST alloc table validation failed")?;
+
+            Some((
+                TextureWritebackPlan {
+                    base_gpa,
+                    row_pitch,
+                    padded_bytes_per_row: padded_bpr,
+                    unpadded_bytes_per_row: row_bytes_u32,
+                    height,
+                },
+                padded_bpr as u64,
+            ))
+        } else {
+            None
         };
+
+        // Ensure the source texture reflects any CPU writes from guest memory before copying.
+        self.ensure_texture_uploaded(encoder, src_texture, allocs, guest_mem)?;
+
         if needs_dst_upload {
             self.ensure_texture_uploaded(encoder, dst_texture, allocs, guest_mem)?;
         }
 
-        let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
-
-        let (dst_backing, dst_row_pitch_bytes) = if writeback {
-            let dst = self
-                .resources
-                .textures
-                .get(&dst_texture)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
-            (
-                dst.backing.ok_or_else(|| {
-                    anyhow!(
-                        "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed (handle={dst_texture})"
-                    )
-                })?,
-                dst.row_pitch_bytes,
-            )
-        } else {
-            (
-                ResourceBacking {
-                    alloc_id: 0,
-                    offset_bytes: 0,
-                },
-                0u32,
-            )
-        };
-
-        let mut staging: Option<(wgpu::Buffer, u32, u32, u32)> = None;
-
+        let mut staging: Option<wgpu::Buffer> = None;
         {
             let src = self
                 .resources
@@ -3089,64 +3214,6 @@ impl AerogpuD3d11Executor {
                 .textures
                 .get(&dst_texture)
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
-
-            if src_mip_level >= src.desc.mip_level_count {
-                bail!(
-                    "COPY_TEXTURE2D: src_mip_level {src_mip_level} out of range (mip_levels={})",
-                    src.desc.mip_level_count
-                );
-            }
-            if dst_mip_level >= dst.desc.mip_level_count {
-                bail!(
-                    "COPY_TEXTURE2D: dst_mip_level {dst_mip_level} out of range (mip_levels={})",
-                    dst.desc.mip_level_count
-                );
-            }
-            if src_array_layer >= src.desc.array_layers {
-                bail!(
-                    "COPY_TEXTURE2D: src_array_layer {src_array_layer} out of range (array_layers={})",
-                    src.desc.array_layers
-                );
-            }
-            if dst_array_layer >= dst.desc.array_layers {
-                bail!(
-                    "COPY_TEXTURE2D: dst_array_layer {dst_array_layer} out of range (array_layers={})",
-                    dst.desc.array_layers
-                );
-            }
-
-            if src.desc.format != dst.desc.format {
-                bail!(
-                    "COPY_TEXTURE2D: format mismatch: src={:?} dst={:?}",
-                    src.desc.format,
-                    dst.desc.format
-                );
-            }
-
-            let src_w = mip_extent(src.desc.width, src_mip_level);
-            let src_h = mip_extent(src.desc.height, src_mip_level);
-            let dst_w = mip_extent(dst.desc.width, dst_mip_level);
-            let dst_h = mip_extent(dst.desc.height, dst_mip_level);
-
-            let src_x_end = src_x
-                .checked_add(width)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src_x+width overflows u32"))?;
-            let src_y_end = src_y
-                .checked_add(height)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src_y+height overflows u32"))?;
-            let dst_x_end = dst_x
-                .checked_add(width)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x+width overflows u32"))?;
-            let dst_y_end = dst_y
-                .checked_add(height)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y+height overflows u32"))?;
-
-            if src_x_end > src_w || src_y_end > src_h {
-                bail!("COPY_TEXTURE2D: src rect out of bounds");
-            }
-            if dst_x_end > dst_w || dst_y_end > dst_h {
-                bail!("COPY_TEXTURE2D: dst rect out of bounds");
-            }
 
             encoder.copy_texture_to_texture(
                 wgpu::ImageCopyTexture {
@@ -3176,19 +3243,9 @@ impl AerogpuD3d11Executor {
                 },
             );
 
-            if writeback {
-                let bytes_per_pixel = bytes_per_texel(dst.desc.format)?;
-                let unpadded_bpr = width
-                    .checked_mul(bytes_per_pixel)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: bytes_per_row overflow"))?;
-                let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                let padded_bpr = unpadded_bpr
-                    .checked_add(align - 1)
-                    .map(|v| v / align)
-                    .and_then(|v| v.checked_mul(align))
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: padded bytes_per_row overflow"))?;
-                let buffer_size = (padded_bpr as u64)
-                    .checked_mul(height as u64)
+            if let Some((plan, padded_bpr_u64)) = writeback_plan.as_ref() {
+                let buffer_size = padded_bpr_u64
+                    .checked_mul(plan.height as u64)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: staging buffer size overflow"))?;
                 let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("aerogpu_cmd copy_texture2d writeback staging"),
@@ -3211,8 +3268,8 @@ impl AerogpuD3d11Executor {
                         buffer: &staging_buf,
                         layout: wgpu::ImageDataLayout {
                             offset: 0,
-                            bytes_per_row: Some(padded_bpr),
-                            rows_per_image: Some(height),
+                            bytes_per_row: Some(plan.padded_bytes_per_row),
+                            rows_per_image: Some(plan.height),
                         },
                     },
                     wgpu::Extent3d {
@@ -3221,76 +3278,16 @@ impl AerogpuD3d11Executor {
                         depth_or_array_layers: 1,
                     },
                 );
-                staging = Some((staging_buf, padded_bpr, unpadded_bpr, height));
+                staging = Some(staging_buf);
             }
         }
         self.encoder_has_commands = true;
 
-        if writeback {
-            let Some((staging, padded_bpr, unpadded_bpr, copy_h)) = staging else {
+        if let Some((plan, _)) = writeback_plan {
+            let Some(staging) = staging else {
                 bail!("COPY_TEXTURE2D: internal error: missing staging buffer for writeback");
             };
-            if dst_row_pitch_bytes == 0 {
-                bail!("COPY_TEXTURE2D: WRITEBACK_DST requires non-zero dst row_pitch_bytes");
-            }
-            let row_pitch = dst_row_pitch_bytes as u64;
-            let bytes_per_pixel = {
-                let dst =
-                    self.resources.textures.get(&dst_texture).ok_or_else(|| {
-                        anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}")
-                    })?;
-                bytes_per_texel(dst.desc.format)?
-            };
-            let dst_x_bytes = (dst_x as u64)
-                .checked_mul(bytes_per_pixel as u64)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
-            let row_bytes = unpadded_bpr as u64;
-            if dst_x_bytes
-                .checked_add(row_bytes)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst row byte range overflow"))?
-                > row_pitch
-            {
-                bail!("COPY_TEXTURE2D: dst row_pitch_bytes too small for writeback region");
-            }
-
-            let start_offset = dst_backing
-                .offset_bytes
-                .checked_add(
-                    (dst_y as u64)
-                        .checked_mul(row_pitch)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y row_pitch overflow"))?,
-                )
-                .and_then(|v| v.checked_add(dst_x_bytes))
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
-
-            let last_row_start = start_offset
-                .checked_add(
-                    (copy_h as u64)
-                        .checked_sub(1)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: copy_h underflow"))?
-                        .checked_mul(row_pitch)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row offset overflow"))?,
-                )
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row start overflow"))?;
-            let end_offset = last_row_start
-                .checked_add(row_bytes)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing end overflow"))?;
-            let validate_size = end_offset
-                .checked_sub(start_offset)
-                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
-
-            let base_gpa =
-                allocs.validate_write_range(dst_backing.alloc_id, start_offset, validate_size)?;
-            pending_writebacks.push(PendingWriteback::Texture2d {
-                staging,
-                plan: TextureWritebackPlan {
-                    base_gpa,
-                    row_pitch,
-                    padded_bytes_per_row: padded_bpr,
-                    unpadded_bytes_per_row: unpadded_bpr,
-                    height: copy_h,
-                },
-            });
+            pending_writebacks.push(PendingWriteback::Texture2d { staging, plan });
         }
 
         // The destination GPU texture content has changed; discard any pending "dirty" marker that
@@ -4391,13 +4388,13 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
         let (dirty, backing, buffer_size, buffer_gpu_size) = {
-            let Some(buf) = self.resources.buffers.get_mut(&buffer_handle) else {
-                return Ok(());
-            };
-            let Some(dirty) = buf.dirty.take() else {
+            let Some(buf) = self.resources.buffers.get(&buffer_handle) else {
                 return Ok(());
             };
             let Some(backing) = buf.backing else {
+                return Ok(());
+            };
+            let Some(dirty) = buf.dirty.clone() else {
                 return Ok(());
             };
             (dirty, backing, buf.size, buf.gpu_size)
@@ -4463,6 +4460,10 @@ impl AerogpuD3d11Executor {
             self.queue
                 .write_buffer(&buf.buffer, offset, &tmp[..write_len]);
             offset += n as u64;
+        }
+
+        if let Some(buf_mut) = self.resources.buffers.get_mut(&buffer_handle) {
+            buf_mut.dirty = None;
         }
 
         Ok(())
@@ -5381,10 +5382,13 @@ fn build_vertex_buffers_for_pipeline(
 
 struct AllocTable {
     entries: HashMap<u32, AerogpuAllocEntry>,
+    present: bool,
 }
 
 impl AllocTable {
-    fn new(entries: &[AerogpuAllocEntry]) -> Result<Self> {
+    fn new(entries: Option<&[AerogpuAllocEntry]>) -> Result<Self> {
+        let present = entries.is_some();
+        let entries = entries.unwrap_or(&[]);
         let mut map = HashMap::new();
         for &e in entries {
             if e.alloc_id == 0 {
@@ -5405,24 +5409,32 @@ impl AllocTable {
                 bail!("duplicate alloc_id {} in alloc table", e.alloc_id);
             }
         }
-        Ok(Self { entries: map })
+        Ok(Self {
+            entries: map,
+            present,
+        })
+    }
+
+    fn require_entry(&self, alloc_id: u32) -> Result<&AerogpuAllocEntry> {
+        if !self.present {
+            bail!(
+                "submission is missing an allocation table required to resolve alloc_id={alloc_id}"
+            );
+        }
+        self.entries
+            .get(&alloc_id)
+            .ok_or_else(|| anyhow!("allocation table does not contain alloc_id={alloc_id}"))
     }
 
     fn gpa(&self, alloc_id: u32) -> Result<u64> {
-        self.entries
-            .get(&alloc_id)
-            .map(|e| e.gpa)
-            .ok_or_else(|| anyhow!("unknown alloc_id {alloc_id}"))
+        Ok(self.require_entry(alloc_id)?.gpa)
     }
 
     fn validate_range(&self, alloc_id: u32, offset: u64, size: u64) -> Result<()> {
         if alloc_id == 0 {
             return Ok(());
         }
-        let entry = self
-            .entries
-            .get(&alloc_id)
-            .ok_or_else(|| anyhow!("unknown alloc_id {alloc_id}"))?;
+        let entry = self.require_entry(alloc_id)?;
         let end = offset
             .checked_add(size)
             .ok_or_else(|| anyhow!("alloc range overflow"))?;
@@ -5442,10 +5454,7 @@ impl AllocTable {
         if alloc_id == 0 {
             bail!("alloc_id must be non-zero");
         }
-        let entry = self
-            .entries
-            .get(&alloc_id)
-            .ok_or_else(|| anyhow!("unknown alloc_id {alloc_id}"))?;
+        let entry = self.require_entry(alloc_id)?;
         if (entry.flags & AEROGPU_ALLOC_FLAG_READONLY) != 0 {
             bail!("alloc {alloc_id} is read-only");
         }
