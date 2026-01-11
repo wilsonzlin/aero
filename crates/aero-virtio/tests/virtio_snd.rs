@@ -1,15 +1,15 @@
 use aero_audio::sink::AudioSink;
 use aero_virtio::devices::snd::{
     VirtioSnd, VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL,
-    VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE, VIRTIO_SND_R_PCM_SET_PARAMS,
-    VIRTIO_SND_R_PCM_START, VIRTIO_SND_S_OK,
+    VIRTIO_SND_QUEUE_EVENT, VIRTIO_SND_QUEUE_RX, VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE,
+    VIRTIO_SND_R_PCM_SET_PARAMS, VIRTIO_SND_R_PCM_START, VIRTIO_SND_S_OK,
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
     VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
-    VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_STATUS_FEATURES_OK, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
@@ -88,6 +88,50 @@ fn bar_write_u64(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u
 
 fn bar_write_u8(dev: &mut VirtioPciDevice, mem: &mut GuestRam, off: u64, val: u8) {
     dev.bar0_write(off, &[val], mem);
+}
+
+#[test]
+fn virtio_snd_pci_contract_v1_features_and_queue_sizes() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x4000);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+
+    let features = u64::from(f0) | (u64::from(f1) << 32);
+    assert_eq!(features, VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC);
+
+    bar_write_u16(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x16,
+        VIRTIO_SND_QUEUE_CONTROL,
+    );
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 64);
+
+    bar_write_u16(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x16,
+        VIRTIO_SND_QUEUE_EVENT,
+    );
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 64);
+
+    bar_write_u16(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x16,
+        VIRTIO_SND_QUEUE_TX,
+    );
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 256);
+
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, VIRTIO_SND_QUEUE_RX);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x18), 64);
 }
 
 fn write_desc(
