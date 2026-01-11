@@ -490,10 +490,11 @@ static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter)
   wprintf(L"  write_index=%lu entry_count=%lu\n", (unsigned long)q.write_index, (unsigned long)q.entry_count);
   for (uint32_t i = 0; i < q.entry_count && i < q.entry_capacity && i < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS; ++i) {
     const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
-    wprintf(L"  [%lu] seq=%lu call=%lu alloc[%lu/%lu] alloc_id=%lu share_token=0x%I64x size=%I64u priv_flags=0x%08lx pitch=%lu flags=0x%08lx->0x%08lx\n",
+    wprintf(L"  [%lu] seq=%lu call=%lu create_flags=0x%08lx alloc[%lu/%lu] alloc_id=%lu share_token=0x%I64x size=%I64u priv_flags=0x%08lx pitch=%lu flags=0x%08lx->0x%08lx\n",
             (unsigned long)i,
             (unsigned long)e.seq,
             (unsigned long)e.call_seq,
+            (unsigned long)e.create_flags,
             (unsigned long)e.alloc_index,
             (unsigned long)e.num_allocations,
             (unsigned long)e.alloc_id,
