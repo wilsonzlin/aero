@@ -197,13 +197,7 @@ export class UsbPassthroughDemoRuntime {
   }
 
   tick(): void {
-    let rawActions: unknown;
-    try {
-      rawActions = this.#demo.drain_actions();
-    } catch {
-      return;
-    }
-
+    const rawActions = this.#demo.drain_actions();
     if (!Array.isArray(rawActions)) return;
     for (const raw of rawActions) {
       if (!raw || typeof raw !== "object") continue;
@@ -226,13 +220,7 @@ export class UsbPassthroughDemoRuntime {
 
   pollResults(): void {
     while (true) {
-      let raw: unknown;
-      try {
-        raw = this.#demo.poll_last_result();
-      } catch {
-        return;
-      }
-
+      const raw = this.#demo.poll_last_result();
       if (raw === null || raw === undefined) return;
       const result = parseDemoResult(raw);
       if (!result) return;

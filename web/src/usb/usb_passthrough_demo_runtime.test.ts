@@ -65,6 +65,22 @@ class FakeDemo {
   }
 }
 
+class ThrowingDemo extends FakeDemo {
+  constructor(private readonly mode: "drain" | "poll") {
+    super();
+  }
+
+  override drain_actions(): unknown {
+    if (this.mode === "drain") throw new Error("boom");
+    return super.drain_actions();
+  }
+
+  override poll_last_result(): unknown {
+    if (this.mode === "poll") throw new Error("boom");
+    return super.poll_last_result();
+  }
+}
+
 describe("UsbPassthroughDemoRuntime", () => {
   it("validates usb.demoResult messages with a strict type guard", () => {
     expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "stall" } })).toBe(true);
@@ -210,5 +226,21 @@ describe("UsbPassthroughDemoRuntime", () => {
       type: "usb.demoResult",
       result: { status: "success", data: Uint8Array.of(0x12, 0x34) },
     });
+  });
+
+  it("propagates demo API exceptions from tick()/pollResults() so callers can surface errors", () => {
+    const drainDemo = new ThrowingDemo("drain");
+    const drainRuntime = new UsbPassthroughDemoRuntime({
+      demo: drainDemo,
+      postMessage: () => undefined,
+    });
+    expect(() => drainRuntime.tick()).toThrow("boom");
+
+    const pollDemo = new ThrowingDemo("poll");
+    const pollRuntime = new UsbPassthroughDemoRuntime({
+      demo: pollDemo,
+      postMessage: () => undefined,
+    });
+    expect(() => pollRuntime.pollResults()).toThrow("boom");
   });
 });

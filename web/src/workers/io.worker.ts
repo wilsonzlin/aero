@@ -568,6 +568,30 @@ function maybeInitUhciDevice(): void {
 type UsbPassthroughDemo = InstanceType<NonNullable<WasmApi["UsbPassthroughDemo"]>>;
 let usbDemo: UsbPassthroughDemoRuntime | null = null;
 let usbDemoApi: UsbPassthroughDemo | null = null;
+let usbDemoLastReportedError: string | null = null;
+
+function resetUsbDemoErrorDedup(): void {
+  usbDemoLastReportedError = null;
+}
+
+function emitUsbDemoError(message: string): void {
+  if (message === usbDemoLastReportedError) return;
+  usbDemoLastReportedError = message;
+  ctx.postMessage({
+    type: "usb.demoResult",
+    result: { status: "error", message },
+  } satisfies UsbPassthroughDemoResultMessage);
+}
+
+function handleUsbDemoFailure(context: string, err: unknown): void {
+  console.warn(`[io.worker] UsbPassthroughDemo ${context} failed`, err);
+  emitUsbDemoError(`UsbPassthroughDemo ${context} failed: ${formatWebUsbGuestError(err)}`);
+  try {
+    usbDemo?.reset();
+  } catch {
+    // ignore
+  }
+}
 
 let hidInputRing: HidReportRing | null = null;
 let hidOutputRing: HidReportRing | null = null;
@@ -1457,31 +1481,23 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isUsbPassthroughDemoRunMessage(data)) {
       const msg = data;
+      resetUsbDemoErrorDedup();
       if (!usbDemo) {
-        ctx.postMessage({
-          type: "usb.demoResult",
-          result: { status: "error", message: "UsbPassthroughDemo is unavailable in this WASM build." },
-        } satisfies UsbPassthroughDemoResultMessage);
+        emitUsbDemoError("UsbPassthroughDemo is unavailable in this WASM build.");
         return;
       }
 
       if (!lastUsbSelected?.ok) {
         const detail = lastUsbSelected?.error;
         const message = detail ? `No WebUSB device is selected: ${detail}` : "No WebUSB device is selected.";
-        ctx.postMessage({
-          type: "usb.demoResult",
-          result: { status: "error", message },
-        } satisfies UsbPassthroughDemoResultMessage);
+        emitUsbDemoError(message);
         return;
       }
 
       try {
         usbDemo.run(msg.request, msg.length);
       } catch (err) {
-        ctx.postMessage({
-          type: "usb.demoResult",
-          result: { status: "error", message: `UsbPassthroughDemo failed: ${formatWebUsbGuestError(err)}` },
-        } satisfies UsbPassthroughDemoResultMessage);
+        handleUsbDemoFailure("run", err);
       }
       return;
     }
@@ -1513,14 +1529,18 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       }
       if (usbDemo) {
         try {
+          if (msg.ok) resetUsbDemoErrorDedup();
           usbDemo.onUsbSelected(msg);
         } catch (err) {
-          console.warn("[io.worker] UsbPassthroughDemo.onUsbSelected failed", err);
           if (msg.ok) {
-            ctx.postMessage({
-              type: "usb.demoResult",
-              result: { status: "error", message: `UsbPassthroughDemo failed: ${formatWebUsbGuestError(err)}` },
-            } satisfies UsbPassthroughDemoResultMessage);
+            handleUsbDemoFailure("onUsbSelected", err);
+          } else {
+            console.warn("[io.worker] UsbPassthroughDemo.onUsbSelected failed", err);
+            try {
+              usbDemo.reset();
+            } catch {
+              // ignore
+            }
           }
         }
       }
@@ -1548,7 +1568,13 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<UsbCompletionMessage>).type === "usb.completion") {
       const msg = data as UsbCompletionMessage;
-      usbDemo?.onUsbCompletion(msg);
+      if (usbDemo) {
+        try {
+          usbDemo.onUsbCompletion(msg);
+        } catch (err) {
+          handleUsbDemoFailure("onUsbCompletion", err);
+        }
+      }
       if (import.meta.env.DEV) {
         if (msg.completion.status === "success" && "data" in msg.completion) {
           const data = msg.completion.data;
@@ -1691,8 +1717,7 @@ function startIoIpcServer(): void {
           usbDemo.tick();
           usbDemo.pollResults();
         } catch (err) {
-          console.warn("[io.worker] UsbPassthroughDemo tick failed", err);
-          // Keep the worker alive; demo failures should not crash the VM runtime.
+          handleUsbDemoFailure("tick", err);
         }
       }
 
