@@ -55,6 +55,98 @@ pub fn version() -> u32 {
     1
 }
 
+// -------------------------------------------------------------------------------------------------
+// Guest RAM vs runtime layout contract
+// -------------------------------------------------------------------------------------------------
+
+/// WebAssembly linear memory page size (wasm32 / wasm64).
+#[cfg(target_arch = "wasm32")]
+const WASM_PAGE_BYTES: u64 = 64 * 1024;
+
+/// Max pages addressable by wasm32 (2^32 bytes).
+#[cfg(target_arch = "wasm32")]
+const MAX_WASM32_PAGES: u64 = 65536;
+
+/// Bytes reserved at the bottom of the linear memory for the Rust/WASM runtime.
+///
+/// Guest physical address 0 maps to `guest_base = align_up(RUNTIME_RESERVED_BYTES, 64KiB)`.
+///
+/// NOTE: Keep this in sync with `web/src/runtime/shared_layout.ts` (`RUNTIME_RESERVED_BYTES`).
+#[cfg(target_arch = "wasm32")]
+const RUNTIME_RESERVED_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
+
+#[cfg(target_arch = "wasm32")]
+fn align_up(value: u64, alignment: u64) -> u64 {
+    if alignment == 0 {
+        return value;
+    }
+    let rem = value % alignment;
+    if rem == 0 {
+        value
+    } else {
+        value + (alignment - rem)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct GuestRamLayout {
+    guest_base: u32,
+    guest_size: u32,
+    runtime_reserved: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl GuestRamLayout {
+    #[wasm_bindgen(getter)]
+    pub fn guest_base(&self) -> u32 {
+        self.guest_base
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn guest_size(&self) -> u32 {
+        self.guest_size
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn runtime_reserved(&self) -> u32 {
+        self.runtime_reserved
+    }
+}
+
+/// Compute the in-memory guest RAM mapping for a desired guest size.
+///
+/// This must stay deterministic and stable across the single-threaded + threaded WASM builds.
+///
+/// Note: `desired_bytes` is a `u32`, so callers must clamp values to `<= 0xFFFF_FFFF`
+/// (4GiB-1). (4GiB itself does not fit in a `u32`.)
+///
+/// The contract is:
+/// - Bytes `[0, guest_base)` are reserved for the Rust/WASM runtime (stack, heap, TLS, etc.).
+/// - Guest physical address 0 maps to byte offset `guest_base` inside the wasm linear memory.
+/// - Guest RAM occupies `[guest_base, guest_base + guest_size)`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
+    let guest_base = align_up(RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES);
+    let base_pages = guest_base / WASM_PAGE_BYTES;
+
+    // `desired_bytes` is u32 so it cannot represent 4GiB; align up safely in u64.
+    let desired_bytes_aligned = align_up(desired_bytes as u64, WASM_PAGE_BYTES);
+    let desired_pages = desired_bytes_aligned / WASM_PAGE_BYTES;
+
+    let total_pages = (base_pages + desired_pages).min(MAX_WASM32_PAGES);
+    let guest_pages = total_pages.saturating_sub(base_pages);
+    let guest_size = guest_pages * WASM_PAGE_BYTES;
+
+    GuestRamLayout {
+        guest_base: guest_base as u32,
+        guest_size: guest_size as u32,
+        runtime_reserved: guest_base as u32,
+    }
+}
+
 #[wasm_bindgen]
 pub fn sum(a: i32, b: i32) -> i32 {
     a + b

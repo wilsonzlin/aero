@@ -122,7 +122,6 @@ export class WorkerCoordinator {
 
     const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB });
     const shared = createSharedMemoryViews(segments);
-    shared.status.fill(0);
     this.shared = shared;
     this.runId += 1;
     const runId = this.runId;

@@ -31,6 +31,19 @@ export enum StatusIndex {
   GpuReady = 9,
   IoReady = 10,
   JitReady = 11,
+
+  /**
+   * Guest RAM layout contract (in bytes, stored as u32).
+   *
+   * `guest_base` is the byte offset within `WebAssembly.Memory` where guest
+   * physical address 0 begins.
+   *
+   * This is written once by the coordinator when allocating the shared memory
+   * segments and then treated as immutable for the life of that VM instance.
+   */
+  GuestBase = 16,
+  GuestSize = 17,
+  RuntimeReserved = 18,
 }
 
 export const COMMAND_RING_CAPACITY_BYTES = 32 * 1024;
@@ -79,6 +92,36 @@ export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
 const WASM_PAGE_BYTES = 64 * 1024;
 const MAX_WASM32_PAGES = 65536;
 
+/**
+ * Fixed low-address region reserved for the Rust/WASM runtime (stack, heap,
+ * static data, wasm-bindgen metadata, etc.).
+ *
+ * Guest RAM starts at `guest_base = align_up(RUNTIME_RESERVED_BYTES, 64KiB)`.
+ *
+ * NOTE: Keep this in sync with the WASM-exported `guest_ram_layout` contract
+ * in `crates/aero-wasm/src/lib.rs`.
+ */
+export const RUNTIME_RESERVED_BYTES = 64 * 1024 * 1024; // 64 MiB
+
+export interface GuestRamLayout {
+  /**
+   * Byte offset into wasm linear memory where guest physical address 0 maps.
+   */
+  guest_base: number;
+  /**
+   * Usable guest bytes (may be clamped to fit wasm32's 4GiB limit).
+   */
+  guest_size: number;
+  /**
+   * Bytes reserved for runtime (always equals `guest_base`).
+   */
+  runtime_reserved: number;
+  /**
+   * Total wasm pages (64KiB) allocated for the memory.
+   */
+  wasm_pages: number;
+}
+
 // Early VGA/VBE framebuffer sizing. The buffer is reused across mode changes;
 // the active dimensions live in the framebuffer header.
 const VGA_FRAMEBUFFER_MAX_WIDTH = 1024;
@@ -107,14 +150,82 @@ export interface RingRegions {
 export interface SharedMemoryViews {
   segments: SharedMemorySegments;
   status: Int32Array;
+  guestLayout: GuestRamLayout;
   guestU8: Uint8Array;
   guestI32: Int32Array;
   vgaFramebuffer: SharedArrayBuffer;
 }
 
 function align(value: number, alignment: number): number {
-  const mask = alignment - 1;
-  return (value + mask) & ~mask;
+  if (alignment <= 0) return value;
+  return Math.ceil(value / alignment) * alignment;
+}
+
+function clampToU32(value: number): number {
+  // JS numbers are IEEE754 doubles; we only need a best-effort clamp for inputs
+  // coming from user configuration (MiB presets).
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  // 2^32 is still a safe integer.
+  return Math.min(value, 0xffffffff);
+}
+
+function toU32(value: number): number {
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`Expected a finite u32, got ${String(value)}`);
+  }
+  const int = Math.trunc(value);
+  if (int < 0 || int > 0xffffffff) {
+    throw new RangeError(`Expected a u32 in [0, 2^32), got ${String(value)}`);
+  }
+  return int >>> 0;
+}
+
+export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout {
+  const desired = clampToU32(desiredGuestBytes);
+  const guestBase = align(RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES);
+  const runtimeReserved = guestBase;
+
+  const basePages = Math.floor(guestBase / WASM_PAGE_BYTES);
+  const desiredPages = bytesToPages(desired);
+  const totalPages = Math.min(MAX_WASM32_PAGES, basePages + desiredPages);
+  const guestPages = Math.max(0, totalPages - basePages);
+
+  return {
+    guest_base: guestBase,
+    guest_size: guestPages * WASM_PAGE_BYTES,
+    runtime_reserved: runtimeReserved,
+    wasm_pages: totalPages,
+  };
+}
+
+export function guestToLinear(layout: GuestRamLayout, paddr: number): number {
+  const addr = toU32(paddr);
+  if (addr >= layout.guest_size) {
+    throw new RangeError(`Guest physical address out of bounds: 0x${addr.toString(16)} (guest_size=${layout.guest_size})`);
+  }
+  return layout.guest_base + addr;
+}
+
+export function guestRangeInBounds(layout: GuestRamLayout, paddr: number, byteLength: number): boolean {
+  const addr = toU32(paddr);
+  const len = toU32(byteLength);
+  if (len === 0) return addr <= layout.guest_size;
+  return addr < layout.guest_size && addr + len <= layout.guest_size;
+}
+
+export function readGuestRamLayoutFromStatus(status: Int32Array): GuestRamLayout {
+  const guestBase = Atomics.load(status, StatusIndex.GuestBase) >>> 0;
+  const guestSize = Atomics.load(status, StatusIndex.GuestSize) >>> 0;
+  const runtimeReserved = Atomics.load(status, StatusIndex.RuntimeReserved) >>> 0;
+
+  if (guestBase === 0 && guestSize === 0) {
+    throw new Error("Guest RAM layout was not initialized in status SAB (guest_base/guest_size are 0).");
+  }
+
+  // wasm_pages isn't stored; infer from guest size + base.
+  const totalBytes = guestBase + guestSize;
+  const totalPages = bytesToPages(totalBytes);
+  return { guest_base: guestBase, guest_size: guestSize, runtime_reserved: runtimeReserved || guestBase, wasm_pages: totalPages };
 }
 
 const RING_REGION_BYTES = RingBuffer.byteLengthForCapacity(COMMAND_RING_CAPACITY_BYTES);
@@ -157,11 +268,9 @@ export function allocateSharedMemorySegments(options?: {
   guestRamMiB?: GuestRamMiB;
 }): SharedMemorySegments {
   const guestRamMiB = options?.guestRamMiB ?? DEFAULT_GUEST_RAM_MIB;
-  const guestBytes = mibToBytes(guestRamMiB);
-  const pages = bytesToPages(guestBytes);
-  if (pages > MAX_WASM32_PAGES) {
-    throw new Error(`guestRamMiB too large for wasm32: ${guestRamMiB} MiB (${pages} pages)`);
-  }
+  const desiredGuestBytes = mibToBytes(guestRamMiB);
+  const layout = computeGuestRamLayout(desiredGuestBytes);
+  const pages = layout.wasm_pages;
 
   let guestMemory: WebAssembly.Memory;
   try {
@@ -180,8 +289,14 @@ export function allocateSharedMemorySegments(options?: {
     );
   }
 
+  const control = new SharedArrayBuffer(CONTROL_BYTES);
+  const status = new Int32Array(control, CONTROL_LAYOUT.statusOffset, STATUS_INTS);
+  Atomics.store(status, StatusIndex.GuestBase, layout.guest_base | 0);
+  Atomics.store(status, StatusIndex.GuestSize, layout.guest_size | 0);
+  Atomics.store(status, StatusIndex.RuntimeReserved, layout.runtime_reserved | 0);
+
   return {
-    control: new SharedArrayBuffer(CONTROL_BYTES),
+    control,
     guestMemory,
     // A single shared RGBA8888 framebuffer region used for early VGA/VBE display.
     // This is sized for a modest SVGA mode; actual modes are communicated via the
@@ -198,9 +313,22 @@ export function allocateSharedMemorySegments(options?: {
 
 export function createSharedMemoryViews(segments: SharedMemorySegments): SharedMemoryViews {
   const status = new Int32Array(segments.control, CONTROL_LAYOUT.statusOffset, STATUS_INTS);
-  const guestU8 = new Uint8Array(segments.guestMemory.buffer);
-  const guestI32 = new Int32Array(segments.guestMemory.buffer);
-  return { segments, status, guestU8, guestI32, vgaFramebuffer: segments.vgaFramebuffer };
+  const guestLayout = readGuestRamLayoutFromStatus(status);
+
+  const memBytes = segments.guestMemory.buffer.byteLength;
+  if (guestLayout.guest_base + guestLayout.guest_size > memBytes) {
+    throw new Error(
+      `Guest RAM layout (${guestLayout.guest_base}+${guestLayout.guest_size}) exceeds wasm memory size (${memBytes}).`,
+    );
+  }
+
+  const guestU8 = new Uint8Array(segments.guestMemory.buffer, guestLayout.guest_base, guestLayout.guest_size);
+  const guestI32 = new Int32Array(
+    segments.guestMemory.buffer,
+    guestLayout.guest_base,
+    Math.floor(guestLayout.guest_size / Int32Array.BYTES_PER_ELEMENT),
+  );
+  return { segments, status, guestLayout, guestU8, guestI32, vgaFramebuffer: segments.vgaFramebuffer };
 }
 
 export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {

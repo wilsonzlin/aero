@@ -14,6 +14,19 @@ export interface WasmApi {
     sum: (a: number, b: number) => number;
     mem_store_u32: (offset: number, value: number) => void;
     mem_load_u32: (offset: number) => number;
+
+    /**
+     * Guest RAM layout contract (see `docs/adr/0003-shared-memory-layout.md`).
+     *
+     * Returns a small object describing where guest physical address 0 maps
+     * inside the wasm linear memory.
+     */
+    guest_ram_layout: (desiredBytes: number) => {
+        readonly guest_base: number;
+        readonly guest_size: number;
+        readonly runtime_reserved: number;
+        free(): void;
+    };
     AeroApi: new () => { version(): string; free(): void };
     DemoVm: new (ramSizeBytes: number) => {
         run_steps(steps: number): void;
@@ -178,6 +191,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         version: mod.version,
         sum: mod.sum,
         mem_store_u32: mod.mem_store_u32,
+        guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,

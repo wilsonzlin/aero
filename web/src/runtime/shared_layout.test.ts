@@ -5,8 +5,10 @@ import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
   EVENT_RING_CAPACITY_BYTES,
+  RUNTIME_RESERVED_BYTES,
   STATUS_BYTES,
   WORKER_ROLES,
+  allocateSharedMemorySegments,
   createSharedMemoryViews,
   ringRegionsForWorker,
 } from "./shared_layout";
@@ -53,15 +55,15 @@ describe("runtime/shared_layout", () => {
   });
 
   it("creates shared views for control + guest memory", () => {
-    const control = new SharedArrayBuffer(CONTROL_BYTES);
-    const guestMemory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-    const vgaFramebuffer = new SharedArrayBuffer(4);
-    const ioIpc = new SharedArrayBuffer(0);
-    const views = createSharedMemoryViews({ control, guestMemory, vgaFramebuffer, ioIpc });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const views = createSharedMemoryViews(segments);
 
     expect(views.status.byteOffset).toBe(0);
     expect(views.status.byteLength).toBe(STATUS_BYTES);
-    expect(views.guestU8.byteLength).toBe(64 * 1024);
-    expect(views.guestU8.buffer).toBe(guestMemory.buffer);
+    expect(views.guestLayout.guest_base).toBe(RUNTIME_RESERVED_BYTES);
+    expect(views.guestLayout.guest_size).toBe(1 * 1024 * 1024);
+    expect(views.guestU8.byteOffset).toBe(views.guestLayout.guest_base);
+    expect(views.guestU8.byteLength).toBe(views.guestLayout.guest_size);
+    expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
   });
 });

@@ -29,9 +29,46 @@ Use **multiple shared buffers** with a clear separation between guest RAM and ho
 
 The guiding rule: **preserve WASM address space for guest RAM**, and keep large or host-only buffers outside the WASM linear memory unless there is a measured performance need to place them inside.
 
+## Addendum: wasm32 linear memory contract (runtime vs guest RAM)
+
+Even when guest RAM is "backed by `WebAssembly.Memory`", **that same linear memory is also used by the Rust/WASM runtime**:
+
+- stack
+- Rust heap allocations (e.g. `Vec`, `String`, wasm-bindgen shims)
+- static data / TLS
+
+Therefore **guest physical address 0 cannot map to linear memory offset 0**.
+
+### Strategy (implementable today): fixed runtime-reserved region at low addresses
+
+We reserve a fixed, page-aligned region at the bottom of wasm linear memory for the runtime:
+
+- `runtime_reserved` = **64 MiB**
+- `guest_base` = `align_up(runtime_reserved, 64KiB)` (currently also 64 MiB)
+- `guest_size` = clamped to fit wasm32's 4 GiB maximum: `guest_size ≤ 4GiB - guest_base`
+
+The guest RAM mapping is:
+
+```
+wasm linear memory (0..4GiB)
+
+0                         guest_base                     guest_base+guest_size
+│-------------------------│------------------------------│---------------------│
+│  runtime reserved       │  guest RAM (paddr 0..)       │ (unused / none)     │
+│  (stack/heap/statics)   │                              │                     │
+│-------------------------│------------------------------│---------------------│
+```
+
+Contract:
+
+- Guest physical address `paddr` maps to linear address `guest_base + paddr`.
+- JS/TS code must bounds-check guest accesses against `[0, guest_size)` and reject anything outside.
+- The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
+
 Reference implementation:
 
-- Shared-memory segment allocation (control SAB + guest `WebAssembly.Memory`): [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)
+- Shared-memory segment allocation + layout computation: [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)
+- WASM-exported layout API: `crates/aero-wasm/src/lib.rs` (`guest_ram_layout`)
 - IPC protocol (binary rings + atomics contracts): [`docs/ipc-protocol.md`](../ipc-protocol.md)
 
 ## Alternatives considered
