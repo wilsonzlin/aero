@@ -7,11 +7,19 @@ on:
     paths:
       - net-proxy/**
       - .github/workflows/net-proxy.yml
+    paths-ignore:
+      - "**/*.md"
   pull_request:
     paths:
       - net-proxy/**
       - .github/workflows/net-proxy.yml
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
