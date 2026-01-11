@@ -233,6 +233,29 @@ static void TestInvalidParams(void)
 	}
 }
 
+static void TestTooManySegments(void)
+{
+	const UINT32 pfn_count = 0x10000u; /* one more than UINT16 max */
+	UINT64 *pfns;
+	UINT32 i;
+	VIRTQ_SG sg[1];
+	UINT16 count = 0;
+	NTSTATUS status;
+
+	pfns = (UINT64 *)calloc((size_t)pfn_count, sizeof(UINT64));
+	ASSERT_TRUE(pfns != NULL);
+	for (i = 0; i < pfn_count; i++) {
+		/* Force non-contiguous addresses so each page becomes its own segment. */
+		pfns[i] = (UINT64)i * 2u;
+	}
+
+	status = VirtioSgBuildFromPfns(pfns, pfn_count, 0, (size_t)pfn_count * PAGE_SIZE, TRUE, sg, 1, &count);
+	ASSERT_EQ_STATUS(status, STATUS_INVALID_PARAMETER);
+	ASSERT_EQ_U16(count, 0);
+
+	free(pfns);
+}
+
 int main(void)
 {
 	TestContiguousCoalesce();
@@ -244,6 +267,7 @@ int main(void)
 	TestLenClampedToU32();
 	TestSizingCallNoOutput();
 	TestInvalidParams();
+	TestTooManySegments();
 
 	printf("virtio_sg_pfn_test: all tests passed\n");
 	return 0;
