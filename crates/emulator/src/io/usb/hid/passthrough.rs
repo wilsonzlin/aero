@@ -537,7 +537,7 @@ impl UsbDeviceModel for UsbHidPassthrough {
                             .cloned()
                             .unwrap_or_else(|| default_input_report(report_id, setup.w_length)),
                         // Minimal behavior for output/feature: return zeros.
-                        2 | 3 => vec![0; setup.w_length.min(64) as usize],
+                        2 | 3 => vec![0; setup.w_length as usize],
                         _ => return ControlResponse::Stall,
                     };
                     ControlResponse::Data(clamp_response(data, setup.w_length))
@@ -644,7 +644,7 @@ impl UsbDeviceModel for UsbHidPassthrough {
 }
 
 fn default_input_report(report_id: u8, w_length: u16) -> Vec<u8> {
-    let len = w_length.min(4096) as usize;
+    let len = w_length as usize;
     if len == 0 {
         return Vec::new();
     }
@@ -1030,5 +1030,38 @@ mod tests {
                 data: vec![(DEFAULT_MAX_PENDING_OUTPUT_REPORTS + 16) as u8]
             }
         );
+    }
+
+    #[test]
+    fn get_report_feature_returns_full_w_length() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".to_string(),
+            "Product".to_string(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        let w_length = 200;
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (3u16 << 8) | 1u16, // Feature, report ID 1
+                w_index: 0,
+                w_length,
+            },
+            None,
+        );
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data.len(), w_length as usize);
     }
 }
