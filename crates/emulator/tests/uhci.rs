@@ -299,6 +299,35 @@ impl UsbDeviceModel for PendingControlInDevice {
 }
 
 #[derive(Clone, Debug)]
+struct PendingControlInZlpDevice {
+    ready: Rc<RefCell<bool>>,
+}
+
+impl PendingControlInZlpDevice {
+    fn new(ready: Rc<RefCell<bool>>) -> Self {
+        Self { ready }
+    }
+}
+
+impl UsbDeviceModel for PendingControlInZlpDevice {
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        if setup.bm_request_type == 0xc0 && setup.b_request == 0x03 {
+            if *self.ready.borrow() {
+                ControlResponse::Ack
+            } else {
+                ControlResponse::Nak
+            }
+        } else {
+            ControlResponse::Stall
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct PendingControlOutDevice {
     ready: Rc<RefCell<bool>>,
     received: Rc<RefCell<Vec<u8>>>,
@@ -332,6 +361,39 @@ impl UsbDeviceModel for PendingControlOutDevice {
         if !self.started {
             self.received.borrow_mut().extend_from_slice(data_stage);
             self.started = true;
+        }
+
+        if *self.ready.borrow() {
+            ControlResponse::Ack
+        } else {
+            ControlResponse::Nak
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingControlOutNoDataDevice {
+    ready: Rc<RefCell<bool>>,
+}
+
+impl PendingControlOutNoDataDevice {
+    fn new(ready: Rc<RefCell<bool>>) -> Self {
+        Self { ready }
+    }
+}
+
+impl UsbDeviceModel for PendingControlOutNoDataDevice {
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        if setup.bm_request_type != 0x40 || setup.b_request != 0x04 {
+            return ControlResponse::Stall;
+        }
+
+        if data_stage.is_some() {
+            return ControlResponse::Stall;
         }
 
         if *self.ready.borrow() {
@@ -776,6 +838,62 @@ fn uhci_control_in_pending_naks_data_td_until_ready() {
 }
 
 #[test]
+fn uhci_control_in_no_data_pending_naks_status_out_until_ready() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let ready = Rc::new(RefCell::new(false));
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(PendingControlInZlpDevice::new(ready.clone())));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Vendor DeviceToHost control transfer with wLength=0 (no data stage).
+    mem.write_physical(BUF_SETUP as u64, &[0xc0, 0x03, 0, 0, 0, 0, 0, 0]);
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // Status stage (OUT ZLP).
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_ne!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st1 & TD_STATUS_NAK, 0);
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD1);
+
+    *ready.borrow_mut() = true;
+    uhci.tick_1ms(&mut mem);
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
+}
+
+#[test]
 fn uhci_control_out_pending_acks_data_stage_and_naks_status_in() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
@@ -851,6 +969,63 @@ fn uhci_control_out_pending_acks_data_stage_and_naks_status_in() {
     let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
     assert_eq!(qh_elem, 1);
     assert_eq!(received.borrow().as_slice(), payload);
+}
+
+#[test]
+fn uhci_control_out_no_data_pending_naks_status_in_until_ready() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let ready = Rc::new(RefCell::new(false));
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(PendingControlOutNoDataDevice::new(ready.clone())),
+    );
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Vendor HostToDevice control transfer with wLength=0 (no data stage).
+    mem.write_physical(BUF_SETUP as u64, &[0x40, 0x04, 0, 0, 0, 0, 0, 0]);
+
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    // Status stage (IN ZLP).
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, true),
+        td_token(PID_IN, 0, 0, 1, 0),
+        0,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_ne!(st1 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st1 & TD_STATUS_NAK, 0);
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD1);
+
+    *ready.borrow_mut() = true;
+    uhci.tick_1ms(&mut mem);
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, 1);
 }
 
 #[test]
