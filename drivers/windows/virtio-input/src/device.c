@@ -617,9 +617,24 @@ NTSTATUS VirtioInputEvtDriverDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE
 
     {
         WDF_DMA_ENABLER_CONFIG dmaConfig;
-        WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, WdfDmaProfileScatterGather64, 0x10000);
+        WDF_OBJECT_ATTRIBUTES dmaAttributes;
+        WDF_DMA_PROFILE profile;
+        PDEVICE_CONTEXT ctx;
 
-        status = WdfDmaEnablerCreate(device, &dmaConfig, WDF_NO_OBJECT_ATTRIBUTES, &VirtioInputGetDeviceContext(device)->DmaEnabler);
+        ctx = VirtioInputGetDeviceContext(device);
+
+        profile = WdfDmaProfileScatterGather64Duplex;
+        WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, profile, 0x10000);
+
+        WDF_OBJECT_ATTRIBUTES_INIT(&dmaAttributes);
+        dmaAttributes.ParentObject = device;
+
+        status = WdfDmaEnablerCreate(device, &dmaConfig, &dmaAttributes, &ctx->DmaEnabler);
+        if (status == STATUS_NOT_SUPPORTED || status == STATUS_INVALID_DEVICE_REQUEST) {
+            profile = WdfDmaProfileScatterGatherDuplex;
+            WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, profile, 0x10000);
+            status = WdfDmaEnablerCreate(device, &dmaConfig, &dmaAttributes, &ctx->DmaEnabler);
+        }
         if (!NT_SUCCESS(status)) {
             return status;
         }
@@ -632,7 +647,7 @@ static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT DeviceContext)
 {
     BOOLEAN active;
 
-    active = VirtioInputIsHidActive(DeviceContext);
+    active = VirtioInputIsHidActive(DeviceContext) && (DeviceContext->DeviceKind == VioInputDeviceKindKeyboard);
 
     if (DeviceContext->StatusQ == NULL) {
         return;

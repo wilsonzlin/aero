@@ -33,7 +33,7 @@ static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT Ctx)
         return;
     }
 
-    active = VirtioInputIsHidActive(Ctx);
+    active = VirtioInputIsHidActive(Ctx) && (Ctx->DeviceKind == VioInputDeviceKindKeyboard);
 
     if (Ctx->Interrupts.QueueLocks != NULL && Ctx->Interrupts.QueueCount > 1) {
         WdfSpinLockAcquire(Ctx->Interrupts.QueueLocks[1]);

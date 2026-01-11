@@ -205,13 +205,75 @@ static void test_reset_emits_release_reports(void) {
   expect_report(&cap, 1, expect_mouse, sizeof(expect_mouse));
 }
 
+static void test_keyboard_only_enable(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_KEYBOARD);
+
+  /* Mouse input is ignored. */
+  send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
+  send_rel(&t, VIRTIO_INPUT_REL_X, 5);
+  send_syn(&t);
+  assert(cap.count == 0);
+
+  /* Keyboard input still emits. */
+  send_key(&t, VIRTIO_INPUT_KEY_A, 1);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  uint8_t expect1[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0x04, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Reset emits only the enabled report types. */
+  cap_clear(&cap);
+  hid_translate_reset(&t, true);
+  assert(cap.count == 1);
+  uint8_t expect_release[HID_TRANSLATE_KEYBOARD_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_KEYBOARD, 0, 0, 0, 0, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect_release, sizeof(expect_release));
+}
+
+static void test_mouse_only_enable(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_MOUSE);
+
+  /* Keyboard input is ignored. */
+  send_key(&t, VIRTIO_INPUT_KEY_A, 1);
+  send_syn(&t);
+  assert(cap.count == 0);
+
+  /* Mouse input emits. */
+  send_key(&t, VIRTIO_INPUT_BTN_LEFT, 1);
+  send_rel(&t, VIRTIO_INPUT_REL_X, 5);
+  send_rel(&t, VIRTIO_INPUT_REL_Y, -3);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  uint8_t expect1[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x01, 0x05, 0xFD, 0x00};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Reset emits only the enabled report types. */
+  cap_clear(&cap);
+  hid_translate_reset(&t, true);
+  assert(cap.count == 1);
+  uint8_t expect_release[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0, 0, 0, 0};
+  expect_report(&cap, 0, expect_release, sizeof(expect_release));
+}
+
 int main(void) {
   test_mapping();
   test_keyboard_reports();
   test_keyboard_overflow_queue();
   test_mouse_reports();
   test_reset_emits_release_reports();
+  test_keyboard_only_enable();
+  test_mouse_only_enable();
   printf("hid_translate_test: ok\n");
   return 0;
 }
-

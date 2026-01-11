@@ -481,4 +481,3 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
 
     VirtioStatusQUpdateDepthCounter(q);
 }
-
