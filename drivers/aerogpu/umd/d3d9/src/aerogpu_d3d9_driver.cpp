@@ -1771,8 +1771,7 @@ struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<
 
 template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
-  const bool patch_list_available =
-      dev->wddm_context.pPatchLocationList && dev->wddm_context.PatchLocationListSize != 0;
+  const bool patch_list_available = (dev->wddm_context.pPatchLocationList != nullptr);
   if constexpr (has_member_hContext<ArgsT>::value) {
     args.hContext = dev->wddm_context.hContext;
   }
@@ -6354,12 +6353,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   // DMA buffer construction.
   const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
       sizeof(aerogpu_cmd_stream_header) + align_up(sizeof(aerogpu_cmd_set_render_targets), 4));
-  const bool patch_list_consistent =
-      (dev->wddm_context.PatchLocationListSize == 0) || (dev->wddm_context.pPatchLocationList != nullptr);
   if (!dev->wddm_context.pCommandBuffer ||
       dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
       !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
-      !patch_list_consistent ||
       !dev->wddm_context.pDmaBufferPrivateData ||
       dev->wddm_context.DmaBufferPrivateDataSize < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
     aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
