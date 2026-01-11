@@ -66,6 +66,9 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::BiosInterrupt(vector) => {
+                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+            }
             BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception after {executed_total} insts: {e:?}"),
         }

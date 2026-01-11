@@ -124,6 +124,9 @@ impl Tier0Machine {
             match res.exit {
                 BatchExit::Completed | BatchExit::Branch => continue,
                 BatchExit::Halted => return,
+                BatchExit::BiosInterrupt(vector) => {
+                    panic!("unexpected BIOS interrupt: {vector:#x}")
+                }
                 BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
                 BatchExit::Assist(r) => {
                     self.handle_assist(r);

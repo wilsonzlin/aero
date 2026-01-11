@@ -1,5 +1,6 @@
 pub mod exec;
 
+mod ops_atomic;
 mod ops_alu;
 mod ops_cf;
 mod ops_data;
@@ -19,6 +20,30 @@ enum ExecOutcome {
     Assist(AssistReason),
 }
 
+fn atomic_rmw_sized<B: CpuBus, R>(
+    bus: &mut B,
+    addr: u64,
+    bits: u32,
+    f: impl FnOnce(u64) -> (u64, R),
+) -> Result<R, Exception> {
+    match bits {
+        8 => bus.atomic_rmw::<u8, _>(addr, |old| {
+            let (new, ret) = f(old as u64);
+            (new as u8, ret)
+        }),
+        16 => bus.atomic_rmw::<u16, _>(addr, |old| {
+            let (new, ret) = f(old as u64);
+            (new as u16, ret)
+        }),
+        32 => bus.atomic_rmw::<u32, _>(addr, |old| {
+            let (new, ret) = f(old as u64);
+            (new as u32, ret)
+        }),
+        64 => bus.atomic_rmw::<u64, _>(addr, |old| f(old)),
+        _ => Err(Exception::InvalidOpcode),
+    }
+}
+
 fn exec_decoded<B: CpuBus>(
     state: &mut CpuState,
     bus: &mut B,
@@ -29,6 +54,9 @@ fn exec_decoded<B: CpuBus>(
     let mnem = decoded.instr.mnemonic();
     if ops_cf::handles_mnemonic(mnem) {
         return ops_cf::exec(state, bus, decoded, next_ip);
+    }
+    if ops_atomic::handles_mnemonic(mnem) {
+        return ops_atomic::exec(state, bus, decoded, next_ip);
     }
     if ops_data::handles_mnemonic(mnem) {
         return ops_data::exec(state, bus, decoded, next_ip);

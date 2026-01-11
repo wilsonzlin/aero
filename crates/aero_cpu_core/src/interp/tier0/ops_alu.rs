@@ -85,16 +85,39 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::Inc | Mnemonic::Dec => {
             let bits = op_bits(state, instr, 0)?;
-            let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
             let cf = state.get_flag(FLAG_CF);
-            let (res, flags) = if instr.mnemonic() == Mnemonic::Inc {
-                add_with_flags(state, dst, 1, 0, bits)
+            let lock = instr.has_lock_prefix();
+            if lock && instr.op_kind(0) == OpKind::Register {
+                return Err(Exception::InvalidOpcode);
+            }
+            if lock && instr.op_kind(0) == OpKind::Memory {
+                let addr = calc_ea(state, instr, next_ip, true)?;
+                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                    let new = if instr.mnemonic() == Mnemonic::Inc {
+                        old.wrapping_add(1) & mask_bits(bits)
+                    } else {
+                        old.wrapping_sub(1) & mask_bits(bits)
+                    };
+                    (new, old)
+                })?;
+                let (_, flags) = if instr.mnemonic() == Mnemonic::Inc {
+                    add_with_flags(state, old, 1, 0, bits)
+                } else {
+                    sub_with_flags(state, old, 1, 0, bits)
+                };
+                // INC/DEC don't modify CF.
+                state.set_rflags((flags & !FLAG_CF) | (cf as u64 * FLAG_CF));
             } else {
-                sub_with_flags(state, dst, 1, 0, bits)
-            };
-            // INC/DEC don't modify CF.
-            state.set_rflags((flags & !FLAG_CF) | (cf as u64 * FLAG_CF));
-            write_op_sized(state, bus, instr, 0, res, bits, next_ip)?;
+                let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
+                let (res, flags) = if instr.mnemonic() == Mnemonic::Inc {
+                    add_with_flags(state, dst, 1, 0, bits)
+                } else {
+                    sub_with_flags(state, dst, 1, 0, bits)
+                };
+                // INC/DEC don't modify CF.
+                state.set_rflags((flags & !FLAG_CF) | (cf as u64 * FLAG_CF));
+                write_op_sized(state, bus, instr, 0, res, bits, next_ip)?;
+            }
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Neg => {
@@ -814,8 +837,12 @@ fn exec_bit_test<B: CpuBus>(
 ) -> Result<ExecOutcome, Exception> {
     let bits = op_bits(state, instr, 0)?;
     let bit_index = read_op_sized(state, bus, instr, 1, 64, next_ip)? as i64;
+    let lock = instr.has_lock_prefix();
     match instr.op_kind(0) {
         OpKind::Register => {
+            if lock {
+                return Err(Exception::InvalidOpcode);
+            }
             let reg = instr.op0_register();
             let val = state.read_reg(reg) & mask_bits(bits);
             let bit = (bit_index as u64) & (bits as u64 - 1);
@@ -836,18 +863,35 @@ fn exec_bit_test<B: CpuBus>(
         OpKind::Memory => {
             let base_addr = calc_ea(state, instr, next_ip, true)?;
             let (addr, bit) = bit_mem_addr(base_addr, bit_index, bits);
-            let val = super::ops_data::read_mem(bus, addr, bits)?;
-            let old = ((val >> bit) & 1) != 0;
-            state.set_flag(FLAG_CF, old);
-            let new_val = match instr.mnemonic() {
-                Mnemonic::Bt => val,
-                Mnemonic::Bts => val | (1u64 << bit),
-                Mnemonic::Btr => val & !(1u64 << bit),
-                Mnemonic::Btc => val ^ (1u64 << bit),
-                _ => val,
-            };
-            if instr.mnemonic() != Mnemonic::Bt {
-                super::ops_data::write_mem(bus, addr, bits, new_val)?;
+            if lock {
+                if instr.mnemonic() == Mnemonic::Bt {
+                    return Err(Exception::InvalidOpcode);
+                }
+                let old = super::atomic_rmw_sized(bus, addr, bits, |val| {
+                    let old = ((val >> bit) & 1) != 0;
+                    let new_val = match instr.mnemonic() {
+                        Mnemonic::Bts => val | (1u64 << bit),
+                        Mnemonic::Btr => val & !(1u64 << bit),
+                        Mnemonic::Btc => val ^ (1u64 << bit),
+                        _ => val,
+                    };
+                    (new_val, old)
+                })?;
+                state.set_flag(FLAG_CF, old);
+            } else {
+                let val = super::ops_data::read_mem(bus, addr, bits)?;
+                let old = ((val >> bit) & 1) != 0;
+                state.set_flag(FLAG_CF, old);
+                let new_val = match instr.mnemonic() {
+                    Mnemonic::Bt => val,
+                    Mnemonic::Bts => val | (1u64 << bit),
+                    Mnemonic::Btr => val & !(1u64 << bit),
+                    Mnemonic::Btc => val ^ (1u64 << bit),
+                    _ => val,
+                };
+                if instr.mnemonic() != Mnemonic::Bt {
+                    super::ops_data::write_mem(bus, addr, bits, new_val)?;
+                }
             }
             Ok(ExecOutcome::Continue)
         }
