@@ -219,6 +219,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $outDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness'
           $harnessLog = Join-Path $outDir 'harness-output.txt'
+          # Ensure the artifact directory is non-empty even if the harness fails before printing.
+          New-Item -ItemType File -Force -Path $harnessLog | Out-Null
           $args = @(
             '-QemuSystem', 'qemu-system-x86_64',
             '-DiskImagePath', $env:DISK_IMAGE_PATH,
