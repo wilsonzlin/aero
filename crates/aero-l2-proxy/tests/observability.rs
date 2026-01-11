@@ -1,8 +1,14 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-use aero_l2_proxy::{start_server, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL};
+use aero_l2_proxy::{
+    start_server, AllowedOrigins, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL,
+};
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::{
+    client::IntoClientRequest,
+    http::{HeaderValue, StatusCode},
+    Error as WsError,
+};
 
 struct TestServer {
     addr: SocketAddr,
@@ -55,7 +61,7 @@ async fn metrics_increment_after_frames() {
     let mut req = server.ws_url().into_client_request().unwrap();
     req.headers_mut().insert(
         "sec-websocket-protocol",
-        tokio_tungstenite::tungstenite::http::HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
     );
     let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let (mut ws_sender, _ws_receiver) = ws.split();
@@ -84,6 +90,62 @@ async fn metrics_increment_after_frames() {
     assert!(rx >= 1, "expected rx counter >= 1, got {rx}");
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn upgrade_rejection_metrics_increment_on_missing_origin() {
+    let cfg = ProxyConfig {
+        bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+        l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+        l2_max_control_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
+        ping_interval: None,
+        tcp_connect_timeout: Duration::from_millis(200),
+        tcp_send_buffer: 8,
+        ws_send_buffer: 8,
+        dns_default_ttl_secs: 60,
+        dns_max_ttl_secs: 300,
+        capture_dir: None,
+        security: SecurityConfig {
+            open: false,
+            allowed_origins: AllowedOrigins::Any,
+            ..Default::default()
+        },
+        policy: EgressPolicy::default(),
+        test_overrides: Default::default(),
+    };
+
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let ws_url = format!("ws://{addr}/l2");
+    let mut req = ws_url.into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected missing Origin to be rejected");
+
+    match err {
+        WsError::Http(resp) => assert_eq!(resp.status(), StatusCode::FORBIDDEN),
+        other => panic!("expected http error, got {other:?}"),
+    }
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let rejected = parse_metric(&body, "l2_upgrade_reject_origin_missing_total").unwrap();
+    assert!(
+        rejected >= 1,
+        "expected origin-missing reject counter >= 1, got {rejected}"
+    );
+
+    proxy.shutdown().await;
 }
 
 #[tokio::test]

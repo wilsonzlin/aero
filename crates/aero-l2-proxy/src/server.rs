@@ -7,9 +7,9 @@ use std::{
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        OriginalUri, State,
+        ConnectInfo, OriginalUri, State,
     },
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
@@ -111,7 +111,7 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let task = tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
+        let _ = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async move {
                 let _ = shutdown_rx.await;
             })
@@ -202,7 +202,10 @@ async fn l2_ws_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
+    ConnectInfo(client_addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
+    let client_ip = client_addr.ip();
+
     if !has_subprotocol(&headers, TUNNEL_SUBPROTOCOL) {
         return (
             StatusCode::BAD_REQUEST,
@@ -211,7 +214,7 @@ async fn l2_ws_handler(
             .into_response();
     }
 
-    if let Err(resp) = enforce_security(&state, &headers, &uri) {
+    if let Err(resp) = enforce_security(&state, &headers, &uri, client_ip) {
         return *resp;
     }
 
@@ -220,6 +223,16 @@ async fn l2_ws_handler(
         Some(semaphore) => match semaphore.clone().try_acquire_owned() {
             Ok(permit) => Some(permit),
             Err(_) => {
+                state.metrics.upgrade_reject_max_connections();
+                tracing::info!(
+                    reason = "max_connections_exceeded",
+                    origin = %origin_from_headers(&headers).unwrap_or("<missing>"),
+                    auth_mode = %auth_mode(&state),
+                    token_present = token_present(state.cfg.security.auth_mode, &headers, &uri),
+                    cookie_present = session_cookie_present(&headers),
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade",
+                );
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
                     "max connections exceeded".to_string(),
@@ -247,9 +260,12 @@ fn enforce_security(
     state: &AppState,
     headers: &HeaderMap,
     uri: &axum::http::Uri,
+    client_ip: std::net::IpAddr,
 ) -> Result<(), Box<axum::response::Response>> {
     // Auth is enforced before Origin checks so callers get a consistent 401 response when missing
     // credentials, even if the request is also missing/invalid Origin (see tests/security.rs).
+    let token_present = token_present(state.cfg.security.auth_mode, headers, uri);
+    let cookie_present = session_cookie_present(headers);
     match state.cfg.security.auth_mode {
         crate::config::AuthMode::None => {}
         crate::config::AuthMode::ApiKey => {
@@ -258,6 +274,24 @@ fn enforce_security(
                 .or_else(|| query_param(uri, "token"))
                 .or_else(|| token_from_subprotocol(headers));
             if provided.as_deref() != Some(expected) {
+                if token_present {
+                    state.metrics.upgrade_reject_auth_invalid();
+                } else {
+                    state.metrics.upgrade_reject_auth_missing();
+                }
+                tracing::warn!(
+                    reason = if token_present {
+                        "auth_invalid"
+                    } else {
+                        "auth_missing"
+                    },
+                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                    auth_mode = %auth_mode(state),
+                    token_present,
+                    cookie_present,
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade",
+                );
                 return Err(Box::new(
                     (StatusCode::UNAUTHORIZED, "invalid api key".to_string()).into_response(),
                 ));
@@ -274,10 +308,31 @@ fn enforce_security(
                 .get(axum::http::header::COOKIE)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            let ok = cookie_value(cookie, SESSION_COOKIE_NAME)
-                .and_then(|token| verify_session_token(&token, secret))
+            let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
+            let cookie_present = session_token.is_some();
+            let ok = session_token
+                .as_deref()
+                .and_then(|token| verify_session_token(token, secret))
                 .is_some();
             if !ok {
+                if cookie_present {
+                    state.metrics.upgrade_reject_auth_invalid();
+                } else {
+                    state.metrics.upgrade_reject_auth_missing();
+                }
+                tracing::warn!(
+                    reason = if cookie_present {
+                        "auth_invalid"
+                    } else {
+                        "auth_missing"
+                    },
+                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                    auth_mode = %auth_mode(state),
+                    token_present,
+                    cookie_present,
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade",
+                );
                 return Err(Box::new(
                     (
                         StatusCode::UNAUTHORIZED,
@@ -290,10 +345,29 @@ fn enforce_security(
         crate::config::AuthMode::Jwt => {
             let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
             let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
+            let token_present = token.is_some();
             let ok = token
                 .as_deref()
                 .is_some_and(|token| verify_jwt(token, secret));
             if !ok {
+                if token_present {
+                    state.metrics.upgrade_reject_auth_invalid();
+                } else {
+                    state.metrics.upgrade_reject_auth_missing();
+                }
+                tracing::warn!(
+                    reason = if token_present {
+                        "auth_invalid"
+                    } else {
+                        "auth_missing"
+                    },
+                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                    auth_mode = %auth_mode(state),
+                    token_present,
+                    cookie_present,
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade",
+                );
                 return Err(Box::new(
                     (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
                 ));
@@ -312,37 +386,62 @@ fn enforce_security(
                 .get(axum::http::header::COOKIE)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            let cookie_ok = cookie_value(cookie, SESSION_COOKIE_NAME)
-                .and_then(|token| verify_session_token(&token, cookie_secret))
-                .is_some();
-            if cookie_ok {
-                return Ok(());
-            }
-
-            let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
-            let jwt_ok = token
+            let session_token = cookie_value(cookie, SESSION_COOKIE_NAME);
+            let cookie_present = session_token.is_some();
+            let cookie_ok = session_token
                 .as_deref()
-                .is_some_and(|token| verify_jwt(token, jwt_secret));
-            if !jwt_ok {
-                return Err(Box::new(
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        "missing or invalid auth".to_string(),
-                    )
-                        .into_response(),
-                ));
+                .and_then(|token| verify_session_token(token, cookie_secret))
+                .is_some();
+            if !cookie_ok {
+                let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
+                let token_present = token.is_some();
+                let jwt_ok = token
+                    .as_deref()
+                    .is_some_and(|token| verify_jwt(token, jwt_secret));
+                if !jwt_ok {
+                    if cookie_present || token_present {
+                        state.metrics.upgrade_reject_auth_invalid();
+                    } else {
+                        state.metrics.upgrade_reject_auth_missing();
+                    }
+                    tracing::warn!(
+                        reason = if cookie_present || token_present {
+                            "auth_invalid"
+                        } else {
+                            "auth_missing"
+                        },
+                        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+                        auth_mode = %auth_mode(state),
+                        token_present,
+                        cookie_present,
+                        client_ip = %client_ip,
+                        "rejected l2 websocket upgrade",
+                    );
+                    return Err(Box::new(
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            "missing or invalid auth".to_string(),
+                        )
+                            .into_response(),
+                    ));
+                }
             }
         }
     }
 
     if !state.cfg.security.open {
-        let origin = headers
-            .get(axum::http::header::ORIGIN)
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-
+        let origin = origin_from_headers(headers);
         let Some(origin) = origin else {
+            state.metrics.upgrade_reject_origin_missing();
+            tracing::warn!(
+                reason = "origin_missing",
+                origin = "<missing>",
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                "rejected l2 websocket upgrade",
+            );
             return Err(Box::new(
                 (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
             ));
@@ -352,6 +451,16 @@ fn enforce_security(
             crate::config::AllowedOrigins::Any => {}
             crate::config::AllowedOrigins::List(list) => {
                 if !list.iter().any(|allowed| allowed == origin) {
+                    state.metrics.upgrade_reject_origin_not_allowed();
+                    tracing::warn!(
+                        reason = "origin_not_allowed",
+                        origin = %origin,
+                        auth_mode = %auth_mode(state),
+                        token_present,
+                        cookie_present,
+                        client_ip = %client_ip,
+                        "rejected l2 websocket upgrade",
+                    );
                     return Err(Box::new(
                         (
                             StatusCode::FORBIDDEN,
@@ -365,6 +474,84 @@ fn enforce_security(
     }
 
     Ok(())
+}
+
+fn auth_mode(state: &AppState) -> &'static str {
+    match state.cfg.security.auth_mode {
+        crate::config::AuthMode::None => "none",
+        crate::config::AuthMode::Cookie => "cookie",
+        crate::config::AuthMode::ApiKey => "api_key",
+        crate::config::AuthMode::Jwt => "jwt",
+        crate::config::AuthMode::CookieOrJwt => "cookie_or_jwt",
+    }
+}
+
+fn origin_from_headers(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
+fn token_present(
+    auth_mode: crate::config::AuthMode,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> bool {
+    match auth_mode {
+        crate::config::AuthMode::ApiKey => {
+            token_present_in_query(uri, "apiKey")
+                || token_present_in_query(uri, "token")
+                || token_present_in_subprotocol(headers)
+        }
+        _ => token_present_in_query(uri, "token") || token_present_in_subprotocol(headers),
+    }
+}
+
+fn token_present_in_query(uri: &axum::http::Uri, key: &str) -> bool {
+    let Some(query) = uri.query() else {
+        return false;
+    };
+    for part in query.split('&') {
+        let (k, v) = part.split_once('=').unwrap_or((part, ""));
+        if k == key {
+            return !v.is_empty();
+        }
+    }
+    false
+}
+
+fn token_present_in_subprotocol(headers: &HeaderMap) -> bool {
+    let Some(value) = headers
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+
+    value.split(',').map(str::trim).any(|proto| {
+        proto
+            .strip_prefix("aero-l2-token.")
+            .is_some_and(|v| !v.is_empty())
+    })
+}
+
+fn session_cookie_present(headers: &HeaderMap) -> bool {
+    let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+
+    cookie.split(';').any(|part| {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let Some((k, v)) = trimmed.split_once('=') else {
+            return false;
+        };
+        k.trim() == SESSION_COOKIE_NAME && !v.trim().is_empty()
+    })
 }
 
 fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {

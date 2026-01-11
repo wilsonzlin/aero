@@ -15,6 +15,13 @@ struct MetricsInner {
     sessions_active: AtomicU64,
     sessions_total: AtomicU64,
 
+    // Upgrade rejections
+    upgrade_reject_origin_missing_total: AtomicU64,
+    upgrade_reject_origin_not_allowed_total: AtomicU64,
+    upgrade_reject_auth_missing_total: AtomicU64,
+    upgrade_reject_auth_invalid_total: AtomicU64,
+    upgrade_reject_max_connections_total: AtomicU64,
+
     // Frames/bytes
     frames_rx_total: AtomicU64,
     frames_tx_total: AtomicU64,
@@ -52,6 +59,11 @@ impl Metrics {
                 next_session_id: AtomicU64::new(1),
                 sessions_active: AtomicU64::new(0),
                 sessions_total: AtomicU64::new(0),
+                upgrade_reject_origin_missing_total: AtomicU64::new(0),
+                upgrade_reject_origin_not_allowed_total: AtomicU64::new(0),
+                upgrade_reject_auth_missing_total: AtomicU64::new(0),
+                upgrade_reject_auth_invalid_total: AtomicU64::new(0),
+                upgrade_reject_max_connections_total: AtomicU64::new(0),
                 frames_rx_total: AtomicU64::new(0),
                 frames_tx_total: AtomicU64::new(0),
                 bytes_rx_total: AtomicU64::new(0),
@@ -87,6 +99,36 @@ impl Metrics {
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
                     Some(val.saturating_sub(1))
                 });
+    }
+
+    pub fn upgrade_reject_origin_missing(&self) {
+        self.inner
+            .upgrade_reject_origin_missing_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_reject_origin_not_allowed(&self) {
+        self.inner
+            .upgrade_reject_origin_not_allowed_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_reject_auth_missing(&self) {
+        self.inner
+            .upgrade_reject_auth_missing_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_reject_auth_invalid(&self) {
+        self.inner
+            .upgrade_reject_auth_invalid_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_reject_max_connections(&self) {
+        self.inner
+            .upgrade_reject_max_connections_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn tcp_conn_opened(&self) {
@@ -177,6 +219,26 @@ impl Metrics {
     pub fn render_prometheus(&self) -> String {
         let sessions_active = self.inner.sessions_active.load(Ordering::Relaxed);
         let sessions_total = self.inner.sessions_total.load(Ordering::Relaxed);
+        let upgrade_reject_origin_missing_total = self
+            .inner
+            .upgrade_reject_origin_missing_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_origin_not_allowed_total = self
+            .inner
+            .upgrade_reject_origin_not_allowed_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_auth_missing_total = self
+            .inner
+            .upgrade_reject_auth_missing_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_auth_invalid_total = self
+            .inner
+            .upgrade_reject_auth_invalid_total
+            .load(Ordering::Relaxed);
+        let upgrade_reject_max_connections_total = self
+            .inner
+            .upgrade_reject_max_connections_total
+            .load(Ordering::Relaxed);
         let frames_rx_total = self.inner.frames_rx_total.load(Ordering::Relaxed);
         let frames_tx_total = self.inner.frames_tx_total.load(Ordering::Relaxed);
         let bytes_rx_total = self.inner.bytes_rx_total.load(Ordering::Relaxed);
@@ -194,6 +256,32 @@ impl Metrics {
 
         push_gauge(&mut out, "l2_sessions_active", sessions_active);
         push_counter(&mut out, "l2_sessions_total", sessions_total);
+
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_origin_missing_total",
+            upgrade_reject_origin_missing_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_origin_not_allowed_total",
+            upgrade_reject_origin_not_allowed_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_auth_missing_total",
+            upgrade_reject_auth_missing_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_auth_invalid_total",
+            upgrade_reject_auth_invalid_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_reject_max_connections_total",
+            upgrade_reject_max_connections_total,
+        );
 
         push_counter(&mut out, "l2_frames_rx_total", frames_rx_total);
         push_counter(&mut out, "l2_frames_tx_total", frames_tx_total);
