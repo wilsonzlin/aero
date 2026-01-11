@@ -97,13 +97,14 @@ Responsibilities:
 - Implement the virtio-snd control message flow on `controlq`:
   - query PCM stream capabilities (`PCM_INFO`)
   - configure params (`PCM_SET_PARAMS`)
-  - prepare/start/stop/release for playback
+  - prepare/start/stop/release for playback and capture (streams 0 and 1)
 - Handle `eventq` for asynchronous device events (if used by the device model).
 - Implement the PCM data path:
    - playback: submit PCM buffers on `txq`
-   - capture: `rxq` (stream id `1`) is initialized for contract conformance and an
-     RX engine exists, but the current PortCls integration is render-only (no
-     capture endpoint wired up yet)
+   - capture: submit capture buffers on `rxq` (stream id `1`) and process
+     completions via the RX engine. The current PortCls integration is still
+     render-only (no capture endpoint wired up yet), but the protocol layer is
+     contract-complete.
 
 The protocol engine should be written to:
 
@@ -185,7 +186,7 @@ Contract v1 requirements include:
   - `controlq = 64`
   - `eventq = 64` (initialized; currently unused unless the device model emits events)
   - `txq = 256`
-  - `rxq = 64` (initialized; RX engine exists but capture endpoint integration is TBD)
+  - `rxq = 64` (initialized; RX engine exists, capture endpoint integration is TBD)
 
 Driver stance (for eventual strict contract-v1 support):
 
