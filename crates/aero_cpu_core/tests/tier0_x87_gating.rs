@@ -51,6 +51,18 @@ fn x87_em_has_priority_over_ts() {
 }
 
 #[test]
+fn unimplemented_x87_still_traps_nm_when_ts_is_set() {
+    // fnop (Tier-0 does not implement this mnemonic yet, but it must still obey CR0.TS gating).
+    let code = [0xD9, 0xD0];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_TS;
+    assert_eq!(
+        exec_single(&code, &mut state),
+        Err(Exception::DeviceNotAvailable)
+    );
+}
+
+#[test]
 fn wait_mp_ts_raises_nm() {
     // wait/fwait
     let code = [0x9B];

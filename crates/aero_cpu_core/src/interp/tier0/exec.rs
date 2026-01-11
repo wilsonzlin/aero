@@ -54,6 +54,15 @@ pub fn step_with_config<B: CpuBus>(
     let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
         Ok(v) => v,
         Err(e) => {
+            // x87 opcodes (D8-DF, optionally preceded by FWAIT=9B) should still obey CR0.EM/TS
+            // gating even if Tier-0 doesn't implement the specific mnemonic yet.
+            if matches!(e, Exception::InvalidOpcode) && is_x87_opcode(&bytes, state.bitness()) {
+                if let Err(fp_e) = super::check_fp_available(state, crate::fpu::FpKind::X87) {
+                    state.apply_exception_side_effects(&fp_e);
+                    return Err(fp_e);
+                }
+            }
+
             state.apply_exception_side_effects(&e);
             return Err(e);
         }
@@ -105,6 +114,39 @@ fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
         i += 1;
     }
     seen
+}
+
+fn is_x87_opcode(bytes: &[u8; 15], bitness: u32) -> bool {
+    // Skip legacy prefixes + REX to find the first opcode byte.
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let is_legacy_prefix = matches!(
+            b,
+            0xF0 | 0xF2 | 0xF3 // lock/rep
+                | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65 // segment overrides
+                | 0x66 // operand-size override
+                | 0x67 // address-size override
+        );
+        let is_rex = bitness == 64 && (0x40..=0x4F).contains(&b);
+        if !(is_legacy_prefix || is_rex) {
+            break;
+        }
+        i += 1;
+    }
+
+    if i >= bytes.len() {
+        return false;
+    }
+
+    match bytes[i] {
+        0xD8..=0xDF => true,
+        0x9B => {
+            // Many x87 "wait" forms are encoded with an FWAIT prefix (9B) followed by an x87 opcode.
+            i + 1 < bytes.len() && matches!(bytes[i + 1], 0xD8..=0xDF)
+        }
+        _ => false,
+    }
 }
 
 pub fn run_batch_with_config<B: CpuBus>(
@@ -235,6 +277,15 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
         let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
             Ok(v) => v,
             Err(e) => {
+                if matches!(e, Exception::InvalidOpcode) && is_x87_opcode(&bytes, state.bitness()) {
+                    if let Err(fp_e) = super::check_fp_available(state, crate::fpu::FpKind::X87) {
+                        state.apply_exception_side_effects(&fp_e);
+                        return BatchResult {
+                            executed,
+                            exit: BatchExit::Exception(fp_e),
+                        };
+                    }
+                }
                 state.apply_exception_side_effects(&e);
                 return BatchResult {
                     executed,
