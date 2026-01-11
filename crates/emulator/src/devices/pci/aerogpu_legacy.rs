@@ -8,7 +8,8 @@
 //!
 //! The Win7 KMD in `drivers/aerogpu/kmd` supports both ABIs and auto-detects the
 //! active one based on the BAR0 MMIO magic. This legacy device model is kept for
-//! compatibility/bring-up and is not the primary execution path.
+//! compatibility/bring-up and is gated behind the `emulator` crate feature
+//! `aerogpu-legacy`.
 
 use memory::MemoryBus;
 use std::time::{Duration, Instant};

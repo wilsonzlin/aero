@@ -1,4 +1,5 @@
 pub mod aerogpu;
+#[cfg(feature = "aerogpu-legacy")]
 pub mod aerogpu_legacy;
 
 use std::any::Any;

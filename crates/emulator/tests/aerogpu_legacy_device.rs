@@ -1,3 +1,5 @@
+#![cfg(feature = "aerogpu-legacy")]
+
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use emulator::devices::pci::aerogpu_legacy::{AeroGpuLegacyDeviceConfig, AeroGpuLegacyPciDevice};
 use emulator::io::pci::PciDevice;

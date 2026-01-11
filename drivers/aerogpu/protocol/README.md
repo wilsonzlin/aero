@@ -9,7 +9,8 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 
 > Note: This directory contains both the **new versioned ABI** (the long-term contract) and a
 > **legacy bring-up ABI** (`aerogpu_protocol.h`). The legacy header is kept for compatibility with
-> the current Win7 KMD and the emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`);
+> the current Win7 KMD and the emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`,
+> behind the `emulator` crate feature `aerogpu-legacy`);
 > it is **not** the source of truth for the versioned ABI described below (implemented by
 > `crates/emulator/src/devices/pci/aerogpu.rs`).
 >
@@ -39,11 +40,12 @@ This directory currently contains two PCI/MMIO ABIs:
   - Uses the major/minor compatibility model below (major breaking, minor forwards compatible).
   - Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`.
 - **Legacy bring-up ABI** – `aerogpu_protocol.h`, PCI `1AED:0001` (`VEN_1AED&DEV_0001`).
-  - Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`.
+  - Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`).
 
 Both IDs are project-specific (not PCI-SIG assigned). Both identify as a display controller (`0x03`), VGA-compatible subclass (`0x00`).
 
-Both IDs may appear in Windows driver INFs during the migration period.
+The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned `VEN_A3A0&DEV_0001` device by default.
+The legacy `VEN_1AED&DEV_0001` path is retained for bring-up/compatibility and requires a custom INF plus enabling the emulator legacy device model.
 
 For a quick overview of the canonical AeroGPU PCI IDs (new vs legacy) and which emulator device
 models implement each ABI, see: `docs/abi/aerogpu-pci-identity.md`.
