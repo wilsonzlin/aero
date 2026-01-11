@@ -4,6 +4,7 @@
 
 #include "trace.h"
 #include "virtiosnd.h"
+#include "virtiosnd_intx.h"
 
 DRIVER_INITIALIZE DriverEntry;
 DRIVER_UNLOAD VirtIoSndUnload;
@@ -182,8 +183,7 @@ VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT PhysicalDeviceObj
 
     IoInitializeRemoveLock(&dx->RemoveLock, VIRTIOSND_POOL_TAG, 0, 0);
 
-    KeInitializeEvent(&dx->DpcIdleEvent, NotificationEvent, TRUE);
-    dx->Stopping = 1;
+    VirtIoSndIntxInitialize(dx);
 
     deviceObject->Flags |= dx->LowerDeviceObject->Flags & (DO_BUFFERED_IO | DO_DIRECT_IO | DO_POWER_PAGABLE);
     deviceObject->Flags &= ~DO_DEVICE_INITIALIZING;

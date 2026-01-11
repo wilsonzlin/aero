@@ -2,61 +2,11 @@
 
 #include "trace.h"
 #include "virtiosnd.h"
-
-/* virtio_pci_isr bits (modern PCI transport). */
-#define VIRTIO_PCI_ISR_QUEUE_INTERRUPT 0x01
-#define VIRTIO_PCI_ISR_CONFIG_INTERRUPT 0x02
+#include "virtiosnd_intx.h"
 
 /* Bounded reset poll (virtio status reset handshake). */
 #define VIRTIOSND_RESET_TIMEOUT_US 1000000u
 #define VIRTIOSND_RESET_POLL_DELAY_US 1000u
-
-static NTSTATUS VirtIoSndParseInterruptResource(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
-                                               _In_opt_ PCM_RESOURCE_LIST TranslatedResources);
-
-static BOOLEAN VirtIoSndIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext);
-static VOID VirtIoSndDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_ PVOID SystemArgument1, _In_ PVOID SystemArgument2);
-
-static VOID VirtIoSndDisconnectInterrupt(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
-{
-    if (Dx->InterruptObject != NULL) {
-        IoDisconnectInterrupt(Dx->InterruptObject);
-        Dx->InterruptObject = NULL;
-        VIRTIOSND_TRACE("INTx disconnected\n");
-    }
-}
-
-static NTSTATUS VirtIoSndConnectInterrupt(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
-{
-    NTSTATUS status;
-
-    KeInitializeDpc(&Dx->InterruptDpc, VirtIoSndDpc, Dx);
-
-    Dx->PendingIsrStatus = 0;
-    Dx->DpcInFlight = 0;
-    KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
-
-    status = IoConnectInterrupt(
-        &Dx->InterruptObject,
-        VirtIoSndIsr,
-        Dx,
-        NULL,
-        Dx->InterruptVector,
-        Dx->InterruptIrql,
-        Dx->InterruptIrql,
-        Dx->InterruptMode,
-        Dx->InterruptShareVector,
-        Dx->InterruptAffinity,
-        FALSE);
-
-    if (!NT_SUCCESS(status)) {
-        Dx->InterruptObject = NULL;
-        return status;
-    }
-
-    VIRTIOSND_TRACE("INTx connected\n");
-    return STATUS_SUCCESS;
-}
 
 static __forceinline UCHAR VirtIoSndReadDeviceStatus(_In_ const VIRTIOSND_TRANSPORT *Transport)
 {
@@ -178,139 +128,6 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS VirtIoSndParseInterruptResource(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
-                                               _In_opt_ PCM_RESOURCE_LIST TranslatedResources)
-{
-    ULONG fullIndex;
-    ULONG fullCount;
-
-    if (TranslatedResources == NULL || TranslatedResources->Count == 0) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    fullCount = TranslatedResources->Count;
-
-    for (fullIndex = 0; fullIndex < fullCount; ++fullIndex) {
-        PCM_PARTIAL_RESOURCE_DESCRIPTOR desc;
-        ULONG count;
-        ULONG i;
-
-        count = TranslatedResources->List[fullIndex].PartialResourceList.Count;
-        desc = TranslatedResources->List[fullIndex].PartialResourceList.PartialDescriptors;
-
-        for (i = 0; i < count; ++i) {
-            if (desc[i].Type != CmResourceTypeInterrupt) {
-                continue;
-            }
-
-            if ((desc[i].Flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
-                continue;
-            }
-
-            Dx->InterruptVector = desc[i].u.Interrupt.Vector;
-            Dx->InterruptIrql = (KIRQL)desc[i].u.Interrupt.Level;
-            Dx->InterruptAffinity = (KAFFINITY)desc[i].u.Interrupt.Affinity;
-            Dx->InterruptMode = (desc[i].Flags & CM_RESOURCE_INTERRUPT_LATCHED) ? Latched : LevelSensitive;
-            Dx->InterruptShareVector = (desc[i].ShareDisposition == CmResourceShareDispositionShared) ? TRUE : FALSE;
-
-            VIRTIOSND_TRACE(
-                "INTx resource: vector=%lu irql=%lu affinity=%I64x flags=0x%x share=%u\n",
-                Dx->InterruptVector,
-                (ULONG)Dx->InterruptIrql,
-                (ULONGLONG)Dx->InterruptAffinity,
-                (ULONG)desc[i].Flags,
-                Dx->InterruptShareVector);
-
-            return STATUS_SUCCESS;
-        }
-    }
-
-    return STATUS_RESOURCE_TYPE_NOT_FOUND;
-}
-
-static BOOLEAN VirtIoSndIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
-{
-    PVIRTIOSND_DEVICE_EXTENSION dx;
-    UCHAR isrStatus;
-    BOOLEAN inserted;
-
-    UNREFERENCED_PARAMETER(Interrupt);
-
-    dx = (PVIRTIOSND_DEVICE_EXTENSION)ServiceContext;
-    if (dx == NULL || dx->Transport.IsrStatus == NULL) {
-        return FALSE;
-    }
-
-    isrStatus = READ_REGISTER_UCHAR(dx->Transport.IsrStatus);
-    if (isrStatus == 0) {
-        return FALSE;
-    }
-
-    (VOID)InterlockedOr(&dx->PendingIsrStatus, (LONG)isrStatus);
-
-    if (InterlockedCompareExchange(&dx->Stopping, 0, 0) != 0) {
-        return TRUE;
-    }
-
-    inserted = KeInsertQueueDpc(&dx->InterruptDpc, NULL, NULL);
-    if (inserted) {
-        if (InterlockedIncrement(&dx->DpcInFlight) == 1) {
-            KeClearEvent(&dx->DpcIdleEvent);
-        }
-    }
-
-    return TRUE;
-}
-
-static VOID VirtIoSndDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_ PVOID SystemArgument1, _In_ PVOID SystemArgument2)
-{
-    PVIRTIOSND_DEVICE_EXTENSION dx;
-    LONG pending;
-
-    UNREFERENCED_PARAMETER(Dpc);
-    UNREFERENCED_PARAMETER(SystemArgument1);
-    UNREFERENCED_PARAMETER(SystemArgument2);
-
-    dx = (PVIRTIOSND_DEVICE_EXTENSION)DeferredContext;
-    if (dx == NULL) {
-        return;
-    }
-
-    pending = InterlockedExchange(&dx->PendingIsrStatus, 0);
-
-    if (InterlockedCompareExchange(&dx->Stopping, 0, 0) == 0) {
-        if ((pending & VIRTIO_PCI_ISR_QUEUE_INTERRUPT) != 0) {
-            /*
-             * Drain used rings. Route completions to protocol engines when
-             * initialized so cookies are not leaked.
-             */
-            VirtioSndCtrlProcessUsed(&dx->Control);
-            VirtioSndTxProcessCompletions(&dx->Tx);
-
-            /*
-             * eventq is device->driver notifications; we do not submit receive
-             * buffers yet, so there should be no used entries. Drain defensively
-             * in case a future path does submit buffers.
-             */
-            if (dx->Queues[VIRTIOSND_QUEUE_EVENT].Ops != NULL) {
-                VOID *cookie;
-                UINT32 usedLen;
-
-                while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &cookie, &usedLen)) {
-                    UNREFERENCED_PARAMETER(cookie);
-                    UNREFERENCED_PARAMETER(usedLen);
-                }
-            }
-        } else if ((pending & VIRTIO_PCI_ISR_CONFIG_INTERRUPT) != 0) {
-            /* Config-change not handled yet; ISR read already ACKed the interrupt. */
-        }
-    }
-
-    if (InterlockedDecrement(&dx->DpcInFlight) == 0) {
-        KeSetEvent(&dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
-    }
-}
-
 _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
@@ -318,18 +135,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
         return;
     }
 
-    InterlockedExchange(&Dx->Stopping, 1);
-
-    VirtIoSndDisconnectInterrupt(Dx);
-    if (KeRemoveQueueDpc(&Dx->InterruptDpc)) {
-        if (InterlockedDecrement(&Dx->DpcInFlight) == 0) {
-            KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
-        }
-    }
-
-    (VOID)KeWaitForSingleObject(&Dx->DpcIdleEvent, Executive, KernelMode, FALSE, NULL);
-    Dx->PendingIsrStatus = 0;
-    Dx->DpcInFlight = 0;
+    VirtIoSndIntxDisconnect(Dx);
 
     VirtIoSndResetDeviceBestEffort(Dx);
 
@@ -359,7 +165,6 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     VirtIoSndStopHardware(Dx);
-    InterlockedExchange(&Dx->Stopping, 0);
 
     status = VirtIoSndTransportInit(&Dx->Transport, Dx->LowerDeviceObject, RawResources, TranslatedResources);
     if (!NT_SUCCESS(status)) {
@@ -387,7 +192,7 @@ NTSTATUS VirtIoSndStartHardware(
         goto fail;
     }
 
-    status = VirtIoSndParseInterruptResource(Dx, TranslatedResources);
+    status = VirtIoSndIntxCaptureResources(Dx, TranslatedResources);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("failed to locate INTx resource: 0x%08X\n", status);
         goto fail;
@@ -401,7 +206,7 @@ NTSTATUS VirtIoSndStartHardware(
 
     VirtioSndCtrlInit(&Dx->Control, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
 
-    status = VirtIoSndConnectInterrupt(Dx);
+    status = VirtIoSndIntxConnect(Dx);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", status);
         goto fail;

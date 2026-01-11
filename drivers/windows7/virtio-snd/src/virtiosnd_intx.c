@@ -199,7 +199,6 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
     PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)DeferredContext;
     LONG active;
     LONG isr;
-    ULONG q;
 
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(SystemArgument1);
@@ -225,16 +224,23 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
     }
 
     if ((isr & VIRTIOSND_ISR_QUEUE) != 0) {
-        // INTx does not identify which queue fired; drain all configured queues.
-        for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+        /*
+         * Drain used rings. Route completions to protocol engines when
+         * initialized so cookies are not leaked.
+         */
+        VirtioSndCtrlProcessUsed(&dx->Control);
+        VirtioSndTxProcessCompletions(&dx->Tx);
+
+        /*
+         * eventq is device->driver notifications; we do not submit receive
+         * buffers yet, so there should be no used entries. Drain defensively in
+         * case a future path does submit buffers.
+         */
+        if (dx->Queues[VIRTIOSND_QUEUE_EVENT].Ops != NULL) {
             VOID* cookie;
             UINT32 usedLen;
 
-            if (dx->Queues[q].Ops == NULL) {
-                continue;
-            }
-
-            while (VirtioSndQueuePopUsed(&dx->Queues[q], &cookie, &usedLen)) {
+            while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &cookie, &usedLen)) {
                 UNREFERENCED_PARAMETER(cookie);
                 UNREFERENCED_PARAMETER(usedLen);
             }
