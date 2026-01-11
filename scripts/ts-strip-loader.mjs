@@ -10,8 +10,8 @@
 //
 // This loader is intentionally conservative: it only rewrites relative specifiers
 // (NodeNext-style `.js` -> `.ts`, and extensionless -> `.ts`/`index.ts`), plus a
-// `ws` shim for offline unit tests. Everything else (node: builtins, bare
-// specifiers, absolute URLs) is delegated unchanged.
+// couple of tiny shims (`ws`, `ipaddr.js`) for offline unit tests. Everything
+// else (node: builtins, bare specifiers, absolute URLs) is delegated unchanged.
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "ws") {
@@ -25,6 +25,19 @@ export async function resolve(specifier, context, nextResolve) {
         throw err;
       }
       return nextResolve(new URL("./ws-shim.mjs", import.meta.url).href, context);
+    }
+  }
+
+  if (specifier === "ipaddr.js") {
+    try {
+      return await nextResolve(specifier, context);
+    } catch (err) {
+      // Same motivation as the `ws` shim: keep Node unit tests runnable in an
+      // offline environment without `node_modules/`.
+      if (err && typeof err === "object" && "code" in err && err.code !== "ERR_MODULE_NOT_FOUND") {
+        throw err;
+      }
+      return nextResolve(new URL("./ipaddr-shim.mjs", import.meta.url).href, context);
     }
   }
 

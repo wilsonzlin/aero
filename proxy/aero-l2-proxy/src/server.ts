@@ -99,6 +99,13 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
 
   const connCounter = new ConnectionCounter(config.maxConnections);
 
+  // Track active sockets ourselves instead of relying on `wss.clients`.
+  //
+  // In `noServer` mode, client tracking can be disabled (or implementation-
+  // dependent), but we still need a best-effort shutdown path for unit tests
+  // and local dev.
+  const activeSockets = new Set<WebSocket>();
+
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: config.wsMaxPayloadBytes,
@@ -155,6 +162,9 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
 
     try {
       wss.handleUpgrade(req, socket, head, (ws) => {
+        activeSockets.add(ws);
+        const removeFromActive = () => activeSockets.delete(ws);
+
         const quota = new SessionQuota({
           maxBytes: config.maxBytesPerConnection,
           maxFramesPerSecond: config.maxFramesPerSecond,
@@ -186,6 +196,9 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
 
         ws.on("close", releaseOnce);
         ws.on("error", releaseOnce);
+
+        ws.on("close", removeFromActive);
+        ws.on("error", removeFromActive);
       });
     } catch {
       releaseOnce();
@@ -207,9 +220,7 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
     config,
     listenAddress,
     close: async () => {
-      for (const client of wss.clients) {
-        client.terminate();
-      }
+      for (const client of activeSockets) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     },
