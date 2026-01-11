@@ -12,7 +12,12 @@ use wgpu::util::DeviceExt;
 fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     // `AERO_REQUIRE_WEBGPU=1` means WebGPU is a hard requirement; anything else
     // (including `0`/unset) means tests should skip when no adapter/device is available.
-    let require_webgpu = matches!(std::env::var("AERO_REQUIRE_WEBGPU").as_deref(), Ok("1"));
+    let require_webgpu = matches!(
+        std::env::var("AERO_REQUIRE_WEBGPU")
+            .as_deref()
+            .map(str::trim),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES") | Ok("on") | Ok("ON")
+    );
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
