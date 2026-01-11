@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE } from "./disk";
+import type { DiskAccessLease } from "./disk_access_lease";
 import type {
   RemoteRangeDiskMetadataStore,
   RemoteRangeDiskSparseCache,
@@ -120,6 +121,7 @@ type RangeServerState = {
   sizeBytes: number;
   etag?: string;
   lastModified?: string;
+  requiredToken?: string;
   ignoreRange?: boolean;
   wrongContentRange?: boolean;
   mismatchStatus?: 200 | 412;
@@ -142,6 +144,22 @@ async function startRangeServer(state: RangeServerState): Promise<{
   const stats: RangeServerStats = { rangeGets: 0, seenIfRanges: [] };
 
   const server = http.createServer((req, res) => {
+    if (state.requiredToken) {
+      const reqUrl = req.url ?? "";
+      let token: string | null = null;
+      try {
+        const parsed = new URL(reqUrl, "http://127.0.0.1");
+        token = parsed.searchParams.get("token");
+      } catch {
+        token = null;
+      }
+      if (token !== state.requiredToken) {
+        res.statusCode = 403;
+        res.end();
+        return;
+      }
+    }
+
     const method = req.method ?? "GET";
     const range = req.headers["range"];
     const ifRange = req.headers["if-range"];
@@ -682,5 +700,44 @@ describe("RemoteRangeDisk", () => {
 
     await expect(disk.close()).rejects.toThrow(/flush failed/i);
     expect(factory.lastCreated?.closed).toBe(true);
+  });
+
+  it("refreshes the DiskAccessLease on 403 and retries successfully", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      requiredToken: "good",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    let refreshCalls = 0;
+    const lease: DiskAccessLease = {
+      url: `${server.url}?token=bad`,
+      credentialsMode: "same-origin",
+      refresh: async () => {
+        refreshCalls += 1;
+        lease.url = `${server.url}?token=good`;
+        return lease;
+      },
+    };
+
+    const disk = await RemoteRangeDisk.openWithLease(
+      { sourceId: "leased-image", lease },
+      {
+        cacheKeyParts: { imageId: "leased-image", version: "v1", deliveryType: "range" },
+        chunkSize,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+        readAheadChunks: 0,
+      },
+    );
+
+    const buf = new Uint8Array(4096);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+    expect(refreshCalls).toBe(1);
   });
 });

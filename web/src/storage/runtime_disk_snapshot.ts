@@ -8,6 +8,13 @@ export type RemoteDiskBaseSnapshot = {
   imageId: string;
   version: string;
   deliveryType: string;
+  /**
+   * Optional same-origin API endpoint used to mint refreshable `DiskAccessLease`s for this image.
+   *
+   * This value is safe to persist (unlike signed URLs). When present, restore flows can call it
+   * to re-acquire a fresh stream URL/cookie lease without embedding secrets in the snapshot.
+   */
+  leaseEndpoint?: string;
   expectedValidator?: RemoteDiskValidator;
   chunkSize: number;
 };

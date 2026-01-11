@@ -3,6 +3,12 @@ import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk }
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 import { opfsGetRemoteCacheDir } from "./metadata";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
+import {
+  DEFAULT_LEASE_REFRESH_MARGIN_MS,
+  DiskAccessLeaseRefresher,
+  fetchWithDiskAccessLease,
+  type DiskAccessLease,
+} from "./disk_access_lease";
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
 import { RemoteCacheManager, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } from "./remote_cache_manager";
 
@@ -58,6 +64,10 @@ export type RemoteRangeDiskOptions = {
   maxRetries?: number;
   readAheadChunks?: number;
   /**
+   * For lease-based access, refresh shortly before `expiresAt`.
+   */
+  leaseRefreshMarginMs?: number;
+  /**
    * Optional per-chunk SHA-256 manifest; each entry must be a lowercase hex digest.
    * If provided, downloaded chunks are verified before being persisted to cache.
    */
@@ -97,6 +107,18 @@ class HttpStatusError extends Error {
   ) {
     super(message);
   }
+}
+
+function staticDiskLease(url: string): DiskAccessLease {
+  const lease: DiskAccessLease = {
+    url,
+    expiresAt: undefined,
+    credentialsMode: "same-origin",
+    async refresh() {
+      return lease;
+    },
+  };
+  return lease;
 }
 
 class RemoteValidatorMismatchError extends Error {
@@ -238,13 +260,13 @@ function isRetryableError(err: unknown): boolean {
   return true;
 }
 
-async function probeRemoteImage(url: string, fetchFn: typeof fetch): Promise<RemoteProbe> {
+async function probeRemoteImage(lease: DiskAccessLease, fetchFn: typeof fetch): Promise<RemoteProbe> {
   let sizeBytes: number | null = null;
   let etag: string | undefined;
   let lastModified: string | undefined;
 
   try {
-    const head = await fetchFn(url, { method: "HEAD" });
+    const head = await fetchWithDiskAccessLease(lease, { method: "HEAD" }, { fetch: fetchFn, retryAuthOnce: true });
     if (head.ok) {
       const lenStr = head.headers.get("content-length");
       if (lenStr) {
@@ -261,7 +283,11 @@ async function probeRemoteImage(url: string, fetchFn: typeof fetch): Promise<Rem
   }
 
   if (sizeBytes === null) {
-    const probe = await fetchFn(url, { method: "GET", headers: { Range: "bytes=0-0" } });
+    const probe = await fetchWithDiskAccessLease(
+      lease,
+      { method: "GET", headers: { Range: "bytes=0-0" } },
+      { fetch: fetchFn, retryAuthOnce: true },
+    );
     if (probe.status === 200) {
       await cancelBody(probe);
       throw new Error("remote server ignored Range probe (expected 206 Partial Content, got 200 OK)");
@@ -395,10 +421,13 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushPending = false;
+  private readonly leaseRefresher: DiskAccessLeaseRefresher;
 
   private constructor(
-    private readonly url: string,
+    private readonly sourceId: string,
+    private readonly lease: DiskAccessLease,
     private readonly opts: ResolvedRemoteRangeDiskOptions,
+    private readonly leaseRefreshMarginMs: number,
     private readonly sha256Manifest: string[] | undefined,
     private readonly metadataStore: RemoteRangeDiskMetadataStore,
     private readonly sparseCacheFactory: RemoteRangeDiskSparseCacheFactory,
@@ -407,6 +436,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   ) {
     this.fetchSemaphore = fetchSemaphore;
     this.cacheKeyParts = cacheKeyParts;
+    this.leaseRefresher = new DiskAccessLeaseRefresher(this.lease, { refreshMarginMs: this.leaseRefreshMarginMs });
   }
 
   get capacityBytes(): number {
@@ -435,7 +465,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (cachedBytes < 0) cachedBytes = 0;
     if (cachedBytes > totalSize) cachedBytes = totalSize;
     return {
-      url: this.url,
+      url: this.sourceId,
       totalSize,
       blockSize,
       cacheLimitBytes: null,
@@ -458,11 +488,27 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   static async open(url: string, options: RemoteRangeDiskOptions): Promise<RemoteRangeDisk> {
+    const sourceId = options.cacheKeyParts.imageId;
+    const lease = staticDiskLease(url);
+    return await RemoteRangeDisk.openWithLease({ sourceId, lease }, options);
+  }
+
+  static async openWithLease(
+    params: { sourceId: string; lease: DiskAccessLease },
+    options: RemoteRangeDiskOptions,
+  ): Promise<RemoteRangeDisk> {
+    if (!params.sourceId) throw new Error("sourceId must not be empty");
+    if (!params.lease.url) {
+      await params.lease.refresh();
+    }
+    if (!params.lease.url) throw new Error("lease.url must not be empty");
+
     const chunkSize = options.chunkSize ?? RANGE_STREAM_CHUNK_SIZE;
     const maxConcurrentFetches = options.maxConcurrentFetches ?? 4;
     const maxRetries = options.maxRetries ?? 4;
     const readAheadChunks = options.readAheadChunks ?? 2;
     const retryBaseDelayMs = options.retryBaseDelayMs ?? 100;
+    const leaseRefreshMarginMs = options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS;
 
     assertValidChunkSize(chunkSize);
     if (!Number.isInteger(maxConcurrentFetches) || maxConcurrentFetches <= 0) {
@@ -476,6 +522,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     if (!Number.isInteger(retryBaseDelayMs) || retryBaseDelayMs <= 0) {
       throw new Error(`invalid retryBaseDelayMs=${retryBaseDelayMs}`);
+    }
+    if (!Number.isInteger(leaseRefreshMarginMs) || leaseRefreshMarginMs < 0) {
+      throw new Error(`invalid leaseRefreshMarginMs=${leaseRefreshMarginMs}`);
     }
 
     const fetchFn = options.fetchFn ?? fetch;
@@ -494,8 +543,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const sparseCacheFactory = options.sparseCacheFactory ?? new OpfsRemoteRangeDiskSparseCacheFactory();
 
     const disk = new RemoteRangeDisk(
-      url,
+      params.sourceId,
+      params.lease,
       resolvedOpts,
+      leaseRefreshMarginMs,
       options.sha256Manifest,
       metadataStore,
       sparseCacheFactory,
@@ -505,6 +556,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     disk.cacheId = cacheId;
     try {
       await disk.init();
+      disk.leaseRefresher.start();
     } catch (err) {
       // `init()` can fail after opening a persistent cache handle. Ensure we close it so we
       // don't leak SyncAccessHandles / file descriptors.
@@ -515,7 +567,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private async init(): Promise<void> {
-    const remote = await probeRemoteImage(this.url, this.opts.fetchFn);
+    await this.maybeRefreshLease();
+    const remote = await probeRemoteImage(this.lease, this.opts.fetchFn);
 
     this.capacityBytesValue = remote.sizeBytes;
     this.remoteEtag = remote.etag;
@@ -718,6 +771,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    this.leaseRefresher.stop();
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -888,7 +942,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.telemetry.rangeRequests += 1;
       this.lastFetchRange = { start, end: endExclusive };
     }
-    const resp = await this.opts.fetchFn(this.url, { method: "GET", headers });
+    await this.maybeRefreshLease();
+    const resp = await fetchWithDiskAccessLease(
+      this.lease,
+      { method: "GET", headers },
+      { fetch: this.opts.fetchFn, retryAuthOnce: true },
+    );
 
     if (resp.status === 200 || resp.status === 412) {
       // Don't read the body — it could be a multi-GB full response.
@@ -952,6 +1011,14 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const padded = new Uint8Array(this.opts.chunkSize);
     padded.set(body);
     return padded;
+  }
+
+  private async maybeRefreshLease(): Promise<void> {
+    const expiresAt = this.lease.expiresAt;
+    if (!expiresAt) return;
+    const refreshAtMs = expiresAt.getTime() - this.leaseRefreshMarginMs;
+    if (!Number.isFinite(refreshAtMs) || Date.now() < refreshAtMs) return;
+    await this.lease.refresh();
   }
 
   private resetTelemetry(): void {
@@ -1051,7 +1118,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
       await this.metadataStore.delete(this.cacheId);
 
-      const remote = await probeRemoteImage(this.url, this.opts.fetchFn);
+      await this.maybeRefreshLease();
+      const remote = await probeRemoteImage(this.lease, this.opts.fetchFn);
       this.capacityBytesValue = remote.sizeBytes;
       this.remoteEtag = remote.etag;
       this.remoteLastModified = remote.lastModified;
