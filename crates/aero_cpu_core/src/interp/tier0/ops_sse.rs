@@ -54,6 +54,11 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Subss
             | Mnemonic::Mulss
             | Mnemonic::Divss
+            | Mnemonic::Addps
+            | Mnemonic::Subps
+            | Mnemonic::Mulps
+            | Mnemonic::Divps
+            | Mnemonic::Cvtsi2ss
             | Mnemonic::Cvtss2si
             | Mnemonic::Cvttss2si
         // SSE2
@@ -66,20 +71,50 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Por
             | Mnemonic::Pxor
             | Mnemonic::Pandn
+            | Mnemonic::Paddb
+            | Mnemonic::Paddw
             | Mnemonic::Paddd
             | Mnemonic::Paddq
+            | Mnemonic::Psubb
+            | Mnemonic::Psubw
+            | Mnemonic::Psubd
+            | Mnemonic::Psubq
             | Mnemonic::Paddsw
+            | Mnemonic::Paddusw
+            | Mnemonic::Psubsw
             | Mnemonic::Psubusw
             | Mnemonic::Paddsb
             | Mnemonic::Paddusb
+            | Mnemonic::Psubsb
+            | Mnemonic::Psubusb
+            | Mnemonic::Psllw
+            | Mnemonic::Pslld
+            | Mnemonic::Psllq
+            | Mnemonic::Psrlw
+            | Mnemonic::Psrld
+            | Mnemonic::Psrlq
             | Mnemonic::Psraw
+            | Mnemonic::Psrad
             | Mnemonic::Pslldq
+            | Mnemonic::Psrldq
             | Mnemonic::Pshufd
             | Mnemonic::Pcmpeqb
+            | Mnemonic::Pcmpeqw
+            | Mnemonic::Pcmpeqd
             | Mnemonic::Pcmpgtb
+            | Mnemonic::Pcmpgtw
+            | Mnemonic::Pcmpgtd
             | Mnemonic::Pmullw
             | Mnemonic::Pmuludq
+            | Mnemonic::Addsd
+            | Mnemonic::Subsd
             | Mnemonic::Mulsd
+            | Mnemonic::Divsd
+            | Mnemonic::Addpd
+            | Mnemonic::Subpd
+            | Mnemonic::Mulpd
+            | Mnemonic::Divpd
+            | Mnemonic::Cvtsi2sd
             | Mnemonic::Cvtsd2si
             | Mnemonic::Cvttsd2si
         // SSE3
@@ -112,6 +147,7 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Pmovzxbd
             | Mnemonic::Pmovzxbq
             | Mnemonic::Pmulld
+            | Mnemonic::Pcmpeqq
         // SSE4.2
         | Mnemonic::Crc32
             | Mnemonic::Pcmpestri
@@ -237,14 +273,28 @@ pub fn exec<B: CpuBus>(
             exec_logic_pd(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Paddd
+        Mnemonic::Paddb
+        | Mnemonic::Paddw
+        | Mnemonic::Paddd
         | Mnemonic::Paddq
-        | Mnemonic::Paddsw
-        | Mnemonic::Psubusw
+        | Mnemonic::Psubb
+        | Mnemonic::Psubw
+        | Mnemonic::Psubd
+        | Mnemonic::Psubq
         | Mnemonic::Paddsb
         | Mnemonic::Paddusb
+        | Mnemonic::Psubsb
+        | Mnemonic::Psubusb
+        | Mnemonic::Paddsw
+        | Mnemonic::Paddusw
+        | Mnemonic::Psubsw
+        | Mnemonic::Psubusw
         | Mnemonic::Pcmpeqb
+        | Mnemonic::Pcmpeqw
+        | Mnemonic::Pcmpeqd
         | Mnemonic::Pcmpgtb
+        | Mnemonic::Pcmpgtw
+        | Mnemonic::Pcmpgtd
         | Mnemonic::Pmullw
         | Mnemonic::Pmuludq
         | Mnemonic::Pshufd => {
@@ -253,7 +303,16 @@ pub fn exec<B: CpuBus>(
             exec_sse2_int(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Psraw | Mnemonic::Pslldq => {
+        Mnemonic::Psllw
+        | Mnemonic::Pslld
+        | Mnemonic::Psllq
+        | Mnemonic::Psrlw
+        | Mnemonic::Psrld
+        | Mnemonic::Psrlq
+        | Mnemonic::Psraw
+        | Mnemonic::Psrad
+        | Mnemonic::Pslldq
+        | Mnemonic::Psrldq => {
             check_xmm_available(state)?;
             require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE2)?;
             exec_sse2_shift(state, instr)?;
@@ -265,16 +324,46 @@ pub fn exec<B: CpuBus>(
             exec_scalar_f32(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
-        Mnemonic::Mulsd => {
+        Mnemonic::Addps | Mnemonic::Subps | Mnemonic::Mulps | Mnemonic::Divps => {
+            check_xmm_available(state)?;
+            require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE)?;
+            exec_packed_f32(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Addsd | Mnemonic::Subsd | Mnemonic::Mulsd | Mnemonic::Divsd => {
             check_xmm_available(state)?;
             require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE2)?;
-            exec_scalar_f64(state, bus, instr, next_ip, |a, b| a * b)?;
+            match instr.mnemonic() {
+                Mnemonic::Addsd => exec_scalar_f64(state, bus, instr, next_ip, |a, b| a + b)?,
+                Mnemonic::Subsd => exec_scalar_f64(state, bus, instr, next_ip, |a, b| a - b)?,
+                Mnemonic::Mulsd => exec_scalar_f64(state, bus, instr, next_ip, |a, b| a * b)?,
+                Mnemonic::Divsd => exec_scalar_f64(state, bus, instr, next_ip, |a, b| a / b)?,
+                _ => unreachable!(),
+            }
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Addpd | Mnemonic::Subpd | Mnemonic::Mulpd | Mnemonic::Divpd => {
+            check_xmm_available(state)?;
+            require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE2)?;
+            exec_packed_f64(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Cvtsi2ss => {
+            check_xmm_available(state)?;
+            require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE)?;
+            exec_cvtsi2ss(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Cvtss2si | Mnemonic::Cvttss2si => {
             check_xmm_available(state)?;
             require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE)?;
             exec_cvtss2si(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Cvtsi2sd => {
+            check_xmm_available(state)?;
+            require_feature_edx(cfg, cpuid_bits::LEAF1_EDX_SSE2)?;
+            exec_cvtsi2sd(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Cvtsd2si | Mnemonic::Cvttsd2si => {
@@ -376,6 +465,12 @@ pub fn exec<B: CpuBus>(
             check_xmm_available(state)?;
             require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE41)?;
             exec_pmulld(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Pcmpeqq => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE41)?;
+            exec_pcmpeqq(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Pcmpestri | Mnemonic::Pcmpestrm | Mnemonic::Pcmpistri | Mnemonic::Pcmpistrm => {
@@ -746,6 +841,14 @@ fn u32x4_to_u128(v: [u32; 4]) -> u128 {
     u128::from_le_bytes(bytes)
 }
 
+fn u128_to_f32x4(v: u128) -> [f32; 4] {
+    u128_to_u32x4(v).map(f32::from_bits)
+}
+
+fn f32x4_to_u128(v: [f32; 4]) -> u128 {
+    u32x4_to_u128(v.map(f32::to_bits))
+}
+
 fn u128_to_u16x8(v: u128) -> [u16; 8] {
     let bytes = v.to_le_bytes();
     let mut out = [0u16; 8];
@@ -778,6 +881,14 @@ fn u64x2_to_u128(v: [u64; 2]) -> u128 {
         bytes[i * 8..i * 8 + 8].copy_from_slice(&lane.to_le_bytes());
     }
     u128::from_le_bytes(bytes)
+}
+
+fn u128_to_f64x2(v: u128) -> [f64; 2] {
+    u128_to_u64x2(v).map(f64::from_bits)
+}
+
+fn f64x2_to_u128(v: [f64; 2]) -> u128 {
+    u64x2_to_u128(v.map(f64::to_bits))
 }
 
 fn exec_unpcklps<B: CpuBus>(
@@ -879,6 +990,24 @@ fn exec_sse2_int<B: CpuBus>(
     let dst_old = read_xmm_reg(state, dst)?;
 
     let res = match instr.mnemonic() {
+        Mnemonic::Paddb => {
+            let a = dst_old.to_le_bytes();
+            let b = src.to_le_bytes();
+            let mut out = [0u8; 16];
+            for i in 0..16 {
+                out[i] = a[i].wrapping_add(b[i]);
+            }
+            u128::from_le_bytes(out)
+        }
+        Mnemonic::Paddw => {
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = a[i].wrapping_add(b[i]);
+            }
+            u16x8_to_u128(out)
+        }
         Mnemonic::Paddd => {
             let a = u128_to_u32x4(dst_old);
             let b = u128_to_u32x4(src);
@@ -894,27 +1023,38 @@ fn exec_sse2_int<B: CpuBus>(
             let b = u128_to_u64x2(src);
             u64x2_to_u128([a[0].wrapping_add(b[0]), a[1].wrapping_add(b[1])])
         }
-        Mnemonic::Paddsw => {
-            fn sat_add(x: i16, y: i16) -> i16 {
-                let sum = x as i32 + y as i32;
-                sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+        Mnemonic::Psubb => {
+            let a = dst_old.to_le_bytes();
+            let b = src.to_le_bytes();
+            let mut out = [0u8; 16];
+            for i in 0..16 {
+                out[i] = a[i].wrapping_sub(b[i]);
             }
+            u128::from_le_bytes(out)
+        }
+        Mnemonic::Psubw => {
             let a = u128_to_u16x8(dst_old);
             let b = u128_to_u16x8(src);
             let mut out = [0u16; 8];
             for i in 0..8 {
-                out[i] = sat_add(a[i] as i16, b[i] as i16) as u16;
+                out[i] = a[i].wrapping_sub(b[i]);
             }
             u16x8_to_u128(out)
         }
-        Mnemonic::Psubusw => {
-            let a = u128_to_u16x8(dst_old);
-            let b = u128_to_u16x8(src);
-            let mut out = [0u16; 8];
-            for i in 0..8 {
-                out[i] = a[i].saturating_sub(b[i]);
-            }
-            u16x8_to_u128(out)
+        Mnemonic::Psubd => {
+            let a = u128_to_u32x4(dst_old);
+            let b = u128_to_u32x4(src);
+            u32x4_to_u128([
+                a[0].wrapping_sub(b[0]),
+                a[1].wrapping_sub(b[1]),
+                a[2].wrapping_sub(b[2]),
+                a[3].wrapping_sub(b[3]),
+            ])
+        }
+        Mnemonic::Psubq => {
+            let a = u128_to_u64x2(dst_old);
+            let b = u128_to_u64x2(src);
+            u64x2_to_u128([a[0].wrapping_sub(b[0]), a[1].wrapping_sub(b[1])])
         }
         Mnemonic::Paddsb => {
             let a = dst_old.to_le_bytes();
@@ -935,6 +1075,67 @@ fn exec_sse2_int<B: CpuBus>(
             }
             u128::from_le_bytes(out)
         }
+        Mnemonic::Psubsb => {
+            let a = dst_old.to_le_bytes();
+            let b = src.to_le_bytes();
+            let mut out = [0u8; 16];
+            for i in 0..16 {
+                let diff = (a[i] as i8 as i16) - (b[i] as i8 as i16);
+                out[i] = diff.clamp(i8::MIN as i16, i8::MAX as i16) as i8 as u8;
+            }
+            u128::from_le_bytes(out)
+        }
+        Mnemonic::Psubusb => {
+            let a = dst_old.to_le_bytes();
+            let b = src.to_le_bytes();
+            let mut out = [0u8; 16];
+            for i in 0..16 {
+                out[i] = a[i].saturating_sub(b[i]);
+            }
+            u128::from_le_bytes(out)
+        }
+        Mnemonic::Paddsw => {
+            fn sat_add(x: i16, y: i16) -> i16 {
+                let sum = x as i32 + y as i32;
+                sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+            }
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = sat_add(a[i] as i16, b[i] as i16) as u16;
+            }
+            u16x8_to_u128(out)
+        }
+        Mnemonic::Paddusw => {
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                let sum = (a[i] as u32) + (b[i] as u32);
+                out[i] = sum.min(u16::MAX as u32) as u16;
+            }
+            u16x8_to_u128(out)
+        }
+        Mnemonic::Psubsw => {
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                let diff = (a[i] as i16 as i32) - (b[i] as i16 as i32);
+                out[i] = diff.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16;
+            }
+            u16x8_to_u128(out)
+        }
+        Mnemonic::Psubusw => {
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = a[i].saturating_sub(b[i]);
+            }
+            u16x8_to_u128(out)
+        }
         Mnemonic::Pcmpeqb => {
             let a = dst_old.to_le_bytes();
             let b = src.to_le_bytes();
@@ -944,6 +1145,24 @@ fn exec_sse2_int<B: CpuBus>(
             }
             u128::from_le_bytes(out)
         }
+        Mnemonic::Pcmpeqw => {
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = if a[i] == b[i] { 0xFFFF } else { 0 };
+            }
+            u16x8_to_u128(out)
+        }
+        Mnemonic::Pcmpeqd => {
+            let a = u128_to_u32x4(dst_old);
+            let b = u128_to_u32x4(src);
+            let mut out = [0u32; 4];
+            for i in 0..4 {
+                out[i] = if a[i] == b[i] { u32::MAX } else { 0 };
+            }
+            u32x4_to_u128(out)
+        }
         Mnemonic::Pcmpgtb => {
             let a = dst_old.to_le_bytes();
             let b = src.to_le_bytes();
@@ -952,6 +1171,28 @@ fn exec_sse2_int<B: CpuBus>(
                 out[i] = if (a[i] as i8) > (b[i] as i8) { 0xFF } else { 0 };
             }
             u128::from_le_bytes(out)
+        }
+        Mnemonic::Pcmpgtw => {
+            let a = u128_to_u16x8(dst_old);
+            let b = u128_to_u16x8(src);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = if (a[i] as i16) > (b[i] as i16) { 0xFFFF } else { 0 };
+            }
+            u16x8_to_u128(out)
+        }
+        Mnemonic::Pcmpgtd => {
+            let a = u128_to_u32x4(dst_old);
+            let b = u128_to_u32x4(src);
+            let mut out = [0u32; 4];
+            for i in 0..4 {
+                out[i] = if (a[i] as i32) > (b[i] as i32) {
+                    u32::MAX
+                } else {
+                    0
+                };
+            }
+            u32x4_to_u128(out)
         }
         Mnemonic::Pmullw => {
             let a = u128_to_u16x8(dst_old);
@@ -988,6 +1229,26 @@ fn exec_sse2_int<B: CpuBus>(
     Ok(())
 }
 
+fn exec_pcmpeqq<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let dst_old = read_xmm_reg(state, dst)?;
+
+    let a = u128_to_u64x2(dst_old);
+    let b = u128_to_u64x2(src);
+    let out = [
+        if a[0] == b[0] { u64::MAX } else { 0 },
+        if a[1] == b[1] { u64::MAX } else { 0 },
+    ];
+    write_xmm_reg(state, dst, u64x2_to_u128(out))?;
+    Ok(())
+}
+
 fn exec_sse2_shift(state: &mut CpuState, instr: &Instruction) -> Result<(), Exception> {
     let dst = instr.op0_register();
     if instr.op_count() < 2 || instr.op_kind(1) != OpKind::Immediate8 {
@@ -996,6 +1257,90 @@ fn exec_sse2_shift(state: &mut CpuState, instr: &Instruction) -> Result<(), Exce
     let imm8 = instr.immediate8();
     let dst_old = read_xmm_reg(state, dst)?;
     match instr.mnemonic() {
+        Mnemonic::Psllw => {
+            if imm8 > 15 {
+                write_xmm_reg(state, dst, 0)?;
+                return Ok(());
+            }
+            let a = u128_to_u16x8(dst_old);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = a[i].wrapping_shl(imm8 as u32);
+            }
+            write_xmm_reg(state, dst, u16x8_to_u128(out))?;
+            Ok(())
+        }
+        Mnemonic::Pslld => {
+            if imm8 > 31 {
+                write_xmm_reg(state, dst, 0)?;
+                return Ok(());
+            }
+            let a = u128_to_u32x4(dst_old);
+            let mut out = [0u32; 4];
+            for i in 0..4 {
+                out[i] = a[i].wrapping_shl(imm8 as u32);
+            }
+            write_xmm_reg(state, dst, u32x4_to_u128(out))?;
+            Ok(())
+        }
+        Mnemonic::Psllq => {
+            if imm8 > 63 {
+                write_xmm_reg(state, dst, 0)?;
+                return Ok(());
+            }
+            let a = u128_to_u64x2(dst_old);
+            write_xmm_reg(
+                state,
+                dst,
+                u64x2_to_u128([
+                    a[0].wrapping_shl(imm8 as u32),
+                    a[1].wrapping_shl(imm8 as u32),
+                ]),
+            )?;
+            Ok(())
+        }
+        Mnemonic::Psrlw => {
+            if imm8 > 15 {
+                write_xmm_reg(state, dst, 0)?;
+                return Ok(());
+            }
+            let a = u128_to_u16x8(dst_old);
+            let mut out = [0u16; 8];
+            for i in 0..8 {
+                out[i] = a[i].wrapping_shr(imm8 as u32);
+            }
+            write_xmm_reg(state, dst, u16x8_to_u128(out))?;
+            Ok(())
+        }
+        Mnemonic::Psrld => {
+            if imm8 > 31 {
+                write_xmm_reg(state, dst, 0)?;
+                return Ok(());
+            }
+            let a = u128_to_u32x4(dst_old);
+            let mut out = [0u32; 4];
+            for i in 0..4 {
+                out[i] = a[i].wrapping_shr(imm8 as u32);
+            }
+            write_xmm_reg(state, dst, u32x4_to_u128(out))?;
+            Ok(())
+        }
+        Mnemonic::Psrlq => {
+            if imm8 > 63 {
+                write_xmm_reg(state, dst, 0)?;
+                return Ok(());
+            }
+            let a = u128_to_u64x2(dst_old);
+            write_xmm_reg(
+                state,
+                dst,
+                u64x2_to_u128([
+                    a[0].wrapping_shr(imm8 as u32),
+                    a[1].wrapping_shr(imm8 as u32),
+                ]),
+            )?;
+            Ok(())
+        }
         Mnemonic::Psraw => {
             let count = imm8.min(15);
             let a = u128_to_u16x8(dst_old);
@@ -1006,11 +1351,30 @@ fn exec_sse2_shift(state: &mut CpuState, instr: &Instruction) -> Result<(), Exce
             write_xmm_reg(state, dst, u16x8_to_u128(out))?;
             Ok(())
         }
+        Mnemonic::Psrad => {
+            let count = imm8.min(31);
+            let a = u128_to_u32x4(dst_old);
+            let mut out = [0u32; 4];
+            for i in 0..4 {
+                out[i] = ((a[i] as i32) >> count) as u32;
+            }
+            write_xmm_reg(state, dst, u32x4_to_u128(out))?;
+            Ok(())
+        }
         Mnemonic::Pslldq => {
             let res = if imm8 >= 16 {
                 0u128
             } else {
                 dst_old << ((imm8 as u32) * 8)
+            };
+            write_xmm_reg(state, dst, res)?;
+            Ok(())
+        }
+        Mnemonic::Psrldq => {
+            let res = if imm8 >= 16 {
+                0u128
+            } else {
+                dst_old >> ((imm8 as u32) * 8)
             };
             write_xmm_reg(state, dst, res)?;
             Ok(())
@@ -1068,6 +1432,49 @@ fn exec_scalar_f64<B: CpuBus>(
     Ok(())
 }
 
+fn exec_packed_f32<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let a = u128_to_f32x4(read_xmm_reg(state, dst)?);
+    let b = u128_to_f32x4(read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?);
+    let mut out = [0f32; 4];
+    for i in 0..4 {
+        out[i] = match instr.mnemonic() {
+            Mnemonic::Addps => a[i] + b[i],
+            Mnemonic::Subps => a[i] - b[i],
+            Mnemonic::Mulps => a[i] * b[i],
+            Mnemonic::Divps => a[i] / b[i],
+            _ => return Err(Exception::InvalidOpcode),
+        };
+    }
+    write_xmm_reg(state, dst, f32x4_to_u128(out))?;
+    Ok(())
+}
+
+fn exec_packed_f64<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let a = u128_to_f64x2(read_xmm_reg(state, dst)?);
+    let b = u128_to_f64x2(read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?);
+    let out = match instr.mnemonic() {
+        Mnemonic::Addpd => [a[0] + b[0], a[1] + b[1]],
+        Mnemonic::Subpd => [a[0] - b[0], a[1] - b[1]],
+        Mnemonic::Mulpd => [a[0] * b[0], a[1] * b[1]],
+        Mnemonic::Divpd => [a[0] / b[0], a[1] / b[1]],
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, f64x2_to_u128(out))?;
+    Ok(())
+}
+
 fn apply_rounding_mode_f64(val: f64, mode: RoundingMode) -> f64 {
     match mode {
         RoundingMode::Nearest => val.round_ties_even(),
@@ -1079,6 +1486,126 @@ fn apply_rounding_mode_f64(val: f64, mode: RoundingMode) -> f64 {
 
 fn or_mxcsr_flags(state: &mut CpuState, flags: u32) {
     state.sse.mxcsr |= flags;
+}
+
+fn sign_extend_i64(raw: u64, bits: u32) -> Result<i64, Exception> {
+    match bits {
+        8 => Ok((raw as u8 as i8) as i64),
+        16 => Ok((raw as u16 as i16) as i64),
+        32 => Ok((raw as u32 as i32) as i64),
+        64 => Ok(raw as i64),
+        _ => Err(Exception::InvalidOpcode),
+    }
+}
+
+fn cvt_i64_to_f32(state: &mut CpuState, src: i64) -> f32 {
+    if src == 0 {
+        return 0.0;
+    }
+
+    let sign = src < 0;
+    let mag: u64 = if sign {
+        src.wrapping_neg() as u64
+    } else {
+        src as u64
+    };
+
+    let msb = 63 - mag.leading_zeros();
+    let mut exp = (msb as i32) + 127;
+    let shift = (msb as i32) - 23;
+
+    let (mut mantissa_full, rem) = if shift <= 0 {
+        ((mag << (-shift as u32)) as u64, 0u64)
+    } else {
+        let shift = shift as u32;
+        ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
+    };
+
+    if rem != 0 {
+        or_mxcsr_flags(state, MXCSR_PE);
+    }
+
+    let inc = if rem == 0 {
+        false
+    } else {
+        match rounding_mode(state.sse.mxcsr) {
+            RoundingMode::Nearest => {
+                let shift = shift as u32;
+                let half = 1u64 << (shift - 1);
+                rem > half || (rem == half && (mantissa_full & 1) == 1)
+            }
+            RoundingMode::Down => sign,
+            RoundingMode::Up => !sign,
+            RoundingMode::TowardZero => false,
+        }
+    };
+
+    if inc {
+        mantissa_full = mantissa_full.wrapping_add(1);
+        if mantissa_full == (1u64 << 24) {
+            mantissa_full >>= 1;
+            exp += 1;
+        }
+    }
+
+    let mantissa = (mantissa_full & ((1u64 << 23) - 1)) as u32;
+    let bits = ((sign as u32) << 31) | ((exp as u32) << 23) | mantissa;
+    f32::from_bits(bits)
+}
+
+fn cvt_i64_to_f64(state: &mut CpuState, src: i64) -> f64 {
+    if src == 0 {
+        return 0.0;
+    }
+
+    let sign = src < 0;
+    let mag: u64 = if sign {
+        src.wrapping_neg() as u64
+    } else {
+        src as u64
+    };
+
+    let msb = 63 - mag.leading_zeros();
+    let mut exp = (msb as i32) + 1023;
+    let shift = (msb as i32) - 52;
+
+    let (mut mantissa_full, rem) = if shift <= 0 {
+        ((mag << (-shift as u32)) as u64, 0u64)
+    } else {
+        let shift = shift as u32;
+        ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
+    };
+
+    if rem != 0 {
+        or_mxcsr_flags(state, MXCSR_PE);
+    }
+
+    let inc = if rem == 0 {
+        false
+    } else {
+        match rounding_mode(state.sse.mxcsr) {
+            RoundingMode::Nearest => {
+                let shift = shift as u32;
+                let half = 1u64 << (shift - 1);
+                rem > half || (rem == half && (mantissa_full & 1) == 1)
+            }
+            RoundingMode::Down => sign,
+            RoundingMode::Up => !sign,
+            RoundingMode::TowardZero => false,
+        }
+    };
+
+    if inc {
+        mantissa_full = mantissa_full.wrapping_add(1);
+        if mantissa_full == (1u64 << 53) {
+            mantissa_full >>= 1;
+            exp += 1;
+        }
+    }
+
+    let mantissa = mantissa_full & ((1u64 << 52) - 1);
+    let bits = ((sign as u64) << 63) | ((exp as u64) << 52) | mantissa;
+    f64::from_bits(bits)
 }
 
 fn cvt_float_to_i32(state: &mut CpuState, val: f64, truncate: bool) -> i32 {
@@ -1127,6 +1654,44 @@ fn cvt_float_to_i64(state: &mut CpuState, val: f64, truncate: bool) -> i64 {
     }
 
     rounded as i64
+}
+
+fn exec_cvtsi2ss<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    if instr.op_kind(0) != OpKind::Register || xmm_index(instr.op0_register()).is_none() {
+        return Err(Exception::InvalidOpcode);
+    }
+    let dst = instr.op0_register();
+    let src_bits = op_bits(state, instr, 1)?;
+    let raw = read_op_sized(state, bus, instr, 1, src_bits, next_ip)?;
+    let src = sign_extend_i64(raw, src_bits)?;
+    let f = cvt_i64_to_f32(state, src);
+    let dst_old = read_xmm_reg(state, dst)?;
+    write_xmm_reg(state, dst, u128_set_low_u32_preserve(dst_old, f.to_bits()))?;
+    Ok(())
+}
+
+fn exec_cvtsi2sd<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    if instr.op_kind(0) != OpKind::Register || xmm_index(instr.op0_register()).is_none() {
+        return Err(Exception::InvalidOpcode);
+    }
+    let dst = instr.op0_register();
+    let src_bits = op_bits(state, instr, 1)?;
+    let raw = read_op_sized(state, bus, instr, 1, src_bits, next_ip)?;
+    let src = sign_extend_i64(raw, src_bits)?;
+    let f = cvt_i64_to_f64(state, src);
+    let dst_old = read_xmm_reg(state, dst)?;
+    write_xmm_reg(state, dst, u128_set_low_u64_preserve(dst_old, f.to_bits()))?;
+    Ok(())
 }
 
 fn exec_cvtss2si<B: CpuBus>(

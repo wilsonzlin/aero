@@ -477,3 +477,32 @@ fn xmm0_15_are_addressable_in_long_mode() {
     assert_eq!(state.sse.xmm[15], pattern);
     assert_eq!(state.sse.xmm[1], pattern);
 }
+
+#[test]
+fn instruction_stream_mixed_sse_sse2() {
+    let cfg = Tier0Config::default();
+    let mut state = new_sse_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // movups xmm0, [rax]     ; SSE
+    // paddd xmm0, xmm1       ; SSE2
+    // movups [rbx], xmm0     ; SSE
+    let code = [
+        0x0F, 0x10, 0x00, // movups xmm0, [rax]
+        0x66, 0x0F, 0xFE, 0xC1, // paddd xmm0, xmm1
+        0x0F, 0x11, 0x03, // movups [rbx], xmm0
+    ];
+    bus.load(CODE_BASE, &code);
+    state.set_rip(CODE_BASE);
+
+    state.write_reg(Register::RAX, 0);
+    state.write_reg(Register::RBX, 0x80);
+    bus.write_u128(0, u128_from_u32x4([1, 2, 3, 4])).unwrap();
+    state.sse.xmm[1] = u128_from_u32x4([10, 20, 30, 40]);
+
+    step_with_config(&cfg, &mut state, &mut bus).unwrap();
+    step_with_config(&cfg, &mut state, &mut bus).unwrap();
+    step_with_config(&cfg, &mut state, &mut bus).unwrap();
+
+    assert_eq!(bus.read_u128(0x80).unwrap(), u128_from_u32x4([11, 22, 33, 44]));
+}

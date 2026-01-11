@@ -260,7 +260,6 @@ impl CpuFeatureSet {
     pub fn optimized_mask() -> Self {
         Self::win7_minimum().union(Self {
             leaf1_ecx: bits::LEAF1_ECX_SSE3
-                | bits::LEAF1_ECX_PCLMULQDQ
                 | bits::LEAF1_ECX_SSSE3
                 | bits::LEAF1_ECX_SSE41
                 | bits::LEAF1_ECX_SSE42
