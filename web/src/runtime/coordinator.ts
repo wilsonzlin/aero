@@ -23,6 +23,8 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
+  type ResetRequestMessage,
+  type SerialOutputMessage,
   type SetAudioRingBufferMessage,
   type SetMicrophoneRingBufferMessage,
   type WorkerInitMessage,
@@ -200,6 +202,12 @@ export class WorkerCoordinator {
   private lastHeartbeatFromRing = 0;
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
 
+  private readonly serialDecoder = new TextDecoder();
+  private serialOutputText = "";
+  private serialOutputBytes = 0;
+  private resetRequestCount = 0;
+  private lastResetRequestAtMs = 0;
+
   // Optional SharedArrayBuffer-backed microphone ring buffer attachment. This
   // is set by the UI and forwarded to workers that consume mic input.
   // IMPORTANT: `micSampleRate` is the *actual* capture sample rate
@@ -310,6 +318,10 @@ export class WorkerCoordinator {
       const runId = this.runId;
       this.nextCmdSeq = 1;
       this.workerConfigAckVersions = {};
+      this.serialOutputText = "";
+      this.serialOutputBytes = 0;
+      this.resetRequestCount = 0;
+      this.lastResetRequestAtMs = 0;
       this.wasmStatus = {};
       this.lastHeartbeatFromRing = 0;
 
@@ -501,6 +513,22 @@ export class WorkerCoordinator {
 
   getLastHeartbeatFromRing(): number {
     return this.lastHeartbeatFromRing;
+  }
+
+  getSerialOutputText(): string {
+    return this.serialOutputText;
+  }
+
+  getSerialOutputBytes(): number {
+    return this.serialOutputBytes;
+  }
+
+  getResetRequestCount(): number {
+    return this.resetRequestCount;
+  }
+
+  getLastResetRequestAtMs(): number {
+    return this.lastResetRequestAtMs;
   }
 
   getGuestCounter0(): number {
@@ -963,6 +991,7 @@ export class WorkerCoordinator {
       return;
     }
 
+<<<<<<< HEAD
     if (role === "gpu") {
       if (isGpuWorkerGpuErrorMessage(data)) {
         const err = data.error as { message?: unknown; stack?: unknown } | undefined;
@@ -991,6 +1020,40 @@ export class WorkerCoordinator {
       }
     }
 
+=======
+    const maybeSerial = data as Partial<SerialOutputMessage>;
+    if (
+      maybeSerial?.kind === "serial.output" &&
+      typeof maybeSerial.port === "number" &&
+      maybeSerial.data instanceof Uint8Array
+    ) {
+      this.serialOutputBytes += maybeSerial.data.byteLength;
+      const text = this.serialDecoder.decode(maybeSerial.data);
+      this.serialOutputText += text;
+      const maxChars = 16 * 1024;
+      if (this.serialOutputText.length > maxChars) {
+        this.serialOutputText = this.serialOutputText.slice(this.serialOutputText.length - maxChars);
+      }
+
+      // Mirror to console for quick visibility during bring-up.
+      const portStr = `0x${(maybeSerial.port >>> 0).toString(16)}`;
+      // eslint-disable-next-line no-console
+      console.log(`[serial ${portStr}] ${text}`);
+      return;
+    }
+
+    const maybeReset = data as Partial<ResetRequestMessage>;
+    if (maybeReset?.kind === "reset.request") {
+      this.resetRequestCount += 1;
+      this.lastResetRequestAtMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+      // eslint-disable-next-line no-console
+      console.warn("[vm] reset requested");
+      return;
+    }
+
+    // Workers use structured `postMessage` for low-rate control/status messages
+    // (READY/ERROR/WASM_READY plus bus-side events like serial output).
+>>>>>>> 6eaf33cb (feat(web): wire CPU↔IO device bus via AIPC rings)
     const msg = data as Partial<ProtocolMessage>;
     if (msg?.type === MessageType.READY) {
       info.status = { state: "ready" };

@@ -49,11 +49,14 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
+  type ResetRequestMessage,
+  type SerialOutputMessage,
   type SetMicrophoneRingBufferMessage,
   type SetAudioRingBufferMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
+import { AeroIpcIoClient } from "../io/ipc/aero_ipc_io";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -81,6 +84,8 @@ let guestI32!: Int32Array;
 let guestU8!: Uint8Array;
 let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
+let io: AeroIpcIoClient | null = null;
+let didIoDemo = false;
 
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
@@ -537,6 +542,7 @@ let ioEvtRing: RingBuffer | null = null;
 let diskDemoStarted = false;
 let diskDemoResponses = 0;
 let nextIoIpcId = 1;
+let diskDemoCompleted = false;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const msg = ev.data as
@@ -651,8 +657,24 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
-      ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
-      ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      const ioCmd = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
+      const ioEvt = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      ioCmdRing = ioCmd;
+      ioEvtRing = ioEvt;
+      io = new AeroIpcIoClient(ioCmd, ioEvt, {
+        onIrq: (irq, level) => {
+          perf.instant("cpu:io:irq", "t", { irq, level });
+        },
+        onA20: (enabled) => {
+          perf.counter("cpu:io:a20Enabled", enabled ? 1 : 0);
+        },
+        onSerialOutput: (port, data) => {
+          ctx.postMessage({ kind: "serial.output", port, data } satisfies SerialOutputMessage);
+        },
+        onReset: () => {
+          ctx.postMessage({ kind: "reset.request" } satisfies ResetRequestMessage);
+        },
+      });
 
       try {
         const { api, variant } = await perf.spanAsync("wasm:init", () =>
@@ -855,6 +877,40 @@ function runLoopInner(): void {
         Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
       }
 
+      if (!didIoDemo && diskDemoCompleted && io && Atomics.load(status, StatusIndex.IoReady) === 1) {
+        didIoDemo = true;
+        try {
+          perf.spanBegin("cpu:io:demo");
+          // Read i8042 status (0x64) and command byte (via 0x20 -> 0x60).
+          const status64 = perf.span("cpu:io:portRead 0x64", () => io!.portRead(0x64, 1));
+          perf.counter("cpu:io:i8042:status", status64);
+          const cmdByte = perf.span("cpu:io:i8042:readCommandByte", () => {
+            io!.portWrite(0x64, 1, 0x20);
+            return io!.portRead(0x60, 1);
+          });
+          perf.counter("cpu:io:i8042:commandByte", cmdByte);
+
+          // Emit a couple bytes on COM1; the I/O worker should mirror them back
+          // as `serialOutput` events, which we forward to the coordinator/UI.
+          perf.span("cpu:io:uart16550:write", () => {
+            io!.portWrite(0x3f8, 1, "H".charCodeAt(0));
+            io!.portWrite(0x3f8, 1, "i".charCodeAt(0));
+            io!.portWrite(0x3f8, 1, "\r".charCodeAt(0));
+            io!.portWrite(0x3f8, 1, "\n".charCodeAt(0));
+          });
+
+          // eslint-disable-next-line no-console
+          console.log(
+            `[cpu] io demo: i8042 status=0x${status64.toString(16)} cmdByte=0x${cmdByte.toString(16)}`,
+          );
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("[cpu] io demo failed:", err);
+        } finally {
+          perf.spanEnd("cpu:io:demo");
+        }
+      }
+
       if (now >= nextHeartbeatMs) {
         const counter = Atomics.add(status, StatusIndex.HeartbeatCounter, 1) + 1;
         Atomics.add(guestI32, 0, 1);
@@ -921,60 +977,64 @@ function runLoopInner(): void {
 }
 
 async function runDiskReadDemo(): Promise<void> {
-  const cmdRing = ioCmdRing;
-  const evtRing = ioEvtRing;
-  if (!cmdRing || !evtRing) return;
+  try {
+    const cmdRing = ioCmdRing;
+    const evtRing = ioEvtRing;
+    if (!cmdRing || !evtRing) return;
 
-  // Wait until the I/O worker reports ready.
-  while (Atomics.load(status, StatusIndex.IoReady) !== 1) {
-    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
+    // Wait until the I/O worker reports ready.
+    while (Atomics.load(status, StatusIndex.IoReady) !== 1) {
+      if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
 
-  // Read the first sector into guest RAM at an arbitrary scratch offset.
-  const id = (nextIoIpcId++ >>> 0) || (nextIoIpcId++ >>> 0);
-  const guestOffset = 0x1000n;
-  const len = 512;
-  const cmdBytes = encodeCommand({ kind: "diskRead", id, diskOffset: 0n, len, guestOffset });
+    // Read the first sector into guest RAM at an arbitrary scratch offset.
+    const id = (nextIoIpcId++ >>> 0) || (nextIoIpcId++ >>> 0);
+    const guestOffset = 0x1000n;
+    const len = 512;
+    const cmdBytes = encodeCommand({ kind: "diskRead", id, diskOffset: 0n, len, guestOffset });
 
-  // Best-effort retry if the ring is temporarily full.
-  while (!cmdRing.tryPush(cmdBytes)) {
-    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
+    // Best-effort retry if the ring is temporarily full.
+    while (!cmdRing.tryPush(cmdBytes)) {
+      if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
 
-  const deadlineMs = performance.now() + 2000;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+    const deadlineMs = performance.now() + 2000;
+    // eslint-disable-next-line no-constant-condition
     while (true) {
-      const bytes = evtRing.tryPop();
-      if (!bytes) break;
-      const evt = decodeEvent(bytes);
-      if (evt.kind !== "diskReadResp") continue;
-      if (evt.id !== id) continue;
+      while (true) {
+        const bytes = evtRing.tryPop();
+        if (!bytes) break;
+        const evt = decodeEvent(bytes);
+        if (evt.kind !== "diskReadResp") continue;
+        if (evt.id !== id) continue;
 
-      diskDemoResponses += 1;
-      perf.counter("diskReadDemoResponses", diskDemoResponses);
-      if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
+        diskDemoResponses += 1;
+        perf.counter("diskReadDemoResponses", diskDemoResponses);
+        if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
 
-      if (evt.ok && evt.bytes >= 4) {
-        const firstDword = new DataView(guestU8.buffer, guestU8.byteOffset + Number(guestOffset), 4).getUint32(0, true);
-        perf.counter("diskReadDemoFirstDword", firstDword);
+        if (evt.ok && evt.bytes >= 4) {
+          const firstDword = new DataView(guestU8.buffer, guestU8.byteOffset + Number(guestOffset), 4).getUint32(0, true);
+          perf.counter("diskReadDemoFirstDword", firstDword);
+        }
+        return;
       }
-      return;
-    }
 
-    const now = performance.now();
-    if (now >= deadlineMs) {
-      if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
-      return;
-    }
+      const now = performance.now();
+      if (now >= deadlineMs) {
+        if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
+        return;
+      }
 
-    const res = await evtRing.waitForDataAsync(Math.max(0, deadlineMs - now));
-    if (res === "timed-out") {
-      if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
-      return;
+      const res = await evtRing.waitForDataAsync(Math.max(0, deadlineMs - now));
+      if (res === "timed-out") {
+        if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
+        return;
+      }
     }
+  } finally {
+    diskDemoCompleted = true;
   }
 }
 

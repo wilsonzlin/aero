@@ -58,6 +58,14 @@ export function mountStatusPanel(
         workerStatuses: coordinator.getWorkerStatuses(),
         heartbeatCounter: coordinator.getHeartbeatCounter(),
         lastHeartbeatFromRing: coordinator.getLastHeartbeatFromRing(),
+        serial: {
+          bytes: coordinator.getSerialOutputBytes(),
+          tail: coordinator.getSerialOutputText().slice(-512),
+        },
+        resetRequests: {
+          count: coordinator.getResetRequestCount(),
+          lastAtMs: coordinator.getLastResetRequestAtMs(),
+        },
       },
       null,
       2,

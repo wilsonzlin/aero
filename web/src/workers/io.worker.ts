@@ -25,6 +25,10 @@ import {
   type ProtocolMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
+import { DeviceManager, type IrqSink } from "../io/device_manager";
+import { I8042Controller } from "../io/devices/i8042";
+import { PciTestDevice } from "../io/devices/pci_test_device";
+import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
@@ -52,6 +56,13 @@ const DISK_ERROR_NO_ACTIVE_DISK = 1;
 const DISK_ERROR_GUEST_OOB = 2;
 const DISK_ERROR_DISK_OFFSET_TOO_LARGE = 3;
 const DISK_ERROR_IO_FAILURE = 4;
+let deviceManager: DeviceManager | null = null;
+let i8042: I8042Controller | null = null;
+
+let portReadCount = 0;
+let portWriteCount = 0;
+let mmioReadCount = 0;
+let mmioWriteCount = 0;
 
 type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
 let usbHid: UsbHidBridge | null = null;
@@ -288,6 +299,38 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           ioCmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
           ioEvtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
 
+          const irqSink: IrqSink = {
+            raiseIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff })),
+            lowerIrq: (irq) => enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: irq & 0xff })),
+          };
+
+          const systemControl = {
+            setA20: (enabled: boolean) => {
+              enqueueIoEvent(encodeEvent({ kind: "a20Set", enabled: Boolean(enabled) }));
+            },
+            requestReset: () => {
+              enqueueIoEvent(encodeEvent({ kind: "resetRequest" }));
+            },
+          };
+
+          const serialSink: SerialOutputSink = {
+            write: (port, data) => {
+              enqueueIoEvent(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }));
+            },
+          };
+
+          const mgr = new DeviceManager(irqSink);
+          deviceManager = mgr;
+
+          i8042 = new I8042Controller(mgr.irqSink, { systemControl });
+          mgr.registerPortIo(0x0060, 0x0060, i8042);
+          mgr.registerPortIo(0x0064, 0x0064, i8042);
+
+          mgr.registerPciDevice(new PciTestDevice());
+
+          const uart = new Uart16550(UART_COM1, serialSink);
+          mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
+
           if (init.perfChannel) {
             perfWriter = new PerfWriter(init.perfChannel.buffer, {
               workerKind: init.perfChannel.workerKind,
@@ -344,6 +387,7 @@ function startPolling(): void {
     const t0 = performance.now();
     drainRuntimeCommands();
     drainIoIpcCommands();
+    deviceManager?.tick(performance.now());
     perfIoMs += performance.now() - t0;
     maybeEmitPerfSample();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
@@ -384,10 +428,31 @@ function drainIoIpcCommands(): void {
       continue;
     }
 
-    if (cmd.kind === "diskRead") {
-      handleDiskRead(cmd);
-    } else if (cmd.kind === "diskWrite") {
-      handleDiskWrite(cmd);
+    switch (cmd.kind) {
+      case "diskRead":
+        handleDiskRead(cmd);
+        break;
+      case "diskWrite":
+        handleDiskWrite(cmd);
+        break;
+      case "portRead":
+        handlePortRead(cmd);
+        break;
+      case "portWrite":
+        handlePortWrite(cmd);
+        break;
+      case "mmioRead":
+        handleMmioRead(cmd);
+        break;
+      case "mmioWrite":
+        handleMmioWrite(cmd);
+        break;
+      case "nop":
+        enqueueIoEvent(encodeEvent({ kind: "ack", seq: cmd.seq }));
+        break;
+      case "shutdown":
+        Atomics.store(status, StatusIndex.StopRequested, 1);
+        break;
     }
   }
 }
@@ -407,6 +472,91 @@ function enqueueIoEvent(bytes: Uint8Array): void {
   if (!evtRing) return;
   if (evtRing.tryPush(bytes)) return;
   pendingIoEvents.push(bytes);
+}
+
+function valueToLeBytes(value: number, size: number): Uint8Array {
+  const out = new Uint8Array(size >>> 0);
+  const v = value >>> 0;
+  if (size >= 1) out[0] = v & 0xff;
+  if (size >= 2) out[1] = (v >>> 8) & 0xff;
+  if (size >= 3) out[2] = (v >>> 16) & 0xff;
+  if (size >= 4) out[3] = (v >>> 24) & 0xff;
+  return out;
+}
+
+function leBytesToU32(bytes: Uint8Array): number {
+  const b0 = bytes[0] ?? 0;
+  const b1 = bytes[1] ?? 0;
+  const b2 = bytes[2] ?? 0;
+  const b3 = bytes[3] ?? 0;
+  return (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) >>> 0;
+}
+
+function handlePortRead(cmd: Extract<Command, { kind: "portRead" }>): void {
+  const id = cmd.id >>> 0;
+  let value = 0;
+  const mgr = deviceManager;
+  if (mgr) {
+    try {
+      value = mgr.portRead(cmd.port, cmd.size);
+    } catch {
+      value = 0;
+    }
+  }
+
+  portReadCount++;
+  if ((portReadCount & 0xff) === 0) perf.counter("io:portReads", portReadCount);
+  enqueueIoEvent(encodeEvent({ kind: "portReadResp", id, value: value >>> 0 }));
+}
+
+function handlePortWrite(cmd: Extract<Command, { kind: "portWrite" }>): void {
+  const id = cmd.id >>> 0;
+  const mgr = deviceManager;
+  if (mgr) {
+    try {
+      mgr.portWrite(cmd.port, cmd.size, cmd.value);
+    } catch {
+      // Ignore device errors; still reply so the CPU side doesn't deadlock.
+    }
+  }
+
+  portWriteCount++;
+  if ((portWriteCount & 0xff) === 0) perf.counter("io:portWrites", portWriteCount);
+  enqueueIoEvent(encodeEvent({ kind: "portWriteResp", id }));
+}
+
+function handleMmioRead(cmd: Extract<Command, { kind: "mmioRead" }>): void {
+  const id = cmd.id >>> 0;
+  let value = 0;
+  const mgr = deviceManager;
+  if (mgr) {
+    try {
+      value = mgr.mmioRead(cmd.addr, cmd.size);
+    } catch {
+      value = 0;
+    }
+  }
+
+  mmioReadCount++;
+  if ((mmioReadCount & 0xff) === 0) perf.counter("io:mmioReads", mmioReadCount);
+  enqueueIoEvent(encodeEvent({ kind: "mmioReadResp", id, data: valueToLeBytes(value, cmd.size) }));
+}
+
+function handleMmioWrite(cmd: Extract<Command, { kind: "mmioWrite" }>): void {
+  const id = cmd.id >>> 0;
+  const value = leBytesToU32(cmd.data);
+  const mgr = deviceManager;
+  if (mgr) {
+    try {
+      mgr.mmioWrite(cmd.addr, cmd.data.byteLength, value);
+    } catch {
+      // Ignore device errors; still reply so the CPU side doesn't deadlock.
+    }
+  }
+
+  mmioWriteCount++;
+  if ((mmioWriteCount & 0xff) === 0) perf.counter("io:mmioWrites", mmioWriteCount);
+  enqueueIoEvent(encodeEvent({ kind: "mmioWriteResp", id }));
 }
 
 function diskOffsetToJsNumber(diskOffset: bigint, len: number): number | null {
@@ -534,9 +684,19 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // HID gamepad report: a/b are packed 8 bytes (little-endian).
         usbHid?.gamepad_report(words[off + 2] >>> 0, words[off + 3] >>> 0);
         break;
-      case InputEventType.KeyScancode:
-        // Key payload is packed bytes + len. No-op for now.
+      case InputEventType.KeyScancode: {
+        // Payload: a=packed bytes LE, b=len.
+        const packed = words[off + 2] >>> 0;
+        const len = words[off + 3] >>> 0;
+        if (i8042) {
+          const bytes = new Uint8Array(len);
+          for (let j = 0; j < len; j++) {
+            bytes[j] = (packed >>> (j * 8)) & 0xff;
+          }
+          i8042.injectKeyboardBytes(bytes);
+        }
         break;
+      }
       default:
         // Unknown event type; ignore.
         break;
@@ -556,6 +716,8 @@ function shutdown(): void {
   activeAccessHandle?.close();
   usbHid?.free();
   usbHid = null;
+  deviceManager = null;
+  i8042 = null;
   pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
   setReadyFlag(status, role, false);
   ctx.close();

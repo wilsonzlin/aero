@@ -53,8 +53,8 @@ export type WorkerInitMessage = {
   /** Variant corresponding to `wasmModule` (or the preferred variant when no module is sent). */
   wasmVariant?: WasmVariant;
   /**
-   * CPU<->I/O AIPC buffer used for high-frequency device operations (disk I/O,
-   * etc). Contains at least a command queue and an event queue.
+   * CPU<->I/O AIPC buffer used for high-frequency operations (disk I/O, port I/O,
+   * MMIO, etc). Contains at least a command queue and an event queue.
    */
   ioIpcSab: SharedArrayBuffer;
   /**
@@ -135,4 +135,21 @@ export type CoordinatorToWorkerPostMessage =
   | ConfigUpdateMessage
   | SetMicrophoneRingBufferMessage
   | SetAudioRingBufferMessage;
-export type WorkerToCoordinatorPostMessage = ReadyMessage | ErrorMessage | WasmReadyMessage | ConfigAckMessage;
+
+export type SerialOutputMessage = {
+  kind: "serial.output";
+  port: number;
+  data: Uint8Array;
+};
+
+export type ResetRequestMessage = {
+  kind: "reset.request";
+};
+
+export type WorkerToCoordinatorPostMessage =
+  | ReadyMessage
+  | ErrorMessage
+  | WasmReadyMessage
+  | ConfigAckMessage
+  | SerialOutputMessage
+  | ResetRequestMessage;

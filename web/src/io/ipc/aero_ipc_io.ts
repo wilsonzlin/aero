@@ -150,6 +150,19 @@ export interface AeroIpcIoServerOptions {
   tickIntervalMs?: number;
 }
 
+export interface AeroIpcIoServerRunAsyncOptions {
+  /**
+   * Optional abort signal used to stop the server loop without requiring a
+   * `shutdown` command.
+   */
+  signal?: AbortSignal;
+  /**
+   * Optional fairness knob: after draining this many commands, yield back to the
+   * event loop so `postMessage` handlers (e.g. input batches) can run.
+   */
+  yieldEveryNCommands?: number;
+}
+
 /**
  * I/O-side server loop implementing the AIPC Command/Event contract and routing
  * to an I/O `DeviceManager` (or any `AeroIpcIoDispatchTarget`).
@@ -198,6 +211,55 @@ export class AeroIpcIoServer implements IrqSink {
 
       const timeout = Math.max(0, nextTickAt - now);
       const res = this.#cmdQ.waitForData(timeout);
+      if (res === "timed-out") {
+        const tickNow = this.#nowMs();
+        this.#target.tick(tickNow);
+        nextTickAt = tickNow + this.#tickIntervalMs;
+      }
+    }
+  }
+
+  /**
+   * Async/non-blocking variant of `run()`.
+   *
+   * This is intended for browser workers that must stay responsive to
+   * `postMessage` events (e.g. input batches) and therefore cannot park the
+   * entire thread in `Atomics.wait()`.
+   */
+  async runAsync(opts: AeroIpcIoServerRunAsyncOptions = {}): Promise<void> {
+    let nextTickAt = this.#nowMs() + this.#tickIntervalMs;
+
+    for (;;) {
+      if (opts.signal?.aborted) return;
+
+      // Drain all queued commands.
+      let drained = 0;
+      while (true) {
+        const bytes = this.#cmdQ.tryPop();
+        if (!bytes) break;
+        const cmd = this.#safeDecodeCommand(bytes);
+        if (!cmd) continue;
+        if (cmd.kind === "shutdown") return;
+        this.#handleCommand(cmd);
+
+        drained++;
+        if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
+          drained = 0;
+          // Yield to allow other tasks (e.g. worker `onmessage`) to run.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (opts.signal?.aborted) return;
+        }
+      }
+
+      const now = this.#nowMs();
+      if (now >= nextTickAt) {
+        this.#target.tick(now);
+        nextTickAt = now + this.#tickIntervalMs;
+        continue;
+      }
+
+      const timeout = Math.max(0, nextTickAt - now);
+      const res = await this.#cmdQ.waitForDataAsync(timeout);
       if (res === "timed-out") {
         const tickNow = this.#nowMs();
         this.#target.tick(tickNow);

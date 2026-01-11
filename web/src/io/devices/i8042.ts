@@ -84,6 +84,17 @@ export class I8042Controller implements PortIoHandler {
     }
   }
 
+  /**
+   * Inject host keyboard scancode bytes into the controller output buffer.
+   *
+   * Bytes injected via this path are treated as coming from the keyboard device
+   * (as opposed to controller replies), so IRQ1 signalling follows the command
+   * byte interrupt-enable bit.
+   */
+  injectKeyboardBytes(bytes: Uint8Array): void {
+    for (const b of bytes) this.#enqueue(b, "keyboard");
+  }
+
   #writeCommand(cmd: number): void {
     switch (cmd & 0xff) {
       case 0x20: // Read command byte
