@@ -2621,7 +2621,24 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
+
+  auto* dev = as_device(hDevice);
+  if (!dev || !dev->adapter) {
 #if defined(_WIN32)
+    ::Sleep(16);
+#else
+    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+#endif
+    return S_OK;
+  }
+
+#if defined(_WIN32)
+  // Prefer a real vblank wait when possible (KMD-backed scanline polling),
+  // but always keep the wait bounded so DWM cannot hang if vblank delivery is
+  // broken.
+  if (dev->adapter->kmd_query.WaitForVBlank(/*vid_pn_source_id=*/0, /*timeout_ms=*/40)) {
+    return S_OK;
+  }
   ::Sleep(16);
 #else
   std::this_thread::sleep_for(std::chrono::milliseconds(16));

@@ -69,6 +69,13 @@ struct AerogpuKmdQuery::D3DKMT_ESCAPE {
   unsigned int PrivateDriverDataSize;
 };
 
+struct AerogpuKmdQuery::D3DKMT_GETSCANLINE {
+  D3DKMT_HANDLE hAdapter;
+  unsigned int VidPnSourceId;
+  BOOL InVerticalBlank;
+  unsigned int ScanLine;
+};
+
 AerogpuKmdQuery::AerogpuKmdQuery() = default;
 
 AerogpuKmdQuery::~AerogpuKmdQuery() {
@@ -93,6 +100,7 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
   query_adapter_info_ =
       reinterpret_cast<PFND3DKMTQueryAdapterInfo>(GetProcAddress(gdi32_, "D3DKMTQueryAdapterInfo"));
   escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
+  get_scanline_ = reinterpret_cast<PFND3DKMTGetScanLine>(GetProcAddress(gdi32_, "D3DKMTGetScanLine"));
 
   if (!close_adapter_ || !escape_) {
     ShutdownLocked();
@@ -208,6 +216,7 @@ bool AerogpuKmdQuery::InitFromHdc(HDC hdc) {
   query_adapter_info_ =
       reinterpret_cast<PFND3DKMTQueryAdapterInfo>(GetProcAddress(gdi32_, "D3DKMTQueryAdapterInfo"));
   escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
+  get_scanline_ = reinterpret_cast<PFND3DKMTGetScanLine>(GetProcAddress(gdi32_, "D3DKMTGetScanLine"));
 
   if (!open_adapter_from_hdc_ || !close_adapter_ || !escape_) {
     ShutdownLocked();
@@ -254,6 +263,7 @@ void AerogpuKmdQuery::ShutdownLocked() {
   close_adapter_ = nullptr;
   query_adapter_info_ = nullptr;
   escape_ = nullptr;
+  get_scanline_ = nullptr;
 
   umdriverprivate_type_known_ = false;
   umdriverprivate_type_ = 0;
@@ -384,6 +394,57 @@ bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {
   return true;
 }
 
+bool AerogpuKmdQuery::WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!adapter_ || !get_scanline_) {
+    return false;
+  }
+
+  D3DKMT_GETSCANLINE scan{};
+  scan.hAdapter = adapter_;
+  scan.VidPnSourceId = vid_pn_source_id;
+
+  const NTSTATUS st0 = get_scanline_(&scan);
+  if (!NtSuccess(st0)) {
+    return false;
+  }
+
+  const bool started_in_vblank = (scan.InVerticalBlank != FALSE);
+  bool need_exit_vblank = started_in_vblank;
+
+  const DWORD start = GetTickCount();
+  uint32_t iteration = 0;
+  for (;;) {
+    if (need_exit_vblank) {
+      if (scan.InVerticalBlank == FALSE) {
+        need_exit_vblank = false;
+      }
+    } else {
+      if (scan.InVerticalBlank != FALSE) {
+        return true;
+      }
+    }
+
+    const DWORD elapsed = GetTickCount() - start;
+    if (elapsed >= timeout_ms) {
+      // We already waited up to the requested bound; treat as best-effort success.
+      return true;
+    }
+
+    // Yield early (Sleep(0)) then back off to 1ms sleeps.
+    Sleep((iteration < 4) ? 0 : 1);
+    iteration++;
+
+    std::memset(&scan, 0, sizeof(scan));
+    scan.hAdapter = adapter_;
+    scan.VidPnSourceId = vid_pn_source_id;
+    const NTSTATUS st = get_scanline_(&scan);
+    if (!NtSuccess(st)) {
+      return false;
+    }
+  }
+}
+
 bool AerogpuKmdQuery::WaitForFence(uint64_t fence, uint32_t timeout_ms) {
   const DWORD start = GetTickCount();
 
@@ -424,6 +485,10 @@ bool AerogpuKmdQuery::QueryFence(uint64_t*, uint64_t*) {
 }
 
 bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1*) {
+  return false;
+}
+
+bool AerogpuKmdQuery::WaitForVBlank(uint32_t, uint32_t) {
   return false;
 }
 

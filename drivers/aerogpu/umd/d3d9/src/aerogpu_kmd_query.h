@@ -64,6 +64,13 @@ class AerogpuKmdQuery {
   // open failure, or query failure).
   bool QueryUmdPrivate(aerogpu_umd_private_v1* out);
 
+  // Best-effort vblank wait using `D3DKMTGetScanLine` polling.
+  //
+  // Returns false if the scanline query path is unavailable. Otherwise waits
+  // until the next vblank transition (or until `timeout_ms` elapses) and returns
+  // true.
+  bool WaitForVBlank(uint32_t vid_pn_source_id, uint32_t timeout_ms);
+
  private:
   void ShutdownLocked();
 
@@ -76,12 +83,14 @@ class AerogpuKmdQuery {
   struct D3DKMT_CLOSEADAPTER;
   struct D3DKMT_QUERYADAPTERINFO;
   struct D3DKMT_ESCAPE;
+  struct D3DKMT_GETSCANLINE;
 
   using PFND3DKMTOpenAdapterFromLuid = NTSTATUS(__stdcall*)(D3DKMT_OPENADAPTERFROMLUID* pData);
   using PFND3DKMTOpenAdapterFromHdc = NTSTATUS(__stdcall*)(D3DKMT_OPENADAPTERFROMHDC* pData);
   using PFND3DKMTCloseAdapter = NTSTATUS(__stdcall*)(D3DKMT_CLOSEADAPTER* pData);
   using PFND3DKMTQueryAdapterInfo = NTSTATUS(__stdcall*)(D3DKMT_QUERYADAPTERINFO* pData);
   using PFND3DKMTEscape = NTSTATUS(__stdcall*)(D3DKMT_ESCAPE* pData);
+  using PFND3DKMTGetScanLine = NTSTATUS(__stdcall*)(D3DKMT_GETSCANLINE* pData);
 
   bool ProbeUmdPrivateTypeLocked();
 
@@ -91,6 +100,7 @@ class AerogpuKmdQuery {
   PFND3DKMTCloseAdapter close_adapter_ = nullptr;
   PFND3DKMTQueryAdapterInfo query_adapter_info_ = nullptr;
   PFND3DKMTEscape escape_ = nullptr;
+  PFND3DKMTGetScanLine get_scanline_ = nullptr;
 
   D3DKMT_HANDLE adapter_ = 0;
   LUID adapter_luid_ = {};
