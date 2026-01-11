@@ -42,7 +42,7 @@ Aero can ship Windows 7 virtio drivers inside `aero-guest-tools.iso` in two ways
 
 2) **In-tree Aero virtio** (`aerovblk`, `aerovnet`)
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
-   - Spec: `tools/packaging/specs/win7-aero-virtio.json` (**modern-only** IDs; rejects `1000/1001` at packaging time)
+   - Spec: `tools/packaging/specs/win7-aero-virtio.json` (**modern-only** IDs; rejects virtio-pci transitional IDs at packaging time)
 
 ## Chosen approach (short term): package upstream virtio-win drivers
 
