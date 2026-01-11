@@ -1111,12 +1111,51 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
                                                                  AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
 
         const ULONGLONG cachedSeq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
+        ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
         if (seq != cachedSeq) {
+            /*
+             * We only know the vblank sequence counter and the nominal period; we don't have
+             * a reliable way to translate the device's `VBLANK_TIME_NS` epoch to guest time.
+             *
+             * Instead, keep a guest-time estimate of the last vblank by advancing the
+             * previous estimate by `deltaSeq * period`. This preserves phase information
+             * even if callers poll `GetScanLine` infrequently (e.g. sleep-based loops),
+             * avoiding "stuck at scanline 0" behavior.
+             */
+            ULONGLONG newLastVblank100ns = now100ns;
+            ULONGLONG period100ns = periodNs / 100ull;
+            if (period100ns == 0) {
+                period100ns = 1;
+            }
+
+            if (lastVblank100ns != 0 && cachedSeq != 0) {
+                const ULONGLONG deltaSeq = seq - cachedSeq;
+                ULONGLONG advance100ns = 0;
+                if (deltaSeq != 0) {
+                    if (deltaSeq > (~0ull / period100ns)) {
+                        advance100ns = ~0ull;
+                    } else {
+                        advance100ns = deltaSeq * period100ns;
+                    }
+                }
+
+                ULONGLONG predicted = lastVblank100ns;
+                if (advance100ns == ~0ull || predicted > (~0ull - advance100ns)) {
+                    predicted = ~0ull;
+                } else {
+                    predicted += advance100ns;
+                }
+
+                if (predicted <= now100ns) {
+                    newLastVblank100ns = predicted;
+                }
+            }
+
             AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
-            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, newLastVblank100ns);
+            lastVblank100ns = newLastVblank100ns;
         }
 
-        ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
         if (lastVblank100ns == 0) {
             /* First observation: anchor the cadence to "now". */
             AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
