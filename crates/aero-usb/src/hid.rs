@@ -131,6 +131,38 @@ impl KeyboardReport {
             keys: [0; 6],
         }
     }
+
+    pub fn to_bytes(self) -> [u8; 8] {
+        let mut out = [0u8; 8];
+        out[0] = self.modifiers;
+        out[1] = self.reserved;
+        out[2..].copy_from_slice(&self.keys);
+        out
+    }
+}
+
+fn keyboard_modifier_bit(usage: u8) -> Option<u8> {
+    if (0xE0..=0xE7).contains(&usage) {
+        Some(1u8 << (usage - 0xE0))
+    } else {
+        None
+    }
+}
+
+fn build_keyboard_report(modifiers: u8, pressed_keys: &[u8]) -> KeyboardReport {
+    let mut keys = [0u8; 6];
+    if pressed_keys.len() > 6 {
+        keys.fill(0x01); // ErrorRollOver
+    } else {
+        for (idx, &usage) in pressed_keys.iter().take(6).enumerate() {
+            keys[idx] = usage;
+        }
+    }
+    KeyboardReport {
+        modifiers,
+        reserved: 0,
+        keys,
+    }
 }
 
 pub struct UsbHidKeyboard {
@@ -145,7 +177,9 @@ pub struct UsbHidKeyboard {
     leds: u8,
     ep0: Ep0Control,
 
-    report: KeyboardReport,
+    modifiers: u8,
+    pressed_keys: Vec<u8>,
+    last_report: [u8; 8],
     pending_reports: VecDeque<[u8; 8]>,
 }
 
@@ -162,56 +196,50 @@ impl UsbHidKeyboard {
             idle_rate: 0,
             leds: 0,
             ep0: Ep0Control::new(),
-            report: KeyboardReport::empty(),
+            modifiers: 0,
+            pressed_keys: Vec::new(),
+            last_report: [0; 8],
             pending_reports: VecDeque::new(),
         }
     }
 
     pub fn key_event(&mut self, usage: u8, pressed: bool) {
-        if (0xE0..=0xE7).contains(&usage) {
-            let bit = 1u8 << (usage - 0xE0);
-            if pressed {
-                self.report.modifiers |= bit;
-            } else {
-                self.report.modifiers &= !bit;
-            }
-            self.enqueue_report();
+        if usage == 0 {
             return;
         }
 
-        if pressed {
-            if self.report.keys.iter().any(|&k| k == usage) {
-                return;
+        let mut changed = false;
+        if let Some(bit) = keyboard_modifier_bit(usage) {
+            let before = self.modifiers;
+            if pressed {
+                self.modifiers |= bit;
+            } else {
+                self.modifiers &= !bit;
             }
-            if let Some(slot) = self.report.keys.iter_mut().find(|k| **k == 0) {
-                *slot = usage;
+            changed = before != self.modifiers;
+        } else if pressed {
+            if !self.pressed_keys.iter().any(|&k| k == usage) {
+                self.pressed_keys.push(usage);
+                changed = true;
             }
         } else {
-            for key in &mut self.report.keys {
-                if *key == usage {
-                    *key = 0;
-                }
-            }
-            let mut compacted = [0u8; 6];
-            let mut idx = 0;
-            for &k in &self.report.keys {
-                if k != 0 && idx < compacted.len() {
-                    compacted[idx] = k;
-                    idx += 1;
-                }
-            }
-            self.report.keys = compacted;
+            let before_len = self.pressed_keys.len();
+            self.pressed_keys.retain(|&k| k != usage);
+            changed = before_len != self.pressed_keys.len();
         }
 
-        self.enqueue_report();
+        if changed {
+            self.enqueue_current_report();
+        }
     }
 
-    fn enqueue_report(&mut self) {
-        let mut bytes = [0u8; 8];
-        bytes[0] = self.report.modifiers;
-        bytes[1] = self.report.reserved;
-        bytes[2..].copy_from_slice(&self.report.keys);
-        self.pending_reports.push_back(bytes);
+    fn enqueue_current_report(&mut self) {
+        let report = build_keyboard_report(self.modifiers, &self.pressed_keys).to_bytes();
+        if report == self.last_report {
+            return;
+        }
+        self.last_report = report;
+        self.pending_reports.push_back(report);
         if self.pending_reports.len() > MAX_PENDING_REPORTS_KEYBOARD {
             self.pending_reports.pop_front();
         }
@@ -224,6 +252,9 @@ impl UsbHidKeyboard {
         if let Some(cfg) = self.pending_configuration.take() {
             self.configuration = cfg;
             if self.configuration == 0 {
+                self.modifiers = 0;
+                self.pressed_keys.clear();
+                self.last_report = [0; 8];
                 self.pending_reports.clear();
             }
         }
@@ -392,11 +423,11 @@ impl UsbHidKeyboard {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
                     1 => {
-                        let mut bytes = [0u8; 8];
-                        bytes[0] = self.report.modifiers;
-                        bytes[1] = self.report.reserved;
-                        bytes[2..].copy_from_slice(&self.report.keys);
-                        Some(bytes.to_vec())
+                        Some(
+                            build_keyboard_report(self.modifiers, &self.pressed_keys)
+                                .to_bytes()
+                                .to_vec(),
+                        )
                     }
                     2 => Some(vec![self.leds]),
                     _ => None,
@@ -501,7 +532,9 @@ impl UsbDevice for UsbHidKeyboard {
         self.idle_rate = 0;
         self.leds = 0;
         self.ep0 = Ep0Control::new();
-        self.report = KeyboardReport::empty();
+        self.modifiers = 0;
+        self.pressed_keys.clear();
+        self.last_report = [0; 8];
         self.pending_reports.clear();
     }
 
@@ -1625,7 +1658,9 @@ pub struct UsbHidCompositeInput {
     idle_rates: [u8; 3],
     ep0: Ep0Control,
 
-    keyboard_report: KeyboardReport,
+    keyboard_modifiers: u8,
+    keyboard_pressed_keys: Vec<u8>,
+    keyboard_last_report: [u8; 8],
     keyboard_leds: u8,
     pending_keyboard_reports: VecDeque<[u8; 8]>,
 
@@ -1648,7 +1683,9 @@ impl UsbHidCompositeInput {
             protocols: [1; 3],
             idle_rates: [0; 3],
             ep0: Ep0Control::new(),
-            keyboard_report: KeyboardReport::empty(),
+            keyboard_modifiers: 0,
+            keyboard_pressed_keys: Vec::new(),
+            keyboard_last_report: [0; 8],
             keyboard_leds: 0,
             pending_keyboard_reports: VecDeque::new(),
             mouse_buttons: 0,
@@ -1659,42 +1696,33 @@ impl UsbHidCompositeInput {
     }
 
     pub fn key_event(&mut self, usage: u8, pressed: bool) {
-        if (0xE0..=0xE7).contains(&usage) {
-            let bit = 1u8 << (usage - 0xE0);
-            if pressed {
-                self.keyboard_report.modifiers |= bit;
-            } else {
-                self.keyboard_report.modifiers &= !bit;
-            }
-            self.enqueue_keyboard_report();
+        if usage == 0 {
             return;
         }
 
-        if pressed {
-            if self.keyboard_report.keys.iter().any(|&k| k == usage) {
-                return;
+        let mut changed = false;
+        if let Some(bit) = keyboard_modifier_bit(usage) {
+            let before = self.keyboard_modifiers;
+            if pressed {
+                self.keyboard_modifiers |= bit;
+            } else {
+                self.keyboard_modifiers &= !bit;
             }
-            if let Some(slot) = self.keyboard_report.keys.iter_mut().find(|k| **k == 0) {
-                *slot = usage;
+            changed = before != self.keyboard_modifiers;
+        } else if pressed {
+            if !self.keyboard_pressed_keys.iter().any(|&k| k == usage) {
+                self.keyboard_pressed_keys.push(usage);
+                changed = true;
             }
         } else {
-            for key in &mut self.keyboard_report.keys {
-                if *key == usage {
-                    *key = 0;
-                }
-            }
-            let mut compacted = [0u8; 6];
-            let mut idx = 0;
-            for &k in &self.keyboard_report.keys {
-                if k != 0 && idx < compacted.len() {
-                    compacted[idx] = k;
-                    idx += 1;
-                }
-            }
-            self.keyboard_report.keys = compacted;
+            let before_len = self.keyboard_pressed_keys.len();
+            self.keyboard_pressed_keys.retain(|&k| k != usage);
+            changed = before_len != self.keyboard_pressed_keys.len();
         }
 
-        self.enqueue_keyboard_report();
+        if changed {
+            self.enqueue_keyboard_report();
+        }
     }
 
     pub fn mouse_movement(&mut self, dx: i32, dy: i32) {
@@ -1760,11 +1788,12 @@ impl UsbHidCompositeInput {
     }
 
     fn enqueue_keyboard_report(&mut self) {
-        let mut bytes = [0u8; 8];
-        bytes[0] = self.keyboard_report.modifiers;
-        bytes[1] = self.keyboard_report.reserved;
-        bytes[2..].copy_from_slice(&self.keyboard_report.keys);
-        self.pending_keyboard_reports.push_back(bytes);
+        let report = build_keyboard_report(self.keyboard_modifiers, &self.keyboard_pressed_keys).to_bytes();
+        if report == self.keyboard_last_report {
+            return;
+        }
+        self.keyboard_last_report = report;
+        self.pending_keyboard_reports.push_back(report);
         if self.pending_keyboard_reports.len() > MAX_PENDING_REPORTS_KEYBOARD {
             self.pending_keyboard_reports.pop_front();
         }
@@ -1777,6 +1806,9 @@ impl UsbHidCompositeInput {
         if let Some(cfg) = self.pending_configuration.take() {
             self.configuration = cfg;
             if self.configuration == 0 {
+                self.keyboard_modifiers = 0;
+                self.keyboard_pressed_keys.clear();
+                self.keyboard_last_report = [0; 8];
                 self.pending_keyboard_reports.clear();
                 self.pending_mouse_reports.clear();
                 self.pending_gamepad_reports.clear();
@@ -1985,11 +2017,11 @@ impl UsbHidCompositeInput {
                 let report_type = (setup.value >> 8) as u8;
                 match (interface, report_type) {
                     (0, 1) => {
-                        let mut bytes = [0u8; 8];
-                        bytes[0] = self.keyboard_report.modifiers;
-                        bytes[1] = self.keyboard_report.reserved;
-                        bytes[2..].copy_from_slice(&self.keyboard_report.keys);
-                        Some(bytes.to_vec())
+                        Some(
+                            build_keyboard_report(self.keyboard_modifiers, &self.keyboard_pressed_keys)
+                                .to_bytes()
+                                .to_vec(),
+                        )
                     }
                     (0, 2) => Some(vec![self.keyboard_leds]),
                     (1, 1) => Some(vec![self.mouse_buttons & 0x07, 0, 0, 0]),
@@ -2112,7 +2144,9 @@ impl UsbDevice for UsbHidCompositeInput {
         self.protocols = [1; 3];
         self.idle_rates = [0; 3];
         self.ep0 = Ep0Control::new();
-        self.keyboard_report = KeyboardReport::empty();
+        self.keyboard_modifiers = 0;
+        self.keyboard_pressed_keys.clear();
+        self.keyboard_last_report = [0; 8];
         self.keyboard_leds = 0;
         self.pending_keyboard_reports.clear();
         self.mouse_buttons = 0;
