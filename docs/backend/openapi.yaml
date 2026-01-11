@@ -241,7 +241,7 @@ components:
         endpoints:
           type: object
           additionalProperties: false
-          required: [tcp, dnsQuery, l2]
+          required: [tcp, tcpMux, dnsQuery, dnsJson, l2, udpRelayToken]
           properties:
             tcp:
               type: string
@@ -269,7 +269,11 @@ components:
               example: /l2
             udpRelayToken:
               type: string
-              description: Path for the UDP relay token refresh endpoint.
+              description: |
+                Path for the UDP relay token refresh endpoint.
+
+                This endpoint may return 404 when the gateway is not configured
+                with `UDP_RELAY_BASE_URL`.
               example: /udp-relay/token
         udpRelay:
           $ref: '#/components/schemas/UdpRelayInfo'
