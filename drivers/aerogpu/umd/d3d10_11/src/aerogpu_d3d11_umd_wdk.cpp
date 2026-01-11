@@ -1306,6 +1306,27 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
   }
 };
 
+template <typename TFnPtr>
+struct DdiNoopStub;
+
+template <typename Ret, typename... Args>
+struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+      // Size queries must not return 0 to avoid runtimes treating the object as
+      // unsupported and then dereferencing null private memory.
+      return sizeof(uint64_t);
+    } else if constexpr (std::is_same_v<Ret, void>) {
+      return;
+    } else {
+      return Ret{};
+    }
+  }
+};
+
 // -------------------------------------------------------------------------------------------------
 // D3D11 DDI function-table stub filling
 //
@@ -1527,6 +1548,7 @@ static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnResolveSubresource)                                                                                           \
   X(pfnGenerateMips)                                                                                                \
   X(pfnSetResourceMinLOD)                                                                                             \
+  X(pfnGetResourceMinLOD)                                                                                             \
   X(pfnClearRenderTargetView)                                                                                       \
   X(pfnClearUnorderedAccessViewUint)                                                                                \
   X(pfnClearUnorderedAccessViewFloat)                                                                               \
@@ -1534,13 +1556,29 @@ static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnBegin)                                                                                                       \
   X(pfnEnd)                                                                                                         \
   X(pfnQueryGetData)                                                                                                \
+  X(pfnGetData)                                                                                                      \
   X(pfnSetPredication)                                                                                               \
   X(pfnExecuteCommandList)                                                                                          \
   X(pfnFinishCommandList)                                                                                           \
   X(pfnClearState)                                                                                                  \
   X(pfnFlush)                                                                                                       \
   X(pfnPresent)                                                                                                     \
-  X(pfnRotateResourceIdentities)
+  X(pfnRotateResourceIdentities)                                                                                    \
+  X(pfnDiscardResource)                                                                                              \
+  X(pfnDiscardView)                                                                                                  \
+  X(pfnSetMarker)                                                                                                    \
+  X(pfnBeginEvent)                                                                                                   \
+  X(pfnEndEvent)
+
+// Context entrypoints that are frequently called as part of ClearState /
+// unbind/reset sequences and should not spam SetErrorCb(E_NOTIMPL) when stubbed.
+#define AEROGPU_D3D11_DEVICECONTEXTFUNCS_NOOP_FIELDS(X)                                                            \
+  X(pfnDiscardResource)                                                                                              \
+  X(pfnDiscardView)                                                                                                  \
+  X(pfnSetMarker)                                                                                                    \
+  X(pfnBeginEvent)                                                                                                   \
+  X(pfnEndEvent)                                                                                                     \
+  X(pfnSetResourceMinLOD)
 
 static void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
   if (!out) {
@@ -1562,6 +1600,12 @@ static void InitDeviceContextFuncsWithStubs(D3D11DDI_DEVICECONTEXTFUNCS* out) {
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::field) { out->field = &DdiStub<decltype(out->field)>::Call; }
   AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS(AEROGPU_ASSIGN_CTX_STUB)
 #undef AEROGPU_ASSIGN_CTX_STUB
+
+  // Avoid spamming SetErrorCb for benign ClearState/unbind sequences.
+#define AEROGPU_ASSIGN_CTX_NOOP(field)                                                                              \
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::field) { out->field = &DdiNoopStub<decltype(out->field)>::Call; }
+  AEROGPU_D3D11_DEVICECONTEXTFUNCS_NOOP_FIELDS(AEROGPU_ASSIGN_CTX_NOOP)
+#undef AEROGPU_ASSIGN_CTX_NOOP
 }
 // Some DDIs (notably Present/RotateResourceIdentities) historically move between
 // the device and context tables across D3D11 DDI interface versions. Bind them
