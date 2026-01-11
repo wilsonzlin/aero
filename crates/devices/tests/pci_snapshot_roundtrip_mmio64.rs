@@ -154,4 +154,4 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_probe_state() {
     let mapped = bus2.mapped_mmio_bars();
     assert_eq!(mapped.len(), 1);
     assert_eq!(mapped[0].range.base, 0x1_2345_6000);
- }
+}
