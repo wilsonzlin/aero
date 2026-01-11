@@ -129,6 +129,14 @@ struct Adapter {
   // adapter multiple times (common with D3D9Ex + DWM).
   LUID luid = {};
 
+  // Best-effort VidPnSourceId corresponding to the active display output for
+  // this adapter. Populated when available via D3DKMTOpenAdapterFromHdc.
+  //
+  // Used to improve vblank waits (D3DKMTGetScanLine). If unknown, code should
+  // fall back to a time-based sleep.
+  uint32_t vid_pn_source_id = 0;
+  bool vid_pn_source_id_valid = false;
+
   // Reference count for OpenAdapter* / CloseAdapter bookkeeping.
   std::atomic<uint32_t> open_count{0};
 

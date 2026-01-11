@@ -5118,7 +5118,11 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
   // but always keep the wait bounded so DWM cannot hang if vblank delivery is
   // broken.
   const uint32_t timeout_ms = std::min<uint32_t>(40, std::max<uint32_t>(1, period_ms * 2));
-  if (dev->adapter->kmd_query.WaitForVBlank(/*vid_pn_source_id=*/0, timeout_ms)) {
+  uint32_t vid_pn_source_id = 0;
+  if (dev->adapter->vid_pn_source_id_valid) {
+    vid_pn_source_id = dev->adapter->vid_pn_source_id;
+  }
+  if (dev->adapter->kmd_query.WaitForVBlank(vid_pn_source_id, timeout_ms)) {
     return trace.ret(S_OK);
   }
   ::Sleep(period_ms);
@@ -5838,6 +5842,14 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
     const bool kmd_ok = adapter && adapter->kmd_query.InitFromHdc(hdc);
     if (adapter) {
       adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+      uint32_t vid_pn_source_id = 0;
+      if (kmd_ok && adapter->kmd_query.GetVidPnSourceId(&vid_pn_source_id)) {
+        adapter->vid_pn_source_id = vid_pn_source_id;
+        adapter->vid_pn_source_id_valid = true;
+      } else {
+        adapter->vid_pn_source_id = 0;
+        adapter->vid_pn_source_id_valid = false;
+      }
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
@@ -5937,6 +5949,14 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
     const bool kmd_ok = adapter && adapter->kmd_query.InitFromHdc(hdc);
     if (adapter) {
       adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+      uint32_t vid_pn_source_id = 0;
+      if (kmd_ok && adapter->kmd_query.GetVidPnSourceId(&vid_pn_source_id)) {
+        adapter->vid_pn_source_id = vid_pn_source_id;
+        adapter->vid_pn_source_id_valid = true;
+      } else {
+        adapter->vid_pn_source_id = 0;
+        adapter->vid_pn_source_id_valid = false;
+      }
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
@@ -6034,6 +6054,14 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
     const bool kmd_ok = adapter && adapter->kmd_query.InitFromHdc(pOpenAdapter->hDc);
     if (adapter) {
       adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+      uint32_t vid_pn_source_id = 0;
+      if (kmd_ok && adapter->kmd_query.GetVidPnSourceId(&vid_pn_source_id)) {
+        adapter->vid_pn_source_id = vid_pn_source_id;
+        adapter->vid_pn_source_id_valid = true;
+      } else {
+        adapter->vid_pn_source_id = 0;
+        adapter->vid_pn_source_id_valid = false;
+      }
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
@@ -6108,6 +6136,14 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
     const bool kmd_ok = adapter && adapter->kmd_query.InitFromLuid(luid);
     if (adapter) {
       adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+      uint32_t vid_pn_source_id = 0;
+      if (kmd_ok && adapter->kmd_query.GetVidPnSourceId(&vid_pn_source_id)) {
+        adapter->vid_pn_source_id = vid_pn_source_id;
+        adapter->vid_pn_source_id_valid = true;
+      } else {
+        adapter->vid_pn_source_id = 0;
+        adapter->vid_pn_source_id_valid = false;
+      }
     }
     if (kmd_ok) {
       uint64_t submitted = 0;

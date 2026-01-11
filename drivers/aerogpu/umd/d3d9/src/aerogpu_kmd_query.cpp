@@ -120,9 +120,70 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
     if (NtSuccess(st) && data.hAdapter != 0) {
       adapter_ = data.hAdapter;
       adapter_luid_ = adapter_luid;
+      vid_pn_source_id_ = 0;
+      vid_pn_source_id_valid_ = false;
       if (query_adapter_info_) {
         ProbeUmdPrivateTypeLocked();
       }
+
+      // Best-effort: resolve the VidPnSourceId by enumerating display HDCs. The
+      // LUID open path does not provide it, but having a valid source ID enables
+      // a more accurate vblank wait via D3DKMTGetScanLine.
+      if (open_adapter_from_hdc_) {
+        DISPLAY_DEVICEW dd;
+        std::memset(&dd, 0, sizeof(dd));
+        dd.cb = sizeof(dd);
+
+        for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i) {
+          const bool active = (dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0;
+          if (!active) {
+            std::memset(&dd, 0, sizeof(dd));
+            dd.cb = sizeof(dd);
+            continue;
+          }
+
+          HDC hdc = CreateDCW(L"DISPLAY", dd.DeviceName, nullptr, nullptr);
+          if (!hdc) {
+            std::memset(&dd, 0, sizeof(dd));
+            dd.cb = sizeof(dd);
+            continue;
+          }
+
+          D3DKMT_OPENADAPTERFROMHDC open_hdc{};
+          open_hdc.hDc = hdc;
+          open_hdc.hAdapter = 0;
+          std::memset(&open_hdc.AdapterLuid, 0, sizeof(open_hdc.AdapterLuid));
+          open_hdc.VidPnSourceId = 0;
+
+          const NTSTATUS st_hdc = open_adapter_from_hdc_(&open_hdc);
+          DeleteDC(hdc);
+
+          if (!NtSuccess(st_hdc) || open_hdc.hAdapter == 0) {
+            std::memset(&dd, 0, sizeof(dd));
+            dd.cb = sizeof(dd);
+            continue;
+          }
+
+          const bool luid_match = (open_hdc.AdapterLuid.LowPart == adapter_luid.LowPart) &&
+                                  (open_hdc.AdapterLuid.HighPart == adapter_luid.HighPart);
+
+          // Close the temporary handle regardless of match; we keep the handle
+          // returned by D3DKMTOpenAdapterFromLuid.
+          D3DKMT_CLOSEADAPTER close{};
+          close.hAdapter = open_hdc.hAdapter;
+          close_adapter_(&close);
+
+          if (luid_match) {
+            vid_pn_source_id_ = open_hdc.VidPnSourceId;
+            vid_pn_source_id_valid_ = true;
+            break;
+          }
+
+          std::memset(&dd, 0, sizeof(dd));
+          dd.cb = sizeof(dd);
+        }
+      }
+
       return true;
     }
   }
@@ -182,6 +243,8 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
 
     adapter_ = open_hdc.hAdapter;
     adapter_luid_ = open_hdc.AdapterLuid;
+    vid_pn_source_id_ = open_hdc.VidPnSourceId;
+    vid_pn_source_id_valid_ = true;
     if (query_adapter_info_) {
       ProbeUmdPrivateTypeLocked();
     }
@@ -237,9 +300,24 @@ bool AerogpuKmdQuery::InitFromHdc(HDC hdc) {
 
   adapter_ = data.hAdapter;
   adapter_luid_ = data.AdapterLuid;
+  vid_pn_source_id_ = data.VidPnSourceId;
+  vid_pn_source_id_valid_ = true;
   if (query_adapter_info_) {
     ProbeUmdPrivateTypeLocked();
   }
+  return true;
+}
+
+bool AerogpuKmdQuery::GetVidPnSourceId(uint32_t* out_vid_pn_source_id) {
+  if (!out_vid_pn_source_id) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!vid_pn_source_id_valid_) {
+    return false;
+  }
+  *out_vid_pn_source_id = vid_pn_source_id_;
   return true;
 }
 
@@ -257,6 +335,8 @@ void AerogpuKmdQuery::ShutdownLocked() {
 
   adapter_ = 0;
   std::memset(&adapter_luid_, 0, sizeof(adapter_luid_));
+  vid_pn_source_id_ = 0;
+  vid_pn_source_id_valid_ = false;
 
   open_adapter_from_luid_ = nullptr;
   open_adapter_from_hdc_ = nullptr;
@@ -497,6 +577,10 @@ bool AerogpuKmdQuery::QueryFence(uint64_t*, uint64_t*) {
 
 uint32_t AerogpuKmdQuery::GetKmtAdapterHandle() {
   return 0;
+}
+
+bool AerogpuKmdQuery::GetVidPnSourceId(uint32_t*) {
+  return false;
 }
 
 bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1*) {

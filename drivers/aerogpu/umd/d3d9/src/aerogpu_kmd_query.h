@@ -59,6 +59,14 @@ class AerogpuKmdQuery {
   // like D3DKMTWaitForSynchronizationObject.
   uint32_t GetKmtAdapterHandle();
 
+  // Returns the VidPnSourceId associated with the opened adapter when known.
+  //
+  // This is primarily used for best-effort vblank waits via D3DKMTGetScanLine.
+  // Some open paths (e.g. D3DKMTOpenAdapterFromLuid) do not directly provide a
+  // VidPnSourceId; in those cases this returns false and callers should fall
+  // back to a time-based sleep.
+  bool GetVidPnSourceId(uint32_t* out_vid_pn_source_id);
+
   // Waits until the completed fence is >= `fence`, or until `timeout_ms`
   // elapses. Uses cooperative polling (Sleep(0/1)), not a busy spin.
   bool WaitForFence(uint64_t fence, uint32_t timeout_ms);
@@ -109,6 +117,8 @@ class AerogpuKmdQuery {
 
   D3DKMT_HANDLE adapter_ = 0;
   LUID adapter_luid_ = {};
+  unsigned int vid_pn_source_id_ = 0;
+  bool vid_pn_source_id_valid_ = false;
 
   bool umdriverprivate_type_known_ = false;
   unsigned int umdriverprivate_type_ = 0;
