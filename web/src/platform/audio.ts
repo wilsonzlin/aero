@@ -1,4 +1,9 @@
-import audioWorkletProcessorUrl from "./audio-worklet-processor.js?worker&url";
+// The audio worklet processor is loaded at runtime via `AudioWorklet.addModule()`.
+//
+// Use `new URL(..., import.meta.url)` instead of Vite-only `?worker&url` imports so that:
+// - Node unit tests can import this module without a bundler transform.
+// - Vite still emits the worklet module as a separate asset and rewrites the URL in builds.
+const audioWorkletProcessorUrl = new URL("./audio-worklet-processor.js", import.meta.url).toString();
 
 export type CreateAudioOutputOptions = {
   sampleRate?: number;
