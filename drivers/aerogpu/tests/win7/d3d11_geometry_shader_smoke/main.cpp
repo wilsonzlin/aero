@@ -73,6 +73,17 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
 static int RunD3D11GeometryShaderSmoke(int argc, char** argv) {
   const char* kTestName = "d3d11_geometry_shader_smoke";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -419,11 +430,13 @@ static int RunD3D11GeometryShaderSmoke(int argc, char** argv) {
   context->Unmap(staging.get(), 0);
 
   if ((corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
+    PrintDeviceRemovedReasonIfAny(kTestName, device.get());
     return reporter.Fail("corner pixel mismatch: got 0x%08lX expected ~0x%08lX",
                          (unsigned long)corner,
                          (unsigned long)expected_corner);
   }
   if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
+    PrintDeviceRemovedReasonIfAny(kTestName, device.get());
     return reporter.Fail("center pixel mismatch: got 0x%08lX expected ~0x%08lX",
                          (unsigned long)center,
                          (unsigned long)expected_center);

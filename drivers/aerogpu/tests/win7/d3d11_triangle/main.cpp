@@ -14,10 +14,10 @@ struct Vertex {
 };
 
 static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
-                                     const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -30,6 +30,17 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
     return reporter->FailHresult(what, hr);
   }
   return aerogpu_test::FailHresult(test_name, what, hr);
+}
+
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
 }
 
 static int RunD3D11Triangle(int argc, char** argv) {
@@ -404,6 +415,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
 
   if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
+    PrintDeviceRemovedReasonIfAny(kTestName, device.get());
     return reporter.Fail("pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
                          (unsigned long)center,
                          (unsigned long)corner);
