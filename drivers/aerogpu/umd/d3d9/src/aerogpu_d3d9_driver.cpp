@@ -1251,7 +1251,15 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
     args.pAllocationList = dev->wddm_context.pAllocationList;
   }
   if constexpr (has_member_AllocationListSize<ArgsT>::value) {
-    args.AllocationListSize = dev->wddm_context.allocation_list_entries_used;
+    // DDI structs disagree on whether AllocationListSize means "capacity" or
+    // "entries used". When NumAllocations is present, treat AllocationListSize
+    // as the capacity returned by CreateContext. Otherwise fall back to the used
+    // count (legacy submit structs with only a single size field).
+    if constexpr (has_member_NumAllocations<ArgsT>::value) {
+      args.AllocationListSize = dev->wddm_context.AllocationListSize;
+    } else {
+      args.AllocationListSize = dev->wddm_context.allocation_list_entries_used;
+    }
   }
   if constexpr (has_member_NumAllocations<ArgsT>::value) {
     args.NumAllocations = dev->wddm_context.allocation_list_entries_used;
@@ -1260,7 +1268,11 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
     args.pPatchLocationList = dev->wddm_context.pPatchLocationList;
   }
   if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
-    args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
+    if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
+      args.PatchLocationListSize = dev->wddm_context.PatchLocationListSize;
+    } else {
+      args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
+    }
   }
   if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
     args.NumPatchLocations = dev->wddm_context.patch_location_entries_used;
@@ -1269,41 +1281,70 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
 
 template <typename ArgsT>
 void update_context_from_submit_args(Device* dev, const ArgsT& args) {
+  bool updated_cmd_buffer = false;
   if constexpr (has_member_pNewCommandBuffer<ArgsT>::value && has_member_NewCommandBufferSize<ArgsT>::value) {
     if (args.pNewCommandBuffer && args.NewCommandBufferSize) {
       dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(args.pNewCommandBuffer);
       dev->wddm_context.CommandBufferSize = args.NewCommandBufferSize;
+      updated_cmd_buffer = true;
     }
   }
-  if constexpr (has_member_pCommandBuffer<ArgsT>::value) {
-    dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(args.pCommandBuffer);
+
+  if (!updated_cmd_buffer) {
+    if constexpr (has_member_pCommandBuffer<ArgsT>::value) {
+      if (args.pCommandBuffer) {
+        dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(args.pCommandBuffer);
+      }
+    }
+    if constexpr (has_member_CommandBufferSize<ArgsT>::value) {
+      if (args.CommandBufferSize) {
+        dev->wddm_context.CommandBufferSize = args.CommandBufferSize;
+      }
+    }
   }
-  if constexpr (has_member_CommandBufferSize<ArgsT>::value) {
-    dev->wddm_context.CommandBufferSize = args.CommandBufferSize;
-  }
+
+  bool updated_allocation_list = false;
   if constexpr (has_member_pNewAllocationList<ArgsT>::value && has_member_NewAllocationListSize<ArgsT>::value) {
     if (args.pNewAllocationList && args.NewAllocationListSize) {
       dev->wddm_context.pAllocationList = args.pNewAllocationList;
       dev->wddm_context.AllocationListSize = args.NewAllocationListSize;
+      updated_allocation_list = true;
     }
   }
-  if constexpr (has_member_pAllocationList<ArgsT>::value) {
-    dev->wddm_context.pAllocationList = args.pAllocationList;
+
+  if (!updated_allocation_list) {
+    if constexpr (has_member_pAllocationList<ArgsT>::value) {
+      if (args.pAllocationList) {
+        dev->wddm_context.pAllocationList = args.pAllocationList;
+      }
+    }
+    if constexpr (has_member_AllocationListSize<ArgsT>::value && has_member_NumAllocations<ArgsT>::value) {
+      if (args.AllocationListSize) {
+        dev->wddm_context.AllocationListSize = args.AllocationListSize;
+      }
+    }
   }
-  if constexpr (has_member_AllocationListSize<ArgsT>::value) {
-    dev->wddm_context.AllocationListSize = args.AllocationListSize;
-  }
+
+  bool updated_patch_list = false;
   if constexpr (has_member_pNewPatchLocationList<ArgsT>::value && has_member_NewPatchLocationListSize<ArgsT>::value) {
     if (args.pNewPatchLocationList && args.NewPatchLocationListSize) {
       dev->wddm_context.pPatchLocationList = args.pNewPatchLocationList;
       dev->wddm_context.PatchLocationListSize = args.NewPatchLocationListSize;
+      updated_patch_list = true;
     }
   }
-  if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
-    dev->wddm_context.pPatchLocationList = args.pPatchLocationList;
-  }
-  if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
-    dev->wddm_context.PatchLocationListSize = args.PatchLocationListSize;
+
+  if (!updated_patch_list) {
+    if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
+      if (args.pPatchLocationList) {
+        dev->wddm_context.pPatchLocationList = args.pPatchLocationList;
+      }
+    }
+    if constexpr (has_member_PatchLocationListSize<ArgsT>::value && has_member_NumPatchLocations<ArgsT>::value) {
+      if (args.PatchLocationListSize) {
+        dev->wddm_context.PatchLocationListSize = args.PatchLocationListSize;
+      }
+    }
   }
 }
 
@@ -4216,6 +4257,13 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
       dev->wddm_context.CommandBufferSize >= sizeof(aerogpu_cmd_stream_header)) {
     dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
   }
+
+  // Bind the allocation-list tracker to the runtime-provided list so we can
+  // populate it immediately (e.g. shared-surface CreateResource can reference
+  // its backing allocation before the first submit()).
+  dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
+                                 dev->wddm_context.AllocationListSize,
+                                 adapter->max_allocation_list_slot_id);
 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
 
