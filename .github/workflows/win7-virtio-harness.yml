@@ -28,6 +28,36 @@ on:
         required: false
         default: false
         type: boolean
+      # virtio-snd testing requires modern-only virtio-pci enumeration (disable-legacy=on, x-pci-revision=0x01).
+      # Using the wav backend keeps the runner headless and produces an artifact for debugging regressions.
+      with_virtio_snd:
+        description: Attach virtio-snd and require the guest virtio-snd playback selftest to PASS
+        required: false
+        default: false
+        type: boolean
+      virtio_snd_audio_backend:
+        description: Audio backend to use when virtio-snd is enabled
+        required: false
+        default: wav
+        type: choice
+        options:
+          - none
+          - wav
+      virtio_snd_verify_wav:
+        description: When using the wav backend, fail if the captured audio is silent
+        required: false
+        default: true
+        type: boolean
+      virtio_snd_wav_peak_threshold:
+        description: Optional override for wav non-silence peak threshold (default is harness default)
+        required: false
+        default: ""
+        type: string
+      virtio_snd_wav_rms_threshold:
+        description: Optional override for wav non-silence RMS threshold (default is harness default)
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   # QEMU uses fixed ports and shared images; overlapping runs will conflict.
@@ -60,6 +90,7 @@ jobs:
           serial_log="${log_dir}/win7-virtio-serial.log"
           http_log="${log_dir}/http.log"
           harness_log="${log_dir}/harness.log"
+          virtio_snd_wav_path="${log_dir}/virtio-snd.wav"
 
           : >"${serial_log}"
           : >"${http_log}"
@@ -75,6 +106,11 @@ jobs:
             echo "  timeout_seconds: '${{ inputs.timeout_seconds }}'"
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
+            echo "  with_virtio_snd: '${{ inputs.with_virtio_snd }}'"
+            echo "  virtio_snd_audio_backend: '${{ inputs.virtio_snd_audio_backend }}'"
+            echo "  virtio_snd_verify_wav: '${{ inputs.virtio_snd_verify_wav }}'"
+            echo "  virtio_snd_wav_peak_threshold: '${{ inputs.virtio_snd_wav_peak_threshold }}'"
+            echo "  virtio_snd_wav_rms_threshold: '${{ inputs.virtio_snd_wav_rms_threshold }}'"
             echo
 
             disk_image_path="${{ inputs.disk_image_path }}"
@@ -111,6 +147,15 @@ jobs:
             echo "qemu: $(\"${qemu_system}\" --version 2>&1 | head -n 1 || true)"
             echo
 
+            with_virtio_snd="${{ inputs.with_virtio_snd }}"
+            virtio_snd_audio_backend="${{ inputs.virtio_snd_audio_backend }}"
+            virtio_snd_verify_wav="${{ inputs.virtio_snd_verify_wav }}"
+            virtio_snd_wav_peak_threshold="${{ inputs.virtio_snd_wav_peak_threshold }}"
+            virtio_snd_wav_rms_threshold="${{ inputs.virtio_snd_wav_rms_threshold }}"
+
+            # Remove stale output from previous runs (self-hosted runners persist state).
+            rm -f "${virtio_snd_wav_path}"
+
             args=(
               python3 -u drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py
               --qemu-system "${qemu_system}"
@@ -124,6 +169,36 @@ jobs:
             fi
             if [[ "${{ inputs.follow_serial }}" == "true" ]]; then
               args+=(--follow-serial)
+            fi
+            if [[ "${with_virtio_snd}" == "true" ]]; then
+              args+=(--with-virtio-snd)
+
+              case "${virtio_snd_audio_backend}" in
+                wav)
+                  args+=(--virtio-snd-audio-backend=wav --virtio-snd-wav-path "${virtio_snd_wav_path}")
+
+                  if [[ "${virtio_snd_verify_wav}" == "true" ]]; then
+                    args+=(--virtio-snd-verify-wav)
+                  fi
+
+                  if [[ -n "${virtio_snd_wav_peak_threshold}" ]]; then
+                    args+=(--virtio-snd-wav-peak-threshold "${virtio_snd_wav_peak_threshold}")
+                  fi
+                  if [[ -n "${virtio_snd_wav_rms_threshold}" ]]; then
+                    args+=(--virtio-snd-wav-rms-threshold "${virtio_snd_wav_rms_threshold}")
+                  fi
+                  ;;
+                none)
+                  args+=(--virtio-snd-audio-backend=none)
+                  if [[ "${virtio_snd_verify_wav}" == "true" ]]; then
+                    echo "NOTE: virtio_snd_verify_wav=true is ignored because virtio_snd_audio_backend=none"
+                  fi
+                  ;;
+                *)
+                  echo "ERROR: unknown workflow input virtio_snd_audio_backend='${virtio_snd_audio_backend}'" >&2
+                  exit 1
+                  ;;
+              esac
             fi
 
             echo "Executing harness:"
@@ -161,6 +236,7 @@ jobs:
         with:
           name: win7-virtio-harness-logs
           if-no-files-found: error
+          # Includes virtio-snd.wav when virtio-snd is enabled with the wav backend.
           path: out/win7-virtio-harness-logs/
 
       - name: Job summary
