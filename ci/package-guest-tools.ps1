@@ -515,7 +515,9 @@ function Update-DevicesCmdStorageServiceFromDrivers {
   }
 
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-  [System.IO.File]::WriteAllLines($DevicesCmdPath, $updated, $utf8NoBom)
+  # Preserve Windows-friendly CRLF line endings even when this script runs on Linux.
+  $text = ($updated -join "`r`n") + "`r`n"
+  [System.IO.File]::WriteAllText($DevicesCmdPath, $text, $utf8NoBom)
 }
 
 function Copy-DriversToPackagerLayout {
