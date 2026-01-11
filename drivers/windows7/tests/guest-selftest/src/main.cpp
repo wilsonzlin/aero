@@ -435,6 +435,7 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
 static bool IsVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
     if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1018")) return true;
   }
   return false;
 }
@@ -1519,7 +1520,8 @@ static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const 
   for (const auto& m : match_names) {
     if (!m.empty() && ContainsInsensitive(friendly_name, m)) return true;
   }
-  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
+      ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
     return true;
   }
   if (IsVirtioSndPciHardwareId(hwids)) return true;
@@ -1748,7 +1750,8 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
       for (const auto& m : match_names) {
         if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
       }
-      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
+          ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
         score += 150;
       }
       if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
@@ -2137,7 +2140,8 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveOut[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
+      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059") ||
+          ContainsInsensitive(*inst_id, L"DEV_1018") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
