@@ -43,6 +43,24 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_webhid_device).toHaveBeenCalledWith([1], dev);
   });
 
+  it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev1 = { kind: "device" };
+    const dev2 = { kind: "device" };
+
+    mgr.setUhciBridge(uhci);
+
+    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+
+    mgr.attachDevice(1, [0, 2], "webhid", dev2);
+
+    // Detach old path (0.1) first, then clear/attach the new path (0.2).
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 1]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 2], dev2);
+  });
+
   it("defers device attachment until the UHCI bridge is available", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();

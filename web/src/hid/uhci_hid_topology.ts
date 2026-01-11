@@ -96,7 +96,13 @@ export class UhciHidTopologyManager {
   }
 
   attachDevice(deviceId: number, path: GuestUsbPath, kind: UhciHidPassthroughDeviceKind, device: unknown): void {
-    this.#devices.set(deviceId, { path: this.#normalizeDevicePath(path), kind, device });
+    const normalizedPath = this.#normalizeDevicePath(path.slice());
+    // Treat (re-)attach as a new session for this deviceId.
+    const prev = this.#devices.get(deviceId);
+    if (prev) {
+      this.#maybeDetachPath(prev.path);
+    }
+    this.#devices.set(deviceId, { path: normalizedPath, kind, device });
     this.#maybeAttachDevice(deviceId);
   }
 
