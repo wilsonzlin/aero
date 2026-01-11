@@ -226,7 +226,7 @@ The Option C implementation is split into a small set of concrete components:
 
 This RFC is accompanied by a minimal prototype that demonstrates the Option C shape:
 
-**Security note:** this prototype is for experimentation only and is not hardened for production use. For a maintained, policy-driven relay, use `backend/aero-gateway` (or `net-proxy/` for local development).
+**Security note:** this prototype is for experimentation only and is not hardened for production use. For a maintained, policy-driven L2 tunnel proxy, use `crates/aero-l2-proxy` (see [`docs/l2-tunnel-runbook.md`](./l2-tunnel-runbook.md)).
 
 **Protocol note:** the prototype now uses the versioned L2 tunnel framing (including basic
 PING/PONG handling) over WebSocket. Production implementations should use the maintained codec and
