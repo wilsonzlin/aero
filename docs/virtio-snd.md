@@ -87,6 +87,11 @@ The device expects a descriptor chain with:
 
 Captured reads are serviced only when the capture stream has been started; otherwise `VIRTIO_SND_S_IO_ERR` is returned.
 
+### Capture sample source
+
+In browser builds, captured samples are expected to come from the Web mic capture
+ring buffer (`SharedArrayBuffer`) via `aero_platform::audio::mic_bridge::MicBridge`.
+
 ### AudioWorklet ring buffer layout
 
 The AudioWorklet ring buffer used by the AU-WORKLET path uses **frame indices** (not sample indices).

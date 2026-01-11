@@ -490,6 +490,7 @@ version = "0.1.0"
 dependencies = [
  "aero-audio",
  "aero-devices",
+ "aero-platform",
  "virtio-gpu-proto",
 ]
 
