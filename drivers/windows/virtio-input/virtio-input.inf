@@ -20,10 +20,14 @@ CatalogFile=virtio-input.cat
 %Aero%=Aero,NTx86,NTamd64
 
 [Aero.NTx86]
-%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Aero.NTamd64]
-%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [DestinationDirs]
 VirtioInput.CopyFiles=12

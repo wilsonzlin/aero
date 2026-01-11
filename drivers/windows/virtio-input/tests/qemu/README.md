@@ -115,13 +115,15 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 
 Expected values include at least:
 
-- `PCI\VEN_1AF4&DEV_1052` (modern / non-transitional, used by QEMU today)
+- `PCI\VEN_1AF4&DEV_1052` (base VEN/DEV form)
 
 The list will also include more specific forms, e.g.:
 
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_01` (when using `x-pci-revision=0x01`)
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (when using `x-pci-revision=0x01`)
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_...&REV_01` (depending on the device model)
 
-The INF should match the shorter `VEN/DEV` form.
+The Aero Win7 virtio-input INF is intentionally **revision-gated**, so it matches the
+`...&REV_01` hardware IDs and does not bind to `REV_00` devices.
 
 ## Cross-checking with QEMU monitor (no guest required)
 

@@ -23,9 +23,14 @@ Commonly observed IDs:
 The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pci
 ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 
-The in-tree Aero virtio-input INF currently matches `PCI\VEN_1AF4&DEV_1052`
-(modern/non-transitional). If you need to support a transitional virtio-input PCI
-function (`DEV_1011`), update `virtio-input.inf` accordingly.
+The in-tree Aero virtio-input INF intentionally matches only **contract v1**
+hardware IDs:
+
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (and the more-specific `...&SUBSYS_...&REV_01` variants)
+
+This avoids “driver installs but won’t start” confusion: the driver enforces the
+contract major version at runtime, so binding to a non-contract `REV_00` device
+would otherwise install successfully but fail to start (Code 10).
 
 Contract v1 also encodes the major version in the PCI **Revision ID** (`REV_01`).
 Some QEMU virtio devices report `REV_00` by default; for contract-v1 testing under

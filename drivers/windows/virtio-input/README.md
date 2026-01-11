@@ -2,7 +2,7 @@
 
 This directory contains a **KMDF** driver that registers itself as a **HID minidriver** using `HidRegisterMinidriver`, intended to bind to the Aero contract v1 virtio-input PCI device:
 
-- Modern-only virtio-input: `PCI\VEN_1AF4&DEV_1052`
+- Aero contract v1 (revision-gated): `PCI\VEN_1AF4&DEV_1052&REV_01`
 
 The driver implements the Aero Windows 7 virtio contract (see `docs/windows7-virtio-driver-contract.md`):
 
@@ -60,7 +60,7 @@ The output `virtioinput.sys` will be placed under the WDK `objfre_*` output dire
      - `-device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01`
      - `-device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01`
    - In Device Manager, the device’s Hardware Ids should include at least:
-     - `PCI\VEN_1AF4&DEV_1052`
+     - `PCI\VEN_1AF4&DEV_1052&REV_01`
      - (and more-specific forms like `...&SUBSYS_...&REV_01` depending on the device model)
 2. Build and **test-sign** the driver package (or enable test signing):
    - `bcdedit /set testsigning on`

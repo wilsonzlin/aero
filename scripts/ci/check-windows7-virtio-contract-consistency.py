@@ -33,6 +33,15 @@ WINDOWS_DEVICE_CONTRACT_MD = REPO_ROOT / "docs/windows-device-contract.md"
 WINDOWS_DEVICE_CONTRACT_JSON = REPO_ROOT / "docs/windows-device-contract.json"
 WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
 
+# Canonical in-tree Win7 driver INFs that are expected to follow AERO-W7-VIRTIO v1
+# identity policy (modern IDs + contract major version encoded in PCI Revision ID).
+WIN7_VIRTIO_DRIVER_INFS: Mapping[str, Path] = {
+    "virtio-blk": REPO_ROOT / "drivers/windows7/virtio/blk/aerovblk.inf",
+    "virtio-net": REPO_ROOT / "drivers/windows7/virtio/net/aerovnet.inf",
+    "virtio-snd": REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf",
+    "virtio-input": REPO_ROOT / "drivers/windows/virtio-input/virtio-input.inf",
+}
+
 # virtio-pci vendor as allocated by PCI-SIG.
 VIRTIO_PCI_VENDOR_ID = 0x1AF4
 # Modern virtio-pci device IDs: 0x1040 + virtio device type.
@@ -235,6 +244,47 @@ def parse_hex(value: str) -> int:
         return int(value, 16)
     except ValueError:
         fail(f"expected hex literal, got: {value!r}")
+
+
+def parse_inf_hardware_ids(path: Path) -> set[str]:
+    """
+    Extract the set of active PCI Hardware IDs referenced by an INF.
+
+    We intentionally keep parsing lightweight (line-based) because INFs are simple
+    and we only need to guard against identity drift in the Models sections.
+    Comment lines (starting with ';' after optional whitespace) are ignored.
+    """
+
+    text = read_text(path)
+    out: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        # Strip inline comments.
+        if ";" in line:
+            line = line.split(";", 1)[0].rstrip()
+            if not line:
+                continue
+        parts = [p.strip() for p in line.split(",")]
+        if not parts:
+            continue
+        candidate = parts[-1]
+        if candidate.upper().startswith("PCI\\VEN_"):
+            out.add(candidate)
+    return out
+
+
+_PCI_HARDWARE_ID_RE = re.compile(r"^PCI\\VEN_(?P<ven>[0-9A-Fa-f]{4})&DEV_(?P<dev>[0-9A-Fa-f]{4})")
+
+
+def parse_pci_vendor_device_from_hwid(hwid: str) -> tuple[int, int] | None:
+    m = _PCI_HARDWARE_ID_RE.match(hwid)
+    if not m:
+        return None
+    return int(m.group("ven"), 16), int(m.group("dev"), 16)
 
 
 def windows_contract_marks_transitional_ids_out_of_scope(md: str) -> bool:
@@ -1808,6 +1858,94 @@ def main() -> None:
                 format_error(
                     f"{device_name}: aero-virtio device_features mentions VIRTIO_F_RING_EVENT_IDX, but contract v1 forbids offering EVENT_IDX:",
                     [f"file: {AERO_VIRTIO_DEVICE_SOURCES[device_name].as_posix()}"],
+                )
+            )
+
+    # ---------------------------------------------------------------------
+    # 5) Win7 driver INFs must follow strict contract-v1 identity policy.
+    #
+    # The AERO-W7-VIRTIO contract major version is encoded in PCI Revision ID.
+    # Some drivers additionally enforce this at runtime, but if the INF is not
+    # revision-gated Windows can still install the driver against a non-contract
+    # device and then fail to start (Code 10). Enforce REV gating here to avoid
+    # "driver installs but won't start" confusion.
+    # ---------------------------------------------------------------------
+    for device_name, inf_path in WIN7_VIRTIO_DRIVER_INFS.items():
+        if not inf_path.exists():
+            errors.append(f"missing expected Win7 virtio driver INF: {inf_path.as_posix()}")
+            continue
+
+        hwids = parse_inf_hardware_ids(inf_path)
+        if not hwids:
+            errors.append(f"{inf_path.as_posix()}: could not find any active PCI hardware IDs (PCI\\VEN_... lines)")
+            continue
+
+        # Guard against accidental transitional virtio-pci IDs in INFs.
+        transitional_hwids: list[str] = []
+        for hwid in hwids:
+            parsed = parse_pci_vendor_device_from_hwid(hwid)
+            if not parsed:
+                continue
+            ven, dev = parsed
+            if ven != VIRTIO_PCI_VENDOR_ID:
+                continue
+            if VIRTIO_PCI_TRANSITIONAL_DEVICE_ID_MIN <= dev <= VIRTIO_PCI_TRANSITIONAL_DEVICE_ID_MAX:
+                transitional_hwids.append(hwid)
+        if transitional_hwids:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: INF references transitional virtio-pci device IDs (out of scope for AERO-W7-VIRTIO v1):",
+                    [f"hwid: {h}" for h in sorted(transitional_hwids)],
+                )
+            )
+
+        # virtio-input uses one INF for both keyboard and mouse functions.
+        if device_name == "virtio-input":
+            contract_any = contract_ids["virtio-input (keyboard)"]
+        else:
+            contract_any = contract_ids[device_name]
+
+        base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
+        strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
+        hwids_upper = {h.upper() for h in hwids}
+        if strict_hwid.upper() not in hwids_upper:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
+                    [
+                        f"expected: {strict_hwid}",
+                        f"got: {sorted(hwids)}",
+                    ],
+                )
+            )
+
+        relevant = [h for h in hwids if h.upper().startswith(base_hwid.upper())]
+        missing_rev: list[str] = []
+        wrong_rev: list[str] = []
+        for hwid in relevant:
+            m = re.search(r"&REV_(?P<rev>[0-9A-Fa-f]{2})", hwid, flags=re.I)
+            if not m:
+                missing_rev.append(hwid)
+                continue
+            rev = int(m.group("rev"), 16)
+            if rev != contract_rev:
+                wrong_rev.append(hwid)
+
+        if missing_rev:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: INF matches {base_hwid} without revision gating (must require REV_{contract_rev:02X}):",
+                    [f"hwid: {h}" for h in sorted(missing_rev)],
+                )
+            )
+        if wrong_rev:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: INF REV_ qualifier does not match contract major version:",
+                    [
+                        f"expected: REV_{contract_rev:02X}",
+                        *[f"hwid: {h}" for h in sorted(wrong_rev)],
+                    ],
                 )
             )
 

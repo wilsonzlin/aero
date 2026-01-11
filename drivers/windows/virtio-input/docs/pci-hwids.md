@@ -74,8 +74,9 @@ Keyboard: PCI device 1af4:1052
 * Windows 7 will show the device as an unknown PCI device until a matching driver
   is installed.
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with
-  `SUBSYS_...` and `REV_...`). The INF should match at least the short form
-  `PCI\VEN_1AF4&DEV_1052`.
+  `SUBSYS_...` and `REV_...`. The INF should match a revision-gated form like
+  `PCI\VEN_1AF4&DEV_1052&REV_01` (and may additionally include the
+  `...&SUBSYS_...&REV_01` variants) to avoid binding to non-contract devices.
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
