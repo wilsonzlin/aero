@@ -334,6 +334,38 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 }
 
 static VOID
+VirtIoSndWaveRtWaitForRxIdle(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_opt_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    LARGE_INTEGER timeout;
+
+    if (Stream == NULL) {
+        return;
+    }
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return;
+    }
+
+    /*
+     * Wait for the in-flight RX request (if any) to complete.
+     *
+     * INTx interrupts should normally deliver RX completions, but if an interrupt
+     * is delayed or lost, the completion can already be present in the used ring
+     * without running the callback. Poll rxq while waiting to keep teardown
+     * deterministic.
+     */
+    timeout.QuadPart = -(LONGLONG)(10u * 1000u * 10u); /* 10ms */
+
+    while (KeReadStateEvent(&Stream->RxIdleEvent) == 0) {
+        if (Dx != NULL) {
+            (VOID)VirtIoSndHwDrainRxCompletions(Dx, NULL, NULL);
+        }
+
+        (VOID)KeWaitForSingleObject(&Stream->RxIdleEvent, Executive, KernelMode, FALSE, &timeout);
+    }
+}
+
+static VOID
 VirtIoSndWaveRtUpdateRegisters(
     _Inout_ PVIRTIOSND_WAVERT_STREAM Stream,
     _In_ ULONG RingPositionBytes,
@@ -1254,7 +1286,7 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
                     (VOID)VirtioSndCtrlStop1(&dx->Control);
                 }
 
-                KeWaitForSingleObject(&stream->RxIdleEvent, Executive, KernelMode, FALSE, NULL);
+                VirtIoSndWaveRtWaitForRxIdle(stream, dx);
 
                 if (state != KSSTATE_STOP) {
                     (VOID)VirtioSndCtrlRelease1(&dx->Control);
@@ -1497,7 +1529,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     KeSetEvent(&stream->RxIdleEvent, IO_NO_INCREMENT, FALSE);
                 }
 
-                KeWaitForSingleObject(&stream->RxIdleEvent, Executive, KernelMode, FALSE, NULL);
+                VirtIoSndWaveRtWaitForRxIdle(stream, dx);
 
                 current = KSSTATE_PAUSE;
                 continue;
