@@ -77,6 +77,16 @@ crates/aero-wasm      (wasm-bindgen JS API)
 **What it does**
 - Port I/O bus + chipset wiring (`aero-platform`) and reusable device models (`aero-devices`).
 
+#### `crates/aero-pc-platform` (`aero-pc-platform`)
+
+**What it does**
+- Higher-level PC platform composition helper (PIC/PIT/RTC/APIC/HPET + PCI bus + BAR MMIO mapping).
+
+**How it fits**
+- This is a *platform builder* rather than the canonical VM object itself.
+- It is used by targeted platform/unit tests and is expected to be folded into `aero-machine` as
+  the canonical machine grows to include more devices (PCI, timers, interrupts, etc.).
+
 #### `crates/emulator` (`emulator`)
 
 **What it does**
