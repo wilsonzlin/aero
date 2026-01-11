@@ -539,7 +539,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 let dst_rate = self.host_sample_rate_hz as u64;
                 let reserve_frames =
                     queued_src.saturating_mul(dst_rate) / (PCM_SAMPLE_RATE_HZ as u64) + 2;
-                self.resampled_scratch.reserve(reserve_frames as usize * 2);
+                if let Ok(frames) = usize::try_from(reserve_frames) {
+                    self.resampled_scratch.reserve(frames.saturating_mul(2));
+                }
                 let _ = self
                     .resampler
                     .produce_available_interleaved_stereo_into(&mut self.resampled_scratch);
