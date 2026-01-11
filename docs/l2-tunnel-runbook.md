@@ -51,6 +51,7 @@ cargo run --locked -p aero-l2-proxy
 #       AERO_L2_AUTH_MODE=cookie_or_jwt AERO_L2_SESSION_SECRET=sekrit AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
 #     - Cookie + API key:
 #       AERO_L2_AUTH_MODE=cookie_or_api_key AERO_L2_SESSION_SECRET=sekrit AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
+#       # (If AERO_L2_API_KEY is omitted, the proxy still accepts cookie auth; the API-key path is simply disabled.)
 #   - Credential delivery:
 #     - query params: `?token=...` (or `?apiKey=...` for API-key auth)
 #     - subprotocol token: additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>`
