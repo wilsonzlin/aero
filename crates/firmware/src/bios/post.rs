@@ -1,8 +1,8 @@
 use machine::{CpuState, FLAG_ALWAYS_ON, FLAG_IF};
 
 use super::{
-    ivt, pci::PciConfigSpace, rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT,
-    EBDA_BASE,
+    ivt, pci::PciConfigSpace, rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_ALIAS_BASE, BIOS_BASE,
+    BIOS_SEGMENT, EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -27,6 +27,7 @@ impl Bios {
         // 0) Install ROM stubs (read-only).
         let rom_image = rom::build_bios_rom();
         bus.map_rom(BIOS_BASE, &rom_image);
+        bus.map_rom(BIOS_ALIAS_BASE, &rom_image);
 
         // 1) Real-mode CPU init: interrupts disabled during POST.
         cpu.halted = false;

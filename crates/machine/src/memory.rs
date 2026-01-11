@@ -9,6 +9,22 @@ struct DirtyBitmap {
     page_size: usize,
 }
 
+#[derive(Debug, Clone)]
+struct RomMapping {
+    base: u64,
+    bytes: Vec<u8>,
+}
+
+impl RomMapping {
+    fn range(&self) -> Range<u64> {
+        self.base..self.base + self.bytes.len() as u64
+    }
+
+    fn contains(&self, addr: u64) -> bool {
+        addr >= self.base && addr < self.base + self.bytes.len() as u64
+    }
+}
+
 impl DirtyBitmap {
     fn new(mem_len: usize, page_size: usize) -> Self {
         let pages = mem_len.div_ceil(page_size);
@@ -173,6 +189,7 @@ pub struct PhysicalMemory {
     data: Vec<u8>,
     a20_enabled: bool,
     read_only_ranges: Vec<Range<u64>>,
+    rom_mappings: Vec<RomMapping>,
     dirty: DirtyBitmap,
 }
 
@@ -182,6 +199,7 @@ impl PhysicalMemory {
             data: vec![0; size],
             a20_enabled: false,
             read_only_ranges: Vec::new(),
+            rom_mappings: Vec::new(),
             dirty: DirtyBitmap::new(size, DIRTY_PAGE_SIZE),
         }
     }
@@ -282,25 +300,49 @@ impl A20Gate for PhysicalMemory {
 
 impl FirmwareMemory for PhysicalMemory {
     fn map_rom(&mut self, base: u64, rom: &[u8]) {
-        let base_usize = self.to_index(base);
-        let end = base_usize
-            .checked_add(rom.len())
-            .unwrap_or_else(|| panic!("ROM mapping overflow"));
-        assert!(
-            end <= self.data.len(),
-            "ROM mapping out of bounds: 0x{base:016x}+0x{:x} (mem=0x{:x})",
-            rom.len(),
-            self.data.len()
-        );
-        self.data[base_usize..end].copy_from_slice(rom);
-        self.read_only_ranges.push(base..base + rom.len() as u64);
+        let len = rom.len() as u64;
+        let end = base
+            .checked_add(len)
+            .unwrap_or_else(|| panic!("ROM mapping overflow: 0x{base:016x}+0x{len:x}"));
+
+        self.read_only_ranges.push(base..end);
+
+        // Map ROM into the backing RAM when possible, but also support sparse ROM windows outside
+        // the allocated RAM (e.g. the BIOS reset-vector alias at 0xFFFF_0000).
+        let ram_len = self.data.len() as u64;
+        if base < ram_len {
+            assert!(
+                end <= ram_len,
+                "ROM mapping out of bounds: 0x{base:016x}+0x{len:x} (mem=0x{ram_len:x})",
+            );
+            let base_usize: usize = base
+                .try_into()
+                .unwrap_or_else(|_| panic!("address out of range: 0x{base:016x}"));
+            let end_usize = base_usize + rom.len();
+            self.data[base_usize..end_usize].copy_from_slice(rom);
+        } else {
+            self.rom_mappings.push(RomMapping {
+                base,
+                bytes: rom.to_vec(),
+            });
+        }
     }
 }
 
 impl MemoryAccess for PhysicalMemory {
     fn read_u8(&self, addr: u64) -> u8 {
-        let idx = self.to_index(addr);
-        self.data[idx]
+        let addr = self.translate_addr(addr);
+        if addr < self.data.len() as u64 {
+            return self.data[addr as usize];
+        }
+
+        for mapping in &self.rom_mappings {
+            if mapping.contains(addr) {
+                return mapping.bytes[(addr - mapping.base) as usize];
+            }
+        }
+
+        panic!("address out of range: 0x{addr:016x}")
     }
 
     fn write_u8(&mut self, addr: u64, val: u8) {
@@ -313,9 +355,32 @@ impl MemoryAccess for PhysicalMemory {
     }
 
     fn fetch_code(&self, addr: u64, len: usize) -> &[u8] {
-        let idx = self.to_index(addr);
-        let end = idx + len;
-        &self.data[idx..end]
+        let addr = self.translate_addr(addr);
+        if addr < self.data.len() as u64 {
+            let idx = addr as usize;
+            let end = idx + len;
+            assert!(
+                end <= self.data.len(),
+                "fetch out of bounds: 0x{addr:016x}+0x{len:x} (mem=0x{:x})",
+                self.data.len()
+            );
+            return &self.data[idx..end];
+        }
+
+        let len_u64 = len as u64;
+        let end_addr = addr
+            .checked_add(len_u64)
+            .unwrap_or_else(|| panic!("fetch address overflow: 0x{addr:016x}+0x{len:x}"));
+
+        for mapping in &self.rom_mappings {
+            let range = mapping.range();
+            if addr >= range.start && end_addr <= range.end {
+                let off = (addr - range.start) as usize;
+                return &mapping.bytes[off..off + len];
+            }
+        }
+
+        panic!("fetch out of bounds: 0x{addr:016x}+0x{len:x}")
     }
 }
 
@@ -350,5 +415,22 @@ mod tests {
 
         assert_eq!(mem.read_u8(0x0020_0000), 0x11);
         assert_eq!(mem.read_u8(0x0030_0000), 0x22);
+    }
+
+    #[test]
+    fn map_rom_supports_sparse_mappings_above_ram() {
+        let mut mem = PhysicalMemory::new(2 * 1024 * 1024);
+        mem.set_a20_enabled(true);
+        let rom = [0xEAu8, 0x00, 0xE0, 0x00, 0xF0];
+        mem.map_rom(0xFFFF_0000, &rom);
+
+        assert_eq!(mem.read_u8(0xFFFF_0000), 0xEA);
+        assert_eq!(mem.read_u8(0xFFFF_0004), 0xF0);
+
+        // Writes to ROM windows should be ignored.
+        mem.write_u8(0xFFFF_0000, 0x90);
+        assert_eq!(mem.read_u8(0xFFFF_0000), 0xEA);
+
+        assert_eq!(mem.fetch_code(0xFFFF_0000, rom.len()), &rom);
     }
 }
