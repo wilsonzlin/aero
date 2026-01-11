@@ -1,6 +1,6 @@
-# Win7 (WDDM 1.1) D3D10/D3D11 UMD resource backing allocations + Map/Unmap (WDK 7.1 reference)
+# Win7 (WDDM 1.1) D3D10/D3D11 UMD resource backing allocations + Map/Unmap (Win7-era headers reference)
 
-This document is a **symbol-accurate (WDK 7.1)** reference for the Win7/WDDM 1.1 D3D10 and D3D11 UMD contracts around:
+This document is a **symbol-accurate (Win7-era headers)** reference for the Win7/WDDM 1.1 D3D10 and D3D11 UMD contracts around:
 
 * **resource backing allocation** (`*CreateResource` → `pfnAllocateCb` / `pfnDeallocateCb`), and
 * **CPU mapping** (`Map`/`Unmap` → `pfnLockCb` / `pfnUnlockCb`).
@@ -90,7 +90,7 @@ Both D3D10 and D3D11 follow the same pattern:
    * pointers to callback tables (including `pUMCallbacks`).
 3. The UMD stores `hRTDevice` and callback table pointers in its device object.
 
-The relevant `*_ARG_CREATEDEVICE` fields (WDK 7.1 names):
+The relevant `*_ARG_CREATEDEVICE` fields (Win7-era header names):
 
 * D3D10: `D3D10DDIARG_CREATEDEVICE`
   * `D3D10DDI_HRTDEVICE hRTDevice`

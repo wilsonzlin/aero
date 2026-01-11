@@ -22,9 +22,9 @@ This directory contains “graphics stack” implementation notes and bring-up c
 - `win7-d3d10-caps-tracing.md` — enabling `OutputDebugString` tracing for D3D10DDI `GetCaps` + unexpected runtime entrypoints during Win7 bring-up.
 - `win7-dxgi-swapchain-backbuffer.md` — trace guide + invariants for Win7 DXGI swapchain backbuffer `CreateResource` parameters and allocation flags.
 
-Deprecated redirect:
+Combined reference:
 
-- `../windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — old combined “allocations + Map/Unmap” doc path (now redirects to the focused docs above).
+- `../windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — combined Win7/WDDM 1.1 reference for resource backing allocations + Map/Unmap callback wiring.
 
 ## Strategy / prototypes
 
