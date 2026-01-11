@@ -852,9 +852,9 @@ cargo test --locked -p conformance --test conformance -- --nocapture
 CI runs a fast subset on PRs and a larger corpus on a schedule via
 `.github/workflows/conformance.yml`.
 
-In addition, `tools/qemu_diff/` provides a **CI-friendly differential harness** that compares Aero
-execution against QEMU on synthetic 16-bit snippets (no QEMU/GPL code shipped; QEMU is an external
-tool invoked by tests).
+In addition, `tools/qemu_diff/` (Cargo package `qemu-diff`, crate identifier `qemu_diff`) provides a
+**CI-friendly differential harness** that compares Aero execution against QEMU on synthetic 16-bit
+snippets (no QEMU/GPL code shipped; QEMU is an external tool invoked by tests).
 
 - `tools/qemu_diff/` builds a tiny bootable floppy image and runs it under an external
   `qemu-system-*` binary.
