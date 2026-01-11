@@ -77,6 +77,7 @@ describe("runtime disk worker protocol", () => {
     if (spec.kind !== "remote" || spec.remote.delivery !== "range") {
       throw new Error("expected a range remote disk spec");
     }
+    const remote = spec.remote;
 
     const w = new StubWorker();
     const client = new RuntimeDiskClient(w as unknown as Worker);
@@ -84,8 +85,8 @@ describe("runtime disk worker protocol", () => {
     const openPromise = client.open(spec);
     expect(w.lastMessage.op).toBe("open");
     expect(w.lastMessage.payload.spec.kind).toBe("remote");
-    expect(w.lastMessage.payload.spec.remote.cacheKey).toBe(spec.remote.cacheKey);
-    expect(w.lastMessage.payload.spec.remote.url).toBe(spec.remote.url);
+    expect(w.lastMessage.payload.spec.remote.cacheKey).toBe(remote.cacheKey);
+    expect(w.lastMessage.payload.spec.remote.url).toBe(remote.url);
 
     w.emit({
       type: "response",

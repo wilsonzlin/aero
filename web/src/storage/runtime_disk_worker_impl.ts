@@ -523,11 +523,11 @@ async function openDiskFromMetadata(
   }
   const localMeta = meta;
 
-  const readOnly = meta.kind === "cd" || meta.format === "iso";
+  const readOnly = localMeta.kind === "cd" || localMeta.format === "iso";
 
-  if (meta.backend === "opfs") {
-    const fileName = meta.fileName;
-    const sizeBytes = meta.sizeBytes;
+  if (localMeta.backend === "opfs") {
+    const fileName = localMeta.fileName;
+    const sizeBytes = localMeta.sizeBytes;
 
     async function openBase(): Promise<AsyncSectorDisk> {
       switch (localMeta.format) {
@@ -555,10 +555,10 @@ async function openDiskFromMetadata(
       let overlay: OpfsAeroSparseDisk | null = null;
       try {
         base = await openBase();
-        const overlayName = `${meta.id}.overlay.aerospar`;
+        const overlayName = `${localMeta.id}.overlay.aerospar`;
 
         overlay = await openOpfsSparseDisk(overlayName, {
-          diskSizeBytes: meta.sizeBytes,
+          diskSizeBytes: localMeta.sizeBytes,
           blockSizeBytes: overlayBlockSizeBytes ?? 1024 * 1024,
         });
 
@@ -568,13 +568,13 @@ async function openDiskFromMetadata(
           backendSnapshot: {
             kind: "local",
             backend: "opfs",
-            key: meta.fileName,
-            format: meta.format,
-            diskKind: meta.kind,
-            sizeBytes: meta.sizeBytes,
+            key: localMeta.fileName,
+            format: localMeta.format,
+            diskKind: localMeta.kind,
+            sizeBytes: localMeta.sizeBytes,
             overlay: {
               fileName: overlayName,
-              diskSizeBytes: meta.sizeBytes,
+              diskSizeBytes: localMeta.sizeBytes,
               blockSizeBytes: overlay.blockSizeBytes,
             },
           },
@@ -584,7 +584,7 @@ async function openDiskFromMetadata(
         await base?.close?.();
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
-        if (meta.format !== "raw" && meta.format !== "iso" && meta.format !== "unknown") throw err;
+        if (localMeta.format !== "raw" && localMeta.format !== "iso" && localMeta.format !== "unknown") throw err;
       }
     }
 
@@ -595,10 +595,10 @@ async function openDiskFromMetadata(
       backendSnapshot: {
         kind: "local",
         backend: "opfs",
-        key: meta.fileName,
-        format: meta.format,
-        diskKind: meta.kind,
-        sizeBytes: meta.sizeBytes,
+        key: localMeta.fileName,
+        format: localMeta.format,
+        diskKind: localMeta.kind,
+        sizeBytes: localMeta.sizeBytes,
       },
     };
   }

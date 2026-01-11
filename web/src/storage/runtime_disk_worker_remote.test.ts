@@ -42,7 +42,6 @@ function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; calls: Array
     }
 
     return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
-    return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
   };
 
   return { fetch: fetcher, calls };
@@ -57,12 +56,12 @@ describe("RuntimeDiskWorker (remote)", () => {
 
     const openDisk: OpenDiskFn = async (spec, mode, overlayBlockSizeBytes) => {
       expect(spec.kind).toBe("remote");
+      if (spec.kind !== "remote") {
+        throw new Error("expected remote disk spec");
+      }
       expect(mode).toBe("cow");
       expect(overlayBlockSizeBytes).toBeUndefined();
 
-      if (spec.kind !== "remote") {
-        throw new Error("expected remote disk open spec");
-      }
       const remote = spec.remote;
       if (remote.delivery !== "range") {
         throw new Error("expected range remote disk spec");
