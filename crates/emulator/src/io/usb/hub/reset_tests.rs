@@ -144,6 +144,26 @@ fn hub_reset_clears_configuration_disables_ports_and_resets_downstream_addresses
         0
     );
     assert!(hub.downstream_device_mut_for_address(5).is_none());
+
+    // Reconfigure hub + re-enable the port without issuing another downstream port reset. If the
+    // hub fails to reset downstream device addresses, the old address would become routable again
+    // here.
+    assert_eq!(
+        hub.handle_control_request(setup(0x00, 0x09, 1, 0, 0), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(setup(0x23, 0x03, 8, 1, 0), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(setup(0x23, 0x03, 1, 1, 0), None),
+        ControlResponse::Ack
+    );
+
+    assert!(port_enabled(&mut hub, 1));
+    assert!(hub.downstream_device_mut_for_address(0).is_some());
+    assert!(hub.downstream_device_mut_for_address(5).is_none());
 }
 
 #[test]
