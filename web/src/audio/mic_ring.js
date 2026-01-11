@@ -32,7 +32,7 @@ export function createMicRingBuffer(capacitySamples) {
   Atomics.store(header, WRITE_POS_INDEX, 0);
   Atomics.store(header, READ_POS_INDEX, 0);
   Atomics.store(header, DROPPED_SAMPLES_INDEX, 0);
-  header[CAPACITY_SAMPLES_INDEX] = cap; // constant
+  Atomics.store(header, CAPACITY_SAMPLES_INDEX, cap); // constant
 
   return { sab, header, data, capacity: cap };
 }
@@ -93,4 +93,3 @@ export function micRingBufferWrite(rb, samples) {
   Atomics.store(rb.header, WRITE_POS_INDEX, writePos);
   return toWrite;
 }
-

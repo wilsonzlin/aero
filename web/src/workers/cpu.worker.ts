@@ -271,7 +271,7 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
   if (!ringBuffer) return;
 
   const header = new Uint32Array(ringBuffer, 0, MIC_HEADER_U32_LEN);
-  const capacity = header[CAPACITY_SAMPLES_INDEX] >>> 0;
+  const capacity = Atomics.load(header, CAPACITY_SAMPLES_INDEX) >>> 0;
   if (capacity === 0) {
     throw new Error("mic ring buffer capacity must be non-zero");
   }

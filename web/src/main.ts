@@ -2080,7 +2080,7 @@ function renderAudioPanel(): HTMLElement {
         workerError = err instanceof Error ? err.message : String(err);
 
         const header = new Uint32Array(mic.ringBuffer, 0, MIC_HEADER_U32_LEN);
-        const capacity = header[MIC_CAPACITY_SAMPLES_INDEX] >>> 0;
+        const capacity = Atomics.load(header, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
         const data = new Float32Array(mic.ringBuffer, MIC_HEADER_BYTES, capacity);
         const micRb: MicRingBuffer = { sab: mic.ringBuffer, header, data, capacity };
 

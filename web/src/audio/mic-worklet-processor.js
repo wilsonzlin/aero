@@ -35,7 +35,7 @@ class AeroMicCaptureProcessor extends AudioWorkletProcessor {
 
     this._header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
     this._data = new Float32Array(ringBuffer, HEADER_BYTES);
-    const headerCap = this._header[CAPACITY_SAMPLES_INDEX] >>> 0;
+    const headerCap = Atomics.load(this._header, CAPACITY_SAMPLES_INDEX) >>> 0;
     if (headerCap && headerCap !== this._data.length) {
       throw new Error("Mic ring buffer capacity does not match SharedArrayBuffer size");
     }

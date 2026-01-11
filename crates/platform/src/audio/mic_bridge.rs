@@ -281,7 +281,7 @@ mod wasm {
             }
 
             let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
-            let capacity_from_header = header.get_index(CAPACITY_SAMPLES_INDEX as u32);
+            let capacity_from_header = atomic_load_u32(&header, CAPACITY_SAMPLES_INDEX);
             let capacity_samples = if capacity_from_header != 0 {
                 if capacity_from_header != payload_samples {
                     return Err(JsValue::from_str(
