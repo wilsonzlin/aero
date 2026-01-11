@@ -75,7 +75,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
             .await
             .unwrap();
         let msg = parse_dhcp_from_frame(&frame).unwrap();
-        assert_eq!(msg.options.message_type, Some(DhcpMessageType::Offer));
+        assert_eq!(msg.message_type, DhcpMessageType::Offer);
     }
 
     let request = build_dhcp_request(xid, guest_mac, guest_ip, gateway_ip);
@@ -98,23 +98,27 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
             .await
             .unwrap();
         let msg = parse_dhcp_from_frame(&frame).unwrap();
-        assert_eq!(msg.options.message_type, Some(DhcpMessageType::Ack));
+        assert_eq!(msg.message_type, DhcpMessageType::Ack);
     }
 
     // --- ARP for gateway ---
-    let arp_req = ArpPacket {
-        op: ArpOperation::Request,
-        sender_hw: guest_mac,
+    let arp_req = ArpPacketBuilder {
+        opcode: ARP_OP_REQUEST,
+        sender_mac: guest_mac,
         sender_ip: guest_ip,
-        target_hw: MacAddr([0, 0, 0, 0, 0, 0]),
+        target_mac: MacAddr([0, 0, 0, 0, 0, 0]),
         target_ip: gateway_ip,
-    };
-    let arp_frame = EthernetFrame::serialize(
-        MacAddr::BROADCAST,
-        guest_mac,
-        EtherType::ARP,
-        &arp_req.serialize(),
-    );
+    }
+    .build_vec()
+    .unwrap();
+    let arp_frame = EthernetFrameBuilder {
+        dest_mac: MacAddr::BROADCAST,
+        src_mac: guest_mac,
+        ethertype: EtherType::ARP,
+        payload: &arp_req,
+    }
+    .build_vec()
+    .unwrap();
     ws_tx
         .send(Message::Binary(encode_l2_frame(&arp_frame).into()))
         .await
@@ -124,19 +128,19 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         let Ok(eth) = EthernetFrame::parse(f) else {
             return false;
         };
-        if eth.ethertype != EtherType::ARP {
+        if eth.ethertype() != EtherType::ARP {
             return false;
         }
-        let Ok(arp) = ArpPacket::parse(eth.payload) else {
+        let Ok(arp) = ArpPacket::parse(eth.payload()) else {
             return false;
         };
-        arp.op == ArpOperation::Reply && arp.sender_ip == gateway_ip
+        arp.opcode() == ARP_OP_REPLY && arp.sender_ip() == Some(gateway_ip)
     })
     .await
     .unwrap();
     let eth = EthernetFrame::parse(&arp_reply).unwrap();
-    let arp = ArpPacket::parse(eth.payload).unwrap();
-    let gateway_mac = arp.sender_hw;
+    let arp = ArpPacket::parse(eth.payload()).unwrap();
+    let gateway_mac = arp.sender_mac().unwrap();
 
     // --- Policy sanity check: private IPs are denied by default ---
     let denied_ip = Ipv4Addr::new(10, 0, 0, 1);
@@ -162,15 +166,15 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         let Ok(seg) = parse_tcp_from_frame(f) else {
             return false;
         };
-        seg.src_port == 80
-            && seg.dst_port == denied_guest_port
-            && (seg.flags & (TcpFlags::RST | TcpFlags::ACK)) == (TcpFlags::RST | TcpFlags::ACK)
-            && seg.ack == denied_isn + 1
+        seg.src_port() == 80
+            && seg.dst_port() == denied_guest_port
+            && seg.flags().contains(TcpFlags::RST | TcpFlags::ACK)
+            && seg.ack_number() == denied_isn + 1
     })
     .await
     .unwrap();
     let rst_seg = parse_tcp_from_frame(&rst).unwrap();
-    assert_eq!(rst_seg.ack, denied_isn + 1);
+    assert_eq!(rst_seg.ack_number(), denied_isn + 1);
 
     // --- UDP echo probe ---
     let udp_remote_ip = Ipv4Addr::new(203, 0, 113, 11);
@@ -195,14 +199,14 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         let Ok(udp) = parse_udp_from_frame(f) else {
             return false;
         };
-        udp.src_port == udp_remote_port
-            && udp.dst_port == udp_guest_port
-            && udp.payload == udp_payload
+        udp.src_port() == udp_remote_port
+            && udp.dst_port() == udp_guest_port
+            && udp.payload() == udp_payload
     })
     .await
     .unwrap();
     let udp = parse_udp_from_frame(&udp_resp).unwrap();
-    assert_eq!(udp.payload, udp_payload);
+    assert_eq!(udp.payload(), udp_payload);
 
     // --- DNS query for echo.local ---
     let dns_id = 0x1234;
@@ -253,17 +257,17 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         let Ok(seg) = parse_tcp_from_frame(f) else {
             return false;
         };
-        seg.src_port == remote_port
-            && seg.dst_port == guest_port
-            && (seg.flags & (TcpFlags::SYN | TcpFlags::ACK)) == (TcpFlags::SYN | TcpFlags::ACK)
-            && seg.ack == guest_isn + 1
+        seg.src_port() == remote_port
+            && seg.dst_port() == guest_port
+            && seg.flags().contains(TcpFlags::SYN | TcpFlags::ACK)
+            && seg.ack_number() == guest_isn + 1
     })
     .await
     .unwrap();
     let syn_ack = parse_tcp_from_frame(&syn_ack_frame).unwrap();
 
     let mut next_client_seq = guest_isn + 1;
-    let mut next_server_seq = syn_ack.seq + 1;
+    let mut next_server_seq = syn_ack.seq_number() + 1;
 
     // ACK SYN-ACK.
     let ack = wrap_tcp_ipv4_eth(
@@ -308,15 +312,15 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         let Ok(seg) = parse_tcp_from_frame(f) else {
             return false;
         };
-        seg.src_port == remote_port
-            && seg.dst_port == guest_port
-            && seg.seq == next_server_seq
-            && !seg.payload.is_empty()
+        seg.src_port() == remote_port
+            && seg.dst_port() == guest_port
+            && seg.seq_number() == next_server_seq
+            && !seg.payload().is_empty()
     })
     .await
     .unwrap();
     let echo_seg = parse_tcp_from_frame(&echo_frame).unwrap();
-    assert_eq!(echo_seg.payload, payload);
+    assert_eq!(echo_seg.payload(), payload);
     next_server_seq += payload.len() as u32;
 
     // ACK echoed data.
@@ -361,9 +365,9 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         let Ok(seg) = parse_tcp_from_frame(f) else {
             return false;
         };
-        seg.src_port == remote_port
-            && seg.dst_port == guest_port
-            && (seg.flags & TcpFlags::FIN) != 0
+        seg.src_port() == remote_port
+            && seg.dst_port() == guest_port
+            && seg.flags().contains(TcpFlags::FIN)
     })
     .await
     .unwrap();
@@ -378,7 +382,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         guest_port,
         remote_port,
         next_client_seq,
-        fin_from_stack.seq + 1,
+        fin_from_stack.seq_number() + 1,
         TcpFlags::ACK,
         &[],
     );
@@ -518,87 +522,86 @@ where
 
 fn is_dhcp_type(frame: &[u8], ty: DhcpMessageType) -> bool {
     parse_dhcp_from_frame(frame)
-        .ok()
-        .and_then(|m| m.options.message_type)
-        == Some(ty)
+        .map(|m| m.message_type == ty)
+        .unwrap_or(false)
 }
 
 fn parse_dhcp_from_frame(frame: &[u8]) -> anyhow::Result<DhcpMessage> {
     let eth =
         EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
-    if eth.ethertype != EtherType::IPV4 {
+    if eth.ethertype() != EtherType::IPV4 {
         return Err(anyhow::anyhow!("not ipv4"));
     }
     let ip =
-        Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
-    if ip.protocol != Ipv4Protocol::UDP {
+        Ipv4Packet::parse(eth.payload()).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    if ip.protocol() != Ipv4Protocol::UDP {
         return Err(anyhow::anyhow!("not udp"));
     }
     let udp =
-        UdpDatagram::parse(ip.payload).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?;
-    if udp.src_port != 67 || udp.dst_port != 68 {
+        UdpDatagram::parse(ip.payload()).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?;
+    if udp.src_port() != 67 || udp.dst_port() != 68 {
         return Err(anyhow::anyhow!("not dhcp"));
     }
-    Ok(DhcpMessage::parse(udp.payload).map_err(|err| anyhow::anyhow!("dhcp parse: {err:?}"))?)
+    Ok(DhcpMessage::parse(udp.payload()).map_err(|err| anyhow::anyhow!("dhcp parse: {err:?}"))?)
 }
 
 fn parse_tcp_from_frame(frame: &[u8]) -> anyhow::Result<TcpSegment<'_>> {
     let eth =
         EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
-    if eth.ethertype != EtherType::IPV4 {
+    if eth.ethertype() != EtherType::IPV4 {
         return Err(anyhow::anyhow!("not ipv4"));
     }
     let ip =
-        Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
-    if ip.protocol != Ipv4Protocol::TCP {
+        Ipv4Packet::parse(eth.payload()).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    if ip.protocol() != Ipv4Protocol::TCP {
         return Err(anyhow::anyhow!("not tcp"));
     }
-    Ok(TcpSegment::parse(ip.payload).map_err(|err| anyhow::anyhow!("tcp parse: {err:?}"))?)
+    Ok(TcpSegment::parse(ip.payload()).map_err(|err| anyhow::anyhow!("tcp parse: {err:?}"))?)
 }
 
 fn parse_udp_from_frame(frame: &[u8]) -> anyhow::Result<UdpDatagram<'_>> {
     let eth =
         EthernetFrame::parse(frame).map_err(|err| anyhow::anyhow!("ethernet parse: {err:?}"))?;
-    if eth.ethertype != EtherType::IPV4 {
+    if eth.ethertype() != EtherType::IPV4 {
         return Err(anyhow::anyhow!("not ipv4"));
     }
     let ip =
-        Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
-    if ip.protocol != Ipv4Protocol::UDP {
+        Ipv4Packet::parse(eth.payload()).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    if ip.protocol() != Ipv4Protocol::UDP {
         return Err(anyhow::anyhow!("not udp"));
     }
-    Ok(UdpDatagram::parse(ip.payload).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?)
+    Ok(UdpDatagram::parse(ip.payload()).map_err(|err| anyhow::anyhow!("udp parse: {err:?}"))?)
 }
 
 fn dns_response_has_a_record(frame: &[u8], id: u16) -> bool {
     let Ok(eth) = EthernetFrame::parse(frame) else {
         return false;
     };
-    if eth.ethertype != EtherType::IPV4 {
+    if eth.ethertype() != EtherType::IPV4 {
         return false;
     }
-    let Ok(ip) = Ipv4Packet::parse(eth.payload) else {
+    let Ok(ip) = Ipv4Packet::parse(eth.payload()) else {
         return false;
     };
-    if ip.protocol != Ipv4Protocol::UDP {
+    if ip.protocol() != Ipv4Protocol::UDP {
         return false;
     }
-    let Ok(udp) = UdpDatagram::parse(ip.payload) else {
+    let Ok(udp) = UdpDatagram::parse(ip.payload()) else {
         return false;
     };
-    if udp.src_port != 53 {
+    if udp.src_port() != 53 {
         return false;
     }
-    let dns = udp.payload;
+    let dns = udp.payload();
     dns.len() >= 12 && dns[0..2] == id.to_be_bytes()
 }
 
 fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
     let eth = EthernetFrame::parse(frame).unwrap();
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, 53);
-    let dns = udp.payload;
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    let udp = UdpDatagram::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 53);
+    let dns = udp.payload();
     assert_eq!(&dns[0..2], &id.to_be_bytes());
     // QR=1
     assert_eq!(dns[2] & 0x80, 0x80);
@@ -616,9 +619,34 @@ fn wrap_udp_ipv4_eth(
     dst_port: u16,
     payload: &[u8],
 ) -> Vec<u8> {
-    let udp = UdpDatagram::serialize(src_ip, dst_ip, src_port, dst_port, payload);
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::UDP, 1, 64, &udp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .unwrap();
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .unwrap();
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .unwrap()
 }
 
 fn wrap_tcp_ipv4_eth(
@@ -630,14 +658,43 @@ fn wrap_tcp_ipv4_eth(
     dst_port: u16,
     seq: u32,
     ack: u32,
-    flags: u8,
+    flags: TcpFlags,
     payload: &[u8],
 ) -> Vec<u8> {
-    let tcp = TcpSegment::serialize(
-        src_ip, dst_ip, src_port, dst_port, seq, ack, flags, 65535, payload,
-    );
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::TCP, 1, 64, &tcp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let tcp = TcpSegmentBuilder {
+        src_port,
+        dst_port,
+        seq_number: seq,
+        ack_number: ack,
+        flags,
+        window_size: 65535,
+        urgent_pointer: 0,
+        options: &[],
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .unwrap();
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::TCP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &tcp,
+    }
+    .build_vec()
+    .unwrap();
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .unwrap()
 }
 
 fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
