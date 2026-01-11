@@ -677,6 +677,197 @@ void flush_locked(AeroGpuImmediateContext* ctx) {
   }
 }
 
+template <typename TFnPtr>
+struct DdiStub;
+
+template <typename Ret, typename... Args>
+struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args...) {
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+      // Size queries must not return 0 to avoid runtimes treating the object as
+      // unsupported and then dereferencing null private memory.
+      return sizeof(void*);
+    } else if constexpr (std::is_same_v<Ret, void>) {
+      return;
+    } else {
+      return Ret{};
+    }
+  }
+};
+
+static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
+  D3D11DDI_DEVICEFUNCS funcs = {};
+
+#define STUB_FIELD(field) funcs.field = &DdiStub<decltype(funcs.field)>::Call
+  STUB_FIELD(pfnDestroyDevice);
+
+  STUB_FIELD(pfnCalcPrivateResourceSize);
+  STUB_FIELD(pfnCreateResource);
+  STUB_FIELD(pfnDestroyResource);
+
+  STUB_FIELD(pfnOpenResource);
+
+  STUB_FIELD(pfnCalcPrivateShaderResourceViewSize);
+  STUB_FIELD(pfnCreateShaderResourceView);
+  STUB_FIELD(pfnDestroyShaderResourceView);
+
+  STUB_FIELD(pfnCalcPrivateRenderTargetViewSize);
+  STUB_FIELD(pfnCreateRenderTargetView);
+  STUB_FIELD(pfnDestroyRenderTargetView);
+
+  STUB_FIELD(pfnCalcPrivateDepthStencilViewSize);
+  STUB_FIELD(pfnCreateDepthStencilView);
+  STUB_FIELD(pfnDestroyDepthStencilView);
+
+  STUB_FIELD(pfnCalcPrivateUnorderedAccessViewSize);
+  STUB_FIELD(pfnCreateUnorderedAccessView);
+  STUB_FIELD(pfnDestroyUnorderedAccessView);
+
+  STUB_FIELD(pfnCalcPrivateVertexShaderSize);
+  STUB_FIELD(pfnCreateVertexShader);
+  STUB_FIELD(pfnDestroyVertexShader);
+
+  STUB_FIELD(pfnCalcPrivatePixelShaderSize);
+  STUB_FIELD(pfnCreatePixelShader);
+  STUB_FIELD(pfnDestroyPixelShader);
+
+  STUB_FIELD(pfnCalcPrivateGeometryShaderSize);
+  STUB_FIELD(pfnCreateGeometryShader);
+  STUB_FIELD(pfnDestroyGeometryShader);
+
+  STUB_FIELD(pfnCalcPrivateGeometryShaderWithStreamOutputSize);
+  STUB_FIELD(pfnCreateGeometryShaderWithStreamOutput);
+
+  STUB_FIELD(pfnCalcPrivateHullShaderSize);
+  STUB_FIELD(pfnCreateHullShader);
+  STUB_FIELD(pfnDestroyHullShader);
+
+  STUB_FIELD(pfnCalcPrivateDomainShaderSize);
+  STUB_FIELD(pfnCreateDomainShader);
+  STUB_FIELD(pfnDestroyDomainShader);
+
+  STUB_FIELD(pfnCalcPrivateComputeShaderSize);
+  STUB_FIELD(pfnCreateComputeShader);
+  STUB_FIELD(pfnDestroyComputeShader);
+
+  STUB_FIELD(pfnCalcPrivateElementLayoutSize);
+  STUB_FIELD(pfnCreateElementLayout);
+  STUB_FIELD(pfnDestroyElementLayout);
+
+  STUB_FIELD(pfnCalcPrivateSamplerSize);
+  STUB_FIELD(pfnCreateSampler);
+  STUB_FIELD(pfnDestroySampler);
+
+  STUB_FIELD(pfnCalcPrivateBlendStateSize);
+  STUB_FIELD(pfnCreateBlendState);
+  STUB_FIELD(pfnDestroyBlendState);
+
+  STUB_FIELD(pfnCalcPrivateRasterizerStateSize);
+  STUB_FIELD(pfnCreateRasterizerState);
+  STUB_FIELD(pfnDestroyRasterizerState);
+
+  STUB_FIELD(pfnCalcPrivateDepthStencilStateSize);
+  STUB_FIELD(pfnCreateDepthStencilState);
+  STUB_FIELD(pfnDestroyDepthStencilState);
+
+  STUB_FIELD(pfnCalcPrivateQuerySize);
+  STUB_FIELD(pfnCreateQuery);
+  STUB_FIELD(pfnDestroyQuery);
+
+  STUB_FIELD(pfnCalcPrivatePredicateSize);
+  STUB_FIELD(pfnCreatePredicate);
+  STUB_FIELD(pfnDestroyPredicate);
+
+  STUB_FIELD(pfnCalcPrivateCounterSize);
+  STUB_FIELD(pfnCreateCounter);
+  STUB_FIELD(pfnDestroyCounter);
+
+  STUB_FIELD(pfnCalcPrivateDeferredContextSize);
+  STUB_FIELD(pfnCreateDeferredContext);
+  STUB_FIELD(pfnDestroyDeferredContext);
+
+  STUB_FIELD(pfnCalcPrivateCommandListSize);
+  STUB_FIELD(pfnCreateCommandList);
+  STUB_FIELD(pfnDestroyCommandList);
+
+  STUB_FIELD(pfnCalcPrivateClassLinkageSize);
+  STUB_FIELD(pfnCreateClassLinkage);
+  STUB_FIELD(pfnDestroyClassLinkage);
+
+  STUB_FIELD(pfnCalcPrivateClassInstanceSize);
+  STUB_FIELD(pfnCreateClassInstance);
+  STUB_FIELD(pfnDestroyClassInstance);
+#undef STUB_FIELD
+
+  return funcs;
+}
+
+static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
+  D3D11DDI_DEVICECONTEXTFUNCS funcs = {};
+
+#define STUB_FIELD(field) funcs.field = &DdiStub<decltype(funcs.field)>::Call
+  STUB_FIELD(pfnIaSetInputLayout);
+  STUB_FIELD(pfnIaSetVertexBuffers);
+  STUB_FIELD(pfnIaSetIndexBuffer);
+  STUB_FIELD(pfnIaSetTopology);
+
+  STUB_FIELD(pfnVsSetShader);
+  STUB_FIELD(pfnVsSetConstantBuffers);
+  STUB_FIELD(pfnVsSetShaderResources);
+  STUB_FIELD(pfnVsSetSamplers);
+
+  STUB_FIELD(pfnPsSetShader);
+  STUB_FIELD(pfnPsSetConstantBuffers);
+  STUB_FIELD(pfnPsSetShaderResources);
+  STUB_FIELD(pfnPsSetSamplers);
+
+  STUB_FIELD(pfnGsSetShader);
+  STUB_FIELD(pfnGsSetConstantBuffers);
+  STUB_FIELD(pfnGsSetShaderResources);
+  STUB_FIELD(pfnGsSetSamplers);
+
+  STUB_FIELD(pfnSetViewports);
+  STUB_FIELD(pfnSetScissorRects);
+  STUB_FIELD(pfnSetRasterizerState);
+  STUB_FIELD(pfnSetBlendState);
+  STUB_FIELD(pfnSetDepthStencilState);
+  STUB_FIELD(pfnSetRenderTargets);
+
+  STUB_FIELD(pfnClearState);
+  STUB_FIELD(pfnClearRenderTargetView);
+  STUB_FIELD(pfnClearDepthStencilView);
+
+  STUB_FIELD(pfnDraw);
+  STUB_FIELD(pfnDrawIndexed);
+  STUB_FIELD(pfnDrawInstanced);
+  STUB_FIELD(pfnDrawIndexedInstanced);
+  STUB_FIELD(pfnDrawAuto);
+  STUB_FIELD(pfnDrawInstancedIndirect);
+  STUB_FIELD(pfnDrawIndexedInstancedIndirect);
+
+  STUB_FIELD(pfnUpdateSubresourceUP);
+  STUB_FIELD(pfnCopyResource);
+  STUB_FIELD(pfnCopySubresourceRegion);
+  STUB_FIELD(pfnResolveSubresource);
+  STUB_FIELD(pfnGenerateMips);
+
+  STUB_FIELD(pfnBegin);
+  STUB_FIELD(pfnEnd);
+  STUB_FIELD(pfnSetPredication);
+
+  STUB_FIELD(pfnMap);
+  STUB_FIELD(pfnUnmap);
+  STUB_FIELD(pfnFlush);
+
+  STUB_FIELD(pfnPresent);
+  STUB_FIELD(pfnRotateResourceIdentities);
+#undef STUB_FIELD
+
+  return funcs;
+}
+
 // -------------------------------------------------------------------------------------------------
 // Device DDI (D3D11DDI_DEVICEFUNCS)
 // -------------------------------------------------------------------------------------------------
@@ -1577,7 +1768,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   // Return the immediate context handle expected by the runtime.
   pCreate->hImmediateContext.pDrvPrivate = ctx;
 
-  D3D11DDI_DEVICEFUNCS device_funcs = {};
+  // The Win7 runtime may call a much larger portion of the DDI surface during
+  // device creation / initialization than a simple triangle sample would
+  // suggest. Ensure we never leave NULL function pointers in the tables by
+  // starting from fully-stubbed defaults and overriding implemented entrypoints.
+  D3D11DDI_DEVICEFUNCS device_funcs = MakeStubDeviceFuncs11();
   device_funcs.pfnDestroyDevice = &DestroyDevice11;
   device_funcs.pfnCalcPrivateResourceSize = &CalcPrivateResourceSize11;
   device_funcs.pfnCreateResource = &CreateResource11;
@@ -1629,7 +1824,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   *pCreate->pDeviceFuncs = device_funcs;
 
-  D3D11DDI_DEVICECONTEXTFUNCS ctx_funcs = {};
+  D3D11DDI_DEVICECONTEXTFUNCS ctx_funcs = MakeStubContextFuncs11();
   ctx_funcs.pfnIaSetInputLayout = &IaSetInputLayout11;
   ctx_funcs.pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
   ctx_funcs.pfnIaSetIndexBuffer = &IaSetIndexBuffer11;
