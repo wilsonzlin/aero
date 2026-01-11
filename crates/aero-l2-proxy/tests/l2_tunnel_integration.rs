@@ -122,7 +122,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         target_ip: gateway_ip,
     }
     .build_vec()
-    .unwrap();
+    .expect("build ARP request");
     let arp_frame = EthernetFrameBuilder {
         dest_mac: MacAddr::BROADCAST,
         src_mac: guest_mac,
@@ -130,7 +130,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         payload: &arp_req,
     }
     .build_vec()
-    .unwrap();
+    .expect("build ARP Ethernet frame");
     ws_tx
         .send(Message::Binary(encode_l2_frame(&arp_frame).into()))
         .await
@@ -152,7 +152,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     .unwrap();
     let eth = EthernetFrame::parse(&arp_reply).unwrap();
     let arp = ArpPacket::parse(eth.payload()).unwrap();
-    let gateway_mac = arp.sender_mac().unwrap();
+    let gateway_mac = arp.sender_mac().expect("ARP sender MAC");
 
     // --- Policy sanity check: private IPs are denied by default ---
     let denied_ip = Ipv4Addr::new(10, 0, 0, 1);
@@ -703,7 +703,7 @@ fn wrap_udp_ipv4_eth(
         payload,
     }
     .build_vec(src_ip, dst_ip)
-    .unwrap();
+    .expect("build UDP");
     let ip = Ipv4PacketBuilder {
         dscp_ecn: 0,
         identification: 1,
@@ -716,7 +716,7 @@ fn wrap_udp_ipv4_eth(
         payload: &udp,
     }
     .build_vec()
-    .unwrap();
+    .expect("build IPv4");
     EthernetFrameBuilder {
         dest_mac: dst_mac,
         src_mac,
@@ -724,7 +724,7 @@ fn wrap_udp_ipv4_eth(
         payload: &ip,
     }
     .build_vec()
-    .unwrap()
+    .expect("build Ethernet frame")
 }
 
 fn wrap_tcp_ipv4_eth(
@@ -751,7 +751,7 @@ fn wrap_tcp_ipv4_eth(
         payload,
     }
     .build_vec(src_ip, dst_ip)
-    .unwrap();
+    .expect("build TCP");
     let ip = Ipv4PacketBuilder {
         dscp_ecn: 0,
         identification: 1,
@@ -764,7 +764,7 @@ fn wrap_tcp_ipv4_eth(
         payload: &tcp,
     }
     .build_vec()
-    .unwrap();
+    .expect("build IPv4");
     EthernetFrameBuilder {
         dest_mac: dst_mac,
         src_mac,
@@ -772,7 +772,7 @@ fn wrap_tcp_ipv4_eth(
         payload: &ip,
     }
     .build_vec()
-    .unwrap()
+    .expect("build Ethernet frame")
 }
 
 fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
