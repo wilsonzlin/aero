@@ -3071,6 +3071,11 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
+  if (!cmd) {
+    sampler->~Sampler();
+    SetError(dev, E_OUTOFMEMORY);
+    return E_OUTOFMEMORY;
+  }
   cmd->sampler_handle = sampler->handle;
   cmd->filter = sampler->filter;
   cmd->address_u = sampler->address_u;
@@ -3091,8 +3096,12 @@ void AEROGPU_APIENTRY DestroySampler11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HSAMPL
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (sampler->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_sampler>(AEROGPU_CMD_DESTROY_SAMPLER);
-    cmd->sampler_handle = sampler->handle;
-    cmd->reserved0 = 0;
+    if (cmd) {
+      cmd->sampler_handle = sampler->handle;
+      cmd->reserved0 = 0;
+    } else {
+      SetError(dev, E_OUTOFMEMORY);
+    }
   }
   sampler->~Sampler();
 }
@@ -3140,6 +3149,11 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, out->dxbc.data(), out->dxbc.size());
+  if (!cmd) {
+    out->~Shader();
+    SetError(dev, E_OUTOFMEMORY);
+    return E_OUTOFMEMORY;
+  }
   cmd->shader_handle = out->handle;
   cmd->stage = stage;
   cmd->dxbc_size_bytes = static_cast<uint32_t>(out->dxbc.size());
@@ -3153,8 +3167,12 @@ static void DestroyShaderCommon(Device* dev, Shader* sh) {
   }
   if (sh->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_shader>(AEROGPU_CMD_DESTROY_SHADER);
-    cmd->shader_handle = sh->handle;
-    cmd->reserved0 = 0;
+    if (cmd) {
+      cmd->shader_handle = sh->handle;
+      cmd->reserved0 = 0;
+    } else {
+      SetError(dev, E_OUTOFMEMORY);
+    }
   }
   sh->~Shader();
 }
