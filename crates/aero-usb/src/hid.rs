@@ -10,6 +10,7 @@ const REQ_GET_DESCRIPTOR: u8 = 0x06;
 const REQ_GET_CONFIGURATION: u8 = 0x08;
 const REQ_SET_CONFIGURATION: u8 = 0x09;
 
+const REQ_HID_GET_REPORT: u8 = 0x01;
 const REQ_HID_GET_IDLE: u8 = 0x02;
 const REQ_HID_GET_PROTOCOL: u8 = 0x03;
 const REQ_HID_SET_REPORT: u8 = 0x09;
@@ -126,6 +127,7 @@ pub struct UsbHidKeyboard {
     pending_configuration: Option<u8>,
     protocol: u8,
     idle_rate: u8,
+    leds: u8,
     ep0: Ep0Control,
 
     report: KeyboardReport,
@@ -141,6 +143,7 @@ impl UsbHidKeyboard {
             pending_configuration: None,
             protocol: 1, // Report protocol by default.
             idle_rate: 0,
+            leds: 0,
             ep0: Ep0Control::new(),
             report: KeyboardReport::empty(),
             pending_reports: VecDeque::new(),
@@ -344,6 +347,20 @@ impl UsbHidKeyboard {
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
             (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0xA1, REQ_HID_GET_REPORT) => {
+                let report_type = (setup.value >> 8) as u8;
+                match report_type {
+                    1 => {
+                        let mut bytes = [0u8; 8];
+                        bytes[0] = self.report.modifiers;
+                        bytes[1] = self.report.reserved;
+                        bytes[2..].copy_from_slice(&self.report.keys);
+                        Some(bytes.to_vec())
+                    }
+                    2 => Some(vec![self.leds]),
+                    _ => None,
+                }
+            }
             (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
             (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
             _ => None,
@@ -399,6 +416,7 @@ impl UsbDevice for UsbHidKeyboard {
         self.pending_configuration = None;
         self.protocol = 1;
         self.idle_rate = 0;
+        self.leds = 0;
         self.ep0 = Ep0Control::new();
         self.report = KeyboardReport::empty();
         self.pending_reports.clear();
@@ -449,7 +467,11 @@ impl UsbDevice for UsbHidKeyboard {
                     let setup = self.ep0.setup();
                     match (setup.request_type, setup.request) {
                         (0x21, REQ_HID_SET_REPORT) => {
-                            // Ignore LED/output reports; keep the transfer successful.
+                            // Store LED/output report value if present.
+                            let report_type = (setup.value >> 8) as u8;
+                            if report_type == 2 && !self.ep0.out_data.is_empty() {
+                                self.leds = self.ep0.out_data[0];
+                            }
                         }
                         _ => {}
                     }
@@ -699,6 +721,13 @@ impl UsbHidMouse {
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
             (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0xA1, REQ_HID_GET_REPORT) => {
+                let report_type = (setup.value >> 8) as u8;
+                match report_type {
+                    1 => Some(vec![self.buttons & 0x07, 0, 0, 0]),
+                    _ => None,
+                }
+            }
             (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
             (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
             _ => None,
@@ -1130,6 +1159,13 @@ impl UsbHidGamepad {
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
             (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0xA1, REQ_HID_GET_REPORT) => {
+                let report_type = (setup.value >> 8) as u8;
+                match report_type {
+                    1 => Some(self.report.to_bytes().to_vec()),
+                    _ => None,
+                }
+            }
             (0xA1, REQ_HID_GET_PROTOCOL) => Some(vec![self.protocol]),
             (0xA1, REQ_HID_GET_IDLE) => Some(vec![self.idle_rate]),
             _ => None,
@@ -1302,6 +1338,7 @@ pub struct UsbHidCompositeInput {
     ep0: Ep0Control,
 
     keyboard_report: KeyboardReport,
+    keyboard_leds: u8,
     pending_keyboard_reports: VecDeque<[u8; 8]>,
 
     mouse_buttons: u8,
@@ -1322,6 +1359,7 @@ impl UsbHidCompositeInput {
             idle_rates: [0; 3],
             ep0: Ep0Control::new(),
             keyboard_report: KeyboardReport::empty(),
+            keyboard_leds: 0,
             pending_keyboard_reports: VecDeque::new(),
             mouse_buttons: 0,
             pending_mouse_reports: VecDeque::new(),
@@ -1616,6 +1654,22 @@ impl UsbHidCompositeInput {
             }
             (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
             (0x80, REQ_GET_STATUS) | (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0xA1, REQ_HID_GET_REPORT) => {
+                let report_type = (setup.value >> 8) as u8;
+                match (interface, report_type) {
+                    (0, 1) => {
+                        let mut bytes = [0u8; 8];
+                        bytes[0] = self.keyboard_report.modifiers;
+                        bytes[1] = self.keyboard_report.reserved;
+                        bytes[2..].copy_from_slice(&self.keyboard_report.keys);
+                        Some(bytes.to_vec())
+                    }
+                    (0, 2) => Some(vec![self.keyboard_leds]),
+                    (1, 1) => Some(vec![self.mouse_buttons & 0x07, 0, 0, 0]),
+                    (2, 1) => Some(self.gamepad_report.to_bytes().to_vec()),
+                    _ => None,
+                }
+            }
             (0xA1, REQ_HID_GET_PROTOCOL) => self.protocols.get(interface as usize).copied().map(|v| vec![v]),
             (0xA1, REQ_HID_GET_IDLE) => self.idle_rates.get(interface as usize).copied().map(|v| vec![v]),
             _ => None,
@@ -1682,6 +1736,7 @@ impl UsbDevice for UsbHidCompositeInput {
         self.idle_rates = [0; 3];
         self.ep0 = Ep0Control::new();
         self.keyboard_report = KeyboardReport::empty();
+        self.keyboard_leds = 0;
         self.pending_keyboard_reports.clear();
         self.mouse_buttons = 0;
         self.pending_mouse_reports.clear();
@@ -1732,7 +1787,13 @@ impl UsbDevice for UsbHidCompositeInput {
                 if self.ep0.out_data.len() >= self.ep0.out_expected {
                     let setup = self.ep0.setup();
                     if matches!((setup.request_type, setup.request), (0x21, REQ_HID_SET_REPORT)) {
-                        // Ignore output reports.
+                        // Store LED/output report value for the keyboard interface if present; keep
+                        // the transfer successful regardless.
+                        let interface = (setup.index & 0xFF) as u8;
+                        let report_type = (setup.value >> 8) as u8;
+                        if interface == 0 && report_type == 2 && !self.ep0.out_data.is_empty() {
+                            self.keyboard_leds = self.ep0.out_data[0];
+                        }
                     } else {
                         let _ = self.handle_no_data_request(setup);
                     }
@@ -1872,5 +1933,46 @@ mod tests {
 
         let mut buf = [0u8; 16];
         assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+    }
+
+    #[test]
+    fn keyboard_get_report_returns_current_state_and_leds() {
+        let mut kb = UsbHidKeyboard::new();
+        kb.key_event(0x04, true); // 'a'
+
+        kb.handle_setup(SetupPacket {
+            request_type: 0xA1,
+            request: REQ_HID_GET_REPORT,
+            value: 0x0100,
+            index: 0,
+            length: 8,
+        });
+        let mut buf = [0u8; 8];
+        assert_eq!(kb.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 8 });
+        assert_eq!(buf[2], 0x04);
+        assert_eq!(kb.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
+
+        // SET_REPORT(Output) with one byte should update LED state.
+        kb.handle_setup(SetupPacket {
+            request_type: 0x21,
+            request: REQ_HID_SET_REPORT,
+            value: 0x0200,
+            index: 0,
+            length: 1,
+        });
+        assert_eq!(kb.handle_out(0, &[0x05]), UsbHandshake::Ack { bytes: 1 });
+        let mut empty = [0u8; 0];
+        assert_eq!(kb.handle_in(0, &mut empty), UsbHandshake::Ack { bytes: 0 });
+
+        kb.handle_setup(SetupPacket {
+            request_type: 0xA1,
+            request: REQ_HID_GET_REPORT,
+            value: 0x0200,
+            index: 0,
+            length: 1,
+        });
+        let mut out = [0u8; 1];
+        assert_eq!(kb.handle_in(0, &mut out), UsbHandshake::Ack { bytes: 1 });
+        assert_eq!(out[0], 0x05);
     }
 }

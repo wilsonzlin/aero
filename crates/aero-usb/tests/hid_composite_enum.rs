@@ -382,6 +382,58 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
     );
     assert!(!irq.raised);
 
+    // GET_REPORT for each interface should return the current state, using the interface index in wIndex.
+    let kb_report = control_in(
+        &mut ctrl,
+        &mut mem,
+        &mut irq,
+        &mut alloc,
+        fl_base,
+        1,
+        SetupPacket {
+            request_type: 0xA1,
+            request: 0x01,
+            value: 0x0100,
+            index: 0,
+            length: 8,
+        },
+    );
+    assert_eq!(kb_report, vec![0; 8]);
+
+    let mouse_report = control_in(
+        &mut ctrl,
+        &mut mem,
+        &mut irq,
+        &mut alloc,
+        fl_base,
+        1,
+        SetupPacket {
+            request_type: 0xA1,
+            request: 0x01,
+            value: 0x0100,
+            index: 1,
+            length: 4,
+        },
+    );
+    assert_eq!(mouse_report, vec![0; 4]);
+
+    let gamepad_report = control_in(
+        &mut ctrl,
+        &mut mem,
+        &mut irq,
+        &mut alloc,
+        fl_base,
+        1,
+        SetupPacket {
+            request_type: 0xA1,
+            request: 0x01,
+            value: 0x0100,
+            index: 2,
+            length: 8,
+        },
+    );
+    assert_eq!(gamepad_report, vec![0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
     // Fetch HID + report descriptors for each interface.
     for (iface, expected_prefix) in [
         (0u16, vec![0x05, 0x01, 0x09, 0x06]), // Keyboard
