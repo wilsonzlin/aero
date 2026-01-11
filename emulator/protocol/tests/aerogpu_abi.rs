@@ -611,6 +611,90 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_set_render_state",
         "value"
     );
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        dst_buffer,
+        "aerogpu_cmd_copy_buffer",
+        "dst_buffer"
+    );
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        src_buffer,
+        "aerogpu_cmd_copy_buffer",
+        "src_buffer"
+    );
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        dst_offset_bytes,
+        "aerogpu_cmd_copy_buffer",
+        "dst_offset_bytes"
+    );
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        src_offset_bytes,
+        "aerogpu_cmd_copy_buffer",
+        "src_offset_bytes"
+    );
+    assert_off!(
+        AerogpuCmdCopyBuffer,
+        size_bytes,
+        "aerogpu_cmd_copy_buffer",
+        "size_bytes"
+    );
+    assert_off!(AerogpuCmdCopyBuffer, flags, "aerogpu_cmd_copy_buffer", "flags");
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_texture,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_texture"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_texture,
+        "aerogpu_cmd_copy_texture2d",
+        "src_texture"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_mip_level,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_mip_level"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        dst_array_layer,
+        "aerogpu_cmd_copy_texture2d",
+        "dst_array_layer"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_mip_level,
+        "aerogpu_cmd_copy_texture2d",
+        "src_mip_level"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        src_array_layer,
+        "aerogpu_cmd_copy_texture2d",
+        "src_array_layer"
+    );
+    assert_off!(AerogpuCmdCopyTexture2d, dst_x, "aerogpu_cmd_copy_texture2d", "dst_x");
+    assert_off!(AerogpuCmdCopyTexture2d, dst_y, "aerogpu_cmd_copy_texture2d", "dst_y");
+    assert_off!(AerogpuCmdCopyTexture2d, src_x, "aerogpu_cmd_copy_texture2d", "src_x");
+    assert_off!(AerogpuCmdCopyTexture2d, src_y, "aerogpu_cmd_copy_texture2d", "src_y");
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        width,
+        "aerogpu_cmd_copy_texture2d",
+        "width"
+    );
+    assert_off!(
+        AerogpuCmdCopyTexture2d,
+        height,
+        "aerogpu_cmd_copy_texture2d",
+        "height"
+    );
+    assert_off!(AerogpuCmdCopyTexture2d, flags, "aerogpu_cmd_copy_texture2d", "flags");
 
     // WDDM allocation private-data contract (stable across x86/x64).
     assert_eq!(abi.size("aerogpu_wddm_alloc_priv"), 40);

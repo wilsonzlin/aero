@@ -123,6 +123,25 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state, value);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, state);
   PRINT_OFF("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state, value);
+  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, dst_buffer);
+  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, src_buffer);
+  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, dst_offset_bytes);
+  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, src_offset_bytes);
+  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, size_bytes);
+  PRINT_OFF("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer, flags);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_texture);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_texture);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_mip_level);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_array_layer);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_mip_level);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_array_layer);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_x);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, dst_y);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_x);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, src_y);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, width);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, height);
+  PRINT_OFF("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d, flags);
 
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, magic);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, abi_version);

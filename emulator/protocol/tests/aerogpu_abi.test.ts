@@ -465,6 +465,25 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_cmd_set_sampler_state", "value"), 20);
   assert.equal(off("aerogpu_cmd_set_render_state", "state"), 8);
   assert.equal(off("aerogpu_cmd_set_render_state", "value"), 12);
+  assert.equal(off("aerogpu_cmd_copy_buffer", "dst_buffer"), 8);
+  assert.equal(off("aerogpu_cmd_copy_buffer", "src_buffer"), 12);
+  assert.equal(off("aerogpu_cmd_copy_buffer", "dst_offset_bytes"), 16);
+  assert.equal(off("aerogpu_cmd_copy_buffer", "src_offset_bytes"), 24);
+  assert.equal(off("aerogpu_cmd_copy_buffer", "size_bytes"), 32);
+  assert.equal(off("aerogpu_cmd_copy_buffer", "flags"), 40);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "dst_texture"), 8);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "src_texture"), 12);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "dst_mip_level"), 16);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "dst_array_layer"), 20);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "src_mip_level"), 24);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "src_array_layer"), 28);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "dst_x"), 32);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "dst_y"), 36);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "src_x"), 40);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "src_y"), 44);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "width"), 48);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "height"), 52);
+  assert.equal(off("aerogpu_cmd_copy_texture2d", "flags"), 56);
 
   assert.equal(off("aerogpu_wddm_alloc_priv", "magic"), 0);
   assert.equal(off("aerogpu_wddm_alloc_priv", "version"), 4);
