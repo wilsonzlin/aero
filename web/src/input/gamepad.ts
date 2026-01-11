@@ -22,10 +22,10 @@ export interface GamepadReportFields {
   buttons: number;
   /** Hat switch value; see `GAMEPAD_HAT_NEUTRAL`. */
   hat: number;
-  /** Left stick X axis (i8). */
-  lx: number;
-  /** Left stick Y axis (i8). */
-  ly: number;
+  /** X axis (i8). */
+  x: number;
+  /** Y axis (i8). */
+  y: number;
   /** Right stick X axis (i8). */
   rx: number;
   /** Right stick Y axis (i8). */
@@ -109,23 +109,23 @@ export function gamepadButtonsToBitfield(buttons: readonly GamepadButtonLike[]):
  * 8-byte report layout (little-endian):
  *   Byte 0: buttons low 8
  *   Byte 1: buttons high 8
- *   Byte 2: hat (0..8, 8=neutral)
- *   Byte 3: reserved (0)
- *   Byte 4: lx (i8)
- *   Byte 5: ly (i8)
- *   Byte 6: rx (i8)
- *   Byte 7: ry (i8)
+ *   Byte 2: hat (low 4 bits; 8=neutral/null)
+ *   Byte 3: x (i8)
+ *   Byte 4: y (i8)
+ *   Byte 5: rx (i8)
+ *   Byte 6: ry (i8)
+ *   Byte 7: padding (0)
  */
 export function packGamepadReport(fields: GamepadReportFields): PackedGamepadReport {
   const buttons = fields.buttons & 0xffff;
   const b0 = buttons & 0xff;
   const b1 = (buttons >>> 8) & 0xff;
-  const b2 = fields.hat & 0xff;
-  const b3 = 0;
-  const b4 = fields.lx & 0xff;
-  const b5 = fields.ly & 0xff;
-  const b6 = fields.rx & 0xff;
-  const b7 = fields.ry & 0xff;
+  const b2 = fields.hat & 0x0f;
+  const b3 = fields.x & 0xff;
+  const b4 = fields.y & 0xff;
+  const b5 = fields.rx & 0xff;
+  const b6 = fields.ry & 0xff;
+  const b7 = 0;
 
   const packedLo = (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) | 0;
   const packedHi = (b4 | (b5 << 8) | (b6 << 16) | (b7 << 24)) | 0;
@@ -154,12 +154,12 @@ export function encodeBrowserGamepadReport(gamepad: BrowserGamepadLike, deadzone
   const right = gamepad.buttons[15]?.pressed ?? false;
   const hat = computeGamepadHat(up, right, down, left);
 
-  const lx = quantizeGamepadAxis(gamepad.axes[0] ?? 0, deadzone);
-  const ly = quantizeGamepadAxis(gamepad.axes[1] ?? 0, deadzone);
+  const x = quantizeGamepadAxis(gamepad.axes[0] ?? 0, deadzone);
+  const y = quantizeGamepadAxis(gamepad.axes[1] ?? 0, deadzone);
   const rx = quantizeGamepadAxis(gamepad.axes[2] ?? 0, deadzone);
   const ry = quantizeGamepadAxis(gamepad.axes[3] ?? 0, deadzone);
 
-  return packGamepadReport({ buttons, hat, lx, ly, rx, ry });
+  return packGamepadReport({ buttons, hat, x, y, rx, ry });
 }
 
 export interface GamepadCaptureOptions {
@@ -190,8 +190,8 @@ export class GamepadCapture {
     const neutral = packGamepadReport({
       buttons: 0,
       hat: GAMEPAD_HAT_NEUTRAL,
-      lx: 0,
-      ly: 0,
+      x: 0,
+      y: 0,
       rx: 0,
       ry: 0,
     });
@@ -219,8 +219,8 @@ export class GamepadCapture {
     const neutral = packGamepadReport({
       buttons: 0,
       hat: GAMEPAD_HAT_NEUTRAL,
-      lx: 0,
-      ly: 0,
+      x: 0,
+      y: 0,
       rx: 0,
       ry: 0,
     });
@@ -278,4 +278,3 @@ function defaultGetGamepads(): readonly (Gamepad | null)[] {
     return [];
   }
 }
-

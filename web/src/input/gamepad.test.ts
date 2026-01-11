@@ -55,14 +55,13 @@ describe("packGamepadReport", () => {
     const { packedLo, packedHi } = packGamepadReport({
       buttons: 0x1234,
       hat: 2,
-      lx: 1,
-      ly: -1,
+      x: 1,
+      y: -1,
       rx: 127,
       ry: -127,
     });
 
     const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
-    expect(bytes).toEqual([0x34, 0x12, 0x02, 0x00, 0x01, 0xff, 0x7f, 0x81]);
+    expect(bytes).toEqual([0x34, 0x12, 0x02, 0x01, 0xff, 0x7f, 0x81, 0x00]);
   });
 });
-
