@@ -303,9 +303,8 @@ The proxy exposes:
 
 - `GET /healthz`
 - `WS /tcp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — compatible with the gateway `/tcp` URL format.
-- `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — **legacy per-target** UDP relay (one destination per WebSocket). This is *not* the multiplexed v1/v2 datagram framing used by `proxy/webrtc-udp-relay`.
-
-A multiplexed WebSocket UDP mode (same v1/v2 datagram framing as `proxy/webrtc-udp-relay/PROTOCOL.md`) is not yet implemented in `net-proxy`. If you need this framing over WebSocket today, `proxy/webrtc-udp-relay` also exposes `GET /udp`.
+- `WS /udp` — **multiplexed** UDP relay datagrams (v1/v2 framing per [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)). This is the mode used by the browser `WebSocketUdpProxyClient`.
+- `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — **legacy per-target** UDP relay (one destination per WebSocket; raw UDP payload bytes).
 
 See `net-proxy/README.md` for allowlisting and client URL examples.
 
