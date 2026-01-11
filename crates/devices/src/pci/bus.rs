@@ -5,7 +5,7 @@ use crate::pci::{PciBarKind, PciBarRange, PciBdf, PciDevice};
 use crate::pci::{PciResourceAllocator, PciResourceError};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use std::collections::BTreeMap;
 
@@ -346,7 +346,9 @@ impl IoSnapshot for PciBusSnapshot {
                 bar_base,
                 bar_probe,
             };
-            by_bdf.insert(bdf, config);
+            if by_bdf.insert(bdf, config).is_some() {
+                return Err(SnapshotError::InvalidFieldEncoding("duplicate PCI BDF entry"));
+            }
         }
         d.finish()?;
 
