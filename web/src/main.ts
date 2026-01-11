@@ -3077,6 +3077,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           usbBroker.attachWorkerPort(ioWorker);
           wireIoWorkerForWebHid(ioWorker, webHidManager);
           syncWebHidInputReportRing(ioWorker);
+          void webHidManager.resyncAttachedDevices();
           attachedIoWorker = ioWorker;
           ioWorker.postMessage({
             type: "setBootDisks",
@@ -3362,6 +3363,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         });
       }
       syncWebHidInputReportRing(ioWorker);
+      void webHidManager.resyncAttachedDevices();
       attachedIoWorker = ioWorker;
     }
 

@@ -186,6 +186,69 @@ export class WebHidPassthroughManager {
     this.#status = status;
   }
 
+  /**
+   * Re-send `hid:*` attach messages for already-attached devices.
+   *
+   * This is useful when the I/O worker is restarted or replaced: the page retains
+   * WebHID device permissions, but the new worker needs to rebuild guest-side
+   * state (virtual hubs, passthrough bridges, etc).
+   */
+  async resyncAttachedDevices(): Promise<void> {
+    if (this.#target === NOOP_TARGET) return;
+    if (this.#attachedDevices.length === 0) return;
+
+    // Treat the new worker as a fresh guest session.
+    this.#externalHubAttached = false;
+
+    const needsHub = this.#attachedDevices.some((entry) => entry.guestPath[0] === EXTERNAL_HUB_ROOT_PORT && entry.guestPath.length >= 2);
+    if (needsHub) {
+      try {
+        this.#ensureExternalHubAttached();
+      } catch (err) {
+        console.warn("WebHID passthrough attachHub failed during resync", err);
+      }
+    }
+
+    for (const entry of this.#attachedDevices) {
+      const device = entry.device;
+      const deviceId = entry.deviceId;
+      const guestPath = entry.guestPath;
+      const guestPort = guestPath[0] as GuestUsbRootPort;
+      const numericDeviceId = this.#numericDeviceIdFor(deviceId);
+
+      try {
+        await device.open();
+      } catch {
+        // Best-effort; proceed anyway.
+      }
+
+      let normalizedCollections: ReturnType<typeof normalizeCollections>;
+      try {
+        const rawCollections = (device as unknown as { collections?: unknown }).collections;
+        normalizedCollections = normalizeCollections((rawCollections ?? []) as unknown as readonly HidCollectionInfo[]);
+      } catch (err) {
+        console.warn("WebHID passthrough collection normalization failed during resync", err);
+        continue;
+      }
+
+      try {
+        this.#target.postMessage({
+          type: "hid:attach",
+          deviceId,
+          numericDeviceId,
+          guestPort,
+          guestPath,
+          vendorId: device.vendorId,
+          productId: device.productId,
+          ...(device.productName ? { productName: device.productName } : {}),
+          collections: normalizedCollections,
+        });
+      } catch (err) {
+        console.warn("WebHID passthrough attach failed during resync", err);
+      }
+    }
+  }
+
   getState(): WebHidPassthroughState {
     return {
       supported: !!this.#hid,

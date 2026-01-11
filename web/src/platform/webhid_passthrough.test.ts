@@ -432,6 +432,26 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     expect(target.messages[5]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
   });
 
+  it("can resync already-attached devices after an I/O worker restart", async () => {
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 3 });
+
+    const devA = makeDevice(1, 1, "A");
+    await manager.attachKnownDevice(devA);
+
+    const firstAttach = target.messages.find((m) => m.type === "hid:attach") as any;
+    expect(firstAttach).toBeTruthy();
+    expect(typeof firstAttach.numericDeviceId).toBe("number");
+    const numericDeviceId = firstAttach.numericDeviceId;
+
+    target.messages.length = 0;
+    await manager.resyncAttachedDevices();
+
+    expect(target.messages).toHaveLength(2);
+    expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 3 });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 1], numericDeviceId });
+  });
+
   it("falls back to root port 1 when the hub is full and only errors once all paths are exhausted", async () => {
     const target = new TestTarget();
     const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 2 });
