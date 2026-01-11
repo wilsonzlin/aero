@@ -64,6 +64,31 @@ fn should_double_fault(first: Exception, second: Exception) -> bool {
     }
 }
 
+/// Execute a paging-protected memory access that should be treated as a
+/// supervisor ("system") access regardless of the current CPL.
+///
+/// On real hardware, reads of system structures like the IDT and TSS are not
+/// subject to user/supervisor page restrictions even when the interrupted code
+/// was running at CPL3. Our paging bus caches CPL, so emulate this by
+/// temporarily forcing CS.RPL=0 for the duration of the access.
+fn with_supervisor_access<B: CpuBus, R>(
+    bus: &mut B,
+    state: &mut state::CpuState,
+    f: impl FnOnce(&mut B, &state::CpuState) -> R,
+) -> R {
+    if state.cpl() != 3 {
+        return f(bus, state);
+    }
+
+    let old_cs = state.segments.cs.selector;
+    state.segments.cs.selector &= !0b11;
+    bus.sync(state);
+    let res = f(bus, state);
+    state.segments.cs.selector = old_cs;
+    bus.sync(state);
+    res
+}
+
 #[derive(Debug, Clone, Copy)]
 struct IdtGate32 {
     offset: u32,
@@ -219,6 +244,7 @@ pub fn deliver_pending_event<B: CpuBus>(
     let Some(event) = pending.pending_event.take() else {
         return Ok(());
     };
+    bus.sync(state);
     deliver_event(state, bus, pending, event)
 }
 
@@ -241,6 +267,7 @@ pub fn deliver_external_interrupt<B: CpuBus>(
     bus: &mut B,
     pending: &mut PendingEventState,
 ) -> Result<(), CpuExit> {
+    bus.sync(state);
     if pending.pending_event.is_some() {
         // Exceptions/traps/INTn take priority.
         return Ok(());
@@ -482,7 +509,8 @@ fn deliver_protected_mode<B: CpuBus>(
     is_interrupt: bool,
     source: InterruptSource,
 ) -> Result<(), CpuExit> {
-    let gate = match read_idt_gate32(bus, state, vector) {
+    let gate = match with_supervisor_access(bus, state, |bus, state| read_idt_gate32(bus, state, vector))
+    {
         Ok(gate) => gate,
         Err(()) => {
             return deliver_exception(
@@ -532,13 +560,16 @@ fn deliver_protected_mode<B: CpuBus>(
 
     let current_cpl = state.cpl();
     let new_cpl = (gate.selector & 0x3) as u8;
+    let old_cs = state.segments.cs.selector;
     let mut stack_switched = false;
 
     let old_ss = state.segments.ss.selector;
     let old_esp = state.read_gpr32(gpr::RSP);
 
     if new_cpl < current_cpl {
-        let (new_ss_raw, new_esp) = match tss32_stack_for_cpl(bus, state, new_cpl) {
+        let (new_ss_raw, new_esp) = match with_supervisor_access(bus, state, |bus, state| {
+            tss32_stack_for_cpl(bus, state, new_cpl)
+        }) {
             Ok(stack) => stack,
             Err(()) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
@@ -548,6 +579,11 @@ fn deliver_protected_mode<B: CpuBus>(
         state.write_gpr32(gpr::RSP, new_esp);
         stack_switched = true;
 
+        // Switch to the handler's privilege level before touching the new stack
+        // so paging permission checks observe the updated CPL.
+        state.segments.cs.selector = gate.selector;
+        bus.sync(state);
+
         // Push old SS:ESP on the new stack.
         push32(bus, state, pending, old_ss as u32, saved_rip)?;
         push32(bus, state, pending, old_esp, saved_rip)?;
@@ -555,9 +591,8 @@ fn deliver_protected_mode<B: CpuBus>(
 
     // Push return frame.
     let eflags = state.rflags() as u32;
-    let cs = state.segments.cs.selector;
     push32(bus, state, pending, eflags, saved_rip)?;
-    push32(bus, state, pending, cs as u32, saved_rip)?;
+    push32(bus, state, pending, old_cs as u32, saved_rip)?;
     push32(bus, state, pending, saved_rip as u32, saved_rip)?;
 
     if let Some(code) = error_code {
@@ -593,7 +628,8 @@ fn deliver_long_mode<B: CpuBus>(
     is_interrupt: bool,
     source: InterruptSource,
 ) -> Result<(), CpuExit> {
-    let gate = match read_idt_gate64(bus, state, vector) {
+    let gate = match with_supervisor_access(bus, state, |bus, state| read_idt_gate64(bus, state, vector))
+    {
         Ok(gate) => gate,
         Err(()) => {
             return deliver_exception(
@@ -654,6 +690,7 @@ fn deliver_long_mode<B: CpuBus>(
 
     let current_cpl = state.cpl();
     let new_cpl = (gate.selector & 0x3) as u8;
+    let old_cs = state.segments.cs.selector;
 
     let old_rsp = state.read_gpr64(gpr::RSP);
     let old_ss = state.segments.ss.selector;
@@ -661,13 +698,17 @@ fn deliver_long_mode<B: CpuBus>(
     let mut used_ist = false;
     if gate.ist != 0 {
         used_ist = true;
-        let new_rsp = match tss64_ist_stack(bus, state, gate.ist) {
+        let new_rsp = match with_supervisor_access(bus, state, |bus, state| {
+            tss64_ist_stack(bus, state, gate.ist)
+        }) {
             Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
             _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
-        let new_rsp = match tss64_rsp_for_cpl(bus, state, new_cpl) {
+        let new_rsp = match with_supervisor_access(bus, state, |bus, state| {
+            tss64_rsp_for_cpl(bus, state, new_cpl)
+        }) {
             Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
             _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
@@ -676,6 +717,13 @@ fn deliver_long_mode<B: CpuBus>(
 
     let stack_switched = used_ist || new_cpl < current_cpl;
     if stack_switched {
+        if new_cpl < current_cpl {
+            // Switch to the handler's privilege level before touching the new stack
+            // so paging permission checks observe the updated CPL.
+            state.segments.cs.selector = gate.selector;
+            bus.sync(state);
+        }
+
         push64(bus, state, pending, old_ss as u64, saved_rip)?;
         push64(bus, state, pending, old_rsp, saved_rip)?;
         if new_cpl < current_cpl {
@@ -689,9 +737,8 @@ fn deliver_long_mode<B: CpuBus>(
 
     // Push return frame (RFLAGS, CS, RIP, error code).
     let rflags = state.rflags();
-    let cs = state.segments.cs.selector;
     push64(bus, state, pending, rflags, saved_rip)?;
-    push64(bus, state, pending, cs as u64, saved_rip)?;
+    push64(bus, state, pending, old_cs as u64, saved_rip)?;
     push64(bus, state, pending, saved_rip, saved_rip)?;
 
     if let Some(code) = error_code {
