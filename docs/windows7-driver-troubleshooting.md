@@ -499,7 +499,9 @@ If the `SysWOW64` UMD is missing, **32-bit apps will not be able to use D3D9** e
     - The test output should include the resolved UMD path. For a 32-bit test binary on a Win7 x64 guest it should be tagged as `(WOW64)` and typically resolve to `C:\\Windows\\SysWOW64\\aerogpu_d3d9.dll`.
 3. If the `SysWOW64` DLL is missing, reinstall using the supported AeroGPU Win7 package:
     - `drivers/aerogpu/packaging/win7/README.md`
-    - Ensure your build/staging workflow includes the WOW64 UMD in the **x64** package (the recommended `drivers\\aerogpu\\build\\stage_packaging_win7.cmd fre x64` flow does).
+    - Ensure your build/staging workflow includes the WOW64 UMD in the **x64** package:
+      - If you are using CI-produced packages, `out/packages/aerogpu/x64/` should contain both `aerogpu_d3d9_x64.dll` and `aerogpu_d3d9.dll`.
+      - If you are staging from a repo-local build, use `drivers\\aerogpu\\build\\stage_packaging_win7.cmd fre x64`.
 4. Reboot the guest after reinstalling the display driver.
 
 ## Safe Mode recovery tips
