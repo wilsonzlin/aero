@@ -43,6 +43,16 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
 
        function buildCmdStream(textureRgba, w, h) {
         const texHandle = 1;
+        const tightRowBytes = (w * 4) >>> 0;
+        // Force a non-tight row pitch to exercise row_pitch_bytes repacking in the GPU worker.
+        const rowPitchBytes = (tightRowBytes + 16) >>> 0;
+        const padded = new Uint8Array(rowPitchBytes * h);
+        for (let y = 0; y < h; y++) {
+          padded.set(
+            textureRgba.subarray(y * tightRowBytes, (y + 1) * tightRowBytes),
+            y * rowPitchBytes,
+          );
+        }
         const writer = new AerogpuCmdWriter();
         writer.createTexture2d(
           texHandle,
@@ -52,12 +62,12 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
           h >>> 0,
           1,
           1,
-          (w * 4) >>> 0,
+          rowPitchBytes,
           0,
           0,
         );
         writer.setRenderTargets([texHandle], 0);
-        writer.uploadResource(texHandle, 0n, textureRgba);
+        writer.uploadResource(texHandle, 0n, padded);
         writer.present(0, 0);
         return writer.finish().buffer;
        }
