@@ -590,7 +590,8 @@ fn parse_set_cookie_value(set_cookie: &str, cookie_name: &str) -> Option<String>
 /// Minimal TCP relay implementing the `/tcp` WebSocket contract.
 ///
 /// Supports:
-/// - Canonical gateway format: `GET /tcp?v=1&host=<host>&port=<port>`
+/// - Canonical gateway format: `GET /tcp?v=1&host=<host>&port=<port>` (host also accepts bracketed
+///   IPv6, e.g. `host=[::1]`).
 /// - Legacy format: `GET /tcp?target=<host>:<port>` (also supports bracketed IPv6)
 ///
 /// Also supports a minimal `POST /session` endpoint that issues an `aero_session` cookie, and
@@ -819,6 +820,21 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
                         .expect("build response"));
                 }
             } else if let (Some(host), Some(port)) = (host, port) {
+                if port == 0 {
+                    return Err(Response::builder()
+                        .status(400)
+                        .body(Some("invalid port".to_string()))
+                        .expect("build response"));
+                }
+                let host = match parse_host(&host) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(Response::builder()
+                            .status(400)
+                            .body(Some("invalid host".to_string()))
+                            .expect("build response"));
+                    }
+                };
                 target = Some((host, port));
             }
 
@@ -883,18 +899,46 @@ fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
         let Some((host, rest)) = rest.split_once(']') else {
             return Err("missing closing bracket in IPv6 address");
         };
+        if host.is_empty() {
+            return Err("missing host");
+        }
         let Some(port) = rest.strip_prefix(':') else {
             return Err("missing :port suffix");
         };
         let port: u16 = port.parse().map_err(|_| "invalid port")?;
+        if port == 0 {
+            return Err("invalid port");
+        }
         return Ok((host.to_string(), port));
     }
 
     let Some((host, port)) = target.rsplit_once(':') else {
         return Err("missing :port suffix");
     };
+    if host.is_empty() {
+        return Err("missing host");
+    }
     let port: u16 = port.parse().map_err(|_| "invalid port")?;
+    if port == 0 {
+        return Err("invalid port");
+    }
     Ok((host.to_string(), port))
+}
+
+fn parse_host(host: &str) -> Result<String, &'static str> {
+    if let Some(rest) = host.strip_prefix('[') {
+        let Some(host) = rest.strip_suffix(']') else {
+            return Err("missing closing bracket in host");
+        };
+        if host.is_empty() {
+            return Err("missing host");
+        }
+        return Ok(host.to_string());
+    }
+    if host.is_empty() {
+        return Err("missing host");
+    }
+    Ok(host.to_string())
 }
 
 struct TcpProxyClient {
