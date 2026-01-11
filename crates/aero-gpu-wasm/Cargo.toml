@@ -1,0 +1,14 @@
+[package]
+name = "aero-gpu-wasm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+aero-gpu = { path = "../aero-gpu" }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+

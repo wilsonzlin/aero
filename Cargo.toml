@@ -14,6 +14,7 @@ members = [
     "crates/aero-gpu-trace",
     "crates/aero-gpu-trace-replay",
     "crates/aero-gpu-utils",
+    "crates/aero-gpu-wasm",
     "crates/aero-shared",
     "crates/aero-emulator",
     "crates/aero-core",

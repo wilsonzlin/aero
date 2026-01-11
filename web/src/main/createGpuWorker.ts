@@ -13,6 +13,7 @@ import type {
   GpuRuntimeOutMessage,
   GpuRuntimeReadyMessage,
   GpuRuntimeScreenshotResponseMessage,
+  GpuRuntimeSubmitCompleteMessage,
 } from "../workers/gpu_runtime_protocol";
 
 export interface CreateGpuWorkerParams {
@@ -29,6 +30,7 @@ export interface GpuWorkerHandle {
   ready: Promise<GpuRuntimeReadyMessage>;
   resize(width: number, height: number, devicePixelRatio: number): void;
   presentTestPattern(): void;
+  submitAerogpu(cmdStream: ArrayBuffer, signalFence: bigint, allocTable?: ArrayBuffer): Promise<GpuRuntimeSubmitCompleteMessage>;
   requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage>;
   shutdown(): void;
 }
@@ -158,12 +160,20 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     number,
     { resolve: (msg: GpuRuntimeScreenshotResponseMessage) => void; reject: (err: unknown) => void }
   >();
+  const submitRequests = new Map<
+    number,
+    { resolve: (msg: GpuRuntimeSubmitCompleteMessage) => void; reject: (err: unknown) => void }
+  >();
 
   function rejectAllPending(err: unknown): void {
     for (const [, pending] of screenshotRequests) {
       pending.reject(err);
     }
     screenshotRequests.clear();
+    for (const [, pending] of submitRequests) {
+      pending.reject(err);
+    }
+    submitRequests.clear();
   }
 
   worker.addEventListener("message", (event) => {
@@ -179,6 +189,13 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         const pending = screenshotRequests.get(msg.requestId);
         if (!pending) return;
         screenshotRequests.delete(msg.requestId);
+        pending.resolve(msg);
+        break;
+      }
+      case "submit_complete": {
+        const pending = submitRequests.get(msg.requestId);
+        if (!pending) return;
+        submitRequests.delete(msg.requestId);
         pending.resolve(msg);
         break;
       }
@@ -234,6 +251,34 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     worker.postMessage({ type: "tick", frameTimeMs: performance.now() });
   }
 
+  function submitAerogpu(
+    cmdStream: ArrayBuffer,
+    signalFence: bigint,
+    allocTable?: ArrayBuffer,
+  ): Promise<GpuRuntimeSubmitCompleteMessage> {
+    return ready.then(
+      () => {
+        const requestId = nextRequestId++;
+        const transfer: Transferable[] = [cmdStream];
+        if (allocTable) transfer.push(allocTable);
+        worker.postMessage(
+          {
+            type: "submit_aerogpu",
+            requestId,
+            signalFence,
+            cmdStream,
+            ...(allocTable ? { allocTable } : {}),
+          },
+          transfer,
+        );
+        return new Promise<GpuRuntimeSubmitCompleteMessage>((resolve, reject) => {
+          submitRequests.set(requestId, { resolve, reject });
+        });
+      },
+      (err) => Promise.reject(err),
+    );
+  }
+
   function requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage> {
     return ready.then(
       () => {
@@ -257,8 +302,8 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     ready,
     resize,
     presentTestPattern,
+    submitAerogpu,
     requestScreenshot,
     shutdown,
   };
 }
-

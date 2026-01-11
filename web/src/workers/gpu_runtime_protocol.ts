@@ -77,6 +77,28 @@ export type GpuRuntimeScreenshotRequestMessage = {
   requestId: number;
 };
 
+export type GpuRuntimeSubmitAerogpuMessage = {
+  type: "submit_aerogpu";
+  requestId: number;
+  /**
+   * Guest-provided fence value to report as completed once the submission finishes.
+   *
+   * Uses BigInt to preserve full u64 fidelity across JS/worker IPC.
+   */
+  signalFence: bigint;
+  /**
+   * Raw command stream bytes (includes `aerogpu_cmd_stream_header` / "ACMD" magic).
+   *
+   * This buffer should be transferred to the worker (`postMessage(..., [cmdStream])`)
+   * to avoid an extra copy.
+   */
+  cmdStream: ArrayBuffer;
+  /**
+   * Optional allocation table bytes (reserved for future guest-memory backing).
+   */
+  allocTable?: ArrayBuffer;
+};
+
 export type GpuRuntimeShutdownMessage = { type: "shutdown" };
 
 export type GpuRuntimeInMessage =
@@ -84,6 +106,7 @@ export type GpuRuntimeInMessage =
   | GpuRuntimeResizeMessage
   | GpuRuntimeTickMessage
   | GpuRuntimeScreenshotRequestMessage
+  | GpuRuntimeSubmitAerogpuMessage
   | GpuRuntimeShutdownMessage;
 
 export type GpuRuntimeFallbackInfo = {
@@ -128,8 +151,20 @@ export type GpuRuntimeScreenshotResponseMessage = {
   frameSeq?: number;
 };
 
+export type GpuRuntimeSubmitCompleteMessage = {
+  type: "submit_complete";
+  requestId: number;
+  completedFence: bigint;
+  /**
+   * Monotonic present counter for the runtime (optional; only reported when the
+   * submission contained at least one PRESENT packet).
+   */
+  presentCount?: bigint;
+};
+
 export type GpuRuntimeOutMessage =
   | GpuRuntimeReadyMessage
   | GpuRuntimeMetricsMessage
   | GpuRuntimeErrorMessage
-  | GpuRuntimeScreenshotResponseMessage;
+  | GpuRuntimeScreenshotResponseMessage
+  | GpuRuntimeSubmitCompleteMessage;

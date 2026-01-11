@@ -255,6 +255,15 @@ name = "aero-gpu-vga"
 version = "0.1.0"
 
 [[package]]
+name = "aero-gpu-wasm"
+version = "0.1.0"
+dependencies = [
+ "aero-gpu",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "aero-http-range"
 version = "0.1.0"
 dependencies = [

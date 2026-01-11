@@ -72,6 +72,7 @@ import type {
   GpuRuntimeInitOptions,
   GpuRuntimeOutMessage,
   GpuRuntimeScreenshotRequestMessage,
+  GpuRuntimeSubmitAerogpuMessage,
 } from "./gpu_runtime_protocol";
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
@@ -124,6 +125,25 @@ let presenterFallback: GpuRuntimeFallbackInfo | undefined = undefined;
 let presenterInitPromise: Promise<void> | null = null;
 let presenterSrcWidth = 0;
 let presenterSrcHeight = 0;
+
+// -----------------------------------------------------------------------------
+// AeroGPU command submission (ACMD)
+// -----------------------------------------------------------------------------
+
+type AeroGpuCpuTexture = {
+  width: number;
+  height: number;
+  format: number;
+  data: Uint8Array;
+};
+
+const aerogpuTextures = new Map<number, AeroGpuCpuTexture>();
+let aerogpuCurrentRenderTarget: number | null = null;
+let aerogpuPresentCount: bigint = 0n;
+let aerogpuLastPresentedFrame: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
+
+// Ensure submissions execute serially even though message handlers are async.
+let aerogpuSubmitChain: Promise<void> = Promise.resolve();
 
 let framesReceived = 0;
 let framesPresented = 0;
@@ -507,6 +527,222 @@ const presentOnce = async (): Promise<boolean> => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// AeroGPU command submissions (ACMD)
+// -----------------------------------------------------------------------------
+
+const AEROGPU_CMD_STREAM_MAGIC = 0x444d_4341; // "ACMD" little-endian
+const AEROGPU_STREAM_HEADER_BYTES = 24;
+const AEROGPU_CMD_HDR_BYTES = 8;
+
+const AEROGPU_CMD_CREATE_TEXTURE2D = 0x101;
+const AEROGPU_CMD_DESTROY_RESOURCE = 0x102;
+const AEROGPU_CMD_UPLOAD_RESOURCE = 0x104;
+
+const AEROGPU_CMD_SET_RENDER_TARGETS = 0x400;
+
+const AEROGPU_CMD_PRESENT = 0x700;
+const AEROGPU_CMD_PRESENT_EX = 0x701;
+
+const AEROGPU_FORMAT_R8G8B8A8_UNORM = 3; // See `drivers/aerogpu/protocol/aerogpu_pci.h`.
+
+const readU32LeChecked = (dv: DataView, offset: number, limit: number, label: string): number => {
+  if (offset < 0 || offset + 4 > limit) {
+    throw new Error(`aerogpu: truncated u32 (${label}) at offset ${offset}`);
+  }
+  return dv.getUint32(offset, true);
+};
+
+const readU64LeChecked = (dv: DataView, offset: number, limit: number, label: string): bigint => {
+  if (offset < 0 || offset + 8 > limit) {
+    throw new Error(`aerogpu: truncated u64 (${label}) at offset ${offset}`);
+  }
+  return dv.getBigUint64(offset, true);
+};
+
+const checkedU64ToNumber = (value: bigint, label: string): number => {
+  if (value < 0n) throw new Error(`aerogpu: negative u64 (${label})`);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`aerogpu: ${label} too large for JS number (${value} > ${Number.MAX_SAFE_INTEGER})`);
+  }
+  return Number(value);
+};
+
+const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
+  aerogpuLastPresentedFrame = { width: tex.width, height: tex.height, rgba8: tex.data.slice().buffer };
+
+  if (!presenter) return;
+
+  if (tex.width !== presenterSrcWidth || tex.height !== presenterSrcHeight) {
+    presenterSrcWidth = tex.width;
+    presenterSrcHeight = tex.height;
+    presenter.resize(tex.width, tex.height, outputDpr);
+  }
+
+  presenter.present(tex.data, tex.width * 4);
+};
+
+const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
+  const dv = new DataView(cmdStream);
+  const bufLen = dv.byteLength;
+
+  if (bufLen < AEROGPU_STREAM_HEADER_BYTES) {
+    throw new Error(`aerogpu: cmd stream too small (${bufLen} bytes)`);
+  }
+
+  const magic = dv.getUint32(0, true);
+  if (magic !== AEROGPU_CMD_STREAM_MAGIC) {
+    throw new Error(`aerogpu: bad cmd stream magic 0x${magic.toString(16)} (expected 0x${AEROGPU_CMD_STREAM_MAGIC.toString(16)})`);
+  }
+
+  const sizeBytes = dv.getUint32(8, true);
+  if (sizeBytes < AEROGPU_STREAM_HEADER_BYTES || sizeBytes > bufLen) {
+    throw new Error(`aerogpu: invalid cmd stream size_bytes=${sizeBytes} (buffer_len=${bufLen})`);
+  }
+
+  let offset = AEROGPU_STREAM_HEADER_BYTES;
+  let presentDelta = 0n;
+
+  while (offset < sizeBytes) {
+    if (offset + AEROGPU_CMD_HDR_BYTES > sizeBytes) {
+      throw new Error(`aerogpu: truncated command header at offset ${offset}`);
+    }
+
+    const opcode = readU32LeChecked(dv, offset + 0, sizeBytes, "opcode");
+    const cmdSizeBytes = readU32LeChecked(dv, offset + 4, sizeBytes, "size_bytes");
+
+    if (cmdSizeBytes < AEROGPU_CMD_HDR_BYTES) {
+      throw new Error(`aerogpu: invalid command size_bytes=${cmdSizeBytes} at offset ${offset}`);
+    }
+    if (cmdSizeBytes % 4 !== 0) {
+      throw new Error(`aerogpu: misaligned command size_bytes=${cmdSizeBytes} at offset ${offset}`);
+    }
+
+    const end = offset + cmdSizeBytes;
+    if (end > sizeBytes) {
+      throw new Error(`aerogpu: command at offset ${offset} overruns stream (end=${end}, size=${sizeBytes})`);
+    }
+
+    switch (opcode) {
+      case AEROGPU_CMD_CREATE_TEXTURE2D: {
+        // struct aerogpu_cmd_create_texture2d is 56 bytes (including header).
+        if (cmdSizeBytes < 56) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const handle = readU32LeChecked(dv, offset + 8, end, "texture_handle");
+        const format = readU32LeChecked(dv, offset + 16, end, "format");
+        const width = readU32LeChecked(dv, offset + 20, end, "width");
+        const height = readU32LeChecked(dv, offset + 24, end, "height");
+
+        if (width === 0 || height === 0) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D invalid dimensions ${width}x${height}`);
+        }
+        if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format} (only RGBA8_UNORM=${AEROGPU_FORMAT_R8G8B8A8_UNORM} supported)`);
+        }
+
+        const byteLen = width * height * 4;
+        aerogpuTextures.set(handle, { width, height, format, data: new Uint8Array(byteLen) });
+        break;
+      }
+
+      case AEROGPU_CMD_DESTROY_RESOURCE: {
+        if (cmdSizeBytes < 16) {
+          throw new Error(`aerogpu: DESTROY_RESOURCE packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const handle = readU32LeChecked(dv, offset + 8, end, "resource_handle");
+        aerogpuTextures.delete(handle);
+        if (aerogpuCurrentRenderTarget === handle) aerogpuCurrentRenderTarget = null;
+        break;
+      }
+
+      case AEROGPU_CMD_UPLOAD_RESOURCE: {
+        // struct aerogpu_cmd_upload_resource is 32 bytes (including header), followed by `size_bytes` payload bytes.
+        if (cmdSizeBytes < 32) {
+          throw new Error(`aerogpu: UPLOAD_RESOURCE packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const handle = readU32LeChecked(dv, offset + 8, end, "resource_handle");
+        const offsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 16, end, "offset_bytes"), "offset_bytes");
+        const sizeBytesU64 = readU64LeChecked(dv, offset + 24, end, "size_bytes");
+        const uploadBytes = checkedU64ToNumber(sizeBytesU64, "size_bytes");
+
+        const dataStart = offset + 32;
+        const dataEnd = dataStart + uploadBytes;
+        if (dataEnd > end) {
+          throw new Error(`aerogpu: UPLOAD_RESOURCE payload overruns packet (dataEnd=${dataEnd}, end=${end})`);
+        }
+
+        const tex = aerogpuTextures.get(handle);
+        if (!tex) {
+          throw new Error(`aerogpu: UPLOAD_RESOURCE references unknown texture handle ${handle}`);
+        }
+        if (offsetBytes + uploadBytes > tex.data.byteLength) {
+          throw new Error(
+            `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${tex.data.byteLength})`,
+          );
+        }
+
+        tex.data.set(new Uint8Array(cmdStream, dataStart, uploadBytes), offsetBytes);
+        break;
+      }
+
+      case AEROGPU_CMD_SET_RENDER_TARGETS: {
+        // struct aerogpu_cmd_set_render_targets is 48 bytes (including header).
+        if (cmdSizeBytes < 48) {
+          throw new Error(`aerogpu: SET_RENDER_TARGETS packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const colorCount = readU32LeChecked(dv, offset + 8, end, "color_count");
+        const rt0 = readU32LeChecked(dv, offset + 16, end, "colors[0]");
+        aerogpuCurrentRenderTarget = colorCount > 0 ? rt0 : null;
+        break;
+      }
+
+      case AEROGPU_CMD_PRESENT:
+      case AEROGPU_CMD_PRESENT_EX: {
+        aerogpuPresentCount += 1n;
+        presentDelta += 1n;
+
+        const rt = aerogpuCurrentRenderTarget;
+        if (rt != null && rt !== 0) {
+          const tex = aerogpuTextures.get(rt);
+          if (!tex) {
+            throw new Error(`aerogpu: PRESENT references missing render target handle ${rt}`);
+          }
+          presentAerogpuTexture(tex);
+        }
+        break;
+      }
+
+      default:
+        // Unknown opcodes are skipped (forward-compat).
+        break;
+    }
+
+    offset = end;
+  }
+
+  return presentDelta;
+};
+
+const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
+  const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
+
+  let presentDelta = 0n;
+  try {
+    await maybeSendReady();
+    presentDelta = executeAerogpuCmdStream(req.cmdStream);
+  } catch (err) {
+    sendError(err);
+  } finally {
+    postToMain({
+      type: "submit_complete",
+      requestId: req.requestId,
+      completedFence: signalFence,
+      ...(presentDelta > 0n ? { presentCount: aerogpuPresentCount } : {}),
+    });
+  }
+};
+
 const handleTick = async () => {
   syncPerfFrame();
   refreshFramebufferViews();
@@ -855,6 +1091,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterSrcWidth = 0;
         presenterSrcHeight = 0;
 
+        aerogpuTextures.clear();
+        aerogpuCurrentRenderTarget = null;
+        aerogpuPresentCount = 0n;
+        aerogpuLastPresentedFrame = null;
+        aerogpuSubmitChain = Promise.resolve();
+
         presenterUserOnError = runtimeOptions?.presenter?.onError;
         presenterInitOptions = { ...(runtimeOptions?.presenter ?? {}) };
         // Backend init installs its own error handler wrapper.
@@ -904,6 +1146,16 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       break;
     }
 
+    case "submit_aerogpu": {
+      const req = msg as GpuRuntimeSubmitAerogpuMessage;
+      aerogpuSubmitChain = aerogpuSubmitChain
+        .catch(() => {
+          // Ensure a previous failed submission does not permanently stall the chain.
+        })
+        .then(() => handleSubmitAerogpu(req));
+      break;
+    }
+
     case "screenshot": {
       const req = msg as GpuRuntimeScreenshotRequestMessage;
       void (async () => {
@@ -925,6 +1177,24 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 ...(typeof seq === "number" ? { frameSeq: seq } : {}),
               },
               [shot.pixels],
+            );
+            return;
+          }
+
+          const last = aerogpuLastPresentedFrame;
+          if (last) {
+            const out = last.rgba8.slice(0);
+            postToMain(
+              {
+                type: "screenshot",
+                requestId: req.requestId,
+                width: last.width,
+                height: last.height,
+                rgba8: out,
+                origin: "top-left",
+                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+              },
+              [out],
             );
             return;
           }
@@ -966,6 +1236,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeCanvas = null;
       runtimeOptions = null;
       runtimeReadySent = false;
+      aerogpuTextures.clear();
+      aerogpuCurrentRenderTarget = null;
+      aerogpuLastPresentedFrame = null;
       ctx.close();
       break;
     }
