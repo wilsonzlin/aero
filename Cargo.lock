@@ -176,6 +176,9 @@ dependencies = [
 [[package]]
 name = "aero-emulator"
 version = "0.1.0"
+dependencies = [
+ "aero-protocol",
+]
 
 [[package]]
 name = "aero-gateway-rs"
