@@ -408,6 +408,21 @@ describe("usb/UsbBroker", () => {
     ]);
   });
 
+  it("does not synthesize a usb.completion when an invalid usb.action envelope includes an invalid id", async () => {
+    stubNavigatorUsb(new EventTarget());
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1.5, endpoint: 1, length: "bad" } });
+    await Promise.resolve();
+
+    expect(port.posted).toEqual([]);
+  });
+
   it("does not resend usb.selected when attaching the same port twice", async () => {
     vi.doMock("./webusb_backend", () => ({
       WebUsbBackend: class {

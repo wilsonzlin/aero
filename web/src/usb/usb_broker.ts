@@ -22,7 +22,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function extractActionId(action: unknown): number | null {
   if (!isRecord(action)) return null;
   const id = action.id;
-  return typeof id === "number" && Number.isFinite(id) ? id : null;
+  if (typeof id !== "number") return null;
+  // Match `isUsbHostAction` (`usb_proxy_protocol.ts`): ids are u32 values encoded as JS numbers.
+  if (!Number.isSafeInteger(id)) return null;
+  if (id < 0 || id > 0xffff_ffff) return null;
+  return id;
 }
 
 function extractActionKind(action: unknown): UsbHostAction["kind"] | null {
