@@ -1351,6 +1351,100 @@ mod tests {
         assert_eq!(collections, reparsed);
     }
 
+    #[test]
+    fn main_item_flag_bitset_roundtrips_for_input_items() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: false,
+                    is_buffered_bytes: true,
+                    is_volatile: false,
+                    is_constant: false,
+                    is_wrapped: true,
+                    is_linear: false,
+                    has_preferred_state: false,
+                    has_null: true,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 1,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+
+        assert!(
+            desc.windows(2).any(|w| w == [0x81, 0xFE]),
+            "expected Input main item flags 0xfe encoding (0x81 0xfe): {desc:02x?}"
+        );
+
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
+    }
+
+    #[test]
+    fn main_item_flag_bitset_roundtrips_for_output_items() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: true,
+                    is_volatile: true,
+                    is_constant: false,
+                    is_wrapped: true,
+                    is_linear: false,
+                    has_preferred_state: false,
+                    has_null: true,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 1,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 8,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                }],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+
+        assert!(
+            desc.windows(3).any(|w| w == [0x92, 0xFA, 0x01]),
+            "expected Output main item flags 0x01fa encoding (0x92 0xfa 0x01): {desc:02x?}"
+        );
+
+        let reparsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(collections, reparsed);
+    }
+
     fn simple_item(report_size: u32, report_count: u32) -> HidReportItem {
         HidReportItem {
             is_array: false,
