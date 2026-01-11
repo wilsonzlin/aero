@@ -626,6 +626,13 @@ foreach ($driverBuildDir in $driverBuildDirs) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
       }
       Copy-Item -LiteralPath $src -Destination $dest -Force
+
+      # Some drivers stage additional INF(s) under subdirectories (for example: a legacy binding
+      # INF under `legacy/`). Include those in INF stamping so DriverVer stays in sync with the
+      # packaged build and catalog generation hashes the stamped contents.
+      if ($ext -eq '.inf') {
+        $stagedInfPaths += $dest
+      }
     }
 
     $existingWdf = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Filter 'WdfCoInstaller*.dll' -ErrorAction SilentlyContinue)
