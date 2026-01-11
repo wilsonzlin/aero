@@ -260,9 +260,9 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(DEFAULT)", hr);
   }
 
-  // Use a padded row pitch (not tightly packed) to catch bugs where the driver incorrectly assumes
-  // RowPitch == Width*BytesPerPixel for UpdateSubresource uploads.
-  const int upload_row_pitch = kWidth * 4 + 16;
+  // Use a padded (and intentionally not 8/16-aligned) row pitch to catch drivers that ignore the
+  // provided pitch or assume a particular alignment.
+  const int upload_row_pitch = kWidth * 4 + 4;
   std::vector<uint8_t> upload((size_t)upload_row_pitch * (size_t)kHeight, 0);
   FillUploadBGRA8(&upload[0], kWidth, kHeight, upload_row_pitch, 0, 0, false);
 
@@ -288,7 +288,8 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
   patch_box.bottom = (UINT)kPatchBottom;
   patch_box.back = 1;
 
-  const int patch_row_pitch = kPatchWidth * 4 + 12;
+  // Also choose a padded, non-8-aligned row pitch for the boxed update.
+  const int patch_row_pitch = kPatchWidth * 4 + 8;
   std::vector<uint8_t> patch((size_t)patch_row_pitch * (size_t)kPatchHeight, 0);
   FillUploadBGRA8(&patch[0], kPatchWidth, kPatchHeight, patch_row_pitch, kPatchLeft, kPatchTop, true);
 
