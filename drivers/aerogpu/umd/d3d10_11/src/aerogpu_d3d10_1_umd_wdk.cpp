@@ -1031,6 +1031,25 @@ void emit_upload_resource_locked(AeroGpuDevice* dev,
   cmd->size_bytes = upload_size;
 }
 
+void emit_dirty_range_locked(AeroGpuDevice* dev,
+                             const AeroGpuResource* res,
+                             uint64_t offset_bytes,
+                             uint64_t size_bytes) {
+  if (!dev || !res || res->handle == kInvalidHandle || !size_bytes) {
+    return;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!cmd) {
+    set_error(dev, E_FAIL);
+    return;
+  }
+  cmd->resource_handle = res->handle;
+  cmd->reserved0 = 0;
+  cmd->offset_bytes = offset_bytes;
+  cmd->size_bytes = size_bytes;
+}
+
 template <typename TFnPtr>
 struct DdiStub;
 
@@ -2596,7 +2615,13 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   }
 
   if (res->mapped_write) {
-    emit_upload_resource_locked(dev, res, res->mapped_offset, res->mapped_size);
+    if (res->mapped_size != 0) {
+      if (res->backing_alloc_id != 0) {
+        emit_dirty_range_locked(dev, res, res->mapped_offset, res->mapped_size);
+      } else {
+        emit_upload_resource_locked(dev, res, res->mapped_offset, res->mapped_size);
+      }
+    }
   }
 
   res->mapped = false;

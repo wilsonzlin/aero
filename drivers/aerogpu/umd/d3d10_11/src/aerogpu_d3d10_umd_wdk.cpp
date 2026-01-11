@@ -1988,7 +1988,7 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     return;
   }
 
-  if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+  if (res->mapped_write && res->backing_alloc_id == 0 && !res->storage.empty() && res->mapped_size) {
     uint64_t upload_offset = res->mapped_offset;
     uint64_t upload_size = res->mapped_size;
     if (res->kind == ResourceKind::Buffer) {
@@ -2069,6 +2069,18 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
         SetError(hDevice, unlock_hr);
       }
     }
+  }
+
+  if (res->mapped_write && res->backing_alloc_id != 0 && res->mapped_size != 0) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    if (!cmd) {
+      SetError(hDevice, E_FAIL);
+      return;
+    }
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = res->mapped_offset;
+    cmd->size_bytes = res->mapped_size;
   }
 
   res->mapped = false;
