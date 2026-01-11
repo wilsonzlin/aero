@@ -303,7 +303,7 @@ If you implement only one blend mode initially, make sure you cover standard pre
 
 Guest-side validation:
 
-* `drivers/aerogpu/tests/win7/d3d9ex_event_query` verifies `D3DQUERYTYPE_EVENT` completion behavior and that `GetData(D3DGETDATA_DONOTFLUSH)` remains non-blocking (DWM relies on this polling pattern).
+ * `drivers/aerogpu/tests/win7/d3d9ex_event_query` verifies `D3DQUERYTYPE_EVENT` completion behavior and that `GetData(D3DGETDATA_DONOTFLUSH)` remains non-blocking (including an initial poll before `Flush`; DWM relies on this polling pattern).
 
 ---
 
