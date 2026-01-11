@@ -249,10 +249,13 @@ must satisfy the proxy's Origin allowlist and auth policy:
   `ALLOWED_ORIGINS` fallback).
   - By default the relay forwards the client signaling Origin (`L2_BACKEND_FORWARD_ORIGIN=1`).
   - Use `L2_BACKEND_ORIGIN` to pin a specific Origin value (must be in the backend allowlist).
-- **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=cookie`), enable
-  `L2_BACKEND_FORWARD_AERO_SESSION=1` so the relay forwards `Cookie: aero_session=<...>` extracted
-  from the signaling request. Otherwise, use token/JWT auth (`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key`)
-  and configure `L2_BACKEND_TOKEN` and/or `L2_BACKEND_AUTH_FORWARD_MODE`.
+- **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=cookie|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`),
+  enable `L2_BACKEND_FORWARD_AERO_SESSION=1` so the relay forwards `Cookie: aero_session=<...>`
+  extracted from the signaling request.
+  - For token/JWT auth (`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key|cookie_and_api_key`), configure
+    `L2_BACKEND_TOKEN` and/or `L2_BACKEND_AUTH_FORWARD_MODE`.
+  - For `AERO_L2_AUTH_MODE=cookie_and_api_key`, you typically need **both** `L2_BACKEND_FORWARD_AERO_SESSION=1` and
+    a token (`L2_BACKEND_TOKEN` or forwarded client credentials).
 
 #### Docker / docker-compose
 
