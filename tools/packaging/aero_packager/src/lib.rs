@@ -571,6 +571,15 @@ fn should_include_driver_file(
     rel_path: &str,
     allowlist: &DriverFileAllowlist,
 ) -> Result<bool> {
+    // Skip hidden directories (e.g. `.vs/`) to keep outputs stable across hosts.
+    // `walkdir` will still traverse them unless we filter at the file level.
+    if rel_path
+        .split('/')
+        .any(|c| c.starts_with('.') || c == "__MACOSX")
+    {
+        return Ok(false);
+    }
+
     let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
     // Keep outputs stable across hosts (e.g. ignore `.DS_Store`).
     if file_name.starts_with('.') {
@@ -600,8 +609,8 @@ fn should_include_driver_file(
     if let Some(ext) = ext_opt {
         if is_private_key_extension(ext) {
             bail!(
-                "refusing to package private key material: {}",
-                path.display()
+                "refusing to package private key material (.{ext}): {} (Guest Tools must not ship signing keys or other secret material)",
+                path.display(),
             );
         }
 
@@ -614,7 +623,7 @@ fn should_include_driver_file(
 }
 
 fn is_private_key_extension(ext: &str) -> bool {
-    matches!(ext, "pfx" | "pvk" | "snk")
+    matches!(ext, "pfx" | "pvk" | "snk" | "key" | "pem")
 }
 
 fn is_default_excluded_driver_extension(ext: &str) -> bool {
@@ -623,7 +632,7 @@ fn is_default_excluded_driver_extension(ext: &str) -> bool {
         // Debug symbols.
         "pdb" | "ipdb" | "iobj"
         // Build metadata.
-        | "obj" | "lib"
+        | "obj" | "lib" | "exp" | "ilk" | "tlog" | "log"
         // Source / project files.
         | "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx" | "idl" | "inl" | "rc" | "s" | "asm"
         | "sln" | "vcxproj" | "props" | "targets"
@@ -665,23 +674,34 @@ fn validate_inf_references(
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
-            if !key.trim().eq_ignore_ascii_case("copyfiles") {
-                continue;
-            }
-            for token in value.split(',') {
-                let token = token.trim();
-                if token.is_empty() {
-                    continue;
+            if key.trim().eq_ignore_ascii_case("copyfiles") {
+                for token in value.split(',') {
+                    let token = token.trim();
+                    if token.is_empty() {
+                        continue;
+                    }
+                    let token = normalize_inf_path_token(token);
+                    if token.is_empty() {
+                        continue;
+                    }
+                    let token = token.trim_start_matches('@').to_string();
+                    if token.contains('.') || token.contains('/') {
+                        referenced.insert(token);
+                    } else {
+                        copyfile_sections.insert(token.to_ascii_lowercase());
+                    }
                 }
-                let token = normalize_inf_path_token(token);
-                if token.is_empty() {
-                    continue;
-                }
-                let token = token.trim_start_matches('@').to_string();
-                if token.contains('.') || token.contains('/') {
-                    referenced.insert(token);
-                } else {
-                    copyfile_sections.insert(token.to_ascii_lowercase());
+            } else if key.trim().eq_ignore_ascii_case("copyinf") {
+                // Best-effort: `CopyINF` can be used to pull additional INF files into the driver
+                // package; `pnputil -a` expects these to exist relative to the staging directory.
+                for token in value.split(',') {
+                    let token = normalize_inf_path_token(token).trim_start_matches('@').to_string();
+                    if token.is_empty() || token.contains('%') {
+                        continue;
+                    }
+                    if token.to_ascii_lowercase().ends_with(".inf") {
+                        referenced.insert(token);
+                    }
                 }
             }
         }
@@ -740,17 +760,17 @@ fn validate_inf_references(
             continue;
         }
         let token_lower = token.to_ascii_lowercase().replace('\\', "/");
-        if token_lower.contains('/') {
-            if !packaged_rel_paths.contains(&token_lower) {
-                bail!(
-                    "driver {} ({}) INF #{} references missing file: {}",
-                    driver_name,
-                    arch,
-                    inf_index,
-                    token
-                );
-            }
-        } else if !packaged_base_names.contains(&token_lower) {
+        if token_lower.contains('/') && packaged_rel_paths.contains(&token_lower) {
+            continue;
+        }
+
+        // Prefer path matches when a path was provided, but fall back to basename (best-effort)
+        // to avoid false negatives when the INF uses slightly different relative paths.
+        let base = token_lower
+            .rsplit_once('/')
+            .map(|(_, b)| b)
+            .unwrap_or(token_lower.as_str());
+        if !packaged_base_names.contains(base) {
             bail!(
                 "driver {} ({}) INF #{} references missing file: {}",
                 driver_name,

@@ -433,32 +433,38 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
     let guest_tools_dir = testdata.join("guest-tools");
     let spec_path = testdata.join("spec.json");
 
-    let drivers_tmp = tempfile::tempdir()?;
-    copy_dir_all(&drivers_dir, drivers_tmp.path())?;
-    fs::write(
-        drivers_tmp.path().join("x86/testdrv/test.pfx"),
-        b"dummy pfx",
-    )?;
+    for ext in ["pfx", "key", "pem"] {
+        let drivers_tmp = tempfile::tempdir()?;
+        copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+        fs::write(
+            drivers_tmp.path().join(format!("x86/testdrv/test.{ext}")),
+            b"dummy secret",
+        )?;
 
-    let out_dir = tempfile::tempdir()?;
-    let config = aero_packager::PackageConfig {
-        drivers_dir: drivers_tmp.path().to_path_buf(),
-        guest_tools_dir,
-        out_dir: out_dir.path().to_path_buf(),
-        spec_path,
-        version: "0.0.0".to_string(),
-        build_id: "test".to_string(),
-        volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
-        source_date_epoch: 0,
-    };
+        let out_dir = tempfile::tempdir()?;
+        let config = aero_packager::PackageConfig {
+            drivers_dir: drivers_tmp.path().to_path_buf(),
+            guest_tools_dir: guest_tools_dir.clone(),
+            out_dir: out_dir.path().to_path_buf(),
+            spec_path: spec_path.clone(),
+            version: "0.0.0".to_string(),
+            build_id: "test".to_string(),
+            volume_id: "AERO_GUEST_TOOLS".to_string(),
+            signing_policy: aero_packager::SigningPolicy::TestSigning,
+            source_date_epoch: 0,
+        };
 
-    let err = aero_packager::package_guest_tools(&config).unwrap_err();
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("refusing to package private key material"),
-        "unexpected error: {msg}"
-    );
+        let err = aero_packager::package_guest_tools(&config).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("refusing to package private key material"),
+            "unexpected error: {msg}"
+        );
+        assert!(
+            msg.contains(&format!("test.{ext}")),
+            "expected offending path in error for .{ext}: {msg}"
+        );
+    }
     Ok(())
 }
 
@@ -524,14 +530,19 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
     let zip_base = fs::read(&outputs_base.zip_path)?;
     let manifest_base = fs::read(&outputs_base.manifest_path)?;
 
-    // Add a dummy PDB (debug symbol) to the driver directory and ensure it is not packaged.
+    // Add dummy build artifacts to the driver directory and ensure they are not packaged.
     let drivers_tmp = tempfile::tempdir()?;
     copy_dir_all(&drivers_dir, drivers_tmp.path())?;
     for arch in ["x86", "amd64"] {
-        fs::write(
-            drivers_tmp.path().join(format!("{arch}/testdrv/test.pdb")),
-            b"dummy pdb",
-        )?;
+        for (name, contents) in [
+            ("test.pdb", b"dummy pdb".as_slice()),
+            ("test.exp", b"dummy exp".as_slice()),
+            ("test.ilk", b"dummy ilk".as_slice()),
+            ("test.tlog", b"dummy tlog".as_slice()),
+            ("test.log", b"dummy log".as_slice()),
+        ] {
+            fs::write(drivers_tmp.path().join(format!("{arch}/testdrv/{name}")), contents)?;
+        }
     }
 
     let out_pdb = tempfile::tempdir()?;
@@ -544,8 +555,20 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
     let iso_pdb = fs::read(&outputs_pdb.iso_path)?;
     let tree = aero_packager::read_joliet_tree(&iso_pdb)?;
 
-    assert!(!tree.contains("drivers/x86/testdrv/test.pdb"));
-    assert!(!tree.contains("drivers/amd64/testdrv/test.pdb"));
+    for unexpected in [
+        "drivers/x86/testdrv/test.pdb",
+        "drivers/amd64/testdrv/test.pdb",
+        "drivers/x86/testdrv/test.exp",
+        "drivers/amd64/testdrv/test.exp",
+        "drivers/x86/testdrv/test.ilk",
+        "drivers/amd64/testdrv/test.ilk",
+        "drivers/x86/testdrv/test.tlog",
+        "drivers/amd64/testdrv/test.tlog",
+        "drivers/x86/testdrv/test.log",
+        "drivers/amd64/testdrv/test.log",
+    ] {
+        assert!(!tree.contains(unexpected), "unexpected file packaged: {unexpected}");
+    }
 
     // Excluded debug symbols should not affect deterministic outputs.
     assert_eq!(iso_base, iso_pdb);
@@ -593,6 +616,52 @@ fn driver_dll_extensions_are_handled_case_insensitively() -> anyhow::Result<()> 
     assert!(tree.contains("drivers/amd64/testdrv/test.DLL"));
     assert!(!tree.contains("drivers/x86/testdrv/test.dll"));
     assert!(!tree.contains("drivers/amd64/testdrv/test.dll"));
+
+    Ok(())
+}
+
+#[test]
+fn copyinf_directives_are_validated() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    // Copy drivers, then mutate the test INF to reference a missing INF via CopyINF.
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+
+    let inf_path = drivers_tmp.path().join("x86/testdrv/test.inf");
+    let original = fs::read_to_string(&inf_path)?;
+    let mut out_lines = Vec::new();
+    for line in original.lines() {
+        out_lines.push(line.to_string());
+        if line.trim()
+            .eq_ignore_ascii_case("CopyFiles=DriverCopyFiles,CoInstaller_CopyFiles")
+        {
+            out_lines.push("CopyINF=missing.inf".to_string());
+        }
+    }
+    fs::write(inf_path, out_lines.join("\n") + "\n")?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing.inf") && msg.contains("references missing file"),
+        "unexpected error: {msg}"
+    );
 
     Ok(())
 }

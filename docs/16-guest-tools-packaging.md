@@ -73,10 +73,10 @@ It applies a small exclusion policy:
 
 - Skipped by default (to avoid bloating artifacts with build outputs):
   - debug symbols: `*.pdb`, `*.ipdb`, `*.iobj`
-  - build metadata: `*.obj`, `*.lib`
+  - build/link metadata: `*.obj`, `*.lib`, `*.exp`, `*.ilk`, `*.tlog`, `*.log`
   - source / project files: `*.c`, `*.cpp`, `*.h`, `*.sln`, `*.vcxproj`, etc
 - **Refused (hard error)** to avoid leaking secrets:
-  - private key material: `*.pfx`, `*.pvk`, `*.snk`
+  - private key material: `*.pfx`, `*.pvk`, `*.snk`, `*.key`, `*.pem` (case-insensitive)
 
 Per-driver overrides can be configured in the packaging spec via `allow_extensions` and `allow_path_regexes`.
 
@@ -237,7 +237,7 @@ Before producing any output, the packager verifies that:
 - each **required** driver is present for both `x86` and `amd64` (missing required drivers are fatal),
 - each included driver (required + optional that are present) contains at least one `.inf`, `.sys`, and `.cat`,
 - each included driver's `.inf` files contain the expected hardware IDs (regex match, case-insensitive) if provided,
-- each included driver's `.inf` files reference only files that exist in the packaged driver directory (best-effort; includes KMDF `WdfCoInstaller*.dll` checks).
+- each included driver's `.inf` files reference only files that exist in the packaged driver directory (best-effort; validates common directives like `CopyFiles=`, `CopyINF=`, `SourceDisksFiles*`, and includes KMDF `WdfCoInstaller*.dll` sanity checks).
 
 These checks are driven by a small JSON spec passed via `--spec`.
 
