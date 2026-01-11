@@ -124,6 +124,8 @@ $osDir = "w7"
 # packaging is robust on case-sensitive filesystems.
 "license placeholder" | Out-File -FilePath (Join-Path $syntheticRoot "license.txt") -Encoding ascii
 "notice placeholder" | Out-File -FilePath (Join-Path $syntheticRoot "notice.txt") -Encoding ascii
+$fakeVirtioWinVersion = "0.0.0-synthetic"
+$fakeVirtioWinVersion | Out-File -FilePath (Join-Path $syntheticRoot "VERSION") -Encoding ascii
 
 # Root-mode provenance: simulate the JSON emitted by tools/virtio-win/extract.py so
 # make-driver-pack.ps1 can record ISO hash/path even when -VirtioWinRoot is used.
@@ -196,6 +198,9 @@ $driverPackManifestPath = Join-Path $driverPackRoot "manifest.json"
 $driverPackManifest = Get-Content -LiteralPath $driverPackManifestPath -Raw | ConvertFrom-Json
 if ($driverPackManifest.source.path -ne $fakeIsoPath) {
   throw "Driver pack manifest source.path mismatch: expected '$fakeIsoPath', got '$($driverPackManifest.source.path)'"
+}
+if ($driverPackManifest.source.derived_version -ne $fakeVirtioWinVersion) {
+  throw "Driver pack manifest source.derived_version mismatch: expected '$fakeVirtioWinVersion', got '$($driverPackManifest.source.derived_version)'"
 }
 if (-not $driverPackManifest.source.hash -or $driverPackManifest.source.hash.value -ne $fakeIsoSha) {
   throw "Driver pack manifest source.hash mismatch: expected '$fakeIsoSha', got '$($driverPackManifest.source.hash.value)'"
