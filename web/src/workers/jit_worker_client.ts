@@ -54,6 +54,8 @@ export class JitWorkerClient {
     if (this.#destroyed) {
       return Promise.reject(new Error("JitWorkerClient is destroyed."));
     }
+    // Note: `wasmBytes` will be transferred to the worker, so the caller must not
+    // use this ArrayBuffer after calling `compile()`.
     const id = this.#nextId++;
     const timeoutMs = Math.max(0, opts?.timeoutMs ?? 10_000);
 
