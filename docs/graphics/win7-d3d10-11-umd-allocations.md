@@ -201,18 +201,18 @@ The callback typedefs are declared in `d3dumddi.h`:
 
 ```c
 typedef HRESULT (APIENTRY *PFND3DDDICB_ALLOCATE)(
-    HANDLE hDevice,
+    D3D10DDI_HRTDEVICE hDevice,
     D3DDDICB_ALLOCATE* pAllocateData
     );
 
 typedef HRESULT (APIENTRY *PFND3DDDICB_DEALLOCATE)(
-    HANDLE hDevice,
+    D3D10DDI_HRTDEVICE hDevice,
     const D3DDDICB_DEALLOCATE* pDeallocateData
     );
 
 // Used by Map/Unmap paths (notably D3D11_USAGE_STAGING)
-typedef HRESULT (APIENTRY *PFND3DDDICB_LOCK)(HANDLE hDevice, D3DDDICB_LOCK* pLockData);
-typedef HRESULT (APIENTRY *PFND3DDDICB_UNLOCK)(HANDLE hDevice, const D3DDDICB_UNLOCK* pUnlockData);
+typedef HRESULT (APIENTRY *PFND3DDDICB_LOCK)(D3D10DDI_HRTDEVICE hDevice, D3DDDICB_LOCK* pLockData);
+typedef HRESULT (APIENTRY *PFND3DDDICB_UNLOCK)(D3D10DDI_HRTDEVICE hDevice, const D3DDDICB_UNLOCK* pUnlockData);
 ```
 
 Notes:
