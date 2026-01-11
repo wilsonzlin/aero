@@ -50,6 +50,38 @@ struct FileToPackage {
     bytes: Vec<u8>,
 }
 
+fn guest_tools_devices_cmd_service_overrides_for_spec(
+    spec: &PackagingSpec,
+) -> GuestToolsDevicesCmdServiceOverrides {
+    let driver_names: HashSet<String> = spec
+        .drivers
+        .iter()
+        .map(|d| d.name.trim().to_ascii_lowercase())
+        .collect();
+
+    // When packaging Guest Tools from upstream virtio-win drivers, the Windows service
+    // names (AddService) differ from Aero's in-tree clean-room drivers. Guest Tools
+    // uses these service names for boot-critical storage pre-seeding (0x7B avoidance).
+    //
+    // Override service names based on the selected packaging spec so `setup.cmd` can
+    // validate and preseed against the packaged INFs.
+    let mut service_overrides = GuestToolsDevicesCmdServiceOverrides::default();
+    if driver_names.contains("viostor") {
+        service_overrides.virtio_blk_service = Some("viostor".to_string());
+    }
+    if driver_names.contains("netkvm") {
+        service_overrides.virtio_net_service = Some("netkvm".to_string());
+    }
+    if driver_names.contains("vioinput") {
+        service_overrides.virtio_input_service = Some("vioinput".to_string());
+    }
+    if driver_names.contains("viosnd") {
+        service_overrides.virtio_snd_service = Some("viosnd".to_string());
+    }
+
+    service_overrides
+}
+
 /// Create `aero-guest-tools.iso`, `aero-guest-tools.zip`, and `manifest.json` in `out_dir`.
 pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     fs::create_dir_all(&config.out_dir)
@@ -57,14 +89,36 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
 
+    let service_overrides = guest_tools_devices_cmd_service_overrides_for_spec(&spec);
+    let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
+        &config.windows_device_contract_path,
+        &service_overrides,
+    )
+    .with_context(|| {
+        format!(
+            "generate config/devices.cmd from {}",
+            config.windows_device_contract_path.display()
+        )
+    })?;
+    let generated_devices_cmd_vars =
+        parse_devices_cmd_vars(String::from_utf8_lossy(&devices_cmd_bytes).as_ref());
+
     let devices_cmd_path = config.guest_tools_dir.join("config").join("devices.cmd");
-    let devices_cmd_vars = read_devices_cmd_vars(&devices_cmd_path)
-        .with_context(|| "read guest-tools/config/devices.cmd")?;
+    let mut devices_cmd_vars = if devices_cmd_path.is_file() {
+        read_devices_cmd_vars(&devices_cmd_path).with_context(|| "read guest-tools/config/devices.cmd")?
+    } else {
+        // config/devices.cmd is packaged from the Windows device contract, but we still allow
+        // optional spec fixtures to define additional variables in the on-disk file.
+        HashMap::new()
+    };
+    // Use the contract-generated devices.cmd values as the source of truth for any overlapping
+    // variables, while still allowing test fixtures to define extra variables.
+    devices_cmd_vars.extend(generated_devices_cmd_vars);
 
     let driver_plan = validate_drivers(&spec, &config.drivers_dir, &devices_cmd_vars)
         .with_context(|| "validate driver artifacts")?;
 
-    let mut files = collect_files(config, &spec, &driver_plan)?;
+    let mut files = collect_files(config, &driver_plan, devices_cmd_bytes)?;
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
     // Hash all files that will be included, except the manifest which is generated below.
@@ -132,8 +186,8 @@ struct DriverPlan {
 
 fn collect_files(
     config: &PackageConfig,
-    spec: &PackagingSpec,
     driver_plan: &DriverPlan,
+    devices_cmd_bytes: Vec<u8>,
 ) -> Result<Vec<FileToPackage>> {
     let mut out = Vec::new();
 
@@ -169,42 +223,6 @@ fn collect_files(
         );
     }
 
-    let driver_names: HashSet<String> = spec
-        .drivers
-        .iter()
-        .map(|d| d.name.trim().to_ascii_lowercase())
-        .collect();
-
-    // When packaging Guest Tools from upstream virtio-win drivers, the Windows service
-    // names (AddService) differ from Aero's in-tree clean-room drivers. Guest Tools
-    // uses these service names for boot-critical storage pre-seeding (0x7B avoidance).
-    //
-    // Override service names based on the selected packaging spec so `setup.cmd` can
-    // validate and preseed against the packaged INFs.
-    let mut service_overrides = GuestToolsDevicesCmdServiceOverrides::default();
-    if driver_names.contains("viostor") {
-        service_overrides.virtio_blk_service = Some("viostor".to_string());
-    }
-    if driver_names.contains("netkvm") {
-        service_overrides.virtio_net_service = Some("netkvm".to_string());
-    }
-    if driver_names.contains("vioinput") {
-        service_overrides.virtio_input_service = Some("vioinput".to_string());
-    }
-    if driver_names.contains("viosnd") {
-        service_overrides.virtio_snd_service = Some("viosnd".to_string());
-    }
-
-    let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
-        &config.windows_device_contract_path,
-        &service_overrides,
-    )
-    .with_context(|| {
-        format!(
-            "generate config/devices.cmd from {}",
-            config.windows_device_contract_path.display()
-        )
-    })?;
     out.push(FileToPackage {
         rel_path: "config/devices.cmd".to_string(),
         bytes: devices_cmd_bytes,
@@ -1089,10 +1107,7 @@ fn normalize_inf_path_token(token: &str) -> String {
     s.trim().to_string()
 }
 
-fn read_devices_cmd_vars(path: &Path) -> Result<HashMap<String, String>> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let text = String::from_utf8_lossy(&bytes);
-
+fn parse_devices_cmd_vars(text: &str) -> HashMap<String, String> {
     let mut vars = HashMap::new();
 
     for line in text.lines() {
@@ -1145,7 +1160,13 @@ fn read_devices_cmd_vars(path: &Path) -> Result<HashMap<String, String>> {
         vars.insert(name.to_ascii_uppercase(), value);
     }
 
-    Ok(vars)
+    vars
+}
+
+fn read_devices_cmd_vars(path: &Path) -> Result<HashMap<String, String>> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(parse_devices_cmd_vars(text.as_ref()))
 }
 
 fn parse_devices_cmd_token_list(raw: &str) -> Vec<String> {
