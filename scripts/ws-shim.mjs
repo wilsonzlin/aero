@@ -27,8 +27,9 @@ function toBuffer(data) {
 }
 
 function parseProtocolsHeader(header) {
-  if (typeof header !== "string") return [];
-  return header
+  const raw = Array.isArray(header) ? header.join(",") : typeof header === "string" ? header : "";
+  if (!raw) return [];
+  return raw
     .split(",")
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
