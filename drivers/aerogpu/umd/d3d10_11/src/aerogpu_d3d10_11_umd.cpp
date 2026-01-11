@@ -3373,20 +3373,19 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       return S_OK;
 
     case 8: { // FEATURE_LEVELS
-      static const D3D_FEATURE_LEVEL kLevels[] = {D3D_FEATURE_LEVEL_10_0};
-      struct FeatureLevelsCaps {
-        UINT NumFeatureLevels;
-        const D3D_FEATURE_LEVEL* pFeatureLevels;
-      };
-
-      if (data_size == sizeof(FeatureLevelsCaps)) {
-        auto* out = reinterpret_cast<FeatureLevelsCaps*>(data);
-        out->NumFeatureLevels = 1;
-        out->pFeatureLevels = kLevels;
+      // Win7 D3D11 runtime expects a "count + inline list" layout in practice:
+      //   { UINT NumFeatureLevels; D3D_FEATURE_LEVEL FeatureLevels[NumFeatureLevels]; }
+      //
+      // Avoid pointer-based layouts here; on x86 they are the same size (8 bytes)
+      // and can be misinterpreted by the runtime.
+      std::memset(data, 0, data_size);
+      if (data_size >= sizeof(UINT) + sizeof(D3D_FEATURE_LEVEL)) {
+        auto* out_count = reinterpret_cast<UINT*>(data);
+        *out_count = 1;
+        auto* out_levels = reinterpret_cast<D3D_FEATURE_LEVEL*>(out_count + 1);
+        out_levels[0] = D3D_FEATURE_LEVEL_10_0;
         return S_OK;
       }
-
-      std::memset(data, 0, data_size);
       if (data_size >= sizeof(D3D_FEATURE_LEVEL)) {
         reinterpret_cast<D3D_FEATURE_LEVEL*>(data)[0] = D3D_FEATURE_LEVEL_10_0;
         return S_OK;
