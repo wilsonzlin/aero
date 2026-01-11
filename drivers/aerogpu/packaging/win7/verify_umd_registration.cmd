@@ -89,10 +89,6 @@ if not defined AEROGPU_CLASS_KEY (
   rem adapter description string differs).
   call :find_class_key "PCI\VEN_A3A0&DEV_0001"
 )
-if not defined AEROGPU_CLASS_KEY (
-  rem Optional legacy bring-up identity.
-  call :find_class_key "PCI\VEN_1AED&DEV_0001"
-)
 
 :found_key
 if not defined AEROGPU_CLASS_KEY (
