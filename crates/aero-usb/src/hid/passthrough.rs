@@ -1462,7 +1462,6 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
     false
 }
 
-
 /// Shared `Rc<RefCell<_>>` wrapper for attaching [`UsbHidPassthrough`] devices to a [`UsbBus`]
 /// while keeping a separate host-side handle.
 #[derive(Clone)]

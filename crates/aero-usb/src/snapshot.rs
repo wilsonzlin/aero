@@ -4,9 +4,7 @@
 //! `Box<dyn UsbDevice>` trait objects. Concrete device models implement `IoSnapshot`, and these
 //! helpers downcast to the supported device types to call their snapshot methods.
 
-use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotError, SnapshotResult,
-};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
 
 use crate::hid::passthrough::{SharedUsbHidPassthroughDevice, UsbHidPassthrough};
 use crate::hid::{UsbHidCompositeInput, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse};
@@ -64,10 +62,7 @@ pub(crate) fn load_device_state(dev: &mut dyn UsbDevice, bytes: &[u8]) -> Snapsh
     if let Some(dev) = dev.as_any_mut().downcast_mut::<UsbHidGamepad>() {
         return dev.load_state(bytes);
     }
-    if let Some(dev) = dev
-        .as_any_mut()
-        .downcast_mut::<UsbHidCompositeInput>()
-    {
+    if let Some(dev) = dev.as_any_mut().downcast_mut::<UsbHidCompositeInput>() {
         return dev.load_state(bytes);
     }
     if let Some(dev) = dev.as_any_mut().downcast_mut::<UsbHidPassthrough>() {

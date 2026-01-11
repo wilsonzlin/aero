@@ -201,7 +201,6 @@ pub struct UhciController {
     bus: UsbBus,
 }
 
-
 impl UhciController {
     pub fn new(io_base: u16, irq_line: u8) -> Self {
         let mut ctrl = Self {
