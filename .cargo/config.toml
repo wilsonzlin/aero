@@ -15,7 +15,6 @@ xtask = "run --locked -p xtask --"
 # Developers can still opt back in by exporting `RUSTC_WRAPPER=sccache` or setting
 # `build.rustc-wrapper` in a higher-precedence config.
 rustc-wrapper = ""
-rustdoc-wrapper = ""
 
 [env]
 # Some sandbox environments ship with a broken `sccache` wrapper via environment
