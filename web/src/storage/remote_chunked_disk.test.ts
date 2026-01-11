@@ -143,12 +143,30 @@ describe("RemoteChunkedDisk", () => {
     expect(hits.get("/chunks/00000000.bin")).toBe(1);
     expect(hits.get("/chunks/00000001.bin")).toBe(1);
 
+    const t1 = disk.getTelemetrySnapshot();
+    expect(t1.totalSize).toBe(totalSize);
+    expect(t1.cachedBytes).toBe(2048);
+    expect(t1.blockRequests).toBe(2);
+    expect(t1.cacheHits).toBe(0);
+    expect(t1.cacheMisses).toBe(2);
+    expect(t1.requests).toBe(2);
+    expect(t1.bytesDownloaded).toBe(2048);
+    expect(t1.lastFetchMs).not.toBeNull();
+
     // Re-read: should be served from cache with no additional chunk GETs.
     const buf2 = new Uint8Array(1536);
     await disk.readSectors(1, buf2);
     expect(buf2).toEqual(img.slice(512, 2048));
     expect(hits.get("/chunks/00000000.bin")).toBe(1);
     expect(hits.get("/chunks/00000001.bin")).toBe(1);
+
+    const t2 = disk.getTelemetrySnapshot();
+    expect(t2.cachedBytes).toBe(2048);
+    expect(t2.blockRequests).toBe(4);
+    expect(t2.cacheHits).toBe(2);
+    expect(t2.cacheMisses).toBe(2);
+    expect(t2.requests).toBe(2);
+    expect(t2.bytesDownloaded).toBe(2048);
 
     await disk.close();
 
@@ -164,6 +182,14 @@ describe("RemoteChunkedDisk", () => {
     expect(buf3).toEqual(img.slice(1536, 2560));
     expect(hits.get("/chunks/00000001.bin")).toBe(1);
     expect(hits.get("/chunks/00000002.bin")).toBe(1);
+
+    const t3 = disk2.getTelemetrySnapshot();
+    expect(t3.totalSize).toBe(totalSize);
+    expect(t3.cachedBytes).toBe(totalSize);
+    expect(t3.cacheHits).toBe(1);
+    expect(t3.cacheMisses).toBe(1);
+    expect(t3.requests).toBe(1);
+    expect(t3.bytesDownloaded).toBe(512);
 
     await disk2.close();
   });
@@ -233,7 +259,13 @@ describe("RemoteChunkedDisk", () => {
     const buf = new Uint8Array(512);
     await expect(disk.readSectors(0, buf)).rejects.toThrow(/sha256 mismatch/i);
     expect(hits.get("/chunks/00000000.bin")).toBe(2);
+
+    const t = disk.getTelemetrySnapshot();
+    expect(t.cacheMisses).toBe(1);
+    expect(t.requests).toBe(2);
+    expect(t.bytesDownloaded).toBe(2048);
+    expect(t.cachedBytes).toBe(0);
+    expect(t.lastFetchMs).toBeNull();
     await disk.close();
   });
 });
-

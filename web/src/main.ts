@@ -1123,12 +1123,18 @@ function renderRemoteDiskPanel(): HTMLElement {
     "div",
     { class: "mono" },
     "Remote disk images are experimental. Only use images you own/have rights to. ",
-    "The server must support HTTP Range requests and CORS (see docs/disk-images.md). ",
+    "The server must support either HTTP Range requests (single-file images) or the chunked manifest format (see docs/disk-images.md). ",
     "For local testing, run `docker compose up` in `infra/local-object-store/` and upload an object to `disk-images/`. ",
     "For CDN/edge emulation, run `docker compose --profile proxy up` and use port 9002.",
   );
 
   const enabledInput = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const modeSelect = el(
+    "select",
+    {},
+    el("option", { value: "range", text: "HTTP Range" }),
+    el("option", { value: "chunked", text: "Chunked manifest.json" }),
+  ) as HTMLSelectElement;
   const urlInput = el("input", { type: "url", placeholder: "http://localhost:9000/disk-images/large.bin" }) as HTMLInputElement;
   const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
   const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
@@ -1155,12 +1161,27 @@ function renderRemoteDiskPanel(): HTMLElement {
     closeButton.disabled = !enabled || handle === null;
   }
 
+  function updateModeUi(): void {
+    const chunked = modeSelect.value === "chunked";
+    blockSizeInput.disabled = chunked;
+    urlInput.placeholder = chunked
+      ? "http://localhost:9000/disk-images/manifest.json"
+      : "http://localhost:9000/disk-images/large.bin";
+    probeButton.textContent = chunked ? "Fetch manifest" : "Probe Range support";
+  }
+
   enabledInput.addEventListener("change", () => {
     if (!enabledInput.checked) {
       void closeHandle();
     }
     updateButtons();
   });
+  modeSelect.addEventListener("change", () => {
+    void closeHandle();
+    updateModeUi();
+    updateButtons();
+  });
+  updateModeUi();
   updateButtons();
 
   async function closeHandle(): Promise<void> {
@@ -1179,11 +1200,17 @@ function renderRemoteDiskPanel(): HTMLElement {
     const url = urlInput.value.trim();
     if (!url) throw new Error("Enter a URL first.");
 
-    const blockSize = Number(blockSizeInput.value) * 1024;
     const cacheLimitMiB = Number(cacheLimitInput.value);
     const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
 
-    const opened = await client.openRemote(url, { blockSize, cacheLimitBytes, prefetchSequentialBlocks: 2 });
+    const opened =
+      modeSelect.value === "chunked"
+        ? await client.openChunked(url, { cacheLimitBytes, prefetchSequentialChunks: 2 })
+        : await client.openRemote(url, {
+            blockSize: Number(blockSizeInput.value) * 1024,
+            cacheLimitBytes,
+            prefetchSequentialBlocks: 2,
+          });
     handle = opened.handle;
     updateButtons();
     return opened.handle;
@@ -1310,20 +1337,22 @@ function renderRemoteDiskPanel(): HTMLElement {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: "Remote disk image (streaming via HTTP Range)" }),
+    el("h2", { text: "Remote disk image (streaming)" }),
     warning,
     el(
       "div",
       { class: "row" },
       el("label", { text: "Enable:" }),
       enabledInput,
+      el("label", { text: "Mode:" }),
+      modeSelect,
       el("label", { text: "URL:" }),
       urlInput,
     ),
     el(
       "div",
       { class: "row" },
-      el("label", { text: "Block KiB:" }),
+      el("label", { text: "Block KiB (range):" }),
       blockSizeInput,
       el("label", { text: "Cache MiB (0=off):" }),
       cacheLimitInput,

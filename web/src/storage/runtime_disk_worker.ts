@@ -7,6 +7,7 @@ import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
 import type { DiskImageMetadata } from "./metadata";
 import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
+import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
 
 type OpenMode = "direct" | "cow";
 
@@ -42,6 +43,12 @@ type RequestMessage =
       requestId: number;
       op: "openRemote";
       payload: { url: string; options?: RemoteDiskOptions };
+    }
+  | {
+      type: "request";
+      requestId: number;
+      op: "openChunked";
+      payload: { manifestUrl: string; options?: RemoteChunkedDiskOpenOptions };
     }
   | { type: "request"; requestId: number; op: "close"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "flush"; payload: { handle: number } }
@@ -164,6 +171,11 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
   return { disk, readOnly: true, io: emptyIoTelemetry() };
 }
 
+async function openChunkedDisk(manifestUrl: string, options?: RemoteChunkedDiskOpenOptions): Promise<DiskEntry> {
+  const disk = await RemoteChunkedDisk.open(manifestUrl, options);
+  return { disk, readOnly: true, io: emptyIoTelemetry() };
+}
+
 async function requireDisk(handle: number): Promise<DiskEntry> {
   const entry = disks.get(handle);
   if (!entry) throw new Error(`unknown disk handle ${handle}`);
@@ -195,6 +207,20 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
     case "openRemote": {
       const { url, options } = msg.payload;
       const entry = await openRemoteDisk(url, options);
+      const handle = nextHandle++;
+      disks.set(handle, entry);
+      postOk(msg.requestId, {
+        handle,
+        sectorSize: entry.disk.sectorSize,
+        capacityBytes: entry.disk.capacityBytes,
+        readOnly: entry.readOnly,
+      });
+      return;
+    }
+
+    case "openChunked": {
+      const { manifestUrl, options } = msg.payload;
+      const entry = await openChunkedDisk(manifestUrl, options);
       const handle = nextHandle++;
       disks.set(handle, entry);
       postOk(msg.requestId, {

@@ -273,6 +273,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private lastReadEnd: number | null = null;
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private metaLoaded = false;
+  private cacheGeneration = 0;
   private idbCache: IdbRemoteChunkCache | null = null;
 
   private telemetry: RemoteDiskTelemetry = {
@@ -473,13 +474,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async clearCache(): Promise<void> {
+    this.cacheGeneration += 1;
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
       await this.idbCache.clear();
     } else {
       await removeOpfsEntry(`state/remote-cache/${this.cacheKey}`, { recursive: true });
     }
-
     this.meta = {
       version: 1,
       url: this.url,
@@ -587,6 +588,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return await existing;
     }
 
+    const generation = this.cacheGeneration;
     const task = (async () => {
       const start = performance.now();
       this.telemetry.cacheMisses++;
@@ -600,6 +602,11 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       const buf = new Uint8Array(await resp.arrayBuffer());
       if (buf.length !== r.end - r.start) {
         throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
+      }
+      // If the caller cleared the cache while this fetch was in-flight, allow the read to
+      // complete but avoid repopulating the cache/telemetry for the new generation.
+      if (generation !== this.cacheGeneration) {
+        return buf;
       }
       this.telemetry.bytesDownloaded += buf.byteLength;
 
@@ -623,7 +630,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     try {
       return await task;
     } finally {
-      this.inflight.delete(blockIndex);
+      if (this.inflight.get(blockIndex) === task) {
+        this.inflight.delete(blockIndex);
+      }
     }
   }
 
@@ -638,6 +647,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return await existing;
     }
 
+    const generation = this.cacheGeneration;
     const task = (async () => {
       const start = performance.now();
       const cached = await this.idbCache!.get(blockIndex);
@@ -663,6 +673,10 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
       }
 
+      if (generation !== this.cacheGeneration) {
+        return buf;
+      }
+
       await this.idbCache!.put(blockIndex, buf);
       const status = await this.idbCache!.getStatus();
       this.cachedBytes = status.bytesUsed;
@@ -676,7 +690,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     try {
       return await task;
     } finally {
-      this.inflight.delete(blockIndex);
+      if (this.inflight.get(blockIndex) === task) {
+        this.inflight.delete(blockIndex);
+      }
     }
   }
 

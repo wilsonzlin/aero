@@ -1,5 +1,5 @@
 import { openFileHandle, removeOpfsEntry } from "../platform/opfs";
-import { RangeSet, type ByteRange } from "../platform/remote_disk";
+import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 
 export type ChunkedDiskManifestV1 = {
@@ -70,6 +70,12 @@ export type RemoteChunkedDiskOptions = {
    */
   store?: BinaryStore;
 };
+
+/**
+ * `RemoteChunkedDiskOptions` safe to send across `postMessage` boundaries.
+ * (The `store` option allows injecting a test store instance and is not transferable.)
+ */
+export type RemoteChunkedDiskOpenOptions = Omit<RemoteChunkedDiskOptions, "store">;
 
 export interface BinaryStore {
   read(path: string): Promise<Uint8Array | null>;
@@ -316,6 +322,7 @@ class RemoteChunkCache {
   private meta: RemoteChunkedDiskCacheMeta;
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
+  private cachedBytes = 0;
 
   constructor(
     private readonly store: BinaryStore,
@@ -335,6 +342,14 @@ class RemoteChunkCache {
       accessCounter: 0,
       chunkLastAccess: {},
     };
+  }
+
+  getCachedBytes(): number {
+    return this.cachedBytes;
+  }
+
+  getCacheLimitBytes(): number | null {
+    return this.cacheLimitBytes;
   }
 
   private chunkPath(chunkIndex: number): string {
@@ -375,13 +390,14 @@ class RemoteChunkCache {
         parsed.chunkIndexWidth === this.manifest.chunkIndexWidth;
       if (!compatible) return;
       this.meta = parsed;
-      for (const r of parsed.downloaded) {
-        this.rangeSet.insert(r.start, r.end);
-      }
-    } catch {
-      // ignore corrupt meta
-    }
-  }
+       for (const r of parsed.downloaded) {
+         this.rangeSet.insert(r.start, r.end);
+       }
+       this.cachedBytes = this.rangeSet.totalLen();
+     } catch {
+       // ignore corrupt meta
+     }
+   }
 
   async getChunk(chunkIndex: number): Promise<Uint8Array | null> {
     await this.loadMeta();
@@ -396,6 +412,7 @@ class RemoteChunkCache {
       this.rangeSet.remove(r.start, r.end);
       delete this.meta.chunkLastAccess[String(chunkIndex)];
       this.meta.downloaded = this.rangeSet.getRanges();
+      this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
       return null;
     }
@@ -415,6 +432,7 @@ class RemoteChunkCache {
 
     await this.store.write(this.chunkPath(chunkIndex), bytes);
     this.rangeSet.insert(r.start, r.end);
+    this.cachedBytes = this.rangeSet.totalLen();
     this.noteAccess(chunkIndex);
     this.meta.downloaded = this.rangeSet.getRanges();
     await this.persistMeta();
@@ -440,6 +458,7 @@ class RemoteChunkCache {
       chunkLastAccess: {},
     };
     this.rangeSet = new RangeSet();
+    this.cachedBytes = 0;
     this.metaWriteChain = Promise.resolve();
     this.metaLoaded = true;
   }
@@ -461,7 +480,7 @@ class RemoteChunkCache {
 
   private async enforceCacheLimit(protectedChunk: number): Promise<void> {
     if (this.cacheLimitBytes === null) return;
-    while (this.rangeSet.totalLen() > this.cacheLimitBytes) {
+    while (this.cachedBytes > this.cacheLimitBytes) {
       let lruChunk: number | null = null;
       let lruCounter = Number.POSITIVE_INFINITY;
       for (const [chunkStr, counter] of Object.entries(this.meta.chunkLastAccess)) {
@@ -479,6 +498,7 @@ class RemoteChunkCache {
       this.rangeSet.remove(r.start, r.end);
       delete this.meta.chunkLastAccess[String(lruChunk)];
       this.meta.downloaded = this.rangeSet.getRanges();
+      this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
     }
   }
@@ -496,11 +516,27 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private readonly semaphore: Semaphore;
   private readonly maxAttempts: number;
   private readonly retryBaseDelayMs: number;
-  private readonly abort = new AbortController();
+  private abort = new AbortController();
 
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private lastReadEnd: number | null = null;
   private closed = false;
+
+  private cacheGeneration = 0;
+
+  private telemetry: Omit<RemoteDiskTelemetrySnapshot, "url" | "totalSize" | "blockSize" | "cacheLimitBytes" | "cachedBytes" | "inflightFetches"> & {
+    lastFetchRange: ByteRange | null;
+  } = {
+    blockRequests: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    inflightJoins: 0,
+    requests: 0,
+    bytesDownloaded: 0,
+    lastFetchMs: null,
+    lastFetchAtMs: null,
+    lastFetchRange: null,
+  };
 
   private constructor(
     manifestUrl: string,
@@ -570,6 +606,30 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     });
   }
 
+  getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
+    return {
+      url: this.manifestUrl,
+      totalSize: this.capacityBytes,
+      blockSize: this.manifest.chunkSize,
+      cacheLimitBytes: this.chunkCache.getCacheLimitBytes(),
+      cachedBytes: this.chunkCache.getCachedBytes(),
+
+      blockRequests: this.telemetry.blockRequests,
+      cacheHits: this.telemetry.cacheHits,
+      cacheMisses: this.telemetry.cacheMisses,
+      inflightJoins: this.telemetry.inflightJoins,
+
+      requests: this.telemetry.requests,
+      bytesDownloaded: this.telemetry.bytesDownloaded,
+
+      inflightFetches: this.inflight.size,
+
+      lastFetchMs: this.telemetry.lastFetchMs,
+      lastFetchAtMs: this.telemetry.lastFetchAtMs,
+      lastFetchRange: this.telemetry.lastFetchRange ? { ...this.telemetry.lastFetchRange } : null,
+    };
+  }
+
   async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
     if (this.closed) throw new Error("disk is closed");
     assertSectorAligned(buffer.byteLength, this.sectorSize);
@@ -612,6 +672,28 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     await this.chunkCache.flush();
   }
 
+  async clearCache(): Promise<void> {
+    this.cacheGeneration += 1;
+    this.abort.abort();
+    const inflight = Array.from(this.inflight.values());
+    this.inflight.clear();
+    await Promise.allSettled(inflight);
+    this.abort = new AbortController();
+    this.lastReadEnd = null;
+    await this.chunkCache.clear();
+    this.telemetry = {
+      blockRequests: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      inflightJoins: 0,
+      requests: 0,
+      bytesDownloaded: 0,
+      lastFetchMs: null,
+      lastFetchAtMs: null,
+      lastFetchRange: null,
+    };
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -638,10 +720,14 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     return true;
   }
 
-  private async fetchChunkOnce(chunkIndex: number): Promise<Uint8Array> {
+  private async fetchChunkOnce(chunkIndex: number, generation: number): Promise<Uint8Array> {
     const expectedLen = this.manifest.chunkSizes[chunkIndex]!;
     const expectedSha = this.manifest.chunkSha256[chunkIndex];
     const url = this.chunkUrl(chunkIndex);
+
+    if (generation === this.cacheGeneration) {
+      this.telemetry.requests += 1;
+    }
 
     const resp = await fetch(url, {
       method: "GET",
@@ -655,6 +741,9 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     if (bytes.length !== expectedLen) {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.length}`);
     }
+    if (generation === this.cacheGeneration) {
+      this.telemetry.bytesDownloaded += bytes.byteLength;
+    }
 
     if (expectedSha) {
       const actual = await sha256Hex(bytes);
@@ -666,12 +755,12 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     return bytes;
   }
 
-  private async fetchChunkWithRetries(chunkIndex: number): Promise<Uint8Array> {
+  private async fetchChunkWithRetries(chunkIndex: number, generation: number): Promise<Uint8Array> {
     return await retryWithBackoff(
       async (_attempt) => {
         const release = await this.semaphore.acquire();
         try {
-          return await this.fetchChunkOnce(chunkIndex);
+          return await this.fetchChunkOnce(chunkIndex, generation);
         } finally {
           release();
         }
@@ -689,15 +778,42 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       throw new Error(`chunkIndex out of range: ${chunkIndex}`);
     }
 
+    const generation = this.cacheGeneration;
+    this.telemetry.blockRequests += 1;
+
     const cached = await this.chunkCache.getChunk(chunkIndex);
-    if (cached) return cached;
+    if (cached) {
+      if (generation === this.cacheGeneration) {
+        this.telemetry.cacheHits += 1;
+      }
+      return cached;
+    }
 
     const existing = this.inflight.get(chunkIndex);
-    if (existing) return await existing;
+    if (existing) {
+      if (generation === this.cacheGeneration) {
+        this.telemetry.inflightJoins += 1;
+      }
+      return await existing;
+    }
+
+    if (generation === this.cacheGeneration) {
+      this.telemetry.cacheMisses += 1;
+      const start = chunkIndex * this.manifest.chunkSize;
+      const end = start + this.manifest.chunkSizes[chunkIndex]!;
+      this.telemetry.lastFetchRange = { start, end };
+    }
+    const startTime = performance.now();
 
     const task = (async () => {
-      const bytes = await this.fetchChunkWithRetries(chunkIndex);
-      await this.chunkCache.putChunk(chunkIndex, bytes);
+      const bytes = await this.fetchChunkWithRetries(chunkIndex, generation);
+      // If the cache was cleared (or the disk closed), allow the read to succeed
+      // but avoid writing into a cache that the caller explicitly cleared.
+      if (generation === this.cacheGeneration && !this.closed) {
+        await this.chunkCache.putChunk(chunkIndex, bytes);
+        this.telemetry.lastFetchMs = performance.now() - startTime;
+        this.telemetry.lastFetchAtMs = Date.now();
+      }
       return bytes;
     })();
 
@@ -705,7 +821,10 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     try {
       return await task;
     } finally {
-      this.inflight.delete(chunkIndex);
+      // Only remove if this task is still the active inflight entry for the chunk.
+      if (this.inflight.get(chunkIndex) === task) {
+        this.inflight.delete(chunkIndex);
+      }
     }
   }
 

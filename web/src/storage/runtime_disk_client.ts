@@ -2,6 +2,7 @@ import type { BenchResult } from "./bench";
 import type { DiskImageMetadata } from "./metadata";
 export type { DiskImageMetadata } from "./metadata";
 import type { RemoteDiskOptions, RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
+import type { RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
 
 type OpenMode = "direct" | "cow";
 
@@ -17,6 +18,12 @@ type RequestMessage =
       requestId: number;
       op: "openRemote";
       payload: { url: string; options?: RemoteDiskOptions };
+    }
+  | {
+      type: "request";
+      requestId: number;
+      op: "openChunked";
+      payload: { manifestUrl: string; options?: RemoteChunkedDiskOpenOptions };
     }
   | { type: "request"; requestId: number; op: "close"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "flush"; payload: { handle: number } }
@@ -113,6 +120,10 @@ export class RuntimeDiskClient {
 
   openRemote(url: string, options?: RemoteDiskOptions): Promise<OpenResult> {
     return this.request("openRemote", { url, options });
+  }
+
+  openChunked(manifestUrl: string, options?: RemoteChunkedDiskOpenOptions): Promise<OpenResult> {
+    return this.request("openChunked", { manifestUrl, options });
   }
 
   read(handle: number, lba: number, byteLength: number): Promise<Uint8Array> {
