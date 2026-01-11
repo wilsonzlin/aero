@@ -34,6 +34,18 @@ import { RemoteStreamingDisk, type RemoteDiskCacheStatus, type RemoteDiskTelemet
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
+import {
+  isHidAttachMessage,
+  isHidDetachMessage,
+  isHidInputReportMessage,
+  type HidAttachMessage,
+  type HidDetachMessage,
+  type HidErrorMessage,
+  type HidInputReportMessage,
+  type HidLogMessage,
+  type HidProxyMessage,
+  type HidSendReportMessage,
+} from "../hid/hid_proxy_protocol";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -70,6 +82,75 @@ let mmioWriteCount = 0;
 
 type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
 let usbHid: UsbHidBridge | null = null;
+
+type HidHostSink = {
+  sendReport: (msg: Omit<HidSendReportMessage, "type">) => void;
+  log: (message: string, deviceId?: number) => void;
+  error: (message: string, deviceId?: number) => void;
+};
+
+interface HidGuestBridge {
+  attach(msg: HidAttachMessage): void;
+  detach(msg: HidDetachMessage): void;
+  inputReport(msg: HidInputReportMessage): void;
+}
+
+class InMemoryHidGuestBridge implements HidGuestBridge {
+  readonly devices = new Map<number, HidAttachMessage>();
+  readonly inputReports = new Map<number, HidInputReportMessage[]>();
+
+  #inputCount = 0;
+
+  constructor(private readonly host: HidHostSink) {}
+
+  attach(msg: HidAttachMessage): void {
+    this.devices.set(msg.deviceId, msg);
+    if (!this.inputReports.has(msg.deviceId)) this.inputReports.set(msg.deviceId, []);
+    this.host.log(
+      `hid.attach deviceId=${msg.deviceId} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
+      msg.deviceId,
+    );
+  }
+
+  detach(msg: HidDetachMessage): void {
+    this.devices.delete(msg.deviceId);
+    this.host.log(`hid.detach deviceId=${msg.deviceId}`, msg.deviceId);
+  }
+
+  inputReport(msg: HidInputReportMessage): void {
+    let queue = this.inputReports.get(msg.deviceId);
+    if (!queue) {
+      queue = [];
+      this.inputReports.set(msg.deviceId, queue);
+    }
+    queue.push(msg);
+
+    this.#inputCount += 1;
+    if (import.meta.env.DEV && (this.#inputCount & 0xff) === 0) {
+      this.host.log(
+        `hid.inputReport deviceId=${msg.deviceId} reportId=${msg.reportId} bytes=${msg.data.byteLength}`,
+        msg.deviceId,
+      );
+    }
+  }
+}
+
+const hidHostSink: HidHostSink = {
+  sendReport: (payload) => {
+    const msg: HidSendReportMessage = { type: "hid.sendReport", ...payload };
+    ctx.postMessage(msg, [payload.data.buffer]);
+  },
+  log: (message, deviceId) => {
+    const msg: HidLogMessage = { type: "hid.log", message, ...(deviceId !== undefined ? { deviceId } : {}) };
+    ctx.postMessage(msg);
+  },
+  error: (message, deviceId) => {
+    const msg: HidErrorMessage = { type: "hid.error", message, ...(deviceId !== undefined ? { deviceId } : {}) };
+    ctx.postMessage(msg);
+  },
+};
+
+let hidGuest: HidGuestBridge = new InMemoryHidGuestBridge(hidHostSink);
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -440,6 +521,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<FlushRemoteDiskCacheRequest>
       | Partial<CloseRemoteDiskRequest>
       | Partial<SetMicrophoneRingBufferMessage>
+      | Partial<HidProxyMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
       | undefined;
@@ -491,6 +573,21 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
       const msg = data as Partial<SetMicrophoneRingBufferMessage>;
       attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
+      return;
+    }
+
+    if (isHidAttachMessage(data)) {
+      hidGuest.attach(data);
+      return;
+    }
+
+    if (isHidDetachMessage(data)) {
+      hidGuest.detach(data);
+      return;
+    }
+
+    if (isHidInputReportMessage(data)) {
+      hidGuest.inputReport(data);
       return;
     }
 

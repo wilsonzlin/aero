@@ -16,7 +16,7 @@ import { startSyntheticMic } from "./audio/synthetic_mic";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs.ts";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
-import { mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./platform/webhid_passthrough";
+import { WebHidPassthroughManager } from "./platform/webhid_passthrough";
 import { initAeroStatusApi } from "./api/status";
 import { AeroConfigManager } from "./config/manager";
 import { InputCapture } from "./input/input_capture";
@@ -45,6 +45,7 @@ import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { UsbBroker } from "./usb/usb_broker";
+import { WebHidBroker } from "./hid/webhid_broker";
 import { WebHidPassthroughRuntime } from "./usb/webhid_passthrough_runtime";
 import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
 
@@ -63,6 +64,8 @@ installAeroGlobals();
 
 const workerCoordinator = new WorkerCoordinator();
 const usbBroker = new UsbBroker();
+const webHidManager = new WebHidPassthroughManager();
+const webHidBroker = new WebHidBroker({ manager: webHidManager });
 configManager.subscribe((state) => {
   workerCoordinator.updateConfig(state.effective);
 });
@@ -2687,50 +2690,156 @@ function renderMicrophonePanel(): HTMLElement {
 }
 
 function renderWebHidPassthroughPanel(): HTMLElement {
-  const host = el("div");
-  const manager = new WebHidPassthroughManager({
-    target: {
-      postMessage: (message) => {
-        const ioWorker = workerCoordinator.getIoWorker();
-        if (!ioWorker) {
-          throw new Error("I/O worker is not running. Start workers before attaching WebHID devices.");
-        }
-        ioWorker.postMessage(message);
-      },
-    },
+  const warning = el("div", {
+    class: "bad",
+    text: "Security warning: Attaching a device passes HID access to the guest OS.",
   });
-  mountWebHidPassthroughPanel(host, manager);
 
-  // Best-effort WASM bridge wiring for the dev panel. This is intentionally
-  // non-fatal: WebHID may be unavailable and WASM initialization can fail.
-  void wasmInitPromise
-    .then(({ api }) => {
+  const workerState = el("div", { class: "mono", text: "" });
+  const error = el("pre", { text: "" });
+  const portHint = el("div", {
+    class: "mono",
+    text: "Guest UHCI root hub currently exposes only 2 ports (0 and 1). Detach an existing device first.",
+  });
+
+  const requestButton = el("button", {
+    text: "Request device…",
+    onclick: async () => {
+      error.textContent = "";
       try {
-        // eslint-disable-next-line no-new
-        new WebHidPassthroughRuntime({
-          manager,
-          pollIntervalMs: 16,
-          createBridge: ({ device, normalizedCollections }) =>
-            // manufacturer/product/serial are not exposed consistently by WebHID; use
-            // best-effort strings and keep them optional on the Rust side.
-            // eslint-disable-next-line new-cap
-            new api.WebHidPassthroughBridge(
-              device.vendorId,
-              device.productId,
-              undefined,
-              device.productName || undefined,
-              undefined,
-              normalizedCollections,
-            ),
-        });
+        await webHidManager.requestAndAttachDevice([]);
       } catch (err) {
-        console.warn("WebHID passthrough runtime init failed", err);
+        error.textContent = err instanceof Error ? err.message : String(err);
       }
-    })
-    .catch((err) => {
-      console.warn("WASM init failed; WebHID passthrough disabled", err);
-    });
-  return el("div", { class: "panel" }, host);
+    },
+  }) as HTMLButtonElement;
+
+  const knownList = el("ul");
+  const attachedList = el("ul");
+
+  const describeDevice = (device: HIDDevice): string => {
+    const name = device.productName || `device (${device.vendorId.toString(16)}:${device.productId.toString(16)})`;
+    return `${name} [${device.vendorId.toString(16).padStart(4, "0")}:${device.productId.toString(16).padStart(4, "0")}]`;
+  };
+
+  const render = (): void => {
+    const state = webHidManager.getState();
+    const workerAttached = webHidBroker.isWorkerAttached();
+
+    workerState.textContent = `ioWorker=${workerAttached ? "attached" : "not attached"}`;
+    requestButton.disabled = !state.supported;
+
+    if (!state.supported) {
+      knownList.replaceChildren(el("li", { text: "WebHID is not available in this browser/context." }));
+      attachedList.replaceChildren(el("li", { text: "No devices attached." }));
+      return;
+    }
+
+    const attachedSet = new Set(state.attachedDevices.map((d) => d.device));
+    const known = state.knownDevices.filter((d) => !attachedSet.has(d));
+
+    knownList.replaceChildren(
+      ...(known.length
+        ? known.map((device) =>
+            el(
+              "li",
+              {},
+              el("span", { text: describeDevice(device) }),
+              el("button", {
+                text: "Open",
+                onclick: async () => {
+                  error.textContent = "";
+                  try {
+                    await webHidManager.attachKnownDevice(device);
+                  } catch (err) {
+                    error.textContent = err instanceof Error ? err.message : String(err);
+                  }
+                },
+              }),
+              el("button", {
+                text: "Attach to IO worker",
+                disabled: workerAttached ? undefined : "true",
+                onclick: async () => {
+                  error.textContent = "";
+                  try {
+                    await webHidBroker.attachDevice(device);
+                  } catch (err) {
+                    error.textContent = err instanceof Error ? err.message : String(err);
+                  }
+                },
+              }),
+            ),
+          )
+        : [el("li", { text: "No known devices. Use “Request device…” to grant access." })]),
+    );
+
+    attachedList.replaceChildren(
+      ...(state.attachedDevices.length
+        ? state.attachedDevices.map((attachment) => {
+            const attached = webHidBroker.isAttachedToWorker(attachment.device);
+            return el(
+              "li",
+              {},
+              el("span", { class: "mono", text: `port=${attachment.guestPort}` }),
+              el("span", { text: ` ${describeDevice(attachment.device)}` }),
+              el("span", { class: "mono", text: attached ? " (attached)" : " (not attached)" }),
+              attached
+                ? null
+                : el("button", {
+                    text: "Attach to IO worker",
+                    disabled: workerAttached ? undefined : "true",
+                    onclick: async () => {
+                      error.textContent = "";
+                      try {
+                        await webHidBroker.attachDevice(attachment.device);
+                      } catch (err) {
+                        error.textContent = err instanceof Error ? err.message : String(err);
+                      }
+                    },
+                  }),
+              el("button", {
+                text: "Detach",
+                onclick: async () => {
+                  error.textContent = "";
+                  try {
+                    await webHidBroker.detachDevice(attachment.device);
+                  } catch (err) {
+                    error.textContent = err instanceof Error ? err.message : String(err);
+                  }
+                },
+              }),
+            );
+          })
+        : [el("li", { text: "No devices attached." })]),
+    );
+  };
+
+  webHidManager.subscribe(() => render());
+  webHidBroker.subscribe(() => render());
+
+  render();
+  void webHidManager.refreshKnownDevices();
+
+  const hint = el("div", {
+    class: "mono",
+    text: "WebHID permissions persist per-origin. To revoke access, use your browser's site settings and remove HID device permissions for this site.",
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "WebHID passthrough" }),
+    warning,
+    workerState,
+    portHint,
+    hint,
+    el("div", { class: "row" }, requestButton),
+    el("h3", { text: "Known devices" }),
+    knownList,
+    el("h3", { text: "Attached devices" }),
+    attachedList,
+    error,
+  );
 }
 
 function renderMicrobenchPanel(): HTMLElement {
@@ -3227,8 +3336,14 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker !== attachedIoWorker) {
-      if (attachedIoWorker) usbBroker.detachWorkerPort(attachedIoWorker);
-      if (ioWorker) usbBroker.attachWorkerPort(ioWorker);
+      if (attachedIoWorker) {
+        usbBroker.detachWorkerPort(attachedIoWorker);
+        webHidBroker.detachWorkerPort(attachedIoWorker);
+      }
+      if (ioWorker) {
+        usbBroker.attachWorkerPort(ioWorker);
+        webHidBroker.attachWorkerPort(ioWorker);
+      }
       attachedIoWorker = ioWorker;
     }
 
