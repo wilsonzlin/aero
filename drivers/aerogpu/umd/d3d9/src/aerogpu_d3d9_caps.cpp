@@ -217,8 +217,6 @@ HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
 
   const uint32_t format_count = static_cast<uint32_t>(sizeof(kSupportedFormats) / sizeof(kSupportedFormats[0]));
 
-  logf("aerogpu-d3d9: GetCaps type=%u data_size=%u\n", pGetCaps->Type, pGetCaps->DataSize);
-
   if (!pGetCaps->pData || pGetCaps->DataSize == 0) {
     return E_INVALIDARG;
   }
@@ -314,10 +312,6 @@ HRESULT query_adapter_info(Adapter* adapter, const D3D9DDIARG_QUERYADAPTERINFO* 
   if (!pQueryAdapterInfo) {
     return E_INVALIDARG;
   }
-
-  logf("aerogpu-d3d9: QueryAdapterInfo type=%u size=%u\n",
-       pQueryAdapterInfo->Type,
-       pQueryAdapterInfo->PrivateDriverDataSize);
 
   if (!pQueryAdapterInfo->pPrivateDriverData || pQueryAdapterInfo->PrivateDriverDataSize == 0) {
     return E_INVALIDARG;
