@@ -31,7 +31,11 @@ See [ADR 0012](./docs/adr/0012-cargo-lock-policy.md) for the full policy.
 If you update Rust dependencies (or see a `--locked` failure), regenerate the lockfile and include it in your PR:
 
 ```bash
+# Root workspace
 cargo generate-lockfile
+
+# Standalone tools that have their own Cargo.lock (use the tool's Cargo.toml)
+cargo generate-lockfile --manifest-path path/to/tool/Cargo.toml
 ```
 
 ### Common workflows (cross-platform)
