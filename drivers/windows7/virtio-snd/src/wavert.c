@@ -1797,6 +1797,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                         }
 
                         VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
+                        VirtioSndQueueDisableInterrupts(&dx->Queues[VIRTIOSND_QUEUE_RX]);
 
                         status = VirtioSndCtrlSetParams1(&dx->Control, bufferSize, periodBytes);
                         if (!NT_SUCCESS(status)) {
@@ -1863,6 +1864,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                         }
 
                         VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
+                        VirtioSndQueueDisableInterrupts(&dx->Queues[VIRTIOSND_QUEUE_RX]);
 
                         /*
                          * If the cyclic buffer was allocated/reallocated while paused,
