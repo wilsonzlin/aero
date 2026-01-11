@@ -49,6 +49,10 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
     NT_ASSERT(Rx != NULL);
     NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
 
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
     if (Rx == NULL || Queue == NULL || Queue->Ops == NULL || Queue->Ctx == NULL || Queue->Ops->Submit == NULL || Queue->Ops->PopUsed == NULL ||
         Queue->Ops->Kick == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -126,6 +130,9 @@ VirtIoSndRxUninit(VIRTIOSND_RX_ENGINE* Rx)
     NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
 
     if (Rx == NULL) {
+        return;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return;
     }
 
