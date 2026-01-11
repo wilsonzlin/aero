@@ -16,6 +16,8 @@ describe("web Vite build outputs", () => {
       execFileSync(process.execPath, [viteBin, "build", "--config", path.join(webDir, "vite.config.ts"), "--outDir", outDir], {
         cwd: webDir,
         stdio: "inherit",
+        // Guard against hangs (e.g. if Vite config/plugins accidentally start a watch).
+        timeout: 120_000,
       });
 
       expect(existsSync(path.join(outDir, "webusb_diagnostics.html"))).toBe(true);
@@ -25,4 +27,3 @@ describe("web Vite build outputs", () => {
     }
   });
 });
-
