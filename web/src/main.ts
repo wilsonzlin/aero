@@ -2889,9 +2889,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     runConfigFullButton.hidden = true;
 
     const selectedLine = selectedInfo
-      ? `selected=${selectedInfo.productName ?? "(unnamed)"} vid=0x${selectedInfo.vendorId.toString(16).padStart(4, "0")} pid=0x${selectedInfo.productId
-          .toString(16)
-          .padStart(4, "0")}`
+      ? `selected=${selectedInfo.productName ?? "(unnamed)"} vid=${hex16(selectedInfo.vendorId)} pid=${hex16(selectedInfo.productId)}`
       : selectedError
         ? `selected=(none) error=${selectedError}`
         : "selected=(none)";
@@ -2932,9 +2930,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         const numInterfaces = isConfigDescriptor ? bytes[4]! : null;
 
         if (idVendor !== null && idProduct !== null) {
-          resultLine.textContent = `Result: success (device vid=0x${idVendor.toString(16).padStart(4, "0")} pid=0x${idProduct
-            .toString(16)
-            .padStart(4, "0")})`;
+          resultLine.textContent = `Result: success (device vid=${hex16(idVendor)} pid=${hex16(idProduct)})`;
         } else if (totalLen !== null && numInterfaces !== null) {
           const truncated = totalLen > bytes.byteLength;
           if (truncated) {

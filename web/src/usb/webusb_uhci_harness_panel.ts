@@ -2,7 +2,7 @@ import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import type { WasmInitResult } from "../runtime/wasm_loader";
 import { WebUsbBackend, type SetupPacket, type UsbHostAction, type UsbHostCompletion } from "./webusb_backend";
-import { formatHexBytes } from "./usb_hex";
+import { formatHexBytes, hex16 } from "./usb_hex";
 import { isUsbSetupPacket } from "./usb_proxy_protocol";
 
 export interface UhciHarnessLike {
@@ -233,9 +233,7 @@ function safeJson(value: unknown): string {
 }
 
 function describeUsbDevice(device: USBDevice): string {
-  const vid = `0x${device.vendorId.toString(16).padStart(4, "0")}`;
-  const pid = `0x${device.productId.toString(16).padStart(4, "0")}`;
-  const parts = [`${vid}:${pid}`];
+  const parts = [`${hex16(device.vendorId)}:${hex16(device.productId)}`];
   if (device.manufacturerName) parts.push(device.manufacturerName);
   if (device.productName) parts.push(device.productName);
   if (device.serialNumber) parts.push(`sn=${device.serialNumber}`);
