@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
@@ -93,6 +94,12 @@ func (v JWTVerifier) VerifyAndExtractClaims(token string) (JWTClaims, error) {
 	dec.UseNumber()
 	var claims map[string]any
 	if err := dec.Decode(&claims); err != nil {
+		return JWTClaims{}, ErrInvalidCredentials
+	}
+	// json.Decoder allows trailing bytes after the first top-level value. Ensure
+	// the payload is exactly one JSON object to match the strictness of other
+	// implementations (Rust/JS).
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return JWTClaims{}, ErrInvalidCredentials
 	}
 

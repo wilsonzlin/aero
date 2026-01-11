@@ -334,6 +334,13 @@
         "expectError": true
       },
       {
+        "name": "invalidJson.trailingBytes.payload",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLXRyYWlsaW5nIn17ImV2aWwiOnRydWV9.GWOvKJn6Pl6CcPEOaOjcH4V83YnsejiUMsKZJHkN85g",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
         "name": "invalidJson.header",
         "secret": "test-jwt-secret",
         "token": "bm90LWpzb24.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.3UPCqD4MzP98b_oscFnIUEluk6h3QxJRgKMc66Cgo-4",
