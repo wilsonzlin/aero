@@ -60,6 +60,10 @@ constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au);
   #define WAIT_TIMEOUT 258L
 #endif
 
+#ifndef ERROR_TIMEOUT
+  #define ERROR_TIMEOUT 1460L
+#endif
+
 constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -808,8 +812,8 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
     return E_FAIL;
   }
 
-  const D3DKMT_HANDLE handles[1] = {static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj)};
-  const UINT64 fence_values[1] = {fence_value};
+  D3DKMT_HANDLE handles[1] = {static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj)};
+  UINT64 fence_values[1] = {fence_value};
 
   // Prefer the runtime callback (it handles WOW64 thunking correctly).
   if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {
@@ -819,10 +823,26 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
       __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
         args.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
       }
-      args.ObjectCount = 1;
-      args.ObjectHandleArray = handles;
-      args.FenceValueArray = fence_values;
-      args.Timeout = timeout;
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectCount) {
+        args.ObjectCount = 1;
+      }
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
+        args.ObjectHandleArray = handles;
+      }
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
+        args.hSyncObjects = handles;
+      }
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+        args.FenceValueArray = fence_values;
+      }
+      __if_not_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+        __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
+          args.FenceValue = fence_value;
+        }
+      }
+      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::Timeout) {
+        args.Timeout = timeout;
+      }
 
       const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb,
                                            MakeRtDeviceHandle(dev),
@@ -832,7 +852,7 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
       // Map the common wait-timeout HRESULTs to DXGI_ERROR_WAS_STILL_DRAWING so
       // higher-level D3D code can use this for Map(DO_NOT_WAIT) behavior.
       if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-          hr == static_cast<HRESULT>(0x10000102L)) {
+          hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
         return kDxgiErrorWasStillDrawing;
       }
       if (FAILED(hr)) {
@@ -850,9 +870,24 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   }
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
+    args.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+  }
   args.ObjectCount = 1;
-  args.ObjectHandleArray = handles;
-  args.FenceValueArray = fence_values;
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
+    args.ObjectHandleArray = handles;
+  }
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
+    args.hSyncObjects = handles;
+  }
+  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+    args.FenceValueArray = fence_values;
+  }
+  __if_not_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
+    __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
+      args.FenceValue = fence_value;
+    }
+  }
   args.Timeout = timeout;
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
