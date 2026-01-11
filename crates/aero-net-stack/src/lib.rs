@@ -19,7 +19,6 @@
 
 #![forbid(unsafe_code)]
 
-mod checksum;
 pub mod packet;
 mod policy;
 mod stack;

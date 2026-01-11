@@ -6,6 +6,6 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+nt-packetlib = { path = "../nt-packetlib" }
 
 [dev-dependencies]
-

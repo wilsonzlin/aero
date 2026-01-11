@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
 use crate::packet::{
-    ArpOperation, ArpPacket, DhcpMessage, DhcpMessageType, DnsMessage, DnsResponseCode, DnsType,
-    EtherType, EthernetFrame, IcmpEchoPacket, Ipv4Packet, Ipv4Protocol, MacAddr, TcpFlags,
-    TcpSegment, UdpDatagram,
+    parse_single_query, qname_to_string, ArpPacket, ArpPacketBuilder, DhcpMessage, DhcpMessageType,
+    DhcpOfferAckBuilder, DnsResponseBuilder, DnsResponseCode, DnsType, EtherType, EthernetFrame,
+    EthernetFrameBuilder, IcmpEchoBuilder, Icmpv4Packet, Ipv4Packet, Ipv4PacketBuilder,
+    Ipv4Protocol, MacAddr, TcpFlags, TcpSegment, TcpSegmentBuilder, UdpPacket, UdpPacketBuilder,
+    ARP_OP_REPLY, ARP_OP_REQUEST, HTYPE_ETHERNET, PTYPE_IPV4,
 };
 use crate::policy::HostPolicy;
 use core::net::Ipv4Addr;
@@ -179,6 +181,7 @@ struct PendingDns {
     txid: u16,
     src_port: u16,
     name: String,
+    qname: Vec<u8>,
     qtype: u16,
     qclass: u16,
     rd: bool,
@@ -240,11 +243,11 @@ impl NetworkStack {
         };
 
         // Learn guest MAC (we need it for replies).
-        self.guest_mac.get_or_insert(eth.src);
+        self.guest_mac.get_or_insert(eth.src_mac());
 
-        match eth.ethertype {
-            EtherType::ARP => self.handle_arp(eth.payload),
-            EtherType::IPV4 => self.handle_ipv4(eth.payload, now_ms),
+        match eth.ethertype() {
+            EtherType::ARP => self.handle_arp(eth.payload()),
+            EtherType::IPV4 => self.handle_ipv4(eth.payload(), now_ms),
             _ => Vec::new(),
         }
     }
@@ -331,22 +334,40 @@ impl NetworkStack {
             return Vec::new();
         }
 
-        let udp = UdpDatagram::serialize(
-            event.src_ip,
-            self.cfg.guest_ip,
-            event.src_port,
-            event.dst_port,
-            &event.data,
-        );
-        let ip = Ipv4Packet::serialize(
-            event.src_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::UDP,
-            self.next_ipv4_ident(),
-            64,
-            &udp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        let Ok(udp) = UdpPacketBuilder {
+            src_port: event.src_port,
+            dst_port: event.dst_port,
+            payload: &event.data,
+        }
+        .build_vec(event.src_ip, self.cfg.guest_ip) else {
+            return Vec::new();
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::UDP,
+            src_ip: event.src_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &udp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -378,37 +399,59 @@ impl NetworkStack {
             );
         }
 
-        let (addr_opt, rcode) = match allowed_addr {
-            Some(addr) => (Some(addr.octets()), DnsResponseCode::NoError),
+        let (answer_a, rcode) = match allowed_addr {
+            Some(addr) => (Some(addr), DnsResponseCode::NoError),
             None => (None, DnsResponseCode::NameError),
         };
-        let dns_payload = DnsMessage::build_response(
-            pending.txid,
-            pending.rd,
-            &pending.name,
-            pending.qtype,
-            pending.qclass,
-            addr_opt,
-            resolved.ttl_secs,
-            rcode,
-        );
 
-        let udp = UdpDatagram::serialize(
-            self.cfg.dns_ip,
-            self.cfg.guest_ip,
-            53,
-            pending.src_port,
-            &dns_payload,
-        );
-        let ip = Ipv4Packet::serialize(
-            self.cfg.dns_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::UDP,
-            self.next_ipv4_ident(),
-            64,
-            &udp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        let Ok(dns_payload) = DnsResponseBuilder {
+            id: pending.txid,
+            rd: pending.rd,
+            rcode,
+            qname: &pending.qname,
+            qtype: pending.qtype,
+            qclass: pending.qclass,
+            answer_a,
+            ttl: resolved.ttl_secs,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(udp) = UdpPacketBuilder {
+            src_port: 53,
+            dst_port: pending.src_port,
+            payload: &dns_payload,
+        }
+        .build_vec(self.cfg.dns_ip, self.cfg.guest_ip) else {
+            return Vec::new();
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::UDP,
+            src_ip: self.cfg.dns_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &udp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -418,35 +461,61 @@ impl NetworkStack {
             Err(_) => return Vec::new(),
         };
 
+        // We only implement Ethernet/IPv4 ARP.
+        if arp.htype() != HTYPE_ETHERNET || arp.ptype() != PTYPE_IPV4 || arp.hlen() != 6 || arp.plen() != 4 {
+            return Vec::new();
+        }
+
+        let sender_hw = match arp.sender_mac() {
+            Some(m) => m,
+            None => return Vec::new(),
+        };
+        let sender_ip = match arp.sender_ip() {
+            Some(ip) => ip,
+            None => return Vec::new(),
+        };
+        let target_ip = match arp.target_ip() {
+            Some(ip) => ip,
+            None => return Vec::new(),
+        };
+
         // Cache guest IP->MAC when known.
-        if arp.sender_ip != Ipv4Addr::UNSPECIFIED {
+        if sender_ip != Ipv4Addr::UNSPECIFIED {
             // Only store if we're already sure about the guest IP (to avoid poisoning ourselves
             // from DHCP's 0.0.0.0 phase).
-            if self.ip_assigned && arp.sender_ip == self.cfg.guest_ip {
-                self.guest_mac = Some(arp.sender_hw);
+            if self.ip_assigned && sender_ip == self.cfg.guest_ip {
+                self.guest_mac = Some(sender_hw);
             }
         }
 
-        if arp.op != ArpOperation::Request {
+        if arp.opcode() != ARP_OP_REQUEST {
             return Vec::new();
         }
-        if arp.target_ip != self.cfg.gateway_ip && arp.target_ip != self.cfg.dns_ip {
+        if target_ip != self.cfg.gateway_ip && target_ip != self.cfg.dns_ip {
             return Vec::new();
         }
 
-        let reply = ArpPacket {
-            op: ArpOperation::Reply,
-            sender_hw: self.cfg.our_mac,
-            sender_ip: arp.target_ip,
-            target_hw: arp.sender_hw,
-            target_ip: arp.sender_ip,
+        let Ok(reply) = ArpPacketBuilder {
+            opcode: ARP_OP_REPLY,
+            sender_mac: self.cfg.our_mac,
+            sender_ip: target_ip,
+            target_mac: sender_hw,
+            target_ip: sender_ip,
+        }
+        .build_vec() else {
+            return Vec::new();
         };
-        let eth = EthernetFrame::serialize(
-            arp.sender_hw,
-            self.cfg.our_mac,
-            EtherType::ARP,
-            &reply.serialize(),
-        );
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: sender_hw,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::ARP,
+            payload: &reply,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -456,7 +525,7 @@ impl NetworkStack {
             Err(_) => return Vec::new(),
         };
 
-        match ip.protocol {
+        match ip.protocol() {
             Ipv4Protocol::UDP => self.handle_udp(ip, now_ms),
             Ipv4Protocol::TCP => self.handle_tcp(ip),
             Ipv4Protocol::ICMP => self.handle_icmp(ip),
@@ -465,18 +534,18 @@ impl NetworkStack {
     }
 
     fn handle_udp(&mut self, ip: Ipv4Packet<'_>, now_ms: Millis) -> Vec<Action> {
-        let udp = match UdpDatagram::parse(ip.payload) {
+        let udp = match UdpPacket::parse(ip.payload()) {
             Ok(u) => u,
             Err(_) => return Vec::new(),
         };
 
         // DHCP (client->server)
-        if udp.src_port == 68 && udp.dst_port == 67 {
+        if udp.src_port() == 68 && udp.dst_port() == 67 {
             return self.handle_dhcp(ip, udp);
         }
 
         // DNS queries to our advertised DNS IP.
-        if udp.dst_port == 53 && ip.dst == self.cfg.dns_ip {
+        if udp.dst_port() == 53 && ip.dst_ip() == self.cfg.dns_ip {
             return self.handle_dns_query(ip, udp, now_ms);
         }
 
@@ -485,7 +554,7 @@ impl NetworkStack {
         }
 
         // Forward UDP to proxy.
-        if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst) {
+        if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst_ip()) {
             return Vec::new();
         }
 
@@ -495,41 +564,42 @@ impl NetworkStack {
             } else {
                 UdpTransport::Proxy
             },
-            src_port: udp.src_port,
-            dst_ip: ip.dst,
-            dst_port: udp.dst_port,
-            data: udp.payload.to_vec(),
+            src_port: udp.src_port(),
+            dst_ip: ip.dst_ip(),
+            dst_port: udp.dst_port(),
+            data: udp.payload().to_vec(),
         }]
     }
 
     fn handle_dns_query(
         &mut self,
         _ip: Ipv4Packet<'_>,
-        udp: UdpDatagram<'_>,
+        udp: UdpPacket<'_>,
         now_ms: Millis,
     ) -> Vec<Action> {
-        let msg = match DnsMessage::parse_query(udp.payload) {
-            Ok(m) => m,
+        let query = match parse_single_query(udp.payload()) {
+            Ok(q) => q,
             Err(_) => return Vec::new(),
         };
-        let question = match msg.questions.first() {
-            Some(q) => q,
-            None => return Vec::new(),
+        let qname = query.qname;
+        let name = match qname_to_string(qname) {
+            Ok(n) => n,
+            Err(_) => return Vec::new(),
         };
 
-        let name = question.name.trim_end_matches('.').to_ascii_lowercase();
-        let rd = (msg.flags & (1 << 8)) != 0;
-        let qtype = question.qtype;
-        let qclass = question.qclass;
+        let name = name.trim_end_matches('.').to_ascii_lowercase();
+        let rd = query.recursion_desired();
+        let qtype = query.qtype;
+        let qclass = query.qclass;
 
         // Enforce domain policy early.
         if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_domain(&name) {
             return self.emit_dns_error(
-                msg.id,
-                &name,
+                query.id,
+                qname,
                 qtype,
                 qclass,
-                udp.src_port,
+                udp.src_port(),
                 rd,
                 DnsResponseCode::NameError,
             );
@@ -539,11 +609,11 @@ impl NetworkStack {
         // A queries instead of treating the name as missing.
         if qtype != DnsType::A as u16 || qclass != 1 {
             return self.emit_dns_error(
-                msg.id,
-                &name,
+                query.id,
+                qname,
                 qtype,
                 qclass,
-                udp.src_port,
+                udp.src_port(),
                 rd,
                 DnsResponseCode::NotImplemented,
             );
@@ -554,11 +624,11 @@ impl NetworkStack {
                 // Policy can change over time; re-check before serving from cache.
                 if !self.cfg.host_policy.allows_ip(entry.addr) {
                     return self.emit_dns_error(
-                        msg.id,
-                        &name,
+                        query.id,
+                        qname,
                         qtype,
                         qclass,
-                        udp.src_port,
+                        udp.src_port(),
                         rd,
                         DnsResponseCode::NameError,
                     );
@@ -567,33 +637,55 @@ impl NetworkStack {
                     Some(m) => m,
                     None => return Vec::new(),
                 };
-                let dns_payload = DnsMessage::build_response(
-                    msg.id,
+
+                let Ok(dns_payload) = DnsResponseBuilder {
+                    id: query.id,
                     rd,
-                    &name,
+                    rcode: DnsResponseCode::NoError,
+                    qname,
                     qtype,
                     qclass,
-                    Some(entry.addr.octets()),
-                    ((entry.expires_at_ms - now_ms) / 1000) as u32,
-                    DnsResponseCode::NoError,
-                );
-                let udp_out = UdpDatagram::serialize(
-                    self.cfg.dns_ip,
-                    self.cfg.guest_ip,
-                    53,
-                    udp.src_port,
-                    &dns_payload,
-                );
-                let ip_out = Ipv4Packet::serialize(
-                    self.cfg.dns_ip,
-                    self.cfg.guest_ip,
-                    Ipv4Protocol::UDP,
-                    self.next_ipv4_ident(),
-                    64,
-                    &udp_out,
-                );
-                let eth =
-                    EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip_out);
+                    answer_a: Some(entry.addr),
+                    ttl: ((entry.expires_at_ms - now_ms) / 1000) as u32,
+                }
+                .build_vec() else {
+                    return Vec::new();
+                };
+
+                let Ok(udp_out) = UdpPacketBuilder {
+                    src_port: 53,
+                    dst_port: udp.src_port(),
+                    payload: &dns_payload,
+                }
+                .build_vec(self.cfg.dns_ip, self.cfg.guest_ip) else {
+                    return Vec::new();
+                };
+
+                let Ok(ip_out) = Ipv4PacketBuilder {
+                    dscp_ecn: 0,
+                    identification: self.next_ipv4_ident(),
+                    flags_fragment: 0x4000, // DF
+                    ttl: 64,
+                    protocol: Ipv4Protocol::UDP,
+                    src_ip: self.cfg.dns_ip,
+                    dst_ip: self.cfg.guest_ip,
+                    options: &[],
+                    payload: &udp_out,
+                }
+                .build_vec() else {
+                    return Vec::new();
+                };
+
+                let Ok(eth) = EthernetFrameBuilder {
+                    dest_mac: guest_mac,
+                    src_mac: self.cfg.our_mac,
+                    ethertype: EtherType::IPV4,
+                    payload: &ip_out,
+                }
+                .build_vec() else {
+                    return Vec::new();
+                };
+
                 return vec![Action::EmitFrame(eth)];
             }
         }
@@ -603,11 +695,11 @@ impl NetworkStack {
         let max_pending_dns = self.cfg.max_pending_dns as usize;
         if max_pending_dns == 0 || self.pending_dns.len() >= max_pending_dns {
             return self.emit_dns_error(
-                msg.id,
-                &name,
+                query.id,
+                qname,
                 qtype,
                 qclass,
-                udp.src_port,
+                udp.src_port(),
                 rd,
                 DnsResponseCode::ServerFailure,
             );
@@ -618,9 +710,10 @@ impl NetworkStack {
         self.pending_dns.insert(
             request_id,
             PendingDns {
-                txid: msg.id,
-                src_port: udp.src_port,
+                txid: query.id,
+                src_port: udp.src_port(),
                 name: name.clone(),
+                qname: qname.to_vec(),
                 qtype,
                 qclass,
                 rd,
@@ -632,7 +725,7 @@ impl NetworkStack {
     fn emit_dns_error(
         &mut self,
         txid: u16,
-        name: &str,
+        qname: &[u8],
         qtype: u16,
         qclass: u16,
         dst_port: u16,
@@ -643,96 +736,167 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let dns_payload = DnsMessage::build_response(txid, rd, name, qtype, qclass, None, 0, rcode);
-        let udp = UdpDatagram::serialize(
-            self.cfg.dns_ip,
-            self.cfg.guest_ip,
-            53,
+
+        let Ok(dns_payload) = DnsResponseBuilder {
+            id: txid,
+            rd,
+            rcode,
+            qname,
+            qtype,
+            qclass,
+            answer_a: None,
+            ttl: 0,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(udp) = UdpPacketBuilder {
+            src_port: 53,
             dst_port,
-            &dns_payload,
-        );
-        let ip = Ipv4Packet::serialize(
-            self.cfg.dns_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::UDP,
-            self.next_ipv4_ident(),
-            64,
-            &udp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+            payload: &dns_payload,
+        }
+        .build_vec(self.cfg.dns_ip, self.cfg.guest_ip) else {
+            return Vec::new();
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::UDP,
+            src_ip: self.cfg.dns_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &udp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
-    fn handle_dhcp(&mut self, _ip: Ipv4Packet<'_>, udp: UdpDatagram<'_>) -> Vec<Action> {
-        let msg = match DhcpMessage::parse(udp.payload) {
+    fn handle_dhcp(&mut self, _ip: Ipv4Packet<'_>, udp: UdpPacket<'_>) -> Vec<Action> {
+        let msg = match DhcpMessage::parse(udp.payload()) {
             Ok(m) => m,
             Err(_) => return Vec::new(),
         };
-        let mtype = match msg.options.message_type {
-            Some(t) => t,
-            None => return Vec::new(),
-        };
 
-        let guest_mac = msg.chaddr;
+        let guest_mac = msg.client_mac;
 
-        let (reply_type, mark_assigned) = match mtype {
+        let (reply_type, mark_assigned) = match msg.message_type {
             DhcpMessageType::Discover => (DhcpMessageType::Offer, false),
             DhcpMessageType::Request => (DhcpMessageType::Ack, true),
             _ => return Vec::new(),
         };
 
-        let dhcp = DhcpMessage::serialize_offer_or_ack(
-            msg.xid,
-            msg.flags,
-            guest_mac,
-            self.cfg.guest_ip,
-            self.cfg.gateway_ip,
-            self.cfg.netmask,
-            self.cfg.gateway_ip,
-            self.cfg.dns_ip,
-            self.cfg.dhcp_lease_time_secs,
-            reply_type,
-        );
+        let dns_servers = [self.cfg.dns_ip];
+        let Ok(dhcp) = DhcpOfferAckBuilder {
+            message_type: reply_type as u8,
+            transaction_id: msg.transaction_id,
+            flags: msg.flags,
+            client_mac: guest_mac,
+            your_ip: self.cfg.guest_ip,
+            server_ip: self.cfg.gateway_ip,
+            subnet_mask: self.cfg.netmask,
+            router: self.cfg.gateway_ip,
+            dns_servers: &dns_servers,
+            lease_time_secs: self.cfg.dhcp_lease_time_secs,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
 
         if mark_assigned {
             self.ip_assigned = true;
             self.guest_mac = Some(guest_mac);
         }
 
-        let udp_out =
-            UdpDatagram::serialize(self.cfg.gateway_ip, Ipv4Addr::BROADCAST, 67, 68, &dhcp);
-        let ip_out = Ipv4Packet::serialize(
-            self.cfg.gateway_ip,
-            Ipv4Addr::BROADCAST,
-            Ipv4Protocol::UDP,
-            self.next_ipv4_ident(),
-            64,
-            &udp_out,
-        );
-        let eth = EthernetFrame::serialize(
-            MacAddr::BROADCAST,
-            self.cfg.our_mac,
-            EtherType::IPV4,
-            &ip_out,
-        );
+        let Ok(udp_out) = UdpPacketBuilder {
+            src_port: 67,
+            dst_port: 68,
+            payload: &dhcp,
+        }
+        .build_vec(self.cfg.gateway_ip, Ipv4Addr::BROADCAST) else {
+            return Vec::new();
+        };
+
+        let Ok(ip_out) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::UDP,
+            src_ip: self.cfg.gateway_ip,
+            dst_ip: Ipv4Addr::BROADCAST,
+            options: &[],
+            payload: &udp_out,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: MacAddr::BROADCAST,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip_out,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
 
         let mut out = vec![Action::EmitFrame(eth)];
 
         // Some stacks accept only unicast replies once the client MAC is known. Send a second copy
         // directly to the guest MAC/IP when possible.
         if guest_mac != MacAddr::BROADCAST {
-            let udp_unicast =
-                UdpDatagram::serialize(self.cfg.gateway_ip, self.cfg.guest_ip, 67, 68, &dhcp);
-            let ip_unicast = Ipv4Packet::serialize(
-                self.cfg.gateway_ip,
-                self.cfg.guest_ip,
-                Ipv4Protocol::UDP,
-                self.next_ipv4_ident(),
-                64,
-                &udp_unicast,
-            );
-            let eth_unicast =
-                EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip_unicast);
+            let Ok(udp_unicast) = UdpPacketBuilder {
+                src_port: 67,
+                dst_port: 68,
+                payload: &dhcp,
+            }
+            .build_vec(self.cfg.gateway_ip, self.cfg.guest_ip) else {
+                return out;
+            };
+
+            let Ok(ip_unicast) = Ipv4PacketBuilder {
+                dscp_ecn: 0,
+                identification: self.next_ipv4_ident(),
+                flags_fragment: 0x4000, // DF
+                ttl: 64,
+                protocol: Ipv4Protocol::UDP,
+                src_ip: self.cfg.gateway_ip,
+                dst_ip: self.cfg.guest_ip,
+                options: &[],
+                payload: &udp_unicast,
+            }
+            .build_vec() else {
+                return out;
+            };
+
+            let Ok(eth_unicast) = EthernetFrameBuilder {
+                dest_mac: guest_mac,
+                src_mac: self.cfg.our_mac,
+                ethertype: EtherType::IPV4,
+                payload: &ip_unicast,
+            }
+            .build_vec() else {
+                return out;
+            };
+
             out.push(Action::EmitFrame(eth_unicast));
         }
 
@@ -750,31 +914,53 @@ impl NetworkStack {
         };
 
         // Only answer echo requests addressed to our gateway IP.
-        if ip.dst != self.cfg.gateway_ip {
+        if ip.dst_ip() != self.cfg.gateway_ip {
             return Vec::new();
         }
-        let pkt = match IcmpEchoPacket::parse(ip.payload) {
+        let pkt = match Icmpv4Packet::parse(ip.payload()) {
             Ok(p) => p,
             Err(_) => return Vec::new(),
         };
-        if pkt.icmp_type != 8 || pkt.code != 0 {
-            return Vec::new();
+        let echo = match pkt.echo() {
+            Some(e) if e.icmp_type == 8 => e,
+            _ => return Vec::new(),
+        };
+
+        let icmp = match IcmpEchoBuilder::echo_reply(echo.identifier, echo.sequence, echo.payload).build_vec() {
+            Ok(pkt) => pkt,
+            Err(_) => return Vec::new(),
+        };
+
+        let Ok(ip_out) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::ICMP,
+            src_ip: self.cfg.gateway_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &icmp,
         }
-        let icmp = IcmpEchoPacket::serialize_echo_reply(pkt.identifier, pkt.sequence, pkt.payload);
-        let ip_out = Ipv4Packet::serialize(
-            self.cfg.gateway_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::ICMP,
-            self.next_ipv4_ident(),
-            64,
-            &icmp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip_out);
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip_out,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
     fn handle_tcp(&mut self, ip: Ipv4Packet<'_>) -> Vec<Action> {
-        let tcp = match TcpSegment::parse(ip.payload) {
+        let tcp = match TcpSegment::parse(ip.payload()) {
             Ok(t) => t,
             Err(_) => return Vec::new(),
         };
@@ -783,12 +969,14 @@ impl NetworkStack {
         }
 
         let key = TcpKey {
-            guest_port: tcp.src_port,
-            remote_ip: ip.dst,
-            remote_port: tcp.dst_port,
+            guest_port: tcp.src_port(),
+            remote_ip: ip.dst_ip(),
+            remote_port: tcp.dst_port(),
         };
 
-        if tcp.flags & TcpFlags::RST != 0 {
+        let flags = tcp.flags();
+
+        if flags.contains(TcpFlags::RST) {
             if let Some(conn) = self.tcp.remove(&key) {
                 return vec![Action::TcpProxyClose {
                     connection_id: conn.id,
@@ -799,43 +987,43 @@ impl NetworkStack {
 
         if !self.tcp.contains_key(&key) {
             // Only start connections when we see SYN.
-            if tcp.flags & TcpFlags::SYN == 0 || tcp.flags & TcpFlags::ACK != 0 {
+            if !flags.contains(TcpFlags::SYN) || flags.contains(TcpFlags::ACK) {
                 return Vec::new();
             }
 
             // Enforce security policy *before* advertising a connection to the guest.
-            if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst) {
-                return self.emit_tcp_rst_for_syn(
-                    ip.src,
-                    tcp.src_port,
-                    ip.dst,
-                    tcp.dst_port,
-                    tcp.seq,
-                );
-            }
-
-            // Cap concurrent connections to avoid unbounded memory use.
-            let max_tcp_connections = self.cfg.max_tcp_connections as usize;
-            if max_tcp_connections == 0 || self.tcp.len() >= max_tcp_connections {
-                return self.emit_tcp_rst_for_syn(
-                    ip.src,
-                    tcp.src_port,
-                    ip.dst,
-                    tcp.dst_port,
-                    tcp.seq,
-                );
-            }
-
-            let guest_isn = tcp.seq;
+         if !self.cfg.host_policy.enabled || !self.cfg.host_policy.allows_ip(ip.dst_ip()) {
+             return self.emit_tcp_rst_for_syn(
+                 ip.src_ip(),
+                 tcp.src_port(),
+                 ip.dst_ip(),
+                 tcp.dst_port(),
+                 tcp.seq_number(),
+             );
+         }
+ 
+         // Cap concurrent connections to avoid unbounded memory use.
+         let max_tcp_connections = self.cfg.max_tcp_connections as usize;
+         if max_tcp_connections == 0 || self.tcp.len() >= max_tcp_connections {
+             return self.emit_tcp_rst_for_syn(
+                    ip.src_ip(),
+                    tcp.src_port(),
+                    ip.dst_ip(),
+                    tcp.dst_port(),
+                    tcp.seq_number(),
+             );
+         }
+ 
+            let guest_isn = tcp.seq_number();
             let our_isn = self.allocate_isn();
             let conn_id = self.next_tcp_id;
             self.next_tcp_id += 1;
 
             let conn = TcpConn {
                 id: conn_id,
-                guest_port: tcp.src_port,
-                remote_ip: ip.dst,
-                remote_port: tcp.dst_port,
+                guest_port: tcp.src_port(),
+                remote_ip: ip.dst_ip(),
+                remote_port: tcp.dst_port(),
                 guest_isn,
                 guest_next_seq: guest_isn.wrapping_add(1),
                 our_isn,
@@ -868,55 +1056,54 @@ impl NetworkStack {
             None => return Vec::new(),
         };
         let mut out = Vec::new();
+        let payload = tcp.payload();
 
         // Retransmitted SYN: resend SYN-ACK for idempotence.
-        if (tcp.flags & TcpFlags::SYN != 0) && (tcp.flags & TcpFlags::ACK == 0) && !conn.syn_acked {
-            if tcp.seq == conn.guest_isn {
+        if flags.contains(TcpFlags::SYN) && !flags.contains(TcpFlags::ACK) && !conn.syn_acked {
+            if tcp.seq_number() == conn.guest_isn {
                 out.extend(self.emit_tcp_syn_ack(&conn));
             }
         }
 
         // ACK bookkeeping (handshake + FIN).
-        if tcp.flags & TcpFlags::ACK != 0 {
-            conn.on_guest_ack(tcp.ack);
+        if flags.contains(TcpFlags::ACK) {
+            conn.on_guest_ack(tcp.ack_number());
         }
 
-        // Payload.
-        if !tcp.payload.is_empty() {
-            // We intentionally do not implement full TCP reassembly: accept only in-order payload.
-            if tcp.seq == conn.guest_next_seq {
+         // Payload.
+         if !payload.is_empty() {
+             // We intentionally do not implement full TCP reassembly: accept only in-order payload.
+            let seg_seq = tcp.seq_number();
+            let seg_end = seg_seq.wrapping_add(payload.len() as u32);
+            if seg_seq == conn.guest_next_seq {
+                // In-order segment.
                 if conn.proxy_connected {
-                    conn.guest_next_seq =
-                        conn.guest_next_seq.wrapping_add(tcp.payload.len() as u32);
                     out.push(Action::TcpProxySend {
                         connection_id: conn.id,
-                        data: tcp.payload.to_vec(),
+                        data: payload.to_vec(),
                     });
                 } else {
-                    if self.tcp_buffer_would_exceed_limit(&conn, tcp.payload.len()) {
+                    if self.tcp_buffer_would_exceed_limit(&conn, payload.len()) {
                         out.extend(self.emit_tcp_rst(&conn));
                         out.push(Action::TcpProxyClose {
                             connection_id: conn.id,
                         });
                         return out;
                     }
-                    conn.guest_next_seq =
-                        conn.guest_next_seq.wrapping_add(tcp.payload.len() as u32);
-                    conn.buffered_to_proxy_bytes = conn
-                        .buffered_to_proxy_bytes
-                        .saturating_add(tcp.payload.len());
-                    conn.buffered_to_proxy.push(tcp.payload.to_vec());
+                    conn.buffered_to_proxy_bytes =
+                        conn.buffered_to_proxy_bytes.saturating_add(payload.len());
+                    conn.buffered_to_proxy.push(payload.to_vec());
                 }
+                conn.guest_next_seq = conn.guest_next_seq.wrapping_add(payload.len() as u32);
                 out.extend(self.emit_tcp_ack(&conn));
-            } else if tcp.seq.wrapping_add(tcp.payload.len() as u32) <= conn.guest_next_seq {
+            } else if seg_end <= conn.guest_next_seq {
                 // Fully duplicate segment; re-ACK for retransmit tolerance.
                 out.extend(self.emit_tcp_ack(&conn));
-            } else if tcp.seq < conn.guest_next_seq {
+            } else if seg_seq < conn.guest_next_seq {
                 // Overlapping segment; forward only unseen tail.
-                let offset = conn.guest_next_seq.wrapping_sub(tcp.seq) as usize;
-                let tail = &tcp.payload[offset..];
+                let offset = conn.guest_next_seq.wrapping_sub(seg_seq) as usize;
+                let tail = &payload[offset..];
                 if conn.proxy_connected {
-                    conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
                     out.push(Action::TcpProxySend {
                         connection_id: conn.id,
                         data: tail.to_vec(),
@@ -929,21 +1116,21 @@ impl NetworkStack {
                         });
                         return out;
                     }
-                    conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
                     conn.buffered_to_proxy_bytes =
                         conn.buffered_to_proxy_bytes.saturating_add(tail.len());
                     conn.buffered_to_proxy.push(tail.to_vec());
                 }
+                conn.guest_next_seq = conn.guest_next_seq.wrapping_add(tail.len() as u32);
                 out.extend(self.emit_tcp_ack(&conn));
             } else {
                 // Out-of-order: ACK what we have and drop.
                 out.extend(self.emit_tcp_ack(&conn));
             }
-        }
+         }
 
         // FIN.
-        if tcp.flags & TcpFlags::FIN != 0 {
-            let fin_seq = tcp.seq.wrapping_add(tcp.payload.len() as u32);
+        if flags.contains(TcpFlags::FIN) {
+            let fin_seq = tcp.seq_number().wrapping_add(payload.len() as u32);
             if fin_seq == conn.guest_next_seq {
                 conn.guest_next_seq = conn.guest_next_seq.wrapping_add(1);
                 conn.guest_fin_received = true;
@@ -969,40 +1156,78 @@ impl NetworkStack {
             Some(m) => m,
             None => return,
         };
-        let Some((key, _)) = self
+        let Some(key) = self
             .tcp
             .iter()
-            .find(|(_, c)| c.id == connection_id)
-            .map(|(k, c)| (*k, c.clone()))
+            .find_map(|(k, c)| (c.id == connection_id).then_some(*k))
         else {
             return;
         };
-        let conn = self.tcp.get_mut(&key).unwrap();
-        if conn.fin_sent || !conn.syn_acked {
+
+        let (remote_ip, remote_port, guest_port, seq_number, ack_number) = match self.tcp.get(&key) {
+            Some(conn) => {
+                if conn.fin_sent || !conn.syn_acked {
+                    return;
+                }
+                (
+                    conn.remote_ip,
+                    conn.remote_port,
+                    conn.guest_port,
+                    conn.our_next_seq,
+                    conn.guest_next_seq,
+                )
+            }
+            None => return,
+        };
+
+        let Ok(tcp_payload) = TcpSegmentBuilder {
+            src_port: remote_port,
+            dst_port: guest_port,
+            seq_number,
+            ack_number,
+            flags: TcpFlags::ACK | TcpFlags::PSH,
+            window_size: 65535,
+            urgent_pointer: 0,
+            options: &[],
+            payload: &data,
+        }
+        .build_vec(remote_ip, self.cfg.guest_ip) else {
             return;
+        };
+
+        // Now that the segment is built, advance the send sequence number.
+        {
+            let Some(conn) = self.tcp.get_mut(&key) else {
+                return;
+            };
+            conn.our_next_seq = conn.our_next_seq.wrapping_add(data.len() as u32);
         }
 
-        let tcp_payload = TcpSegment::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
-            conn.remote_port,
-            conn.guest_port,
-            conn.our_next_seq,
-            conn.guest_next_seq,
-            TcpFlags::ACK | TcpFlags::PSH,
-            65535,
-            &data,
-        );
-        conn.our_next_seq = conn.our_next_seq.wrapping_add(data.len() as u32);
-        let ip = Ipv4Packet::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::TCP,
-            self.next_ipv4_ident(),
-            64,
-            &tcp_payload,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::TCP,
+            src_ip: remote_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &tcp_payload,
+        }
+        .build_vec() else {
+            return;
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return;
+        };
+
         out.push(Action::EmitFrame(eth));
     }
 
@@ -1011,26 +1236,44 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let tcp = TcpSegment::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
+        let tcp = match TcpSegmentBuilder::syn_ack(
             conn.remote_port,
             conn.guest_port,
             conn.our_isn,
             conn.guest_next_seq,
-            TcpFlags::SYN | TcpFlags::ACK,
             65535,
-            &[],
-        );
-        let ip = Ipv4Packet::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::TCP,
-            self.next_ipv4_ident(),
-            64,
-            &tcp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        )
+        .build_vec(conn.remote_ip, self.cfg.guest_ip)
+        {
+            Ok(pkt) => pkt,
+            Err(_) => return Vec::new(),
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::TCP,
+            src_ip: conn.remote_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &tcp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -1039,26 +1282,44 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let tcp = TcpSegment::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
+        let tcp = match TcpSegmentBuilder::ack(
             conn.remote_port,
             conn.guest_port,
             conn.our_next_seq,
             conn.guest_next_seq,
-            TcpFlags::ACK,
             65535,
-            &[],
-        );
-        let ip = Ipv4Packet::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::TCP,
-            self.next_ipv4_ident(),
-            64,
-            &tcp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        )
+        .build_vec(conn.remote_ip, self.cfg.guest_ip)
+        {
+            Ok(pkt) => pkt,
+            Err(_) => return Vec::new(),
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::TCP,
+            src_ip: conn.remote_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &tcp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -1073,27 +1334,45 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let tcp = TcpSegment::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
+        let tcp = match TcpSegmentBuilder::fin_ack(
             conn.remote_port,
             conn.guest_port,
             conn.fin_seq,
             conn.guest_next_seq,
-            TcpFlags::FIN | TcpFlags::ACK,
             65535,
-            &[],
-        );
-        let ip = Ipv4Packet::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::TCP,
-            self.next_ipv4_ident(),
-            64,
-            &tcp,
-        );
+        )
+        .build_vec(conn.remote_ip, self.cfg.guest_ip)
+        {
+            Ok(pkt) => pkt,
+            Err(_) => return Vec::new(),
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::TCP,
+            src_ip: conn.remote_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &tcp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
         conn.our_next_seq = conn.our_next_seq.wrapping_add(1);
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -1102,26 +1381,44 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let tcp = TcpSegment::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
+        let tcp = match TcpSegmentBuilder::rst(
             conn.remote_port,
             conn.guest_port,
             conn.our_next_seq,
             conn.guest_next_seq,
-            TcpFlags::RST | TcpFlags::ACK,
             0,
-            &[],
-        );
-        let ip = Ipv4Packet::serialize(
-            conn.remote_ip,
-            self.cfg.guest_ip,
-            Ipv4Protocol::TCP,
-            self.next_ipv4_ident(),
-            64,
-            &tcp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        )
+        .build_vec(conn.remote_ip, self.cfg.guest_ip)
+        {
+            Ok(pkt) => pkt,
+            Err(_) => return Vec::new(),
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::TCP,
+            src_ip: conn.remote_ip,
+            dst_ip: self.cfg.guest_ip,
+            options: &[],
+            payload: &tcp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 
@@ -1137,26 +1434,44 @@ impl NetworkStack {
             Some(m) => m,
             None => return Vec::new(),
         };
-        let tcp = TcpSegment::serialize(
-            remote_ip,
-            guest_ip,
+        let tcp = match TcpSegmentBuilder::rst(
             remote_port,
             guest_port,
             0,
             guest_seq.wrapping_add(1),
-            TcpFlags::RST | TcpFlags::ACK,
             0,
-            &[],
-        );
-        let ip = Ipv4Packet::serialize(
-            remote_ip,
-            guest_ip,
-            Ipv4Protocol::TCP,
-            self.next_ipv4_ident(),
-            64,
-            &tcp,
-        );
-        let eth = EthernetFrame::serialize(guest_mac, self.cfg.our_mac, EtherType::IPV4, &ip);
+        )
+        .build_vec(remote_ip, guest_ip)
+        {
+            Ok(pkt) => pkt,
+            Err(_) => return Vec::new(),
+        };
+
+        let Ok(ip) = Ipv4PacketBuilder {
+            dscp_ecn: 0,
+            identification: self.next_ipv4_ident(),
+            flags_fragment: 0x4000, // DF
+            ttl: 64,
+            protocol: Ipv4Protocol::TCP,
+            src_ip: remote_ip,
+            dst_ip: guest_ip,
+            options: &[],
+            payload: &tcp,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
+        let Ok(eth) = EthernetFrameBuilder {
+            dest_mac: guest_mac,
+            src_mac: self.cfg.our_mac,
+            ethertype: EtherType::IPV4,
+            payload: &ip,
+        }
+        .build_vec() else {
+            return Vec::new();
+        };
+
         vec![Action::EmitFrame(eth)]
     }
 

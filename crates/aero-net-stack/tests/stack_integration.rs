@@ -80,11 +80,8 @@ fn dhcp_dns_tcp_flow() {
     let actions = stack.process_outbound_ethernet(&syn, 20);
     let (conn_id, syn_ack_frame) = extract_tcp_connect_and_frame(&actions);
     let syn_ack = parse_tcp_from_frame(&syn_ack_frame);
-    assert_eq!(
-        syn_ack.flags & (TcpFlags::SYN | TcpFlags::ACK),
-        TcpFlags::SYN | TcpFlags::ACK
-    );
-    assert_eq!(syn_ack.ack, guest_isn + 1);
+    assert_eq!(syn_ack.flags(), TcpFlags::SYN | TcpFlags::ACK);
+    assert_eq!(syn_ack.ack_number(), guest_isn + 1);
 
     // Proxy connects.
     let proxy_actions = stack.handle_tcp_proxy_event(
@@ -104,7 +101,7 @@ fn dhcp_dns_tcp_flow() {
         guest_port,
         80,
         guest_isn + 1,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK,
         &[],
     );
@@ -121,7 +118,7 @@ fn dhcp_dns_tcp_flow() {
         guest_port,
         80,
         guest_isn + 1,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK | TcpFlags::PSH,
         payload,
     );
@@ -140,11 +137,8 @@ fn dhcp_dns_tcp_flow() {
     );
     let frame = extract_single_frame(&actions);
     let seg = parse_tcp_from_frame(&frame);
-    assert_eq!(seg.payload, resp_payload);
-    assert_eq!(
-        seg.flags & (TcpFlags::ACK | TcpFlags::PSH),
-        TcpFlags::ACK | TcpFlags::PSH
-    );
+    assert_eq!(seg.payload(), resp_payload);
+    assert_eq!(seg.flags(), TcpFlags::ACK | TcpFlags::PSH);
 }
 
 #[test]
@@ -218,7 +212,7 @@ fn tcp_fin_closes_and_drops_state() {
         guest_port,
         80,
         guest_isn + 1,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK,
         &[],
     );
@@ -234,7 +228,7 @@ fn tcp_fin_closes_and_drops_state() {
         guest_port,
         80,
         guest_isn + 1,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK | TcpFlags::PSH,
         payload,
     );
@@ -253,7 +247,7 @@ fn tcp_fin_closes_and_drops_state() {
         guest_port,
         80,
         guest_next,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK | TcpFlags::FIN,
         &[],
     );
@@ -267,7 +261,7 @@ fn tcp_fin_closes_and_drops_state() {
     let fin_seg = frames
         .iter()
         .map(|f| parse_tcp_from_frame(f))
-        .find(|seg| seg.flags & TcpFlags::FIN != 0)
+        .find(|seg| seg.flags().contains(TcpFlags::FIN))
         .expect("FIN from stack");
 
     // ACK the stack FIN; stack should drop state, so no further frames/actions.
@@ -279,7 +273,7 @@ fn tcp_fin_closes_and_drops_state() {
         guest_port,
         80,
         guest_next + 1,
-        fin_seg.seq + 1,
+        fin_seg.seq_number() + 1,
         TcpFlags::ACK,
         &[],
     );
@@ -331,10 +325,7 @@ fn tcp_proxy_error_before_handshake_sends_rst() {
     );
     let frame = extract_single_frame(&actions);
     let seg = parse_tcp_from_frame(&frame);
-    assert_eq!(
-        seg.flags & (TcpFlags::RST | TcpFlags::ACK),
-        TcpFlags::RST | TcpFlags::ACK
-    );
+    assert_eq!(seg.flags(), TcpFlags::RST | TcpFlags::ACK);
 }
 
 #[test]
@@ -432,9 +423,9 @@ fn udp_proxy_send_and_receive_roundtrip() {
     );
     let resp_frame = extract_single_frame(&resp_actions);
     let udp = parse_udp_from_frame(&resp_frame);
-    assert_eq!(udp.src_port, remote_port);
-    assert_eq!(udp.dst_port, guest_port);
-    assert_eq!(udp.payload, b"ok");
+    assert_eq!(udp.src_port(), remote_port);
+    assert_eq!(udp.dst_port(), guest_port);
+    assert_eq!(udp.payload(), b"ok");
 }
 
 #[test]
@@ -520,10 +511,9 @@ fn tcp_connection_cap_rejects_new_syn() {
     );
     let frame = extract_single_frame(&actions_b);
     let seg = parse_tcp_from_frame(&frame);
-    assert_eq!(
-        seg.flags & (TcpFlags::RST | TcpFlags::ACK),
-        TcpFlags::RST | TcpFlags::ACK
-    );
+    assert!(seg
+        .flags()
+        .contains(TcpFlags::RST | TcpFlags::ACK));
 }
 
 #[test]
@@ -567,7 +557,7 @@ fn tcp_buffered_payload_cap_sends_rst_and_frees_state() {
         guest_port_a,
         80,
         guest_isn + 1,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK | TcpFlags::PSH,
         payload,
     );
@@ -587,7 +577,7 @@ fn tcp_buffered_payload_cap_sends_rst_and_frees_state() {
         guest_port_a,
         80,
         guest_isn + 1 + payload.len() as u32,
-        syn_ack.seq + 1,
+        syn_ack.seq_number() + 1,
         TcpFlags::ACK | TcpFlags::PSH,
         overflow,
     );
@@ -603,10 +593,9 @@ fn tcp_buffered_payload_cap_sends_rst_and_frees_state() {
             .collect::<Vec<_>>(),
     );
     let seg = parse_tcp_from_frame(&frame);
-    assert_eq!(
-        seg.flags & (TcpFlags::RST | TcpFlags::ACK),
-        TcpFlags::RST | TcpFlags::ACK
-    );
+    assert!(seg
+        .flags()
+        .contains(TcpFlags::RST | TcpFlags::ACK));
 
     // Connection state should be gone, freeing the only available slot.
     let syn_b = wrap_tcp_ipv4_eth(
@@ -761,7 +750,7 @@ fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
     let offer_frames = extract_frames(&actions);
     assert_eq!(offer_frames.len(), 2);
     let offer_msg = parse_dhcp_from_frame(&offer_frames[0]);
-    assert_eq!(offer_msg.options.message_type, Some(DhcpMessageType::Offer));
+    assert_eq!(offer_msg.message_type, DhcpMessageType::Offer);
 
     let request = build_dhcp_request(
         xid,
@@ -782,7 +771,7 @@ fn dhcp_handshake(stack: &mut NetworkStack, guest_mac: MacAddr) {
     let ack_frames = extract_frames(&actions);
     assert_eq!(ack_frames.len(), 2);
     let ack_msg = parse_dhcp_from_frame(&ack_frames[0]);
-    assert_eq!(ack_msg.options.message_type, Some(DhcpMessageType::Ack));
+    assert_eq!(ack_msg.message_type, DhcpMessageType::Ack);
     assert!(stack.is_ip_assigned());
 }
 
@@ -824,37 +813,37 @@ fn extract_tcp_connect_and_frame(actions: &[Action]) -> (u32, Vec<u8>) {
 
 fn parse_dhcp_from_frame(frame: &[u8]) -> DhcpMessage {
     let eth = EthernetFrame::parse(frame).unwrap();
-    assert_eq!(eth.ethertype, EtherType::IPV4);
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    assert_eq!(ip.protocol, Ipv4Protocol::UDP);
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, 67);
-    assert_eq!(udp.dst_port, 68);
-    DhcpMessage::parse(udp.payload).unwrap()
+    assert_eq!(eth.ethertype(), EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    assert_eq!(ip.protocol(), Ipv4Protocol::UDP);
+    let udp = UdpPacket::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 67);
+    assert_eq!(udp.dst_port(), 68);
+    DhcpMessage::parse(udp.payload()).unwrap()
 }
 
 fn parse_tcp_from_frame(frame: &[u8]) -> TcpSegment<'_> {
     let eth = EthernetFrame::parse(frame).unwrap();
-    assert_eq!(eth.ethertype, EtherType::IPV4);
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    assert_eq!(ip.protocol, Ipv4Protocol::TCP);
-    TcpSegment::parse(ip.payload).unwrap()
+    assert_eq!(eth.ethertype(), EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    assert_eq!(ip.protocol(), Ipv4Protocol::TCP);
+    TcpSegment::parse(ip.payload()).unwrap()
 }
 
-fn parse_udp_from_frame(frame: &[u8]) -> UdpDatagram<'_> {
+fn parse_udp_from_frame(frame: &[u8]) -> UdpPacket<'_> {
     let eth = EthernetFrame::parse(frame).unwrap();
-    assert_eq!(eth.ethertype, EtherType::IPV4);
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    assert_eq!(ip.protocol, Ipv4Protocol::UDP);
-    UdpDatagram::parse(ip.payload).unwrap()
+    assert_eq!(eth.ethertype(), EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    assert_eq!(ip.protocol(), Ipv4Protocol::UDP);
+    UdpPacket::parse(ip.payload()).unwrap()
 }
 
 fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
     let eth = EthernetFrame::parse(frame).unwrap();
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, 53);
-    let dns = udp.payload;
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    let udp = UdpPacket::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 53);
+    let dns = udp.payload();
     assert_eq!(&dns[0..2], &id.to_be_bytes());
     // QR=1
     assert_eq!(dns[2] & 0x80, 0x80);
@@ -866,10 +855,10 @@ fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
 
 fn assert_dns_response_has_rcode(frame: &[u8], id: u16, rcode: DnsResponseCode) {
     let eth = EthernetFrame::parse(frame).unwrap();
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, 53);
-    let dns = udp.payload;
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    let udp = UdpPacket::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 53);
+    let dns = udp.payload();
     assert_eq!(&dns[0..2], &id.to_be_bytes());
     // QR=1
     assert_eq!(dns[2] & 0x80, 0x80);
@@ -888,9 +877,34 @@ fn wrap_udp_ipv4_eth(
     dst_port: u16,
     payload: &[u8],
 ) -> Vec<u8> {
-    let udp = UdpDatagram::serialize(src_ip, dst_ip, src_port, dst_port, payload);
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::UDP, 1, 64, &udp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .unwrap();
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .unwrap();
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .unwrap()
 }
 
 fn wrap_tcp_ipv4_eth(
@@ -902,14 +916,43 @@ fn wrap_tcp_ipv4_eth(
     dst_port: u16,
     seq: u32,
     ack: u32,
-    flags: u8,
+    flags: TcpFlags,
     payload: &[u8],
 ) -> Vec<u8> {
-    let tcp = TcpSegment::serialize(
-        src_ip, dst_ip, src_port, dst_port, seq, ack, flags, 65535, payload,
-    );
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::TCP, 1, 64, &tcp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let tcp = TcpSegmentBuilder {
+        src_port,
+        dst_port,
+        seq_number: seq,
+        ack_number: ack,
+        flags,
+        window_size: 65535,
+        urgent_pointer: 0,
+        options: &[],
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .unwrap();
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0x4000, // DF
+        ttl: 64,
+        protocol: Ipv4Protocol::TCP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &tcp,
+    }
+    .build_vec()
+    .unwrap();
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .unwrap()
 }
 
 fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {

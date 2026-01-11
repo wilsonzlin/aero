@@ -382,6 +382,9 @@ dependencies = [
 [[package]]
 name = "aero-net-stack"
 version = "0.1.0"
+dependencies = [
+ "nt-packetlib",
+]
 
 [[package]]
 name = "aero-opfs"
