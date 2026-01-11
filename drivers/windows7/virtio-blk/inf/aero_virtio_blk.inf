@@ -19,34 +19,34 @@ aero_virtio_blk.sys = 1
 %Aero% = Aero,NTx86,NTamd64
 
 [Aero.NTx86]
-%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1042&REV_01
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Inst, PCI\VEN_1AF4&DEV_1042&REV_01
 
 [Aero.NTamd64]
-%Aerovblk.DeviceDesc% = Aerovblk_Inst, PCI\VEN_1AF4&DEV_1042&REV_01
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Inst, PCI\VEN_1AF4&DEV_1042&REV_01
 
-[Aerovblk_Inst]
-CopyFiles = Aerovblk_CopyFiles
+[AeroVirtioBlk_Inst]
+CopyFiles = AeroVirtioBlk_CopyFiles
 
-[Aerovblk_CopyFiles]
+[AeroVirtioBlk_CopyFiles]
 aero_virtio_blk.sys
 
-[Aerovblk_Inst.Services]
-AddService = aero_virtio_blk,0x00000002,Aerovblk_Service_Inst
+[AeroVirtioBlk_Inst.Services]
+AddService = aero_virtio_blk,0x00000002,AeroVirtioBlk_Service_Inst
 
-[Aerovblk_Service_Inst]
-DisplayName    = %Aerovblk.ServiceDesc%
+[AeroVirtioBlk_Service_Inst]
+DisplayName    = %AeroVirtioBlk.ServiceDesc%
 ServiceType    = 1
 StartType      = 0
 ErrorControl   = 1
 ServiceBinary  = %12%\aero_virtio_blk.sys
 LoadOrderGroup = SCSI Miniport
-AddReg         = Aerovblk_Service_AddReg
+AddReg         = AeroVirtioBlk_Service_AddReg
 
-[Aerovblk_Service_AddReg]
+[AeroVirtioBlk_Service_AddReg]
 HKR,"Parameters\PnpInterface","5",0x00010001,1
 
 [Strings]
 Aero                  = "Aero Project"
 DiskName              = "Aero VirtIO Block Driver"
-Aerovblk.DeviceDesc   = "Aero VirtIO Block StorPort Miniport"
-Aerovblk.ServiceDesc  = "Aero VirtIO Block StorPort Miniport"
+AeroVirtioBlk.DeviceDesc   = "Aero VirtIO Block StorPort Miniport"
+AeroVirtioBlk.ServiceDesc  = "Aero VirtIO Block StorPort Miniport"
