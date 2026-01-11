@@ -85,6 +85,12 @@ services:
       # origin allowlisting / absolute URL generation.
       PUBLIC_BASE_URL: https://${AERO_DOMAIN:-localhost}
 
+      # Session signing secret (cookie auth). Strongly recommended for production.
+      #
+      # If unset, the gateway generates a temporary secret at startup and
+      # sessions will not survive restarts.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+
       # Optional explicit origin allowlist (comma-separated). When unset/empty, the
       # gateway defaults to allowing the origin derived from PUBLIC_BASE_URL.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}

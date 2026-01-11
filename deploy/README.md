@@ -197,6 +197,8 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
 
 - `PUBLIC_BASE_URL` (default in compose: `https://${AERO_DOMAIN}`)
   - Used to derive the default `ALLOWED_ORIGINS` allowlist.
+- `SESSION_SECRET` (strongly recommended for production)
+  - If unset, the gateway generates a temporary secret at startup and sessions won’t survive restarts.
 - `ALLOWED_ORIGINS` (optional, comma-separated)
   - Set explicitly if you need to allow additional origins (e.g. a dev server).
 - `TRUST_PROXY` (default in compose: `1`)
