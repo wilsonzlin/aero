@@ -72,17 +72,23 @@ func main() {
 	})
 	mux.HandleFunc("GET /l2", func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		qAPIKey := r.URL.Query().Get("apiKey")
 		qToken := r.URL.Query().Get("token")
 		protocols := splitHeaderTokens(r.Header.Values("Sec-WebSocket-Protocol"))
 		pToken := tokenFromSubprotocols(protocols)
 
-		token := pToken
+		// Match `crates/aero-l2-proxy` precedence: prefer query-string credentials
+		// (apiKey/token) over `aero-l2-token.*` subprotocol tokens.
+		token := qAPIKey
 		tokenSource := ""
 		if token != "" {
-			tokenSource = "subprotocol"
+			tokenSource = "query"
 		} else if qToken != "" {
 			token = qToken
 			tokenSource = "query"
+		} else if pToken != "" {
+			token = pToken
+			tokenSource = "subprotocol"
 		}
 
 		if requiredOrigin != "" && origin != requiredOrigin {
