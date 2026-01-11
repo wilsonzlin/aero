@@ -11,6 +11,7 @@ net_log = []
 sinc-resampler = []
 
 [dependencies]
+aero-protocol = { path = "../../emulator/protocol" }
 aero-devices = { path = "../devices" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-platform = { path = "../platform" }
