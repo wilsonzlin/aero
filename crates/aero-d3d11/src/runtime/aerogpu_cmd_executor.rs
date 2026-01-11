@@ -3137,11 +3137,48 @@ impl AerogpuD3d11Executor {
                 .checked_mul(bytes_per_texel(desc.format)?)
                 .ok_or_else(|| anyhow!("texture upload bytes_per_row overflow"))?
         };
-        let total_size = (bytes_per_row as u64)
-            .checked_mul(desc.height as u64)
+
+        let bpt = bytes_per_texel(desc.format)?;
+        let mip_extent = |v: u32, level: u32| v.checked_shr(level).unwrap_or(0).max(1);
+        let mip_levels = desc.mip_level_count;
+        let array_layers = desc.array_layers;
+
+        // Pre-compute per-mip metadata and backing offsets. The command protocol models backing
+        // memory as a contiguous blob containing all mips for layer0, then all mips for layer1, etc.
+        let mut mip_offsets: Vec<u64> = Vec::new();
+        let mut layer_stride: u64 = 0;
+        for level in 0..mip_levels {
+            let level_width = mip_extent(desc.width, level);
+            let level_height = mip_extent(desc.height, level);
+
+            let level_row_pitch = u64::from(bytes_per_row)
+                .checked_shr(level)
+                .unwrap_or(0)
+                .max(1);
+            let unpadded_bpr = level_width
+                .checked_mul(bpt)
+                .ok_or_else(|| anyhow!("texture upload bytes_per_row overflow"))?;
+            if level_row_pitch < unpadded_bpr as u64 {
+                bail!("texture upload bytes_per_row too small");
+            }
+
+            let level_size = level_row_pitch
+                .checked_mul(level_height as u64)
+                .ok_or_else(|| anyhow!("texture upload size overflow"))?;
+            mip_offsets.push(layer_stride);
+            layer_stride = layer_stride
+                .checked_add(level_size)
+                .ok_or_else(|| anyhow!("texture upload size overflow"))?;
+        }
+
+        let total_size = layer_stride
+            .checked_mul(array_layers as u64)
             .ok_or_else(|| anyhow!("texture upload size overflow"))?;
         allocs.validate_range(backing.alloc_id, backing.offset_bytes, total_size)?;
-        let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes;
+        let base_gpa = allocs
+            .gpa(backing.alloc_id)?
+            .checked_add(backing.offset_bytes)
+            .ok_or_else(|| anyhow!("texture upload GPA overflow"))?;
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
         self.submit_encoder_if_has_commands(
@@ -3158,46 +3195,103 @@ impl AerogpuD3d11Executor {
         // `COPY_BYTES_PER_ROW_ALIGNMENT`.
         const CHUNK_BYTES: usize = 256 * 1024;
 
-        let bpt = bytes_per_texel(tex.desc.format)?;
-        let unpadded_bpr = tex
-            .desc
-            .width
-            .checked_mul(bpt)
-            .ok_or_else(|| anyhow!("texture upload bytes_per_row overflow"))?;
-        if bytes_per_row < unpadded_bpr {
-            bail!("texture upload bytes_per_row too small");
-        }
+        fn upload_subresource(
+            queue: &wgpu::Queue,
+            texture: &wgpu::Texture,
+            format: wgpu::TextureFormat,
+            mip_level: u32,
+            array_layer: u32,
+            width: u32,
+            height: u32,
+            bytes_per_row: u32,
+            gpa: u64,
+            guest_mem: &dyn GuestMemory,
+        ) -> Result<()> {
+            let bpt = bytes_per_texel(format)?;
+            let unpadded_bpr = width
+                .checked_mul(bpt)
+                .ok_or_else(|| anyhow!("texture upload bytes_per_row overflow"))?;
+            if bytes_per_row < unpadded_bpr {
+                bail!("texture upload bytes_per_row too small");
+            }
 
-        let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let height_usize: usize = tex
-            .desc
-            .height
-            .try_into()
-            .map_err(|_| anyhow!("texture upload height out of range"))?;
-        let src_row_pitch = bytes_per_row as usize;
+            let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let height_usize: usize = height
+                .try_into()
+                .map_err(|_| anyhow!("texture upload height out of range"))?;
+            let src_row_pitch = bytes_per_row as usize;
 
-        if tex.desc.height > 1 && bytes_per_row % aligned != 0 {
-            // Repack each chunk into an aligned row pitch.
-            let padded_bpr = unpadded_bpr
-                .checked_add(aligned - 1)
-                .map(|v| v / aligned)
-                .and_then(|v| v.checked_mul(aligned))
-                .ok_or_else(|| anyhow!("texture upload padded bytes_per_row overflow"))?;
-            let padded_bpr_usize = padded_bpr as usize;
-            let rows_per_chunk = (CHUNK_BYTES / padded_bpr_usize).max(1);
+            if height > 1 && bytes_per_row % aligned != 0 {
+                // Repack each chunk into an aligned row pitch.
+                let padded_bpr = unpadded_bpr
+                    .checked_add(aligned - 1)
+                    .map(|v| v / aligned)
+                    .and_then(|v| v.checked_mul(aligned))
+                    .ok_or_else(|| anyhow!("texture upload padded bytes_per_row overflow"))?;
+                let padded_bpr_usize = padded_bpr as usize;
+                let rows_per_chunk = (CHUNK_BYTES / padded_bpr_usize).max(1);
 
-            let mut row_buf = vec![0u8; unpadded_bpr as usize];
-            for y0 in (0..height_usize).step_by(rows_per_chunk) {
-                let rows = (height_usize - y0).min(rows_per_chunk);
-                let repacked_len = padded_bpr_usize
-                    .checked_mul(rows)
-                    .ok_or_else(|| anyhow!("texture upload chunk overflows usize"))?;
-                let mut repacked = vec![0u8; repacked_len];
-                for row in 0..rows {
-                    let row_index = y0
-                        .checked_add(row)
-                        .ok_or_else(|| anyhow!("texture upload row index overflows usize"))?;
-                    let row_offset = u64::try_from(row_index)
+                let mut row_buf = vec![0u8; unpadded_bpr as usize];
+                for y0 in (0..height_usize).step_by(rows_per_chunk) {
+                    let rows = (height_usize - y0).min(rows_per_chunk);
+                    let repacked_len = padded_bpr_usize
+                        .checked_mul(rows)
+                        .ok_or_else(|| anyhow!("texture upload chunk overflows usize"))?;
+                    let mut repacked = vec![0u8; repacked_len];
+                    for row in 0..rows {
+                        let row_index = y0
+                            .checked_add(row)
+                            .ok_or_else(|| anyhow!("texture upload row index overflows usize"))?;
+                        let row_offset = u64::try_from(row_index)
+                            .ok()
+                            .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
+                            .ok_or_else(|| anyhow!("texture upload row offset overflows u64"))?;
+                        let src_addr = gpa
+                            .checked_add(row_offset)
+                            .ok_or_else(|| anyhow!("texture upload address overflows u64"))?;
+                        guest_mem
+                            .read(src_addr, &mut row_buf)
+                            .map_err(anyhow_guest_mem)?;
+                        let dst_start = row * padded_bpr_usize;
+                        repacked[dst_start..dst_start + row_buf.len()].copy_from_slice(&row_buf);
+                    }
+
+                    queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture,
+                            mip_level,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: y0 as u32,
+                                z: array_layer,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &repacked,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(padded_bpr),
+                            rows_per_image: Some(rows as u32),
+                        },
+                        wgpu::Extent3d {
+                            width,
+                            height: rows as u32,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+            } else {
+                // `bytes_per_row` is already aligned (or the copy is a single row). Upload contiguous
+                // chunks directly from guest memory.
+                let rows_per_chunk = (CHUNK_BYTES / src_row_pitch).max(1);
+                let mut tmp = vec![0u8; src_row_pitch * rows_per_chunk];
+                for y0 in (0..height_usize).step_by(rows_per_chunk) {
+                    let rows = (height_usize - y0).min(rows_per_chunk);
+                    let byte_len = src_row_pitch
+                        .checked_mul(rows)
+                        .ok_or_else(|| anyhow!("texture upload chunk overflows usize"))?;
+                    let tmp_slice = &mut tmp[..byte_len];
+                    let row_offset = u64::try_from(y0)
                         .ok()
                         .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
                         .ok_or_else(|| anyhow!("texture upload row offset overflows u64"))?;
@@ -3205,81 +3299,70 @@ impl AerogpuD3d11Executor {
                         .checked_add(row_offset)
                         .ok_or_else(|| anyhow!("texture upload address overflows u64"))?;
                     guest_mem
-                        .read(src_addr, &mut row_buf)
+                        .read(src_addr, tmp_slice)
                         .map_err(anyhow_guest_mem)?;
-                    let dst_start = row * padded_bpr_usize;
-                    repacked[dst_start..dst_start + row_buf.len()].copy_from_slice(&row_buf);
+
+                    queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture,
+                            mip_level,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: y0 as u32,
+                                z: array_layer,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        tmp_slice,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(bytes_per_row),
+                            rows_per_image: Some(rows as u32),
+                        },
+                        wgpu::Extent3d {
+                            width,
+                            height: rows as u32,
+                            depth_or_array_layers: 1,
+                        },
+                    );
                 }
-
-                self.queue.write_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &tex.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: y0 as u32,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &repacked,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: Some(padded_bpr),
-                        rows_per_image: Some(rows as u32),
-                    },
-                    wgpu::Extent3d {
-                        width: tex.desc.width,
-                        height: rows as u32,
-                        depth_or_array_layers: 1,
-                    },
-                );
             }
-        } else {
-            // `bytes_per_row` is already aligned (or the copy is a single row). Upload contiguous
-            // chunks directly from guest memory.
-            let rows_per_chunk = (CHUNK_BYTES / src_row_pitch).max(1);
-            let mut tmp = vec![0u8; src_row_pitch * rows_per_chunk];
-            for y0 in (0..height_usize).step_by(rows_per_chunk) {
-                let rows = (height_usize - y0).min(rows_per_chunk);
-                let byte_len = src_row_pitch
-                    .checked_mul(rows)
-                    .ok_or_else(|| anyhow!("texture upload chunk overflows usize"))?;
-                let tmp_slice = &mut tmp[..byte_len];
-                let row_offset = u64::try_from(y0)
-                    .ok()
-                    .and_then(|v| v.checked_mul(u64::from(bytes_per_row)))
-                    .ok_or_else(|| anyhow!("texture upload row offset overflows u64"))?;
-                let src_addr = gpa
-                    .checked_add(row_offset)
-                    .ok_or_else(|| anyhow!("texture upload address overflows u64"))?;
-                guest_mem
-                    .read(src_addr, tmp_slice)
-                    .map_err(anyhow_guest_mem)?;
 
-                self.queue.write_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &tex.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: y0 as u32,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    tmp_slice,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(rows as u32),
-                    },
-                    wgpu::Extent3d {
-                        width: tex.desc.width,
-                        height: rows as u32,
-                        depth_or_array_layers: 1,
-                    },
-                );
+            Ok(())
+        }
+
+        for layer in 0..array_layers {
+            let layer_offset = layer_stride
+                .checked_mul(layer as u64)
+                .ok_or_else(|| anyhow!("texture upload size overflow"))?;
+            for level in 0..mip_levels {
+                let level_width = mip_extent(desc.width, level);
+                let level_height = mip_extent(desc.height, level);
+                let level_row_pitch_u32 = u32::try_from(
+                    u64::from(bytes_per_row)
+                        .checked_shr(level)
+                        .unwrap_or(0)
+                        .max(1),
+                )
+                .map_err(|_| anyhow!("texture upload row pitch out of range"))?;
+
+                let gpa = base_gpa
+                    .checked_add(layer_offset)
+                    .and_then(|v| v.checked_add(mip_offsets[level as usize]))
+                    .ok_or_else(|| anyhow!("texture upload GPA overflow"))?;
+
+                upload_subresource(
+                    &self.queue,
+                    &tex.texture,
+                    desc.format,
+                    level,
+                    layer,
+                    level_width,
+                    level_height,
+                    level_row_pitch_u32,
+                    gpa,
+                    guest_mem,
+                )?;
             }
         }
 
