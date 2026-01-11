@@ -515,22 +515,42 @@ impl AerogpuCmdRuntime {
         pass.set_pipeline(pipeline);
 
         // Viewport/scissor are dynamic state; apply on every draw.
-        let Viewport {
-            x,
-            y,
-            width,
-            height,
-            min_depth,
-            max_depth,
-        } = self.state.viewport.unwrap_or(Viewport {
+        let default_viewport = Viewport {
             x: 0.0,
             y: 0.0,
             width: target_size.0 as f32,
             height: target_size.1 as f32,
             min_depth: 0.0,
             max_depth: 1.0,
-        });
-        pass.set_viewport(x, y, width, height, min_depth, max_depth);
+        };
+        let mut viewport = self.state.viewport.unwrap_or(default_viewport);
+        if !viewport.x.is_finite()
+            || !viewport.y.is_finite()
+            || !viewport.width.is_finite()
+            || !viewport.height.is_finite()
+            || !viewport.min_depth.is_finite()
+            || !viewport.max_depth.is_finite()
+        {
+            viewport = default_viewport;
+        }
+
+        let max_w = target_size.0 as f32;
+        let max_h = target_size.1 as f32;
+        let left = viewport.x.max(0.0);
+        let top = viewport.y.max(0.0);
+        let right = (viewport.x + viewport.width).max(0.0).min(max_w);
+        let bottom = (viewport.y + viewport.height).max(0.0).min(max_h);
+        let width = (right - left).max(0.0);
+        let height = (bottom - top).max(0.0);
+
+        if width > 0.0 && height > 0.0 {
+            let mut min_depth = viewport.min_depth.clamp(0.0, 1.0);
+            let mut max_depth = viewport.max_depth.clamp(0.0, 1.0);
+            if min_depth > max_depth {
+                std::mem::swap(&mut min_depth, &mut max_depth);
+            }
+            pass.set_viewport(left, top, width, height, min_depth, max_depth);
+        }
 
         if scissor_enabled {
             let scissor = self.state.scissor.unwrap_or(ScissorRect {
@@ -539,7 +559,15 @@ impl AerogpuCmdRuntime {
                 width: target_size.0,
                 height: target_size.1,
             });
-            pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+            let x = scissor.x.min(target_size.0);
+            let y = scissor.y.min(target_size.1);
+            let width = scissor.width.min(target_size.0.saturating_sub(x));
+            let height = scissor.height.min(target_size.1.saturating_sub(y));
+            if width > 0 && height > 0 {
+                pass.set_scissor_rect(x, y, width, height);
+            } else {
+                pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+            }
         } else {
             pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
         }
