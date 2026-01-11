@@ -38,6 +38,7 @@ jobs:
 
       - name: Setup Rust
         if: steps.rust.outputs.has_rust == 'true'
+        id: setup-rust
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
@@ -54,7 +55,7 @@ jobs:
         if: steps.rust.outputs.has_rust == 'true'
         run: |
           set -euo pipefail
-          cargo metadata --locked --format-version 1 >/dev/null
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 >/dev/null
 
       # Fast + deterministic policy checks run on every PR.
       - name: cargo-deny check (licenses, bans, sources)

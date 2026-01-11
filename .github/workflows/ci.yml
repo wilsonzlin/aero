@@ -214,10 +214,10 @@ jobs:
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-features --doc
 
       - name: cargo nextest (guest tools packager)
-        run: cargo nextest run --manifest-path tools/packaging/aero_packager/Cargo.toml --locked --junit-path test-results/rust-aero-packager.xml
+        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/packaging/aero_packager/Cargo.toml --junit-path test-results/rust-aero-packager.xml
 
       - name: cargo nextest (disk-gateway reference server)
-        run: cargo nextest run --manifest-path server/disk-gateway/Cargo.toml --locked --junit-path test-results/rust-disk-gateway.xml
+        run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path server/disk-gateway/Cargo.toml --junit-path test-results/rust-disk-gateway.xml
 
       - name: cargo nextest (aero-storage-server)
         run: cargo nextest run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-storage-server --all-features --junit-path test-results/rust-aero-storage-server.xml
@@ -481,11 +481,11 @@ jobs:
 
       - name: Build offline cert injector (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo build --manifest-path tools/win-offline-cert-injector/Cargo.toml --locked
+        run: cargo build ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/win-offline-cert-injector/Cargo.toml
 
       - name: Test offline cert injector (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo test --manifest-path tools/win-offline-cert-injector/Cargo.toml --locked
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --manifest-path tools/win-offline-cert-injector/Cargo.toml
 
       - name: Setup Node workspace
         id: node-workspace
