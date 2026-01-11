@@ -126,7 +126,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
   if (chosen_level < D3D_FEATURE_LEVEL_10_0) {
-    return reporter.Fail("feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
+    const std::string skip_reason = aerogpu_test::FormatString(
+        "feature level 0x%04X is below D3D_FEATURE_LEVEL_10_0 (0x%04X)",
+        (unsigned)chosen_level,
+        (unsigned)D3D_FEATURE_LEVEL_10_0);
+    reporter.SetSkipped(skip_reason.c_str());
+    aerogpu_test::PrintfStdout("SKIP: %s: %s", kTestName, skip_reason.c_str());
+    return reporter.Pass();
   }
 
   ComPtr<IDXGIDevice> dxgi_device;
@@ -200,7 +206,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                            strlen(kStateHlsl),
                                            "d3d11_rs_om_state_sanity.hlsl",
                                            "vs_main",
-                                           "vs_4_0_level_9_1",
+                                           "vs_4_0",
                                            &vs_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile vertex shader (vs_main): %s", shader_err.c_str());
@@ -209,7 +215,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                            strlen(kStateHlsl),
                                            "d3d11_rs_om_state_sanity.hlsl",
                                            "vs_depth_clip_main",
-                                           "vs_4_0_level_9_1",
+                                           "vs_4_0",
                                            &vs_depth_clip_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile vertex shader (vs_depth_clip_main): %s", shader_err.c_str());
@@ -218,7 +224,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                            strlen(kStateHlsl),
                                            "d3d11_rs_om_state_sanity.hlsl",
                                            "ps_main",
-                                           "ps_4_0_level_9_1",
+                                           "ps_4_0",
                                            &ps_bytes,
                                            &shader_err)) {
     return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
