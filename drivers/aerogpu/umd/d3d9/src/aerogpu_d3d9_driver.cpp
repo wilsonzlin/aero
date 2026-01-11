@@ -7430,7 +7430,7 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   return trace.ret(S_OK);
 }
 
-static bool SupportsTransfer(const AeroGpuDevice* dev) {
+static bool SupportsTransfer(const Device* dev) {
   if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
     return false;
   }
