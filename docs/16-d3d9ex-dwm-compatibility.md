@@ -355,56 +355,24 @@ avoid accidental installs.
 
 ## Tests
 
-### Guest Windows test app: `d3d9ex_test`
+### Guest Windows tests (in-tree)
 
-Provide a Windows test program that:
+The repo ships Win7 guest-side validation tests under `drivers/aerogpu/tests/win7/` that cover the D3D9Ex bring-up + DWM-critical probe surface:
 
-1. Calls `Direct3DCreate9Ex`
-2. Creates a device via `CreateDeviceEx`
-3. Renders a moving pattern to a render target/backbuffer
-4. Calls `PresentEx` in a loop
-5. Calls `GetPresentStats` and `GetLastPresentCount` each frame and validates:
-   - calls return `S_OK`
-   - counts are monotonic
-
-Example (sketch):
-
-```c++
-ComPtr<IDirect3D9Ex> d3d;
-CHECK_HR(Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d));
-
-D3DPRESENT_PARAMETERS pp = {};
-pp.Windowed = TRUE;
-pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-pp.hDeviceWindow = hwnd;
-pp.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
-
-ComPtr<IDirect3DDevice9Ex> dev;
-CHECK_HR(d3d->CreateDeviceEx(
-  D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd,
-  D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, nullptr, &dev));
-
-UINT last = 0;
-for (;;) {
-  render(dev.Get(), t++);
-  CHECK_HR(dev->PresentEx(nullptr, nullptr, nullptr, nullptr, 0));
-
-  D3DPRESENTSTATS st = {};
-  CHECK_HR(dev->GetPresentStats(&st));
-  CHECK_HR(dev->GetLastPresentCount(&last));
-  assert(st.PresentCount >= last);
-}
-```
+- `d3d9ex_triangle` / `d3d9ex_multiframe_triangle`: create a D3D9Ex device, render/present, and validate expected pixels via readback.
+- `d3d9ex_query_latency`: validates EVENT query polling and max-frame-latency pacing (including `PresentEx(D3DPRESENT_DONOTWAIT)` behavior).
+- `d3d9ex_dwm_ddi_sanity`: exercises the DWM-critical D3D9Ex probes (present stats, `CheckDeviceState`, `WaitForVBlank`, etc) and asserts they remain non-blocking.
 
 ### Verification steps (Windows 7)
 
 In a Windows 7 SP1 guest:
 
-1. Verify `d3d9ex_test` runs without crashing, and it visibly animates.
-2. Confirm `dwm.exe` starts and Aero composition remains enabled:
+1. Run `d3d9ex_dwm_probe` and confirm `dwm.exe` starts and Aero composition remains enabled:
    - no immediate fallback to Basic theme
    - no repeated `Direct3DCreate9Ex` failures in logs
-3. Optional: launch other D3D9Ex apps (media players, simple demos) to validate broader compatibility.
+2. Run `d3d9ex_triangle` (and optionally `d3d9ex_multiframe_triangle`) to confirm D3D9Ex rendering + present works end-to-end.
+3. Run `d3d9ex_dwm_ddi_sanity` to ensure Ex-only DWM probes succeed and never block.
+4. Optional: launch other D3D9Ex apps (media players, simple demos) to validate broader compatibility.
 
 ### Host integration test
 
