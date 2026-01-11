@@ -83,6 +83,35 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     await p;
   });
 
+  it("respects initiallyBlocked and waits for usb.selected ok:true before forwarding actions", async () => {
+    const port = new FakePort();
+
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [action]),
+      push_completion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({
+      bridge,
+      port: port as unknown as MessagePort,
+      pollIntervalMs: 0,
+      initiallyBlocked: true,
+    });
+
+    await runtime.pollOnce();
+    expect(port.posted).toEqual([]);
+
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+    expect(port.posted).toEqual([{ type: "usb.action", action }]);
+    port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "stall" } satisfies UsbHostCompletion });
+    await p;
+  });
+
   it("falls back to non-transfer postMessage when the payload buffer cannot be transferred", async () => {
     class ThrowOnTransferPort extends FakePort {
       override postMessage(msg: unknown, transfer?: Transferable[]): void {

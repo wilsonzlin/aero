@@ -828,7 +828,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           try {
             const bridge = new api.UsbPassthroughBridge();
             // Poll USB passthrough as part of the main IO tick to avoid a separate timer.
-            usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 0 });
+            usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 0, initiallyBlocked: !usbAvailable });
             usbPassthroughRuntime.start();
             if (import.meta.env.DEV) {
               usbPassthroughDebugTimer = setInterval(() => {

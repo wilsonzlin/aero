@@ -172,7 +172,7 @@ export class WebUsbPassthroughRuntime {
    * instantiated after an `ok:true` broadcast (e.g. WASM finishes loading after
    * the user selects a device).
    */
-  #blocked = false;
+  #blocked: boolean;
   #desiredRunning = false;
   #pollTimer: number | undefined;
   #pollInFlight = false;
@@ -185,10 +185,24 @@ export class WebUsbPassthroughRuntime {
 
   readonly #onMessage: EventListener;
 
-  constructor(options: { bridge: UsbPassthroughBridgeLike; port: UsbBrokerPortLike; pollIntervalMs?: number }) {
+  constructor(options: {
+    bridge: UsbPassthroughBridgeLike;
+    port: UsbBrokerPortLike;
+    pollIntervalMs?: number;
+    /**
+     * Override the initial "blocked" state.
+     *
+     * By default the runtime starts unblocked so it still functions even if it is
+     * instantiated after a `usb.selected ok:true` broadcast (e.g. WASM finishes
+     * loading late). Pass `true` if you want to ensure the passthrough bridge does
+     * not emit host actions until a selection message is observed.
+     */
+    initiallyBlocked?: boolean;
+  }) {
     this.#bridge = options.bridge;
     this.#port = options.port;
     this.#pollIntervalMs = options.pollIntervalMs ?? 8;
+    this.#blocked = options.initiallyBlocked ?? false;
 
     this.#onMessage = (ev) => {
       const data = (ev as MessageEvent<unknown>).data;
