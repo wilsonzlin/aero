@@ -29,11 +29,11 @@ and assigns subsystem IDs per device instance:
 
 * Revision ID: `REV_01` (contract v1)
 * Subsystem Vendor ID: `0x1AF4`
-* Subsystem Device ID: `0x0003` (virtio-snd instance)
+* Subsystem Device ID: `0x0019` (`VIRTIO_ID_SOUND`)
 
 So, a fully-qualified expected HWID looks like:
 
-* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01`
+* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
 The Aero driver INF is intentionally **revision-gated** so it will not bind to devices that do not
 claim to implement contract v1:

@@ -81,7 +81,7 @@ Subsystem Device IDs are used to distinguish device variants (for example, virti
 |----------------|---------------------|
 | virtio-net     | `0x0001` |
 | virtio-blk     | `0x0002` |
-| virtio-snd     | `0x0003` |
+| virtio-snd     | `0x0019` |
 | virtio-input (keyboard) | `0x0010` |
 | virtio-input (mouse)    | `0x0011` |
 
@@ -758,11 +758,11 @@ The guest MAY send output/LED events via `statusq`.
 ### 3.4 virtio-snd (audio)
 
 #### 3.4.1 PCI IDs
-
+ 
 - Vendor ID: `0x1AF4`
 - Device ID: `0x1059`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0003`
+- Subsystem Device ID: `0x0019`
 - Revision ID: `0x01`
 
 #### 3.4.2 Virtqueues
