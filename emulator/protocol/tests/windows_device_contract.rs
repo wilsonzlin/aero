@@ -664,6 +664,7 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     let allowed_mapping_doc = b"docs/abi/aerogpu-pci-identity.md";
     let allowed_prefixes: &[&[u8]] = &[
         b"docs/windows-device-contract.json",
+        b"docs/windows-device-contract-virtio-win.json",
         b"drivers/aerogpu/protocol/legacy/",
         b"drivers/aerogpu/packaging/win7/README.md",
         b"drivers/aerogpu/packaging/win7/legacy/",
