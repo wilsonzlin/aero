@@ -48,6 +48,20 @@ async fn net_e2e() {
     .await;
 
     let session_cookie = create_gateway_session(tcp_relay.addr).await;
+    assert_tcp_relay_rejects_invalid_target_over_host_port(
+        tcp_relay.addr,
+        &session_cookie,
+        Ipv4Addr::LOCALHOST,
+        tcp_echo.addr.port(),
+    )
+    .await;
+    assert_tcp_relay_accepts_target_over_invalid_host_port(
+        tcp_relay.addr,
+        &session_cookie,
+        Ipv4Addr::LOCALHOST,
+        tcp_echo.addr.port(),
+    )
+    .await;
 
     let mut stack = NetworkStack::new(StackConfig::default());
     let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
@@ -579,6 +593,53 @@ async fn assert_tcp_relay_rejects_without_cookie(
         .await
         .expect("read tcp relay /tcp response");
     assert_eq!(status, "401", "expected 401 Unauthorized from /tcp");
+}
+
+async fn assert_tcp_relay_rejects_invalid_target_over_host_port(
+    addr: SocketAddr,
+    session_cookie: &str,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) {
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .expect("connect tcp relay /tcp (invalid target)");
+
+    // Gateway semantics: if `target` is present, it takes precedence over host/port. That means an
+    // invalid target must fail the request even if host/port are valid.
+    let req = format!(
+        "GET /tcp?v=1&host={remote_ip}&port={remote_port}&target= HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nCookie: aero_session={session_cookie}\r\n\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .expect("send tcp relay /tcp (invalid target)");
+
+    let (_proto, status, _headers, _body) = read_http_response(&mut stream)
+        .await
+        .expect("read tcp relay /tcp response");
+    assert_eq!(status, "400", "expected 400 Bad Request from /tcp");
+}
+
+async fn assert_tcp_relay_accepts_target_over_invalid_host_port(
+    addr: SocketAddr,
+    session_cookie: &str,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) {
+    // Use an invalid host/port pair, but a valid `target=`. The relay should ignore host/port and
+    // accept the connection based on `target=`.
+    let url = format!("ws://{addr}/tcp?v=1&target={remote_ip}:{remote_port}&host=&port=0");
+    let mut request = url.into_client_request().expect("build tcp relay request");
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::COOKIE,
+        HeaderValue::from_str(&format!("aero_session={session_cookie}"))
+            .expect("valid Cookie header value"),
+    );
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("tcp relay should accept target over invalid host/port");
+    let _ = ws.send(Message::Close(None)).await;
 }
 
 fn parse_set_cookie_value(set_cookie: &str, cookie_name: &str) -> Option<String> {
