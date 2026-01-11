@@ -415,6 +415,21 @@ static bool LooksLikeTestReportJsonObject(const std::string& obj) {
   return true;
 }
 
+static void WriteTestReportJsonBestEffort(const std::wstring& path, const aerogpu_test::TestReport& report) {
+  if (path.empty()) {
+    return;
+  }
+  std::string json = aerogpu_test::BuildTestReportJson(report);
+  json.push_back('\n');
+  std::string err;
+  if (!aerogpu_test::WriteFileStringW(path, json, &err)) {
+    // Reporting should not change the test outcome.
+    aerogpu_test::PrintfStdout("INFO: aerogpu_test_runner: failed to write per-test JSON report to %ls: %s",
+                               path.c_str(),
+                               err.c_str());
+  }
+}
+
 static std::string BuildAdapterJsonObject(const aerogpu_test::TestReportAdapterInfo& info) {
   if (!info.present) {
     return std::string("null");
@@ -649,6 +664,19 @@ int main(int argc, char** argv) {
     const std::string test_name(tests[i]);
     const std::wstring exe_leaf = aerogpu_test::Utf8ToWideFallbackAcp(test_name + ".exe");
     const std::wstring exe_path = aerogpu_test::JoinPath(bin_dir, exe_leaf.c_str());
+    std::wstring per_test_json_path;
+    if (emit_json) {
+      const std::wstring json_leaf = aerogpu_test::Utf8ToWideFallbackAcp(test_name + ".json");
+      if (!report_dir.empty()) {
+        per_test_json_path = aerogpu_test::JoinPath(report_dir, json_leaf.c_str());
+      } else {
+        per_test_json_path = json_leaf;
+      }
+
+      // Avoid consuming stale output from a previous run if the test crashes or otherwise fails to
+      // write a report this time.
+      DeleteFileW(per_test_json_path.c_str());
+    }
 
     aerogpu_test::PrintfStdout("");
     aerogpu_test::PrintfStdout("=== Running %s ===", test_name.c_str());
@@ -675,6 +703,7 @@ int main(int argc, char** argv) {
         fallback.skip_reason = "not present in this checkout";
         if (emit_json) {
           test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
+          WriteTestReportJsonBestEffort(per_test_json_path, fallback);
         }
         continue;
       }
@@ -686,24 +715,14 @@ int main(int argc, char** argv) {
       fallback.failure = "missing binary";
       if (emit_json) {
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
+        WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
       continue;
     }
 
     std::vector<std::wstring> args = forwarded_args;
-    std::wstring per_test_json_path;
     if (emit_json) {
-      const std::wstring json_leaf = aerogpu_test::Utf8ToWideFallbackAcp(test_name + ".json");
-      if (!report_dir.empty()) {
-        per_test_json_path = aerogpu_test::JoinPath(report_dir, json_leaf.c_str());
-      } else {
-        per_test_json_path = json_leaf;
-      }
       args.push_back(L"--json=" + per_test_json_path);
-
-      // Avoid consuming stale output from a previous run if the test crashes or otherwise fails to
-      // write a report this time.
-      DeleteFileW(per_test_json_path.c_str());
     }
 
     RunResult rr = RunProcessWithTimeoutW(exe_path, args, timeout_ms, enforce_timeout);
@@ -715,6 +734,7 @@ int main(int argc, char** argv) {
       fallback.failure = rr.err;
       if (emit_json) {
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
+        WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
       continue;
     }
@@ -727,6 +747,7 @@ int main(int argc, char** argv) {
       fallback.failure = aerogpu_test::FormatString("timed out after %lu ms", (unsigned long)timeout_ms);
       if (emit_json) {
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
+        WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
       continue;
     }
@@ -766,6 +787,7 @@ int main(int argc, char** argv) {
                                ? std::string()
                                : aerogpu_test::FormatString("exit_code=%lu", (unsigned long)rr.exit_code);
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
+        WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
     }
   }
