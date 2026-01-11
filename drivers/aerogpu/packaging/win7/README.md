@@ -248,8 +248,13 @@ cd C:\path\to\out\packages\aerogpu\x64
 pnputil -i -a aerogpu.inf
 :: legacy bring-up device model:
 pnputil -i -a legacy\aerogpu.inf
+:: legacy bring-up device model (DX11-capable variant; if staged):
+pnputil -i -a legacy\aerogpu_dx11.inf
 :: or (use the helper script shipped in the package):
 packaging\win7\install.cmd
+:: legacy bring-up variants:
+packaging\win7\install.cmd legacy\aerogpu.inf
+packaging\win7\install.cmd legacy\aerogpu_dx11.inf
 :: install.cmd also runs packaging\win7\verify_umd_registration.cmd to sanity-check UMD placement + registry values.
 ```
 
