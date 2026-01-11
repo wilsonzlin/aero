@@ -11,13 +11,13 @@ The kernel-mode driver (KMD) is responsible for accepting submissions and forwar
 
 The in-tree Win7 KMD supports both the **versioned** ring/MMIO transport (`drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h`) and the legacy bring-up transport (see `drivers/aerogpu/kmd/README.md` for current status and device model/VID selection).
 
-The command stream does **not** reference resources by “allocation-list index”; instead it uses two separate ID spaces:
+The command stream does **not** reference resources by a per-submission “allocation-list index”; instead it uses two separate ID spaces:
 
-- **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream.
+- **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream. They are *not* WDDM allocation IDs/handles.
 - **Backing allocation IDs** (`alloc_id`): a stable 32-bit ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`.
   - `alloc_id` is **UMD-owned** and is stored in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-  - The KMD validates it and uses it to build the per-submit `aerogpu_alloc_table` mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator.
-  - The current bring-up UMD uses host-allocated resources and typically sets `backing_alloc_id = 0`.
+  - The KMD validates it and uses it to build the per-submit `aerogpu_alloc_table` (`drivers/aerogpu/protocol/aerogpu_ring.h`) mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator. `backing_alloc_id` in packets is the `alloc_id` lookup key (not an index into an allocation list).
+  - `backing_alloc_id = 0` means “host allocated” (no guest backing). The current bring-up UMD uses host-allocated resources and typically sets `backing_alloc_id = 0`.
 
 ### Shared surfaces (D3D9Ex / DWM)
 
