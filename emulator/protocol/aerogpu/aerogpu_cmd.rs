@@ -244,10 +244,13 @@ pub struct AerogpuCmdCopyBuffer {
     pub dst_offset_bytes: u64,
     pub src_offset_bytes: u64,
     pub size_bytes: u64,
-    pub flags: u32,
+    pub flags: u32, // aerogpu_copy_flags
     pub reserved0: u32,
 }
 
+impl AerogpuCmdCopyBuffer {
+    pub const SIZE_BYTES: usize = 48;
+}
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdCopyTexture2d {
@@ -264,8 +267,12 @@ pub struct AerogpuCmdCopyTexture2d {
     pub src_y: u32,
     pub width: u32,
     pub height: u32,
-    pub flags: u32,
+    pub flags: u32, // aerogpu_copy_flags
     pub reserved0: u32,
+}
+
+impl AerogpuCmdCopyTexture2d {
+    pub const SIZE_BYTES: usize = 64;
 }
 /* -------------------------------- Shaders -------------------------------- */
 

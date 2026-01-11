@@ -1,0 +1,76 @@
+; AeroGPU WDDM 1.1 display + D3D9 UMD driver package (Windows 7)
+;
+; This is a minimal, test-signing friendly INF. It installs:
+;  - aerogpu_kmd.sys      (kernel-mode display miniport)
+;  - aerogpu_d3d9umd.dll  (Direct3D 9 user-mode driver)
+;
+; The PCI IDs must match the host device model (Task 51). The default IDs are
+; defined in prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h.
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=Display
+ClassGuid={4d36e968-e325-11ce-bfc1-08002be10318}
+Provider=%Aero%
+DriverVer=01/10/2026,0.1.0.0
+CatalogFile=aerogpu.cat
+
+[Manufacturer]
+%Aero%=Aero,NTamd64.6.1,NTx86.6.1
+
+[Aero.NTamd64.6.1]
+%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\VEN_1AE0&DEV_0001
+%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
+
+[Aero.NTx86.6.1]
+%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\VEN_1AE0&DEV_0001
+%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
+
+[DestinationDirs]
+DefaultDestDir=12
+AeroGPU.CopyFiles.Kmd=12
+AeroGPU.CopyFiles.Umd=11
+
+[SourceDisksNames]
+1=%DiskName%,,,""
+
+[SourceDisksFiles]
+aerogpu_kmd.sys=1
+aerogpu_d3d9umd.dll=1
+
+[AeroGPU_Install]
+CopyFiles=AeroGPU.CopyFiles.Kmd,AeroGPU.CopyFiles.Umd
+AddReg=AeroGPU.AddReg
+
+[AeroGPU_Install.Services]
+AddService=aerogpu_kmd,0x00000002,AeroGPU_Service_Inst
+
+[AeroGPU.CopyFiles.Kmd]
+aerogpu_kmd.sys
+
+[AeroGPU.CopyFiles.Umd]
+aerogpu_d3d9umd.dll
+
+[AeroGPU_Service_Inst]
+DisplayName=%AeroGPU.ServiceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\aerogpu_kmd.sys
+
+[AeroGPU.AddReg]
+; UMD registration
+HKR,,UserModeDriverName,%REG_SZ%,aerogpu_d3d9umd.dll
+HKR,,UserModeDriverNameWow,%REG_SZ%,aerogpu_d3d9umd.dll
+
+; Prefer this driver when matching by class code.
+HKR,,FeatureScore,%REG_DWORD%,0
+
+[Strings]
+Aero="Aero Project"
+DiskName="AeroGPU Driver Disk"
+REG_DWORD=0x00010001
+REG_SZ=0x00000000
+
+AeroGPU.DeviceDesc="AeroGPU Paravirtual Display Adapter"
+AeroGPU.ServiceDesc="AeroGPU WDDM 1.1 Display Miniport"

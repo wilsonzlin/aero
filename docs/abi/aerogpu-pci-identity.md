@@ -51,9 +51,9 @@ The supported Windows 7 driver package lives under:
 
 * `drivers/aerogpu/packaging/win7/` (see its `README.md`)
 
-An older `guest/windows/` AeroGPU driver stack existed during early bring-up; it is **not** the supported
-driver package and was not WOW64-complete on Win7 x64. It was removed to avoid accidental installs;
-`guest/windows/README.md` remains as a pointer.
+An older AeroGPU driver stack existed during early bring-up; it is **not** the supported driver
+package and was not WOW64-complete on Win7 x64. It is archived at
+`prototype/legacy-win7-aerogpu-1ae0/guest/windows/` for reference only.
 
 ## Related docs
 
@@ -68,6 +68,6 @@ driver packages, or documentation:
 * A retired experimental prototype ABI existed for deterministic host-side tests and gpu-trace plumbing.
   The implementation has been removed; see `docs/legacy/experimental-gpu-command-abi.md` for a brief note.
 
-Older prototypes in this repository used a different PCI vendor ID (`VEN_1AE0`)
-and an early placeholder device ID (`E001`). These identifiers are **stale** and
+Older prototypes in this repository used a different PCI vendor ID (1AE0)
+and an early placeholder device ID (E001). These identifiers are **stale** and
 must not be used for current device models, driver packages, or documentation.

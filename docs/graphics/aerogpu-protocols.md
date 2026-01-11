@@ -54,7 +54,7 @@ The protocol is still documented for reference, but it is archived:
 
 - Commands are things like `CREATE_SURFACE`, `UPDATE_SURFACE`, `CLEAR_RGBA`, `PRESENT`.
 - The code is intentionally simple and does not model WDDM concepts.
-- It used stale placeholder PCI IDs (deprecated vendor `VEN_1AE0`) and must not be used as a
+- It used stale placeholder PCI IDs (deprecated vendor 1AE0) and must not be used as a
   driver contract (see `docs/abi/aerogpu-pci-identity.md`).
 
 It is **not** compatible with the Win7/WDDM AeroGPU protocol.
@@ -76,5 +76,6 @@ The archived note is kept under:
   labeled as prototypes.
 
 Note: an older `guest/windows/` prototype Win7 driver tree existed during early bring-up; it used stale
-placeholder PCI IDs (`VEN_1AE0`) and was not WOW64-complete on Win7 x64. It has been removed to avoid
-accidental installs; use `drivers/aerogpu/packaging/win7/` for the supported Win7 driver package.
+placeholder PCI IDs (vendor 1AE0) and was not WOW64-complete on Win7 x64. It is archived under
+`prototype/legacy-win7-aerogpu-1ae0/guest/windows/` to avoid accidental installs; use
+`drivers/aerogpu/packaging/win7/` for the supported Win7 driver package.

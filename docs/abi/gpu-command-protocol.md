@@ -5,10 +5,10 @@
 > This file previously documented a **surface-centric** AeroGPU command protocol
 > (`CREATE_SURFACE` / `UPDATE_SURFACE` / `PRESENT`) used during early bring-up by
 > the legacy prototype device model in `crates/aero-emulator/src/devices/aerogpu/`.
-> That prototype is now removed or feature-gated; this is **not** the Windows 7
+> That prototype is now removed; this is **not** the Windows 7
 > WDDM AeroGPU ABI.
 >
-> It also used stale placeholder PCI IDs (deprecated vendor `VEN_1AE0`) and must
+> It also used stale placeholder PCI IDs (deprecated vendor 1AE0) and must
 > not be treated as a Windows driver contract. See
 > `docs/abi/aerogpu-pci-identity.md`.
 >

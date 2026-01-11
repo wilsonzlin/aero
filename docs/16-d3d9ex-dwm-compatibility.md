@@ -340,9 +340,9 @@ The supported, in-tree AeroGPU Windows 7 driver stack lives under `drivers/aerog
   - `crates/aero-gpu/src/protocol*.rs` (opcode + payload definitions; event types)
   - `crates/aero-gpu/src/command_processor*.rs` (implement `PRESENT_EX`, shared surface import/export, fence signaling)
 
-Note: `guest/windows/` used to contain an older prototype driver stack (legacy PCI IDs / different ABI) and
-was not WOW64-complete on Win7 x64. It was removed to avoid accidental installs; `guest/windows/README.md`
-remains as a pointer to the supported stack.
+Note: `guest/windows/` used to contain an older prototype driver stack (legacy PCI IDs / different ABI)
+and was not WOW64-complete on Win7 x64. It is archived at
+`prototype/legacy-win7-aerogpu-1ae0/guest/windows/` to avoid accidental installs.
 
 ---
 

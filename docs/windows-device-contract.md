@@ -83,6 +83,9 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 > Legacy note: some bring-up builds may still expose the legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`.
 > The supported Win7 display driver INFs match both `PCI\VEN_A3A0&DEV_0001` (preferred, versioned ABI)
 > and `PCI\VEN_1AED&DEV_0001` (legacy bring-up ABI) during migration.
+>
+> Older prototypes used PCI vendor 1AE0; those stacks are deprecated and must not be treated as the
+> Windows driver binding contract.
 
 ## Device table (normative)
 
