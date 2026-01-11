@@ -123,7 +123,7 @@ if errorlevel 1 (
 exit /b 0
 
 :help
-echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--producers=N] [--samples=N] [--iterations=N] [--stress-iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--no-timeout] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
+echo Usage: run_all.cmd [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--producers=N] [--samples=N] [--iterations=N] [--stress-iterations=N] [--wait-timeout-ms=N] [--display \\.\DISPLAYn] [--timeout-ms=NNNN] [--timeout-ms NNNN] [--no-timeout] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]
 echo.
 echo Notes:
 echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't active.
