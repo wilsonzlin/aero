@@ -23,7 +23,7 @@ Commonly observed IDs:
 The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pci
 ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 
-The in-tree Aero virtio-input INF currently matches `PCI\\VEN_1AF4&DEV_1052`
+The in-tree Aero virtio-input INF currently matches `PCI\VEN_1AF4&DEV_1052`
 (modern/non-transitional). If you need to support a transitional virtio-input PCI
 function (`DEV_1011`), update `virtio-input.inf` accordingly.
 

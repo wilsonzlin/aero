@@ -12,8 +12,8 @@ space `DEV_104x`/`DEV_105x`).
 Windows picks drivers by matching PCI hardware IDs against installed INFs. Aero’s
 contract v1 uses modern-only IDs like:
 
-- `PCI\\VEN_1AF4&DEV_1041` (virtio-net)
-- `PCI\\VEN_1AF4&DEV_1042` (virtio-blk)
+- `PCI\VEN_1AF4&DEV_1041` (virtio-net)
+- `PCI\VEN_1AF4&DEV_1042` (virtio-blk)
 
 To avoid Windows seeing **multiple** INFs that match the **same** modern device,
 make sure your driver set does **not** contain duplicate INFs that bind the

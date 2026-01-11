@@ -65,8 +65,8 @@ qemu-system-x86_64 \
 
 Virtio-input has two PCI IDs defined in the virtio spec:
 
-- **Modern / non-transitional**: `PCI\\VEN_1AF4&DEV_1052`
-- **Transitional (legacy+modern)**: `PCI\\VEN_1AF4&DEV_1011`
+- **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1052`
+- **Transitional (legacy+modern)**: `PCI\VEN_1AF4&DEV_1011`
 
 QEMU’s virtio-input PCI devices currently enumerate as **modern/non-transitional**
 (`DEV_1052`) even without `disable-legacy=on`. However, you can still include
@@ -115,11 +115,11 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 
 Expected values include at least:
 
-- `PCI\\VEN_1AF4&DEV_1052` (modern / non-transitional, used by QEMU today)
+- `PCI\VEN_1AF4&DEV_1052` (modern / non-transitional, used by QEMU today)
 
 The list will also include more specific forms, e.g.:
 
-- `PCI\\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_01` (when using `x-pci-revision=0x01`)
+- `PCI\VEN_1AF4&DEV_1052&SUBSYS_11001AF4&REV_01` (when using `x-pci-revision=0x01`)
 
 The INF should match the shorter `VEN/DEV` form.
 
@@ -128,7 +128,7 @@ The INF should match the shorter `VEN/DEV` form.
 You can validate the PCI ID that QEMU is emitting without booting Windows:
 
 ```bash
-printf 'info pci\\nquit\\n' | \
+printf 'info pci\nquit\n' | \
   qemu-system-x86_64 -nodefaults -machine q35 -m 128 -nographic -monitor stdio \
     -device virtio-keyboard-pci
 ```
@@ -153,7 +153,7 @@ Keyboard: PCI device 1af4:1052
      - Often shows under **Other devices** as an unknown PCI device until the INF is installed.
    - Right click → **Update Driver Software...**
    - **Browse my computer for driver software**
-   - Point it to a directory containing `virtio-input.inf` + `virtioinput.sys` (for example: `out\\packages\\windows\\virtio-input\\x64\\`)
+   - Point it to a directory containing `virtio-input.inf` + `virtioinput.sys` (for example: `out\packages\windows\virtio-input\x64\`)
 4. Reboot when prompted.
 
 ## Verify the Windows HID stacks attach (`kbdhid.sys` / `mouhid.sys`)
@@ -229,4 +229,3 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 ### Input works in Windows but `hidtest` prints nothing
 
 - Verify you are not testing PS/2 input unintentionally; after the driver works, re-run QEMU with `-machine ... ,i8042=off` to force virtio-only input.
-
