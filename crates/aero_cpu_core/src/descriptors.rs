@@ -376,6 +376,9 @@ impl CpuState {
         // 32-bit TSS: ESP0 at +4, SS0 at +8.
         let esp0 = bus.read_u32(base + 4)?;
         let ss0 = bus.read_u16(base + 8)?;
+        if (ss0 >> 3) == 0 {
+            return Err(Exception::ts(0));
+        }
         Ok((ss0, esp0))
     }
 

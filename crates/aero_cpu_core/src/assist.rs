@@ -1042,6 +1042,9 @@ fn tss32_ring0_stack<B: CpuBus>(state: &CpuState, bus: &mut B) -> Result<(u16, u
     }
     let esp0 = bus.read_u32(base + 4)?;
     let ss0 = bus.read_u16(base + 8)?;
+    if (ss0 >> 3) == 0 {
+        return Err(Exception::ts(0));
+    }
     Ok((ss0, esp0))
 }
 

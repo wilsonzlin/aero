@@ -485,6 +485,43 @@ fn tss32_ring0_stack_read_enforces_tr_limit() {
 }
 
 #[test]
+fn tss32_ring0_stack_read_rejects_null_ss0_selector() {
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x4000);
+    let gdt_base = 0x100;
+    let tss_base = 0x900;
+
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    let tss_desc = make_descriptor(
+        tss_base as u32,
+        0x67,
+        0x9,
+        false,
+        0,
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    setup_gdt(&mut bus, gdt_base, &[null, code32, tss_desc]);
+    cpu.set_gdtr(gdt_base, (3 * 8 - 1) as u16);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+
+    bus.load(tss_base + 4, &0xDEAD_BEEFu32.to_le_bytes());
+    // Index=0 selectors are invalid for SS0 even if RPL bits are set.
+    bus.load(tss_base + 8, &0x3u16.to_le_bytes());
+
+    assert_eq!(cpu.tss32_ring0_stack(&mut bus), Err(Exception::ts(0)));
+}
+
+#[test]
 fn tss64_rsp0_and_ist_reads() {
     let mut cpu = CpuState::new(CpuMode::Real);
     cpu.set_protected_enable(true);

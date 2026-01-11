@@ -1068,7 +1068,7 @@ fn tss32_stack_for_cpl<B: CpuBus>(
     let ss_addr = base.checked_add(ss_off).ok_or(())?;
     let esp = bus.read_u32(esp_addr).map_err(|_| ())?;
     let ss = bus.read_u16(ss_addr).map_err(|_| ())?;
-    if ss == 0 {
+    if (ss >> 3) == 0 {
         return Err(());
     }
     Ok((ss, esp))
