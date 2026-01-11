@@ -72,7 +72,7 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
  
 Legacy bring-up ABI note:
 
-- The Win7 KMD still has a compatibility path for the deprecated legacy bring-up AeroGPU ABI.
+- The Win7 KMD still has a compatibility path for the deprecated legacy bring-up AeroGPU ABI (`PCI\VEN_1AED&DEV_0001`).
 - The canonical in-tree Win7 AeroGPU INFs (`drivers/aerogpu/packaging/win7/{aerogpu.inf,aerogpu_dx11.inf}`) intentionally bind **only** to `PCI\VEN_A3A0&DEV_0001`.
 - Installing against the legacy device model requires:
   - building the emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`), and
@@ -86,7 +86,7 @@ Legacy bring-up ABI note:
 > - Guest Tools install/verify config: `guest-tools/config/devices.cmd`
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 >
-> Legacy note: some bring-up builds may still expose the deprecated legacy AeroGPU HWID. This is not
+> Legacy note: some bring-up builds may still expose the deprecated legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`. This is not
 > the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design). If you
 > need it, use the legacy INFs and enable the legacy device model feature (`emulator/aerogpu-legacy`).
 
@@ -108,7 +108,8 @@ Notes:
 - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
 - `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` (canonical / current ABI).
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
-- The deprecated legacy bring-up AeroGPU HWID requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
+- The deprecated legacy bring-up AeroGPU HWID `PCI\VEN_1AED&DEV_0001` requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
+- Windows service names are case-insensitive. The AeroGPU INF installs `AeroGPU` (`AddService = AeroGPU, ...`), but this contract normalizes it to `aerogpu`.
 
 Compatibility note (non-canonical virtio PCI Device IDs):
 
