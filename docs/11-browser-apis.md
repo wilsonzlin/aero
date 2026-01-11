@@ -300,9 +300,13 @@ const wasmFeatures = {
 const GUEST_RAM_MIB = 1024; // 512 / 1024 / 2048 / 3072 (best-effort)
 const GUEST_RAM_BYTES = GUEST_RAM_MIB * 1024 * 1024;
 const WASM_PAGE_BYTES = 64 * 1024;
-const RING_CTRL_BYTES = 16;      // Int32Array[4] header (see docs/ipc-protocol.md)
-const CMD_CAP_BYTES = 1 << 20;   // 1 MiB ring data region
-const EVT_CAP_BYTES = 1 << 20;   // 1 MiB ring data region
+
+// IMPORTANT: The wasm linear memory is shared between guest RAM and the Rust/WASM runtime
+// (stack/heap/statics). Guest physical address 0 does NOT map to linear address 0.
+//
+// See ADR 0003 addendum + `web/src/runtime/shared_layout.ts` for the canonical implementation.
+const RUNTIME_RESERVED_BYTES = 64 * 1024 * 1024;
+const guestBase = Math.ceil(RUNTIME_RESERVED_BYTES / WASM_PAGE_BYTES) * WASM_PAGE_BYTES;
 
 async function initializeMemory() {
     // If this fails, fall back to the single-threaded build (ADR 0004).
@@ -310,35 +314,29 @@ async function initializeMemory() {
         throw new Error('SharedArrayBuffer requires COOP/COEP (cross-origin isolated page)');
     }
 
-    // Shared guest RAM (wasm32).
-    const guestPages = Math.ceil(GUEST_RAM_BYTES / WASM_PAGE_BYTES);
+    // Shared wasm linear memory (wasm32). This contains:
+    // - `[0, guestBase)`            reserved for the Rust/WASM runtime
+    // - `[guestBase, guestBase+N)`  guest RAM (paddr 0..)
+    //
+    // Note: `guestSize` may be clamped so `guestBase + guestSize <= 4GiB`.
+    const totalBytes = guestBase + GUEST_RAM_BYTES;
+    const guestPages = Math.ceil(totalBytes / WASM_PAGE_BYTES);
     const guestMemory = new WebAssembly.Memory({
         initial: guestPages,
         maximum: guestPages,
         shared: true,
     });
 
+    const guestU8 = new Uint8Array(guestMemory.buffer, guestBase, guestMemory.buffer.byteLength - guestBase);
+    function guestToLinear(paddr) {
+        if (paddr < 0 || paddr >= guestU8.byteLength) throw new RangeError('guest paddr out of range');
+        return guestBase + paddr;
+    }
+
     // Separate small SABs for state + command/event rings (no >4GiB offsets).
     const stateSab = new SharedArrayBuffer(64 * 1024);
-    const cmdSab = new SharedArrayBuffer(RING_CTRL_BYTES + CMD_CAP_BYTES);
-    const eventSab = new SharedArrayBuffer(RING_CTRL_BYTES + EVT_CAP_BYTES);
 
-    // Initialize ring headers: [head, tail_reserve, tail_commit, capacity_bytes]
-    new Int32Array(cmdSab, 0, 4).set([0, 0, 0, CMD_CAP_BYTES]);
-    new Int32Array(eventSab, 0, 4).set([0, 0, 0, EVT_CAP_BYTES]);
-    
-    // Create views
-    const views = {
-        guestU8: new Uint8Array(guestMemory.buffer),
-        guestU32: new Uint32Array(guestMemory.buffer),
-        stateI32: new Int32Array(stateSab),
-        cmdCtrl: new Int32Array(cmdSab, 0, 4),
-        evtCtrl: new Int32Array(eventSab, 0, 4),
-        cmdData: new Uint8Array(cmdSab, RING_CTRL_BYTES, CMD_CAP_BYTES),
-        evtData: new Uint8Array(eventSab, RING_CTRL_BYTES, EVT_CAP_BYTES),
-    };
-    
-    return { guestMemory, stateSab, cmdSab, eventSab, views };
+    return { guestMemory, guestBase, guestU8, guestToLinear, stateSab };
 }
 ```
 
