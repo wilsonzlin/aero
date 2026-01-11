@@ -4015,7 +4015,9 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     funcs.pfnCreateQuery = &NotImpl<decltype(funcs.pfnCreateQuery)>::Fn;
   }
   if constexpr (has_pfnDestroyQuery<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDestroyQuery = &NotImpl<decltype(funcs.pfnDestroyQuery)>::Fn;
+    // Destroy paths should be no-ops even for unsupported features so teardown
+    // doesn't surface spurious device errors.
+    funcs.pfnDestroyQuery = &Noop<decltype(funcs.pfnDestroyQuery)>::Fn;
   }
   if constexpr (has_pfnCalcPrivatePredicateSize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivatePredicateSize = &NotImpl<decltype(funcs.pfnCalcPrivatePredicateSize)>::Fn;
@@ -4024,7 +4026,7 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     funcs.pfnCreatePredicate = &NotImpl<decltype(funcs.pfnCreatePredicate)>::Fn;
   }
   if constexpr (has_pfnDestroyPredicate<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDestroyPredicate = &NotImpl<decltype(funcs.pfnDestroyPredicate)>::Fn;
+    funcs.pfnDestroyPredicate = &Noop<decltype(funcs.pfnDestroyPredicate)>::Fn;
   }
   if constexpr (has_pfnCalcPrivateCounterSize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivateCounterSize = &NotImpl<decltype(funcs.pfnCalcPrivateCounterSize)>::Fn;
@@ -4033,7 +4035,7 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     funcs.pfnCreateCounter = &NotImpl<decltype(funcs.pfnCreateCounter)>::Fn;
   }
   if constexpr (has_pfnDestroyCounter<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDestroyCounter = &NotImpl<decltype(funcs.pfnDestroyCounter)>::Fn;
+    funcs.pfnDestroyCounter = &Noop<decltype(funcs.pfnDestroyCounter)>::Fn;
   }
   if constexpr (has_pfnCalcPrivateGeometryShaderWithStreamOutputSize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivateGeometryShaderWithStreamOutputSize =
