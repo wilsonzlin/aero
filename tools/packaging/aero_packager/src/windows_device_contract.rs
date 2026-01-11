@@ -221,8 +221,8 @@ mod tests {
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1042",
       "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1042"],
-      "driver_service_name": "aerovblk",
-      "inf_name": "aerovblk.inf",
+      "driver_service_name": "aero_virtio_blk",
+      "inf_name": "aero_virtio_blk.inf",
       "virtio_device_type": 2
     }
   ]

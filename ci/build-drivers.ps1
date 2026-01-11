@@ -9,7 +9,7 @@ Discovers CI-buildable driver projects under `drivers/` and builds each driver f
 platforms/configuration using MSBuild (command-line only).
 
 Discovery conventions (encoded here for CI determinism):
-  - Drivers may live at any depth under `drivers/` (example: `drivers/windows7/virtio/net`).
+  - Drivers may live at any depth under `drivers/` (example: `drivers/windows7/virtio-net`).
   - Each driver directory provides either:
       - a solution file `<dir>/<dirName>.sln`, OR
       - exactly one project file `<dir>/*.vcxproj`.

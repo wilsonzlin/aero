@@ -10,9 +10,9 @@ The driver package you inject must ultimately be a normal driver folder containi
 
 ```text
 # Aero contract v1 (modern-only, strict):
-aero-virtio-snd.inf
-virtiosnd.sys
-aero-virtio-snd.cat   (recommended; required for unattended Win7 x64)
+aero_virtio_snd.inf
+aero_virtio_snd.sys
+aero_virtio_snd.cat   (recommended; required for unattended Win7 x64)
 
 # QEMU transitional (optional):
 aero-virtio-snd-legacy.inf
@@ -34,7 +34,7 @@ drivers\virtio-snd\x64\   (Windows 7 x64)
 ```
 
 Note: the default CI/Guest Tools bundle includes only the Aero contract v1 package
-(`aero-virtio-snd.inf` + `virtiosnd.sys`). The optional transitional/QEMU package
+(`aero_virtio_snd.inf` + `aero_virtio_snd.sys`). The optional transitional/QEMU package
 (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`) must be built and staged separately.
 
 > `virtio-snd` is **not boot-critical** (it’s a PnP media device, StartType=3). If staging fails or the driver is blocked by signature policy at runtime, Windows should still boot; you’ll just have an unbound device to troubleshoot.
@@ -61,14 +61,14 @@ Notes:
 
 You must inject a driver package that matches the target Windows 7 architecture:
 
-- Windows 7 **x86** → use an x86 build of `virtiosnd.sys`
-- Windows 7 **x64** → use an amd64/x64 build of `virtiosnd.sys`
+- Windows 7 **x86** → use an x86 build of `aero_virtio_snd.sys`
+- Windows 7 **x64** → use an amd64/x64 build of `aero_virtio_snd.sys`
 
-`aero-virtio-snd.inf` has `NTx86` and `NTamd64` models, but the binary filename is the same (`virtiosnd.sys`) for both architectures. To avoid mixing them up, it’s easiest to keep separate per-arch folders (example only):
+`aero_virtio_snd.inf` has `NTx86` and `NTamd64` models, but the binary filename is the same (`aero_virtio_snd.sys`) for both architectures. To avoid mixing them up, it’s easiest to keep separate per-arch folders (example only):
 
 ```text
-C:\drivers\virtio-snd\x86\   (aero-virtio-snd.inf + virtiosnd.sys (x86) + aero-virtio-snd.cat)
-C:\drivers\virtio-snd\amd64\ (aero-virtio-snd.inf + virtiosnd.sys (x64) + aero-virtio-snd.cat)
+C:\drivers\virtio-snd\x86\   (aero_virtio_snd.inf + aero_virtio_snd.sys (x86) + aero_virtio_snd.cat)
+C:\drivers\virtio-snd\amd64\ (aero_virtio_snd.inf + aero_virtio_snd.sys (x64) + aero_virtio_snd.cat)
 ```
 
 For the transitional/QEMU package, keep separate per-arch folders for `virtiosnd_legacy.sys` as well.
@@ -102,7 +102,7 @@ dism /Mount-Wim /WimFile:%WIM% /Index:1 /MountDir:%MOUNT%
 
 ### 3) Add (stage) the virtio-snd driver
 
-Set `VIRTIO_SND_INF_DIR` to a folder containing `aero-virtio-snd.inf` + `virtiosnd.sys` for the correct architecture.
+Set `VIRTIO_SND_INF_DIR` to a folder containing `aero_virtio_snd.inf` + `aero_virtio_snd.sys` for the correct architecture.
 
 Example (repo checkout at `C:\src\aero`):
 
@@ -110,7 +110,7 @@ Example (repo checkout at `C:\src\aero`):
 set REPO=C:\src\aero
 
 REM Point this at a folder containing the desired INF + SYS for the correct architecture:
-REM   - Aero contract v1: aero-virtio-snd.inf + virtiosnd.sys
+REM   - Aero contract v1: aero_virtio_snd.inf + aero_virtio_snd.sys
 REM   - QEMU transitional: aero-virtio-snd-legacy.inf + virtiosnd_legacy.sys
 set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf
 
@@ -141,8 +141,7 @@ List staged 3rd-party drivers in the mounted image:
 dism /Image:%MOUNT% /Get-Drivers /Format:Table
 ```
 
-Locate the `oem#.inf` entry corresponding to `aero-virtio-snd.inf` (or
-`aero-virtio-snd-legacy.inf`), then inspect it:
+Locate the `oem#.inf` entry corresponding to `aero_virtio_snd.inf` (or `aero-virtio-snd-legacy.inf`), then inspect it:
 
 ```bat
 dism /Image:%MOUNT% /Get-DriverInfo /Driver:oem#.inf
@@ -241,9 +240,9 @@ Once the system boots with virtio-snd hardware present:
 
 - **Device Manager** (`devmgmt.msc`)
   - Under **Sound, video and game controllers**, you should see the virtio-snd device (the INF default name is **“Aero VirtIO Sound Device”**).
-  - In **Properties → Driver → Driver Details**, you should see `virtiosnd.sys` (contract v1) or `virtiosnd_legacy.sys` (transitional/QEMU).
+  - In **Properties → Driver → Driver Details**, you should see `aero_virtio_snd.sys` (contract v1) or `virtiosnd_legacy.sys` (transitional/QEMU).
   - You should also see playback/recording endpoints under **Audio inputs and outputs**.
-  - **PnP driver store**
+- **PnP driver store**
 
   `pnputil -e` lists staged packages:
 
@@ -251,17 +250,18 @@ Once the system boots with virtio-snd hardware present:
   pnputil -e
   ```
 
-  Look for the entry whose “Original name” is `aero-virtio-snd.inf` (the “Published name” will be `oem#.inf`).
+  Look for the entry whose “Original name” is `aero_virtio_snd.inf` (the “Published name” will be `oem#.inf`).
 
 - **SetupAPI log**
 
   Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
 
-  - `aero-virtio-snd.inf`, or
-  - the device hardware ID (for virtio-snd contract v1: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear)
+  - `aero_virtio_snd.inf` (or `aero-virtio-snd-legacy.inf`), or
+  - the device hardware ID (for virtio-snd contract v1: `PCI\VEN_1AF4&DEV_1059&REV_01`; more-specific `SUBSYS_...` qualifiers may also appear).
+    If you see `DEV_1018`, the device is transitional and the Aero contract v1 INF will not bind.
 
-  Note: `aero-virtio-snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
-  If the device does not expose that HWID:
+  Note: `aero_virtio_snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
+  If the device does not expose that HWID (for example it reports `REV_00` under QEMU defaults), either:
   
   - If the device enumerates as transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`; common for stock QEMU defaults),
     inject/install the legacy package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
@@ -270,8 +270,7 @@ Once the system boots with virtio-snd hardware present:
  If the driver package is staged but the device doesn’t bind:
 
  1. Confirm you injected the correct architecture (x86 vs x64).
-2. Confirm the device’s Hardware IDs match what the injected INF declares (`aero-virtio-snd.inf` vs
-   `aero-virtio-snd-legacy.inf`) (Device Manager → Details → **Hardware Ids**).
+ 2. Confirm the device’s Hardware IDs match what the injected INF declares (`aero_virtio_snd.inf` vs `aero-virtio-snd-legacy.inf`) (Device Manager → Details → **Hardware Ids**).
 3. Confirm signature policy didn’t block installation/loading (next section).
 
 ---

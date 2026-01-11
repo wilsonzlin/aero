@@ -143,9 +143,9 @@ To reproduce CI packaging locally (assuming you already have `out/packages/` + `
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPath tools/packaging/specs/win7-signed.json
 ```
 
-## Building Guest Tools from in-tree aero virtio drivers (Win7 aerovblk + aerovnet)
+## Building Guest Tools from in-tree aero virtio drivers (Win7 aero_virtio_blk + aero_virtio_net)
 
-If you want Guest Tools to include Aero's in-tree Windows 7 virtio drivers (`aerovblk`, `aerovnet`),
+If you want Guest Tools to include Aero's in-tree Windows 7 virtio drivers (`aero_virtio_blk`, `aero_virtio_net`),
 build them and point the wrapper at the resulting driver package directory:
 
 ```powershell
@@ -167,10 +167,10 @@ replace the staged `guest-tools/certs/*` contents.
 
 ```
 <DriverOutDir>/
-  x86/aerovblk/*.{inf,sys,cat}
-  x86/aerovnet/*.{inf,sys,cat}
-  amd64/aerovblk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
-  amd64/aerovnet/*.{inf,sys,cat}
+  x86/aero_virtio_blk/*.{inf,sys,cat}
+  x86/aero_virtio_net/*.{inf,sys,cat}
+  amd64/aero_virtio_blk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
+  amd64/aero_virtio_net/*.{inf,sys,cat}
 ```
 
 This uses the validation spec at:

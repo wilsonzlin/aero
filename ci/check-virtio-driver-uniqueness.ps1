@@ -21,8 +21,8 @@ The check ignores comment lines (starting with ';') so documentation inside INFs
 still mention these IDs.
 
 Additionally, enforce that there is only one MSBuild driver project under `drivers/`
-that produces `aerovblk.sys` (TargetName = aerovblk) and only one that produces
-`aerovnet.sys` (TargetName = aerovnet).
+that produces `aero_virtio_blk.sys` (TargetName = aero_virtio_blk) and only one
+that produces `aero_virtio_net.sys` (TargetName = aero_virtio_net).
 #>
 
 [CmdletBinding()]
@@ -119,10 +119,10 @@ if ($conflicts.Count -gt 0) {
 
 Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042/DEV_1052/DEV_1059)."
 
-# Enforce that there is only one MSBuild project that produces aerovblk.sys / aerovnet.sys.
+# Enforce that there is only one MSBuild project that produces aero_virtio_blk.sys / aero_virtio_net.sys.
 $projFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
-$aerovblkProjects = New-Object System.Collections.Generic.List[string]
-$aerovnetProjects = New-Object System.Collections.Generic.List[string]
+$virtioBlkProjects = New-Object System.Collections.Generic.List[string]
+$virtioNetProjects = New-Object System.Collections.Generic.List[string]
 foreach ($proj in $projFiles) {
   $content = $null
   try {
@@ -131,18 +131,18 @@ foreach ($proj in $projFiles) {
     continue
   }
   if ([string]::IsNullOrWhiteSpace($content)) { continue }
-  if ($content -match '(?i)<TargetName>\s*aerovblk\s*</TargetName>') {
-    $aerovblkProjects.Add($proj.FullName) | Out-Null
+  if ($content -match '(?i)<TargetName>\s*aero_virtio_blk\s*</TargetName>') {
+    $virtioBlkProjects.Add($proj.FullName) | Out-Null
   }
-  if ($content -match '(?i)<TargetName>\s*aerovnet\s*</TargetName>') {
-    $aerovnetProjects.Add($proj.FullName) | Out-Null
+  if ($content -match '(?i)<TargetName>\s*aero_virtio_net\s*</TargetName>') {
+    $virtioNetProjects.Add($proj.FullName) | Out-Null
   }
 }
 
-$uniqueProjPaths = @($aerovblkProjects | Sort-Object -Unique)
+$uniqueProjPaths = @($virtioBlkProjects | Sort-Object -Unique)
 if ($uniqueProjPaths.Count -gt 1) {
   Write-Host ""
-  Write-Host "ERROR: Found multiple MSBuild projects that produce aerovblk.sys (TargetName=aerovblk)."
+  Write-Host "ERROR: Found multiple MSBuild projects that produce aero_virtio_blk.sys (TargetName=aero_virtio_blk)."
   foreach ($p in $uniqueProjPaths) {
     Write-Host ("- {0}" -f $p)
   }
@@ -150,10 +150,12 @@ if ($uniqueProjPaths.Count -gt 1) {
   exit 1
 }
 
-$uniqueNetProjPaths = @($aerovnetProjects | Sort-Object -Unique)
+Write-Host "OK: aero_virtio_blk MSBuild output is unique."
+
+$uniqueNetProjPaths = @($virtioNetProjects | Sort-Object -Unique)
 if ($uniqueNetProjPaths.Count -gt 1) {
   Write-Host ""
-  Write-Host "ERROR: Found multiple MSBuild projects that produce aerovnet.sys (TargetName=aerovnet)."
+  Write-Host "ERROR: Found multiple MSBuild projects that produce aero_virtio_net.sys (TargetName=aero_virtio_net)."
   foreach ($p in $uniqueNetProjPaths) {
     Write-Host ("- {0}" -f $p)
   }
@@ -161,5 +163,5 @@ if ($uniqueNetProjPaths.Count -gt 1) {
   exit 1
 }
 
-Write-Host "OK: aerovblk/aerovnet MSBuild outputs are unique."
+Write-Host "OK: aero_virtio_net MSBuild output is unique."
 exit 0

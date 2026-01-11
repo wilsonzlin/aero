@@ -114,7 +114,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 #### CI driver selection (explicit opt-in via `ci-package.json`)
 
-`ci/build-drivers.ps1` only builds drivers that are explicitly marked as **CI-packaged** by placing a `ci-package.json` manifest at the *driver root* (for example `drivers/windows7/virtio/net/ci-package.json`).
+`ci/build-drivers.ps1` only builds drivers that are explicitly marked as **CI-packaged** by placing a `ci-package.json` manifest at the *driver root* (for example `drivers/windows7/virtio-net/ci-package.json`).
 
 `ci-package.json` is the explicit CI packaging gate: CI discovery starts from `drivers/**/ci-package.json` and only those drivers can flow into `out/drivers/`, `out/packages/`, and the final driver bundle artifacts. (Guest Tools media is further filtered by a separate packager spec; see below.)
 
@@ -147,7 +147,8 @@ See also the examples under `drivers/_template/`:
 >
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
 >
-> `drivers/windows/virtio-input/` is CI-packaged and binds to the Aero Win7 virtio contract v1 HWIDs (`PCI\VEN_1AF4&DEV_1052&REV_01`, plus the more specific `...&SUBSYS_...&REV_01` keyboard/mouse variants). Keep its INF/HWID matches unique (avoid duplicate INFs that bind the same IDs) so Guest Tools packaging and the Win7 host harness remain deterministic.
+>
+> The virtio-input driver under `drivers/windows7/virtio-input/` binds to the real virtio-input PCI HWIDs. For Aero contract v1, it is revision-gated (e.g. `PCI\VEN_1AF4&DEV_1052&REV_01`, plus more specific `...&SUBSYS_...&REV_01` keyboard/mouse variants). Shipping multiple INFs that match the same HWIDs can cause confusing driver selection/install behaviour. Prefer explicit `ci-package.json` `infFiles` allowlists.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json

@@ -8,7 +8,7 @@
 # x86: use the Win7 x86 Free/Checked build environment.
 # x64: use the Win7 x64 Free/Checked build environment.
 
-TARGETNAME=virtiosnd
+TARGETNAME=aero_virtio_snd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
 

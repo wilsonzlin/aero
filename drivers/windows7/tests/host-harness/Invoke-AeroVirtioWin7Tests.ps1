@@ -391,7 +391,7 @@ function Get-AeroVirtioSoundDeviceArg {
   # Determine which QEMU virtio-snd PCI device name is available and validate it supports
   # the Aero contract v1 configuration we need.
   #
-  # The strict Aero INF (`aero-virtio-snd.inf`) matches only the modern virtio-snd PCI ID
+  # The strict Aero INF (`aero_virtio_snd.inf`) matches only the modern virtio-snd PCI ID
   # (`PCI\VEN_1AF4&DEV_1059`) and requires `REV_01`, so we must:
   #   - force modern-only virtio-pci enumeration (`disable-legacy=on` => `DEV_1059`)
   #   - force PCI Revision ID 0x01 (`x-pci-revision=0x01` => `REV_01`)

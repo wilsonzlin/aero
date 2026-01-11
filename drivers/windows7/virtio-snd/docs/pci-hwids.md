@@ -9,7 +9,7 @@ vendor-specific capabilities + BAR0 MMIO).
 Authoritative references:
 
 - `docs/windows7-virtio-driver-contract.md` (definitive virtio transport + device contract)
-- `drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf` (actual INF match strings)
+- `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (actual INF match strings)
 - `docs/windows-device-contract.{md,json}` (consolidated IDs for Guest Tools; must remain consistent with `AERO-W7-VIRTIO`)
 
 ## Contract v1 PCI identity
@@ -28,7 +28,7 @@ Windows will typically enumerate multiple hardware IDs, including more-specific 
 
 ## INF binding (Aero)
 
-The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
+The shipped INF (`inf/aero_virtio_snd.inf`) is intentionally strict and matches only:
 
 - `PCI\VEN_1AF4&DEV_1059&REV_01`
 
@@ -50,7 +50,7 @@ contract major version in the PCI **Revision ID**. Automation (Guest Tools, CI) 
 (`...&REV_01`) as described in `docs/windows-device-contract.md`, even though `docs/windows-device-contract.json` also
 includes non-revision-gated patterns for tooling convenience.
 
-CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match
+CI packaging stages only `inf/aero_virtio_snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match
 the same HWIDs.
 
 If your QEMU build cannot set both `disable-legacy=on` and `x-pci-revision=0x01`, it will not be able to exercise the
@@ -63,9 +63,8 @@ If you need a legacy **I/O-port** transport driver (older bring-up), the tree al
 - `inf/aero-virtio-snd-ioport.inf` + `virtiosnd_ioport.sys` (matches `PCI\VEN_1AF4&DEV_1018&REV_00`)
 
 The repository also contains an optional **legacy filename alias** INF (`inf/virtio-snd.inf.disabled`). If you rename
-it back to `virtio-snd.inf` (and regenerate/sign `virtio-snd.cat`), it installs the same driver/service as
-`aero-virtio-snd.inf` and matches the same contract-v1 HWIDs, but provides the legacy filename for compatibility with
-older tooling/workflows.
+it back to `virtio-snd.inf`, it installs the same driver/service and matches the same contract-v1 HWIDs as
+`aero_virtio_snd.inf`, but provides the legacy filename for compatibility with older tooling/workflows.
 
 ## QEMU mapping
 

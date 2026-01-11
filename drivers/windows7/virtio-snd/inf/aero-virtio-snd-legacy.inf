@@ -5,7 +5,7 @@
 ; Purpose:
 ;   QEMU typically exposes virtio-snd as a *transitional* virtio-pci device by default
 ;   (PCI device ID `DEV_1018`, usually `REV_00`). Aero's contract-v1 INF
-;   (`aero-virtio-snd.inf`) is intentionally strict (modern-only ID + `REV_01`) and
+;   (`aero_virtio_snd.inf`) is intentionally strict (modern-only ID + `REV_01`) and
 ;   does not bind to QEMU defaults.
 ;
 ; This INF is an *opt-in* compatibility path intended for QEMU bring-up/regression:

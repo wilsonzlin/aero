@@ -33,7 +33,7 @@ Aero exposes virtio-snd as a virtio-pci device using the standard virtio vendor 
 
 Windows driver binding (Aero):
 
-- The shipped Aero Win7 virtio-snd INF (`drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
+- The shipped Aero Win7 virtio-snd INF (`drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf`) is intentionally strict and matches only:
   - `PCI\VEN_1AF4&DEV_1059&REV_01`
   - (Optional) `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (commented out in the INF by default)
 
@@ -41,6 +41,9 @@ Windows driver binding (Aero):
 
 Treat [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) as authoritative.
 This section is a convenience summary that MUST remain consistent with that contract.
+The clean-room Win7 INF (`aero_virtio_snd.inf`) matches only `DEV_1059` (typically revision-gated as `&REV_01`), so if
+Windows shows `DEV_1018` you must configure the hypervisor to expose a modern-only device (for example QEMU
+`disable-legacy=on`).
 
 - **Transport:** virtio-pci **modern-only** (PCI vendor-specific capabilities + **BAR0 MMIO**). No legacy I/O-port BARs.
 - **Contract major version:** encoded in PCI Revision ID (`REV_01`).

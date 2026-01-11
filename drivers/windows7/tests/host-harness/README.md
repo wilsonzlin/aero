@@ -21,6 +21,13 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
 
+For the in-tree clean-room Aero virtio driver stack, the canonical INF names are:
+
+- `aero_virtio_blk.inf`
+- `aero_virtio_net.inf`
+- `aero_virtio_input.inf` (optional)
+- `aero_virtio_snd.inf` (optional)
+
 ## Running tests
 
 Example:
@@ -247,7 +254,7 @@ which is modern-only.
 
 When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the harness also forces `disable-legacy=on` and
 `x-pci-revision=0x01` on the virtio-snd device so it matches the Aero contract v1 HWID (`PCI\VEN_1AF4&DEV_1059&REV_01`)
-and the strict `aero-virtio-snd.inf` binds under QEMU.
+and the strict `aero_virtio_snd.inf` binds under QEMU.
 #### Verifying what your QEMU build reports (no guest required)
 
 You can probe the PCI IDs (including Revision ID) that your local QEMU build advertises for the harness devices with:
@@ -306,21 +313,31 @@ For safety and determinism, the provisioning script installs **only an allowlist
 
 Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input/virtio-snd
 (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
-For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) matches only `PCI\VEN_1AF4&DEV_1059&REV_01`, so your QEMU
+
+Install only one INF per HWID. If you keep multiple in-tree packages in the same drivers directory, disambiguate by
+passing a relative INF path via `-InfAllowList`.
+
+For virtio-snd, the canonical INF (`aero_virtio_snd.inf`) matches only `PCI\VEN_1AF4&DEV_1059&REV_01`, so your QEMU
 build must support `disable-legacy=on` and `x-pci-revision=0x01` for virtio-snd testing.
 The repo also contains an optional legacy filename alias INF (`virtio-snd.inf.disabled`; rename to `virtio-snd.inf` to
 enable) for compatibility with older workflows/tools. It installs the same driver/service and matches the same
 contract-v1 HWIDs, but it is not used by default.
 
-For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`). Avoid
-installing multiple `aerovnet.inf` files that bind the same HWID, or disambiguate by passing a relative INF path via
-`-InfAllowList`.
+Canonical in-tree driver packages:
 
-For virtio-blk, use the contract-v1 driver under `drivers/windows7/virtio/blk/` (binds `DEV_1042`).
-Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via
-`-InfAllowList`.
+- virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
+- virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
+- virtio-input: `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&REV_01`)
+- virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
 
-For fully repeatable provisioning, pass `-InfAllowList` explicitly:
+If QEMU cannot expose modern-only virtio-snd (no `disable-legacy` property on the device), virtio-snd may enumerate as
+the transitional ID `DEV_1018` and `aero_virtio_snd.inf` will not bind. Use a QEMU build that supports
+`disable-legacy=on` for virtio-snd (or omit virtio-snd from provisioning/tests).
+
+Use `-InstallAllInfs` to install every `*.inf` found under `AERO\\drivers` instead.
+
+If you are provisioning an image with **upstream virtio-win** driver packages (e.g. `viostor.inf` / `netkvm.inf`),
+use `-InstallAllInfs` or provide a custom `-InfAllowList`.
 
 `New-AeroWin7TestImage.ps1` also supports baking `--blk-root` into the installed scheduled task (useful if the VM boots
 from a non-virtio disk but has a separate virtio data volume):
@@ -330,10 +347,10 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
   -InfAllowList @(
-    "aerovblk.inf",
-    "aerovnet.inf",
-    "virtio-input.inf",
-    "aero-virtio-snd.inf"
+    "aero_virtio_blk.inf",
+    "aero_virtio_net.inf",
+    "aero_virtio_input.inf",
+    "aero_virtio_snd.inf"
   ) `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
@@ -354,10 +371,10 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
   -InfAllowList @(
-    "aerovblk.inf",
-    "aerovnet.inf",
-    "virtio-input.inf",
-    "aero-virtio-snd.inf"
+    "aero_virtio_blk.inf",
+    "aero_virtio_net.inf",
+    "aero_virtio_input.inf",
+    "aero_virtio_snd.inf"
   ) `
   -DisableSnd
 ```
@@ -393,7 +410,7 @@ To run the virtio-snd **capture** smoke test when a capture endpoint exists, pro
     in `-InfAllowList`.
 
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
-`"windows7\\virtio\\net\\x64\\aerovnet.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
+`"windows7\\virtio-net\\x64\\aero_virtio_net.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
 
 ### Enabling test-signing mode (unsigned / test-signed drivers)
 
@@ -407,10 +424,10 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -SelftestExePath ./aero-virtio-selftest.exe `
   -DriversDir ./drivers-out `
   -InfAllowList @(
-    "aerovblk.inf",
-    "aerovnet.inf",
-    "virtio-input.inf",
-    "aero-virtio-snd.inf"
+    "aero_virtio_blk.inf",
+    "aero_virtio_net.inf",
+    "aero_virtio_input.inf",
+    "aero_virtio_snd.inf"
   ) `
   -EnableTestSigning `
   -AutoReboot

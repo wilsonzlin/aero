@@ -1,7 +1,7 @@
 {
   "drivers": [
     {
-      "name": "aerovblk",
+      "name": "aero_virtio_blk",
       "required": true,
       "expected_hardware_ids": [
         "PCI\\\\VEN_1AF4&DEV_1042",
@@ -9,7 +9,7 @@
       ]
     },
     {
-      "name": "aerovnet",
+      "name": "aero_virtio_net",
       "required": true,
       "expected_hardware_ids": [
         "PCI\\\\VEN_1AF4&DEV_1041",

@@ -11,7 +11,7 @@ This `docs/README.md` is the **source of truth** for the in-tree Windows 7 `virt
 - What (if any) QEMU configuration is supported
 - What render/capture endpoints exist today
 
-The shipped driver package produces `virtiosnd.sys` and exposes two fixed-format endpoints:
+The shipped driver package produces `aero_virtio_snd.sys` and exposes two fixed-format endpoints:
 
 Render (output, stream 0):
 
@@ -45,7 +45,7 @@ Windows tooling (Guest Tools manifests, CI tooling, etc.) must remain consistent
 The shipped INF is intentionally strict and only matches Aero contract v1 devices:
 
 - **Required (as-shipped):** `PCI\VEN_1AF4&DEV_1059&REV_01`
-  - This is the only active HWID match in `inf/aero-virtio-snd.inf`.
+  - This is the only active HWID match in `inf/aero_virtio_snd.inf`.
 - **Optional (tighter, commented out in the INF):** `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
 The INF does **not** match:
@@ -55,14 +55,13 @@ The INF does **not** match:
 
 The source tree also contains a legacy filename alias INF checked in as `inf/virtio-snd.inf.disabled` for compatibility
 with tooling/workflows that still reference `virtio-snd.inf`. When enabled (rename to `inf/virtio-snd.inf`), it
-installs the same driver/service as `aero-virtio-snd.inf`, matches the same Aero contract v1 HWIDs, and uses
-`CatalogFile = virtio-snd.cat`.
+installs the same driver/service as `aero_virtio_snd.inf` and matches the same Aero contract v1 HWIDs.
 
-CI packaging stages only `inf/aero-virtio-snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match
+CI packaging stages only `inf/aero_virtio_snd.inf` (see `ci-package.json`) to avoid shipping multiple INFs that match
 the same hardware IDs. The default CI/Guest Tools driver bundle therefore includes only the strict Aero contract v1
 package (the opt-in QEMU compatibility package is not staged by default).
 
-See also: [`pci-hwids.md`](pci-hwids.md) and `inf/aero-virtio-snd.inf`.
+See also: [`pci-hwids.md`](pci-hwids.md) and `inf/aero_virtio_snd.inf`.
 
 ### Expected virtio features and queues (contract v1 §3.4)
 
@@ -118,7 +117,7 @@ weakening the default Aero contract-v1 INF:
 
 | Variant | MSBuild config | SYS | INF | Binds to |
 | --- | --- | --- | --- | --- |
-| **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\VEN_1AF4&DEV_1059&REV_01` |
+| **Aero contract v1 (default)** | `Release` | `aero_virtio_snd.sys` | `inf/aero_virtio_snd.inf` | `PCI\VEN_1AF4&DEV_1059&REV_01` |
 | **QEMU compatibility (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\VEN_1AF4&DEV_1018` (transitional; no revision gate) |
 
 The two packaging INFs intentionally have **no overlapping hardware IDs**, so they do not compete
@@ -199,7 +198,7 @@ The repository also contains an older **legacy/transitional virtio-pci I/O-port*
 `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`).
 That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only
 negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default
-contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
+contract INF (`inf/aero_virtio_snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
 stock QEMU defaults).
 
 CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
@@ -436,8 +435,8 @@ Configuration notes:
 Build outputs are staged under:
 
 - `Release` (default):
-  - `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
-  - `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
+  - `out/drivers/windows7/virtio-snd/x86/aero_virtio_snd.sys`
+  - `out/drivers/windows7/virtio-snd/x64/aero_virtio_snd.sys`
 - `Legacy` (optional QEMU/transitional package):
   - `out/drivers/windows7/virtio-snd/x86/virtiosnd_legacy.sys`
   - `out/drivers/windows7/virtio-snd/x64/virtiosnd_legacy.sys`
@@ -462,18 +461,18 @@ build -cZ
 
 The output will be under `objfre_win7_*` (or `objchk_win7_*` for checked builds).
 
-3. Copy the built `virtiosnd.sys` into the driver package staging directory:
+3. Copy the built `aero_virtio_snd.sys` into the driver package staging directory:
 
 ```text
-drivers/windows7/virtio-snd/inf/virtiosnd.sys
+drivers/windows7/virtio-snd/inf/aero_virtio_snd.sys
 ```
 
-> `Inf2Cat` hashes every file referenced by the INF, so `virtiosnd.sys` must exist in `inf/` before generating the catalog.
+> `Inf2Cat` hashes every file referenced by the INF, so `aero_virtio_snd.sys` must exist in `inf/` before generating the catalog.
 
 Instead of copying manually, you can use:
 
 ```powershell
-# Stage the x86 or amd64 build output into inf\virtiosnd.sys
+# Stage the x86 or amd64 build output into inf\aero_virtio_snd.sys
 powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
 ```
 
@@ -549,13 +548,8 @@ To generate the optional transitional/QEMU catalog, run:
 Expected output (`make-cat.cmd`):
 
 ```text
-inf\aero-virtio-snd.cat
-# Optional (legacy alias INF):
-# inf\virtio-snd.cat
+inf\aero_virtio_snd.cat
 ```
-
-`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present (rename from `inf\virtio-snd.inf.disabled` to enable the legacy alias).
-
 ### 3) Sign the SYS + CAT
 
 From `drivers/windows7/virtio-snd/`:
@@ -566,9 +560,8 @@ From `drivers/windows7/virtio-snd/`:
 
 This signs (contract v1):
 
-- `inf\virtiosnd.sys`
-- `inf\aero-virtio-snd.cat`
-- `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
+- `inf\aero_virtio_snd.sys`
+- `inf\aero_virtio_snd.cat`
 
 To sign the transitional/QEMU package, run:
 
@@ -605,7 +598,7 @@ This installs the cert into:
 After building + signing, stage a per-arch driver folder under `release/`:
 
 ```powershell
-# Auto-detect arch from inf\virtiosnd.sys and stage into release\<arch>\virtio-snd\
+# Auto-detect arch from inf\aero_virtio_snd.sys and stage into release\<arch>\virtio-snd\
 powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
 ```
 
@@ -635,24 +628,24 @@ Note: the default Guest Tools tree does not include the QEMU compatibility varia
 1. Ensure the package directory contains the files for the variant you want to install:
    
    - Contract v1 (default):
-     - `aero-virtio-snd.inf`
-     - `virtiosnd.sys`
-     - `aero-virtio-snd.cat` (signed)
+     - `aero_virtio_snd.inf`
+     - `aero_virtio_snd.sys`
+     - `aero_virtio_snd.cat` (signed)
    - Transitional/QEMU (optional):
      - `aero-virtio-snd-legacy.inf`
      - `virtiosnd_legacy.sys`
      - `aero-virtio-snd-legacy.cat` (signed)
    - Optional legacy filename alias:
-     - `virtio-snd.inf` + `virtio-snd.cat` (signed; rename `virtio-snd.inf.disabled` to enable)
-2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
+     - `virtio-snd.inf` (rename `virtio-snd.inf.disabled` to enable)
+2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\\` (or `release\\<arch>\\virtio-snd\\` once packaged). Pick the desired INF when prompted.
 
 INF selection note:
 
-- `aero-virtio-snd.inf` is the **canonical** Aero contract v1 package (matches `PCI\VEN_1AF4&DEV_1059&REV_01` and installs service `aeroviosnd`).
+- `aero_virtio_snd.inf` is the **canonical** Aero contract v1 package (matches `PCI\VEN_1AF4&DEV_1059&REV_01` and installs service `aero_virtio_snd`).
 - `aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018` with no revision gate and installs service `aeroviosnd_legacy`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
-  It installs the same driver/service as `aero-virtio-snd.inf` and matches the same Aero contract v1 HWIDs,
-  but uses `CatalogFile = virtio-snd.cat`.
+  It installs the same driver/service and matches the same Aero contract v1 HWIDs as `aero_virtio_snd.inf`,
+  but is disabled by default to avoid accidentally installing **two** INFs that match the same HWIDs.
 
   To avoid accidentally installing **two** INFs that match the same HWIDs, the alias INF is checked in as
   `virtio-snd.inf.disabled`; rename it back to `virtio-snd.inf` if you need the legacy filename.
@@ -664,3 +657,27 @@ For offline/slipstream installation into Windows 7 images (WIM or offline OS), s
 For a repeatable end-to-end validation flow under QEMU (device enumeration → driver binding → endpoint presence → playback), see:
 
 - `../tests/qemu/README.md`
+
+### Contract v1 hardware IDs (reference)
+
+Contract v1 virtio-snd devices enumerate as:
+
+- Vendor ID: `VEN_1AF4`
+- Device ID: `DEV_1059` (`0x1040 + VIRTIO_ID_SOUND` where `VIRTIO_ID_SOUND = 25`)
+- Revision ID: `REV_01` (contract major version = 1)
+- Subsystem ID: `SUBSYS_0019xxxx` (Aero uses `SUBSYS_00191AF4`)
+
+`inf/aero_virtio_snd.inf` matches the **revision-gated** modern HWID:
+
+- `PCI\VEN_1AF4&DEV_1059&REV_01`
+
+For additional safety in environments that expose multiple virtio-snd devices, you can further restrict the match to Aero’s subsystem ID:
+
+- `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
+
+Notes:
+
+- The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
+- This WDM driver currently uses **INTx only**. The INF does **not** include the registry settings required to request MSI/MSI-X from Windows.
+
+If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.

@@ -39,8 +39,8 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:DriverId = if ($Variant -eq 'legacy') { 'aero-virtio-snd-legacy' } else { 'aero-virtio-snd' }
-$script:SysFileName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'virtiosnd.sys' }
+$script:DriverId = if ($Variant -eq 'legacy') { 'aero-virtio-snd-legacy' } else { 'aero_virtio_snd' }
+$script:SysFileName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'aero_virtio_snd.sys' }
 $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 
@@ -182,31 +182,38 @@ if (-not (Test-Path -LiteralPath $infDir -PathType Container)) {
   throw "INF directory not found: $infDir"
 }
 
-$infFiles = @()
-switch ($Variant) {
+$preferred = switch ($Variant) {
   'legacy' {
-    $preferred = @(
+    @(
       (Join-Path $infDir 'aero-virtio-snd-legacy.inf')
     )
   }
   default {
-    $preferred = @(
-      (Join-Path $infDir 'aero-virtio-snd.inf'),
+    @(
+      (Join-Path $infDir 'aero_virtio_snd.inf'),
       (Join-Path $infDir 'virtio-snd.inf')
     )
   }
 }
 
+$infCandidates = @()
 foreach ($p in $preferred) {
   if (Test-Path -LiteralPath $p -PathType Leaf) {
-    $infFiles += (Get-Item -LiteralPath $p)
+    $infCandidates += (Get-Item -LiteralPath $p)
   }
 }
-if ($infFiles.Count -eq 0) {
+
+if ($infCandidates.Count -eq 0) {
   throw "INF not found for variant '$Variant' under: $infDir"
 }
 
-$infPath = $infFiles[0].FullName
+if ($infCandidates.Count -gt 1) {
+  $list = $infCandidates | ForEach-Object { "  - $($_.Name)" } | Out-String
+  throw ("Multiple INF files found under {0} for variant '{1}'. Expected only one.`r`nFound:`r`n{2}" -f $infDir, $Variant, $list.TrimEnd())
+}
+
+$infFiles = @($infCandidates[0])
+$infPath = $infCandidates[0].FullName
 
 $sysPath = Join-Path $infDir $script:SysFileName
 if (-not (Test-Path -LiteralPath $sysPath -PathType Leaf)) {

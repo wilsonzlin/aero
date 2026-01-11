@@ -473,19 +473,19 @@ fn windows_device_contract_driver_service_names_match_driver_infs() {
     let cases = [
         (
             "virtio-blk",
-            root.join("drivers/windows7/virtio/blk/aerovblk.inf"),
+            root.join("drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf"),
         ),
         (
             "virtio-net",
-            root.join("drivers/windows7/virtio/net/aerovnet.inf"),
+            root.join("drivers/windows7/virtio-net/inf/aero_virtio_net.inf"),
         ),
         (
             "virtio-snd",
-            root.join("drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"),
+            root.join("drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"),
         ),
         (
             "virtio-input",
-            root.join("drivers/windows/virtio-input/virtio-input.inf"),
+            root.join("drivers/windows7/virtio-input/inf/aero_virtio_input.inf"),
         ),
         (
             "aero-gpu",

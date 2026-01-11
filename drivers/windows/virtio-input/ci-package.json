@@ -1,4 +1,0 @@
-{
-  "$schema": "../../../ci/driver-package.schema.json",
-  "infFiles": ["virtio-input.inf"]
-}

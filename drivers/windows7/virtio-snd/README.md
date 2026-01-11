@@ -6,7 +6,7 @@ This directory contains the Aero **virtio-snd** Windows 7 SP1 driver sources, pl
 
 The intended developer workflow is:
 
-1. Build `virtiosnd.sys`
+1. Build `aero_virtio_snd.sys`
 2. Copy it into `drivers/windows7/virtio-snd/inf/`
 3. Generate a test certificate, generate a catalog (`.cat`), and sign `SYS + CAT`
 4. Install on Windows 7 with test-signing enabled (Device Manager → “Have Disk…”)
@@ -17,8 +17,8 @@ The intended developer workflow is:
 | --- | --- |
 | `SOURCES.md` | Clean-room/source tracking record (see `drivers/windows7/LEGAL.md` §2.6). |
 | `src/`, `include/` | Driver sources (shared by both build systems). |
-| `virtio-snd.vcxproj` | **CI-supported** MSBuild project (WDK10; builds `virtiosnd.sys`). |
-| `makefile`, `src/sources` | Legacy WinDDK 7600 `build.exe` files (deprecated). |
+| `virtio-snd.vcxproj` | **CI-supported** MSBuild project (WDK10; builds `aero_virtio_snd.sys`). |
+| `makefile`, `src/sources` | Legacy WinDDK 7600 / WDK 7.1 `build.exe` files (deprecated). |
 | `inf/` | Driver package staging directory (INF/CAT/SYS live together for “Have Disk…” installs). |
 | `scripts/` | Utilities for generating a test cert, generating the catalog, signing, and optional release packaging. |
 | `cert/` | **Local-only** output directory for `.cer/.pfx` (ignored by git). |
@@ -53,8 +53,8 @@ From a Windows host with the WDK installed:
 
 Build outputs are staged under:
 
-- `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
-- `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
+- `out/drivers/windows7/virtio-snd/x86/aero_virtio_snd.sys`
+- `out/drivers/windows7/virtio-snd/x64/aero_virtio_snd.sys`
 
 Optional (QEMU/transitional) build outputs:
 
@@ -67,10 +67,10 @@ Optional (legacy virtio-pci **I/O-port** bring-up) build:
 - Output SYS: `virtiosnd_ioport.sys`
 - INF: `drivers/windows7/virtio-snd/inf/aero-virtio-snd-ioport.inf`
 
-To stage an installable/signable package, copy the appropriate `virtiosnd.sys` into:
+To stage an installable/signable package, copy the appropriate `aero_virtio_snd.sys` into:
 
 ```text
-drivers/windows7/virtio-snd/inf/virtiosnd.sys
+drivers/windows7/virtio-snd/inf/aero_virtio_snd.sys
 ```
 
 For the optional QEMU/transitional package, stage the legacy binary instead:
@@ -85,12 +85,12 @@ The original WinDDK 7600 `build.exe` files are kept for reference. See `docs/REA
 
 The build must produce:
 
-- `virtiosnd.sys`
+- `aero_virtio_snd.sys`
 
 Copy the built driver into the package staging folder:
 
 ```text
-drivers/windows7/virtio-snd/inf/virtiosnd.sys
+drivers/windows7/virtio-snd/inf/aero_virtio_snd.sys
 ```
 
 Instead of copying manually, you can use:
@@ -178,21 +178,17 @@ This runs `Inf2Cat` for both architectures:
 - `7_X86`
 - `7_X64`
 
-Expected output (once `virtiosnd.sys` exists in `inf/`):
+Expected output (once `aero_virtio_snd.sys` exists in `inf/`):
 
 ```text
-inf\aero-virtio-snd.cat
-# Optional (legacy alias INF):
-# inf\virtio-snd.cat
+inf\aero_virtio_snd.cat
 ```
 
-`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present (rename from `virtio-snd.inf.disabled` to enable the legacy alias).
+To generate the optional QEMU/transitional catalog (for `aero-virtio-snd-legacy.inf` / `virtiosnd_legacy.sys`), run:
 
-To generate the optional QEMU/transitional catalog, run:
 ```cmd
 .\scripts\make-cat.cmd legacy
 ```
-
 ## Signing (SYS + CAT)
 
 From `drivers/windows7/virtio-snd/`:
@@ -210,9 +206,10 @@ Notes:
 
 This signs (contract v1):
 
-- `inf\virtiosnd.sys`
-- `inf\aero-virtio-snd.cat`
-- `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
+- `inf\aero_virtio_snd.sys`
+- `inf\aero_virtio_snd.cat`
+- `inf\virtiosnd_legacy.sys` (if present)
+- `inf\aero-virtio-snd-legacy.cat` (if present)
 
 To sign the optional transitional/QEMU package, run:
 
@@ -231,15 +228,12 @@ This signs:
 2. **Browse my computer**
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-snd/inf/`
-5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
+5. Select `aero_virtio_snd.inf` (recommended for Aero contract v1)
    - For stock QEMU defaults (transitional virtio-snd PCI IDs; typically `PCI\VEN_1AF4&DEV_1018`), select `aero-virtio-snd-legacy.inf`
 
-`virtio-snd.inf` is a legacy filename alias kept for compatibility with older workflows/tools.
-It installs the same driver/service and matches the same contract-v1 HWIDs as `aero-virtio-snd.inf`,
-but uses `CatalogFile = virtio-snd.cat`.
-
-To avoid accidentally installing **two** INFs that match the same HWIDs, the alias INF is checked in as
-`virtio-snd.inf.disabled`; rename it back to `virtio-snd.inf` if you need the legacy filename.
+`virtio-snd.inf.disabled` is a legacy filename alias kept for compatibility with older workflows/tools that still reference
+`virtio-snd.inf`. It installs the same driver/service and matches the same contract-v1 HWIDs as `aero_virtio_snd.inf`, but
+is disabled by default to avoid accidentally installing **two** INFs that match the same HWIDs.
 
 ## Offline / slipstream installation (optional)
 

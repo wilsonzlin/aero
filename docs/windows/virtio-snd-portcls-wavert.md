@@ -738,11 +738,11 @@ And an interfaces section that includes both directions, for example:
 And in `AddReg`:
 
 * `HKR,,DevLoader,,*ntkern`
-* `HKR,,NTMPDriver,,virtiosnd.sys`
+* `HKR,,NTMPDriver,,aero_virtio_snd.sys`
 * `HKR,Drivers,SubClasses,, "wave,topology"`
-* `HKR,Drivers\wave,Driver,,virtiosnd.sys`
+* `HKR,Drivers\wave,Driver,,aero_virtio_snd.sys`
 * `HKR,Drivers\wave,Description,,%VirtioSnd.WaveDesc%`
-* `HKR,Drivers\topology,Driver,,virtiosnd.sys`
+* `HKR,Drivers\topology,Driver,,aero_virtio_snd.sys`
 * `HKR,Drivers\topology,Description,,%VirtioSnd.TopoDesc%`
 
 ### 7.2 Hardware IDs
@@ -759,7 +759,7 @@ package is intentionally **revision-gated** and matches only:
 Optionally add more specific matches for your emulator’s subsystem ids if used:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_XXXXXXXXYYYYYYYY&REV_01` (example placeholder)
-* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (Aero contract v1 example; also present as a commented-out match in `aero-virtio-snd.inf`)
+* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (Aero contract v1 example; also present as a commented-out match in `aero_virtio_snd.inf`)
 
 When testing under QEMU, note that virtio devices may default to `REV_00`. For strict Aero
 contract-v1 binding you typically need:
@@ -785,17 +785,17 @@ AddInterface=%KSCATEGORY_TOPOLOGY%,%KSNAME_Topology%,VirtioSnd.Topology.Interfac
 
 [VirtioSnd.AddReg]
 HKR,,DevLoader,,*ntkern
-HKR,,NTMPDriver,,virtiosnd.sys
+HKR,,NTMPDriver,,aero_virtio_snd.sys
 
 ; Tell wdmaud/sysaudio which miniports exist in this driver.
 HKR,Drivers,SubClasses,,"wave,topology"
 
 ; WaveRT subdevice
-HKR,Drivers\wave,Driver,,virtiosnd.sys
+HKR,Drivers\wave,Driver,,aero_virtio_snd.sys
 HKR,Drivers\wave,Description,,%VirtioSnd.WaveDesc%
 
 ; Topology subdevice
-HKR,Drivers\topology,Driver,,virtiosnd.sys
+HKR,Drivers\topology,Driver,,aero_virtio_snd.sys
 HKR,Drivers\topology,Description,,%VirtioSnd.TopoDesc%
 ```
 

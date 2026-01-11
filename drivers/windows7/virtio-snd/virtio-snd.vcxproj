@@ -23,8 +23,8 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{98A436CA-35F8-4C4D-BEE1-E3E7C419BECB}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>virtiosnd</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <RootNamespace>aero_virtio_snd</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -70,8 +70,7 @@
   <PropertyGroup Label="UserMacros" />
 
   <PropertyGroup>
-    <!-- Match the binary name referenced by inf/aero-virtio-snd.inf. -->
-    <TargetName>virtiosnd</TargetName>
+    <TargetName>aero_virtio_snd</TargetName>
     <TargetExt>.sys</TargetExt>
   </PropertyGroup>
 
@@ -165,7 +164,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="inf\aero-virtio-snd.inf" />
+    <None Include="inf\aero_virtio_snd.inf" />
+    <None Include="inf\virtio-snd.inf.disabled" />
     <None Include="inf\aero-virtio-snd-legacy.inf" />
   </ItemGroup>
 

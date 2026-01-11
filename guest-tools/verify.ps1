@@ -1171,7 +1171,7 @@ try {
         }
         if (-not $cfgVirtioSndService) {
             $cfgStatus = "WARN"
-            $cfgDetails += "AERO_VIRTIO_SND_SERVICE is not set (default for Aero in-tree drivers: aeroviosnd)."
+            $cfgDetails += "AERO_VIRTIO_SND_SERVICE is not set (default for Aero in-tree drivers: aero_virtio_snd)."
         }
         if (-not $cfgVirtioSndHwids -or $cfgVirtioSndHwids.Count -eq 0) {
             $cfgStatus = "WARN"
@@ -1732,7 +1732,28 @@ try {
     $pnp = Invoke-Capture "pnputil.exe" @("-e")
     $raw = $pnp.output
 
-    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","virtioinput","viosnd","aerosnd","virtiosnd","aeroviosnd","aeroviosnd_legacy")
+    $keywords = @(
+        "aero",
+        "virtio",
+        "viostor",
+        "vionet",
+        "netkvm",
+        "viogpu",
+        "vioinput",
+        "virtioinput",
+        "viosnd",
+        "aerosnd",
+        "virtiosnd",
+        "aeroviosnd",
+        "aeroviosnd_legacy",
+        "aerovblk",
+        "aerovnet",
+        "aero_virtio_blk",
+        "aero_virtio_net",
+        "aero_virtio_input",
+        "aero_virtio_snd",
+        "1af4"
+    )
     foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
         if ($s -and ("" + $s).Trim().Length -gt 0) {
             $kw = ("" + $s).Trim().ToLower()
@@ -1851,7 +1872,32 @@ try {
     $devconDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $devconPath = Join-Path $devconDir "devcon.exe"
 
-    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","aeroviosnd_legacy","vioinput","virtioinput")
+    $svcCandidates = @(
+        "viostor",
+        "aeroviostor",
+        "aero_virtio_blk",
+        "aerovblk",
+        "virtio_blk",
+        "virtio-blk",
+        "aero_virtio_net",
+        "aerovnet",
+        "vionet",
+        "netkvm",
+        "viogpu",
+        "AeroGPU",
+        "aerogpu",
+        "aero-gpu",
+        "aero_virtio_snd",
+        "viosnd",
+        "aerosnd",
+        "virtiosnd",
+        "aeroviosnd",
+        "aeroviosnd_legacy",
+        "aero_virtio_input",
+        "vioinput",
+        "virtioinput",
+        "aerovioinput"
+    )
     foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
         if ($s -and ("" + $s).Trim().Length -gt 0) { $svcCandidates = @((("" + $s).Trim())) + $svcCandidates }
     }
@@ -1996,17 +2042,19 @@ try {
     $inputRegex = $cfgVirtioInputRegex
     $gpuRegex = $cfgGpuRegex
 
-    $storageServiceCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
+    $storageServiceCandidates = @("aero_virtio_blk","aerovblk","viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
     if ($cfgVirtioBlkService) { $storageServiceCandidates = @($cfgVirtioBlkService) + $storageServiceCandidates }
-    $networkServiceCandidates = @("vionet","netkvm")
+    $networkServiceCandidates = @("aero_virtio_net","aerovnet","vionet","netkvm")
     if ($cfgVirtioNetService) { $networkServiceCandidates = @($cfgVirtioNetService) + $networkServiceCandidates }
     $graphicsServiceCandidates = @("AeroGPU","viogpu","aerogpu","aero-gpu")
     if ($cfgGpuService) { $graphicsServiceCandidates = @($cfgGpuService) + $graphicsServiceCandidates }
-    $audioServiceCandidates = @("aeroviosnd","aeroviosnd_legacy","viosnd","aerosnd","virtiosnd")
+    $audioServiceCandidates = @("aero_virtio_snd","aeroviosnd_legacy","aeroviosnd","viosnd","aerosnd","virtiosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
     $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
-    $inputServiceCandidates = @("virtioinput","vioinput","aeroinput")
+
+    $inputServiceCandidates = @("aero_virtio_input","virtioinput","vioinput","aeroinput","aerovioinput")
     if ($cfgVirtioInputService) { $inputServiceCandidates = @($cfgVirtioInputService) + $inputServiceCandidates }
+    $inputServiceCandidates = Dedup-CaseInsensitive $inputServiceCandidates
 
     Add-DeviceBindingCheck `
         "device_binding_storage" `

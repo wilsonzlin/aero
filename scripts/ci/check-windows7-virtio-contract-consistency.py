@@ -56,6 +56,10 @@ PACKAGING_SPEC_DRIVER_TO_CONTRACT_DEVICE: Mapping[str, str] = {
     "aerovnet": "virtio-net",
     "virtioinput": "virtio-input",
     "aeroviosnd": "virtio-snd",
+    "aero_virtio_blk": "virtio-blk",
+    "aero_virtio_net": "virtio-net",
+    "aero_virtio_input": "virtio-input",
+    "aero_virtio_snd": "virtio-snd",
     # virtio-win payload driver directory names.
     "viostor": "virtio-blk",
     "netkvm": "virtio-net",
@@ -68,10 +72,10 @@ PACKAGING_SPEC_DRIVER_TO_CONTRACT_DEVICE: Mapping[str, str] = {
 # Canonical in-tree Win7 driver INFs that are expected to follow AERO-W7-VIRTIO v1
 # identity policy (modern IDs + contract major version encoded in PCI Revision ID).
 WIN7_VIRTIO_DRIVER_INFS: Mapping[str, Path] = {
-    "virtio-blk": REPO_ROOT / "drivers/windows7/virtio/blk/aerovblk.inf",
-    "virtio-net": REPO_ROOT / "drivers/windows7/virtio/net/aerovnet.inf",
-    "virtio-snd": REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf",
-    "virtio-input": REPO_ROOT / "drivers/windows/virtio-input/virtio-input.inf",
+    "virtio-blk": REPO_ROOT / "drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf",
+    "virtio-net": REPO_ROOT / "drivers/windows7/virtio-net/inf/aero_virtio_net.inf",
+    "virtio-snd": REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf",
+    "virtio-input": REPO_ROOT / "drivers/windows7/virtio-input/inf/aero_virtio_input.inf",
 }
 
 # virtio-pci vendor as allocated by PCI-SIG.
@@ -102,16 +106,16 @@ AERO_VIRTIO_DEVICE_SOURCES: Mapping[str, Path] = {
 # Canonical in-tree Windows driver INFs for the Aero Win7 virtio contract.
 # Keeping these in sync prevents "driver installs but doesn't bind" regressions.
 AERO_VIRTIO_INF_SOURCES: Mapping[str, Path] = {
-    "virtio-blk": REPO_ROOT / "drivers/windows7/virtio/blk/aerovblk.inf",
-    "virtio-net": REPO_ROOT / "drivers/windows7/virtio/net/aerovnet.inf",
-    "virtio-snd": REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf",
-    "virtio-input": REPO_ROOT / "drivers/windows/virtio-input/virtio-input.inf",
+    "virtio-blk": REPO_ROOT / "drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf",
+    "virtio-net": REPO_ROOT / "drivers/windows7/virtio-net/inf/aero_virtio_net.inf",
+    "virtio-snd": REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf",
+    "virtio-input": REPO_ROOT / "drivers/windows7/virtio-input/inf/aero_virtio_input.inf",
 }
 
 AERO_VIRTIO_PCI_IDENTITY_HEADER = REPO_ROOT / "drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h"
-AERO_VIRTIO_BLK_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio/blk/include/aerovblk.h"
-AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio/net/include/aerovnet.h"
-AERO_VIRTIO_INPUT_DRIVER_HEADER = REPO_ROOT / "drivers/windows/virtio-input/src/virtio_input.h"
+AERO_VIRTIO_BLK_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-blk/include/aerovblk.h"
+AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-net/include/aerovnet.h"
+AERO_VIRTIO_INPUT_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-input/src/virtio_input.h"
 AERO_VIRTIO_PCI_MODERN_TRANSPORT_H = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
 AERO_VIRTIO_PCI_MODERN_TRANSPORT_C = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
 

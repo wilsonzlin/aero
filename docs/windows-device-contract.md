@@ -123,11 +123,11 @@ All numeric values are shown as hexadecimal.
 
 | Device | PCI Vendor:Device | Subsystem Vendor:Device | Class Code (base/sub/prog) | Windows service | INF name |
 |---|---:|---:|---:|---|---|
-| virtio-blk | `1AF4:1042` (REV `0x01`) | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aerovblk` | `aerovblk.inf` |
-| virtio-net | `1AF4:1041` (REV `0x01`) | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovnet` | `aerovnet.inf` |
-| virtio-snd | `1AF4:1059` (REV `0x01`) | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
-| virtio-input (keyboard) | `1AF4:1052` (REV `0x01`) | `1AF4:0010` | `09/80/00` (input / other) | `virtioinput` | `virtio-input.inf` |
-| virtio-input (mouse) | `1AF4:1052` (REV `0x01`) | `1AF4:0011` | `09/80/00` (input / other) | `virtioinput` | `virtio-input.inf` |
+| virtio-blk | `1AF4:1042` (REV `0x01`) | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aero_virtio_blk` | `aero_virtio_blk.inf` |
+| virtio-net | `1AF4:1041` (REV `0x01`) | `1AF4:0001` | `02/00/00` (network / ethernet) | `aero_virtio_net` | `aero_virtio_net.inf` |
+| virtio-snd | `1AF4:1059` (REV `0x01`) | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aero_virtio_snd` | `aero_virtio_snd.inf` |
+| virtio-input (keyboard) | `1AF4:1052` (REV `0x01`) | `1AF4:0010` | `09/80/00` (input / other) | `aero_virtio_input` | `aero_virtio_input.inf` |
+| virtio-input (mouse) | `1AF4:1052` (REV `0x01`) | `1AF4:0011` | `09/80/00` (input / other) | `aero_virtio_input` | `aero_virtio_input.inf` |
 | Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `aerogpu` | `aerogpu.inf` |
 
 Notes:
@@ -142,7 +142,8 @@ Notes:
 Compatibility note (transitional virtio PCI Device IDs):
 
 `AERO-W7-VIRTIO` v1 is modern-only (emulator-visible PCI IDs + `REV_01`). The older virtio-pci **transitional** PCI
-Device ID space exists for ecosystem compatibility, but is intentionally out of scope for the contract.
+Device ID space exists for ecosystem compatibility, but is intentionally out of scope for the contract (the emulator is
+not required to emit transitional IDs, and Aero’s in-tree contract-v1 driver INFs do not bind to them).
 
 Transitional virtio-pci IDs are out of scope for `AERO-W7-VIRTIO` v1.
 
@@ -187,20 +188,20 @@ Where:
 Examples (illustrative) INF model entries:
 
 ```ini
+; aero_virtio_blk.inf
 [Manufacturer]
 %MfgName% = AeroModels,NTx86,NTamd64
 
 [AeroModels.NTamd64]
-; aerovblk.inf
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&REV_01
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01
 
-; aerovnet.inf
+; aero_virtio_net.inf
 %AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
 %AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
 
-; aero-virtio-snd.inf
-%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+ ; aero_virtio_snd.inf
+ %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
@@ -213,7 +214,7 @@ Where `<hardware-id>` is the hardware ID with backslashes replaced (commonly `PC
 
 The required mapping for virtio-blk is:
 
-- `hardware ID` → `Service = aerovblk`
+- `hardware ID` → `Service = aero_virtio_blk`
 
 ## Virtio transport contract
 

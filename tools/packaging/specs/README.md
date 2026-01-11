@@ -111,7 +111,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPa
 
 Intended for packaging Guest Tools using Aero's in-tree clean-room Windows 7 virtio drivers.
 
-- Requires: `aerovblk` (virtio-blk) + `aerovnet` (virtio-net)
+- Requires: `aero_virtio_blk` (virtio-blk) + `aero_virtio_net` (virtio-net)
 - Validates **modern-only** virtio PCI IDs (`DEV_1042` / `DEV_1041`); transitional IDs are not accepted by the spec.
 
 This spec is used by `drivers/scripts/make-guest-tools-from-aero-virtio.ps1` by default.

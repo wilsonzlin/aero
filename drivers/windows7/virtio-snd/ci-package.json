@@ -1,6 +1,6 @@
 {
   "$schema": "../../../ci/driver-package.schema.json",
-  "infFiles": ["inf/aero-virtio-snd.inf"],
+  "infFiles": ["inf/aero_virtio_snd.inf"],
   "additionalFiles": [
     "README.md",
     "SOURCES.md",

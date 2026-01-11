@@ -13,7 +13,7 @@
 
   It can run the workflow for a single architecture or for both architectures
   sequentially (x86 then amd64). This matters because the binary name is the same
-  (`virtiosnd.sys` / `virtiosnd_legacy.sys`) on both architectures, and `Inf2Cat`
+  (`aero_virtio_snd.sys` / `virtiosnd_legacy.sys`) on both architectures, and `Inf2Cat`
   hashes the staged SYS.
 
   Run this from a WDK Developer Command Prompt so `Inf2Cat.exe` and `signtool.exe`

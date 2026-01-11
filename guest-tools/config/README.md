@@ -50,7 +50,7 @@ modern-only IDs plus PCI Revision ID `0x01`). Keep `devices.cmd` consistent with
 
 `AERO_VIRTIO_BLK_SERVICE` MUST match the virtio-blk storage driver's INF `AddService` name, because `setup.cmd`
 uses it to mark the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase` entries.
-(For Aero in-tree drivers, this is `aerovblk` from `drivers/windows7/virtio/blk/aerovblk.inf`.)
+(For Aero in-tree drivers, this is `aero_virtio_blk` from `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf`.)
 
 ## AeroGPU PCI IDs
 

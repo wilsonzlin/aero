@@ -140,7 +140,7 @@ requiring `/skipstorage`.
 Note:
 
 - For **Aero** driver builds (in-tree virtio + AeroGPU), the contract’s `driver_service_name` values
-  are expected to match the packaged INF `AddService` names (e.g. `aerovblk`).
+  are expected to match the packaged INF `AddService` names (e.g. `aero_virtio_blk`).
 - For **virtio-win** builds, pass the dedicated contract override
   `docs/windows-device-contract-virtio-win.json` to `ci/package-guest-tools.ps1 -WindowsDeviceContractPath`
   so the generated `devices.cmd` uses virtio-win service names (e.g. `viostor`, `netkvm`), while keeping
@@ -190,17 +190,17 @@ When building Guest Tools from an upstream `virtio-win.iso` via
 populate `licenses/virtio-win/` with upstream license/notice files (when present) and
 include `driver-pack-manifest.json` for virtio-win ISO provenance.
 
-## Packaging in-tree aero virtio drivers (aerovblk + aerovnet)
+## Packaging in-tree aero virtio drivers (aero_virtio_blk + aero_virtio_net)
 
-If you built Aero's in-tree Windows 7 virtio drivers (`drivers/windows7/virtio/{blk,net}`) and
+If you built Aero's in-tree Windows 7 virtio drivers (`drivers/windows7/virtio-{blk,net}`) and
 have a packager-style driver directory:
 
 ```
 <DriverOutDir>/
-  x86/aerovblk/*.{inf,sys,cat}
-  x86/aerovnet/*.{inf,sys,cat}
-  amd64/aerovblk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
-  amd64/aerovnet/*.{inf,sys,cat}
+  x86/aero_virtio_blk/*.{inf,sys,cat}
+  x86/aero_virtio_net/*.{inf,sys,cat}
+  amd64/aero_virtio_blk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
+  amd64/aero_virtio_net/*.{inf,sys,cat}
 ```
 
 You can build Guest Tools media directly using:

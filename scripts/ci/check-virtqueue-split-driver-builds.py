@@ -120,24 +120,23 @@ def main() -> None:
     msbuild_projects: dict[str, tuple[Path, str, str, str]] = {
         # Win7 miniports (StorPort/NDIS) use the WDF-free canonical split-ring engine.
         "virtio-blk": (
-            REPO_ROOT / "drivers/windows7/virtio/blk/aerovblk.vcxproj",
+            REPO_ROOT / "drivers/windows7/virtio-blk/aerovblk.vcxproj",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",
         ),
         "virtio-net": (
-            REPO_ROOT / "drivers/windows7/virtio/net/aerovnet.vcxproj",
+            REPO_ROOT / "drivers/windows7/virtio-net/aerovnet.vcxproj",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",
         ),
-        # virtio-input lives under drivers/windows but targets Win7 (KMDF 1.9) and
-        # uses the WDF-free split virtqueue engine.
+        # virtio-input targets Win7 (KMDF 1.9) and uses the canonical split virtqueue engine.
         "virtio-input": (
-            REPO_ROOT / "drivers/windows/virtio-input/virtio-input.vcxproj",
+            REPO_ROOT / "drivers/windows7/virtio-input/virtio-input.vcxproj",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
-            "virtio/common",
+            "windows/virtio/common",
         ),
     }
 
@@ -175,22 +174,22 @@ def main() -> None:
     # ---------------------------------------------------------------------
     sources_files: dict[str, tuple[Path, str, str, str]] = {
         "virtio-blk": (
-            REPO_ROOT / "drivers/windows7/virtio/blk/sources",
+            REPO_ROOT / "drivers/windows7/virtio-blk/sources",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",
         ),
         "virtio-net": (
-            REPO_ROOT / "drivers/windows7/virtio/net/sources",
+            REPO_ROOT / "drivers/windows7/virtio-net/sources",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",
         ),
         "virtio-input": (
-            REPO_ROOT / "drivers/windows/virtio-input/sources",
+            REPO_ROOT / "drivers/windows7/virtio-input/sources",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
-            "virtio/common",
+            "windows/virtio/common",
         ),
         "virtio-snd": (
             REPO_ROOT / "drivers/windows7/virtio-snd/src/sources",

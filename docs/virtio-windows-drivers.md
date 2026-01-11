@@ -55,11 +55,11 @@ Aero can build Guest Tools media (`aero-guest-tools.iso` / `.zip`) from a few di
 2) **Upstream virtio-win** (`viostor`, `netkvm`, etc.) *(optional / compatibility)*
    - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
    - Spec (via `-Profile`):
-     - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
-     - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
+      - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
+      - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
    - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
-3) **In-tree Aero virtio** (`aerovblk`, `aerovnet`) *(local/dev)*
+3) **In-tree Aero virtio** (`aero_virtio_blk`, `aero_virtio_net`, etc.) *(local/dev)*
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
    - Spec: `tools/packaging/specs/win7-aero-virtio.json` (**modern-only** IDs; rejects virtio-pci transitional IDs at packaging time)
    - Device contract (for generated `config/devices.cmd` when using the CI packaging wrapper): `docs/windows-device-contract.json`
@@ -111,21 +111,21 @@ For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers be
 
 | Device | Contract PCI ID | In-tree driver INF | Windows service name | Guest Tools config |
 |---|---|---|---|---|
-| virtio-net | `1AF4:1041` (REV `0x01`) | `drivers/windows7/virtio/net/aerovnet.inf` | `aerovnet` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_NET_SERVICE`, `AERO_VIRTIO_NET_HWIDS` |
-| virtio-blk | `1AF4:1042` (REV `0x01`) | `drivers/windows7/virtio/blk/aerovblk.inf` | `aerovblk` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_BLK_SERVICE`, `AERO_VIRTIO_BLK_HWIDS` |
-| virtio-input | `1AF4:1052` (REV `0x01`) | `drivers/windows/virtio-input/virtio-input.inf` | `virtioinput` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_INPUT_SERVICE`, `AERO_VIRTIO_INPUT_HWIDS` |
-| virtio-snd | `1AF4:1059` (REV `0x01`) | `drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf` | `aeroviosnd` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_SND_SERVICE`, `AERO_VIRTIO_SND_HWIDS` |
+| virtio-net | `1AF4:1041` (REV `0x01`) | `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` | `aero_virtio_net` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_NET_SERVICE`, `AERO_VIRTIO_NET_HWIDS` |
+| virtio-blk | `1AF4:1042` (REV `0x01`) | `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` | `aero_virtio_blk` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_BLK_SERVICE`, `AERO_VIRTIO_BLK_HWIDS` |
+| virtio-input | `1AF4:1052` (REV `0x01`) | `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` | `aero_virtio_input` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_INPUT_SERVICE`, `AERO_VIRTIO_INPUT_HWIDS` |
+| virtio-snd | `1AF4:1059` (REV `0x01`) | `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` | `aero_virtio_snd` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_SND_SERVICE`, `AERO_VIRTIO_SND_HWIDS` |
 
 Guest Tools uses:
 
 - `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
-- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (the in-tree virtio-blk/net/input/snd INFs all match `...&REV_01`).
+- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (the in-tree `aero_virtio_{blk,net,input,snd}.inf` files all match `...&REV_01`).
 
 Note: `guest-tools/config/devices.cmd` is generated from a Windows device contract JSON
 (see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging
 from the contract passed to the packager (`ci/package-guest-tools.ps1 -WindowsDeviceContractPath`):
 
-- `docs/windows-device-contract.json` (canonical; Aero in-tree driver service names like `aerovblk` / `aerovnet`)
+- `docs/windows-device-contract.json` (canonical; Aero in-tree driver service names like `aero_virtio_blk` / `aero_virtio_net`)
 - `docs/windows-device-contract-virtio-win.json` (virtio-win; upstream service names like `viostor` / `netkvm`)
 
 CI-style drift check (no rewrite):
@@ -496,7 +496,7 @@ If the Windows installer can’t see the disk:
    - **CI/release driver bundles** (`win7-drivers`): mount `AeroVirtIO-Win7-<version>.iso` or attach `*-fat.vhd` as a secondary disk (see [`docs/16-driver-install-media.md`](./16-driver-install-media.md) and `INSTALL.txt` at the media root for the exact layout).
    - **virtio-win-derived drivers ISO** (optional/compatibility): mount `aero-virtio-win7-drivers.iso` built by `drivers/scripts/make-virtio-driver-iso.ps1`.
 4. Select the storage driver INF for your media:
-   - **Aero in-tree virtio-blk**: `aerovblk.inf` (find it under the attached media; the directory names differ between Guest Tools vs driver bundle artifacts).
+   - **Aero in-tree virtio-blk**: `aero_virtio_blk.inf` (find it under the attached media; the directory names differ between Guest Tools vs driver bundle artifacts).
    - **virtio-win virtio-blk**: `viostor.inf` (typically under `\win7\amd64\viostor\` or `\win7\x86\viostor\`).
 5. The virtio disk should appear; continue installation.
 
@@ -520,8 +520,8 @@ pnputil -i -a D:\win7\amd64\viostor\viostor.inf
 pnputil -i -a D:\win7\amd64\netkvm\netkvm.inf
 
 REM Example: Aero Guest Tools media (in-tree drivers)
-pnputil -i -a X:\drivers\amd64\virtio-blk\aerovblk.inf
-pnputil -i -a X:\drivers\amd64\virtio-net\aerovnet.inf
+pnputil -i -a X:\drivers\amd64\aero_virtio_blk\aero_virtio_blk.inf
+pnputil -i -a X:\drivers\amd64\aero_virtio_net\aero_virtio_net.inf
 ```
 
 Replace `D:` / `X:` with your mounted media drive letter and use the correct architecture directory

@@ -1,5 +1,6 @@
 @echo off
 rem Minimal devices config fixture for tests.
-set "AERO_VIRTIO_BLK_SERVICE=aerovblk"
+rem Canonical service name for Aero's in-tree virtio-blk driver.
+set "AERO_VIRTIO_BLK_SERVICE=aero_virtio_blk"
 set AERO_VIRTIO_BLK_HWIDS="PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01" "PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4" "PCI\VEN_1AF4&DEV_1042&REV_01" "PCI\VEN_1AF4&DEV_1042"
 set AERO_TESTDRV_HWIDS="PCI\VEN_1234&DEV_5678"

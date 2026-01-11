@@ -30,17 +30,18 @@ References:
 ## Prerequisites
 
 - A QEMU build new enough to expose a virtio-snd PCI device.
-   - Known-good reference: QEMU **8.2.x**.
-   - For binding with the strict Aero contract v1 INF (`aero-virtio-snd.inf`), QEMU must support
-     `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd device (to match `PCI\VEN_1AF4&DEV_1059&REV_01`).
-   - Verify supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.
+  - Known-good reference: QEMU **8.2.x**.
+  - For binding with the strict Aero contract v1 INF (`aero_virtio_snd.inf`), QEMU must support
+    `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd device
+    (to match `PCI\VEN_1AF4&DEV_1059&REV_01`).
+  - Verify supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.
 - A Windows 7 SP1 VM disk image (x86 or x64).
-- A virtio-snd driver package staged next to the device INF:
+- A virtio-snd driver package directory staged next to the INF:
   - Repo layout (staging): `drivers/windows7/virtio-snd/inf/`
   - Guest Tools / CI bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
   - **Preferred: strict Aero contract v1** (requires the contract-v1 HWID):
-    - `inf/aero-virtio-snd.inf`
-    - `virtiosnd.sys` built for x86 or x64
+    - `inf/aero_virtio_snd.inf`
+    - `aero_virtio_snd.sys` built for x86 or x64
   - **Optional: QEMU compatibility package** (for QEMU builds/configurations that cannot expose the contract-v1 HWID):
     - `inf/aero-virtio-snd-legacy.inf`
     - `virtiosnd_legacy.sys` built for x86 or x64 (MSBuild `Configuration=Legacy`)
@@ -49,7 +50,7 @@ References:
   - **Optional: legacy I/O-port transport** (older bring-up; not part of `AERO-W7-VIRTIO` v1):
     - `inf/aero-virtio-snd-ioport.inf`
     - `virtiosnd_ioport.sys` built for x86 or x64 (MSBuild `virtio-snd-ioport-legacy.vcxproj`)
-- Important: `aero-virtio-snd.inf` is revision-gated and binds only to the Aero contract v1 HWID
+- Important: `aero_virtio_snd.inf` is revision-gated and binds only to the Aero contract v1 HWID
   (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device does not expose that HWID, Windows will not
   bind this package until you adjust QEMU device options (see below).
 - Test signing enabled in the guest (or a properly production-signed driver package).
@@ -109,7 +110,7 @@ qemu-system-x86_64 \
 ```
 
 These examples validate the strict Aero contract v1 identity under QEMU (modern `PCI\VEN_1AF4&DEV_1059&REV_01`); install
-`aero-virtio-snd.inf`.
+`aero_virtio_snd.inf`.
 
 If your QEMU build cannot expose **both** `disable-legacy=on` and `x-pci-revision=0x01`, the strict INF will not
 bind. In that case, run virtio-snd in **transitional** mode (do not set `disable-legacy=on`, so the device
@@ -137,11 +138,11 @@ use the opt-in legacy package in that case.
 
 | Mode | Expected HWID | INF | SYS |
 |---|---|---|---|
-| Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero-virtio-snd.inf` | `virtiosnd.sys` |
+| Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero_virtio_snd.inf` | `aero_virtio_snd.sys` |
 | QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` (transitional; see Device Manager for full list) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
 | QEMU transitional (I/O-port legacy; optional) | `PCI\VEN_1AF4&DEV_1018&REV_00` | `aero-virtio-snd-ioport.inf` | `virtiosnd_ioport.sys` |
 
-The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
+The shipped contract INF (`inf/aero_virtio_snd.inf`) is intentionally strict and matches only:
 
 - `PCI\VEN_1AF4&DEV_1059&REV_01`
 
@@ -161,9 +162,10 @@ qemu-system-x86_64 -device virtio-sound-pci,help
 
 Development note: the repo also contains an optional legacy filename alias INF
 (`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf`, it installs the same
-driver/service as `aero-virtio-snd.inf` (same contract-v1 HWIDs), but provides the legacy filename
-for compatibility with older tooling/workflows and uses `CatalogFile = virtio-snd.cat`. This legacy
-INF is **not** staged into the CI driver bundle.
+driver/service and binds the same contract-v1 HWIDs as `aero_virtio_snd.inf`, but provides the legacy filename
+for compatibility with older tooling/workflows. The alias INF uses `CatalogFile = aero_virtio_snd.cat` and is
+checked in disabled-by-default to avoid shipping multiple INFs that match the same HWIDs. This legacy INF is
+not staged into the CI driver bundle.
 
 ## Verifying HWID in Device Manager
 
@@ -182,7 +184,7 @@ Expected values include:
 Windows may also list less-specific forms (without `REV_01` / `SUBSYS_...`), but the Aero INF is
 revision-gated; if you do not see a `...&REV_01` HWID, the driver will not bind.
 
-Ensure the HWID matches the INF you intend to install (`aero-virtio-snd.inf` vs `aero-virtio-snd-legacy.inf`).
+Ensure the HWID matches the INF you intend to install (`aero_virtio_snd.inf` vs `aero-virtio-snd-legacy.inf`).
 If you want to validate the strict Aero contract v1 package, configure QEMU to expose `PCI\VEN_1AF4&DEV_1059&REV_01`
 (for example `disable-legacy=on,x-pci-revision=0x01` when supported).
 
@@ -227,16 +229,17 @@ Use either Device Manager or PnPUtil.
 3. Right click the virtio-snd device → **Update Driver Software...**
 4. **Browse my computer for driver software**
 5. Point it to the directory containing the driver package `*.inf` files:
-    - Repo layout: `drivers/windows7/virtio-snd/inf/`
-    - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
-   - When prompted, pick the INF that matches your QEMU device configuration:
-      - `aero-virtio-snd.inf` (recommended; modern `PCI\VEN_1AF4&DEV_1059&REV_01`)
-      - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional `PCI\VEN_1AF4&DEV_1018`)
+   - Repo layout: `drivers/windows7/virtio-snd/inf/`
+   - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
+6. When prompted, pick the INF that matches your QEMU device configuration:
+   - `aero_virtio_snd.inf` (recommended; modern `PCI\VEN_1AF4&DEV_1059&REV_01`)
+   - `aero-virtio-snd-legacy.inf` (stock QEMU defaults; transitional `PCI\VEN_1AF4&DEV_1018`)
+   - `aero-virtio-snd-ioport.inf` (optional legacy I/O-port transport; transitional `PCI\VEN_1AF4&DEV_1018&REV_00`)
 
 **PnPUtil (scriptable, elevated CMD):**
 
 ```bat
-pnputil -i -a X:\path\to\aero-virtio-snd.inf
+pnputil -i -a X:\path\to\aero_virtio_snd.inf
 
 REM Stock QEMU (transitional PCI\VEN_1AF4&DEV_1018):
 pnputil -i -a X:\path\to\aero-virtio-snd-legacy.inf
@@ -253,12 +256,12 @@ Reboot if prompted.
 2. Right click → **Properties**:
    - **General** should show “This device is working properly.”
    - **Details** tab → **Hardware Ids** should include the revision-gated contract-v1 HWID:
-     - `PCI\VEN_1AF4&DEV_1059&REV_01`
-     - (Optional) `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)
-     and may also include other `SUBSYS_...` / `REV_..` forms.
-     - If you are installing the QEMU compatibility package (`aero-virtio-snd-legacy.inf`), the HWIDs will differ; ensure they match the INF you installed.
-   - **Driver** tab → **Driver Details** should include at least:
-     - `virtiosnd.sys` (contract v1) **or** `virtiosnd_legacy.sys` (QEMU legacy)
+      - `PCI\VEN_1AF4&DEV_1059&REV_01`
+      - (Optional) `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)
+        and may also include other `SUBSYS_...` / `REV_..` forms.
+      - If you are installing the QEMU compatibility package (`aero-virtio-snd-legacy.inf`), the HWIDs will differ; ensure they match the INF you installed.
+    - **Driver** tab → **Driver Details** should include at least:
+      - `aero_virtio_snd.sys` (contract v1) **or** `virtiosnd_legacy.sys` (QEMU legacy)
       - `portcls.sys`
       - `ks.sys`
 
@@ -317,7 +320,7 @@ The selftest logs to:
     Notes:
     - `--test-snd` (alias: `--require-snd`) makes virtio-snd **required**: missing virtio-snd is treated as a FAIL.
       (If a supported virtio-snd PCI function is detected, playback is exercised automatically even without `--test-snd`.)
-    - The strict `aero-virtio-snd.inf` package expects the contract-v1 HWID (`PCI\VEN_1AF4&DEV_1059&REV_01`). Under QEMU, configure the device with
+    - The strict `aero_virtio_snd.inf` package expects the contract-v1 HWID (`PCI\VEN_1AF4&DEV_1059&REV_01`). Under QEMU, configure the device with
       `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
     - If your device enumerates as transitional, install the opt-in legacy driver package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`)
       and pass `--allow-virtio-snd-transitional` so the selftest accepts it (intended for QEMU bring-up/regression).
@@ -374,7 +377,7 @@ Then review:
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
 - Confirm the HWID matches the INF you installed:
-  - For the contract-v1 package (`inf/aero-virtio-snd.inf`), the device must expose the revision-gated HWID
+  - For the contract-v1 package (`inf/aero_virtio_snd.inf`), the device must expose the revision-gated HWID
     `PCI\VEN_1AF4&DEV_1059&REV_01` and QEMU must be configured with `disable-legacy=on,x-pci-revision=0x01` (when supported).
   - For the QEMU compatibility package (`inf/aero-virtio-snd-legacy.inf`), do **not** set `disable-legacy=on` (it
     removes the transitional HWID `PCI\VEN_1AF4&DEV_1018` that the legacy INF matches).
@@ -389,7 +392,7 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 - Confirm the driver is installing a complete PortCls/WaveRT stack:
   - A WaveRT render miniport alone is not sufficient; Windows typically also expects the correct KS filter categories and (often) a topology miniport.
 - Re-check the INF:
-  - `inf/aero-virtio-snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01` (an optional
+  - `inf/aero_virtio_snd.inf` is intentionally strict and matches only `PCI\VEN_1AF4&DEV_1059&REV_01` (an optional
     `...&SUBSYS_00191AF4&REV_01` match is present but commented out).
   - `inf/aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd HWID
     `PCI\VEN_1AF4&DEV_1018` and does not require `REV_01`).

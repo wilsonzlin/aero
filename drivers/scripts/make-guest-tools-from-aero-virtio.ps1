@@ -3,10 +3,10 @@ param(
   # Directory containing built aero virtio driver packages.
   #
   # Expected layout:
-  #   x86/aerovblk/*.{inf,sys,cat}
-  #   x86/aerovnet/*.{inf,sys,cat}
-  #   amd64/aerovblk/*.{inf,sys,cat}   (or x64/ instead of amd64/)
-  #   amd64/aerovnet/*.{inf,sys,cat}
+  #   x86/aero_virtio_blk/*.{inf,sys,cat}
+  #   x86/aero_virtio_net/*.{inf,sys,cat}
+  #   amd64/aero_virtio_blk/*.{inf,sys,cat}   (or x64/ instead of amd64/)
+  #   amd64/aero_virtio_net/*.{inf,sys,cat}
   [Parameter(Mandatory = $true)]
   [string]$DriverOutDir,
 
@@ -178,7 +178,7 @@ if ($CertPath) {
 $driversX86Dir = Resolve-InputArchDir -DriversDir $driversRoot -ArchOut "x86"
 $driversAmd64Dir = Resolve-InputArchDir -DriversDir $driversRoot -ArchOut "amd64"
 
-foreach ($driver in @("aerovblk", "aerovnet")) {
+foreach ($driver in @("aero_virtio_blk", "aero_virtio_net")) {
   Require-DriverPackageComplete -DriverDir (Join-Path $driversX86Dir $driver) -DriverName $driver -Arch "x86"
   Require-DriverPackageComplete -DriverDir (Join-Path $driversAmd64Dir $driver) -DriverName $driver -Arch "amd64"
 }

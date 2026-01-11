@@ -14,7 +14,7 @@ param(
   # Optional: restrict which .inf files are installed by the guest provisioning script.
   #
   # Each entry can be either:
-  # - An INF basename (e.g. "aerovblk.inf") which must match exactly one file under -DriversDir, or
+  # - An INF basename (e.g. "aero_virtio_blk.inf") which must match exactly one file under -DriversDir, or
   # - A relative path under -DriversDir (e.g. "amd64\\viostor\\viostor.inf") to disambiguate duplicates.
   #
   # If not specified, a conservative default allowlist is used to avoid accidentally installing test/smoke INFs
@@ -180,10 +180,10 @@ $infIndex = foreach ($inf in $infFiles) {
 }
 
 $defaultInfAllowList = @(
-  "aerovblk.inf",
-  "aerovnet.inf",
-  "virtio-input.inf",
-  "aero-virtio-snd.inf"
+  "aero_virtio_blk.inf",
+  "aero_virtio_net.inf",
+  "aero_virtio_input.inf",
+  "aero_virtio_snd.inf"
 )
   if ($AllowVirtioSndTransitional) {
     # When we allow the transitional virtio-snd PCI ID in the guest selftest, also stage the optional
@@ -260,10 +260,11 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
       # If still ambiguous after filtering, require an explicit relative path.
       $preferPattern = $null
       switch ($entryWin.ToLowerInvariant()) {
-        "aerovblk.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1042&REV_01" }
-        "aerovnet.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1041&REV_01" }
-        "virtio-input.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&REV_01" }
-        "aero-virtio-snd.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1059&REV_01" }
+        "aero_virtio_blk.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1042&REV_01" }
+        "aero_virtio_net.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1041&REV_01" }
+        "aero_virtio_input.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&REV_01" }
+        "aero_virtio_snd.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1059&REV_01" }
+        "aero-virtio-snd-legacy.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1018" }
       }
 
       if ($preferPattern) {

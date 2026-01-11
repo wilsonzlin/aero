@@ -829,9 +829,11 @@ def validate(
     if spec_path.name in ("win7-virtio-win.json", "win7-virtio-full.json"):
         required_groups = (("viostor",), ("netkvm",))
     elif spec_path.name == "win7-aero-virtio.json":
-        required_groups = (("aerovblk",), ("aerovnet",))
+        required_groups = (("aero_virtio_blk",), ("aero_virtio_net",))
     elif spec_path.name in ("win7-aero-guest-tools.json", "win7-signed.json"):
-        required_groups = (("aerogpu",), ("virtio-blk",), ("virtio-net",), ("virtio-input",))
+        # The in-repo driver folder name for AeroGPU is `aerogpu`, but keep
+        # backwards-compatible aliases to avoid renames breaking CI history.
+        required_groups = (("aerogpu", "aero-gpu"), ("virtio-blk",), ("virtio-net",), ("virtio-input",))
     else:
         required_groups = ()
 
@@ -946,6 +948,12 @@ def validate(
         driver_kind="virtio-blk",
     )
     maybe_validate(
+        "aero_virtio_blk",
+        devices_var="AERO_VIRTIO_BLK_HWIDS",
+        hwids=devices.virtio_blk_hwids,
+        driver_kind="virtio-blk",
+    )
+    maybe_validate(
         "netkvm",
         devices_var="AERO_VIRTIO_NET_HWIDS",
         hwids=devices.virtio_net_hwids,
@@ -953,6 +961,12 @@ def validate(
     )
     maybe_validate(
         "aerovnet",
+        devices_var="AERO_VIRTIO_NET_HWIDS",
+        hwids=devices.virtio_net_hwids,
+        driver_kind="virtio-net",
+    )
+    maybe_validate(
+        "aero_virtio_net",
         devices_var="AERO_VIRTIO_NET_HWIDS",
         hwids=devices.virtio_net_hwids,
         driver_kind="virtio-net",
@@ -1008,6 +1022,8 @@ def validate(
             "netkvm",
             "aerovblk",
             "aerovnet",
+            "aero_virtio_blk",
+            "aero_virtio_net",
             "vioinput",
             "viosnd",
             "virtio-blk",

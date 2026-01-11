@@ -1,0 +1,4 @@
+{
+  "$schema": "../../../ci/driver-package.schema.json",
+  "infFiles": ["inf/aero_virtio_net.inf"]
+}

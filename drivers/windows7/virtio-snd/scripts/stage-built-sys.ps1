@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Copies a built virtio-snd SYS from a WDK/MSBuild output directory into inf/.
+  Copies a built aero_virtio_snd.sys from a WDK/MSBuild output directory into inf/.
 
 .DESCRIPTION
   The signing workflow expects the driver binary to be staged next to the INF(s):
 
-    drivers\windows7\virtio-snd\inf\virtiosnd.sys
+    drivers\windows7\virtio-snd\inf\aero_virtio_snd.sys
     drivers\windows7\virtio-snd\inf\virtiosnd_legacy.sys
 
   This helper searches recursively for the expected SYS file under an input directory
@@ -90,7 +90,7 @@ $infDirResolved = Resolve-ExistingDirectory -Path $InfDir -ArgName '-InfDir'
 
 $expectedMachine = Get-ExpectedPeMachine -ArchValue $Arch
 
-$sysName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'virtiosnd.sys' }
+$sysName = if ($Variant -eq 'legacy') { 'virtiosnd_legacy.sys' } else { 'aero_virtio_snd.sys' }
 
 $candidates = @(
   Get-ChildItem -LiteralPath $inputDirResolved -Recurse -File -Filter $sysName -ErrorAction SilentlyContinue

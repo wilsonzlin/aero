@@ -14,8 +14,8 @@
         "PCI\\VEN_1AF4&DEV_1042&REV_01",
         "PCI\\VEN_1AF4&DEV_1042"
       ],
-      "driver_service_name": "aerovblk",
-      "inf_name": "aerovblk.inf",
+      "driver_service_name": "aero_virtio_blk",
+      "inf_name": "aero_virtio_blk.inf",
       "virtio_device_type": 2
     },
     {
@@ -29,8 +29,8 @@
         "PCI\\VEN_1AF4&DEV_1041&REV_01",
         "PCI\\VEN_1AF4&DEV_1041"
       ],
-      "driver_service_name": "aerovnet",
-      "inf_name": "aerovnet.inf",
+      "driver_service_name": "aero_virtio_net",
+      "inf_name": "aero_virtio_net.inf",
       "virtio_device_type": 1
     },
     {
@@ -44,8 +44,8 @@
         "PCI\\VEN_1AF4&DEV_1059&REV_01",
         "PCI\\VEN_1AF4&DEV_1059"
       ],
-      "driver_service_name": "aeroviosnd",
-      "inf_name": "aero-virtio-snd.inf",
+      "driver_service_name": "aero_virtio_snd",
+      "inf_name": "aero_virtio_snd.inf",
       "virtio_device_type": 25
     },
     {
@@ -61,8 +61,8 @@
         "PCI\\VEN_1AF4&DEV_1052&REV_01",
         "PCI\\VEN_1AF4&DEV_1052"
       ],
-      "driver_service_name": "virtioinput",
-      "inf_name": "virtio-input.inf",
+      "driver_service_name": "aero_virtio_input",
+      "inf_name": "aero_virtio_input.inf",
       "virtio_device_type": 18
     },
     {

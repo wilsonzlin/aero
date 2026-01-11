@@ -7,13 +7,13 @@ Why this exists:
   - `drivers/windows7/virtio-snd` contains both legacy (I/O-port) and modern
     (virtio-pci modern + MMIO) transport implementations.
   - MSBuild will happily succeed even if the project accidentally compiles the
-    legacy transport sources, but the resulting `virtiosnd.sys` cannot start
+    legacy transport sources, but the resulting `aero_virtio_snd.sys` cannot start
     against Aero's modern virtio device contract.
 
 This check parses `virtio-snd.vcxproj` and enforces:
   - Required modern transport sources are included.
   - Known legacy transport sources are NOT included.
-  - The project output name matches the shipped INF's NTMPDriver (`virtiosnd.sys`).
+  - The project output name matches the shipped INF's NTMPDriver (`aero_virtio_snd.sys`).
 
 If files are renamed during migration, update REQUIRED_SOURCES / FORBIDDEN_*.
 """
@@ -28,10 +28,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VCXPROJ = REPO_ROOT / "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-AERO_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+AERO_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"
 LEGACY_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf"
 
-# virtio-snd ships with a primary, strict Aero contract INF (`aero-virtio-snd.inf`).
+# virtio-snd ships with a primary, strict Aero contract INF (`aero_virtio_snd.inf`).
 # A legacy filename alias INF may optionally be present as `virtio-snd.inf`. In
 # this repo it may be checked in as `virtio-snd.inf.disabled` to avoid accidental
 # packaging; treat the alias as best-effort and always validate the Aero INF.
@@ -323,7 +323,7 @@ def vcxproj_has_target_name(vcxproj: Path, expected: str) -> bool:
 
 
 def extract_inf_ntmpdriver(inf_path: Path) -> str:
-    # Match `HKR,,NTMPDriver,,virtiosnd.sys` (common in this tree) and tolerate
+    # Match `HKR,,NTMPDriver,,aero_virtio_snd.sys` and tolerate
     # optional flags or quoted strings.
     for line in read_text(inf_path).splitlines():
         # Strip inline comments.

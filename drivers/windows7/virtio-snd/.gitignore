@@ -4,6 +4,8 @@ objfre*/
 buildchk*/
 buildfre*/
 
+obj*/
+
 *.log
 *.wrn
 *.err

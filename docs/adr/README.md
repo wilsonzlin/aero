@@ -20,9 +20,11 @@ were considered, and what the consequences are.
 - [ADR 0013: Networking via L2 tunnel (Option C) to an unprivileged proxy](./0013-networking-l2-tunnel.md)
 - [ADR 0014: Canonical machine/VM stack (`aero-machine`)](./0014-canonical-machine-stack.md)
 - [ADR 0015: Canonical USB stack (browser runtime: `aero-usb`)](./0015-canonical-usb-stack.md)
+- [ADR 0015: Canonical USB stack (browser runtime: `aero-usb`)](./0015-canonical-usb-stack.md)
+- [ADR 0016: Windows 7 virtio driver naming + layout](./0016-win7-virtio-driver-naming.md)
 ## Creating a new ADR
 
-1. Pick the next number (`0016-...`).
+1. Pick the next number (`0017-...`).
 2. Use a descriptive slug (`kebab-case`).
 3. Include these sections:
    - **Context**

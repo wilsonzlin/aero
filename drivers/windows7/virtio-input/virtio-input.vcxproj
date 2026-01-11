@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{0C3D42AA-52B7-4F87-A7FA-CC4A0798B9D9}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>aero_virtio_input</RootNamespace>
+    <!-- INF expects aero_virtio_input.sys (underscore). -->
+    <TargetName>aero_virtio_input</TargetName>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
+    <KmdfLibraryVersion>1.9</KmdfLibraryVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <SignMode>Off</SignMode>
+    <KmdfLibraryVersion>1.9</KmdfLibraryVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\Driver.props" />
+  </ImportGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>src;..\..\windows\virtio\common;..\..\win7\virtio\virtio-core\include;..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_KERNEL_MODE;KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>hidclass.lib;wdmguid.lib;ntstrsafe.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>src;..\..\windows\virtio\common;..\..\win7\virtio\virtio-core\include;..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_KERNEL_MODE;KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>hidclass.lib;wdmguid.lib;ntstrsafe.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\descriptor.c" />
+    <ClCompile Include="src\device.c" />
+    <ClCompile Include="src\driver.c" />
+    <ClCompile Include="src\file.c" />
+    <ClCompile Include="src\hid.c" />
+    <ClCompile Include="src\hid_read.c" />
+    <ClCompile Include="src\hid_translate.c" />
+    <ClCompile Include="src\hid_write.c" />
+    <ClCompile Include="src\log.c" />
+    <ClCompile Include="src\power.c" />
+    <ClCompile Include="src\queue.c" />
+    <ClCompile Include="src\virtio_input.c" />
+    <ClCompile Include="src\virtio_statusq.c" />
+
+    <ClCompile Include="..\..\windows\virtio\kmdf\virtio_pci_interrupts.c" />
+    <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
+
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="src\descriptor.h" />
+    <ClInclude Include="src\hid_translate.h" />
+    <ClInclude Include="src\log.h" />
+    <ClInclude Include="src\virtio_input.h" />
+    <ClInclude Include="src\virtio_input_proto.h" />
+    <ClInclude Include="src\virtio_pci_interrupts.h" />
+    <ClInclude Include="src\virtio_statusq.h" />
+
+    <None Include="inf\aero_virtio_input.inf" />
+    <None Include="sources" />
+    <None Include="makefile" />
+    <None Include="README.md" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\Driver.targets" />
+  </ImportGroup>
+</Project>

@@ -186,16 +186,16 @@ upstream virtio-win license/notice files (if present) are also included under:
 - `licenses/virtio-win/`
   - Includes `driver-pack-manifest.json` (copied from the extracted driver pack) to preserve virtio-win ISO provenance.
 
-### Optional: build `aero-guest-tools.iso` from in-tree aero virtio drivers (aerovblk + aerovnet)
+### Optional: build `aero-guest-tools.iso` from in-tree aero virtio drivers (aero_virtio_blk + aero_virtio_net)
 
-If you built Aero's in-tree Win7 virtio drivers (`aerovblk`, `aerovnet`) and have a packager-style driver output directory:
+If you built Aero's in-tree Win7 virtio drivers (`aero_virtio_blk`, `aero_virtio_net`) and have a packager-style driver output directory:
 
 ```
 <DriverOutDir>/
-  x86/aerovblk/*.{inf,sys,cat}
-  x86/aerovnet/*.{inf,sys,cat}
-  amd64/aerovblk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
-  amd64/aerovnet/*.{inf,sys,cat}
+  x86/aero_virtio_blk/*.{inf,sys,cat}
+  x86/aero_virtio_net/*.{inf,sys,cat}
+  amd64/aero_virtio_blk/*.{inf,sys,cat}   # (or x64/ instead of amd64/)
+  amd64/aero_virtio_net/*.{inf,sys,cat}
 ```
 
 You can build Guest Tools media (ISO + zip) using:

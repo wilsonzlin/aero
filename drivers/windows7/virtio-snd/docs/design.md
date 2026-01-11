@@ -17,7 +17,7 @@ design note ever disagrees with the contract, the contract wins.
 There are currently two **build/packaging variants** supported:
 
 1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement (`PCI\VEN_1AF4&DEV_1059&REV_01`)
-   as encoded by `inf/aero-virtio-snd.inf`.
+   as encoded by `inf/aero_virtio_snd.inf`.
 2. **QEMU compatibility (optional):** opt-in package for stock QEMU defaults as encoded by
     `inf/aero-virtio-snd-legacy.inf`.
 

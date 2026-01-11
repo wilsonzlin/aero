@@ -521,7 +521,7 @@ static bool IsAllowedVirtioSndPciHardwareId(const std::vector<std::wstring>& hwi
   return IsAllowedVirtioSndPciId(info, allow_transitional);
 }
 
-static constexpr const wchar_t* kVirtioSndExpectedServiceModern = L"aeroviosnd";
+static constexpr const wchar_t* kVirtioSndExpectedServiceModern = L"aero_virtio_snd";
 static constexpr const wchar_t* kVirtioSndExpectedServiceTransitional = L"aeroviosnd_legacy";
 
 static const char* CmProblemCodeToName(DWORD code) {

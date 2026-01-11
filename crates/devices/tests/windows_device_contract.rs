@@ -161,11 +161,11 @@ fn windows_device_contract_virtio_input_matches_pci_profile() {
     assert_eq!(VIRTIO_INPUT_KEYBOARD.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
         input.get("driver_service_name").and_then(|v| v.as_str()),
-        Some("virtioinput")
+        Some("aero_virtio_input")
     );
     assert_eq!(
         input.get("inf_name").and_then(|v| v.as_str()),
-        Some("virtio-input.inf")
+        Some("aero_virtio_input.inf")
     );
     assert_eq!(
         input.get("virtio_device_type").and_then(|v| v.as_u64()),
@@ -195,7 +195,7 @@ fn windows_device_contract_virtio_input_inf_installs_declared_service() {
         .expect("device entry missing inf_name");
 
     let inf_path = repo_root()
-        .join("drivers/windows/virtio-input")
+        .join("drivers/windows7/virtio-input/inf")
         .join(inf_name);
     assert!(
         inf_path.exists(),
@@ -231,11 +231,11 @@ fn windows_device_contract_virtio_snd_matches_pci_profile() {
     assert_eq!(VIRTIO_SND.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
         snd.get("driver_service_name").and_then(|v| v.as_str()),
-        Some("aeroviosnd")
+        Some("aero_virtio_snd")
     );
     assert_eq!(
         snd.get("inf_name").and_then(|v| v.as_str()),
-        Some("aero-virtio-snd.inf")
+        Some("aero_virtio_snd.inf")
     );
     assert_eq!(
         snd.get("virtio_device_type").and_then(|v| v.as_u64()),
@@ -261,11 +261,11 @@ fn windows_device_contract_virtio_blk_matches_pci_profile() {
     assert_eq!(VIRTIO_BLK.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
         blk.get("driver_service_name").and_then(|v| v.as_str()),
-        Some("aerovblk")
+        Some("aero_virtio_blk")
     );
     assert_eq!(
         blk.get("inf_name").and_then(|v| v.as_str()),
-        Some("aerovblk.inf")
+        Some("aero_virtio_blk.inf")
     );
     assert_eq!(
         blk.get("virtio_device_type").and_then(|v| v.as_u64()),
@@ -291,11 +291,11 @@ fn windows_device_contract_virtio_net_matches_pci_profile() {
     assert_eq!(VIRTIO_NET.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
         net.get("driver_service_name").and_then(|v| v.as_str()),
-        Some("aerovnet")
+        Some("aero_virtio_net")
     );
     assert_eq!(
         net.get("inf_name").and_then(|v| v.as_str()),
-        Some("aerovnet.inf")
+        Some("aero_virtio_net.inf")
     );
     assert_eq!(
         net.get("virtio_device_type").and_then(|v| v.as_u64()),

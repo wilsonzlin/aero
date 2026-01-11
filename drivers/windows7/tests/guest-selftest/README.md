@@ -37,9 +37,16 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
       - The Aero contract INF is strict and will not bind; install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
       - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
   - Validate that the PCI device is bound to the expected in-tree driver service and emit
+    - `PCI\VEN_1AF4&DEV_1059` (modern; strict INF matches `PCI\VEN_1AF4&DEV_1059&REV_01`)
+      - If the VM/device does not report `REV_01`, the Aero contract driver will not bind and the selftest will report binding diagnostics (for example `driver_not_bound` / `wrong_service`) and log that `REV_01` is missing.
+      - For QEMU-based testing with the strict contract-v1 package, you typically need `disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device so Windows enumerates `PCI\VEN_1AF4&DEV_1059&REV_01`.
+    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional PCI ID `PCI\VEN_1AF4&DEV_1018` (often `REV_00`).
+      - The Aero contract INF is strict and will not bind; install the opt-in transitional package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+      - Pass `--allow-virtio-snd-transitional` to accept the transitional ID (intended for QEMU bring-up/regression).
+  - Validate that the PCI device is bound to the expected in-tree driver service and emit
     actionable diagnostics (PNP instance ID, ConfigManagerErrorCode / Device Manager “Code X”, driver INF name
     when queryable).
-    - Contract v1 (`aero-virtio-snd.inf`): expects service `aeroviosnd`
+    - Contract v1 (`aero_virtio_snd.inf`): expects service `aero_virtio_snd`
     - QEMU compatibility package (`aero-virtio-snd-legacy.inf`): expects service `aeroviosnd_legacy`
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.

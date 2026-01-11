@@ -950,8 +950,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
     for (name, dev) in devices {
         // The repo contains multiple Windows driver trees (Win7, newer Windows, templates).
         // This validator is specifically for the Windows 7 contract. Most Win7 drivers live
-        // under `drivers/windows7/` (or `drivers/win7/`), but some Win7-targeted drivers are
-        // kept under `drivers/windows/` (for example: `drivers/windows/virtio-input`).
+        // under `drivers/windows7/` (or `drivers/win7/`). We also search `drivers/windows/`
+        // because some shared/legacy code still lives there, and older commits kept some
+        // Win7-targeted drivers under that tree.
         let search_roots: Vec<PathBuf> = if dev.device == "aero-gpu" {
             vec![repo_root.join("drivers/aerogpu/packaging/win7")]
         } else if dev.virtio_device_type.is_some() {

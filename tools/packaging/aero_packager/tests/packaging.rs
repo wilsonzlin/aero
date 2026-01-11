@@ -251,18 +251,18 @@ fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
     let iso_bytes = fs::read(&outputs.iso_path)?;
     let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
     for required in [
-        "drivers/x86/aerovblk/aerovblk.inf",
-        "drivers/x86/aerovblk/aerovblk.sys",
-        "drivers/x86/aerovblk/aerovblk.cat",
-        "drivers/x86/aerovnet/aerovnet.inf",
-        "drivers/x86/aerovnet/aerovnet.sys",
-        "drivers/x86/aerovnet/aerovnet.cat",
-        "drivers/amd64/aerovblk/aerovblk.inf",
-        "drivers/amd64/aerovblk/aerovblk.sys",
-        "drivers/amd64/aerovblk/aerovblk.cat",
-        "drivers/amd64/aerovnet/aerovnet.inf",
-        "drivers/amd64/aerovnet/aerovnet.sys",
-        "drivers/amd64/aerovnet/aerovnet.cat",
+        "drivers/x86/aero_virtio_blk/aero_virtio_blk.inf",
+        "drivers/x86/aero_virtio_blk/aero_virtio_blk.sys",
+        "drivers/x86/aero_virtio_blk/aero_virtio_blk.cat",
+        "drivers/x86/aero_virtio_net/aero_virtio_net.inf",
+        "drivers/x86/aero_virtio_net/aero_virtio_net.sys",
+        "drivers/x86/aero_virtio_net/aero_virtio_net.cat",
+        "drivers/amd64/aero_virtio_blk/aero_virtio_blk.inf",
+        "drivers/amd64/aero_virtio_blk/aero_virtio_blk.sys",
+        "drivers/amd64/aero_virtio_blk/aero_virtio_blk.cat",
+        "drivers/amd64/aero_virtio_net/aero_virtio_net.inf",
+        "drivers/amd64/aero_virtio_net/aero_virtio_net.sys",
+        "drivers/amd64/aero_virtio_net/aero_virtio_net.cat",
     ] {
         assert!(
             tree.contains(required),
