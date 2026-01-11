@@ -32,6 +32,20 @@ struct CmdLoc {
   size_t offset = 0;
 };
 
+size_t StreamBytesUsed(const uint8_t* buf, size_t len) {
+  if (!buf || len < sizeof(aerogpu_cmd_stream_header)) {
+    return 0;
+  }
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  const size_t used = static_cast<size_t>(stream->size_bytes);
+  if (used < sizeof(aerogpu_cmd_stream_header) || used > len) {
+    // Fall back to the provided buffer length when the header is malformed. Callers that require
+    // strict validation should call ValidateStream first.
+    return len;
+  }
+  return used;
+}
+
 bool ValidateStream(const uint8_t* buf, size_t len) {
   if (!Check(buf != nullptr, "stream buffer must be non-null")) {
     return false;
@@ -50,13 +64,19 @@ bool ValidateStream(const uint8_t* buf, size_t len) {
   if (!Check(stream->flags == AEROGPU_CMD_STREAM_FLAG_NONE, "stream flags")) {
     return false;
   }
-  if (!Check(stream->size_bytes == len, "stream size_bytes matches submitted length")) {
+  if (!Check(stream->size_bytes >= sizeof(aerogpu_cmd_stream_header), "stream size_bytes >= header")) {
+    return false;
+  }
+  // Forward-compat: allow the submission buffer to be larger than the stream header's declared
+  // size (the header carries bytes-used; trailing bytes are ignored).
+  if (!Check(stream->size_bytes <= len, "stream size_bytes within submitted length")) {
     return false;
   }
 
+  const size_t stream_len = static_cast<size_t>(stream->size_bytes);
   size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset < stream->size_bytes) {
-    if (!Check(stream->size_bytes - offset >= sizeof(aerogpu_cmd_hdr), "packet header fits")) {
+  while (offset < stream_len) {
+    if (!Check(stream_len - offset >= sizeof(aerogpu_cmd_hdr), "packet header fits")) {
       return false;
     }
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
@@ -66,7 +86,7 @@ bool ValidateStream(const uint8_t* buf, size_t len) {
     if (!Check((hdr->size_bytes & 3u) == 0, "packet size is 4-byte aligned")) {
       return false;
     }
-    if (!Check(hdr->size_bytes <= stream->size_bytes - offset, "packet size within stream")) {
+    if (!Check(hdr->size_bytes <= stream_len - offset, "packet size within stream")) {
       return false;
     }
     offset += hdr->size_bytes;
@@ -80,14 +100,15 @@ CmdLoc FindLastOpcode(const uint8_t* buf, size_t len, uint32_t opcode) {
     return loc;
   }
 
+  const size_t stream_len = StreamBytesUsed(buf, len);
   size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == opcode) {
       loc.hdr = hdr;
       loc.offset = offset;
     }
-    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > len - offset) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > stream_len - offset) {
       break;
     }
     offset += hdr->size_bytes;
@@ -100,14 +121,15 @@ size_t CountOpcode(const uint8_t* buf, size_t len, uint32_t opcode) {
     return 0;
   }
 
+  const size_t stream_len = StreamBytesUsed(buf, len);
   size_t count = 0;
   size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == opcode) {
       count++;
     }
-    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > len - offset) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > stream_len - offset) {
       break;
     }
     offset += hdr->size_bytes;
@@ -614,7 +636,7 @@ bool TestHostOwnedBufferUnmapUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned Unmap should not emit RESOURCE_DIRTY_RANGE")) {
@@ -722,7 +744,7 @@ bool TestHostOwnedTextureUnmapUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned tex2d Unmap should not emit RESOURCE_DIRTY_RANGE")) {
@@ -817,7 +839,7 @@ bool TestGuestBackedBufferUnmapDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed Unmap should not emit UPLOAD_RESOURCE")) {
@@ -937,7 +959,7 @@ bool TestGuestBackedTextureUnmapDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed tex2d Unmap should not emit UPLOAD_RESOURCE")) {
@@ -1323,7 +1345,7 @@ bool TestHostOwnedDynamicIABufferUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned dynamic ia Unmap should not emit RESOURCE_DIRTY_RANGE")) {
@@ -1417,7 +1439,7 @@ bool TestGuestBackedDynamicIABufferDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed dynamic ia Unmap should not emit UPLOAD_RESOURCE")) {
@@ -1548,7 +1570,7 @@ bool TestHostOwnedDynamicConstantBufferUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned dynamic CB Unmap should not emit RESOURCE_DIRTY_RANGE")) {
@@ -1642,7 +1664,7 @@ bool TestGuestBackedDynamicConstantBufferDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed dynamic CB Unmap should not emit UPLOAD_RESOURCE")) {
@@ -1759,7 +1781,7 @@ bool TestHostOwnedCopyResourceBufferReadback() {
     return false;
   }
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_BUFFER) == 1, "COPY_BUFFER emitted")) {
     return false;
@@ -1921,7 +1943,7 @@ bool TestHostOwnedCopyResourceTextureReadback() {
     return false;
   }
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D) == 1, "COPY_TEXTURE2D emitted")) {
     return false;
@@ -2061,7 +2083,7 @@ bool TestGuestBackedCopyResourceBufferReadback() {
     return false;
   }
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_BUFFER) == 1, "COPY_BUFFER emitted")) {
     return false;
@@ -2190,7 +2212,7 @@ bool TestGuestBackedCopyResourceTextureReadback() {
     return false;
   }
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_COPY_TEXTURE2D) == 1, "COPY_TEXTURE2D emitted")) {
     return false;
@@ -2241,7 +2263,7 @@ bool TestHostOwnedUpdateSubresourceUPBufferUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned UpdateSubresourceUP should not emit RESOURCE_DIRTY_RANGE")) {
@@ -2320,7 +2342,7 @@ bool TestGuestBackedUpdateSubresourceUPBufferDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed UpdateSubresourceUP should not emit UPLOAD_RESOURCE")) {
@@ -2415,7 +2437,7 @@ bool TestHostOwnedUpdateSubresourceUPTextureUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned tex2d UpdateSubresourceUP should not emit RESOURCE_DIRTY_RANGE")) {
@@ -2504,7 +2526,7 @@ bool TestGuestBackedUpdateSubresourceUPTextureDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed tex2d UpdateSubresourceUP should not emit UPLOAD_RESOURCE")) {
@@ -2613,7 +2635,7 @@ bool TestHostOwnedUpdateSubresourceUPBufferBoxUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned UpdateSubresourceUP(box) should not emit RESOURCE_DIRTY_RANGE")) {
@@ -2700,7 +2722,7 @@ bool TestHostOwnedUpdateSubresourceUPTextureBoxUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned tex2d UpdateSubresourceUP(box) should not emit RESOURCE_DIRTY_RANGE")) {
@@ -2778,7 +2800,7 @@ bool TestGuestBackedUpdateSubresourceUPBufferBoxDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed UpdateSubresourceUP(box) should not emit UPLOAD_RESOURCE")) {
@@ -2867,7 +2889,7 @@ bool TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed tex2d UpdateSubresourceUP(box) should not emit UPLOAD_RESOURCE")) {
@@ -2957,7 +2979,7 @@ bool TestHostOwnedCreateBufferInitialDataUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned CreateResource(initial) should not emit RESOURCE_DIRTY_RANGE")) {
@@ -3037,7 +3059,7 @@ bool TestGuestBackedCreateBufferInitialDataDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed CreateResource(initial) should not emit UPLOAD_RESOURCE")) {
@@ -3134,7 +3156,7 @@ bool TestHostOwnedCreateTextureInitialDataUploads() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
              "host-owned CreateResource(initial tex2d) should not emit RESOURCE_DIRTY_RANGE")) {
@@ -3224,7 +3246,7 @@ bool TestGuestBackedCreateTextureInitialDataDirtyRange() {
   }
 
   const uint8_t* stream = dev.harness.last_stream.data();
-  const size_t stream_len = dev.harness.last_stream.size();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
 
   if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
              "guest-backed CreateResource(initial tex2d) should not emit UPLOAD_RESOURCE")) {
