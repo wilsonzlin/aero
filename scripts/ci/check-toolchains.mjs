@@ -61,6 +61,12 @@ if (/\+nightly(?!-)/.test(wasmBuildScript)) {
 if (/env\.RUSTUP_TOOLCHAIN\s*=\s*["']/.test(wasmBuildScript)) {
     fail("web/scripts/build_wasm.mjs sets RUSTUP_TOOLCHAIN to a string literal (must come from scripts/toolchains.json).");
 }
+if (!/env\.RUSTUP_TOOLCHAIN\s*=\s*wasmThreadedToolchain\b/.test(wasmBuildScript)) {
+    fail(
+        "web/scripts/build_wasm.mjs must set env.RUSTUP_TOOLCHAIN from the pinned toolchain loaded from scripts/toolchains.json " +
+            "(expected assignment to wasmThreadedToolchain).",
+    );
+}
 
 const justfile = readFileSync(justfilePath, "utf8");
 if (!justfile.includes("scripts/toolchains.json") || !justfile.includes("nightlyWasm")) {
