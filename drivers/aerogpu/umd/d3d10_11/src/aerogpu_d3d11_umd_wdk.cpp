@@ -1258,12 +1258,23 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     HRESULT alloc_hr = CallCbMaybeHandle(cb->pfnAllocateCb, hrt_device11, hrt_device10, &alloc);
 
     void* dma_ptr = nullptr;
+    void* dma_buffer_ptr = nullptr;
+    void* command_buffer_ptr = nullptr;
+    D3DDDI_ALLOCATIONLIST* allocation_list_ptr = nullptr;
+    D3DDDI_PATCHLOCATIONLIST* patch_location_list_ptr = nullptr;
     UINT dma_cap = 0;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
-      dma_ptr = alloc.pDmaBuffer;
+      dma_buffer_ptr = alloc.pDmaBuffer;
     }
     __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
-      dma_ptr = alloc.pCommandBuffer;
+      command_buffer_ptr = alloc.pCommandBuffer;
+    }
+    dma_ptr = command_buffer_ptr ? command_buffer_ptr : dma_buffer_ptr;
+    __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
+      allocation_list_ptr = alloc.pAllocationList;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::pPatchLocationList) {
+      patch_location_list_ptr = alloc.pPatchLocationList;
     }
     __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
       dma_cap = alloc.DmaBufferSize;
@@ -1441,7 +1452,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         present.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
       }
       __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
-        present.pDmaBuffer = alloc.pDmaBuffer;
+        present.pDmaBuffer = dma_buffer_ptr ? dma_buffer_ptr : dma_ptr;
       }
       __if_exists(D3DDDICB_PRESENT::pCommandBuffer) {
         present.pCommandBuffer = dma_ptr;
@@ -1453,13 +1464,13 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         present.CommandLength = static_cast<UINT>(chunk_size);
       }
       __if_exists(D3DDDICB_PRESENT::pAllocationList) {
-        present.pAllocationList = alloc.pAllocationList;
+        present.pAllocationList = allocation_list_ptr;
       }
       __if_exists(D3DDDICB_PRESENT::AllocationListSize) {
         present.AllocationListSize = 0;
       }
       __if_exists(D3DDDICB_PRESENT::pPatchLocationList) {
-        present.pPatchLocationList = alloc.pPatchLocationList;
+        present.pPatchLocationList = patch_location_list_ptr;
       }
       __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
         present.PatchLocationListSize = 0;
@@ -1512,7 +1523,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         render.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
       }
       __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
-        render.pDmaBuffer = alloc.pDmaBuffer;
+        render.pDmaBuffer = dma_buffer_ptr ? dma_buffer_ptr : dma_ptr;
       }
       __if_exists(D3DDDICB_RENDER::pCommandBuffer) {
         render.pCommandBuffer = dma_ptr;
@@ -1524,13 +1535,13 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         render.CommandLength = static_cast<UINT>(chunk_size);
       }
       __if_exists(D3DDDICB_RENDER::pAllocationList) {
-        render.pAllocationList = alloc.pAllocationList;
+        render.pAllocationList = allocation_list_ptr;
       }
       __if_exists(D3DDDICB_RENDER::AllocationListSize) {
         render.AllocationListSize = 0;
       }
       __if_exists(D3DDDICB_RENDER::pPatchLocationList) {
-        render.pPatchLocationList = alloc.pPatchLocationList;
+        render.pPatchLocationList = patch_location_list_ptr;
       }
       __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
         render.PatchLocationListSize = 0;
