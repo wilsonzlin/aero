@@ -177,3 +177,40 @@ test("detect-node-dir: --allow-missing writes empty outputs (including GitHub ou
     fs.rmSync(temp.repoRoot, { recursive: true, force: true });
   }
 });
+
+test("detect-node-dir: creates parent directories for --github-output", () => {
+  const temp = setupTempRepo();
+  try {
+    writeJson(path.join(temp.repoRoot, "package.json"), { name: "root", version: "1.0.0" });
+    writeJson(path.join(temp.repoRoot, "package-lock.json"), { lockfileVersion: 3 });
+
+    const githubOutput = path.join(temp.repoRoot, "out", "github-output.txt");
+    assert.ok(!fs.existsSync(path.dirname(githubOutput)), "expected output directory to not exist yet");
+
+    const stdout = execFileSync(
+      process.execPath,
+      [temp.resolverPath, "--require-lockfile", "--github-output", githubOutput],
+      {
+        encoding: "utf8",
+        cwd: temp.repoRoot,
+        env: {
+          ...process.env,
+          AERO_NODE_DIR: "",
+          AERO_WEB_DIR: "",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const detected = parseKeyVal(stdout);
+    assert.equal(detected.dir, ".");
+    assert.equal(detected.lockfile, "package-lock.json");
+    assert.equal(detected.package_name, "root");
+    assert.equal(detected.package_version, "1.0.0");
+
+    assert.ok(fs.existsSync(githubOutput), "expected --github-output file to be created");
+    const fileOut = parseKeyVal(fs.readFileSync(githubOutput, "utf8"));
+    assert.deepEqual(fileOut, detected);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});

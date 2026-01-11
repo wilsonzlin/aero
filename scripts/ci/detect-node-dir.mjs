@@ -14,7 +14,7 @@
  * Logs are written to stderr.
  */
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,14 @@ function usageAndExit() {
 function die(message) {
     console.error(`error: ${message}`);
     process.exit(1);
+}
+
+function appendGithubOutput(githubOutputPath, lines) {
+    const dir = path.dirname(githubOutputPath);
+    if (dir && dir !== "." && !existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+    }
+    appendFileSync(githubOutputPath, lines, { encoding: "utf8" });
 }
 
 function toPosixPath(p) {
@@ -197,7 +205,7 @@ if (!workspaceAbs) {
             const lines = Object.entries(empty)
                 .map(([k, v]) => `${k}=${v}`)
                 .join("\n");
-            appendFileSync(githubOutputPath, `${lines}\n`, { encoding: "utf8" });
+            appendGithubOutput(githubOutputPath, `${lines}\n`);
         }
 
         console.error("[detect-node-dir] No package.json found; returning empty outputs (--allow-missing).");
@@ -252,7 +260,7 @@ if (githubOutputPath) {
     const lines = Object.entries(out)
         .map(([k, v]) => `${k}=${v}`)
         .join("\n");
-    appendFileSync(githubOutputPath, `${lines}\n`, { encoding: "utf8" });
+    appendGithubOutput(githubOutputPath, `${lines}\n`);
 }
 
 console.error(`[detect-node-dir] Resolved node dir '${out.dir}' via ${resolutionReason}.`);
