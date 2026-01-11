@@ -720,6 +720,37 @@ foreach ($target in $targets) {
     continue
   }
 
+  # If the target is a solution and it contains MakeFileProj/Makefile wrapper projects,
+  # build only the non-wrapper vcxproj projects. This avoids msbuild attempting to invoke
+  # legacy WDK 7.1 build.exe wrappers in CI while still allowing real MSBuild projects
+  # in the same solution to build.
+  $solutionBuildProjects = $null
+  $solutionSkippedMakefileProjects = $null
+  if (-not $IncludeMakefileProjects -and $target.Kind -eq 'sln') {
+    $vcxprojs = @(Get-SlnReferencedVcxprojPaths -SolutionPath $target.BuildPath)
+    if ($vcxprojs -and $vcxprojs.Count -gt 0) {
+      $buildable = New-Object System.Collections.Generic.List[string]
+      $makefileProjects = New-Object System.Collections.Generic.List[object]
+
+      foreach ($vcxproj in $vcxprojs) {
+        $markers = Get-VcxprojMakefileMarkers -VcxprojPath $vcxproj
+        if ($markers) {
+          [void]$makefileProjects.Add([pscustomobject]@{
+            Path = $vcxproj
+            Markers = $markers
+          })
+        } else {
+          [void]$buildable.Add($vcxproj)
+        }
+      }
+
+      if ($makefileProjects.Count -gt 0 -and $buildable.Count -gt 0) {
+        $solutionBuildProjects = $buildable.ToArray()
+        $solutionSkippedMakefileProjects = $makefileProjects.ToArray()
+      }
+    }
+  }
+
   foreach ($platform in $normalizedPlatforms) {
     if ($null -ne $toolchain) {
       Initialize-ToolchainEnvironment -Toolchain $toolchain -Platform $platform
@@ -733,43 +764,90 @@ foreach ($target in $targets) {
     Ensure-EmptyDirectory -Path $driverOutDir
     Ensure-EmptyDirectory -Path $driverObjDir
 
-    $logBase = Get-SafeFileName -Value $target.Name
-    $logFile = Join-Path $logRoot ("{0}-{1}.msbuild.log" -f $logBase, $arch)
-    $binLogFile = Join-Path $logRoot ("{0}-{1}.msbuild.binlog" -f $logBase, $arch)
-
     Write-Host ""
     Write-Host ("==> Building driver '{0}' ({1}) [{2}|{3}]" -f $target.Name, $target.Kind, $Configuration, $platform)
-    Write-Host ("    Project: {0}" -f $target.BuildPath)
     Write-Host ("    Output:  {0}" -f $driverOutDir)
 
-    $exitCode = Invoke-MSBuild `
-      -MSBuildPath $msbuild `
-      -ProjectOrSolutionPath $target.BuildPath `
-      -Configuration $Configuration `
-      -Platform $platform `
-      -OutDir $driverOutDir `
-      -ObjDir $driverObjDir `
-      -LogFile $logFile `
-      -BinLogFile $binLogFile
+    if ($solutionBuildProjects) {
+      Write-Host ("    Solution: {0}" -f $target.BuildPath)
+      Write-Host "    Skipping MakeFileProj wrapper project(s) in solution:"
+      foreach ($p in $solutionSkippedMakefileProjects) {
+        Write-Host ("      - skipping MakeFileProj wrapper project: {0} ({1})" -f $p.Path, $p.Markers)
+      }
 
-    $succeeded = ($exitCode -eq 0)
-    if (-not $succeeded) {
-      $failed = $true
-      Write-Host ("!! Build FAILED for driver '{0}' Platform={1} (exit code {2})" -f $target.Name, $platform, $exitCode)
-      Write-Host ("   MSBuild log:   {0}" -f $logFile)
-      Write-Host ("   MSBuild binlog:{0}" -f $binLogFile)
+      foreach ($projPath in $solutionBuildProjects) {
+        $projName = [IO.Path]::GetFileNameWithoutExtension($projPath)
+        $logBase = Get-SafeFileName -Value ("{0}-{1}" -f $target.Name, $projName)
+        $logFile = Join-Path $logRoot ("{0}-{1}.msbuild.log" -f $logBase, $arch)
+        $binLogFile = Join-Path $logRoot ("{0}-{1}.msbuild.binlog" -f $logBase, $arch)
+
+        Write-Host ("    -> Project: {0}" -f $projPath)
+
+        $exitCode = Invoke-MSBuild `
+          -MSBuildPath $msbuild `
+          -ProjectOrSolutionPath $projPath `
+          -Configuration $Configuration `
+          -Platform $platform `
+          -OutDir $driverOutDir `
+          -ObjDir $driverObjDir `
+          -LogFile $logFile `
+          -BinLogFile $binLogFile
+
+        $succeeded = ($exitCode -eq 0)
+        if (-not $succeeded) {
+          $failed = $true
+          Write-Host ("!! Build FAILED for driver '{0}' project '{1}' Platform={2} (exit code {3})" -f $target.Name, $projName, $platform, $exitCode)
+          Write-Host ("   MSBuild log:   {0}" -f $logFile)
+          Write-Host ("   MSBuild binlog:{0}" -f $binLogFile)
+        }
+
+        [void]$results.Add([pscustomobject]@{
+          Driver = $target.Name
+          Platform = $platform
+          Arch = $arch
+          OutputPath = $driverOutDir
+          Project = $projPath
+          Log = $logFile
+          BinLog = $binLogFile
+          Succeeded = $succeeded
+        })
+      }
+    } else {
+      Write-Host ("    Project: {0}" -f $target.BuildPath)
+
+      $logBase = Get-SafeFileName -Value $target.Name
+      $logFile = Join-Path $logRoot ("{0}-{1}.msbuild.log" -f $logBase, $arch)
+      $binLogFile = Join-Path $logRoot ("{0}-{1}.msbuild.binlog" -f $logBase, $arch)
+
+      $exitCode = Invoke-MSBuild `
+        -MSBuildPath $msbuild `
+        -ProjectOrSolutionPath $target.BuildPath `
+        -Configuration $Configuration `
+        -Platform $platform `
+        -OutDir $driverOutDir `
+        -ObjDir $driverObjDir `
+        -LogFile $logFile `
+        -BinLogFile $binLogFile
+
+      $succeeded = ($exitCode -eq 0)
+      if (-not $succeeded) {
+        $failed = $true
+        Write-Host ("!! Build FAILED for driver '{0}' Platform={1} (exit code {2})" -f $target.Name, $platform, $exitCode)
+        Write-Host ("   MSBuild log:   {0}" -f $logFile)
+        Write-Host ("   MSBuild binlog:{0}" -f $binLogFile)
+      }
+
+      [void]$results.Add([pscustomobject]@{
+        Driver = $target.Name
+        Platform = $platform
+        Arch = $arch
+        OutputPath = $driverOutDir
+        Project = $target.BuildPath
+        Log = $logFile
+        BinLog = $binLogFile
+        Succeeded = $succeeded
+      })
     }
-
-    [void]$results.Add([pscustomobject]@{
-      Driver = $target.Name
-      Platform = $platform
-      Arch = $arch
-      OutputPath = $driverOutDir
-      Project = $target.BuildPath
-      Log = $logFile
-      BinLog = $binLogFile
-      Succeeded = $succeeded
-    })
   }
 }
 
