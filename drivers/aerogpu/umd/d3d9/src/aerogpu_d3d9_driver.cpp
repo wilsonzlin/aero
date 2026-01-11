@@ -4078,15 +4078,25 @@ void wddm_deallocate_active_buffers(Device* dev) {
     }
   }
 
-  // Prevent use-after-free on any runtime-provided buffers. AllocateCb buffers
-  // are treated as per-submit: after DeallocateCb, force reacquisition.
-  dev->wddm_context.pCommandBuffer = nullptr;
-  dev->wddm_context.CommandBufferSize = 0;
-  dev->wddm_context.pAllocationList = nullptr;
-  dev->wddm_context.AllocationListSize = 0;
-  dev->wddm_context.pPatchLocationList = nullptr;
-  dev->wddm_context.PatchLocationListSize = 0;
-  if (dev->wddm_context.dma_priv_from_allocate) {
+  // Prevent use-after-free on any deallocated runtime-provided buffers.
+  //
+  // The runtime is allowed to rotate submit-buffer pointers in the submit
+  // callback out-params (pNewCommandBuffer/pNewAllocationList/...). Preserve any
+  // rotated pointers that do not alias the buffers we are deallocating so we can
+  // keep using them without forcing an extra Allocate/GetCommandBuffer roundtrip.
+  if (dev->wddm_context.pCommandBuffer == cmd_buffer || dev->wddm_context.pCommandBuffer == dma_buffer) {
+    dev->wddm_context.pCommandBuffer = nullptr;
+    dev->wddm_context.CommandBufferSize = 0;
+  }
+  if (dev->wddm_context.pAllocationList == alloc_list) {
+    dev->wddm_context.pAllocationList = nullptr;
+    dev->wddm_context.AllocationListSize = 0;
+  }
+  if (dev->wddm_context.pPatchLocationList == patch_list) {
+    dev->wddm_context.pPatchLocationList = nullptr;
+    dev->wddm_context.PatchLocationListSize = 0;
+  }
+  if (dev->wddm_context.pDmaBufferPrivateData == dma_priv) {
     dev->wddm_context.pDmaBufferPrivateData = nullptr;
     dev->wddm_context.DmaBufferPrivateDataSize = 0;
   }
