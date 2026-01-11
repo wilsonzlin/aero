@@ -1728,6 +1728,10 @@ function renderAudioPanel(): HTMLElement {
       stopLoopback();
 
       try {
+        // Ensure the static config (if any) has been loaded before starting the
+        // worker harness. Otherwise, `AeroConfigManager.init()` may emit an update
+        // after we start workers and trigger an avoidable worker restart.
+        await configInitPromise;
         workerCoordinator.start(configManager.getState().effective);
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
