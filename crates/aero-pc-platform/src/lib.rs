@@ -1,15 +1,15 @@
 #![forbid(unsafe_code)]
 
-use aero_audio::hda::{HdaController, HDA_MMIO_SIZE};
+use aero_audio::hda_pci::HdaPciDevice;
 use aero_devices::a20_gate::A20Gate;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
 use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciConfigPorts, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
-    PciResourceAllocator, PciResourceAllocatorConfig, PciSubsystemIds, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciConfigPorts, PciDevice, PciEcamConfig,
+    PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -57,24 +57,11 @@ struct HdaPciConfigDevice {
 
 impl HdaPciConfigDevice {
     fn new() -> Self {
-        let profile = aero_devices::pci::profile::HDA_ICH6;
-        let mut config =
-            aero_devices::pci::PciConfigSpace::new(profile.vendor_id, profile.device_id);
-        config.set_class_code(
-            profile.class.base_class,
-            profile.class.sub_class,
-            profile.class.prog_if,
-            profile.revision_id,
-        );
-        config.set_subsystem_ids(PciSubsystemIds {
-            subsystem_vendor_id: profile.subsystem_vendor_id,
-            subsystem_id: profile.subsystem_id,
-        });
-        config.write(0x0e, 1, u32::from(profile.header_type));
+        let mut config = aero_devices::pci::profile::HDA_ICH6.build_config_space();
         config.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: HDA_MMIO_SIZE as u32,
+                size: HdaPciDevice::MMIO_BAR_SIZE,
                 prefetchable: false,
             },
         );
@@ -94,16 +81,16 @@ impl PciDevice for HdaPciConfigDevice {
 
 #[derive(Clone)]
 struct HdaMmio {
-    hda: Rc<RefCell<HdaController>>,
+    hda: Rc<RefCell<HdaPciDevice>>,
 }
 
 impl MmioHandler for HdaMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
-        self.hda.borrow_mut().mmio_read(offset, size)
+        self.hda.borrow_mut().read(offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        self.hda.borrow_mut().mmio_write(offset, size, value);
+        self.hda.borrow_mut().write(offset, size, value);
     }
 }
 
@@ -222,7 +209,7 @@ pub struct PcPlatform {
     pub pci_intx: PciIntxRouter,
     pub acpi_pm: SharedAcpiPmIo,
 
-    pub hda: Option<Rc<RefCell<HdaController>>>,
+    pub hda: Option<Rc<RefCell<HdaPciDevice>>>,
 
     pci_allocator: PciResourceAllocator,
 
@@ -337,7 +324,7 @@ impl PcPlatform {
             let profile = aero_devices::pci::profile::HDA_ICH6;
             let bdf = profile.bdf;
 
-            let hda = Rc::new(RefCell::new(HdaController::new()));
+            let hda = Rc::new(RefCell::new(HdaPciDevice::new()));
 
             let mut dev = HdaPciConfigDevice::new();
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
@@ -374,7 +361,11 @@ impl PcPlatform {
             };
 
             memory
-                .map_mmio(bar0_base, HDA_MMIO_SIZE as u64, Box::new(HdaMmio { hda }))
+                .map_mmio(
+                    bar0_base,
+                    u64::from(HdaPciDevice::MMIO_BAR_SIZE),
+                    Box::new(HdaMmio { hda }),
+                )
                 .unwrap();
         }
 
@@ -445,7 +436,7 @@ impl PcPlatform {
         let mut mem = HdaDmaMemory {
             mem: RefCell::new(&mut self.memory),
         };
-        hda.process(&mut mem, output_frames);
+        hda.controller_mut().process(&mut mem, output_frames);
     }
 
     pub fn poll_pci_intx_lines(&mut self) {
