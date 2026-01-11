@@ -10,12 +10,17 @@ SMOKE_WASM_NAME="__aero_smoke_${PROJECT_NAME}.wasm"
 SMOKE_WASM_PATH="$SMOKE_FRONTEND_ROOT/assets/$SMOKE_WASM_NAME"
 SMOKE_WASM_DIR="$(dirname "$SMOKE_WASM_PATH")"
 SMOKE_WEBRTC_API_KEY="__aero_smoke_${PROJECT_NAME}"
+SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE=101
+SMOKE_WEBRTC_UDP_PORT_MIN=50000
+SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE - 1))
 
 compose() {
   AERO_DOMAIN=localhost \
     AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
+    WEBRTC_UDP_PORT_MIN="$SMOKE_WEBRTC_UDP_PORT_MIN" \
+    WEBRTC_UDP_PORT_MAX="$SMOKE_WEBRTC_UDP_PORT_MAX" \
     AERO_HSTS_MAX_AGE=0 \
     AERO_CSP_CONNECT_SRC_EXTRA= \
     AERO_L2_ALLOWED_ORIGINS_EXTRA= \
@@ -53,6 +58,49 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "deploy smoke: docker not found" >&2
   exit 1
 fi
+
+pick_udp_port_range() {
+  local size="$SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE"
+  local min_start=40000
+  local max_port=65535
+  local max_start=$((max_port - size + 1))
+
+  if [[ $max_start -le $min_start ]]; then
+    echo "deploy smoke: invalid WebRTC UDP port range size: $size" >&2
+    exit 1
+  fi
+
+  declare -A used_udp=()
+  if command -v ss >/dev/null 2>&1; then
+    while read -r addr _; do
+      local port="${addr##*:}"
+      if [[ $port =~ ^[0-9]+$ ]]; then
+        used_udp["$port"]=1
+      fi
+    done < <(ss -lunH | awk '{print $5}')
+  fi
+
+  for _ in $(seq 1 50); do
+    local start=$((min_start + RANDOM % (max_start - min_start + 1)))
+    local end=$((start + size - 1))
+    local ok=1
+    local p
+    for ((p = start; p <= end; p++)); do
+      if [[ -n "${used_udp[$p]:-}" ]]; then
+        ok=0
+        break
+      fi
+    done
+    if [[ $ok -eq 1 ]]; then
+      SMOKE_WEBRTC_UDP_PORT_MIN="$start"
+      SMOKE_WEBRTC_UDP_PORT_MAX="$end"
+      return 0
+    fi
+  done
+}
+
+pick_udp_port_range
+echo "deploy smoke: using WebRTC UDP port range ${SMOKE_WEBRTC_UDP_PORT_MIN}-${SMOKE_WEBRTC_UDP_PORT_MAX}" >&2
 
 mkdir -p "$SMOKE_WASM_DIR"
 # Minimal valid WebAssembly module header: \0asm + version 1.
