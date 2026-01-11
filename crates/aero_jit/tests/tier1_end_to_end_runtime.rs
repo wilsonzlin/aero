@@ -145,8 +145,7 @@ impl WasmiBackendInner {
                 Func::wrap(
                     &mut store,
                     |_caller: Caller<'_, ()>, _kind: i32, _rip: i64| -> i64 {
-                        // Sentinel mirrors `u64::MAX`.
-                        -1i64
+                        aero_jit::wasm::JIT_EXIT_SENTINEL_I64
                     },
                 ),
             )
@@ -211,7 +210,7 @@ impl WasmiBackendInner {
             .write(&mut self.store, CPU_PTR as usize, &cpu_bytes)
             .unwrap();
 
-        let next_rip = func.call(&mut self.store, CPU_PTR).unwrap() as u64;
+        let ret = func.call(&mut self.store, CPU_PTR).unwrap();
 
         // Read back guest memory.
         {
@@ -226,6 +225,13 @@ impl WasmiBackendInner {
             .read(&self.store, CPU_PTR as usize, &mut out_cpu_bytes)
             .unwrap();
         cpu.state = CpuState::read_from_mem(&out_cpu_bytes, 0);
+
+        let exit_to_interpreter = exit_to_interpreter || ret == aero_jit::wasm::JIT_EXIT_SENTINEL_I64;
+        let next_rip = if ret == aero_jit::wasm::JIT_EXIT_SENTINEL_I64 {
+            cpu.state.rip
+        } else {
+            ret as u64
+        };
 
         JitBlockExit {
             next_rip,

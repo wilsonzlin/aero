@@ -15,6 +15,7 @@ use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVers
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
 
 use crate::compiler::tier1::compile_tier1_block;
+use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::BlockLimits;
 
 /// Minimal interface a host CPU type must expose to execute Tier-1 WASM blocks.
@@ -75,6 +76,12 @@ impl<Cpu> WasmBackend<Cpu> {
 
     pub fn add_compiled_block(&mut self, wasm_bytes: &[u8]) -> u32 {
         self.0.borrow_mut().add_compiled_block(wasm_bytes)
+    }
+}
+
+impl<Cpu> Tier1WasmRegistry for WasmBackend<Cpu> {
+    fn register_tier1_block(&mut self, wasm: Vec<u8>, _exit_to_interpreter: bool) -> u32 {
+        self.add_compiled_block(&wasm)
     }
 }
 
