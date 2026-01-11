@@ -77,6 +77,35 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     await p;
   });
 
+  it("normalizes bigint ids from WASM actions before forwarding to the broker", async () => {
+    const port = new FakePort();
+
+    const rawActions = [{ kind: "bulkIn", id: 1n, endpoint: 1, length: 8 }];
+
+    const push_completion = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => rawActions),
+      push_completion,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+
+    expect(port.posted).toEqual([{ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 1, length: 8 } }]);
+
+    const completion: UsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) };
+    port.emit({ type: "usb.completion", completion });
+
+    await p;
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    expect(push_completion.mock.calls[0]?.[0]).toBe(completion);
+  });
+
   it("pushes usb.completion replies back into the WASM bridge (matching out of order by id)", async () => {
     const port = new FakePort();
 
