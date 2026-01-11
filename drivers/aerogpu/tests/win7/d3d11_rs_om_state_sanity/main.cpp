@@ -469,7 +469,58 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned long)expected_red);
     }
 
-    // Verify that the scissor rect is ignored when ScissorEnable is FALSE.
+    // Verify that RSSetState(NULL) restores the default rasterizer state, which has scissor disabled.
+    // Keep the scissor rect set to left-half; if ScissorEnable is still effectively TRUE, the draw will
+    // remain clipped and the outside pixel will stay red.
+    context->RSSetState(NULL);
+    context->RSSetScissorRects(1, &scissor);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor NULL state]", hr, device.get());
+    }
+
+    const uint32_t inside_null =
+        aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
+    const uint32_t outside_null =
+        aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
+
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_null_state.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: scissor-NULL-state BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+
+    context->Unmap(staging.get(), 0);
+
+    if ((inside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        (outside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      return aerogpu_test::Fail(kTestName,
+                                "scissor NULL state failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
+                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
+                                kHeight / 2,
+                                (unsigned long)inside_null,
+                                (unsigned long)expected_green,
+                                kWidth - 5,
+                                kHeight / 2,
+                                (unsigned long)outside_null,
+                                (unsigned long)expected_green);
+    }
+
+    // Verify that the scissor rect is ignored when ScissorEnable is FALSE (explicit rasterizer state).
     context->RSSetState(rs_no_cull.get());
     context->RSSetScissorRects(1, &scissor);
     context->ClearRenderTargetView(rtv.get(), clear_red);
@@ -515,54 +566,6 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 kWidth - 5,
                                 kHeight / 2,
                                 (unsigned long)outside_disabled,
-                                (unsigned long)expected_green);
-    }
-
-    // Verify that RSSetState(NULL) restores the default rasterizer state, which has scissor disabled.
-    context->RSSetState(NULL);
-    context->RSSetScissorRects(1, &scissor);
-    context->ClearRenderTargetView(rtv.get(), clear_red);
-    context->Draw(3, 0);
-
-    context->CopyResource(staging.get(), rt_tex.get());
-    context->Flush();
-
-    ZeroMemory(&map, sizeof(map));
-    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
-    if (FAILED(hr)) {
-      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor NULL state]", hr, device.get());
-    }
-
-    const uint32_t inside_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
-    const uint32_t outside_null =
-        aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
-
-    if (dump) {
-      std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(
-              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_null_state.bmp"),
-              kWidth,
-              kHeight,
-              map.pData,
-              (int)map.RowPitch,
-              &err)) {
-        aerogpu_test::PrintfStdout("INFO: %s: scissor-NULL-state BMP dump failed: %s", kTestName, err.c_str());
-      }
-    }
-
-    context->Unmap(staging.get(), 0);
-
-    if ((inside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
-        (outside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
-      return aerogpu_test::Fail(kTestName,
-                                "scissor NULL state failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
-                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
-                                kHeight / 2,
-                                (unsigned long)inside_null,
-                                (unsigned long)expected_green,
-                                kWidth - 5,
-                                kHeight / 2,
-                                (unsigned long)outside_null,
                                 (unsigned long)expected_green);
     }
   }
