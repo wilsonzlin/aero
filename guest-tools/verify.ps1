@@ -689,17 +689,34 @@ $gtConfig = Load-GuestToolsConfig $scriptDir
 
 $cfgVars = $gtConfig.vars
 $cfgVirtioBlkService = $null
-if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SERVICE")) { $cfgVirtioBlkService = $cfgVars["AERO_VIRTIO_BLK_SERVICE"] }
-$cfgVirtioBlkSys = $null
-if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SYS")) {
-    $cfgVirtioBlkSys = ("" + $cfgVars["AERO_VIRTIO_BLK_SYS"]).Trim()
-    if ($cfgVirtioBlkSys.Length -eq 0) { $cfgVirtioBlkSys = $null }
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SERVICE")) {
+    $cfgVirtioBlkService = ("" + $cfgVars["AERO_VIRTIO_BLK_SERVICE"]).Trim()
+    if ($cfgVirtioBlkService.Length -eq 0) { $cfgVirtioBlkService = $null }
 }
-
+$cfgVirtioNetService = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_NET_SERVICE")) {
+    $cfgVirtioNetService = ("" + $cfgVars["AERO_VIRTIO_NET_SERVICE"]).Trim()
+    if ($cfgVirtioNetService.Length -eq 0) { $cfgVirtioNetService = $null }
+}
 $cfgVirtioSndService = $null
 if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_SND_SERVICE")) {
     $cfgVirtioSndService = ("" + $cfgVars["AERO_VIRTIO_SND_SERVICE"]).Trim()
     if ($cfgVirtioSndService.Length -eq 0) { $cfgVirtioSndService = $null }
+}
+$cfgVirtioInputService = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_INPUT_SERVICE")) {
+    $cfgVirtioInputService = ("" + $cfgVars["AERO_VIRTIO_INPUT_SERVICE"]).Trim()
+    if ($cfgVirtioInputService.Length -eq 0) { $cfgVirtioInputService = $null }
+}
+$cfgGpuService = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_GPU_SERVICE")) {
+    $cfgGpuService = ("" + $cfgVars["AERO_GPU_SERVICE"]).Trim()
+    if ($cfgGpuService.Length -eq 0) { $cfgGpuService = $null }
+}
+$cfgVirtioBlkSys = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SYS")) {
+    $cfgVirtioBlkSys = ("" + $cfgVars["AERO_VIRTIO_BLK_SYS"]).Trim()
+    if ($cfgVirtioBlkSys.Length -eq 0) { $cfgVirtioBlkSys = $null }
 }
 $cfgVirtioSndSys = $null
 if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_SND_SYS")) {
@@ -1580,7 +1597,13 @@ try {
     $pnp = Invoke-Capture "pnputil.exe" @("-e")
     $raw = $pnp.output
 
-    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","viosnd","aerosnd","virtiosnd","aeroviosnd","1af4")
+    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","viosnd","aerosnd","virtiosnd","aeroviosnd")
+    foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
+        if ($s -and ("" + $s).Trim().Length -gt 0) {
+            $kw = ("" + $s).Trim().ToLower()
+            if (-not ($keywords -contains $kw)) { $keywords += $kw }
+        }
+    }
     $blocks = @()
     if ($raw) {
         # Split on blank lines (package blocks).
@@ -1694,16 +1717,11 @@ try {
     $devconPath = Join-Path $devconDir "devcon.exe"
 
     $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","AeroGPU","aerogpu","aero-gpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput")
-    if ($cfgVirtioBlkService) { $svcCandidates = @($cfgVirtioBlkService) + $svcCandidates }
-    if ($cfgVirtioSndService) { $svcCandidates = @($cfgVirtioSndService) + $svcCandidates }
+    foreach ($s in @($cfgVirtioBlkService,$cfgVirtioNetService,$cfgVirtioSndService,$cfgVirtioInputService,$cfgGpuService)) {
+        if ($s -and ("" + $s).Trim().Length -gt 0) { $svcCandidates = @((("" + $s).Trim())) + $svcCandidates }
+    }
     $svcCandidates = Dedup-CaseInsensitive $svcCandidates
-
-    # Heuristic keywords used to identify Aero/virtio devices in WMI output.
-    #
-    # Includes AeroGPU PCI vendor IDs:
-    # - A3A0: canonical / current AeroGPU ABI (`drivers/aerogpu/protocol/aerogpu_pci.h`)
-    # - 1AED: legacy bring-up ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
-    $kw = @("aero","virtio","1af4","a3a0","1aed")
+    $kw = @("aero","virtio")
 
     $signedDriverMap = @{}
     $signedDrivers = Try-GetWmi "Win32_PnPSignedDriver" ""
@@ -1736,8 +1754,7 @@ try {
             $svc = "" + $d.Service
 
             $relevant = $false
-            if ($pnpid -match '(?i)(VEN_1AF4|VID_1AF4|VEN_A3A0|VID_A3A0|VEN_1AED|VID_1AED|VIRTIO|AERO)') { $relevant = $true }
-            if (-not $relevant -and $pnpid) {
+            if ($pnpid) {
                 foreach ($rx in @($cfgVirtioBlkRegex,$cfgVirtioNetRegex,$cfgVirtioSndRegex,$cfgVirtioInputRegex,$cfgGpuRegex)) {
                     if ($rx -and $pnpid -match $rx) { $relevant = $true; break }
                 }
@@ -1838,20 +1855,22 @@ try {
     # These are intentionally WARN (not FAIL) when missing, since the guest might still be
     # using baseline devices (AHCI/e1000/VGA/PS2) even if Guest Tools are installed.
 
-    $hwidVendorFallback = '(?i)(VEN_1AF4|VID_1AF4)'
     $blkRegex = $cfgVirtioBlkRegex
     $netRegex = $cfgVirtioNetRegex
     $sndRegex = $cfgVirtioSndRegex
     $inputRegex = $cfgVirtioInputRegex
     $gpuRegex = $cfgGpuRegex
-    if (-not $blkRegex) { $blkRegex = $hwidVendorFallback }
-    if (-not $netRegex) { $netRegex = $hwidVendorFallback }
-    if (-not $sndRegex) { $sndRegex = $hwidVendorFallback }
-    if (-not $inputRegex) { $inputRegex = $hwidVendorFallback }
-    if (-not $gpuRegex) { $gpuRegex = '(?i)(VEN_A3A0|VID_A3A0|VEN_1AED|VID_1AED|VEN_1AF4|VID_1AF4)' }
 
     $storageServiceCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
     if ($cfgVirtioBlkService) { $storageServiceCandidates = @($cfgVirtioBlkService) + $storageServiceCandidates }
+    $networkServiceCandidates = @("vionet","netkvm")
+    if ($cfgVirtioNetService) { $networkServiceCandidates = @($cfgVirtioNetService) + $networkServiceCandidates }
+    $graphicsServiceCandidates = @("viogpu","aerogpu","aero-gpu")
+    if ($cfgGpuService) { $graphicsServiceCandidates = @($cfgGpuService) + $graphicsServiceCandidates }
+    $audioServiceCandidates = @("viosnd","aerosnd")
+    if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
+    $inputServiceCandidates = @("vioinput","aeroinput")
+    if ($cfgVirtioInputService) { $inputServiceCandidates = @($cfgVirtioInputService) + $inputServiceCandidates }
 
     Add-DeviceBindingCheck `
         "device_binding_storage" `
@@ -1867,7 +1886,7 @@ try {
         "device_binding_network" `
         "Device Binding: Network (virtio-net)" `
         $devices `
-        @("vionet","netkvm") `
+        $networkServiceCandidates `
         @("NET") `
         $netRegex `
         @("virtio","aero") `
@@ -1877,7 +1896,7 @@ try {
         "device_binding_graphics" `
         "Device Binding: Graphics (Aero GPU / virtio-gpu)" `
         $devices `
-        @("viogpu","aerogpu","aero-gpu") `
+        $graphicsServiceCandidates `
         @("DISPLAY") `
         $gpuRegex `
         @("aero","virtio","gpu") `
@@ -1888,7 +1907,7 @@ try {
         $gpuDetected = $false
         foreach ($d in $devices) {
             $pnpid = "" + $d.pnp_device_id
-            if ($pnpid -and ($pnpid -match '(?i)^PCI\\VEN_(A3A0|1AED)&DEV_0001')) {
+            if ($pnpid -and $gpuRegex -and ($pnpid -match $gpuRegex)) {
                 $gpuDetected = $true
                 break
             }
@@ -1964,7 +1983,7 @@ try {
         "device_binding_input" `
         "Device Binding: Input (virtio-input)" `
         $devices `
-        @("vioinput","aeroinput") `
+        $inputServiceCandidates `
         @("HIDClass","Keyboard","Mouse") `
         $inputRegex `
         @("aero","virtio","input") `

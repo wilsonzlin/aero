@@ -11,6 +11,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     let drivers_dir = testdata.join("drivers");
     let guest_tools_dir = testdata.join("guest-tools");
     let spec_path = testdata.join("spec.json");
+    let windows_device_contract_path = device_contract_path();
 
     let out1 = tempfile::tempdir()?;
     let out2 = tempfile::tempdir()?;
@@ -18,6 +19,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     let config1 = aero_packager::PackageConfig {
         drivers_dir: drivers_dir.clone(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: windows_device_contract_path.clone(),
         out_dir: out1.path().to_path_buf(),
         spec_path: spec_path.clone(),
         version: "1.2.3".to_string(),
@@ -221,6 +223,7 @@ fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "1.2.3".to_string(),
@@ -333,6 +336,7 @@ fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
     let config = aero_packager::PackageConfig {
         drivers_dir: drivers_tmp.path().to_path_buf(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -427,6 +431,7 @@ fn optional_drivers_are_validated_when_present() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir: drivers_tmp.path().to_path_buf(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -507,6 +512,7 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
         let config = aero_packager::PackageConfig {
             drivers_dir: drivers_tmp.path().to_path_buf(),
             guest_tools_dir: guest_tools_dir.clone(),
+            windows_device_contract_path: device_contract_path(),
             out_dir: out_dir.path().to_path_buf(),
             spec_path: spec_path.clone(),
             version: "0.0.0".to_string(),
@@ -553,6 +559,7 @@ fn package_rejects_private_key_materials_in_licenses_dir() -> anyhow::Result<()>
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out_dir.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -583,6 +590,7 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
     let config_base = aero_packager::PackageConfig {
         drivers_dir: drivers_dir.clone(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out_base.path().to_path_buf(),
         spec_path: spec_path.clone(),
         version: "1.2.3".to_string(),
@@ -666,6 +674,7 @@ fn driver_dll_extensions_are_handled_case_insensitively() -> anyhow::Result<()> 
     let config = aero_packager::PackageConfig {
         drivers_dir: drivers_tmp.path().to_path_buf(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -714,6 +723,7 @@ fn copyinf_directives_are_validated() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir: drivers_tmp.path().to_path_buf(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -794,6 +804,7 @@ fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Resul
     let config_base = aero_packager::PackageConfig {
         drivers_dir: drivers_dir.clone(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out_base.path().to_path_buf(),
         spec_path: spec_path.clone(),
         version: "1.2.3".to_string(),
@@ -866,6 +877,7 @@ fn package_outputs_allow_empty_certs_when_signing_policy_none() -> anyhow::Resul
     let config1 = aero_packager::PackageConfig {
         drivers_dir: drivers_dir.clone(),
         guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out1.path().to_path_buf(),
         spec_path: spec_path.clone(),
         version: "1.2.3".to_string(),
@@ -928,6 +940,7 @@ fn package_outputs_allow_missing_certs_dir_when_signing_policy_none() -> anyhow:
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "1.2.3".to_string(),
@@ -960,6 +973,7 @@ fn packaging_fails_when_signing_policy_requires_certs_but_none_present() -> anyh
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "1.2.3".to_string(),
@@ -1009,6 +1023,7 @@ fn duplicate_driver_names_in_spec_are_rejected() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -1053,6 +1068,7 @@ fn driver_names_with_whitespace_are_rejected() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -1089,6 +1105,7 @@ fn empty_driver_list_is_rejected() -> anyhow::Result<()> {
     let config = aero_packager::PackageConfig {
         drivers_dir,
         guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
         out_dir: out.path().to_path_buf(),
         spec_path,
         version: "0.0.0".to_string(),
@@ -1121,4 +1138,13 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<
         }
     }
     Ok(())
+}
+
+fn device_contract_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+        .join("docs")
+        .join("windows-device-contract.json")
 }

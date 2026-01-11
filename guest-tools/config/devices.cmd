@@ -1,57 +1,29 @@
 @echo off
-rem This file is sourced by guest-tools\setup.cmd and guest-tools\uninstall.cmd.
-rem Keep these values in sync with:
-rem - emulator-presented PCI IDs
-rem - the driver INFs (Hardware IDs / Compatible IDs)
-rem - the storage driver's service name (INF AddService name)
-rem - docs/windows-device-contract.json (intended source of truth)
+rem This file is GENERATED from docs/windows-device-contract.json.
+rem Do not edit by hand.
 
 rem ---------------------------
 rem Boot-critical storage (virtio-blk)
 rem ---------------------------
 
-rem Service name for the virtio-blk storage miniport.
-rem This MUST match the INF AddService name for the storage driver.
-rem Default aligns with the Aero in-tree virtio-blk driver (`aerovblk.inf`).
 set "AERO_VIRTIO_BLK_SERVICE=aerovblk"
-
-rem Optional explicit .sys name for the storage driver.
-rem If empty, setup.cmd assumes "<service>.sys".
 set "AERO_VIRTIO_BLK_SYS="
-
-rem Space-separated list of PCI hardware IDs for virtio-blk.
-rem Aero virtio contract v1 is virtio-pci modern-only (DEV_1042) with PCI Revision ID 0x01.
-rem Note: IDs are individually quoted so the value can safely contain `&` characters.
-set AERO_VIRTIO_BLK_HWIDS="PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01" "PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4" "PCI\VEN_1AF4&DEV_1042&REV_01" "PCI\VEN_1AF4&DEV_1042"
+set AERO_VIRTIO_BLK_HWIDS="PCI\VEN_1AF4&DEV_1042" "PCI\VEN_1AF4&DEV_1042&REV_01" "PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4" "PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01"
 
 rem ---------------------------
-rem Non-boot-critical devices (used for documentation / potential future checks)
+rem Network / input / sound
 rem ---------------------------
 
-rem Service name for the virtio-snd audio driver.
-rem Used by verify.ps1 to confirm device binding.
-rem Default aligns with upstream virtio-win (`viosnd`), but verify.ps1 also checks
-rem common clean-room/Aero candidates (e.g. `virtiosnd`, `aeroviosnd`).
-set "AERO_VIRTIO_SND_SERVICE=viosnd"
+set "AERO_VIRTIO_NET_SERVICE=aerovnet"
+set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1041" "PCI\VEN_1AF4&DEV_1041&REV_01" "PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4" "PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01"
+set "AERO_VIRTIO_INPUT_SERVICE=aerovioinput"
+set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1052" "PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4" "PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4"
+set "AERO_VIRTIO_SND_SERVICE=aeroviosnd"
+set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1059" "PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4"
 
-rem Optional explicit .sys name for the virtio-snd driver.
-rem If empty, tools assume "<service>.sys".
-set "AERO_VIRTIO_SND_SYS="
+rem ---------------------------
+rem Aero GPU
+rem ---------------------------
 
-set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01" "PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4" "PCI\VEN_1AF4&DEV_1041&REV_01" "PCI\VEN_1AF4&DEV_1041"
-set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1011" "PCI\VEN_1AF4&DEV_1052"
-set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1059"
-
-rem Aero WDDM GPU stack (AeroGPU).
-rem Must match emulator-presented IDs and the AeroGPU display driver INF.
-rem
-rem AeroGPU should present this HWID:
-rem   - PCI\VEN_A3A0&DEV_0001  (canonical / current)
-rem
-rem The legacy bring-up device model uses `PCI\VEN_1AED&DEV_0001`, but the shipped Win7 AeroGPU
-rem INFs intentionally bind only to `PCI\VEN_A3A0&DEV_0001` (to discourage accidental installs
-rem against the legacy device model). If you are using the legacy device model, install using a
-rem custom INF that matches `PCI\VEN_1AED&DEV_0001`.
-rem Note: the older 1AE0-family vendor ID is stale/deprecated; keep it out of Guest Tools config.
-rem Note: IDs are individually quoted so the value can safely contain `&` characters.
-set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001"
+set "AERO_GPU_SERVICE=AeroGPU"
+set AERO_GPU_HWIDS="PCI\VEN_A3A0&DEV_0001" "PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"

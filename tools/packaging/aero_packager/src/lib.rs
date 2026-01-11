@@ -1,6 +1,8 @@
 mod iso9660;
+mod guest_tools_config;
 mod manifest;
 mod spec;
+mod windows_device_contract;
 mod zip_util;
 
 use anyhow::{bail, Context, Result};
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub use iso9660::read_joliet_file_entries;
 pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
+pub use guest_tools_config::generate_guest_tools_devices_cmd_bytes;
 pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
 pub use spec::{DriverSpec, PackagingSpec};
 
@@ -20,6 +23,7 @@ pub use spec::{DriverSpec, PackagingSpec};
 pub struct PackageConfig {
     pub drivers_dir: PathBuf,
     pub guest_tools_dir: PathBuf,
+    pub windows_device_contract_path: PathBuf,
     pub out_dir: PathBuf,
     pub spec_path: PathBuf,
     pub version: String,
@@ -147,15 +151,6 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
         });
     }
 
-    // Guest tools config (expected device IDs / service names).
-    // setup.cmd requires this for boot-critical virtio-blk pre-seeding.
-    let config_devices = config.guest_tools_dir.join("config").join("devices.cmd");
-    if !config_devices.is_file() {
-        bail!(
-            "guest tools missing required file: {}",
-            config_devices.to_string_lossy()
-        );
-    }
     let config_dir = config.guest_tools_dir.join("config");
     if !config_dir.is_dir() {
         bail!(
@@ -163,13 +158,19 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
             config_dir.to_string_lossy()
         );
     }
-    let devices_cmd = config_dir.join("devices.cmd");
-    if !devices_cmd.is_file() {
-        bail!(
-            "guest tools missing required config file: {}",
-            devices_cmd.to_string_lossy()
-        );
-    }
+
+    let devices_cmd_bytes =
+        generate_guest_tools_devices_cmd_bytes(&config.windows_device_contract_path)
+            .with_context(|| {
+                format!(
+                    "generate config/devices.cmd from {}",
+                    config.windows_device_contract_path.display()
+                )
+            })?;
+    out.push(FileToPackage {
+        rel_path: "config/devices.cmd".to_string(),
+        bytes: devices_cmd_bytes,
+    });
     for entry in walkdir::WalkDir::new(&config_dir)
         .follow_links(false)
         .sort_by_file_name()
@@ -190,6 +191,9 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
             .strip_prefix(&config.guest_tools_dir)
             .expect("walkdir under guest_tools_dir");
         let rel_str = path_to_slash(rel);
+        if rel_str.eq_ignore_ascii_case("config/devices.cmd") {
+            continue;
+        }
         out.push(FileToPackage {
             rel_path: rel_str,
             bytes: fs::read(entry.path())

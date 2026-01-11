@@ -23,6 +23,12 @@ struct Cli {
     #[arg(long)]
     spec: PathBuf,
 
+    /// Machine-readable device contract used to generate `config/devices.cmd`.
+    ///
+    /// If omitted, defaults to `../docs/windows-device-contract.json` relative to `--guest-tools-dir`.
+    #[arg(long)]
+    windows_device_contract: Option<PathBuf>,
+
     /// Version string to embed in manifest.json.
     #[arg(long, default_value = "0.0.0")]
     version: String,
@@ -59,9 +65,22 @@ fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var("SOURCE_DATE_EPOCH").ok()?.parse().ok())
         .unwrap_or(0);
 
+    let windows_device_contract_path = match cli.windows_device_contract {
+        Some(p) => p,
+        None => {
+            let base = cli
+                .guest_tools_dir
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            base.join("docs").join("windows-device-contract.json")
+        }
+    };
+
     let config = aero_packager::PackageConfig {
         drivers_dir: cli.drivers_dir,
         guest_tools_dir: cli.guest_tools_dir,
+        windows_device_contract_path,
         out_dir: cli.out_dir,
         spec_path: cli.spec,
         version: cli.version,
