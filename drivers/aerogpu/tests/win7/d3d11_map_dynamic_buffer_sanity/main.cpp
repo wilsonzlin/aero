@@ -26,6 +26,39 @@ static uint8_t PatternByte(size_t i) {
   return (uint8_t)((i * 131u + 7u) & 0xFFu);
 }
 
+static void DumpBytesToFileIfRequested(const char* test_name,
+                                       const wchar_t* file_name,
+                                       const void* data,
+                                       UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+  }
+  CloseHandle(h);
+}
+
 static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_map_dynamic_buffer_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -156,6 +189,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   }
 
   const UINT kByteWidth = 4096;
+  const size_t kOverwriteStart = kByteWidth / 2;
 
   D3D11_BUFFER_DESC dyn_desc;
   ZeroMemory(&dyn_desc, sizeof(dyn_desc));
@@ -179,6 +213,27 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ID3D11Buffer* vbs[] = {dynamic_buf.get()};
   context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
 
+  D3D11_BUFFER_DESC st_desc;
+  ZeroMemory(&st_desc, sizeof(st_desc));
+  st_desc.ByteWidth = kByteWidth;
+  st_desc.Usage = D3D11_USAGE_STAGING;
+  st_desc.BindFlags = 0;
+  st_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  st_desc.MiscFlags = 0;
+  st_desc.StructureByteStride = 0;
+
+  ComPtr<ID3D11Buffer> staging_a;
+  hr = device->CreateBuffer(&st_desc, NULL, staging_a.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging_a)", hr);
+  }
+
+  ComPtr<ID3D11Buffer> staging_b;
+  hr = device->CreateBuffer(&st_desc, NULL, staging_b.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging_b)", hr);
+  }
+
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
@@ -197,6 +252,27 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
 
   context->Unmap(dynamic_buf.get(), 0);
 
+  // Queue a GPU copy of the first DISCARD upload, then DISCARD again before flushing. A correct
+  // implementation must ensure the first copy reads the first set of bytes even if the second DISCARD
+  // map happens before the GPU executes.
+  context->CopyResource(staging_a.get(), dynamic_buf.get());
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic, WRITE_DISCARD #2)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(dynamic_buf.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(dynamic, WRITE_DISCARD #2) returned NULL pData");
+  }
+
+  uint8_t* dst_b = (uint8_t*)map.pData;
+  for (size_t i = 0; i < kByteWidth; ++i) {
+    dst_b[i] = (uint8_t)(PatternByte(i) ^ 0xC3u);
+  }
+  context->Unmap(dynamic_buf.get(), 0);
+
   // Also exercise WRITE_NO_OVERWRITE (common path in real apps using ring-buffered dynamic vertex
   // buffers).
   ZeroMemory(&map, sizeof(map));
@@ -209,83 +285,81 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "Map(dynamic, WRITE_NO_OVERWRITE) returned NULL pData");
   }
 
-  const size_t kOverwriteStart = kByteWidth / 2;
   uint8_t* dst2 = (uint8_t*)map.pData;
   for (size_t i = kOverwriteStart; i < kByteWidth; ++i) {
-    dst2[i] = (uint8_t)(PatternByte(i) ^ 0x5Au);
+    dst2[i] = (uint8_t)((PatternByte(i) ^ 0xC3u) ^ 0x5Au);
   }
   context->Unmap(dynamic_buf.get(), 0);
 
-  D3D11_BUFFER_DESC st_desc;
-  ZeroMemory(&st_desc, sizeof(st_desc));
-  st_desc.ByteWidth = kByteWidth;
-  st_desc.Usage = D3D11_USAGE_STAGING;
-  st_desc.BindFlags = 0;
-  st_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-  st_desc.MiscFlags = 0;
-  st_desc.StructureByteStride = 0;
-
-  ComPtr<ID3D11Buffer> staging_buf;
-  hr = device->CreateBuffer(&st_desc, NULL, staging_buf.put());
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging)", hr);
-  }
-
-  context->CopyResource(staging_buf.get(), dynamic_buf.get());
+  context->CopyResource(staging_b.get(), dynamic_buf.get());
   context->Flush();
 
+  // Verify the first copy sees the original DISCARD contents.
   ZeroMemory(&map, sizeof(map));
-  hr = context->Map(staging_buf.get(), 0, D3D11_MAP_READ, 0, &map);
+  hr = context->Map(staging_a.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging, READ)", hr, device.get());
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging_a, READ)", hr, device.get());
   }
   if (!map.pData) {
-    context->Unmap(staging_buf.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging, READ) returned NULL pData");
+    context->Unmap(staging_a.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging_a, READ) returned NULL pData");
   }
 
   if (dump) {
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring path = aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity.bin");
-    HANDLE h = CreateFileW(
-        path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) {
-      aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW failed: %s",
-                                 kTestName,
-                                 aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
-    } else {
-      DWORD written = 0;
-      if (!WriteFile(h, map.pData, kByteWidth, &written, NULL) || written != kByteWidth) {
-        aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile failed: %s",
-                                   kTestName,
-                                   aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
-      } else {
-        aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
-                                   kTestName,
-                                   (unsigned)kByteWidth,
-                                   path.c_str());
-      }
-      CloseHandle(h);
-    }
+    DumpBytesToFileIfRequested(kTestName,
+                               L"d3d11_map_dynamic_buffer_sanity_discard0.bin",
+                               map.pData,
+                               kByteWidth);
   }
 
   const uint8_t* got = (const uint8_t*)map.pData;
   for (size_t i = 0; i < kByteWidth; ++i) {
-    uint8_t expected = PatternByte(i);
-    if (i >= kOverwriteStart) {
-      expected = (uint8_t)(expected ^ 0x5Au);
-    }
+    const uint8_t expected = PatternByte(i);
     if (got[i] != expected) {
-      context->Unmap(staging_buf.get(), 0);
+      context->Unmap(staging_a.get(), 0);
       return aerogpu_test::Fail(kTestName,
-                                "byte mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                                "staging_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
                                 (unsigned long)i,
                                 (unsigned)got[i],
                                 (unsigned)expected);
     }
   }
 
-  context->Unmap(staging_buf.get(), 0);
+  context->Unmap(staging_a.get(), 0);
+
+  // Verify the final contents (second DISCARD + NO_OVERWRITE update).
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(staging_b.get(), 0, D3D11_MAP_READ, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging_b, READ)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging_b.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging_b, READ) returned NULL pData");
+  }
+  if (dump) {
+    // Keep the original dump name for the final buffer contents.
+    DumpBytesToFileIfRequested(
+        kTestName, L"d3d11_map_dynamic_buffer_sanity.bin", map.pData, kByteWidth);
+  }
+
+  got = (const uint8_t*)map.pData;
+  for (size_t i = 0; i < kByteWidth; ++i) {
+    uint8_t expected = (uint8_t)(PatternByte(i) ^ 0xC3u);
+    if (i >= kOverwriteStart) {
+      expected = (uint8_t)(expected ^ 0x5Au);
+    }
+    if (got[i] != expected) {
+      context->Unmap(staging_b.get(), 0);
+      return aerogpu_test::Fail(kTestName,
+                                "staging_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                                (unsigned long)i,
+                                (unsigned)got[i],
+                                (unsigned)expected);
+    }
+  }
+
+  context->Unmap(staging_b.get(), 0);
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
