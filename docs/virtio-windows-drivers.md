@@ -257,6 +257,7 @@ Notes:
 - `tools/virtio-win/extract.py` prefers `7z` (install `p7zip-full` on Ubuntu/Debian or `p7zip` via Homebrew on macOS).
   If you don’t have `7z`, install `pycdlib` (`python3 -m pip install pycdlib`) and pass `--backend pycdlib`.
 - `drivers/scripts/make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
+- See `tools/virtio-win/README.md` for details (what is extracted, backends, provenance fields).
 
 `tools/virtio-win/extract.py` also writes a machine-readable provenance file to:
 
