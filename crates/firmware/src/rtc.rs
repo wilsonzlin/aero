@@ -17,6 +17,13 @@ fn from_bcd(value: u8) -> Option<u8> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RtcError {
+    InvalidDate,
+    InvalidTimeOfDay,
+    InvalidCmosField,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DateTime {
     pub year: u16,
     pub month: u8,
@@ -25,14 +32,6 @@ pub struct DateTime {
     pub minute: u8,
     pub second: u8,
     pub nanosecond: u32,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum RtcError {
-    InvalidMonth,
-    InvalidDay,
-    InvalidTimeOfDay,
-    InvalidCmosField,
 }
 
 impl DateTime {
@@ -73,11 +72,11 @@ impl DateTime {
 
     pub fn set_date(&mut self, year: u16, month: u8, day: u8) -> Result<(), RtcError> {
         if !(1..=12).contains(&month) {
-            return Err(RtcError::InvalidMonth);
+            return Err(RtcError::InvalidDate);
         }
         let dim = days_in_month(year, month);
         if day == 0 || day > dim {
-            return Err(RtcError::InvalidDay);
+            return Err(RtcError::InvalidDate);
         }
         self.year = year;
         self.month = month;
@@ -284,7 +283,7 @@ impl CmosRtc {
             .decode_field(second)
             .ok_or(RtcError::InvalidCmosField)?;
         if minute >= 60 || second >= 60 {
-            return Err(RtcError::InvalidTimeOfDay);
+            return Err(RtcError::InvalidCmosField);
         }
 
         self.daylight_savings = daylight_savings != 0;
@@ -305,7 +304,9 @@ impl CmosRtc {
             .decode_field(century)
             .ok_or(RtcError::InvalidCmosField)?;
         let year = self.decode_field(year).ok_or(RtcError::InvalidCmosField)?;
-        let month = self.decode_field(month).ok_or(RtcError::InvalidCmosField)?;
+        let month = self
+            .decode_field(month)
+            .ok_or(RtcError::InvalidCmosField)?;
         let day = self.decode_field(day).ok_or(RtcError::InvalidCmosField)?;
 
         let full_year = (century as u16) * 100 + (year as u16);

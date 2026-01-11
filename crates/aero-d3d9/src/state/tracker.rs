@@ -222,7 +222,7 @@ impl From<&BlendState> for BlendPipelineState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SamplerState {
     pub address_u: u32,
     pub address_v: u32,
@@ -245,7 +245,7 @@ pub struct VertexBufferLayoutKey {
     pub attributes: Vec<VertexAttributeKey>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RenderTargetState {
     /// D3D9 allows up to 4 MRTs, but we keep the formats as a dense list starting
     /// from slot 0.

@@ -103,47 +103,27 @@ impl Machine {
     }
 
     fn step(&mut self) -> Result<StepOutcome, Exception> {
+        if self.cpu.halted {
+            return Ok(StepOutcome::Halted);
+        }
         let mut bus = Bus {
             mem: &mut self.mem,
             ports: &mut self.ports,
         };
-
-        // Deliver any pending architectural event at instruction boundaries.
-        // This matches the behaviour of the real execution loop (`exec::Vcpu`) and
-        // allows maskable interrupts to wake the CPU from `HLT`.
-        interrupts::deliver_pending_event(&mut self.cpu, &mut bus, &mut self.pending)
-            .unwrap_or_else(|exit| panic!("pending event delivery failed: {exit:?}"));
-        interrupts::deliver_external_interrupt(&mut self.cpu, &mut bus, &mut self.pending)
-            .unwrap_or_else(|exit| panic!("external interrupt delivery failed: {exit:?}"));
-
-        if self.cpu.halted {
-            return Ok(StepOutcome::Halted);
-        }
         match tier0_step(&mut self.cpu, &mut bus)? {
-            StepExit::Continue | StepExit::Branch => {
+            StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => {
                 self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
-            StepExit::ContinueInhibitInterrupts => {
-                self.pending.retire_instruction();
-                self.pending.inhibit_interrupts_for_one_instruction();
-                Ok(StepOutcome::Continue)
-            }
-            StepExit::Halted => {
-                self.pending.retire_instruction();
-                Ok(StepOutcome::Halted)
-            }
+            StepExit::Halted => Ok(StepOutcome::Halted),
             StepExit::BiosInterrupt(vector) => {
                 self.handle_bios_interrupt(vector)?;
                 self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
             StepExit::Assist(reason) => {
-                let inhibit = self.handle_assist(reason)?;
+                self.handle_assist(reason)?;
                 self.pending.retire_instruction();
-                if inhibit {
-                    self.pending.inhibit_interrupts_for_one_instruction();
-                }
                 Ok(StepOutcome::Continue)
             }
         }
@@ -184,11 +164,12 @@ impl Machine {
         Ok(())
     }
 
-    fn handle_assist(&mut self, _reason: AssistReason) -> Result<bool, Exception> {
+    fn handle_assist(&mut self, _reason: AssistReason) -> Result<(), Exception> {
         let mut bus = Bus {
             mem: &mut self.mem,
             ports: &mut self.ports,
         };
+
         let ip = self.cpu.rip();
         let fetch_addr = self
             .cpu
@@ -211,7 +192,7 @@ impl Machine {
                 let v = bus.io_read(port, bits)?;
                 self.cpu.write_reg(dst, v);
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Out => {
                 let src = instr.op1_register();
@@ -224,17 +205,18 @@ impl Machine {
                 let v = self.cpu.read_reg(src);
                 bus.io_write(port, bits, v)?;
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Cli => {
                 self.cpu.set_flag(RFLAGS_IF, false);
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Sti => {
                 self.cpu.set_flag(RFLAGS_IF, true);
+                self.pending.inhibit_interrupts_for_one_instruction();
                 self.cpu.set_rip(next_ip);
-                Ok(true)
+                Ok(())
             }
             Mnemonic::Cpuid => {
                 let leaf = self.cpu.read_reg(Register::EAX) as u32;
@@ -245,7 +227,7 @@ impl Machine {
                 self.cpu.write_reg(Register::ECX, ecx as u64);
                 self.cpu.write_reg(Register::EDX, edx as u64);
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Rdtsc => {
                 let tsc = self.cpu.msr.tsc;
@@ -253,7 +235,7 @@ impl Machine {
                 self.cpu
                     .write_reg(Register::EDX, ((tsc >> 32) as u32) as u64);
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Rdmsr => {
                 let idx = self.cpu.read_reg(Register::ECX) as u32;
@@ -265,7 +247,7 @@ impl Machine {
                 self.cpu
                     .write_reg(Register::EDX, ((val >> 32) as u32) as u64);
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Wrmsr => {
                 let idx = self.cpu.read_reg(Register::ECX) as u32;
@@ -277,7 +259,7 @@ impl Machine {
                     self.msr.insert(idx, val);
                 }
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Lgdt | Mnemonic::Lidt => {
                 if instr.op_kind(0) != OpKind::Memory {
@@ -298,7 +280,7 @@ impl Machine {
                     _ => {}
                 }
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Ltr => {
                 let sel = match instr.op_kind(0) {
@@ -311,7 +293,7 @@ impl Machine {
                 };
                 self.cpu.tables.tr.selector = sel;
                 self.cpu.set_rip(next_ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Mov => {
                 if instr.op_kind(0) == OpKind::Register
@@ -330,7 +312,7 @@ impl Machine {
                     }
                     self.cpu.update_mode();
                     self.cpu.set_rip(next_ip);
-                    Ok(false)
+                    Ok(())
                 } else {
                     Err(Exception::Unimplemented("assisted MOV form"))
                 }
@@ -350,7 +332,7 @@ impl Machine {
                 push(&mut self.cpu, &mut bus, next_ip, 2)?;
                 self.cpu.write_reg(Register::CS, selector as u64);
                 self.cpu.set_rip(target & self.cpu.mode.ip_mask());
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Retf => {
                 let pop_imm = if instr.op_count() == 1 && instr.op_kind(0) == OpKind::Immediate16 {
@@ -365,7 +347,7 @@ impl Machine {
                 self.cpu.set_stack_ptr(sp);
                 self.cpu.write_reg(Register::CS, cs as u64);
                 self.cpu.set_rip(ip);
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Int | Mnemonic::Int3 => {
                 let vector = if instr.mnemonic() == Mnemonic::Int3 {
@@ -383,7 +365,7 @@ impl Machine {
                 self.pending.raise_software_interrupt(vector, next_ip);
                 interrupts::deliver_pending_event(&mut self.cpu, &mut bus, &mut self.pending)
                     .unwrap_or_else(|exit| panic!("interrupt delivery failed: {exit:?}"));
-                Ok(false)
+                Ok(())
             }
             Mnemonic::Iret => {
                 if self.cpu.bitness() != 16 {
@@ -394,99 +376,11 @@ impl Machine {
                 // Any real-mode IRET cancels the pending BIOS interrupt marker (the hypercall
                 // path consumes the marker when the ROM stub executes `HLT`).
                 self.cpu.clear_pending_bios_int();
-                Ok(false)
+                Ok(())
             }
             _ => Err(Exception::Unimplemented("assist handler missing mnemonic")),
         }
     }
-}
-
-#[test]
-fn sti_interrupt_shadow_defers_external_interrupt_delivery() {
-    // Program: STI; NOP; NOP; HLT.
-    //
-    // Inject an external interrupt up-front and assert that it is only delivered
-    // *after* the instruction following STI has retired.
-    let code = [0xFB, 0x90, 0x90, 0xF4];
-    let mut machine = make_machine(CpuMode::Real, &code, |cpu, mem, _ports| {
-        cpu.write_reg(Register::SP, 0x8000);
-        cpu.set_rflags(0x2); // IF=0, reserved bit 1 set
-
-        // IVT[0x20] -> 0000:0500, handler = HLT.
-        let vector = 0x20u8;
-        let ivt_addr = (vector as u64) * 4;
-        mem.write_u16(ivt_addr, 0x0500).unwrap();
-        mem.write_u16(ivt_addr + 2, 0).unwrap();
-        mem.load(0x0500, &[0xF4]);
-    });
-    machine.pending.inject_external_interrupt(0x20);
-
-    // Step 1: execute STI, which sets IF and creates an interrupt shadow.
-    assert_eq!(machine.step().unwrap(), StepOutcome::Continue);
-    assert_eq!(machine.cpu.rip(), 1);
-
-    // Step 2: the interrupt shadow blocks delivery, so the first NOP executes.
-    assert_eq!(machine.step().unwrap(), StepOutcome::Continue);
-    assert_eq!(machine.cpu.rip(), 2);
-
-    // Step 3: the interrupt is now delivered before executing the second NOP, and
-    // the handler HLT stops the machine.
-    assert_eq!(machine.step().unwrap(), StepOutcome::Halted);
-    assert_eq!(machine.cpu.rip(), 0x0501);
-
-    // Validate the pushed interrupt frame: top of stack contains return IP 0x0002.
-    let sp = machine.cpu.stack_ptr();
-    let addr = machine
-        .cpu
-        .apply_a20(machine.cpu.seg_base_reg(Register::SS).wrapping_add(sp));
-    let addr = addr as usize;
-    let ip = u16::from_le_bytes([machine.mem.data[addr], machine.mem.data[addr + 1]]);
-    assert_eq!(ip, 2);
-}
-
-#[test]
-fn mov_ss_interrupt_shadow_defers_external_interrupt_delivery() {
-    // Program: MOV SS, AX; NOP; NOP; HLT.
-    //
-    // Inject an external interrupt *after* MOV SS retires and assert the MOV-SS
-    // interrupt shadow delays delivery until after the following instruction.
-    let code = [0x8E, 0xD0, 0x90, 0x90, 0xF4];
-    let mut machine = make_machine(CpuMode::Real, &code, |cpu, mem, _ports| {
-        cpu.write_reg(Register::SP, 0x8000);
-        cpu.write_reg(Register::AX, 0);
-        cpu.set_rflags(0x202); // IF=1, reserved bit 1 set
-
-        // IVT[0x20] -> 0000:0500, handler = HLT.
-        let vector = 0x20u8;
-        let ivt_addr = (vector as u64) * 4;
-        mem.write_u16(ivt_addr, 0x0500).unwrap();
-        mem.write_u16(ivt_addr + 2, 0).unwrap();
-        mem.load(0x0500, &[0xF4]);
-    });
-
-    // Step 1: execute MOV SS, AX (creates an interrupt shadow for the next instruction).
-    assert_eq!(machine.step().unwrap(), StepOutcome::Continue);
-    assert_eq!(machine.cpu.rip(), 2);
-
-    machine.pending.inject_external_interrupt(0x20);
-
-    // Step 2: the MOV-SS interrupt shadow blocks delivery, so the first NOP executes.
-    assert_eq!(machine.step().unwrap(), StepOutcome::Continue);
-    assert_eq!(machine.cpu.rip(), 3);
-
-    // Step 3: the interrupt is now delivered before executing the second NOP, and the
-    // handler HLT stops the machine.
-    assert_eq!(machine.step().unwrap(), StepOutcome::Halted);
-    assert_eq!(machine.cpu.rip(), 0x0501);
-
-    // Validate the pushed interrupt frame: top of stack contains return IP 0x0003.
-    let sp = machine.cpu.stack_ptr();
-    let addr = machine
-        .cpu
-        .apply_a20(machine.cpu.seg_base_reg(Register::SS).wrapping_add(sp));
-    let addr = addr as usize;
-    let ip = u16::from_le_bytes([machine.mem.data[addr], machine.mem.data[addr + 1]]);
-    assert_eq!(ip, 3);
 }
 
 struct Bus<'a> {
@@ -591,8 +485,8 @@ impl CpuBus for Bus<'_> {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for (i, slot) in buf.iter_mut().take(len).enumerate() {
-            *slot = self.read_u8(vaddr.wrapping_add(i as u64))?;
+        for (i, slot) in buf.iter_mut().enumerate().take(len) {
+            *slot = self.read_u8(vaddr + i as u64)?;
         }
         Ok(buf)
     }

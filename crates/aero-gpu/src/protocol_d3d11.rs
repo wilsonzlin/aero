@@ -317,7 +317,7 @@ pub struct CmdWriter {
 
 impl CmdWriter {
     pub fn new() -> Self {
-        Self { words: Vec::new() }
+        Self::default()
     }
 
     pub fn finish(self) -> Vec<CmdWord> {
@@ -483,8 +483,9 @@ impl CmdWriter {
             color_format as u32,
             depth_format as u32,
             topology as u32,
-            vertex_buffers.len() as u32,
         ];
+
+        payload.push(vertex_buffers.len() as u32);
         for vb in vertex_buffers {
             payload.push(vb.array_stride);
             payload.push(vb.step_mode as u32);
@@ -513,7 +514,9 @@ impl CmdWriter {
         cs_shader: ResourceId,
         bindings: &[BindingDesc],
     ) {
-        let mut payload: Vec<u32> = vec![pipeline_id, cs_shader, bindings.len() as u32];
+        let mut payload: Vec<u32> = vec![pipeline_id, cs_shader];
+
+        payload.push(bindings.len() as u32);
         for b in bindings {
             payload.push(b.binding);
             payload.push(b.ty as u32);

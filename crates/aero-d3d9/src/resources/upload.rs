@@ -30,17 +30,6 @@ pub struct UploadQueue {
     ops: Vec<UploadOp>,
 }
 
-pub struct TextureUpload<'a> {
-    pub texture: &'a Arc<wgpu::Texture>,
-    pub mip_level: u32,
-    pub origin: wgpu::Origin3d,
-    pub aspect: wgpu::TextureAspect,
-    pub size: wgpu::Extent3d,
-    pub bytes_per_row: u32,
-    pub rows_per_image: u32,
-    pub data: &'a [u8],
-}
-
 impl UploadQueue {
     pub fn new(initial_capacity: usize) -> Self {
         Self {
@@ -90,23 +79,34 @@ impl UploadQueue {
     /// Stages data for a `copy_buffer_to_texture` operation.
     ///
     /// `bytes_per_row` must already satisfy WebGPU alignment rules (256-byte multiple when set).
-    pub fn write_texture(&mut self, upload: TextureUpload<'_>) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_texture(
+        &mut self,
+        texture: &Arc<wgpu::Texture>,
+        mip_level: u32,
+        origin: wgpu::Origin3d,
+        aspect: wgpu::TextureAspect,
+        size: wgpu::Extent3d,
+        bytes_per_row: u32,
+        rows_per_image: u32,
+        data: &[u8],
+    ) {
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let src_offset = align_up(self.staging.len(), align);
-        let required = src_offset + upload.data.len();
+        let required = src_offset + data.len();
         self.staging.resize(required, 0);
-        self.staging[src_offset..src_offset + upload.data.len()].copy_from_slice(upload.data);
+        self.staging[src_offset..src_offset + data.len()].copy_from_slice(data);
 
         self.ops.push(UploadOp::Texture {
-            dst: Arc::clone(upload.texture),
-            dst_mip_level: upload.mip_level,
-            dst_origin: upload.origin,
-            dst_aspect: upload.aspect,
-            copy_size: upload.size,
+            dst: Arc::clone(texture),
+            dst_mip_level: mip_level,
+            dst_origin: origin,
+            dst_aspect: aspect,
+            copy_size: size,
             layout: wgpu::ImageDataLayout {
                 offset: 0, // overridden via src_offset below
-                bytes_per_row: Some(upload.bytes_per_row),
-                rows_per_image: Some(upload.rows_per_image),
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(rows_per_image),
             },
             src_offset: src_offset as u64,
         });

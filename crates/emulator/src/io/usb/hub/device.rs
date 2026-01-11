@@ -240,7 +240,6 @@ impl HubPort {
 pub struct UsbHubDevice {
     configuration: u8,
     remote_wakeup_enabled: bool,
-    upstream_suspended: bool,
     ports: Vec<HubPort>,
     interrupt_bitmap_len: usize,
     interrupt_ep_halted: bool,
@@ -267,7 +266,6 @@ impl UsbHubDevice {
         Self {
             configuration: 0,
             remote_wakeup_enabled: false,
-            upstream_suspended: false,
             ports: (0..num_ports).map(|_| HubPort::new()).collect(),
             interrupt_bitmap_len,
             interrupt_ep_halted: false,
@@ -284,12 +282,7 @@ impl UsbHubDevice {
         if idx >= self.ports.len() {
             return;
         }
-        let upstream_suspended = self.upstream_suspended;
         self.ports[idx].attach(model);
-        let effective = upstream_suspended || self.ports[idx].suspended;
-        if let Some(dev) = self.ports[idx].device.as_mut() {
-            dev.model_mut().set_suspended(effective);
-        }
     }
 
     #[allow(dead_code)]
@@ -332,7 +325,6 @@ impl UsbDeviceModel for UsbHubDevice {
     fn reset(&mut self) {
         self.configuration = 0;
         self.remote_wakeup_enabled = false;
-        self.upstream_suspended = false;
         self.interrupt_ep_halted = false;
 
         for port in &mut self.ports {
@@ -354,7 +346,6 @@ impl UsbDeviceModel for UsbHubDevice {
             port.reset_change = false;
             if let Some(dev) = port.device.as_mut() {
                 dev.reset();
-                dev.model_mut().set_suspended(false);
             }
         }
     }
@@ -585,50 +576,24 @@ impl UsbDeviceModel for UsbHubDevice {
                     {
                         return ControlResponse::Stall;
                     }
-                    let upstream_suspended = self.upstream_suspended;
                     let Some(port) = self.port_mut(setup.w_index) else {
                         return ControlResponse::Stall;
                     };
                     match setup.w_value {
                         HUB_PORT_FEATURE_ENABLE => {
-                            let prev_effective = upstream_suspended || port.suspended;
                             port.set_enabled(true);
-                            let effective = upstream_suspended || port.suspended;
-                            if prev_effective != effective {
-                                if let Some(dev) = port.device.as_mut() {
-                                    dev.model_mut().set_suspended(effective);
-                                }
-                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_SUSPEND => {
-                            let prev_effective = upstream_suspended || port.suspended;
                             port.set_suspended(true);
-                            let effective = upstream_suspended || port.suspended;
-                            if prev_effective != effective {
-                                if let Some(dev) = port.device.as_mut() {
-                                    dev.model_mut().set_suspended(effective);
-                                }
-                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_POWER => {
-                            let prev_effective = upstream_suspended || port.suspended;
                             port.set_powered(true);
-                            let effective = upstream_suspended || port.suspended;
-                            if prev_effective != effective {
-                                if let Some(dev) = port.device.as_mut() {
-                                    dev.model_mut().set_suspended(effective);
-                                }
-                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_RESET => {
                             port.start_reset();
-                            let effective = upstream_suspended || port.suspended;
-                            if let Some(dev) = port.device.as_mut() {
-                                dev.model_mut().set_suspended(effective);
-                            }
                             ControlResponse::Ack
                         }
                         _ => ControlResponse::Stall,
@@ -640,39 +605,20 @@ impl UsbDeviceModel for UsbHubDevice {
                     {
                         return ControlResponse::Stall;
                     }
-                    let upstream_suspended = self.upstream_suspended;
                     let Some(port) = self.port_mut(setup.w_index) else {
                         return ControlResponse::Stall;
                     };
                     match setup.w_value {
                         HUB_PORT_FEATURE_ENABLE => {
-                            let prev_effective = upstream_suspended || port.suspended;
                             port.set_enabled(false);
-                            let effective = upstream_suspended || port.suspended;
-                            if prev_effective != effective {
-                                if let Some(dev) = port.device.as_mut() {
-                                    dev.model_mut().set_suspended(effective);
-                                }
-                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_SUSPEND => {
-                            let prev_effective = upstream_suspended || port.suspended;
                             port.set_suspended(false);
-                            let effective = upstream_suspended || port.suspended;
-                            if prev_effective != effective {
-                                if let Some(dev) = port.device.as_mut() {
-                                    dev.model_mut().set_suspended(effective);
-                                }
-                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_POWER => {
                             port.set_powered(false);
-                            let effective = upstream_suspended || port.suspended;
-                            if let Some(dev) = port.device.as_mut() {
-                                dev.model_mut().set_suspended(effective);
-                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_C_PORT_CONNECTION => {
@@ -734,44 +680,6 @@ impl UsbDeviceModel for UsbHubDevice {
     fn as_hub_mut(&mut self) -> Option<&mut dyn UsbHub> {
         Some(self)
     }
-
-    fn set_suspended(&mut self, suspended: bool) {
-        if suspended == self.upstream_suspended {
-            return;
-        }
-        let prev_upstream = self.upstream_suspended;
-        self.upstream_suspended = suspended;
-
-        for port in &mut self.ports {
-            let prev_effective = prev_upstream || port.suspended;
-            let effective = suspended || port.suspended;
-            if prev_effective == effective {
-                continue;
-            }
-            if let Some(dev) = port.device.as_mut() {
-                dev.model_mut().set_suspended(effective);
-            }
-        }
-    }
-
-    fn poll_remote_wakeup(&mut self) -> bool {
-        if !self.upstream_suspended && self.ports.iter().all(|p| !p.suspended) {
-            return false;
-        }
-
-        for port in &mut self.ports {
-            if !(port.connected && port.powered && port.enabled) {
-                continue;
-            }
-            let Some(dev) = port.device.as_mut() else {
-                continue;
-            };
-            if dev.model_mut().poll_remote_wakeup() {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 impl UsbHub for UsbHubDevice {
@@ -806,13 +714,8 @@ impl UsbHub for UsbHubDevice {
     }
 
     fn attach_downstream(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
-        let upstream_suspended = self.upstream_suspended;
         if let Some(p) = self.ports.get_mut(port) {
             p.attach(model);
-            let effective = upstream_suspended || p.suspended;
-            if let Some(dev) = p.device.as_mut() {
-                dev.model_mut().set_suspended(effective);
-            }
         }
     }
 
@@ -828,7 +731,7 @@ impl UsbHub for UsbHubDevice {
 }
 
 fn hub_bitmap_len(num_ports: usize) -> usize {
-    (num_ports + 1).div_ceil(8)
+    num_ports.saturating_add(1).div_ceil(8)
 }
 
 fn build_hub_config_descriptor(interrupt_bitmap_len: usize) -> Vec<u8> {

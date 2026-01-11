@@ -59,7 +59,7 @@ pub enum LoadReason {
     FarControlTransfer,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SegmentCache {
     pub base: u64,
     pub limit: u32,
@@ -67,6 +67,7 @@ pub struct SegmentCache {
 }
 
 impl SegmentCache {}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentRegister {
     pub selector: u16,

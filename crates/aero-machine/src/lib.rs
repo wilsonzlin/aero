@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_cpu_core::assist::AssistContext;
+use aero_cpu_core::interrupts::CpuExit;
 use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::CpuBus;
@@ -81,6 +82,8 @@ pub enum RunExit {
     Assist { reason: AssistReason, executed: u64 },
     /// Execution stopped due to an exception/fault.
     Exception { exception: Exception, executed: u64 },
+    /// Execution stopped due to a fatal CPU exit condition (e.g. triple fault).
+    CpuExit { exit: CpuExit, executed: u64 },
 }
 
 impl RunExit {
@@ -91,7 +94,8 @@ impl RunExit {
             | RunExit::Halted { executed }
             | RunExit::ResetRequested { executed, .. }
             | RunExit::Assist { executed, .. }
-            | RunExit::Exception { executed, .. } => executed,
+            | RunExit::Exception { executed, .. }
+            | RunExit::CpuExit { executed, .. } => executed,
         }
     }
 }
@@ -404,8 +408,8 @@ impl CpuBus for Bus<'_> {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for (i, byte) in buf.iter_mut().enumerate().take(len) {
-            *byte = self.mem.read_u8(vaddr.wrapping_add(i as u64));
+        for (i, slot) in buf.iter_mut().enumerate().take(len) {
+            *slot = self.mem.read_u8(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)
     }
@@ -722,24 +726,7 @@ impl Machine {
                 }
                 BatchExit::CpuExit(exit) => {
                     self.flush_serial();
-                    return match exit {
-                        aero_cpu_core::interrupts::CpuExit::TripleFault => {
-                            RunExit::ResetRequested {
-                                kind: ResetKind::Cpu,
-                                executed,
-                            }
-                        }
-                        aero_cpu_core::interrupts::CpuExit::MemoryFault => RunExit::Exception {
-                            exception: Exception::MemoryFault,
-                            executed,
-                        },
-                        aero_cpu_core::interrupts::CpuExit::UnimplementedInstruction(name) => {
-                            RunExit::Exception {
-                                exception: Exception::Unimplemented(name),
-                                executed,
-                            }
-                        }
-                    };
+                    return RunExit::CpuExit { exit, executed };
                 }
             }
         }

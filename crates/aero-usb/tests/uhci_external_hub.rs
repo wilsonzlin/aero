@@ -154,209 +154,204 @@ fn write_td(
     mem.write_u32(addr + 12, buffer);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn control_in(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
+struct UhciTestHarness<'a> {
+    ctrl: &'a mut UhciController,
+    mem: &'a mut TestMemory,
+    irq: &'a mut TestIrq,
+    alloc: &'a mut Alloc,
     fl_base: u32,
-    devaddr: u8,
-    max_packet: usize,
-    setup: SetupPacket,
-) -> Vec<u8> {
-    let qh_addr = alloc.alloc(0x20, 0x10);
-    let setup_buf = alloc.alloc(8, 0x10);
-    let setup_td = alloc.alloc(0x20, 0x10);
+}
 
-    let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    mem.write(setup_buf, &bytes);
-
-    let mut tds = Vec::new();
-    tds.push((setup_td, setup_buf, 8usize, PID_SETUP, false)); // SETUP, DATA0
-
-    let mut remaining = setup.length as usize;
-    let mut toggle = true;
-    while remaining != 0 {
-        let chunk = remaining.min(max_packet);
-        let buf = alloc.alloc(chunk as u32, 0x10);
-        let td = alloc.alloc(0x20, 0x10);
-        tds.push((td, buf, chunk, PID_IN, toggle)); // IN
-        toggle = !toggle;
-        remaining -= chunk;
+impl UhciTestHarness<'_> {
+    fn port_write(&mut self, port: u16, size: usize, value: u32) {
+        self.ctrl.port_write(port, size, value, &mut *self.irq);
     }
 
-    // Status stage: OUT zero-length, DATA1.
-    let status_td = alloc.alloc(0x20, 0x10);
-    tds.push((status_td, 0, 0, PID_OUT, true));
+    fn step_frames(&mut self, frames: usize) {
+        for _ in 0..frames {
+            self.ctrl.step_frame(&mut *self.mem, &mut *self.irq);
+        }
+    }
 
-    for i in 0..tds.len() {
-        let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
-        let link = if i + 1 == tds.len() {
-            LINK_PTR_T
-        } else {
-            tds[i + 1].0
-        };
-        let ioc = i + 1 == tds.len();
+    fn control_in(&mut self, devaddr: u8, max_packet: usize, setup: SetupPacket) -> Vec<u8> {
+        let ctrl = &mut *self.ctrl;
+        let mem = &mut *self.mem;
+        let irq = &mut *self.irq;
+        let alloc = &mut *self.alloc;
+        let fl_base = self.fl_base;
+
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let setup_buf = alloc.alloc(8, 0x10);
+        let setup_td = alloc.alloc(0x20, 0x10);
+
+        let mut bytes = [0u8; 8];
+        bytes[0] = setup.request_type;
+        bytes[1] = setup.request;
+        bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
+        bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
+        bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
+        mem.write(setup_buf, &bytes);
+
+        let mut tds = Vec::new();
+        tds.push((setup_td, setup_buf, 8usize, PID_SETUP, false)); // SETUP, DATA0
+
+        let mut remaining = setup.length as usize;
+        let mut toggle = true;
+        while remaining != 0 {
+            let chunk = remaining.min(max_packet);
+            let buf = alloc.alloc(chunk as u32, 0x10);
+            let td = alloc.alloc(0x20, 0x10);
+            tds.push((td, buf, chunk, PID_IN, toggle)); // IN
+            toggle = !toggle;
+            remaining -= chunk;
+        }
+
+        // Status stage: OUT zero-length, DATA1.
+        let status_td = alloc.alloc(0x20, 0x10);
+        tds.push((status_td, 0, 0, PID_OUT, true));
+
+        for i in 0..tds.len() {
+            let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
+            let link = if i + 1 == tds.len() {
+                LINK_PTR_T
+            } else {
+                tds[i + 1].0
+            };
+            let ioc = i + 1 == tds.len();
+            write_td(
+                mem,
+                td_addr,
+                link,
+                td_ctrl(true, ioc),
+                td_token(pid, devaddr, 0, dtoggle, len),
+                buf_addr,
+            );
+        }
+
+        write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+        install_frame_list(mem, fl_base, qh_addr);
+
+        ctrl.step_frame(mem, irq);
+
+        let mut out = Vec::new();
+        for (td_addr, buf_addr, _len, pid, _) in tds {
+            if pid != PID_IN {
+                continue;
+            }
+            let ctrl_sts = mem.read_u32(td_addr + 4);
+            let got = actlen(ctrl_sts);
+            let mut tmp = vec![0u8; got];
+            mem.read(buf_addr, &mut tmp);
+            out.extend_from_slice(&tmp);
+        }
+        out
+    }
+
+    fn control_no_data(&mut self, devaddr: u8, setup: SetupPacket) {
+        let ctrl = &mut *self.ctrl;
+        let mem = &mut *self.mem;
+        let irq = &mut *self.irq;
+        let alloc = &mut *self.alloc;
+        let fl_base = self.fl_base;
+
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let setup_buf = alloc.alloc(8, 0x10);
+        let setup_td = alloc.alloc(0x20, 0x10);
+        let status_td = alloc.alloc(0x20, 0x10);
+
+        let mut bytes = [0u8; 8];
+        bytes[0] = setup.request_type;
+        bytes[1] = setup.request;
+        bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
+        bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
+        bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
+        mem.write(setup_buf, &bytes);
+
+        write_td(
+            mem,
+            setup_td,
+            status_td,
+            td_ctrl(true, false),
+            td_token(PID_SETUP, devaddr, 0, false, 8),
+            setup_buf,
+        );
+        // Status stage: IN zero-length, DATA1.
+        write_td(
+            mem,
+            status_td,
+            LINK_PTR_T,
+            td_ctrl(true, true),
+            td_token(PID_IN, devaddr, 0, true, 0),
+            0,
+        );
+        write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+        install_frame_list(mem, fl_base, qh_addr);
+
+        ctrl.step_frame(mem, irq);
+    }
+
+    fn interrupt_in(&mut self, devaddr: u8, ep: u8, max_len: usize) -> Vec<u8> {
+        let ctrl = &mut *self.ctrl;
+        let mem = &mut *self.mem;
+        let irq = &mut *self.irq;
+        let alloc = &mut *self.alloc;
+        let fl_base = self.fl_base;
+
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let td_addr = alloc.alloc(0x20, 0x10);
+        let buf_addr = alloc.alloc(max_len as u32, 0x10);
+
         write_td(
             mem,
             td_addr,
-            link,
-            td_ctrl(true, ioc),
-            td_token(pid, devaddr, 0, dtoggle, len),
+            LINK_PTR_T,
+            td_ctrl(true, true),
+            td_token(PID_IN, devaddr, ep, false, max_len),
             buf_addr,
         );
-    }
+        write_qh(mem, qh_addr, LINK_PTR_T, td_addr);
+        install_frame_list(mem, fl_base, qh_addr);
 
-    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
-    install_frame_list(mem, fl_base, qh_addr);
+        ctrl.step_frame(mem, irq);
 
-    ctrl.step_frame(mem, irq);
-
-    let mut out = Vec::new();
-    for (td_addr, buf_addr, _len, pid, _) in tds {
-        if pid != PID_IN {
-            continue;
-        }
         let ctrl_sts = mem.read_u32(td_addr + 4);
         let got = actlen(ctrl_sts);
-        let mut tmp = vec![0u8; got];
-        mem.read(buf_addr, &mut tmp);
-        out.extend_from_slice(&tmp);
+        let mut out = vec![0u8; got];
+        mem.read(buf_addr, &mut out);
+        out
     }
-    out
+
+    fn interrupt_out(&mut self, devaddr: u8, ep: u8, payload: &[u8]) {
+        let ctrl = &mut *self.ctrl;
+        let mem = &mut *self.mem;
+        let irq = &mut *self.irq;
+        let alloc = &mut *self.alloc;
+        let fl_base = self.fl_base;
+
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let td_addr = alloc.alloc(0x20, 0x10);
+        let buf_addr = alloc.alloc(payload.len() as u32, 0x10);
+
+        mem.write(buf_addr, payload);
+
+        write_td(
+            mem,
+            td_addr,
+            LINK_PTR_T,
+            td_ctrl(true, true),
+            td_token(PID_OUT, devaddr, ep, false, payload.len()),
+            buf_addr,
+        );
+        write_qh(mem, qh_addr, LINK_PTR_T, td_addr);
+        install_frame_list(mem, fl_base, qh_addr);
+
+        ctrl.step_frame(mem, irq);
+    }
 }
 
-fn control_no_data(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
-    devaddr: u8,
-    setup: SetupPacket,
-) {
-    let qh_addr = alloc.alloc(0x20, 0x10);
-    let setup_buf = alloc.alloc(8, 0x10);
-    let setup_td = alloc.alloc(0x20, 0x10);
-    let status_td = alloc.alloc(0x20, 0x10);
-
-    let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    mem.write(setup_buf, &bytes);
-
-    write_td(
-        mem,
-        setup_td,
-        status_td,
-        td_ctrl(true, false),
-        td_token(PID_SETUP, devaddr, 0, false, 8),
-        setup_buf,
-    );
-    // Status stage: IN zero-length, DATA1.
-    write_td(
-        mem,
-        status_td,
-        LINK_PTR_T,
-        td_ctrl(true, true),
-        td_token(PID_IN, devaddr, 0, true, 0),
-        0,
-    );
-    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
-    install_frame_list(mem, fl_base, qh_addr);
-
-    ctrl.step_frame(mem, irq);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn interrupt_in(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
-    devaddr: u8,
-    ep: u8,
-    max_len: usize,
-) -> Vec<u8> {
-    let qh_addr = alloc.alloc(0x20, 0x10);
-    let td_addr = alloc.alloc(0x20, 0x10);
-    let buf_addr = alloc.alloc(max_len as u32, 0x10);
-
-    write_td(
-        mem,
-        td_addr,
-        LINK_PTR_T,
-        td_ctrl(true, true),
-        td_token(PID_IN, devaddr, ep, false, max_len),
-        buf_addr,
-    );
-    write_qh(mem, qh_addr, LINK_PTR_T, td_addr);
-    install_frame_list(mem, fl_base, qh_addr);
-
-    ctrl.step_frame(mem, irq);
-
-    let ctrl_sts = mem.read_u32(td_addr + 4);
-    let got = actlen(ctrl_sts);
-    let mut out = vec![0u8; got];
-    mem.read(buf_addr, &mut out);
-    out
-}
-
-#[allow(clippy::too_many_arguments)]
-fn interrupt_out(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
-    devaddr: u8,
-    ep: u8,
-    payload: &[u8],
-) {
-    let qh_addr = alloc.alloc(0x20, 0x10);
-    let td_addr = alloc.alloc(0x20, 0x10);
-    let buf_addr = alloc.alloc(payload.len() as u32, 0x10);
-
-    mem.write(buf_addr, payload);
-
-    write_td(
-        mem,
-        td_addr,
-        LINK_PTR_T,
-        td_ctrl(true, true),
-        td_token(PID_OUT, devaddr, ep, false, payload.len()),
-        buf_addr,
-    );
-    write_qh(mem, qh_addr, LINK_PTR_T, td_addr);
-    install_frame_list(mem, fl_base, qh_addr);
-
-    ctrl.step_frame(mem, irq);
-}
-
-fn enumerate_hub(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
-) {
+fn enumerate_hub(uhci: &mut UhciTestHarness<'_>) {
     // GET_DESCRIPTOR(Device)
-    let dev_desc = control_in(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    let dev_desc = uhci.control_in(
         0,
         64,
         SetupPacket {
@@ -371,12 +366,7 @@ fn enumerate_hub(
     assert_eq!(dev_desc[4], 0x09, "bDeviceClass should be Hub (0x09)");
 
     // SET_ADDRESS(1)
-    control_no_data(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    uhci.control_no_data(
         0,
         SetupPacket {
             request_type: 0x00,
@@ -388,12 +378,7 @@ fn enumerate_hub(
     );
 
     // GET_DESCRIPTOR(Configuration)
-    let cfg_desc = control_in(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    let cfg_desc = uhci.control_in(
         1,
         64,
         SetupPacket {
@@ -408,12 +393,7 @@ fn enumerate_hub(
     assert_eq!(cfg_desc[1], 0x02);
 
     // SET_CONFIGURATION(1)
-    control_no_data(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    uhci.control_no_data(
         1,
         SetupPacket {
             request_type: 0x00,
@@ -425,12 +405,7 @@ fn enumerate_hub(
     );
 
     // GET_DESCRIPTOR(Hub, type=0x29) via class request.
-    let hub_desc = control_in(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    let hub_desc = uhci.control_in(
         1,
         64,
         SetupPacket {
@@ -445,22 +420,9 @@ fn enumerate_hub(
     assert_eq!(hub_desc[1], 0x29);
 }
 
-fn power_reset_and_clear_hub_port(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
-    hub_addr: u8,
-    port: u8,
-) {
+fn power_reset_and_clear_hub_port(uhci: &mut UhciTestHarness<'_>, hub_addr: u8, port: u8) {
     // SET_FEATURE(PORT_POWER)
-    control_no_data(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    uhci.control_no_data(
         hub_addr,
         SetupPacket {
             request_type: 0x23,
@@ -472,12 +434,7 @@ fn power_reset_and_clear_hub_port(
     );
 
     // SET_FEATURE(PORT_RESET)
-    control_no_data(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    uhci.control_no_data(
         hub_addr,
         SetupPacket {
             request_type: 0x23,
@@ -489,18 +446,11 @@ fn power_reset_and_clear_hub_port(
     );
 
     // Advance time until reset completes.
-    for _ in 0..50 {
-        ctrl.step_frame(mem, irq);
-    }
+    uhci.step_frames(50);
 
     // Clear change bits so subsequent interrupt polling is deterministic.
     for feature in [20u16, 16u16, 17u16] {
-        control_no_data(
-            ctrl,
-            mem,
-            irq,
-            alloc,
-            fl_base,
+        uhci.control_no_data(
             hub_addr,
             SetupPacket {
                 request_type: 0x23,
@@ -513,23 +463,13 @@ fn power_reset_and_clear_hub_port(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn enumerate_passthrough_device(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
+    uhci: &mut UhciTestHarness<'_>,
     address: u8,
     expected_vendor_id: u16,
     expected_product_id: u16,
 ) {
-    let device_desc = control_in(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    let device_desc = uhci.control_in(
         0,
         64,
         SetupPacket {
@@ -547,12 +487,7 @@ fn enumerate_passthrough_device(
     assert_eq!(product_id, expected_product_id);
 
     // SET_ADDRESS(address)
-    control_no_data(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    uhci.control_no_data(
         0,
         SetupPacket {
             request_type: 0x00,
@@ -564,12 +499,7 @@ fn enumerate_passthrough_device(
     );
 
     // GET_DESCRIPTOR(Configuration) at new address.
-    let cfg = control_in(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    let cfg = uhci.control_in(
         address,
         64,
         SetupPacket {
@@ -583,12 +513,7 @@ fn enumerate_passthrough_device(
     assert_eq!(cfg[1], 0x02);
 
     // SET_CONFIGURATION(1)
-    control_no_data(
-        ctrl,
-        mem,
-        irq,
-        alloc,
-        fl_base,
+    uhci.control_no_data(
         address,
         SetupPacket {
             request_type: 0x00,
@@ -672,27 +597,28 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     let mut alloc = Alloc::new(0x2000);
 
     let fl_base = 0x1000;
-    ctrl.port_write(io_base + REG_FRBASEADD, 4, fl_base, &mut irq);
-    ctrl.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32, &mut irq);
+    let mut uhci = UhciTestHarness {
+        ctrl: &mut ctrl,
+        mem: &mut mem,
+        irq: &mut irq,
+        alloc: &mut alloc,
+        fl_base,
+    };
+
+    uhci.port_write(io_base + REG_FRBASEADD, 4, fl_base);
+    uhci.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32);
 
     // Reset + enable root port 1.
-    ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PR as u32, &mut irq);
-    for _ in 0..50 {
-        ctrl.step_frame(&mut mem, &mut irq);
-    }
+    uhci.port_write(io_base + REG_PORTSC1, 2, PORTSC_PR as u32);
+    uhci.step_frames(50);
 
-    ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+    uhci.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32);
 
     // Enumerate and configure the hub itself at address 0 -> 1.
-    enumerate_hub(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base);
+    enumerate_hub(&mut uhci);
 
     // Enable port 1 and validate the hub interrupt endpoint reports change.
-    control_no_data(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
+    uhci.control_no_data(
         1,
         SetupPacket {
             request_type: 0x23,
@@ -702,12 +628,7 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
             length: 0,
         },
     );
-    control_no_data(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
+    uhci.control_no_data(
         1,
         SetupPacket {
             request_type: 0x23,
@@ -717,10 +638,8 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
             length: 0,
         },
     );
-    for _ in 0..50 {
-        ctrl.step_frame(&mut mem, &mut irq);
-    }
-    let bitmap = interrupt_in(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 1, 1, 1);
+    uhci.step_frames(50);
+    let bitmap = uhci.interrupt_in(1, 1, 1);
     assert_eq!(bitmap.len(), 1);
     assert_ne!(
         bitmap[0] & 0x02,
@@ -730,12 +649,7 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
 
     // Clear change bits for port1 and then enumerate device 1 at address 5.
     for feature in [20u16, 16u16, 17u16] {
-        control_no_data(
-            &mut ctrl,
-            &mut mem,
-            &mut irq,
-            &mut alloc,
-            fl_base,
+        uhci.control_no_data(
             1,
             SetupPacket {
                 request_type: 0x23,
@@ -747,21 +661,15 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
         );
     }
 
-    enumerate_passthrough_device(
-        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 5, 0x1234, 0x0001,
-    );
+    enumerate_passthrough_device(&mut uhci, 5, 0x1234, 0x0001);
 
     // Power + reset port2 and enumerate device2 at address 6.
-    power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 1, 2);
-    enumerate_passthrough_device(
-        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 6, 0x1234, 0x0002,
-    );
+    power_reset_and_clear_hub_port(&mut uhci, 1, 2);
+    enumerate_passthrough_device(&mut uhci, 6, 0x1234, 0x0002);
 
     // Power + reset port3 and enumerate device3 at address 7.
-    power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 1, 3);
-    enumerate_passthrough_device(
-        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 7, 0x1234, 0x0003,
-    );
+    power_reset_and_clear_hub_port(&mut uhci, 1, 3);
+    enumerate_passthrough_device(&mut uhci, 7, 0x1234, 0x0003);
 
     // Functional proof: each device has independent interrupt IN and OUT endpoints.
     let report1 = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
@@ -769,7 +677,8 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
     let report3 = [0x21u8, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28];
 
     for (addr, report) in [(5u8, report1), (6, report2), (7, report3)] {
-        let dev = ctrl
+        let dev = uhci
+            .ctrl
             .bus_mut()
             .device_mut_for_address(addr)
             .unwrap()
@@ -779,28 +688,23 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
         dev.push_input_report(0, &report);
     }
 
-    let got1 = interrupt_in(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 5, 1, 8);
+    let got1 = uhci.interrupt_in(5, 1, 8);
     assert_eq!(got1, report1);
-    let got2 = interrupt_in(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 6, 1, 8);
+    let got2 = uhci.interrupt_in(6, 1, 8);
     assert_eq!(got2, report2);
-    let got3 = interrupt_in(&mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 7, 1, 8);
+    let got3 = uhci.interrupt_in(7, 1, 8);
     assert_eq!(got3, report3);
 
     let out1 = [0xaa, 0xbb, 0xcc];
     let out2 = [0x10, 0x20];
     let out3 = [0xde, 0xad, 0xbe, 0xef];
 
-    interrupt_out(
-        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 5, 1, &out1,
-    );
-    interrupt_out(
-        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 6, 1, &out2,
-    );
-    interrupt_out(
-        &mut ctrl, &mut mem, &mut irq, &mut alloc, fl_base, 7, 1, &out3,
-    );
+    uhci.interrupt_out(5, 1, &out1);
+    uhci.interrupt_out(6, 1, &out2);
+    uhci.interrupt_out(7, 1, &out3);
 
-    let dev1 = ctrl
+    let dev1 = uhci
+        .ctrl
         .bus_mut()
         .device_mut_for_address(5)
         .unwrap()
@@ -816,7 +720,8 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
         })
     );
 
-    let dev2 = ctrl
+    let dev2 = uhci
+        .ctrl
         .bus_mut()
         .device_mut_for_address(6)
         .unwrap()
@@ -832,7 +737,8 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
         })
     );
 
-    let dev3 = ctrl
+    let dev3 = uhci
+        .ctrl
         .bus_mut()
         .device_mut_for_address(7)
         .unwrap()
@@ -848,5 +754,5 @@ fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
         })
     );
 
-    assert!(irq.raised);
+    assert!(uhci.irq.raised);
 }

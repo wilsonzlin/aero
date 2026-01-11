@@ -2,7 +2,9 @@ use std::collections::{HashMap, VecDeque};
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::{GuestMemory, GuestMemoryError};
-use aero_protocol::aerogpu::aerogpu_ring::{decode_alloc_table_le, AerogpuAllocEntry};
+use aero_protocol::aerogpu::aerogpu_ring::{
+    decode_alloc_table_le, AerogpuAllocEntry, AerogpuAllocTableDecodeError, AerogpuAllocTableHeader,
+};
 use anyhow::{anyhow, Result};
 use memory::MemoryBus;
 
@@ -60,9 +62,75 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
 }
 
 fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
-    let view = decode_alloc_table_le(bytes)
-        .map_err(|err| anyhow!("alloc table decode failed: {err:?}"))?;
-    Ok(view.entries.into_owned())
+    match decode_alloc_table_le(bytes) {
+        Ok(view) => Ok(view.entries.to_vec()),
+        Err(AerogpuAllocTableDecodeError::Misaligned) => decode_alloc_table_bytes_unaligned(bytes),
+        Err(err) => Err(anyhow!("alloc table decode failed: {err:?}")),
+    }
+}
+
+fn decode_alloc_table_bytes_unaligned(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
+    // `decode_alloc_table_le` requires the entry array to be aligned so it can cast the entry
+    // array directly. When the allocation table bytes originate from an unaligned `Vec<u8>` copy,
+    // fall back to decoding entries individually.
+    let header = AerogpuAllocTableHeader::decode_from_le_bytes(bytes)
+        .map_err(|e| anyhow!("alloc table header decode failed: {e:?}"))?;
+    header
+        .validate_prefix()
+        .map_err(|e| anyhow!("alloc table header validation failed: {e:?}"))?;
+
+    let size_bytes = usize::try_from(header.size_bytes)
+        .map_err(|_| anyhow!("alloc table header size_bytes does not fit in usize"))?;
+    if size_bytes > bytes.len() {
+        return Err(anyhow!(
+            "alloc table size_bytes={} exceeds buffer length={}",
+            size_bytes,
+            bytes.len()
+        ));
+    }
+
+    let expected_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
+    if header.entry_stride_bytes != expected_stride {
+        return Err(anyhow!(
+            "alloc table entry_stride_bytes={} does not match expected_stride={expected_stride}",
+            header.entry_stride_bytes,
+        ));
+    }
+
+    let entry_count = usize::try_from(header.entry_count)
+        .map_err(|_| anyhow!("alloc table header entry_count does not fit in usize"))?;
+    let entries_size_bytes = entry_count
+        .checked_mul(AerogpuAllocEntry::SIZE_BYTES)
+        .ok_or_else(|| anyhow!("alloc table entry_count overflows"))?;
+
+    let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES;
+    let required_bytes = header_size_bytes
+        .checked_add(entries_size_bytes)
+        .ok_or_else(|| anyhow!("alloc table size computation overflows"))?;
+    if required_bytes > size_bytes {
+        return Err(anyhow!(
+            "alloc table entries out of bounds: required_bytes={required_bytes} size_bytes={size_bytes}"
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(entry_count);
+    for idx in 0..entry_count {
+        let off = header_size_bytes
+            .checked_add(
+                idx.checked_mul(AerogpuAllocEntry::SIZE_BYTES)
+                    .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?,
+            )
+            .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
+        let end = off
+            .checked_add(AerogpuAllocEntry::SIZE_BYTES)
+            .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
+        entries.push(
+            AerogpuAllocEntry::decode_from_le_bytes(&bytes[off..end])
+                .map_err(|e| anyhow!("alloc table entry {idx} decode failed: {e:?}"))?,
+        );
+    }
+
+    Ok(entries)
 }
 
 impl AeroGpuCommandBackend for AerogpuWgpuBackend {
@@ -150,25 +218,6 @@ mod tests {
     };
     use memory::Bus;
 
-    fn require_webgpu() -> bool {
-        let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
-            return false;
-        };
-
-        let v = raw.trim();
-        v == "1"
-            || v.eq_ignore_ascii_case("true")
-            || v.eq_ignore_ascii_case("yes")
-            || v.eq_ignore_ascii_case("on")
-    }
-
-    fn skip_or_panic(test_name: &str, reason: &str) {
-        if require_webgpu() {
-            panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
-        }
-        eprintln!("skipping {test_name}: {reason}");
-    }
-
     #[test]
     fn decode_alloc_table_bytes_recovers_from_misaligned_buffers() {
         let header_size = AerogpuAllocTableHeader::SIZE_BYTES;
@@ -203,19 +252,7 @@ mod tests {
 
     #[test]
     fn submit_surfaces_execution_errors_via_completion() {
-        let mut backend = match AerogpuWgpuBackend::new() {
-            Ok(backend) => backend,
-            Err(err) => {
-                skip_or_panic(
-                    concat!(
-                        module_path!(),
-                        "::submit_surfaces_execution_errors_via_completion"
-                    ),
-                    &format!("wgpu unavailable ({err:#})"),
-                );
-                return;
-            }
-        };
+        let mut backend = AerogpuWgpuBackend::new().unwrap();
         let mut mem = Bus::new(0x1000);
 
         // Intentionally malformed command stream: too small to contain even the header.
@@ -237,35 +274,5 @@ mod tests {
             completions[0].error.is_some(),
             "expected execution error to be reported via completion"
         );
-    }
-
-    #[test]
-    fn decode_alloc_table_bytes_accepts_extended_entry_stride() {
-        let header_size = AerogpuAllocTableHeader::SIZE_BYTES;
-        let entry_size = AerogpuAllocEntry::SIZE_BYTES;
-        let entry_stride = entry_size + 16;
-        let size_bytes = u32::try_from(header_size + entry_stride).unwrap();
-
-        let mut table = Vec::new();
-        table.extend_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
-        table.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-        table.extend_from_slice(&size_bytes.to_le_bytes());
-        table.extend_from_slice(&1u32.to_le_bytes()); // entry_count
-        table.extend_from_slice(&(entry_stride as u32).to_le_bytes()); // entry_stride_bytes
-        table.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-
-        // One entry (prefix), then padding to match the stride.
-        table.extend_from_slice(&1u32.to_le_bytes()); // alloc_id
-        table.extend_from_slice(&0u32.to_le_bytes()); // flags
-        table.extend_from_slice(&0x1000u64.to_le_bytes()); // gpa
-        table.extend_from_slice(&0x2000u64.to_le_bytes()); // size_bytes
-        table.extend_from_slice(&0u64.to_le_bytes()); // reserved0
-        table.resize(header_size + entry_stride, 0);
-
-        let entries = decode_alloc_table_bytes(&table).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].alloc_id, 1);
-        assert_eq!(entries[0].gpa, 0x1000);
-        assert_eq!(entries[0].size_bytes, 0x2000);
     }
 }

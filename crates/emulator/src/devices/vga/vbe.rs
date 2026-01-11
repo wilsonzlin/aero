@@ -338,7 +338,7 @@ impl VbeState {
 
     pub fn controller_info(&self) -> VbeControllerInfo {
         // Total video memory in 64KiB blocks.
-        let total_mem_blocks = u16::try_from(VBE_LFB_SIZE.div_ceil(0x1_0000)).unwrap_or(u16::MAX);
+        let total_mem_blocks = VBE_LFB_SIZE.div_ceil(0x1_0000) as u16;
 
         VbeControllerInfo {
             signature: *b"VESA",

@@ -13,7 +13,7 @@
 //! - translation to WGSL using `aero-d3d9`
 //! - caching of WGSL + compiled `wgpu::ShaderModule`s keyed by a strong hash of the original bytes
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 
 use aero_d3d9::dxbc::{Container as DxbcContainer, DxbcError, FourCC};
 use aero_d3d9::shader::{self, ShaderError, ShaderStage, ShaderVersion};
@@ -109,7 +109,7 @@ impl D3d9ShaderCache {
         let payload_format = ShaderPayloadFormat::detect(bytes);
 
         // Ensure the shader artifact exists (translate/compile on miss).
-        if let Entry::Vacant(e) = self.by_hash.entry(hash) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.by_hash.entry(hash) {
             let token_stream = extract_token_stream(payload_format, bytes)?;
             let program = shader::parse(token_stream)?;
 

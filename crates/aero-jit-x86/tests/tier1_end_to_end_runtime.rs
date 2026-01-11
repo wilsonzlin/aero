@@ -94,7 +94,7 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
     }
 }
 
-type SetupRuntimeResult = (
+type RuntimeSetup = (
     SharedWasmtimeBackend,
     Tier1CompileQueue,
     ExecDispatcher<Tier1Interpreter, SharedWasmtimeBackend, Tier1CompileQueue>,
@@ -102,7 +102,9 @@ type SetupRuntimeResult = (
     TestCpu,
 );
 
-fn setup_runtime(hot_threshold: u32) -> SetupRuntimeResult {
+fn setup_runtime(
+    hot_threshold: u32,
+) -> RuntimeSetup {
     let entry = 0x1000u64;
     let code = [
         0x83, 0xc0, 0x01, // add eax, 1
@@ -132,10 +134,12 @@ fn setup_runtime(hot_threshold: u32) -> SetupRuntimeResult {
         max_bytes: 64,
     });
 
-    let mut cpu = TestCpu {
-        state: CpuState::default(),
+    let cpu = TestCpu {
+        state: CpuState {
+            rip: entry,
+            ..Default::default()
+        },
     };
-    cpu.state.rip = entry;
 
     (backend, compile_queue, dispatcher, compiler, cpu)
 }

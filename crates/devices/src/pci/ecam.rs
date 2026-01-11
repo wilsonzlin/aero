@@ -130,8 +130,8 @@ impl memory::MmioHandler for PciEcamMmio {
         }
 
         let bytes = value.to_le_bytes();
-        for (i, byte) in bytes.iter().enumerate().take(size) {
-            self.write_u8(offset.wrapping_add(i as u64), *byte);
+        for (i, byte) in bytes.iter().copied().enumerate().take(size) {
+            self.write_u8(offset.wrapping_add(i as u64), byte);
         }
     }
 }

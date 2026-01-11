@@ -239,24 +239,24 @@ impl Texture {
             )
         };
 
-        uploads.write_texture(super::TextureUpload {
-            texture: tex,
-            mip_level: level,
-            origin: wgpu::Origin3d {
+        uploads.write_texture(
+            tex,
+            level,
+            wgpu::Origin3d {
                 x: 0,
                 y: 0,
                 z: layer,
             },
-            aspect: wgpu::TextureAspect::All,
-            size: wgpu::Extent3d {
+            wgpu::TextureAspect::All,
+            wgpu::Extent3d {
                 width: mip_w,
                 height: mip_h,
                 depth_or_array_layers: 1,
             },
-            bytes_per_row: padded_bpr,
-            rows_per_image: upload_rows_per_image,
-            data: &padded,
-        });
+            padded_bpr,
+            upload_rows_per_image,
+            &padded,
+        );
         Ok(())
     }
 
@@ -659,24 +659,21 @@ fn decompress_bc3_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 }
 
 fn bc3_alpha_table(a0: u8, a1: u8) -> [u8; 8] {
-    let a0_u16 = u16::from(a0);
-    let a1_u16 = u16::from(a1);
-
     let mut table = [0u8; 8];
     table[0] = a0;
     table[1] = a1;
     if a0 > a1 {
-        table[2] = ((6u16 * a0_u16 + a1_u16) / 7) as u8;
-        table[3] = ((5u16 * a0_u16 + 2u16 * a1_u16) / 7) as u8;
-        table[4] = ((4u16 * a0_u16 + 3u16 * a1_u16) / 7) as u8;
-        table[5] = ((3u16 * a0_u16 + 4u16 * a1_u16) / 7) as u8;
-        table[6] = ((2u16 * a0_u16 + 5u16 * a1_u16) / 7) as u8;
-        table[7] = ((a0_u16 + 6u16 * a1_u16) / 7) as u8;
+        table[2] = ((6u16 * a0 as u16 + a1 as u16) / 7) as u8;
+        table[3] = ((5u16 * a0 as u16 + 2u16 * a1 as u16) / 7) as u8;
+        table[4] = ((4u16 * a0 as u16 + 3u16 * a1 as u16) / 7) as u8;
+        table[5] = ((3u16 * a0 as u16 + 4u16 * a1 as u16) / 7) as u8;
+        table[6] = ((2u16 * a0 as u16 + 5u16 * a1 as u16) / 7) as u8;
+        table[7] = ((a0 as u16 + 6u16 * a1 as u16) / 7) as u8;
     } else {
-        table[2] = ((4u16 * a0_u16 + a1_u16) / 5) as u8;
-        table[3] = ((3u16 * a0_u16 + 2u16 * a1_u16) / 5) as u8;
-        table[4] = ((2u16 * a0_u16 + 3u16 * a1_u16) / 5) as u8;
-        table[5] = ((a0_u16 + 4u16 * a1_u16) / 5) as u8;
+        table[2] = ((4u16 * a0 as u16 + a1 as u16) / 5) as u8;
+        table[3] = ((3u16 * a0 as u16 + 2u16 * a1 as u16) / 5) as u8;
+        table[4] = ((2u16 * a0 as u16 + 3u16 * a1 as u16) / 5) as u8;
+        table[5] = ((a0 as u16 + 4u16 * a1 as u16) / 5) as u8;
         table[6] = 0;
         table[7] = 255;
     }
@@ -717,8 +714,8 @@ mod tests {
 
     #[test]
     fn bc1_decompress_solid_color() {
-        // Solid red (approx) in RGB565.
-        let data = bc1_solid_block(0xF800);
+        // Solid red (approx) in RGB565: 0b11111_000000_00000
+        let data = bc1_solid_block(0xf800);
         let out = decompress_bc1_to_bgra8(4, 4, &data).unwrap();
         // First pixel should be red-ish with full alpha.
         assert_eq!(out[0], 0); // B

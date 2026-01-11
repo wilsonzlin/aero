@@ -317,7 +317,7 @@ impl Tracer {
         }
 
         self.sample_counter = self.sample_counter.wrapping_add(1);
-        self.sample_counter.is_multiple_of(u64::from(rate))
+        self.sample_counter.is_multiple_of(rate as u64)
     }
 }
 

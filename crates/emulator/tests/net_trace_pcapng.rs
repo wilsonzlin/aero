@@ -1,15 +1,16 @@
-#![cfg(not(target_arch = "wasm32"))]
-
 use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 
-#[derive(Clone, Copy, Debug)]
-struct TcpEndpoint {
-    mac: [u8; 6],
-    ip: [u8; 4],
-    port: u16,
-}
-
-fn make_ipv4_tcp_frame(src: TcpEndpoint, dst: TcpEndpoint, flags: u8, payload: &[u8]) -> Vec<u8> {
+#[allow(clippy::too_many_arguments)]
+fn make_ipv4_tcp_frame(
+    src_mac: [u8; 6],
+    dst_mac: [u8; 6],
+    src_ip: [u8; 4],
+    dst_ip: [u8; 4],
+    src_port: u16,
+    dst_port: u16,
+    flags: u8,
+    payload: &[u8],
+) -> Vec<u8> {
     let ip_header_len = 20usize;
     let tcp_header_len = 20usize;
 
@@ -17,8 +18,8 @@ fn make_ipv4_tcp_frame(src: TcpEndpoint, dst: TcpEndpoint, flags: u8, payload: &
 
     let mut buf = Vec::with_capacity(14 + total_len);
 
-    buf.extend_from_slice(&dst.mac);
-    buf.extend_from_slice(&src.mac);
+    buf.extend_from_slice(&dst_mac);
+    buf.extend_from_slice(&src_mac);
     buf.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype: IPv4
 
     buf.push(0x45); // version + IHL
@@ -29,11 +30,11 @@ fn make_ipv4_tcp_frame(src: TcpEndpoint, dst: TcpEndpoint, flags: u8, payload: &
     buf.push(64); // ttl
     buf.push(6); // protocol: TCP
     buf.extend_from_slice(&0u16.to_be_bytes()); // hdr checksum (ignored)
-    buf.extend_from_slice(&src.ip);
-    buf.extend_from_slice(&dst.ip);
+    buf.extend_from_slice(&src_ip);
+    buf.extend_from_slice(&dst_ip);
 
-    buf.extend_from_slice(&src.port.to_be_bytes());
-    buf.extend_from_slice(&dst.port.to_be_bytes());
+    buf.extend_from_slice(&src_port.to_be_bytes());
+    buf.extend_from_slice(&dst_port.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes()); // seq
     buf.extend_from_slice(&0u32.to_be_bytes()); // ack
     buf.push((tcp_header_len as u8 / 4) << 4); // data offset
@@ -118,19 +119,26 @@ fn synthetic_tcp_exchange_is_written_to_pcapng() {
     let guest_ip = [10, 0, 2, 15];
     let remote_ip = [93, 184, 216, 34]; // example.com
 
-    let guest = TcpEndpoint {
-        mac: guest_mac,
-        ip: guest_ip,
-        port: 12345,
-    };
-    let remote = TcpEndpoint {
-        mac: remote_mac,
-        ip: remote_ip,
-        port: 80,
-    };
-
-    let syn = make_ipv4_tcp_frame(guest, remote, 0x02, &[]);
-    let syn_ack = make_ipv4_tcp_frame(remote, guest, 0x12, &[]);
+    let syn = make_ipv4_tcp_frame(
+        guest_mac,
+        remote_mac,
+        guest_ip,
+        remote_ip,
+        12345,
+        80,
+        0x02,
+        &[],
+    );
+    let syn_ack = make_ipv4_tcp_frame(
+        remote_mac,
+        guest_mac,
+        remote_ip,
+        guest_ip,
+        80,
+        12345,
+        0x12,
+        &[],
+    );
 
     tracer.record_ethernet(FrameDirection::GuestTx, &syn);
     tracer.record_ethernet(FrameDirection::GuestRx, &syn_ack);

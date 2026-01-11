@@ -155,9 +155,7 @@ impl VertexBuffer {
 
         if !lock.flags.contains(LockFlags::READONLY) {
             let align = wgpu::COPY_BUFFER_ALIGNMENT;
-            if !(lock.offset as u64).is_multiple_of(align)
-                || !(lock.size as u64).is_multiple_of(align)
-            {
+            if !(lock.offset as u64).is_multiple_of(align) || !(lock.size as u64).is_multiple_of(align) {
                 return Err(anyhow!(
                     "vertex buffer unlock range must be 4-byte aligned (offset {}, size {})",
                     lock.offset,

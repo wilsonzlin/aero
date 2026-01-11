@@ -385,7 +385,9 @@ impl SharedFramebuffer {
         };
         let addr = base.as_ptr() as usize;
         if !addr.is_multiple_of(4) {
-            return Err(SharedFramebufferError::UnalignedBasePtr { addr });
+            return Err(SharedFramebufferError::UnalignedBasePtr {
+                addr,
+            });
         }
 
         Ok(Self { base, layout })

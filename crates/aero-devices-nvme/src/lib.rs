@@ -757,17 +757,18 @@ impl IoSnapshot for NvmeController {
     const DEVICE_VERSION: SnapshotVersion = <NvmeControllerState as IoSnapshot>::DEVICE_VERSION;
 
     fn save_state(&self) -> Vec<u8> {
-        NvmeControllerState {
+        // INTMC is write-only in this device model; we store 0 for compatibility with the shared
+        // snapshot state struct.
+        let state = NvmeControllerState {
             cap: self.cap,
             vs: self.vs,
             intms: self.intms,
+            intmc: 0,
             cc: self.cc,
             csts: self.csts,
             aqa: self.aqa,
             asq: self.asq,
             acq: self.acq,
-            intx_level: self.intx_level,
-
             admin_sq: self.admin_sq.as_ref().map(|sq| NvmeSubmissionQueueState {
                 qid: sq.id,
                 base: sq.base,
@@ -810,9 +811,12 @@ impl IoSnapshot for NvmeController {
                     irq_enabled: cq.irq_enabled,
                 })
                 .collect(),
-            ..Default::default()
-        }
-        .save_state()
+            intx_level: self.intx_level,
+            // This controller processes commands synchronously, so there is no meaningful in-flight state.
+            in_flight: Vec::new(),
+        };
+
+        state.save_state()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {

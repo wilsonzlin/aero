@@ -1,4 +1,3 @@
-use crate::video::vga::TextRegion;
 use crate::{bda::BiosDataArea, cpu::CpuState, memory::MemoryBus};
 
 use super::Bios;
@@ -74,7 +73,7 @@ impl Bios {
                     0,
                     lines,
                     attr,
-                    TextRegion {
+                    crate::video::vga::TextWindow {
                         top_row,
                         top_col,
                         bottom_row,

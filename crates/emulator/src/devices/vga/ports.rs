@@ -425,8 +425,8 @@ impl VgaDevice {
                 let src = &self.lfb[..needed.min(self.lfb.len())];
                 for y in 0..h {
                     let row = &src[y * pitch..(y + 1) * pitch];
-                    for (x, &idx_byte) in row.iter().take(w).enumerate() {
-                        let idx = idx_byte as usize;
+                    for (x, &b) in row.iter().take(w).enumerate() {
+                        let idx = b as usize;
                         self.frontbuffer[y * w + x] = palette[idx];
                     }
                 }

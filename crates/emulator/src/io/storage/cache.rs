@@ -244,7 +244,7 @@ impl<B: DiskBackend> BlockCache<B> {
     pub fn new(backend: B, config: BlockCacheConfig) -> DiskResult<Self> {
         let sector_size = backend.sector_size();
         if config.block_size == 0
-            || !u64::from(config.block_size).is_multiple_of(u64::from(sector_size))
+            || !(config.block_size as u64).is_multiple_of(sector_size as u64)
         {
             return Err(DiskError::Unsupported(
                 "cache block size must be a multiple of backend sector size",

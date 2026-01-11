@@ -557,7 +557,7 @@ impl SincResampler {
             // Need samples from center-(half-1) .. center+half.
             let start = center - (self.half - 1);
 
-            for (c, &last) in last_frame.iter().enumerate() {
+            for (c, &last_sample) in last_frame.iter().enumerate() {
                 let mut acc = 0.0f32;
                 for (t, &k) in coeffs.iter().enumerate() {
                     let idx = start + t as isize;
@@ -567,7 +567,7 @@ impl SincResampler {
                         let base = idx as usize * self.channels;
                         self.history[base + c]
                     } else {
-                        last
+                        last_sample
                     };
                     acc += sample * k;
                 }

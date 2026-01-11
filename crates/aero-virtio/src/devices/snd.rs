@@ -338,7 +338,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 PLAYBACK_CHANNELS,
             ));
         }
-        if (start_id..end).contains(&CAPTURE_STREAM_ID) {
+        if start_id <= CAPTURE_STREAM_ID && CAPTURE_STREAM_ID < end {
             resp.extend_from_slice(&virtio_snd_pcm_info(
                 CAPTURE_STREAM_ID,
                 VIRTIO_SND_D_INPUT,
@@ -452,12 +452,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     }
 
     fn handle_tx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
-        const MAX_TX_PCM_BYTES: u64 = 4 * 1024 * 1024;
-
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
         let mut parsed_stream = false;
-        let mut pcm_bytes = 0u64;
 
         let mut pending_lo: Option<u8> = None;
         let mut pending_left: Option<f32> = None;
@@ -489,11 +486,6 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 }
 
                 parsed_stream = true;
-            }
-
-            pcm_bytes = pcm_bytes.saturating_add(slice.len() as u64);
-            if pcm_bytes > MAX_TX_PCM_BYTES {
-                return VIRTIO_SND_S_BAD_MSG;
             }
 
             for &b in slice {
@@ -547,9 +539,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 let dst_rate = self.host_sample_rate_hz as u64;
                 let reserve_frames =
                     queued_src.saturating_mul(dst_rate) / (PCM_SAMPLE_RATE_HZ as u64) + 2;
-                if let Ok(frames) = usize::try_from(reserve_frames) {
-                    self.resampled_scratch.reserve(frames.saturating_mul(2));
-                }
+                self.resampled_scratch.reserve(reserve_frames as usize * 2);
                 let _ = self
                     .resampler
                     .produce_available_interleaved_stereo_into(&mut self.resampled_scratch);
@@ -578,13 +568,13 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     fn handle_rx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
-        let out_bytes: u64 = chain
+        let out_bytes: usize = chain
             .descriptors()
             .iter()
             .filter(|d| !d.is_write_only())
-            .map(|d| u64::from(d.len))
-            .fold(0u64, u64::saturating_add);
-        let extra_out = out_bytes > hdr.len() as u64;
+            .map(|d| d.len as usize)
+            .sum();
+        let extra_out = out_bytes > hdr.len();
 
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
             if hdr_len >= hdr.len() {
@@ -636,16 +626,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let resp_desc = *in_descs.last().unwrap();
         let payload_descs = &in_descs[..in_descs.len().saturating_sub(1)];
 
-        let payload_bytes: u64 = payload_descs
-            .iter()
-            .map(|d| u64::from(d.len))
-            .fold(0u64, u64::saturating_add);
+        let payload_bytes: usize = payload_descs.iter().map(|d| d.len as usize).sum();
         if !payload_bytes.is_multiple_of(2) {
-            status = VIRTIO_SND_S_BAD_MSG;
-        }
-        // Avoid unbounded host allocations if the guest provides a pathologically large capture
-        // buffer chain (important for native builds; wasm32 naturally constrains this).
-        if status == VIRTIO_SND_S_OK && payload_bytes > 4 * 1024 * 1024 {
             status = VIRTIO_SND_S_BAD_MSG;
         }
 
@@ -657,13 +639,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let payload_written = if payload_descs.is_empty() {
             0usize
         } else if status == VIRTIO_SND_S_OK {
-            let samples_needed = match usize::try_from(payload_bytes / 2) {
-                Ok(samples) => samples,
-                Err(_) => {
-                    status = VIRTIO_SND_S_BAD_MSG;
-                    0
-                }
-            };
+            let samples_needed = payload_bytes / 2;
             if samples_needed == 0 {
                 write_payload_silence(mem, payload_descs)
             } else {

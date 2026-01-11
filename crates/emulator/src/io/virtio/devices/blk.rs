@@ -1,10 +1,8 @@
-use crate::io::storage::{DiskBackend, DiskResult};
+use crate::io::storage::disk::{DiskBackend, DiskResult};
 use crate::io::virtio::vio_core::{DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE};
 use memory::GuestMemory;
 
 pub const VIRTIO_BLK_SECTOR_SIZE: u64 = 512;
-
-const DISK_IO_CHUNK_BYTES: usize = 64 * 1024;
 
 pub const VIRTIO_BLK_T_IN: u32 = 0;
 pub const VIRTIO_BLK_T_OUT: u32 = 1;
@@ -191,8 +189,7 @@ impl VirtioBlkDevice {
             return Err(());
         }
         let req_type = mem.read_u32_le(hdr.addr).map_err(|_| ())?;
-        let sector_addr = hdr.addr.checked_add(8).ok_or(())?;
-        let sector = mem.read_u64_le(sector_addr).map_err(|_| ())?;
+        let sector = mem.read_u64_le(hdr.addr + 8).map_err(|_| ())?;
         Ok(VirtioBlkReq { req_type, sector })
     }
 
@@ -211,17 +208,6 @@ impl VirtioBlkDevice {
             return Err(());
         }
         let mut lba = byte_offset / disk_sector_size;
-        let mem_size = mem.size();
-        let disk_sector_bytes = usize::try_from(disk_sector_size).map_err(|_| ())?;
-        if disk_sector_bytes == 0 {
-            return Err(());
-        }
-        let scratch_len = if disk_sector_bytes > DISK_IO_CHUNK_BYTES {
-            disk_sector_bytes
-        } else {
-            (DISK_IO_CHUNK_BYTES / disk_sector_bytes) * disk_sector_bytes
-        };
-        let mut scratch = vec![0u8; scratch_len];
 
         let mut written: u32 = 0;
         for desc in &chain.descriptors[1..chain.descriptors.len() - 1] {
@@ -232,35 +218,22 @@ impl VirtioBlkDevice {
             if disk_sector_size == 0 || !(len as u64).is_multiple_of(disk_sector_size) {
                 return Err(());
             }
-            let end = desc.addr.checked_add(u64::from(desc.len)).ok_or(())?;
-            if end > mem_size {
-                return Err(());
+            let sectors = (len as u64) / disk_sector_size;
+
+            if let Some(dst) = mem.get_slice_mut(desc.addr, len) {
+                self.drive
+                    .backend_mut()
+                    .read_sectors(lba, dst)
+                    .map_err(|_| ())?;
+            } else {
+                let mut tmp = vec![0u8; len];
+                self.drive
+                    .backend_mut()
+                    .read_sectors(lba, &mut tmp)
+                    .map_err(|_| ())?;
+                mem.write_from(desc.addr, &tmp).map_err(|_| ())?;
             }
-
-            let mut addr = desc.addr;
-            let mut remaining = len;
-            while remaining > 0 {
-                let to_read = remaining.min(scratch.len());
-                let sectors = (to_read as u64) / disk_sector_size;
-
-                if let Some(dst) = mem.get_slice_mut(addr, to_read) {
-                    self.drive
-                        .backend_mut()
-                        .read_sectors(lba, dst)
-                        .map_err(|_| ())?;
-                } else {
-                    let buf = &mut scratch[..to_read];
-                    self.drive
-                        .backend_mut()
-                        .read_sectors(lba, buf)
-                        .map_err(|_| ())?;
-                    mem.write_from(addr, buf).map_err(|_| ())?;
-                }
-
-                lba = lba.checked_add(sectors).ok_or(())?;
-                addr = addr.checked_add(to_read as u64).ok_or(())?;
-                remaining -= to_read;
-            }
+            lba = lba.checked_add(sectors).ok_or(())?;
             written = written.saturating_add(desc.len);
         }
 
@@ -282,17 +255,6 @@ impl VirtioBlkDevice {
             return Err(());
         }
         let mut lba = byte_offset / disk_sector_size;
-        let mem_size = mem.size();
-        let disk_sector_bytes = usize::try_from(disk_sector_size).map_err(|_| ())?;
-        if disk_sector_bytes == 0 {
-            return Err(());
-        }
-        let scratch_len = if disk_sector_bytes > DISK_IO_CHUNK_BYTES {
-            disk_sector_bytes
-        } else {
-            (DISK_IO_CHUNK_BYTES / disk_sector_bytes) * disk_sector_bytes
-        };
-        let mut scratch = vec![0u8; scratch_len];
 
         for desc in &chain.descriptors[1..chain.descriptors.len() - 1] {
             if desc.flags & VRING_DESC_F_WRITE != 0 {
@@ -302,35 +264,22 @@ impl VirtioBlkDevice {
             if disk_sector_size == 0 || !(len as u64).is_multiple_of(disk_sector_size) {
                 return Err(());
             }
-            let end = desc.addr.checked_add(u64::from(desc.len)).ok_or(())?;
-            if end > mem_size {
-                return Err(());
+            let sectors = (len as u64) / disk_sector_size;
+
+            if let Some(src) = mem.get_slice(desc.addr, len) {
+                self.drive
+                    .backend_mut()
+                    .write_sectors(lba, src)
+                    .map_err(|_| ())?;
+            } else {
+                let mut tmp = vec![0u8; len];
+                mem.read_into(desc.addr, &mut tmp).map_err(|_| ())?;
+                self.drive
+                    .backend_mut()
+                    .write_sectors(lba, &tmp)
+                    .map_err(|_| ())?;
             }
-
-            let mut addr = desc.addr;
-            let mut remaining = len;
-            while remaining > 0 {
-                let to_write = remaining.min(scratch.len());
-                let sectors = (to_write as u64) / disk_sector_size;
-
-                if let Some(src) = mem.get_slice(addr, to_write) {
-                    self.drive
-                        .backend_mut()
-                        .write_sectors(lba, src)
-                        .map_err(|_| ())?;
-                } else {
-                    let buf = &mut scratch[..to_write];
-                    mem.read_into(addr, buf).map_err(|_| ())?;
-                    self.drive
-                        .backend_mut()
-                        .write_sectors(lba, buf)
-                        .map_err(|_| ())?;
-                }
-
-                lba = lba.checked_add(sectors).ok_or(())?;
-                addr = addr.checked_add(to_write as u64).ok_or(())?;
-                remaining -= to_write;
-            }
+            lba = lba.checked_add(sectors).ok_or(())?;
         }
 
         Ok(())
@@ -344,7 +293,7 @@ mod tests {
     use crate::io::virtio::vio_core::{
         Descriptor, VirtQueue, VRING_AVAIL_F_NO_INTERRUPT, VRING_DESC_F_NEXT,
     };
-    use memory::{DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult};
+    use memory::DenseMemory;
     use std::sync::{Arc, Mutex};
 
     const DESC_TABLE: u64 = 0x1000;
@@ -853,146 +802,5 @@ mod tests {
         let irq = dev.process_queue(&mut mem).unwrap();
         assert!(!irq);
         assert_eq!(dev.take_isr(), 0);
-    }
-
-    #[derive(Debug)]
-    struct PanickingReadDisk;
-
-    impl DiskBackend for PanickingReadDisk {
-        fn sector_size(&self) -> u32 {
-            512
-        }
-
-        fn total_sectors(&self) -> u64 {
-            8
-        }
-
-        fn read_sectors(
-            &mut self,
-            _lba: u64,
-            _buf: &mut [u8],
-        ) -> Result<(), crate::io::storage::disk::DiskError> {
-            panic!("disk read should not be invoked");
-        }
-
-        fn write_sectors(
-            &mut self,
-            _lba: u64,
-            _buf: &[u8],
-        ) -> Result<(), crate::io::storage::disk::DiskError> {
-            Ok(())
-        }
-
-        fn flush(&mut self) -> Result<(), crate::io::storage::disk::DiskError> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn read_rejects_out_of_range_guest_buffers_without_touching_disk() {
-        let drive = VirtualDrive::new(Box::new(PanickingReadDisk));
-        let vq = VirtQueue::new(8, 0, 0, 0);
-        let mut dev = VirtioBlkDevice::new(drive, vq);
-
-        let chain = DescriptorChain {
-            head_index: 0,
-            descriptors: vec![
-                Descriptor {
-                    addr: 0,
-                    len: 16,
-                    flags: VRING_DESC_F_NEXT,
-                    next: 1,
-                },
-                Descriptor {
-                    addr: 0x3f00,
-                    len: 512,
-                    flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
-                    next: 2,
-                },
-                Descriptor {
-                    addr: 0,
-                    len: 1,
-                    flags: VRING_DESC_F_WRITE,
-                    next: 0,
-                },
-            ],
-        };
-
-        let mut mem = DenseMemory::new(0x4000).unwrap();
-        assert!(dev.do_read(&mut mem, &chain, 0).is_err());
-    }
-
-    #[derive(Debug)]
-    struct HighAddrZeroMemory;
-
-    impl GuestMemory for HighAddrZeroMemory {
-        fn size(&self) -> u64 {
-            u64::MAX
-        }
-
-        fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
-            let end = paddr
-                .checked_add(dst.len() as u64)
-                .ok_or(GuestMemoryError::OutOfRange {
-                    paddr,
-                    len: dst.len(),
-                    size: self.size(),
-                })?;
-            if end > self.size() {
-                return Err(GuestMemoryError::OutOfRange {
-                    paddr,
-                    len: dst.len(),
-                    size: self.size(),
-                });
-            }
-            dst.fill(0);
-            Ok(())
-        }
-
-        fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
-            let end = paddr
-                .checked_add(src.len() as u64)
-                .ok_or(GuestMemoryError::OutOfRange {
-                    paddr,
-                    len: src.len(),
-                    size: self.size(),
-                })?;
-            if end > self.size() {
-                return Err(GuestMemoryError::OutOfRange {
-                    paddr,
-                    len: src.len(),
-                    size: self.size(),
-                });
-            }
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn read_req_rejects_address_overflow_without_panicking() {
-        let drive = VirtualDrive::new(Box::new(SharedDisk::new(8, 512)));
-        let vq = VirtQueue::new(8, 0, 0, 0);
-        let dev = VirtioBlkDevice::new(drive, vq);
-
-        let chain = DescriptorChain {
-            head_index: 0,
-            descriptors: vec![
-                Descriptor {
-                    addr: u64::MAX - 4,
-                    len: 16,
-                    flags: VRING_DESC_F_NEXT,
-                    next: 1,
-                },
-                Descriptor {
-                    addr: 0,
-                    len: 1,
-                    flags: VRING_DESC_F_WRITE,
-                    next: 0,
-                },
-            ],
-        };
-
-        let mem = HighAddrZeroMemory;
-        assert!(dev.read_req(&mem, &chain).is_err());
     }
 }

@@ -399,19 +399,18 @@ fn micro_triangle_solid_color_pixel_compare() {
     }
 
     let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+    let constants = zero_constants();
     software::draw(
         &mut rt,
         &vs,
         &ps,
-        software::DrawCall {
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: None,
-            constants: &zero_constants(),
-            textures: &HashMap::new(),
-            sampler_states: &HashMap::new(),
-            blend_state: state::BlendState::default(),
-        },
+        &decl,
+        &vb,
+        None,
+        &constants,
+        &HashMap::new(),
+        &HashMap::new(),
+        state::BlendState::default(),
     );
 
     let rgba = rt.to_rgba8();
@@ -471,19 +470,18 @@ fn micro_textured_quad_pixel_compare() {
     );
 
     let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
     software::draw(
         &mut rt,
         &vs,
         &ps,
-        software::DrawCall {
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: Some(&indices),
-            constants: &zero_constants(),
-            textures: &textures,
-            sampler_states: &sampler_states,
-            blend_state: state::BlendState::default(),
-        },
+        &decl,
+        &vb,
+        Some(&indices),
+        &constants,
+        &textures,
+        &sampler_states,
+        state::BlendState::default(),
     );
 
     assert_eq!(rt.get(1, 1).to_rgba8(), [255, 0, 0, 255]); // top-left
@@ -546,19 +544,18 @@ fn micro_ps3_ifc_def_pixel_compare() {
     );
 
     let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
     software::draw(
         &mut rt,
         &vs,
         &ps,
-        software::DrawCall {
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: Some(&indices),
-            constants: &zero_constants(),
-            textures: &textures,
-            sampler_states: &sampler_states,
-            blend_state: state::BlendState::default(),
-        },
+        &decl,
+        &vb,
+        Some(&indices),
+        &constants,
+        &textures,
+        &sampler_states,
+        state::BlendState::default(),
     );
 
     // Left side: r0.x is 1.0 so branch returns the sampled texel (red).
@@ -604,20 +601,19 @@ fn micro_alpha_blending_pixel_compare() {
     let sampler_states = HashMap::new();
 
     let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
     // Pass 1: opaque red.
     software::draw(
         &mut rt,
         &vs,
         &ps,
-        software::DrawCall {
-            vertex_decl: &decl,
-            vertex_buffer: &vb_red,
-            indices: Some(&indices),
-            constants: &zero_constants(),
-            textures: &textures,
-            sampler_states: &sampler_states,
-            blend_state: state::BlendState::default(),
-        },
+        &decl,
+        &vb_red,
+        Some(&indices),
+        &constants,
+        &textures,
+        &sampler_states,
+        state::BlendState::default(),
     );
 
     // Pass 2: green with alpha=0.5 blended over.
@@ -631,15 +627,13 @@ fn micro_alpha_blending_pixel_compare() {
         &mut rt,
         &vs,
         &ps,
-        software::DrawCall {
-            vertex_decl: &decl,
-            vertex_buffer: &vb_green,
-            indices: Some(&indices),
-            constants: &zero_constants(),
-            textures: &textures,
-            sampler_states: &sampler_states,
-            blend_state: blend,
-        },
+        &decl,
+        &vb_green,
+        Some(&indices),
+        &constants,
+        &textures,
+        &sampler_states,
+        blend,
     );
 
     assert_eq!(rt.get(4, 4).to_rgba8(), [128, 128, 0, 191]);
@@ -694,15 +688,13 @@ fn micro_ps2_src_and_result_modifiers_pixel_compare() {
         &mut rt,
         &vs,
         &ps,
-        software::DrawCall {
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: None,
-            constants: &constants,
-            textures: &HashMap::new(),
-            sampler_states: &HashMap::new(),
-            blend_state: state::BlendState::default(),
-        },
+        &decl,
+        &vb,
+        None,
+        &constants,
+        &HashMap::new(),
+        &HashMap::new(),
+        state::BlendState::default(),
     );
 
     // `oC0 = clamp(-c0, 0..1)`, with c0 = (-0.5, 0.5, -2.0, -1.0).

@@ -36,7 +36,9 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) 
 
     // Guest memory in page 0, CpuState at CPU_PTR in page 1, and room for the JIT context.
     let memory = Memory::new(&mut store, MemoryType::new(4, None)).unwrap();
-    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+    linker
+        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
+        .unwrap();
 
     define_mem_helpers(&mut store, &mut linker, memory);
 

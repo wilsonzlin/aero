@@ -59,8 +59,7 @@ const PORTSC_LS_J_FS: u16 = 0x0010;
 const PORTSC_LSDA: u16 = 0x0100;
 const PORTSC_PR: u16 = 0x0200;
 
-type InterruptOutPacket = (u8, Vec<u8>);
-type InterruptOutLog = Rc<RefCell<Vec<InterruptOutPacket>>>;
+type InterruptOutLog = Rc<RefCell<Vec<(u8, Vec<u8>)>>>;
 
 struct TestMemBus {
     mem: Vec<u8>,
@@ -176,7 +175,7 @@ impl DummyInterruptOutDevice {
         }
     }
 
-    fn received(&self) -> Vec<InterruptOutPacket> {
+    fn received(&self) -> Vec<(u8, Vec<u8>)> {
         self.received.borrow().clone()
     }
 }
@@ -1587,8 +1586,7 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
         0xc0, // End Collection
     ];
 
-    let report_len =
-        u16::try_from(report_descriptor.len()).expect("report descriptor length fits u16");
+    let report_len = report_descriptor.len() as u16;
     let passthrough = UsbHidPassthroughHandle::new(
         0x1234,
         0x5678,

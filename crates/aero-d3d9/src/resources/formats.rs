@@ -62,10 +62,7 @@ impl FormatInfo {
     pub fn d3d_mip_level_byte_len(&self, width: u32, height: u32, level: u32) -> usize {
         let (w, h) = self.mip_dimensions(width, height, level);
         let (bw, bh) = if self.d3d_is_compressed {
-            (
-                w.div_ceil(self.d3d_block_width),
-                h.div_ceil(self.d3d_block_height),
-            )
+            (w.div_ceil(self.d3d_block_width), h.div_ceil(self.d3d_block_height))
         } else {
             (w, h)
         };
@@ -260,10 +257,12 @@ pub fn format_info(
             force_opaque_alpha: false,
         }),
 
-        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, _) => Err(anyhow!(
-            "depth format {:?} must be used with TextureUsageKind::DepthStencil",
-            format
-        )),
+        (D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32, _) => {
+            Err(anyhow!(
+                "depth format {:?} must be used with TextureUsageKind::DepthStencil",
+                format
+            ))
+        }
     }
 }
 

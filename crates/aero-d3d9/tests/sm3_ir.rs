@@ -52,10 +52,10 @@ fn ir_snapshot_ps3_tex_ifc() {
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // dcl_texcoord0 v0.xy
-        opcode_token(31, 1) | (5u32 << 16),
+        31u32 | (1u32 << 24) | (5u32 << 16),
         dst_token(1, 0, 0x3),
         // dcl_2d s0
-        opcode_token(31, 1) | (2u32 << 16),
+        31u32 | (1u32 << 24) | (2u32 << 16),
         dst_token(10, 0, 0xF),
         // def c0, 0.5, 0, 0, 0
         opcode_token(81, 5),

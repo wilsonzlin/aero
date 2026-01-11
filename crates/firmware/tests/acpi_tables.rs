@@ -186,7 +186,11 @@ fn fadt_exposes_acpi_pm_blocks_and_reset_register() {
     assert_ne!(flags & (1 << 10), 0, "RESET_REG_SUP flag must be set");
 
     // ResetReg is a Generic Address Structure (GAS).
-    assert_eq!(fadt[RESET_REG_OFFSET], 0x01, "ResetReg must be System I/O");
+    assert_eq!(
+        fadt[RESET_REG_OFFSET],
+        0x01,
+        "ResetReg must be System I/O"
+    );
     assert_eq!(
         fadt[RESET_REG_OFFSET + 1],
         8,

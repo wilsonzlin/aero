@@ -15,9 +15,10 @@ fn vbe_present_to_shared_framebuffer_converts_bgra_to_rgba_and_forces_alpha() {
 
     let mut output =
         VgaSharedFramebufferOutput::new(1024, 768).expect("allocate shared framebuffer");
-    assert!(vga
-        .present_to_shared_framebuffer(&mut output)
-        .expect("present VBE frame"));
+    assert!(
+        vga.present_to_shared_framebuffer(&mut output)
+            .expect("present VBE frame")
+    );
 
     let view = output.view_mut();
     let header = view.header();

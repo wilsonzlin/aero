@@ -108,14 +108,13 @@ impl VecDisk {
     }
 
     fn check(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        let sector_size = self.sector_size as usize;
-        if !bytes.is_multiple_of(sector_size) {
+        if !bytes.is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: self.sector_size,
             });
         }
-        let sectors = (bytes / sector_size) as u64;
+        let sectors = (bytes / self.sector_size as usize) as u64;
         let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
             lba,
             sectors,

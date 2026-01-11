@@ -8,8 +8,10 @@ use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
 };
 
-type JitBlockFn = Box<dyn FnMut(&mut TestCpu) -> JitBlockExit>;
-type InterpStepFn = Box<dyn FnMut(&mut TestCpu) -> u64>;
+type JitBlockFn = dyn FnMut(&mut TestCpu) -> JitBlockExit;
+type JitBlockMap = HashMap<u32, Box<JitBlockFn>>;
+type InterpStepFn = dyn FnMut(&mut TestCpu) -> u64;
+type InterpStepMap = HashMap<u64, Box<InterpStepFn>>;
 
 #[derive(Debug, Default, Clone)]
 struct TestCpu {
@@ -78,7 +80,7 @@ impl CompileRequestSink for RecordingCompileSink {
 
 #[derive(Default)]
 struct TestJitBackend {
-    blocks: HashMap<u32, JitBlockFn>,
+    blocks: JitBlockMap,
 }
 
 impl TestJitBackend {
@@ -102,7 +104,7 @@ impl JitBackend for TestJitBackend {
 
 #[derive(Default)]
 struct TestInterpreter {
-    steps: HashMap<u64, InterpStepFn>,
+    steps: InterpStepMap,
 }
 
 impl TestInterpreter {

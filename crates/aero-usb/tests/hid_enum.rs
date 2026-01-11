@@ -150,128 +150,132 @@ fn write_td(
     mem.write_u32(addr + 12, buffer);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn control_in(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
+struct UhciTestHarness<'a> {
+    ctrl: &'a mut UhciController,
+    mem: &'a mut TestMemory,
+    irq: &'a mut TestIrq,
+    alloc: &'a mut Alloc,
     fl_base: u32,
-    devaddr: u8,
-    max_packet: usize,
-    setup: SetupPacket,
-) -> Vec<u8> {
-    let qh_addr = alloc.alloc(0x20, 0x10);
-    let setup_buf = alloc.alloc(8, 0x10);
-    let setup_td = alloc.alloc(0x20, 0x10);
-
-    let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    mem.write(setup_buf, &bytes);
-
-    let mut tds = Vec::new();
-    tds.push((setup_td, setup_buf, 8usize, 0x2D, false)); // SETUP, DATA0
-
-    let mut remaining = setup.length as usize;
-    let mut toggle = true;
-    while remaining != 0 {
-        let chunk = remaining.min(max_packet);
-        let buf = alloc.alloc(chunk as u32, 0x10);
-        let td = alloc.alloc(0x20, 0x10);
-        tds.push((td, buf, chunk, 0x69, toggle)); // IN
-        toggle = !toggle;
-        remaining -= chunk;
-    }
-
-    // Status stage: OUT zero-length, DATA1.
-    let status_td = alloc.alloc(0x20, 0x10);
-    tds.push((status_td, 0, 0, 0xE1, true));
-
-    for i in 0..tds.len() {
-        let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
-        let link = if i + 1 == tds.len() {
-            LINK_PTR_T
-        } else {
-            tds[i + 1].0
-        };
-        let ioc = i + 1 == tds.len();
-        write_td(
-            mem,
-            td_addr,
-            link,
-            td_ctrl(true, ioc),
-            td_token(pid, devaddr, 0, dtoggle, len),
-            buf_addr,
-        );
-    }
-
-    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
-    install_frame_list(mem, fl_base, qh_addr);
-
-    // One frame is enough for this emulator model (no NAKs during enumeration).
-    ctrl.step_frame(mem, irq);
-
-    let mut out = Vec::new();
-    for (td_addr, buf_addr, _len, pid, _) in tds {
-        if pid != 0x69 {
-            continue;
-        }
-        let ctrl_sts = mem.read_u32(td_addr + 4);
-        let got = actlen(ctrl_sts);
-        let mut tmp = vec![0u8; got];
-        mem.read(buf_addr, &mut tmp);
-        out.extend_from_slice(&tmp);
-    }
-    out
 }
 
-fn control_no_data(
-    ctrl: &mut UhciController,
-    mem: &mut TestMemory,
-    irq: &mut TestIrq,
-    alloc: &mut Alloc,
-    fl_base: u32,
-    devaddr: u8,
-    setup: SetupPacket,
-) {
-    let qh_addr = alloc.alloc(0x20, 0x10);
-    let setup_buf = alloc.alloc(8, 0x10);
-    let setup_td = alloc.alloc(0x20, 0x10);
-    let status_td = alloc.alloc(0x20, 0x10);
+impl UhciTestHarness<'_> {
+    fn control_in(&mut self, devaddr: u8, max_packet: usize, setup: SetupPacket) -> Vec<u8> {
+        let ctrl = &mut *self.ctrl;
+        let mem = &mut *self.mem;
+        let irq = &mut *self.irq;
+        let alloc = &mut *self.alloc;
+        let fl_base = self.fl_base;
 
-    let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    mem.write(setup_buf, &bytes);
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let setup_buf = alloc.alloc(8, 0x10);
+        let setup_td = alloc.alloc(0x20, 0x10);
 
-    write_td(
-        mem,
-        setup_td,
-        status_td,
-        td_ctrl(true, false),
-        td_token(0x2D, devaddr, 0, false, 8),
-        setup_buf,
-    );
-    // Status stage: IN zero-length, DATA1.
-    write_td(
-        mem,
-        status_td,
-        LINK_PTR_T,
-        td_ctrl(true, true),
-        td_token(0x69, devaddr, 0, true, 0),
-        0,
-    );
-    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
-    install_frame_list(mem, fl_base, qh_addr);
+        let mut bytes = [0u8; 8];
+        bytes[0] = setup.request_type;
+        bytes[1] = setup.request;
+        bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
+        bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
+        bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
+        mem.write(setup_buf, &bytes);
 
-    ctrl.step_frame(mem, irq);
+        let mut tds = Vec::new();
+        tds.push((setup_td, setup_buf, 8usize, 0x2D, false)); // SETUP, DATA0
+
+        let mut remaining = setup.length as usize;
+        let mut toggle = true;
+        while remaining != 0 {
+            let chunk = remaining.min(max_packet);
+            let buf = alloc.alloc(chunk as u32, 0x10);
+            let td = alloc.alloc(0x20, 0x10);
+            tds.push((td, buf, chunk, 0x69, toggle)); // IN
+            toggle = !toggle;
+            remaining -= chunk;
+        }
+
+        // Status stage: OUT zero-length, DATA1.
+        let status_td = alloc.alloc(0x20, 0x10);
+        tds.push((status_td, 0, 0, 0xE1, true));
+
+        for i in 0..tds.len() {
+            let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
+            let link = if i + 1 == tds.len() {
+                LINK_PTR_T
+            } else {
+                tds[i + 1].0
+            };
+            let ioc = i + 1 == tds.len();
+            write_td(
+                mem,
+                td_addr,
+                link,
+                td_ctrl(true, ioc),
+                td_token(pid, devaddr, 0, dtoggle, len),
+                buf_addr,
+            );
+        }
+
+        write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+        install_frame_list(mem, fl_base, qh_addr);
+
+        // One frame is enough for this emulator model (no NAKs during enumeration).
+        ctrl.step_frame(mem, irq);
+
+        let mut out = Vec::new();
+        for (td_addr, buf_addr, _len, pid, _) in tds {
+            if pid != 0x69 {
+                continue;
+            }
+            let ctrl_sts = mem.read_u32(td_addr + 4);
+            let got = actlen(ctrl_sts);
+            let mut tmp = vec![0u8; got];
+            mem.read(buf_addr, &mut tmp);
+            out.extend_from_slice(&tmp);
+        }
+        out
+    }
+
+    fn control_no_data(&mut self, devaddr: u8, setup: SetupPacket) {
+        let ctrl = &mut *self.ctrl;
+        let mem = &mut *self.mem;
+        let irq = &mut *self.irq;
+        let alloc = &mut *self.alloc;
+        let fl_base = self.fl_base;
+
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let setup_buf = alloc.alloc(8, 0x10);
+        let setup_td = alloc.alloc(0x20, 0x10);
+        let status_td = alloc.alloc(0x20, 0x10);
+
+        let mut bytes = [0u8; 8];
+        bytes[0] = setup.request_type;
+        bytes[1] = setup.request;
+        bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
+        bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
+        bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
+        mem.write(setup_buf, &bytes);
+
+        write_td(
+            mem,
+            setup_td,
+            status_td,
+            td_ctrl(true, false),
+            td_token(0x2D, devaddr, 0, false, 8),
+            setup_buf,
+        );
+        // Status stage: IN zero-length, DATA1.
+        write_td(
+            mem,
+            status_td,
+            LINK_PTR_T,
+            td_ctrl(true, true),
+            td_token(0x69, devaddr, 0, true, 0),
+            0,
+        );
+        write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+        install_frame_list(mem, fl_base, qh_addr);
+
+        ctrl.step_frame(mem, irq);
+    }
 }
 
 #[test]
@@ -298,124 +302,104 @@ fn enumerate_hid_keyboard_and_receive_keypress_report() {
 
     let mut ep0_max_packet = 8usize;
 
-    // GET_DESCRIPTOR(Device) - first 8 bytes (host learns max packet size).
-    let dev_desc8 = control_in(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        0,
-        ep0_max_packet,
-        SetupPacket {
-            request_type: 0x80,
-            request: 0x06,
-            value: 0x0100,
-            index: 0,
-            length: 8,
-        },
-    );
-    assert_eq!(dev_desc8.len(), 8);
-    assert_eq!(dev_desc8[0], 18); // bLength of the full descriptor (18 bytes)
-    assert_eq!(dev_desc8[1], 0x01);
-    assert_eq!(dev_desc8[2..4], [0x00, 0x02]); // bcdUSB = 2.00
-    ep0_max_packet = dev_desc8[7] as usize;
-    assert_eq!(ep0_max_packet, 0x40);
+    {
+        let mut uhci = UhciTestHarness {
+            ctrl: &mut ctrl,
+            mem: &mut mem,
+            irq: &mut irq,
+            alloc: &mut alloc,
+            fl_base,
+        };
 
-    // GET_DESCRIPTOR(Device) - full descriptor now that we know max packet size.
-    let dev_desc = control_in(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        0,
-        ep0_max_packet,
-        SetupPacket {
-            request_type: 0x80,
-            request: 0x06,
-            value: 0x0100,
-            index: 0,
-            length: 18,
-        },
-    );
-    assert_eq!(dev_desc.len(), 18);
-    assert_eq!(dev_desc[0], 18);
-    assert_eq!(dev_desc[1], 0x01);
-    assert_eq!(dev_desc[7], 0x40);
+        // GET_DESCRIPTOR(Device) - first 8 bytes (host learns max packet size).
+        let dev_desc8 = uhci.control_in(
+            0,
+            ep0_max_packet,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x06,
+                value: 0x0100,
+                index: 0,
+                length: 8,
+            },
+        );
+        assert_eq!(dev_desc8.len(), 8);
+        assert_eq!(dev_desc8[0], 18); // bLength of the full descriptor (18 bytes)
+        assert_eq!(dev_desc8[1], 0x01);
+        assert_eq!(dev_desc8[2..4], [0x00, 0x02]); // bcdUSB = 2.00
+        ep0_max_packet = dev_desc8[7] as usize;
+        assert_eq!(ep0_max_packet, 0x40);
 
-    // SET_ADDRESS(1). Status stage still targets address 0.
-    control_no_data(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        0,
-        SetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 1,
-            index: 0,
-            length: 0,
-        },
-    );
+        // GET_DESCRIPTOR(Device) - full descriptor now that we know max packet size.
+        let dev_desc = uhci.control_in(
+            0,
+            ep0_max_packet,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x06,
+                value: 0x0100,
+                index: 0,
+                length: 18,
+            },
+        );
+        assert_eq!(dev_desc.len(), 18);
+        assert_eq!(dev_desc[0], 18);
+        assert_eq!(dev_desc[1], 0x01);
+        assert_eq!(dev_desc[7], 0x40);
 
-    // GET_DESCRIPTOR(Configuration) from the new address.
-    let cfg_desc = control_in(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        1,
-        ep0_max_packet,
-        SetupPacket {
-            request_type: 0x80,
-            request: 0x06,
-            value: 0x0200,
-            index: 0,
-            length: 34,
-        },
-    );
-    assert_eq!(cfg_desc.len(), 34);
-    assert_eq!(cfg_desc[1], 0x02);
+        // SET_ADDRESS(1). Status stage still targets address 0.
+        uhci.control_no_data(
+            0,
+            SetupPacket {
+                request_type: 0x00,
+                request: 0x05,
+                value: 1,
+                index: 0,
+                length: 0,
+            },
+        );
 
-    // SET_CONFIGURATION(1).
-    control_no_data(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        1,
-        SetupPacket {
-            request_type: 0x00,
-            request: 0x09,
-            value: 1,
-            index: 0,
-            length: 0,
-        },
-    );
+        // GET_DESCRIPTOR(Configuration) from the new address.
+        let cfg_desc = uhci.control_in(
+            1,
+            ep0_max_packet,
+            SetupPacket {
+                request_type: 0x80,
+                request: 0x06,
+                value: 0x0200,
+                index: 0,
+                length: 34,
+            },
+        );
+        assert_eq!(cfg_desc.len(), 34);
+        assert_eq!(cfg_desc[1], 0x02);
 
-    // GET_DESCRIPTOR(Report) for interface 0.
-    let report_desc = control_in(
-        &mut ctrl,
-        &mut mem,
-        &mut irq,
-        &mut alloc,
-        fl_base,
-        1,
-        ep0_max_packet,
-        SetupPacket {
-            request_type: 0x81,
-            request: 0x06,
-            value: 0x2200,
-            index: 0,
-            length: 63,
-        },
-    );
-    assert!(report_desc.starts_with(&[0x05, 0x01, 0x09, 0x06]));
+        // SET_CONFIGURATION(1).
+        uhci.control_no_data(
+            1,
+            SetupPacket {
+                request_type: 0x00,
+                request: 0x09,
+                value: 1,
+                index: 0,
+                length: 0,
+            },
+        );
+
+        // GET_DESCRIPTOR(Report) for interface 0.
+        let report_desc = uhci.control_in(
+            1,
+            ep0_max_packet,
+            SetupPacket {
+                request_type: 0x81,
+                request: 0x06,
+                value: 0x2200,
+                index: 0,
+                length: 63,
+            },
+        );
+        assert!(report_desc.starts_with(&[0x05, 0x01, 0x09, 0x06]));
+    }
 
     // Schedule an interrupt IN transfer (ep1) to fetch a key report.
     let qh_addr = alloc.alloc(0x20, 0x10);

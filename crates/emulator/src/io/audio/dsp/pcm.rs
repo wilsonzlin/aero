@@ -123,52 +123,52 @@ pub fn decode_interleaved_to_f32(
             }
         }
         PcmSampleFormat::I16 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(2)) {
+            for (i, chunk) in input.chunks_exact(2).enumerate() {
                 let s = i16::from_le_bytes([chunk[0], chunk[1]]);
-                *dst = s as f32 * (1.0 / 32768.0);
+                out[i] = s as f32 * (1.0 / 32768.0);
             }
         }
         PcmSampleFormat::I20In32 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(4)) {
+            for (i, chunk) in input.chunks_exact(4).enumerate() {
                 let raw = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 // Sign extend from bit 19.
                 let s = ((raw << 12) as i32) >> 12;
-                *dst = s as f32 * (1.0 / 524288.0);
+                out[i] = s as f32 * (1.0 / 524288.0);
             }
         }
         PcmSampleFormat::I24In32 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(4)) {
+            for (i, chunk) in input.chunks_exact(4).enumerate() {
                 let raw = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 // Sign extend from bit 23.
                 let s = ((raw << 8) as i32) >> 8;
-                *dst = s as f32 * (1.0 / 8_388_608.0);
+                out[i] = s as f32 * (1.0 / 8_388_608.0);
             }
         }
         PcmSampleFormat::I20In3 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(3)) {
+            for (i, chunk) in input.chunks_exact(3).enumerate() {
                 let raw = (chunk[0] as u32) | ((chunk[1] as u32) << 8) | ((chunk[2] as u32) << 16);
                 // Sign extend from bit 19 (low 20 bits).
                 let s = ((raw << 12) as i32) >> 12;
-                *dst = s as f32 * (1.0 / 524288.0);
+                out[i] = s as f32 * (1.0 / 524288.0);
             }
         }
         PcmSampleFormat::I24In3 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(3)) {
+            for (i, chunk) in input.chunks_exact(3).enumerate() {
                 let raw = (chunk[0] as u32) | ((chunk[1] as u32) << 8) | ((chunk[2] as u32) << 16);
                 // Sign extend from bit 23.
                 let s = ((raw << 8) as i32) >> 8;
-                *dst = s as f32 * (1.0 / 8_388_608.0);
+                out[i] = s as f32 * (1.0 / 8_388_608.0);
             }
         }
         PcmSampleFormat::I32 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(4)) {
+            for (i, chunk) in input.chunks_exact(4).enumerate() {
                 let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                *dst = s as f32 * (1.0 / 2_147_483_648.0);
+                out[i] = s as f32 * (1.0 / 2_147_483_648.0);
             }
         }
         PcmSampleFormat::F32 => {
-            for (dst, chunk) in out.iter_mut().zip(input.chunks_exact(4)) {
-                *dst = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            for (i, chunk) in input.chunks_exact(4).enumerate() {
+                out[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             }
         }
     }

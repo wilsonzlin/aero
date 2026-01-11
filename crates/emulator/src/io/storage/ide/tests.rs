@@ -128,7 +128,7 @@ fn ata_pio_read_multi_sector() {
     let data = disk.data_mut();
     for i in 0..512 {
         let a = (i & 0xFF) as u8;
-        let b = 255 - (i as u8);
+        let b = 255u8 - i as u8;
         data[512 + i] = a;
         data[2 * 512 + i] = b;
         expected[i] = a;

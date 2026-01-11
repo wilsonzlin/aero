@@ -414,12 +414,13 @@ fn shift_bytes(v: u128, imm: u8, dir: ShiftDir) -> u128 {
     let bytes = v.to_le_bytes();
     let shift = imm as usize;
     let mut out = [0u8; 16];
-    let len = 16 - shift;
     match dir {
         ShiftDir::Left => {
+            let len = 16 - shift;
             out[shift..].copy_from_slice(&bytes[..len]);
         }
         ShiftDir::RightLogical | ShiftDir::RightArithmetic => {
+            let len = 16 - shift;
             out[..len].copy_from_slice(&bytes[shift..]);
         }
     }

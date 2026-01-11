@@ -512,7 +512,9 @@ impl I8042Controller {
         self.output_port = value;
 
         if let Some(sink) = self.sys_ctrl.as_deref_mut() {
-            let prev_a20 = sink.a20_enabled().unwrap_or((prev & OUTPUT_PORT_A20) != 0);
+            let prev_a20 = sink
+                .a20_enabled()
+                .unwrap_or((prev & OUTPUT_PORT_A20) != 0);
             let new_a20 = (value & OUTPUT_PORT_A20) != 0;
             if prev_a20 != new_a20 {
                 sink.set_a20(new_a20);

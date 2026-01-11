@@ -359,12 +359,6 @@ pub struct HdaCodec {
     afg_power_state: u8,
 }
 
-impl Default for HdaCodec {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Clone)]
 struct CodecOutputWidget {
     stream_id: u8,
@@ -774,6 +768,12 @@ impl HdaCodec {
         };
 
         ((mute as u32) << 7) | gain as u32
+    }
+}
+
+impl Default for HdaCodec {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1280,7 +1280,7 @@ impl HdaController {
                     _ if addr == REG_WAKEEN + 1 => {
                         self.wakeen = (self.wakeen & !0xff00) | ((byte as u16) << 8)
                     }
-                    REG_STATESTS => self.statests &= !u16::from(byte),
+                    REG_STATESTS => self.statests &= !(byte as u16),
                     _ if addr == REG_STATESTS + 1 => self.statests &= !((byte as u16) << 8),
                     _ => {}
                 }

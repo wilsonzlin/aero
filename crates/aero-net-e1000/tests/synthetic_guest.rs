@@ -100,7 +100,7 @@ fn eeprom_read_returns_mac_words() {
     let mut dma = TestDma::new(0x1000);
 
     // Read EEPROM word 0.
-    dev.mmio_write_u32(&mut dma, 0x0014, 1); // START + addr=0
+    dev.mmio_write_u32(&mut dma, 0x0014, 1); // START + addr (word 0)
     let eerd = dev.mmio_read_u32(0x0014);
     let data = (eerd >> 16) as u16;
     assert_eq!(data, u16::from_le_bytes([mac[0], mac[1]]));

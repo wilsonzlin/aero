@@ -39,12 +39,16 @@ pub struct AerogpuMemoryRangeCapture<'a> {
     pub bytes: &'a [u8],
 }
 
+/// Capture of an AeroGPU submission (command stream + optional alloc table + referenced memory).
 #[derive(Clone, Copy, Debug)]
-pub struct AerogpuSubmissionInfo {
+pub struct AerogpuSubmissionCapture<'a> {
     pub submit_flags: u32,
     pub context_id: u32,
     pub engine_id: u32,
     pub signal_fence: u64,
+    pub cmd_stream_bytes: &'a [u8],
+    pub alloc_table_bytes: Option<&'a [u8]>,
+    pub memory_ranges: &'a [AerogpuMemoryRangeCapture<'a>],
 }
 
 pub struct TraceWriter<W> {
@@ -154,13 +158,9 @@ impl<W: Write> TraceWriter<W> {
         Ok(blob_id)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn write_aerogpu_submission(
         &mut self,
-        submission: AerogpuSubmissionInfo,
-        cmd_stream_bytes: &[u8],
-        alloc_table_bytes: Option<&[u8]>,
-        memory_ranges: &[AerogpuMemoryRangeCapture<'_>],
+        submission: AerogpuSubmissionCapture<'_>,
     ) -> Result<(), TraceWriteError> {
         if self.container_version < CONTAINER_VERSION_V2 {
             return Err(TraceWriteError::UnsupportedContainerVersion(
@@ -171,21 +171,15 @@ impl<W: Write> TraceWriter<W> {
             return Err(TraceWriteError::NoOpenFrame);
         }
 
-        let AerogpuSubmissionInfo {
-            submit_flags,
-            context_id,
-            engine_id,
-            signal_fence,
-        } = submission;
-
-        let cmd_stream_blob_id = self.write_blob(BlobKind::AerogpuCmdStream, cmd_stream_bytes)?;
-        let alloc_table_blob_id = match alloc_table_bytes {
+        let cmd_stream_blob_id =
+            self.write_blob(BlobKind::AerogpuCmdStream, submission.cmd_stream_bytes)?;
+        let alloc_table_blob_id = match submission.alloc_table_bytes {
             Some(bytes) => self.write_blob(BlobKind::AerogpuAllocTable, bytes)?,
             None => 0,
         };
 
-        let mut range_refs = Vec::with_capacity(memory_ranges.len());
-        for range in memory_ranges {
+        let mut range_refs = Vec::with_capacity(submission.memory_ranges.len());
+        for range in submission.memory_ranges {
             let blob_id = self.write_blob(BlobKind::AerogpuAllocMemory, range.bytes)?;
             range_refs.push(AerogpuMemoryRangeRef {
                 alloc_id: range.alloc_id,
@@ -208,11 +202,11 @@ impl<W: Write> TraceWriter<W> {
 
         payload.extend_from_slice(&AEROGPU_SUBMISSION_RECORD_VERSION.to_le_bytes());
         payload.extend_from_slice(&AEROGPU_SUBMISSION_RECORD_HEADER_SIZE.to_le_bytes());
-        payload.extend_from_slice(&submit_flags.to_le_bytes());
-        payload.extend_from_slice(&context_id.to_le_bytes());
-        payload.extend_from_slice(&engine_id.to_le_bytes());
+        payload.extend_from_slice(&submission.submit_flags.to_le_bytes());
+        payload.extend_from_slice(&submission.context_id.to_le_bytes());
+        payload.extend_from_slice(&submission.engine_id.to_le_bytes());
         payload.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        payload.extend_from_slice(&signal_fence.to_le_bytes());
+        payload.extend_from_slice(&submission.signal_fence.to_le_bytes());
         payload.extend_from_slice(&cmd_stream_blob_id.to_le_bytes());
         payload.extend_from_slice(&alloc_table_blob_id.to_le_bytes());
         payload.extend_from_slice(&range_count.to_le_bytes());
@@ -415,22 +409,13 @@ impl<W: Write> Recorder<W> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn record_aerogpu_submission(
         &mut self,
-        submission: AerogpuSubmissionInfo,
-        cmd_stream_bytes: &[u8],
-        alloc_table_bytes: Option<&[u8]>,
-        memory_ranges: &[AerogpuMemoryRangeCapture<'_>],
+        submission: AerogpuSubmissionCapture<'_>,
     ) -> Result<(), TraceWriteError> {
         match self {
             Self::Disabled => Ok(()),
-            Self::Enabled(writer) => writer.write_aerogpu_submission(
-                submission,
-                cmd_stream_bytes,
-                alloc_table_bytes,
-                memory_ranges,
-            ),
+            Self::Enabled(writer) => writer.write_aerogpu_submission(submission),
         }
     }
 }

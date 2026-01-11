@@ -179,10 +179,6 @@ fn read_sdt_signature(mem: &TestMemory, paddr: u64) -> [u8; 4] {
 fn generated_tables_are_self_consistent_and_checksums_pass() {
     let cfg = AcpiConfig {
         cpu_count: 2,
-        local_apic_addr: 0xFEE0_0000,
-        io_apic_addr: 0xFEC0_0000,
-        hpet_addr: 0xFED0_0000,
-        sci_irq: 9,
         pirq_to_gsi: [20, 21, 22, 23],
         ..Default::default()
     };

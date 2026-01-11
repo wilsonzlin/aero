@@ -330,12 +330,12 @@ fn handle_def_f32(inst: &DecodedInstruction, out: &mut Vec<ConstDefF32>) -> Resu
     }
 
     let mut vals = [0f32; 4];
-    for (i, slot) in vals.iter_mut().enumerate() {
+    for (i, val) in vals.iter_mut().enumerate() {
         let token = match inst.operands.get(1 + i) {
             Some(Operand::Imm32(v)) => *v,
             _ => return Err(err(inst, "def missing immediate constant tokens")),
         };
-        *slot = f32::from_bits(token);
+        *val = f32::from_bits(token);
     }
 
     out.push(ConstDefF32 {
@@ -472,7 +472,11 @@ fn decode_compare_op(code: u8) -> CompareOp {
     }
 }
 
-fn push_binop<F>(stack: &mut [Frame], inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
+fn push_binop<F>(
+    stack: &mut [Frame],
+    inst: &DecodedInstruction,
+    ctor: F,
+) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, Src, InstModifiers) -> IrOp,
 {
@@ -483,7 +487,11 @@ where
     push_stmt(stack, Stmt::Op(ctor(dst, src0, src1, modifiers)))
 }
 
-fn push_unop<F>(stack: &mut [Frame], inst: &DecodedInstruction, ctor: F) -> Result<(), BuildError>
+fn push_unop<F>(
+    stack: &mut [Frame],
+    inst: &DecodedInstruction,
+    ctor: F,
+) -> Result<(), BuildError>
 where
     F: FnOnce(Dst, Src, InstModifiers) -> IrOp,
 {

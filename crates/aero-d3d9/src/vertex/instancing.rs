@@ -214,7 +214,8 @@ pub fn expand_instance_data(
         return Err(InstanceDataExpandError::ZeroDivisor);
     }
 
-    let required_src_instances = (draw_instances as u64).div_ceil(divisor as u64);
+    let required_src_instances =
+        (draw_instances as u64).div_ceil(divisor as u64);
     let required_src_bytes = (required_src_instances as usize)
         .checked_mul(stride)
         .ok_or(InstanceDataExpandError::SizeOverflow)?;

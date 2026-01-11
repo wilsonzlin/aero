@@ -313,16 +313,6 @@ fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4Deco
     // Optional explicit LOD operand.
     let explicit_lod = decode_src(r)?;
     if r.is_eof() {
-        // Reject `ld` variants that include a non-scalar trailing operand (e.g. `Load(.., offset)`).
-        // Those forms are not implemented yet and should not be mis-decoded as an explicit LOD.
-        if !explicit_lod
-            .swizzle
-            .0
-            .iter()
-            .all(|&c| c == explicit_lod.swizzle.0[0])
-        {
-            return Ok(Sm4Inst::Unknown { opcode: OPCODE_LD });
-        }
         return Ok(Sm4Inst::Ld {
             dst,
             coord,
@@ -549,16 +539,6 @@ fn try_decode_ld_like(
         Err(_) => return Ok(None),
     };
     if r.is_eof() {
-        // Avoid misclassifying `ld` variants with a non-scalar trailing operand as explicit-LOD
-        // texture loads.
-        if !explicit_lod
-            .swizzle
-            .0
-            .iter()
-            .all(|&c| c == explicit_lod.swizzle.0[0])
-        {
-            return Ok(None);
-        }
         return Ok(Some(Sm4Inst::Ld {
             dst,
             coord,
@@ -866,16 +846,19 @@ impl<'a> InstrReader<'a> {
     }
 
     fn read_u32(&mut self) -> Result<u32, Sm4DecodeError> {
-        let at_dword = self.base_at + self.pos;
-        let value = self.toks.get(self.pos).copied().ok_or(Sm4DecodeError {
-            at_dword,
-            kind: Sm4DecodeErrorKind::UnexpectedEof {
-                wanted: 1,
-                remaining: 0,
-            },
-        })?;
+        let v = self
+            .toks
+            .get(self.pos)
+            .copied()
+            .ok_or_else(|| Sm4DecodeError {
+                at_dword: self.base_at + self.pos,
+                kind: Sm4DecodeErrorKind::UnexpectedEof {
+                    wanted: 1,
+                    remaining: 0,
+                },
+            })?;
         self.pos += 1;
-        Ok(value)
+        Ok(v)
     }
 
     fn is_eof(&self) -> bool {

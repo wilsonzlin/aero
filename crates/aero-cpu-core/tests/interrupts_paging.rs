@@ -454,7 +454,10 @@ fn protected_mode_iret_syncs_bus_before_popping_supervisor_stack() -> Result<(),
     let pd_base = 0x10000u64;
     let pt_base = 0x11000u64;
 
-    phys.write_u32(pd_base, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
+    phys.write_u32(
+        pd_base,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
 
     set_pte32(&mut phys, pt_base, 0x0, PTE_P32 | PTE_RW32 | PTE_US32); // user code
     set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT supervisor-only
@@ -540,7 +543,10 @@ fn push_during_interrupt_delivery_page_faults() -> Result<(), CpuExit> {
     let pd_base = 0x10000u64;
     let pt_base = 0x11000u64;
 
-    phys.write_u32(pd_base, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
+    phys.write_u32(
+        pd_base,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
 
     // Identity-map the pages we need. Leave 0x7000 (user stack) not-present.
     set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT (supervisor)
@@ -625,7 +631,10 @@ fn idt_read_page_faults() -> Result<(), CpuExit> {
 
     let pd_base = 0x10000u64;
     let pt_base = 0x11000u64;
-    phys.write_u32(pd_base, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
+    phys.write_u32(
+        pd_base,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
 
     // IDT base chosen so vector 0xFF lives in the next page.
     let idt_base = 0x1900u64;
@@ -689,7 +698,10 @@ fn nested_pf_during_pf_delivery_escalates_to_df() -> Result<(), CpuExit> {
 
     let pd_base = 0x10000u64;
     let pt_base = 0x11000u64;
-    phys.write_u32(pd_base, (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32));
+    phys.write_u32(
+        pd_base,
+        (pt_base as u32) | (PTE_P32 | PTE_RW32 | PTE_US32),
+    );
 
     // Identity-map required pages. Leave 0x7000 (user stack) not-present.
     set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // IDT

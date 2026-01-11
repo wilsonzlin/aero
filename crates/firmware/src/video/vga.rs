@@ -7,17 +7,12 @@ pub struct VgaDevice {
     default_attr: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TextRegion {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextWindow {
     pub top_row: u8,
     pub top_col: u8,
     pub bottom_row: u8,
     pub bottom_col: u8,
-}
-impl Default for VgaDevice {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl VgaDevice {
@@ -106,7 +101,7 @@ impl VgaDevice {
                 0,
                 1,
                 self.default_attr,
-                TextRegion {
+                TextWindow {
                     top_row: 0,
                     top_col: 0,
                     bottom_row: rows - 1,
@@ -119,14 +114,13 @@ impl VgaDevice {
         BiosDataArea::write_cursor_pos_page0(mem, row, col);
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn scroll_up(
         &mut self,
         mem: &mut impl MemoryBus,
         page: u8,
         lines: u8,
         attr: u8,
-        region: TextRegion,
+        window: TextWindow,
     ) {
         if page != 0 {
             return;
@@ -134,10 +128,10 @@ impl VgaDevice {
 
         let cols = BiosDataArea::read_screen_cols(mem);
         let rows = 25u16;
-        let top_row = region.top_row as u16;
-        let top_col = region.top_col as u16;
-        let bottom_row = region.bottom_row.min((rows - 1) as u8) as u16;
-        let bottom_col = region.bottom_col.min((cols - 1) as u8) as u16;
+        let top_row = window.top_row as u16;
+        let top_col = window.top_col as u16;
+        let bottom_row = window.bottom_row.min((rows - 1) as u8) as u16;
+        let bottom_col = window.bottom_col.min((cols - 1) as u8) as u16;
 
         let lines = lines as u16;
         let window_rows = bottom_row - top_row + 1;
@@ -223,5 +217,11 @@ impl VgaDevice {
 
     fn text_offset(&self, cols: u16, row: u16, col: u16) -> u64 {
         ((row * cols + col) * 2) as u64
+    }
+}
+
+impl Default for VgaDevice {
+    fn default() -> Self {
+        Self::new()
     }
 }

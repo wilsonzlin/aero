@@ -77,6 +77,15 @@ fn should_double_fault(first: Exception, second: Exception) -> bool {
     )
 }
 
+#[derive(Debug, Clone, Copy)]
+struct VectorDelivery {
+    vector: u8,
+    saved_rip: u64,
+    error_code: Option<u32>,
+    is_interrupt: bool,
+    source: InterruptSource,
+}
+
 fn deliver_cpu_exception<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
@@ -675,27 +684,18 @@ fn deliver_exception<B: CpuBus>(
     res
 }
 
-#[derive(Clone, Copy, Debug)]
-struct VectorDelivery {
-    vector: u8,
-    saved_rip: u64,
-    error_code: Option<u32>,
-    is_interrupt: bool,
-    source: InterruptSource,
-}
-
 fn deliver_vector<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
     pending: &mut PendingEventState,
-    req: VectorDelivery,
+    delivery: VectorDelivery,
 ) -> Result<(), CpuExit> {
     match state.mode {
         CpuMode::Real | CpuMode::Vm86 => {
-            deliver_real_mode(bus, state, pending, req.vector, req.saved_rip)
+            deliver_real_mode(bus, state, pending, delivery.vector, delivery.saved_rip)
         }
-        CpuMode::Protected => deliver_protected_mode(bus, state, pending, req),
-        CpuMode::Long => deliver_long_mode(bus, state, pending, req),
+        CpuMode::Protected => deliver_protected_mode(bus, state, pending, delivery),
+        CpuMode::Long => deliver_long_mode(bus, state, pending, delivery),
     }
 }
 
@@ -743,25 +743,17 @@ fn deliver_real_mode<B: CpuBus>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn deliver_protected_mode<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
     pending: &mut PendingEventState,
-    req: VectorDelivery,
+    delivery: VectorDelivery,
 ) -> Result<(), CpuExit> {
-    let VectorDelivery {
-        vector,
-        saved_rip,
-        error_code,
-        is_interrupt,
-        source,
-    } = req;
     let gate = match with_supervisor_access(bus, state, |bus, state| {
-        read_idt_gate32(bus, state, vector)
+        read_idt_gate32(bus, state, delivery.vector)
     }) {
         Ok(gate) => gate,
-        Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
+        Err(e) => return deliver_cpu_exception(bus, state, pending, e, delivery.saved_rip),
     };
     if !gate.present {
         return deliver_exception(
@@ -769,7 +761,7 @@ fn deliver_protected_mode<B: CpuBus>(
             state,
             pending,
             Exception::SegmentNotPresent,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
@@ -780,18 +772,21 @@ fn deliver_protected_mode<B: CpuBus>(
             state,
             pending,
             Exception::GeneralProtection,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
 
-    if is_interrupt && source == InterruptSource::Software && state.cpl() > gate.dpl {
+    if delivery.is_interrupt
+        && delivery.source == InterruptSource::Software
+        && state.cpl() > gate.dpl
+    {
         return deliver_exception(
             bus,
             state,
             pending,
             Exception::GeneralProtection,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
@@ -809,7 +804,7 @@ fn deliver_protected_mode<B: CpuBus>(
             tss32_stack_for_cpl(bus, state, new_cpl)
         }) {
             Ok(stack) => stack,
-            Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
+            Err(e) => return deliver_cpu_exception(bus, state, pending, e, delivery.saved_rip),
         };
         // Hardware forces SS.RPL == CPL for the new stack segment.
         let new_ss = (new_ss_raw & !0b11) | (new_cpl as u16);
@@ -823,12 +818,13 @@ fn deliver_protected_mode<B: CpuBus>(
         bus.sync(state);
 
         // Push old SS:ESP on the new stack.
-        if push32(bus, state, pending, old_ss as u32, saved_rip)?
+        if push32(bus, state, pending, old_ss as u32, delivery.saved_rip)?
             == PushOutcome::NestedExceptionDelivered
         {
             return Ok(());
         }
-        if push32(bus, state, pending, old_esp, saved_rip)? == PushOutcome::NestedExceptionDelivered
+        if push32(bus, state, pending, old_esp, delivery.saved_rip)?
+            == PushOutcome::NestedExceptionDelivered
         {
             return Ok(());
         }
@@ -836,22 +832,32 @@ fn deliver_protected_mode<B: CpuBus>(
 
     // Push return frame.
     let eflags = state.rflags() as u32;
-    if push32(bus, state, pending, eflags, saved_rip)? == PushOutcome::NestedExceptionDelivered {
-        return Ok(());
-    }
-    if push32(bus, state, pending, old_cs as u32, saved_rip)?
+    if push32(bus, state, pending, eflags, delivery.saved_rip)?
         == PushOutcome::NestedExceptionDelivered
     {
         return Ok(());
     }
-    if push32(bus, state, pending, saved_rip as u32, saved_rip)?
+    if push32(bus, state, pending, old_cs as u32, delivery.saved_rip)?
+        == PushOutcome::NestedExceptionDelivered
+    {
+        return Ok(());
+    }
+    if push32(
+        bus,
+        state,
+        pending,
+        delivery.saved_rip as u32,
+        delivery.saved_rip,
+    )?
         == PushOutcome::NestedExceptionDelivered
     {
         return Ok(());
     }
 
-    if let Some(code) = error_code {
-        if push32(bus, state, pending, code, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+    if let Some(code) = delivery.error_code {
+        if push32(bus, state, pending, code, delivery.saved_rip)?
+            == PushOutcome::NestedExceptionDelivered
+        {
             return Ok(());
         }
     }
@@ -875,25 +881,17 @@ fn deliver_protected_mode<B: CpuBus>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn deliver_long_mode<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
     pending: &mut PendingEventState,
-    req: VectorDelivery,
+    delivery: VectorDelivery,
 ) -> Result<(), CpuExit> {
-    let VectorDelivery {
-        vector,
-        saved_rip,
-        error_code,
-        is_interrupt,
-        source,
-    } = req;
     let gate = match with_supervisor_access(bus, state, |bus, state| {
-        read_idt_gate64(bus, state, vector)
+        read_idt_gate64(bus, state, delivery.vector)
     }) {
         Ok(gate) => gate,
-        Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
+        Err(e) => return deliver_cpu_exception(bus, state, pending, e, delivery.saved_rip),
     };
     if !gate.present {
         return deliver_exception(
@@ -901,7 +899,7 @@ fn deliver_long_mode<B: CpuBus>(
             state,
             pending,
             Exception::SegmentNotPresent,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
@@ -912,18 +910,21 @@ fn deliver_long_mode<B: CpuBus>(
             state,
             pending,
             Exception::GeneralProtection,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
 
-    if is_interrupt && source == InterruptSource::Software && state.cpl() > gate.dpl {
+    if delivery.is_interrupt
+        && delivery.source == InterruptSource::Software
+        && state.cpl() > gate.dpl
+    {
         return deliver_exception(
             bus,
             state,
             pending,
             Exception::GeneralProtection,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
@@ -934,7 +935,7 @@ fn deliver_long_mode<B: CpuBus>(
             state,
             pending,
             Exception::GeneralProtection,
-            saved_rip,
+            delivery.saved_rip,
             Some(0),
         );
     }
@@ -961,12 +962,12 @@ fn deliver_long_mode<B: CpuBus>(
                         state,
                         pending,
                         Exception::InvalidTss,
-                        saved_rip,
+                        delivery.saved_rip,
                         Some(0),
                     );
                 }
             }
-            Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
+            Err(e) => return deliver_cpu_exception(bus, state, pending, e, delivery.saved_rip),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
@@ -982,12 +983,12 @@ fn deliver_long_mode<B: CpuBus>(
                         state,
                         pending,
                         Exception::InvalidTss,
-                        saved_rip,
+                        delivery.saved_rip,
                         Some(0),
                     );
                 }
             }
-            Err(e) => return deliver_cpu_exception(bus, state, pending, e, saved_rip),
+            Err(e) => return deliver_cpu_exception(bus, state, pending, e, delivery.saved_rip),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     }
@@ -1001,12 +1002,13 @@ fn deliver_long_mode<B: CpuBus>(
             bus.sync(state);
         }
 
-        if push64(bus, state, pending, old_ss as u64, saved_rip)?
+        if push64(bus, state, pending, old_ss as u64, delivery.saved_rip)?
             == PushOutcome::NestedExceptionDelivered
         {
             return Ok(());
         }
-        if push64(bus, state, pending, old_rsp, saved_rip)? == PushOutcome::NestedExceptionDelivered
+        if push64(bus, state, pending, old_rsp, delivery.saved_rip)?
+            == PushOutcome::NestedExceptionDelivered
         {
             return Ok(());
         }
@@ -1021,20 +1023,30 @@ fn deliver_long_mode<B: CpuBus>(
 
     // Push return frame (RFLAGS, CS, RIP, error code).
     let rflags = state.rflags();
-    if push64(bus, state, pending, rflags, saved_rip)? == PushOutcome::NestedExceptionDelivered {
-        return Ok(());
-    }
-    if push64(bus, state, pending, old_cs as u64, saved_rip)?
+    if push64(bus, state, pending, rflags, delivery.saved_rip)?
         == PushOutcome::NestedExceptionDelivered
     {
         return Ok(());
     }
-    if push64(bus, state, pending, saved_rip, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+    if push64(bus, state, pending, old_cs as u64, delivery.saved_rip)?
+        == PushOutcome::NestedExceptionDelivered
+    {
+        return Ok(());
+    }
+    if push64(
+        bus,
+        state,
+        pending,
+        delivery.saved_rip,
+        delivery.saved_rip,
+    )?
+        == PushOutcome::NestedExceptionDelivered
+    {
         return Ok(());
     }
 
-    if let Some(code) = error_code {
-        if push64(bus, state, pending, code as u64, saved_rip)?
+    if let Some(code) = delivery.error_code {
+        if push64(bus, state, pending, code as u64, delivery.saved_rip)?
             == PushOutcome::NestedExceptionDelivered
         {
             return Ok(());

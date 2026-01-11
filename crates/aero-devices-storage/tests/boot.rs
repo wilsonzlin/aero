@@ -34,8 +34,8 @@ fn boot_sector_read_via_ide_pio() {
     ide.write_u8(0x1F7, ATA_CMD_READ_SECTORS, &irq14, &irq15);
 
     let mut buf = [0u8; SECTOR_SIZE];
-    for byte in buf.iter_mut() {
-        *byte = ide.read_u8(0x1F0, &irq14, &irq15);
+    for slot in &mut buf {
+        *slot = ide.read_u8(0x1F0, &irq14, &irq15);
     }
 
     assert_eq!(&buf[0..4], b"BOOT");

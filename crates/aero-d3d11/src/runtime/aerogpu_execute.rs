@@ -147,15 +147,7 @@ impl AerogpuCmdRuntime {
     }
 
     pub fn poll_wait(&self) {
-        self.poll();
-    }
-
-    fn poll(&self) {
-        #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
-
-        #[cfg(target_arch = "wasm32")]
-        self.device.poll(wgpu::Maintain::Poll);
     }
 
     pub fn pipeline_cache_stats(&self) -> PipelineCacheStats {
@@ -457,56 +449,58 @@ impl AerogpuCmdRuntime {
         let depth_stencil_state = depth_state.clone();
 
         // Fetch or create pipeline.
-        let pipeline = self.pipelines.get_or_create_render_pipeline(
-            &self.device,
-            key,
-            move |device, vs_module, fs_module| {
-                let pipeline_layout =
-                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("aero-d3d11 aerogpu pipeline layout"),
-                        bind_group_layouts: &[],
-                        push_constant_ranges: &[],
-                    });
+        let pipeline = {
+            self.pipelines.get_or_create_render_pipeline(
+                &self.device,
+                key,
+                move |device, vs_module, fs_module| {
+                    let pipeline_layout =
+                        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("aero-d3d11 aerogpu pipeline layout"),
+                            bind_group_layouts: &[],
+                            push_constant_ranges: &[],
+                        });
 
-                let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
-                    .iter()
-                    .map(|l| wgpu::VertexBufferLayout {
-                        array_stride: l.array_stride,
-                        step_mode: l.step_mode,
-                        attributes: &l.attributes,
+                    let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
+                        .iter()
+                        .map(|l| wgpu::VertexBufferLayout {
+                            array_stride: l.array_stride,
+                            step_mode: l.step_mode,
+                            attributes: &l.attributes,
+                        })
+                        .collect();
+
+                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("aero-d3d11 aerogpu render pipeline"),
+                        layout: Some(&pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: vs_module,
+                            entry_point: "vs_main",
+                            buffers: &vertex_buffers,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: fs_module,
+                            entry_point: "fs_main",
+                            targets: &color_target_states,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        }),
+                        primitive: wgpu::PrimitiveState {
+                            topology: primitive_topology,
+                            front_face,
+                            cull_mode,
+                            ..Default::default()
+                        },
+                        depth_stencil: depth_stencil_state,
+                        multisample: wgpu::MultisampleState {
+                            count: 1,
+                            ..Default::default()
+                        },
+                        multiview: None,
                     })
-                    .collect();
-
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("aero-d3d11 aerogpu render pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: vs_module,
-                        entry_point: "vs_main",
-                        buffers: &vertex_buffers,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: fs_module,
-                        entry_point: "fs_main",
-                        targets: &color_target_states,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: primitive_topology,
-                        front_face,
-                        cull_mode,
-                        ..Default::default()
-                    },
-                    depth_stencil: depth_stencil_state,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                })
-            },
-        )?;
+                },
+            )?
+        };
 
         // Encode the draw.
         let mut encoder = self
@@ -704,7 +698,7 @@ impl AerogpuCmdRuntime {
         slice.map_async(wgpu::MapMode::Read, move |v| {
             sender.send(v).ok();
         });
-        self.poll();
+        self.device.poll(wgpu::Maintain::Wait);
         receiver
             .receive()
             .await
@@ -824,7 +818,7 @@ fn build_vertex_state(
     })
 }
 
-type ColorAttachments<'a> = (
+type RenderPassColorAttachments<'a> = (
     Vec<Option<wgpu::RenderPassColorAttachment<'a>>>,
     Vec<ColorTargetKey>,
     (u32, u32),
@@ -833,7 +827,7 @@ type ColorAttachments<'a> = (
 fn build_color_attachments<'a>(
     resources: &'a AerogpuResources,
     state: &D3D11ShadowState,
-) -> Result<ColorAttachments<'a>> {
+) -> Result<RenderPassColorAttachments<'a>> {
     let mut attachments = Vec::new();
     let mut keys = Vec::new();
 

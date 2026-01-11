@@ -355,8 +355,7 @@ impl<'a> Iterator for DxbcChunksIter<'a> {
         let start = self.index.checked_mul(4)?;
         let end = start.checked_add(4)?;
         let offset_bytes = self.chunk_offsets.get(start..end)?;
-        let chunk_offset: [u8; 4] = offset_bytes.try_into().ok()?;
-        let chunk_offset = u32::from_le_bytes(chunk_offset) as usize;
+        let chunk_offset = u32::from_le_bytes(offset_bytes.try_into().ok()?) as usize;
 
         let header_end = chunk_offset.checked_add(8)?;
         let header = self.bytes.get(chunk_offset..header_end)?;

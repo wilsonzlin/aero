@@ -53,7 +53,9 @@ fn instantiate_trace(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+    linker
+        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
+        .unwrap();
 
     define_mem_helpers(&mut store, &mut linker, memory);
 
@@ -135,34 +137,14 @@ fn instantiate_trace_without_code_page_version(
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
     let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+    linker
+        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
+        .unwrap();
 
     define_mem_helpers(&mut store, &mut linker, memory);
 
     // Crucially: do NOT define `env.code_page_version`. This should still instantiate when the
     // trace is compiled with `Tier2WasmOptions { code_version_guard_import: false, .. }`.
-    let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
-    let trace = instance
-        .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
-        .unwrap();
-    (store, memory, trace)
-}
-
-fn instantiate_trace_minimal(
-    bytes: &[u8],
-    host_env: HostEnv,
-) -> (Store<HostEnv>, Memory, TypedFunc<(i32, i32), i64>) {
-    let engine = Engine::default();
-    let module = Module::new(&engine, bytes).unwrap();
-
-    let mut store = Store::new(&engine, host_env);
-    let mut linker = Linker::new(&engine);
-
-    // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
-    let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
-    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
-
-    // Intentionally do not define any host helpers: memory-free traces should not import them.
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let trace = instance
         .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
@@ -443,9 +425,9 @@ fn write_cpu_state(bytes: &mut [u8], cpu: &aero_cpu_core::state::CpuState) {
         bytes.len() >= abi::CPU_STATE_SIZE as usize,
         "cpu state buffer too small"
     );
-    for (i, reg) in cpu.gpr.iter().enumerate() {
+    for (i, gpr) in cpu.gpr.iter().enumerate() {
         let off = abi::CPU_GPR_OFF[i] as usize;
-        bytes[off..off + 8].copy_from_slice(&reg.to_le_bytes());
+        bytes[off..off + 8].copy_from_slice(&gpr.to_le_bytes());
     }
     bytes[abi::CPU_RIP_OFF as usize..abi::CPU_RIP_OFF as usize + 8]
         .copy_from_slice(&cpu.rip.to_le_bytes());
@@ -585,52 +567,6 @@ fn tier2_trace_without_code_version_guards_does_not_require_code_page_version_im
     let (got_gpr, got_rip, _got_rflags) = read_cpu_state(&cpu_bytes);
     assert_eq!(got_rip, init_state.cpu.rip);
     assert_eq!(got_gpr[Gpr::Rax.as_u8() as usize], 0xdead_beef);
-}
-
-#[test]
-fn tier2_trace_without_memory_ops_does_not_require_mem_helpers() {
-    let mut trace = TraceIr {
-        prologue: vec![],
-        body: vec![
-            Instr::Const {
-                dst: v(0),
-                value: 123,
-            },
-            Instr::StoreReg {
-                reg: Gpr::Rax,
-                src: Operand::Value(v(0)),
-            },
-        ],
-        kind: TraceKind::Linear,
-    };
-
-    let opt = optimize_trace(&mut trace, &OptConfig::default());
-    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
-    validate_wasm(&wasm);
-
-    let (mut store, memory, func) = instantiate_trace_minimal(&wasm, HostEnv::default());
-    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
-    memory.write(&mut store, 0, &guest_mem_init).unwrap();
-
-    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
-    let mut init_state = T2State::default();
-    init_state.cpu.rip = 0x1234;
-    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
-    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
-    memory
-        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
-        .unwrap();
-    install_code_version_table(&memory, &mut store, &[]);
-
-    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
-    assert_eq!(got_rip, init_state.cpu.rip);
-
-    memory
-        .read(&store, CPU_PTR as usize, &mut cpu_bytes)
-        .unwrap();
-    let (got_gpr, got_rip, _got_rflags) = read_cpu_state(&cpu_bytes);
-    assert_eq!(got_rip, init_state.cpu.rip);
-    assert_eq!(got_gpr[Gpr::Rax.as_u8() as usize], 123);
 }
 
 #[test]

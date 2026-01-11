@@ -97,53 +97,20 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         });
     }
 
-    // Intel TSX `XABORT` (`C6 F8 ib`) and `XBEGIN` (`C7 F8 iw/id`) share legacy opcode bytes with
-    // Group 11 `MOV r/m, imm`. Some upstream decoders (yaxpeax) treat them as `MOV` even when the
-    // ModRM byte is the TSX-fixed `0xF8`. Decode them with the iced-powered decoder so validity,
-    // length, and relative targets match iced-x86.
-    if opcode.map == OpcodeMap::Primary
-        && matches!(opcode.opcode, 0xC6 | 0xC7)
-        && matches!(opcode.opcode_ext, Some(7))
-    {
-        let (mut operands, inst_len) =
-            decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?;
-
-        if inst_len > MAX_INST_LEN {
-            return Err(DecodeError::TooLong);
-        }
-
-        fixup_implicit_operands(
-            opcode,
-            mode,
-            prefixes,
-            operand_size,
-            address_size,
-            &mut operands,
-        );
-        let flags = classify_inst(opcode, &operands);
-
-        return Ok(DecodedInst {
-            length: inst_len as u8,
-            opcode,
-            prefixes,
-            operand_size,
-            address_size,
-            operands,
-            flags,
-        });
-    }
-
     // Some relative branch/call opcodes have operand-size-dependent immediate widths, and not all
     // upstream decoders agree on how to interpret `0x66` in 16-bit mode. Decode these cases
     // ourselves so we match iced-x86 for block formation.
     if let Some((operands, inst_len)) = decode_relative_immediate(
         bytes,
-        mode,
-        ip,
-        prefixes,
-        prefix_len + opcode_len,
-        opcode,
-        operand_size,
+        RelativeImmediateDecodeContext {
+            mode,
+            ip,
+            prefixes,
+            prefix_len,
+            opcode_len,
+            opcode,
+            operand_size,
+        },
     )? {
         if inst_len > MAX_INST_LEN {
             return Err(DecodeError::TooLong);
@@ -256,15 +223,13 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
             if matches!(mode, DecodeMode::Bits16 | DecodeMode::Bits32)
                 && opcode.map == OpcodeMap::Primary
                 && matches!(opcode.opcode, 0x9A | 0xEA)
-                && !prefixes.lock =>
+                && !prefixes.lock
+                && prefixes.rep.is_none() =>
         {
             // Far call/jmp (`CALLF/JMPF ptr16:16/32`) is used during boot and mode transitions.
             // Some third-party decoders treat it as invalid in certain configurations; if the
             // upstream decoder rejects it, decode its length manually so the interpreter/JIT can
             // keep going.
-            //
-            // Note: iced-x86 accepts REP/REPNZ prefixes on these opcodes (they are ignored), so we
-            // must not treat them as invalid here.
             let ptr_len = match operand_size {
                 OperandSize::Bits16 => 4,
                 OperandSize::Bits32 => 6,
@@ -375,21 +340,6 @@ fn fixup_implicit_operands(
                 addr_size: address_size,
                 base: Some(crate::inst::Gpr { index: 3 }), // BX/EBX/RBX
                 index: Some(crate::inst::Gpr { index: 0 }), // (approx) AL
-                scale: 1,
-                disp: 0,
-                rip_relative: false,
-            }));
-        }
-        (OpcodeMap::Map0F, 0xF7, _)
-            if operands.iter().all(|op| !matches!(op, Operand::Memory(_))) =>
-        {
-            // MASKMOVQ/MASKMOVDQU: implicit memory operand at [DI/EDI/RDI]. `yaxpeax-x86` only
-            // exposes the explicit register operands.
-            operands.push(Operand::Memory(crate::inst::MemoryOperand {
-                segment: prefixes.segment,
-                addr_size: address_size,
-                base: Some(crate::inst::Gpr { index: 7 }), // DI/EDI/RDI
-                index: None,
                 scale: 1,
                 disp: 0,
                 rip_relative: false,
@@ -617,26 +567,6 @@ fn parse_opcode(
                 2,
             ))
         }
-    } else if b0 == 0x8F {
-        // XOP prefixes share their first byte with `POP r/m16/32/64`.
-        //
-        // Disambiguate by checking the "map select" bits in what would otherwise be ModRM.rm:
-        // valid XOP maps are 8..=10 (0b01000..0b01010), while POP encodings require ModRM.reg=0
-        // and therefore can only have values 0..=7 in those low bits.
-        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
-        let is_extended = matches!(b1 & 0x1F, 0x08..=0x0A);
-        Ok((
-            OpcodeBytes {
-                map: if is_extended {
-                    OpcodeMap::Extended
-                } else {
-                    OpcodeMap::Primary
-                },
-                opcode: b0,
-                opcode_ext: None,
-            },
-            1,
-        ))
     } else if matches!(b0, 0xC4 | 0xC5 | 0x62) {
         // VEX/EVEX prefixes share their first byte with legacy opcodes (LES/LDS/BOUND). In 16/32-bit
         // modes, the CPU disambiguates them by requiring the following byte to have ModRM.mod=3,
@@ -667,30 +597,35 @@ fn parse_opcode(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn decode_relative_immediate(
-    bytes: &[u8],
+#[derive(Debug, Clone, Copy)]
+struct RelativeImmediateDecodeContext {
     mode: DecodeMode,
     ip: u64,
     prefixes: Prefixes,
-    imm_off: usize,
+    prefix_len: usize,
+    opcode_len: usize,
     opcode: OpcodeBytes,
     operand_size: OperandSize,
+}
+
+fn decode_relative_immediate(
+    bytes: &[u8],
+    ctx: RelativeImmediateDecodeContext,
 ) -> Result<Option<(Vec<Operand>, usize)>, DecodeError> {
-    let (imm_len, rel_size) = match (opcode.map, opcode.opcode) {
+    let (imm_len, rel_size) = match (ctx.opcode.map, ctx.opcode.opcode) {
         (OpcodeMap::Primary, 0xE8 | 0xE9) => {
-            if mode == DecodeMode::Bits64 {
+            if ctx.mode == DecodeMode::Bits64 {
                 (4usize, OperandSize::Bits32)
-            } else if operand_size == OperandSize::Bits16 {
+            } else if ctx.operand_size == OperandSize::Bits16 {
                 (2usize, OperandSize::Bits16)
             } else {
                 (4usize, OperandSize::Bits32)
             }
         }
         (OpcodeMap::Map0F, 0x80..=0x8F) => {
-            if mode == DecodeMode::Bits64 {
+            if ctx.mode == DecodeMode::Bits64 {
                 (4usize, OperandSize::Bits32)
-            } else if operand_size == OperandSize::Bits16 {
+            } else if ctx.operand_size == OperandSize::Bits16 {
                 (2usize, OperandSize::Bits16)
             } else {
                 (4usize, OperandSize::Bits32)
@@ -703,10 +638,11 @@ fn decode_relative_immediate(
     //
     // Note: REP/REPNZ prefixes are accepted (and ignored) by iced-x86 for these
     // opcodes, so we do not treat them as invalid here.
-    if prefixes.lock {
+    if ctx.prefixes.lock {
         return Err(DecodeError::Invalid);
     }
 
+    let imm_off = ctx.prefix_len + ctx.opcode_len;
     let inst_len = imm_off + imm_len;
     if inst_len > MAX_INST_LEN {
         return Err(DecodeError::TooLong);
@@ -727,10 +663,10 @@ fn decode_relative_immediate(
         _ => return Err(DecodeError::Invalid),
     };
 
-    let next_ip = ip.wrapping_add(inst_len as u64);
-    let ip_mask = if mode == DecodeMode::Bits64 {
+    let next_ip = ctx.ip.wrapping_add(inst_len as u64);
+    let ip_mask = if ctx.mode == DecodeMode::Bits64 {
         u64::MAX
-    } else if operand_size == OperandSize::Bits16 {
+    } else if ctx.operand_size == OperandSize::Bits16 {
         0xFFFF
     } else {
         0xFFFF_FFFF

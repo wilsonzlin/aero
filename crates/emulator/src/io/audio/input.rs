@@ -86,9 +86,9 @@ impl F32RingBuffer {
         // when we have to drop.
         let samples = &samples[dropped..];
 
-        for (offset, sample) in samples.iter().enumerate() {
-            let idx = self.write_pos.wrapping_add(offset as u32) % self.cap;
-            self.buf[idx as usize] = *sample;
+        for (i, &sample) in samples.iter().enumerate().take(to_write) {
+            let idx = self.write_pos.wrapping_add(i as u32) % self.cap;
+            self.buf[idx as usize] = sample;
         }
 
         self.write_pos = self.write_pos.wrapping_add(to_write as u32);
@@ -107,9 +107,9 @@ impl F32RingBuffer {
         let available = self.available() as u32;
         let to_read = cmp::min(out.len() as u32, available) as usize;
 
-        for (offset, dst) in out.iter_mut().take(to_read).enumerate() {
-            let idx = self.read_pos.wrapping_add(offset as u32) % self.cap;
-            *dst = self.buf[idx as usize];
+        for (i, out_sample) in out.iter_mut().enumerate().take(to_read) {
+            let idx = self.read_pos.wrapping_add(i as u32) % self.cap;
+            *out_sample = self.buf[idx as usize];
         }
 
         self.read_pos = self.read_pos.wrapping_add(to_read as u32);

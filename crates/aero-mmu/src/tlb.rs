@@ -39,6 +39,20 @@ pub(crate) struct TlbEntry {
     valid: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TlbEntryAttributes {
+    pub(crate) user: bool,
+    pub(crate) writable: bool,
+    pub(crate) nx: bool,
+    pub(crate) global: bool,
+    /// Physical address of the leaf paging-structure entry (PTE/PDE/PDPTE).
+    pub(crate) leaf_addr: u64,
+    /// `true` for PAE/long-mode entries (64-bit), `false` for legacy 32-bit entries.
+    pub(crate) leaf_is_64: bool,
+    /// Cached state of the leaf dirty bit. Used to lazily set D on write hits.
+    pub(crate) dirty: bool,
+}
+
 impl Default for TlbEntry {
     fn default() -> Self {
         Self {
@@ -64,15 +78,18 @@ impl TlbEntry {
         vbase: u64,
         pbase: u64,
         page_size: PageSize,
-        user: bool,
-        writable: bool,
-        nx: bool,
-        global: bool,
         pcid: u16,
-        leaf_addr: u64,
-        leaf_is_64: bool,
-        dirty: bool,
+        attrs: TlbEntryAttributes,
     ) -> Self {
+        let TlbEntryAttributes {
+            user,
+            writable,
+            nx,
+            global,
+            leaf_addr,
+            leaf_is_64,
+            dirty,
+        } = attrs;
         Self {
             vbase,
             pbase,

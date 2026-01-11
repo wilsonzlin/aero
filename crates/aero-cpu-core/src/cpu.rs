@@ -6,7 +6,7 @@ use aero_perf::PerfWorker;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CpuMode {
     #[default]
     Real16,

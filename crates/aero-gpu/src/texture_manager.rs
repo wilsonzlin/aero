@@ -428,11 +428,9 @@ impl<'a> TextureManager<'a> {
 
         match selection.upload_transform {
             TextureUploadTransform::Direct => upload_direct(
-                UploadCtx {
-                    device: self.device,
-                    queue: self.queue,
-                    stats: &mut self.stats,
-                },
+                self.device,
+                self.queue,
+                &mut self.stats,
                 &texture,
                 region,
                 requested_format,
@@ -440,9 +438,9 @@ impl<'a> TextureManager<'a> {
                 data,
             ),
             TextureUploadTransform::Bc1ToRgba8 => {
-                let expected = region.size.width.div_ceil(4) as usize
-                    * region.size.height.div_ceil(4) as usize
-                    * 8;
+                let blocks_w = region.size.width.div_ceil(4) as usize;
+                let blocks_h = region.size.height.div_ceil(4) as usize;
+                let expected = blocks_w * blocks_h * 8;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -466,9 +464,9 @@ impl<'a> TextureManager<'a> {
                 )
             }
             TextureUploadTransform::Bc2ToRgba8 => {
-                let expected = region.size.width.div_ceil(4) as usize
-                    * region.size.height.div_ceil(4) as usize
-                    * 16;
+                let blocks_w = region.size.width.div_ceil(4) as usize;
+                let blocks_h = region.size.height.div_ceil(4) as usize;
+                let expected = blocks_w * blocks_h * 16;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -492,9 +490,9 @@ impl<'a> TextureManager<'a> {
                 )
             }
             TextureUploadTransform::Bc3ToRgba8 => {
-                let expected = region.size.width.div_ceil(4) as usize
-                    * region.size.height.div_ceil(4) as usize
-                    * 16;
+                let blocks_w = region.size.width.div_ceil(4) as usize;
+                let blocks_h = region.size.height.div_ceil(4) as usize;
+                let expected = blocks_w * blocks_h * 16;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -518,9 +516,9 @@ impl<'a> TextureManager<'a> {
                 )
             }
             TextureUploadTransform::Bc7ToRgba8 => {
-                let expected = region.size.width.div_ceil(4) as usize
-                    * region.size.height.div_ceil(4) as usize
-                    * 16;
+                let blocks_w = region.size.width.div_ceil(4) as usize;
+                let blocks_h = region.size.height.div_ceil(4) as usize;
+                let expected = blocks_w * blocks_h * 16;
                 if data.len() != expected {
                     return Err(TextureManagerError::DataLengthMismatch {
                         expected,
@@ -652,71 +650,32 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
 
 #[allow(clippy::too_many_arguments)]
 fn upload_direct(
-    ctx: UploadCtx<'_>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    stats: &mut TextureManagerStats,
     texture: &wgpu::Texture,
     region: TextureRegion,
     format: TextureFormat,
     mip_size: wgpu::Extent3d,
     data: &[u8],
 ) -> Result<(), TextureManagerError> {
-    let UploadCtx {
-        device,
-        queue,
-        stats,
-    } = ctx;
     match format {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => {
             upload_rgba8(device, queue, stats, texture, region, data)
         }
 
-        TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => upload_bc(
-            UploadCtx {
-                device,
-                queue,
-                stats,
-            },
-            texture,
-            region,
-            mip_size,
-            data,
-            8,
-        ),
-        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => upload_bc(
-            UploadCtx {
-                device,
-                queue,
-                stats,
-            },
-            texture,
-            region,
-            mip_size,
-            data,
-            16,
-        ),
-        TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => upload_bc(
-            UploadCtx {
-                device,
-                queue,
-                stats,
-            },
-            texture,
-            region,
-            mip_size,
-            data,
-            16,
-        ),
-        TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => upload_bc(
-            UploadCtx {
-                device,
-                queue,
-                stats,
-            },
-            texture,
-            region,
-            mip_size,
-            data,
-            16,
-        ),
+        TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb => {
+            upload_bc(device, queue, stats, texture, region, mip_size, data, 8)
+        }
+        TextureFormat::Bc2RgbaUnorm | TextureFormat::Bc2RgbaUnormSrgb => {
+            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
+        }
+        TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => {
+            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
+        }
+        TextureFormat::Bc7RgbaUnorm | TextureFormat::Bc7RgbaUnormSrgb => {
+            upload_bc(device, queue, stats, texture, region, mip_size, data, 16)
+        }
     }
 }
 
@@ -743,11 +702,9 @@ fn upload_rgba8(
     let layout_rows = height;
 
     upload_with_alignment(
-        UploadCtx {
-            device,
-            queue,
-            stats,
-        },
+        device,
+        queue,
+        stats,
         texture,
         region,
         data,
@@ -760,18 +717,15 @@ fn upload_rgba8(
 
 #[allow(clippy::too_many_arguments)]
 fn upload_bc(
-    ctx: UploadCtx<'_>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    stats: &mut TextureManagerStats,
     texture: &wgpu::Texture,
     region: TextureRegion,
     mip_size: wgpu::Extent3d,
     data: &[u8],
     block_bytes: u32,
 ) -> Result<(), TextureManagerError> {
-    let UploadCtx {
-        device,
-        queue,
-        stats,
-    } = ctx;
     // Origin must be block-aligned.
     if !region.origin.x.is_multiple_of(4) || !region.origin.y.is_multiple_of(4) {
         return Err(TextureManagerError::BcRegionNotBlockAligned {
@@ -785,8 +739,7 @@ fn upload_bc(
     }
 
     // Size must be block-aligned unless the copy reaches the mip edge.
-    if (!region.size.width.is_multiple_of(4)
-        && region.origin.x + region.size.width != mip_size.width)
+    if (!region.size.width.is_multiple_of(4) && region.origin.x + region.size.width != mip_size.width)
         || (!region.size.height.is_multiple_of(4)
             && region.origin.y + region.size.height != mip_size.height)
     {
@@ -815,11 +768,9 @@ fn upload_bc(
     let layout_rows = blocks_h;
 
     upload_with_alignment(
-        UploadCtx {
-            device,
-            queue,
-            stats,
-        },
+        device,
+        queue,
+        stats,
         texture,
         region,
         data,
@@ -830,14 +781,11 @@ fn upload_bc(
     Ok(())
 }
 
-struct UploadCtx<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
-    stats: &'a mut TextureManagerStats,
-}
-
+#[allow(clippy::too_many_arguments)]
 fn upload_with_alignment(
-    ctx: UploadCtx<'_>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    stats: &mut TextureManagerStats,
     texture: &wgpu::Texture,
     region: TextureRegion,
     data: &[u8],
@@ -845,11 +793,6 @@ fn upload_with_alignment(
     padded_bpr: u32,
     layout_rows: u32,
 ) {
-    let UploadCtx {
-        device,
-        queue,
-        stats,
-    } = ctx;
     let needs_padding = padded_bpr != unpadded_bpr;
     let threshold = 256 * 1024usize;
 

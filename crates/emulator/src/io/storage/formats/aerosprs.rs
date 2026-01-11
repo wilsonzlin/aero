@@ -55,7 +55,7 @@ impl SparseHeader {
         if sector_size == 0 || block_size == 0 {
             return Err(DiskError::CorruptImage("invalid sector/block size"));
         }
-        if !u64::from(block_size).is_multiple_of(u64::from(sector_size)) {
+        if !(block_size as u64).is_multiple_of(sector_size as u64) {
             return Err(DiskError::CorruptImage(
                 "block size must be multiple of sector size",
             ));
@@ -142,7 +142,7 @@ impl<S: ByteStorage> SparseDisk<S> {
         if sector_size != 512 && sector_size != 4096 {
             return Err(DiskError::Unsupported("sector size (expected 512 or 4096)"));
         }
-        if block_size == 0 || !u64::from(block_size).is_multiple_of(u64::from(sector_size)) {
+        if block_size == 0 || !(block_size as u64).is_multiple_of(sector_size as u64) {
             return Err(DiskError::Unsupported(
                 "block size must be a multiple of sector size",
             ));

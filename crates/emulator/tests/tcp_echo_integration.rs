@@ -1,5 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
-
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -10,7 +8,7 @@ use aero_net_stack::packet::{
     EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
     MacAddr, TcpFlags, TcpSegment, TcpSegmentBuilder, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{Action, HostPolicy, StackConfig, TcpProxyEvent};
+use emulator::io::net::stack::{Action, StackConfig, TcpProxyEvent};
 use emulator::io::net::trace::{
     CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack,
 };
@@ -54,29 +52,25 @@ fn wrap_udp_ipv4_eth(
     .expect("build Ethernet frame")
 }
 
-#[derive(Clone, Copy, Debug)]
-struct TcpParams {
-    src_port: u16,
-    dst_port: u16,
-    seq: u32,
-    ack: u32,
-    flags: TcpFlags,
-}
-
+#[allow(clippy::too_many_arguments)]
 fn wrap_tcp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,
     src_ip: Ipv4Addr,
     dst_ip: Ipv4Addr,
-    params: TcpParams,
+    src_port: u16,
+    dst_port: u16,
+    seq: u32,
+    ack: u32,
+    flags: TcpFlags,
     payload: &[u8],
 ) -> Vec<u8> {
     let tcp = TcpSegmentBuilder {
-        src_port: params.src_port,
-        dst_port: params.dst_port,
-        seq_number: params.seq,
-        ack_number: params.ack,
-        flags: params.flags,
+        src_port,
+        dst_port,
+        seq_number: seq,
+        ack_number: ack,
+        flags,
         window_size: 65535,
         urgent_pointer: 0,
         options: &[],
@@ -204,13 +198,8 @@ fn tcp_proxy_echo_end_to_end() {
         }
     });
 
-    let cfg = StackConfig {
-        host_policy: HostPolicy {
-            enabled: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let mut cfg = StackConfig::default();
+    cfg.host_policy.enabled = true;
     let guest_mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
     let remote_ip = Ipv4Addr::new(127, 0, 0, 1);
 
@@ -235,13 +224,11 @@ fn tcp_proxy_echo_end_to_end() {
         cfg.our_mac,
         cfg.guest_ip,
         remote_ip,
-        TcpParams {
-            src_port: guest_port,
-            dst_port: addr.port(),
-            seq: guest_isn,
-            ack: 0,
-            flags: TcpFlags::SYN,
-        },
+        guest_port,
+        addr.port(),
+        guest_isn,
+        0,
+        TcpFlags::SYN,
         &[],
     );
     stack.transmit_at(syn, 20);
@@ -290,13 +277,11 @@ fn tcp_proxy_echo_end_to_end() {
         cfg.our_mac,
         cfg.guest_ip,
         remote_ip,
-        TcpParams {
-            src_port: guest_port,
-            dst_port: addr.port(),
-            seq: guest_isn + 1,
-            ack: stack_isn + 1,
-            flags: TcpFlags::ACK,
-        },
+        guest_port,
+        addr.port(),
+        guest_isn + 1,
+        stack_isn + 1,
+        TcpFlags::ACK,
         &[],
     );
     stack.transmit_at(ack, 22);
@@ -310,13 +295,11 @@ fn tcp_proxy_echo_end_to_end() {
         cfg.our_mac,
         cfg.guest_ip,
         remote_ip,
-        TcpParams {
-            src_port: guest_port,
-            dst_port: addr.port(),
-            seq: guest_isn + 1,
-            ack: stack_isn + 1,
-            flags: TcpFlags::ACK | TcpFlags::PSH,
-        },
+        guest_port,
+        addr.port(),
+        guest_isn + 1,
+        stack_isn + 1,
+        TcpFlags::ACK | TcpFlags::PSH,
         payload,
     );
     stack.transmit_at(psh, 23);
@@ -366,13 +349,11 @@ fn tcp_proxy_echo_end_to_end() {
         cfg.our_mac,
         cfg.guest_ip,
         remote_ip,
-        TcpParams {
-            src_port: guest_port,
-            dst_port: addr.port(),
-            seq: guest_next,
-            ack: seg.seq_number() + seg.payload().len() as u32,
-            flags: TcpFlags::ACK,
-        },
+        guest_port,
+        addr.port(),
+        guest_next,
+        seg.seq_number() + seg.payload().len() as u32,
+        TcpFlags::ACK,
         &[],
     );
     stack.transmit_at(ack_remote, 25);
@@ -385,13 +366,11 @@ fn tcp_proxy_echo_end_to_end() {
         cfg.our_mac,
         cfg.guest_ip,
         remote_ip,
-        TcpParams {
-            src_port: guest_port,
-            dst_port: addr.port(),
-            seq: guest_next,
-            ack: seg.seq_number() + seg.payload().len() as u32,
-            flags: TcpFlags::ACK | TcpFlags::FIN,
-        },
+        guest_port,
+        addr.port(),
+        guest_next,
+        seg.seq_number() + seg.payload().len() as u32,
+        TcpFlags::ACK | TcpFlags::FIN,
         &[],
     );
     stack.transmit_at(fin, 26);
@@ -423,13 +402,11 @@ fn tcp_proxy_echo_end_to_end() {
         cfg.our_mac,
         cfg.guest_ip,
         remote_ip,
-        TcpParams {
-            src_port: guest_port,
-            dst_port: addr.port(),
-            seq: guest_next + 1,
-            ack: fin_seg.seq_number() + 1,
-            flags: TcpFlags::ACK,
-        },
+        guest_port,
+        addr.port(),
+        guest_next + 1,
+        fin_seg.seq_number() + 1,
+        TcpFlags::ACK,
         &[],
     );
     stack.transmit_at(final_ack, 27);

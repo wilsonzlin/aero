@@ -79,7 +79,7 @@ impl VhdDynamicHeader {
         if max_table_entries == 0 {
             return Err(DiskError::CorruptImage("vhd max_table_entries is zero"));
         }
-        if block_size == 0 || !u64::from(block_size).is_multiple_of(u64::from(SECTOR_SIZE)) {
+        if block_size == 0 || !(block_size as u64).is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd block_size invalid"));
         }
 

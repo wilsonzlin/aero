@@ -8,16 +8,20 @@ use aero_d3d9::state::{
 
 #[test]
 fn cull_mode_respects_front_face() {
-    let mut raster = RasterizerState {
+    let raster = RasterizerState {
         cull_mode: CullMode::CW,
         front_counter_clockwise: false, // front is CW
-        ..RasterizerState::default()
+        ..Default::default()
     };
     let (front_face, cull_mode) = translate_cull_and_front_face(&raster);
     assert_eq!(front_face, wgpu::FrontFace::Cw);
     assert_eq!(cull_mode, Some(wgpu::Face::Front));
 
-    raster.front_counter_clockwise = true; // front is CCW
+    let raster = RasterizerState {
+        cull_mode: CullMode::CW,
+        front_counter_clockwise: true, // front is CCW
+        ..Default::default()
+    };
     let (front_face, cull_mode) = translate_cull_and_front_face(&raster);
     assert_eq!(front_face, wgpu::FrontFace::Ccw);
     assert_eq!(cull_mode, Some(wgpu::Face::Back));

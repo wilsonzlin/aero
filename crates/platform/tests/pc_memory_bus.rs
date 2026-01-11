@@ -49,9 +49,9 @@ impl memory::MmioHandler for RecordingMmio {
 
         let bytes = value.to_le_bytes();
         let off = offset as usize;
-        for (i, src) in bytes.iter().enumerate().take(size.min(8)) {
+        for (i, byte) in bytes.iter().enumerate().take(size.min(8)) {
             if let Some(dst) = state.mem.get_mut(off + i) {
-                *dst = *src;
+                *dst = *byte;
             }
         }
     }

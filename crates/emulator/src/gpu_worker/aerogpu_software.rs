@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_ring as ring};
 use memory::MemoryBus;
@@ -79,12 +79,6 @@ impl Default for SamplerResource {
             address_w: cmd::AerogpuSamplerAddressMode::ClampToEdge as u32,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct TextureSampling<'a> {
-    tex: &'a Texture2DResource,
-    sampler: SamplerResource,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -175,7 +169,7 @@ impl Default for BlendState {
             src_factor_alpha: cmd::AerogpuBlendFactor::One as u32,
             dst_factor_alpha: cmd::AerogpuBlendFactor::Zero as u32,
             blend_op_alpha: cmd::AerogpuBlendOp::Add as u32,
-            blend_constant: [1.0; 4],
+            blend_constant: [0.0; 4],
             sample_mask: 0xFFFF_FFFF,
             write_mask: 0xF,
         }
@@ -275,7 +269,6 @@ pub struct AeroGpuSoftwareExecutor {
     shaders: HashMap<u32, ShaderResource>,
     input_layouts: HashMap<u32, InputLayoutResource>,
     shared_surfaces: HashMap<u64, u32>,
-    retired_shared_surface_tokens: HashSet<u64>,
     resource_aliases: HashMap<u32, u32>,
     texture_refcounts: HashMap<u32, u32>,
     state: PipelineState,
@@ -293,7 +286,6 @@ impl AeroGpuSoftwareExecutor {
         self.shaders.clear();
         self.input_layouts.clear();
         self.shared_surfaces.clear();
-        self.retired_shared_surface_tokens.clear();
         self.resource_aliases.clear();
         self.texture_refcounts.clear();
         self.state = PipelineState::default();
@@ -328,23 +320,30 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
+
+        let size: usize = match usize::try_from(size_bytes) {
+            Ok(v) => v,
+            Err(_) => {
+                Self::record_error(regs);
+                return None;
+            }
+        };
+        if size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
+            Self::record_error(regs);
+            return None;
+        }
+        if size > MAX_ALLOC_TABLE_SIZE_BYTES {
+            Self::record_error(regs);
+            return None;
+        }
         if gpa.checked_add(u64::from(size_bytes)).is_none() {
             Self::record_error(regs);
             return None;
         }
-        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 {
-            Self::record_error(regs);
-            return None;
-        }
 
-        // Forward-compat: the submit descriptor's `alloc_table_size_bytes` is the backing buffer
-        // capacity, while the allocation table header's `size_bytes` field is bytes-used.
-        //
-        // Only read the prefix that the header declares (bounded by the descriptor capacity) to
-        // avoid copying potentially large trailing bytes.
-        let mut header_bytes = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
-        mem.read_physical(gpa, &mut header_bytes);
-        let hdr = match ring::AerogpuAllocTableHeader::decode_from_le_bytes(&header_bytes) {
+        let mut buf = vec![0u8; size];
+        mem.read_physical(gpa, &mut buf);
+        let hdr = match ring::AerogpuAllocTableHeader::decode_from_le_bytes(&buf) {
             Ok(v) => v,
             Err(_) => {
                 Self::record_error(regs);
@@ -360,25 +359,12 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
-
         let total_size = hdr.size_bytes as usize;
-        if total_size > size_bytes as usize
-            || total_size < ring::AerogpuAllocTableHeader::SIZE_BYTES
-        {
+        if total_size > size || total_size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
             Self::record_error(regs);
             return None;
         }
-        if total_size > MAX_ALLOC_TABLE_SIZE_BYTES {
-            Self::record_error(regs);
-            return None;
-        }
-
-        let mut buf = vec![0u8; total_size];
-        mem.read_physical(gpa, &mut buf);
-
-        // Forward-compat: newer guests may extend `aerogpu_alloc_entry` by increasing the declared
-        // stride and appending fields. We only require the entry prefix we understand.
-        if hdr.entry_stride_bytes < ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
+        if hdr.entry_stride_bytes as usize != ring::AerogpuAllocEntry::SIZE_BYTES {
             Self::record_error(regs);
             return None;
         }
@@ -387,8 +373,8 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         };
-        let entry_stride = hdr.entry_stride_bytes as usize;
-        let Some(entries_bytes) = entry_count.checked_mul(entry_stride) else {
+        let Some(entries_bytes) = entry_count.checked_mul(ring::AerogpuAllocEntry::SIZE_BYTES)
+        else {
             Self::record_error(regs);
             return None;
         };
@@ -402,8 +388,6 @@ impl AeroGpuSoftwareExecutor {
             Self::record_error(regs);
             return None;
         }
-
-        let buf = &buf[..];
 
         let mut out = HashMap::new();
         let mut off = ring::AerogpuAllocTableHeader::SIZE_BYTES;
@@ -419,9 +403,9 @@ impl AeroGpuSoftwareExecutor {
                     return None;
                 }
             };
-            off += entry_stride;
+            off += ring::AerogpuAllocEntry::SIZE_BYTES;
 
-            if entry.alloc_id == 0 || entry.size_bytes == 0 {
+            if entry.alloc_id == 0 || entry.gpa == 0 || entry.size_bytes == 0 {
                 Self::record_error(regs);
                 return None;
             }
@@ -657,7 +641,7 @@ impl AeroGpuSoftwareExecutor {
             AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8X8Unorm => Some([
                 tex.data[off + 2], // r
                 tex.data[off + 1], // g
-                tex.data[off],     // b
+                tex.data[off], // b
                 if matches!(tex.format, AeroGpuFormat::B8G8R8A8Unorm) {
                     tex.data[off + 3]
                 } else {
@@ -1079,7 +1063,12 @@ impl AeroGpuSoftwareExecutor {
     fn rasterize_triangle(
         tex: &mut Texture2DResource,
         clip: (i32, i32, i32, i32),
-        tri: [Vertex; 3],
+        v0: (f32, f32),
+        v1: (f32, f32),
+        v2: (f32, f32),
+        c0: [f32; 4],
+        c1: [f32; 4],
+        c2: [f32; 4],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1089,12 +1078,7 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let [v0, v1, v2] = tri;
-        let (v0x, v0y) = v0.pos;
-        let (v1x, v1y) = v1.pos;
-        let (v2x, v2y) = v2.pos;
-
-        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
             return;
         }
@@ -1105,10 +1089,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
-        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
-        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
-        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1123,9 +1107,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
-                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
-                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1133,8 +1117,8 @@ impl AeroGpuSoftwareExecutor {
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
                 let mut out = [0.0f32; 4];
-                for (i, chan) in out.iter_mut().enumerate() {
-                    *chan = v0.color[i] * w0 + v1.color[i] * w1 + v2.color[i] * w2;
+                for i in 0..4 {
+                    out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
                 }
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
@@ -1147,7 +1131,12 @@ impl AeroGpuSoftwareExecutor {
         depth_tex: &mut Texture2DResource,
         depth_state: DepthStencilState,
         clip: (i32, i32, i32, i32),
-        tri: [Vertex; 3],
+        v0: (f32, f32, f32),
+        v1: (f32, f32, f32),
+        v2: (f32, f32, f32),
+        c0: [f32; 4],
+        c1: [f32; 4],
+        c2: [f32; 4],
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1157,12 +1146,7 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let [v0, v1, v2] = tri;
-        let (v0x, v0y) = v0.pos;
-        let (v1x, v1y) = v1.pos;
-        let (v2x, v2y) = v2.pos;
-
-        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
             return;
         }
@@ -1173,10 +1157,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
-        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
-        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
-        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1193,9 +1177,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
-                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
-                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1203,7 +1187,7 @@ impl AeroGpuSoftwareExecutor {
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
 
-                let depth = (v0.depth * w0 + v1.depth * w1 + v2.depth * w2).clamp(0.0, 1.0);
+                let depth = (v0.2 * w0 + v1.2 * w1 + v2.2 * w2).clamp(0.0, 1.0);
 
                 let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
                     continue;
@@ -1223,8 +1207,8 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let mut out = [0.0f32; 4];
-                for (i, chan) in out.iter_mut().enumerate() {
-                    *chan = v0.color[i] * w0 + v1.color[i] * w1 + v2.color[i] * w2;
+                for i in 0..4 {
+                    out[i] = c0[i] * w0 + c1[i] * w1 + c2[i] * w2;
                 }
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
@@ -1234,9 +1218,15 @@ impl AeroGpuSoftwareExecutor {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_textured(
         tex: &mut Texture2DResource,
+        src_tex: &Texture2DResource,
+        sampler: SamplerResource,
         clip: (i32, i32, i32, i32),
-        sampling: TextureSampling<'_>,
-        tri: [Vertex; 3],
+        v0: (f32, f32),
+        v1: (f32, f32),
+        v2: (f32, f32),
+        uv0: (f32, f32),
+        uv1: (f32, f32),
+        uv2: (f32, f32),
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1246,12 +1236,7 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let [v0, v1, v2] = tri;
-        let (v0x, v0y) = v0.pos;
-        let (v1x, v1y) = v1.pos;
-        let (v2x, v2y) = v2.pos;
-
-        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
             return;
         }
@@ -1262,10 +1247,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
-        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
-        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
-        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1280,9 +1265,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
-                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
-                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1291,10 +1276,10 @@ impl AeroGpuSoftwareExecutor {
                 let w2 = w2 * inv_area;
 
                 let uv = (
-                    v0.uv.0 * w0 + v1.uv.0 * w1 + v2.uv.0 * w2,
-                    v0.uv.1 * w0 + v1.uv.1 * w1 + v2.uv.1 * w2,
+                    uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
+                    uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
                 );
-                let out = Self::sample_texture_2d(sampling.tex, sampling.sampler, uv);
+                let out = Self::sample_texture_2d(src_tex, sampler, uv);
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
@@ -1304,10 +1289,16 @@ impl AeroGpuSoftwareExecutor {
     fn rasterize_triangle_depth_textured(
         tex: &mut Texture2DResource,
         depth_tex: &mut Texture2DResource,
+        src_tex: &Texture2DResource,
+        sampler: SamplerResource,
         depth_state: DepthStencilState,
         clip: (i32, i32, i32, i32),
-        sampling: TextureSampling<'_>,
-        tri: [Vertex; 3],
+        v0: (f32, f32, f32),
+        v1: (f32, f32, f32),
+        v2: (f32, f32, f32),
+        uv0: (f32, f32),
+        uv1: (f32, f32),
+        uv2: (f32, f32),
         blend: BlendState,
     ) {
         if (blend.sample_mask & 1) == 0 {
@@ -1317,12 +1308,7 @@ impl AeroGpuSoftwareExecutor {
             (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         }
 
-        let [v0, v1, v2] = tri;
-        let (v0x, v0y) = v0.pos;
-        let (v1x, v1y) = v1.pos;
-        let (v2x, v2y) = v2.pos;
-
-        let area = edge(v0x, v0y, v1x, v1y, v2x, v2y);
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
         if area == 0.0 {
             return;
         }
@@ -1333,10 +1319,10 @@ impl AeroGpuSoftwareExecutor {
             (1.0f32, 1.0f32 / area)
         };
 
-        let min_x = v0x.min(v1x).min(v2x).floor() as i32;
-        let max_x = v0x.max(v1x).max(v2x).ceil() as i32;
-        let min_y = v0y.min(v1y).min(v2y).floor() as i32;
-        let max_y = v0y.max(v1y).max(v2y).ceil() as i32;
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
 
         let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
         let start_x = min_x.max(clip_x0);
@@ -1353,9 +1339,9 @@ impl AeroGpuSoftwareExecutor {
             for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let w0 = edge(v1x, v1y, v2x, v2y, px, py) * sign;
-                let w1 = edge(v2x, v2y, v0x, v0y, px, py) * sign;
-                let w2 = edge(v0x, v0y, v1x, v1y, px, py) * sign;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
                 if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                     continue;
                 }
@@ -1363,7 +1349,7 @@ impl AeroGpuSoftwareExecutor {
                 let w1 = w1 * inv_area;
                 let w2 = w2 * inv_area;
 
-                let depth = (v0.depth * w0 + v1.depth * w1 + v2.depth * w2).clamp(0.0, 1.0);
+                let depth = (v0.2 * w0 + v1.2 * w1 + v2.2 * w2).clamp(0.0, 1.0);
 
                 let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
                     continue;
@@ -1383,10 +1369,10 @@ impl AeroGpuSoftwareExecutor {
                 }
 
                 let uv = (
-                    v0.uv.0 * w0 + v1.uv.0 * w1 + v2.uv.0 * w2,
-                    v0.uv.1 * w0 + v1.uv.1 * w1 + v2.uv.1 * w2,
+                    uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
+                    uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
                 );
-                let out = Self::sample_texture_2d(sampling.tex, sampling.sampler, uv);
+                let out = Self::sample_texture_2d(src_tex, sampler, uv);
                 Self::blend_and_write_pixel(tex, x, y, out, blend);
             }
         }
@@ -1458,7 +1444,7 @@ impl AeroGpuSoftwareExecutor {
                 .map(|l| l.parsed.clone())
         };
 
-        let mut vertices = Vec::with_capacity(vertex_indices.len());
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(vertex_indices.len());
 
         for &idx in vertex_indices {
             if idx < 0 {
@@ -1599,12 +1585,7 @@ impl AeroGpuSoftwareExecutor {
                         return;
                     };
 
-                    let sampling = TextureSampling {
-                        tex: &src_tex,
-                        sampler,
-                    };
-                    for triangle in vertices.chunks_exact(3) {
-                        let tri = [triangle[0], triangle[1], triangle[2]];
+                    for tri in vertices.chunks_exact(3) {
                         if rast.depth_clip_enable
                             && (tri[0].depth < vp.min_depth
                                 || tri[0].depth > vp.max_depth
@@ -1639,10 +1620,16 @@ impl AeroGpuSoftwareExecutor {
                         Self::rasterize_triangle_depth_textured(
                             tex,
                             &mut depth_tex,
+                            &src_tex,
+                            sampler,
                             depth_state,
                             (clip_x0, clip_y0, clip_x1, clip_y1),
-                            sampling,
-                            tri,
+                            (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
+                            (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
+                            (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
+                            tri[0].uv,
+                            tri[1].uv,
+                            tri[2].uv,
                             blend,
                         );
                     }
@@ -1657,12 +1644,7 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return;
                 };
-                let sampling = TextureSampling {
-                    tex: &src_tex,
-                    sampler,
-                };
-                for triangle in vertices.chunks_exact(3) {
-                    let tri = [triangle[0], triangle[1], triangle[2]];
+                for tri in vertices.chunks_exact(3) {
                     if rast.depth_clip_enable
                         && (tri[0].depth < vp.min_depth
                             || tri[0].depth > vp.max_depth
@@ -1694,9 +1676,15 @@ impl AeroGpuSoftwareExecutor {
                     }
                     Self::rasterize_triangle_textured(
                         tex,
+                        &src_tex,
+                        sampler,
                         (clip_x0, clip_y0, clip_x1, clip_y1),
-                        sampling,
-                        tri,
+                        tri[0].pos,
+                        tri[1].pos,
+                        tri[2].pos,
+                        tri[0].uv,
+                        tri[1].uv,
+                        tri[2].uv,
                         blend,
                     );
                 }
@@ -1735,8 +1723,7 @@ impl AeroGpuSoftwareExecutor {
                     return;
                 };
 
-                for triangle in vertices.chunks_exact(3) {
-                    let tri = [triangle[0], triangle[1], triangle[2]];
+                for tri in vertices.chunks_exact(3) {
                     if rast.depth_clip_enable
                         && (tri[0].depth < vp.min_depth
                             || tri[0].depth > vp.max_depth
@@ -1772,7 +1759,12 @@ impl AeroGpuSoftwareExecutor {
                         &mut depth_tex,
                         depth_state,
                         (clip_x0, clip_y0, clip_x1, clip_y1),
-                        tri,
+                        (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
+                        (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
+                        (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
+                        tri[0].color,
+                        tri[1].color,
+                        tri[2].color,
                         blend,
                     );
                 }
@@ -1786,8 +1778,7 @@ impl AeroGpuSoftwareExecutor {
                 Self::record_error(regs);
                 return;
             };
-            for triangle in vertices.chunks_exact(3) {
-                let tri = [triangle[0], triangle[1], triangle[2]];
+            for tri in vertices.chunks_exact(3) {
                 if rast.depth_clip_enable
                     && (tri[0].depth < vp.min_depth
                         || tri[0].depth > vp.max_depth
@@ -1817,7 +1808,17 @@ impl AeroGpuSoftwareExecutor {
                         }
                     }
                 }
-                Self::rasterize_triangle(tex, (clip_x0, clip_y0, clip_x1, clip_y1), tri, blend);
+                Self::rasterize_triangle(
+                    tex,
+                    (clip_x0, clip_y0, clip_x1, clip_y1),
+                    tri[0].pos,
+                    tri[1].pos,
+                    tri[2].pos,
+                    tri[0].color,
+                    tri[1].color,
+                    tri[2].color,
+                    blend,
+                );
             }
 
             tex.dirty = true;
@@ -2037,52 +2038,22 @@ impl AeroGpuSoftwareExecutor {
         mem: &mut dyn MemoryBus,
         desc: &AeroGpuSubmitDesc,
     ) {
-        if desc.cmd_gpa == 0 && desc.cmd_size_bytes == 0 {
-            return;
-        }
         if desc.cmd_gpa == 0 || desc.cmd_size_bytes == 0 {
-            Self::record_error(regs);
             return;
         }
-        if desc
-            .cmd_gpa
-            .checked_add(u64::from(desc.cmd_size_bytes))
-            .is_none()
-        {
-            Self::record_error(regs);
-            return;
-        }
-        if desc.cmd_size_bytes < cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32 {
-            Self::record_error(regs);
-            return;
-        }
-
-        // Forward-compat: the submit descriptor's `cmd_size_bytes` is the backing buffer capacity,
-        // while the command stream header's `size_bytes` field indicates the bytes used.
-        //
-        // Only copy the used prefix to avoid allocating/copying potentially large trailing bytes.
-        let mut header_bytes = [0u8; cmd::AerogpuCmdStreamHeader::SIZE_BYTES];
-        mem.read_physical(desc.cmd_gpa, &mut header_bytes);
-        let header = match cmd::decode_cmd_stream_header_le(&header_bytes) {
+        let cmd_size: usize = match usize::try_from(desc.cmd_size_bytes) {
             Ok(v) => v,
             Err(_) => {
                 Self::record_error(regs);
                 return;
             }
         };
-
-        if header.size_bytes > desc.cmd_size_bytes {
+        if cmd_size > MAX_CMD_STREAM_SIZE_BYTES {
             Self::record_error(regs);
             return;
         }
 
-        let stream_size = header.size_bytes as usize;
-        if stream_size > MAX_CMD_STREAM_SIZE_BYTES {
-            Self::record_error(regs);
-            return;
-        }
-
-        let mut buf = vec![0u8; stream_size];
+        let mut buf = vec![0u8; cmd_size];
         mem.read_physical(desc.cmd_gpa, &mut buf);
 
         let iter = match cmd::AerogpuCmdStreamIter::new(&buf) {
@@ -2092,6 +2063,7 @@ impl AeroGpuSoftwareExecutor {
                 return;
             }
         };
+        let stream_size = iter.header().size_bytes as usize;
 
         let Some(allocs) = self.parse_alloc_table(regs, mem, desc) else {
             return;
@@ -2154,8 +2126,16 @@ impl AeroGpuSoftwareExecutor {
         // `AerogpuCmdOpcode` is a fixed protocol enum today. The wildcard arm at the bottom is
         // intentional forward-compatibility: if the protocol gains new opcodes, the software
         // backend should ignore them rather than failing compilation.
+        #[allow(unreachable_patterns)]
         match op {
             cmd::AerogpuCmdOpcode::Nop | cmd::AerogpuCmdOpcode::DebugMarker => {}
+            cmd::AerogpuCmdOpcode::CreateSampler
+            | cmd::AerogpuCmdOpcode::DestroySampler
+            | cmd::AerogpuCmdOpcode::SetSamplers
+            | cmd::AerogpuCmdOpcode::SetConstantBuffers => {
+                // The software backend is intentionally minimal and ignores GPU state
+                // that is only needed for shader-based rendering.
+            }
             cmd::AerogpuCmdOpcode::CreateBuffer => {
                 let packet_cmd =
                     match Self::read_packed_prefix::<cmd::AerogpuCmdCreateBuffer>(packet) {
@@ -2367,28 +2347,12 @@ impl AeroGpuSoftwareExecutor {
                         destroyed_underlying = true;
                         self.texture_refcounts.remove(&resolved);
                         self.textures.remove(&resolved);
-                        let to_retire: Vec<u64> = self
-                            .shared_surfaces
-                            .iter()
-                            .filter_map(|(k, v)| (*v == resolved).then_some(*k))
-                            .collect();
-                        for token in to_retire {
-                            self.shared_surfaces.remove(&token);
-                            self.retired_shared_surface_tokens.insert(token);
-                        }
+                        self.shared_surfaces.retain(|_, v| *v != resolved);
                         self.resource_aliases.retain(|_, v| *v != resolved);
                     }
                 } else {
                     destroyed_underlying = self.textures.remove(&resolved).is_some();
-                    let to_retire: Vec<u64> = self
-                        .shared_surfaces
-                        .iter()
-                        .filter_map(|(k, v)| (*v == resolved).then_some(*k))
-                        .collect();
-                    for token in to_retire {
-                        self.shared_surfaces.remove(&token);
-                        self.retired_shared_surface_tokens.insert(token);
-                    }
+                    self.shared_surfaces.retain(|_, v| *v != resolved);
                     self.resource_aliases.retain(|_, v| *v != resolved);
                 }
                 self.state.render_targets.iter_mut().for_each(|rt| {
@@ -2995,7 +2959,7 @@ impl AeroGpuSoftwareExecutor {
             }
             cmd::AerogpuCmdOpcode::SetBlendState => {
                 // `SET_BLEND_STATE` was extended over time; accept older 28-byte packets and
-                // default missing fields (alpha=params, constant=1, sample_mask=0xFFFFFFFF).
+                // default missing fields (alpha=params, constant=0, sample_mask=0xFFFFFFFF).
                 if packet.len() < 28 {
                     Self::record_error(regs);
                     return false;
@@ -3023,7 +2987,7 @@ impl AeroGpuSoftwareExecutor {
                     blend_op
                 };
 
-                let mut blend_constant = [1.0f32; 4];
+                let mut blend_constant = [0.0f32; 4];
                 if packet.len() >= 44 {
                     blend_constant[0] =
                         f32::from_bits(u32::from_le_bytes(packet[40..44].try_into().unwrap()));
@@ -3456,10 +3420,6 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return true;
                 }
-                if self.retired_shared_surface_tokens.contains(&token) {
-                    Self::record_error(regs);
-                    return true;
-                }
                 let underlying = self.resolve_handle(handle);
                 if !self.texture_refcounts.contains_key(&underlying) {
                     Self::record_error(regs);
@@ -3535,7 +3495,6 @@ impl AeroGpuSoftwareExecutor {
                 let token = u64::from_le(packet_cmd.share_token);
                 if token != 0 {
                     self.shared_surfaces.remove(&token);
-                    self.retired_shared_surface_tokens.insert(token);
                 }
             }
             cmd::AerogpuCmdOpcode::Present
@@ -3543,7 +3502,6 @@ impl AeroGpuSoftwareExecutor {
             | cmd::AerogpuCmdOpcode::Flush => {
                 // No-op for software backend (work already executes at submit boundaries).
             }
-            #[allow(unreachable_patterns)]
             _ => {
                 // Forward compatibility: ignore opcodes not yet implemented by the software
                 // backend. Unknown numeric opcodes are already filtered by `from_u32` above.
@@ -3551,208 +3509,5 @@ impl AeroGpuSoftwareExecutor {
         }
 
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use memory::Bus;
-
-    #[test]
-    fn parse_alloc_table_accepts_capacity_larger_than_header_size_bytes() {
-        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES;
-        let entry_count = 1u32;
-        let used_size =
-            ring::AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * entry_stride);
-        let capacity = used_size + 128;
-
-        let alloc_table_gpa = 0x1000u64;
-        let mut table = vec![0u8; capacity];
-        table.fill(0xCD);
-        table[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
-        table[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
-        table[8..12].copy_from_slice(&(used_size as u32).to_le_bytes());
-        table[12..16].copy_from_slice(&entry_count.to_le_bytes());
-        table[16..20].copy_from_slice(&(entry_stride as u32).to_le_bytes());
-        table[20..24].copy_from_slice(&0u32.to_le_bytes());
-
-        let base = ring::AerogpuAllocTableHeader::SIZE_BYTES;
-        table[base..base + 4].copy_from_slice(&1u32.to_le_bytes());
-        table[base + 4..base + 8].copy_from_slice(&0u32.to_le_bytes()); // flags
-        table[base + 8..base + 16].copy_from_slice(&0x2000u64.to_le_bytes()); // gpa
-        table[base + 16..base + 24].copy_from_slice(&0x100u64.to_le_bytes()); // size_bytes
-        table[base + 24..base + 32].copy_from_slice(&0u64.to_le_bytes()); // reserved0
-
-        table[used_size..].fill(0xAB);
-
-        let mut mem = Bus::new(0x4000);
-        mem.write_physical(alloc_table_gpa, &table);
-
-        let desc = AeroGpuSubmitDesc {
-            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
-            flags: 0,
-            context_id: 0,
-            engine_id: 0,
-            cmd_gpa: 0,
-            cmd_size_bytes: 0,
-            alloc_table_gpa,
-            alloc_table_size_bytes: capacity as u32,
-            signal_fence: 0,
-        };
-
-        let exec = AeroGpuSoftwareExecutor::new();
-        let mut regs = AeroGpuRegs::default();
-        let allocs = exec
-            .parse_alloc_table(&mut regs, &mut mem, &desc)
-            .expect("alloc table should parse");
-        assert_eq!(allocs.len(), 1);
-        assert_eq!(allocs.get(&1).unwrap().size_bytes, 0x100);
-        assert_eq!(regs.irq_status, 0);
-    }
-
-    #[test]
-    fn parse_alloc_table_accepts_extended_entry_stride() {
-        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES + 16;
-        let entry_count = 2u32;
-        let total_size =
-            ring::AerogpuAllocTableHeader::SIZE_BYTES + (entry_count as usize * entry_stride);
-
-        let alloc_table_gpa = 0x1000u64;
-        let mut table = vec![0u8; total_size];
-        table[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
-        table[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
-        table[8..12].copy_from_slice(&(total_size as u32).to_le_bytes());
-        table[12..16].copy_from_slice(&entry_count.to_le_bytes());
-        table[16..20].copy_from_slice(&(entry_stride as u32).to_le_bytes());
-        table[20..24].copy_from_slice(&0u32.to_le_bytes());
-
-        for i in 0..entry_count as usize {
-            let base = ring::AerogpuAllocTableHeader::SIZE_BYTES + i * entry_stride;
-            let alloc_id = (i as u32) + 1;
-            table[base..base + 4].copy_from_slice(&alloc_id.to_le_bytes());
-            table[base + 4..base + 8].copy_from_slice(&0u32.to_le_bytes()); // flags
-            table[base + 8..base + 16].copy_from_slice(&(0x2000u64 + i as u64).to_le_bytes()); // gpa
-            table[base + 16..base + 24].copy_from_slice(&0x100u64.to_le_bytes()); // size_bytes
-            table[base + 24..base + 32].copy_from_slice(&0u64.to_le_bytes()); // reserved0
-
-            // Extension bytes.
-            table[base + ring::AerogpuAllocEntry::SIZE_BYTES..base + entry_stride].fill(0xAB);
-        }
-
-        let mut mem = Bus::new(0x4000);
-        mem.write_physical(alloc_table_gpa, &table);
-
-        let desc = AeroGpuSubmitDesc {
-            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
-            flags: 0,
-            context_id: 0,
-            engine_id: 0,
-            cmd_gpa: 0,
-            cmd_size_bytes: 0,
-            alloc_table_gpa,
-            alloc_table_size_bytes: total_size as u32,
-            signal_fence: 0,
-        };
-
-        let exec = AeroGpuSoftwareExecutor::new();
-        let mut regs = AeroGpuRegs::default();
-        let allocs = exec
-            .parse_alloc_table(&mut regs, &mut mem, &desc)
-            .expect("alloc table should parse");
-        assert_eq!(allocs.len(), 2);
-        assert_eq!(allocs.get(&1).unwrap().size_bytes, 0x100);
-        assert_eq!(allocs.get(&2).unwrap().size_bytes, 0x100);
-        assert_eq!(regs.irq_status, 0);
-    }
-
-    #[test]
-    fn execute_submission_records_error_on_inconsistent_cmd_descriptor() {
-        let mut mem = Bus::new(0x4000);
-        let mut regs = AeroGpuRegs::default();
-
-        let desc = AeroGpuSubmitDesc {
-            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
-            flags: 0,
-            context_id: 0,
-            engine_id: 0,
-            // cmd_size_bytes is non-zero but cmd_gpa is 0.
-            cmd_gpa: 0,
-            cmd_size_bytes: 24,
-            alloc_table_gpa: 0,
-            alloc_table_size_bytes: 0,
-            signal_fence: 0,
-        };
-
-        let mut exec = AeroGpuSoftwareExecutor::new();
-        exec.execute_submission(&mut regs, &mut mem, &desc);
-
-        assert_eq!(regs.stats.malformed_submissions, 1);
-        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
-    }
-
-    #[test]
-    fn execute_submission_records_error_on_cmd_descriptor_address_overflow() {
-        let mut mem = Bus::new(0x4000);
-        let mut regs = AeroGpuRegs::default();
-
-        let desc = AeroGpuSubmitDesc {
-            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
-            flags: 0,
-            context_id: 0,
-            engine_id: 0,
-            cmd_gpa: u64::MAX - 8,
-            cmd_size_bytes: 24,
-            alloc_table_gpa: 0,
-            alloc_table_size_bytes: 0,
-            signal_fence: 0,
-        };
-
-        let mut exec = AeroGpuSoftwareExecutor::new();
-        exec.execute_submission(&mut regs, &mut mem, &desc);
-
-        assert_eq!(regs.stats.malformed_submissions, 1);
-        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
-    }
-
-    #[test]
-    fn execute_submission_accepts_cmd_buffer_larger_than_stream_size_bytes() {
-        let cmd_gpa = 0x1000u64;
-        let capacity = 64u32;
-        let used_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
-
-        let mut stream = vec![0u8; capacity as usize];
-        stream.fill(0xCD);
-        stream[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-        stream[4..8].copy_from_slice(&AeroGpuRegs::default().abi_version.to_le_bytes());
-        stream[8..12].copy_from_slice(&used_size.to_le_bytes());
-        stream[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
-        stream[16..20].copy_from_slice(&0u32.to_le_bytes());
-        stream[20..24].copy_from_slice(&0u32.to_le_bytes());
-
-        stream[used_size as usize..].fill(0xAB);
-
-        let mut mem = Bus::new(0x4000);
-        mem.write_physical(cmd_gpa, &stream);
-
-        let desc = AeroGpuSubmitDesc {
-            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
-            flags: 0,
-            context_id: 0,
-            engine_id: 0,
-            cmd_gpa,
-            cmd_size_bytes: capacity,
-            alloc_table_gpa: 0,
-            alloc_table_size_bytes: 0,
-            signal_fence: 0,
-        };
-
-        let mut exec = AeroGpuSoftwareExecutor::new();
-        let mut regs = AeroGpuRegs::default();
-        exec.execute_submission(&mut regs, &mut mem, &desc);
-
-        assert_eq!(regs.stats.malformed_submissions, 0);
-        assert_eq!(regs.irq_status, 0);
     }
 }

@@ -94,7 +94,7 @@ impl MmioHandler for HdaPciDevice {
             }
             _ => {
                 let bytes = value.to_le_bytes();
-                for (i, byte) in bytes.iter().take(size.min(8)).enumerate() {
+                for (i, byte) in bytes.iter().enumerate().take(size.min(8)) {
                     self.controller
                         .mmio_write(offset + i as u64, 1, u64::from(*byte));
                 }

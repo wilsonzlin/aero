@@ -92,7 +92,7 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle, modifier: OperandModifier
     let mut out = Vec::new();
     out.push(token);
     if needs_ext {
-        let mod_bits = match modifier {
+        let mod_bits: u32 = match modifier {
             OperandModifier::None => 0,
             OperandModifier::Neg => 1,
             OperandModifier::Abs => 2,

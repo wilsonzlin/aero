@@ -58,7 +58,9 @@ fn instantiate(
     let mut linker = Linker::new(&engine);
 
     let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None)).unwrap();
-    linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+    linker
+        .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
+        .unwrap();
 
     define_mem_helpers(&mut store, &mut linker, memory);
     define_mmu_translate(&mut store, &mut linker, memory);
@@ -412,7 +414,7 @@ fn run_wasm_inner(
 
     mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
 
-    let pages = total_len.div_ceil(65_536) as u32;
+    let pages = (total_len.div_ceil(65_536)) as u32;
     let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
     memory.write(&mut store, 0, &mem).unwrap();
 

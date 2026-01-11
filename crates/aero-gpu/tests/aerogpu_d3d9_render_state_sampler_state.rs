@@ -210,8 +210,6 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     // Vertex buffer: two fullscreen quads (12 vertices total). Each vertex is:
     //   float4 position, float4 texcoord
     let mut vb_data = Vec::new();
-    // D3D9 defaults to back-face culling with clockwise front faces. Build quads using clockwise
-    // triangle winding so tests don't need to touch cull state.
     let quad_pos = [
         [-1.0f32, -1.0, 0.0, 1.0],
         [-1.0, 1.0, 0.0, 1.0],
@@ -234,17 +232,17 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     // Quad B: constant UV near the boundary between two texels (for filter test).
     let uv_const = [0.49f32, 0.5f32];
 
-    for (pos, uv) in quad_pos.iter().zip(quad_uv.iter()) {
-        for &f in pos {
+    for i in 0..6 {
+        for f in quad_pos[i] {
             push_f32(&mut vb_data, f);
         }
-        push_f32(&mut vb_data, uv[0]);
-        push_f32(&mut vb_data, uv[1]);
+        push_f32(&mut vb_data, quad_uv[i][0]);
+        push_f32(&mut vb_data, quad_uv[i][1]);
         push_f32(&mut vb_data, 0.0);
         push_f32(&mut vb_data, 0.0);
     }
-    for pos in &quad_pos {
-        for &f in pos {
+    for pos in quad_pos {
+        for f in pos {
             push_f32(&mut vb_data, f);
         }
         push_f32(&mut vb_data, uv_const[0]);

@@ -17,7 +17,7 @@ fn run_to_halt<B: CpuBus>(state: &mut CpuState, bus: &mut B, max: u64) {
             BatchExit::BiosInterrupt(vector) => panic!("unexpected BIOS interrupt: {vector:#x}"),
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
-            BatchExit::CpuExit(e) => panic!("unexpected cpu exit: {e:?}"),
+            BatchExit::CpuExit(exit) => panic!("unexpected cpu exit: {exit:?}"),
         }
     }
     panic!("program did not halt");
@@ -177,9 +177,9 @@ impl CpuBus for SparseBus {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for (i, slot) in buf.iter_mut().take(len).enumerate() {
+        for (i, byte) in buf.iter_mut().enumerate().take(len) {
             let addr = vaddr.checked_add(i as u64).ok_or(Exception::MemoryFault)?;
-            *slot = self.read_u8(addr)?;
+            *byte = self.read_u8(addr)?;
         }
         Ok(buf)
     }

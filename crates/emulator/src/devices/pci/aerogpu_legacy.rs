@@ -211,8 +211,7 @@ impl AeroGpuLegacyPciDevice {
                 return None;
             }
             // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
-            let hz = u64::from(hz);
-            let period_ns = 1_000_000_000u64.div_ceil(hz);
+            let period_ns = 1_000_000_000u64.div_ceil(hz as u64);
             Some(Duration::from_nanos(period_ns))
         });
 

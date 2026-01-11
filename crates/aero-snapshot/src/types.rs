@@ -206,8 +206,8 @@ impl CpuState {
         let gs = SegmentState::real_mode(r.read_u16_le()?);
         let ss = SegmentState::real_mode(r.read_u16_le()?);
         let mut xmm = [0u128; 16];
-        for reg in &mut xmm {
-            *reg = r.read_u128_le()?;
+        for slot in &mut xmm {
+            *slot = r.read_u128_le()?;
         }
         Ok(Self {
             rax,
@@ -228,12 +228,12 @@ impl CpuState {
             r15,
             rip,
             rflags,
-            es,
             cs,
-            ss,
             ds,
+            es,
             fs,
             gs,
+            ss,
             xmm,
             ..Self::default()
         })
@@ -320,7 +320,6 @@ impl CpuState {
         }
         let mut fxsave = [0u8; FXSAVE_AREA_SIZE];
         r.read_exact(&mut fxsave)?;
-
         let mut state = Self {
             rax,
             rbx,

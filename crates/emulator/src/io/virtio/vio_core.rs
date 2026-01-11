@@ -74,12 +74,13 @@ impl From<GuestMemoryError> for VirtQueueError {
 }
 
 fn checked_offset(base: u64, offset: u64, len: usize, size: u64) -> Result<u64, VirtQueueError> {
-    base.checked_add(offset)
-        .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+    base.checked_add(offset).ok_or(VirtQueueError::GuestMemory(
+        GuestMemoryError::OutOfRange {
             paddr: base,
             len,
             size,
-        }))
+        },
+    ))
 }
 
 #[derive(Debug, Clone)]

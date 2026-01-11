@@ -1025,8 +1025,18 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     let end_bus = end_bus_raw.max(start_bus);
     let bus_len = end_bus - start_bus + 1;
     out.extend_from_slice(&word_addr_space_descriptor(
-        0x02, 0x0D, // producer + min/max fixed
-        0x00, 0x0000, start_bus, end_bus, 0x0000, bus_len,
+        AddrSpaceDescriptorHeader {
+            resource_type: 0x02,
+            general_flags: 0x0D, // producer + min/max fixed
+            type_specific_flags: 0x00,
+        },
+        AddrSpaceDescriptorRange {
+            granularity: 0x0000,
+            min: start_bus,
+            max: end_bus,
+            translation: 0x0000,
+            length: bus_len,
+        },
     ));
 
     // I/O Port Descriptor for PCI config mechanism 1 (0xCF8..0xCFF).
@@ -1034,12 +1044,34 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
 
     // Word Address Space Descriptor (I/O): 0x0000..0x0CF7
     out.extend_from_slice(&word_addr_space_descriptor(
-        0x01, 0x0D, 0x00, 0x0000, 0x0000, 0x0CF7, 0x0000, 0x0CF8,
+        AddrSpaceDescriptorHeader {
+            resource_type: 0x01,
+            general_flags: 0x0D,
+            type_specific_flags: 0x00,
+        },
+        AddrSpaceDescriptorRange {
+            granularity: 0x0000,
+            min: 0x0000,
+            max: 0x0CF7,
+            translation: 0x0000,
+            length: 0x0CF8,
+        },
     ));
 
     // Word Address Space Descriptor (I/O): 0x0D00..0xFFFF
     out.extend_from_slice(&word_addr_space_descriptor(
-        0x01, 0x0D, 0x00, 0x0000, 0x0D00, 0xFFFF, 0x0000, 0xF300,
+        AddrSpaceDescriptorHeader {
+            resource_type: 0x01,
+            general_flags: 0x0D,
+            type_specific_flags: 0x00,
+        },
+        AddrSpaceDescriptorRange {
+            granularity: 0x0000,
+            min: 0x0D00,
+            max: 0xFFFF,
+            translation: 0x0000,
+            length: 0xF300,
+        },
     ));
 
     // DWord Address Space Descriptor (Memory): PCI MMIO window.
@@ -1070,14 +1102,18 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
                 .expect("PCI MMIO window size must fit in 32-bit address space");
 
             out.extend_from_slice(&dword_addr_space_descriptor(
-                0x00,
-                0x0D,
-                0x06, // cacheable, read/write
-                0x0000_0000,
-                start,
-                end_inclusive,
-                0x0000_0000,
-                len,
+                AddrSpaceDescriptorHeader {
+                    resource_type: 0x00,
+                    general_flags: 0x0D,
+                    type_specific_flags: 0x06, // cacheable, read/write
+                },
+                AddrSpaceDescriptorRange {
+                    granularity: 0x0000_0000,
+                    min: start,
+                    max: end_inclusive,
+                    translation: 0x0000_0000,
+                    length: len,
+                },
             ));
         };
 
@@ -1124,53 +1160,55 @@ fn hpet_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-fn word_addr_space_descriptor(
+#[derive(Debug, Clone, Copy)]
+struct AddrSpaceDescriptorHeader {
     resource_type: u8,
     general_flags: u8,
     type_specific_flags: u8,
-    granularity: u16,
-    min: u16,
-    max: u16,
-    translation: u16,
-    length: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AddrSpaceDescriptorRange<T> {
+    granularity: T,
+    min: T,
+    max: T,
+    translation: T,
+    length: T,
+}
+
+fn word_addr_space_descriptor(
+    header: AddrSpaceDescriptorHeader,
+    range: AddrSpaceDescriptorRange<u16>,
 ) -> [u8; 16] {
     let mut out = [0u8; 16];
     out[0] = 0x88;
     out[1..3].copy_from_slice(&0x000Du16.to_le_bytes());
-    out[3] = resource_type;
-    out[4] = general_flags;
-    out[5] = type_specific_flags;
-    out[6..8].copy_from_slice(&granularity.to_le_bytes());
-    out[8..10].copy_from_slice(&min.to_le_bytes());
-    out[10..12].copy_from_slice(&max.to_le_bytes());
-    out[12..14].copy_from_slice(&translation.to_le_bytes());
-    out[14..16].copy_from_slice(&length.to_le_bytes());
+    out[3] = header.resource_type;
+    out[4] = header.general_flags;
+    out[5] = header.type_specific_flags;
+    out[6..8].copy_from_slice(&range.granularity.to_le_bytes());
+    out[8..10].copy_from_slice(&range.min.to_le_bytes());
+    out[10..12].copy_from_slice(&range.max.to_le_bytes());
+    out[12..14].copy_from_slice(&range.translation.to_le_bytes());
+    out[14..16].copy_from_slice(&range.length.to_le_bytes());
     out
 }
 
-#[allow(clippy::too_many_arguments)]
 fn dword_addr_space_descriptor(
-    resource_type: u8,
-    general_flags: u8,
-    type_specific_flags: u8,
-    granularity: u32,
-    min: u32,
-    max: u32,
-    translation: u32,
-    length: u32,
+    header: AddrSpaceDescriptorHeader,
+    range: AddrSpaceDescriptorRange<u32>,
 ) -> [u8; 26] {
     let mut out = [0u8; 26];
     out[0] = 0x87;
     out[1..3].copy_from_slice(&0x0017u16.to_le_bytes());
-    out[3] = resource_type;
-    out[4] = general_flags;
-    out[5] = type_specific_flags;
-    out[6..10].copy_from_slice(&granularity.to_le_bytes());
-    out[10..14].copy_from_slice(&min.to_le_bytes());
-    out[14..18].copy_from_slice(&max.to_le_bytes());
-    out[18..22].copy_from_slice(&translation.to_le_bytes());
-    out[22..26].copy_from_slice(&length.to_le_bytes());
+    out[3] = header.resource_type;
+    out[4] = header.general_flags;
+    out[5] = header.type_specific_flags;
+    out[6..10].copy_from_slice(&range.granularity.to_le_bytes());
+    out[10..14].copy_from_slice(&range.min.to_le_bytes());
+    out[14..18].copy_from_slice(&range.max.to_le_bytes());
+    out[18..22].copy_from_slice(&range.translation.to_le_bytes());
+    out[22..26].copy_from_slice(&range.length.to_le_bytes());
     out
 }
 

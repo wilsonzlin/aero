@@ -26,8 +26,8 @@ use crate::{
 /// Number of general purpose registers in [`CpuState::gpr`].
 pub const GPR_COUNT: usize = 16;
 
+/// Canonical register indices for [`CpuState::gpr`].
 pub mod gpr {
-    //! Canonical register indices for [`super::CpuState::gpr`].
     pub const RAX: usize = 0;
     pub const RCX: usize = 1;
     pub const RDX: usize = 2;
@@ -809,8 +809,6 @@ impl CpuState {
     pub fn new(mode: CpuMode) -> Self {
         let mut state = Self {
             mode,
-            halted: false,
-            pending_bios_int_valid: false,
             ..Self::default()
         };
 
@@ -1682,13 +1680,13 @@ mod tests {
         assert_eq!(offset_of!(CpuState, rip), CPU_RIP_OFF);
         assert_eq!(offset_of!(CpuState, rflags), CPU_RFLAGS_OFF);
 
-        for (i, &off) in CPU_GPR_OFF.iter().enumerate().take(GPR_COUNT) {
-            assert_eq!(off, CPU_GPR_BASE_OFF + i * 8);
+        for (i, off) in CPU_GPR_OFF.iter().enumerate() {
+            assert_eq!(*off, CPU_GPR_BASE_OFF + i * 8);
         }
 
         let xmm_base = offset_of!(CpuState, sse) + offset_of!(SseState, xmm);
-        for (i, &off) in CPU_XMM_OFF.iter().enumerate() {
-            assert_eq!(off, xmm_base + i * core::mem::size_of::<u128>());
+        for (i, off) in CPU_XMM_OFF.iter().enumerate() {
+            assert_eq!(*off, xmm_base + i * core::mem::size_of::<u128>());
         }
     }
 

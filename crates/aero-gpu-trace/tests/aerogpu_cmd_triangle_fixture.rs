@@ -1,5 +1,5 @@
 use aero_gpu_trace::{
-    AerogpuMemoryRangeCapture, AerogpuSubmissionInfo, TraceMeta, TraceReader, TraceWriter,
+    AerogpuMemoryRangeCapture, AerogpuSubmissionCapture, TraceMeta, TraceReader, TraceWriter,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -210,23 +210,21 @@ fn generate_trace() -> Vec<u8> {
 
     writer.begin_frame(0).unwrap();
     writer
-        .write_aerogpu_submission(
-            AerogpuSubmissionInfo {
-                submit_flags: AEROGPU_SUBMIT_FLAG_PRESENT,
-                context_id: 0,
-                engine_id: 0,
-                signal_fence: 1,
-            },
-            &cmd_stream,
-            Some(&alloc_table),
-            &[AerogpuMemoryRangeCapture {
+        .write_aerogpu_submission(AerogpuSubmissionCapture {
+            submit_flags: AEROGPU_SUBMIT_FLAG_PRESENT,
+            context_id: 0,
+            engine_id: 0,
+            signal_fence: 1,
+            cmd_stream_bytes: &cmd_stream,
+            alloc_table_bytes: Some(&alloc_table),
+            memory_ranges: &[AerogpuMemoryRangeCapture {
                 alloc_id: 1,
                 flags: 0,
                 gpa: vertex_gpa,
                 size_bytes: vertex_bytes.len() as u64,
                 bytes: &vertex_bytes,
             }],
-        )
+        })
         .unwrap();
     writer.present(0).unwrap();
     let bytes = writer.finish().unwrap();

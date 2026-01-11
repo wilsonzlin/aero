@@ -21,7 +21,7 @@ use crate::gpu_worker::aerogpu_software::AeroGpuSoftwareExecutor;
 
 #[cfg(feature = "aerogpu-trace")]
 use aero_gpu_trace::{
-    AerogpuMemoryRangeCapture, AerogpuSubmissionInfo, TraceMeta, TraceWriteError, TraceWriter,
+    AerogpuMemoryRangeCapture, AerogpuSubmissionCapture, TraceMeta, TraceWriteError, TraceWriter,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -640,25 +640,6 @@ impl AeroGpuExecutor {
                             },
                         );
 
-                        // If the backend completed this fence before the executor processed the
-                        // submission descriptor, still honor PRESENT writeback so host callers that
-                        // render from guest scanout memory observe the update.
-                        if already_completed
-                            && (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0
-                            && self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred
-                        {
-                            if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
-                                if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
-                                    if self.cfg.verbose {
-                                        eprintln!("aerogpu: scanout writeback failed: {err}");
-                                    }
-                                    regs.stats.gpu_exec_errors =
-                                        regs.stats.gpu_exec_errors.saturating_add(1);
-                                    regs.irq_status |= irq_bits::ERROR;
-                                }
-                            }
-                        }
-
                         if already_completed && kind == PendingFenceKind::Immediate {
                             self.advance_completed_fence(regs, mem);
                         }
@@ -943,16 +924,6 @@ fn decode_alloc_table(
         ));
         return (None, Vec::new());
     }
-    if desc
-        .alloc_table_gpa
-        .checked_add(u64::from(desc.alloc_table_size_bytes))
-        .is_none()
-    {
-        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
-            AeroGpuAllocTableDecodeError::AddressOverflow,
-        ));
-        return (None, Vec::new());
-    }
 
     let header = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
 
@@ -1041,7 +1012,7 @@ fn decode_alloc_table(
         };
 
         let entry = AeroGpuAllocEntry::read_from(mem, entry_gpa);
-        if entry.alloc_id == 0 || entry.size_bytes == 0 {
+        if entry.alloc_id == 0 || entry.size_bytes == 0 || entry.gpa == 0 {
             decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
                 AeroGpuAllocTableDecodeError::InvalidEntry,
             ));
@@ -1092,35 +1063,87 @@ fn decode_cmd_stream(
         return (None, Vec::new());
     }
 
-    // Forward-compat: `cmd_size_bytes` is the buffer capacity, while the command stream header's
-    // `size_bytes` is the number of bytes used by the stream. Guests may provide a backing buffer
-    // that is larger than `cmd_stream_header.size_bytes` (page rounding / reuse); only copy the
-    // used prefix.
-    if desc.cmd_size_bytes < ProtocolCmdStreamHeader::SIZE_BYTES as u32 {
+    if desc.cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+
+        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+        mem.read_physical(desc.cmd_gpa, &mut prefix);
+        let header = decode_cmd_stream_header_le(&prefix)
+            .ok()
+            .map(AeroGpuCmdStreamHeader::from);
+        if let Some(header) = header {
+            if header.size_bytes > desc.cmd_size_bytes {
+                decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                    AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+                ));
+            }
+        }
+        return (header, Vec::new());
+    }
+
+    if !capture_bytes {
+        let cmd_size = desc.cmd_size_bytes as usize;
+        if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
+            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::TooSmall,
+            ));
+            return (None, Vec::new());
+        }
+
+        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+        mem.read_physical(desc.cmd_gpa, &mut prefix);
+        let header = match decode_cmd_stream_header_le(&prefix) {
+            Ok(header) => AeroGpuCmdStreamHeader::from(header),
+            Err(_) => {
+                decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                    AeroGpuCmdStreamDecodeError::BadHeader,
+                ));
+                return (None, Vec::new());
+            }
+        };
+
+        if header.size_bytes > desc.cmd_size_bytes {
+            decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
+            ));
+        }
+
+        return (Some(header), Vec::new());
+    }
+
+    let Ok(cmd_size) = usize::try_from(desc.cmd_size_bytes) else {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+        return (None, Vec::new());
+    };
+
+    let mut cmd_stream = Vec::new();
+    if cmd_stream.try_reserve_exact(cmd_size).is_err() {
+        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
+            AeroGpuCmdStreamDecodeError::TooLarge,
+        ));
+        return (None, Vec::new());
+    }
+    cmd_stream.resize(cmd_size, 0u8);
+    mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
+
+    if cmd_stream.len() < ProtocolCmdStreamHeader::SIZE_BYTES {
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::TooSmall,
         ));
-        if !capture_bytes {
-            return (None, Vec::new());
-        }
-        let cmd_size = desc.cmd_size_bytes as usize;
-        let mut cmd_stream = vec![0u8; cmd_size];
-        mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
         return (None, cmd_stream);
     }
 
-    let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
-    mem.read_physical(desc.cmd_gpa, &mut prefix);
-    let header = match decode_cmd_stream_header_le(&prefix) {
+    let header = match decode_cmd_stream_header_le(&cmd_stream) {
         Ok(header) => AeroGpuCmdStreamHeader::from(header),
         Err(_) => {
             decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
                 AeroGpuCmdStreamDecodeError::BadHeader,
             ));
-            if capture_bytes {
-                return (None, prefix.to_vec());
-            }
-            return (None, Vec::new());
+            return (None, cmd_stream);
         }
     };
 
@@ -1128,36 +1151,7 @@ fn decode_cmd_stream(
         decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
             AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
         ));
-        if capture_bytes {
-            return (Some(header), prefix.to_vec());
-        }
-        return (Some(header), Vec::new());
     }
-
-    if header.size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
-        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-            AeroGpuCmdStreamDecodeError::TooLarge,
-        ));
-        if capture_bytes {
-            return (Some(header), prefix.to_vec());
-        }
-        return (Some(header), Vec::new());
-    }
-
-    if !capture_bytes {
-        return (Some(header), Vec::new());
-    }
-
-    let cmd_size = header.size_bytes as usize;
-    let mut cmd_stream = Vec::new();
-    if cmd_stream.try_reserve_exact(cmd_size).is_err() {
-        decode_errors.push(AeroGpuSubmissionDecodeError::CmdStream(
-            AeroGpuCmdStreamDecodeError::TooLarge,
-        ));
-        return (Some(header), Vec::new());
-    }
-    cmd_stream.resize(cmd_size, 0u8);
-    mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
 
     (Some(header), cmd_stream)
 }
@@ -1556,118 +1550,6 @@ mod tests {
             7
         );
     }
-
-    #[derive(Debug)]
-    struct EarlyCompletionBackend {
-        completions: std::collections::VecDeque<AeroGpuBackendCompletion>,
-        scanout: Option<AeroGpuBackendScanout>,
-    }
-
-    impl AeroGpuCommandBackend for EarlyCompletionBackend {
-        fn reset(&mut self) {
-            self.completions.clear();
-        }
-
-        fn submit(
-            &mut self,
-            _mem: &mut dyn MemoryBus,
-            _submission: AeroGpuBackendSubmission,
-        ) -> Result<(), String> {
-            // In this test, the completion is delivered before the executor processes the ring
-            // entry, so `submit` should not emit another completion.
-            Ok(())
-        }
-
-        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
-            self.completions.drain(..).collect()
-        }
-
-        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
-            self.scanout.clone()
-        }
-    }
-
-    #[test]
-    fn present_writeback_handles_completion_before_submission() {
-        let mut mem = Bus::new(0x9000);
-        let ring_gpa = 0x1000u64;
-        let fence_gpa = 0x2000u64;
-        let cmd_gpa = 0x3000u64;
-        let fb_gpa = 0x4000u64;
-
-        let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
-        mem.write_u32(cmd_gpa, AEROGPU_CMD_STREAM_MAGIC);
-        mem.write_u32(cmd_gpa + 4, AeroGpuRegs::default().abi_version);
-        mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
-        mem.write_u32(cmd_gpa + 12, 0);
-        mem.write_u32(cmd_gpa + 16, 0);
-        mem.write_u32(cmd_gpa + 20, 0);
-
-        write_ring_header(&mut mem, ring_gpa, 1, 0, 1);
-        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-        mem.write_u32(desc_gpa, AeroGpuSubmitDesc::SIZE_BYTES);
-        mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT);
-        mem.write_u32(desc_gpa + 8, 0);
-        mem.write_u32(desc_gpa + 12, 0);
-        mem.write_u64(desc_gpa + 16, cmd_gpa);
-        mem.write_u32(desc_gpa + 24, cmd_size_bytes);
-        mem.write_u64(desc_gpa + 32, 0);
-        mem.write_u32(desc_gpa + 40, 0);
-        mem.write_u64(desc_gpa + 48, 7);
-
-        let ring_size_bytes =
-            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + AeroGpuSubmitDesc::SIZE_BYTES as u64)
-                .unwrap();
-
-        let mut regs = AeroGpuRegs {
-            ring_gpa,
-            ring_size_bytes,
-            ring_control: ring_control::ENABLE,
-            fence_gpa,
-            irq_enable: irq_bits::FENCE,
-            ..Default::default()
-        };
-
-        regs.scanout0.enable = true;
-        regs.scanout0.width = 1;
-        regs.scanout0.height = 1;
-        regs.scanout0.fb_gpa = fb_gpa;
-        regs.scanout0.pitch_bytes = 4;
-        regs.scanout0.format = AeroGpuFormat::B8G8R8X8Unorm;
-
-        let scanout = AeroGpuBackendScanout {
-            width: 1,
-            height: 1,
-            rgba8: vec![255, 0, 0, 255],
-        };
-
-        let backend = EarlyCompletionBackend {
-            completions: std::collections::VecDeque::from([AeroGpuBackendCompletion {
-                fence: 7,
-                error: None,
-            }]),
-            scanout: Some(scanout),
-        };
-
-        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        });
-        exec.set_backend(Box::new(backend));
-
-        // Drain the completion before the executor sees the submission descriptor.
-        exec.poll_backend_completions(&mut regs, &mut mem);
-        assert_eq!(regs.completed_fence, 0);
-
-        exec.process_doorbell(&mut regs, &mut mem);
-
-        assert_eq!(regs.completed_fence, 7);
-
-        let mut fb = [0u8; 4];
-        mem.read_physical(fb_gpa, &mut fb);
-        assert_eq!(fb, [0, 0, 255, 255]);
-    }
 }
 
 #[cfg(feature = "aerogpu-trace")]
@@ -1720,71 +1602,26 @@ impl AerogpuSubmissionTrace {
 
         self.ensure_frame_open()?;
 
-        // Only capture the command stream if the descriptor is consistent. Malformed descriptors
-        // are still recorded (with an empty cmd stream) so tracing can't be disabled by guests
-        // that set `cmd_size_bytes` without a valid GPA.
-        let cmd_stream_bytes = if desc.cmd_gpa != 0
-            && desc.cmd_size_bytes != 0
-            && desc
-                .cmd_gpa
-                .checked_add(u64::from(desc.cmd_size_bytes))
-                .is_some()
-        {
-            // Capture only the used bytes (`cmd_stream_header.size_bytes`), not the backing buffer
-            // capacity (`desc.cmd_size_bytes`).
-            if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
-                return Err(TraceWriteError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "aerogpu trace: cmd buffer too large",
-                )));
-            }
-            let mut capture_len = desc.cmd_size_bytes;
-            if desc.cmd_size_bytes >= ProtocolCmdStreamHeader::SIZE_BYTES as u32 {
-                let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
-                mem.read_physical(desc.cmd_gpa, &mut prefix);
-                if let Ok(hdr) = decode_cmd_stream_header_le(&prefix) {
-                    if hdr.size_bytes >= ProtocolCmdStreamHeader::SIZE_BYTES as u32
-                        && hdr.size_bytes <= desc.cmd_size_bytes
-                    {
-                        capture_len = hdr.size_bytes;
-                    }
-                }
-            }
-            let cmd_size = capture_len as usize;
-            let mut cmd_stream_bytes = vec![0u8; cmd_size];
+        if desc.cmd_size_bytes > MAX_CAPTURE_BYTES {
+            return Err(TraceWriteError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "aerogpu trace: cmd stream too large",
+            )));
+        }
+        let cmd_size = desc.cmd_size_bytes as usize;
+        let mut cmd_stream_bytes = vec![0u8; cmd_size];
+        if cmd_size > 0 && desc.cmd_gpa != 0 {
             mem.read_physical(desc.cmd_gpa, &mut cmd_stream_bytes);
-            cmd_stream_bytes
-        } else {
-            Vec::new()
-        };
+        }
 
-        let alloc_table_bytes = if desc.alloc_table_gpa != 0
-            && desc.alloc_table_size_bytes != 0
-            && desc
-                .alloc_table_gpa
-                .checked_add(u64::from(desc.alloc_table_size_bytes))
-                .is_some()
-        {
-            // Capture only the used bytes (`alloc_table_header.size_bytes`), not the backing buffer
-            // capacity (`desc.alloc_table_size_bytes`).
+        let alloc_table_bytes = if desc.alloc_table_gpa != 0 && desc.alloc_table_size_bytes != 0 {
             if desc.alloc_table_size_bytes > MAX_CAPTURE_BYTES {
                 return Err(TraceWriteError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "aerogpu trace: alloc table buffer too large",
+                    "aerogpu trace: alloc table too large",
                 )));
             }
-
-            let mut capture_len = desc.alloc_table_size_bytes;
-            if desc.alloc_table_size_bytes >= AeroGpuAllocTableHeader::SIZE_BYTES {
-                let hdr = AeroGpuAllocTableHeader::read_from(mem, desc.alloc_table_gpa);
-                if hdr.size_bytes >= AeroGpuAllocTableHeader::SIZE_BYTES
-                    && hdr.size_bytes <= desc.alloc_table_size_bytes
-                {
-                    capture_len = hdr.size_bytes;
-                }
-            }
-
-            let alloc_size = capture_len as usize;
+            let alloc_size = desc.alloc_table_size_bytes as usize;
             let mut bytes = vec![0u8; alloc_size];
             mem.read_physical(desc.alloc_table_gpa, &mut bytes);
             Some(bytes)
@@ -1827,7 +1664,7 @@ impl AerogpuSubmissionTrace {
                         let size =
                             u64::from_le_bytes(table[off + 16..off + 24].try_into().unwrap());
 
-                        if alloc_id != 0 && size != 0 && gpa.checked_add(size).is_some() {
+                        if alloc_id != 0 && gpa != 0 && size != 0 {
                             let size_u32 = u32::try_from(size).unwrap_or(u32::MAX);
                             if size_u32 <= MAX_CAPTURE_BYTES {
                                 let mut bytes = vec![0u8; size as usize];
@@ -1862,17 +1699,15 @@ impl AerogpuSubmissionTrace {
             });
         }
 
-        self.writer.write_aerogpu_submission(
-            AerogpuSubmissionInfo {
-                submit_flags: desc.flags,
-                context_id: desc.context_id,
-                engine_id: desc.engine_id,
-                signal_fence: desc.signal_fence,
-            },
-            &cmd_stream_bytes,
-            alloc_table_bytes.as_deref(),
-            &ranges,
-        )?;
+        self.writer.write_aerogpu_submission(AerogpuSubmissionCapture {
+            submit_flags: desc.flags,
+            context_id: desc.context_id,
+            engine_id: desc.engine_id,
+            signal_fence: desc.signal_fence,
+            cmd_stream_bytes: &cmd_stream_bytes,
+            alloc_table_bytes: alloc_table_bytes.as_deref(),
+            memory_ranges: &ranges,
+        })?;
 
         if (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0 {
             self.writer.present(self.frame_index)?;

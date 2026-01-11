@@ -1831,6 +1831,7 @@ pub enum RunExitKind {
     ResetRequested,
     Assist,
     Exception,
+    CpuExit,
 }
 
 #[wasm_bindgen]
@@ -1886,6 +1887,11 @@ impl RunExit {
                 kind: RunExitKind::Exception,
                 executed,
                 detail: exception.to_string(),
+            },
+            aero_machine::RunExit::CpuExit { exit, .. } => Self {
+                kind: RunExitKind::CpuExit,
+                executed,
+                detail: format!("{exit:?}"),
             },
         }
     }

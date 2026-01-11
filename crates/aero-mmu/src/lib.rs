@@ -8,7 +8,7 @@
 
 mod tlb;
 
-use tlb::{PageSize, Tlb, TlbEntry};
+use tlb::{PageSize, Tlb, TlbEntry, TlbEntryAttributes};
 
 /// Physical memory access used for page-table walking.
 ///
@@ -532,14 +532,16 @@ impl Mmu {
                 vbase,
                 pbase,
                 page_size,
-                user_ok,
-                writable_ok,
+                self.current_pcid(),
+                TlbEntryAttributes {
+                    user: user_ok,
+                    writable: writable_ok,
                 nx,
                 global,
-                self.current_pcid(),
-                pde_addr,
-                false,
+                    leaf_addr: pde_addr,
+                    leaf_is_64: false,
                 dirty,
+                },
             );
             let paddr = pbase + (vaddr - vbase);
             return Ok((entry, paddr));
@@ -578,14 +580,16 @@ impl Mmu {
             vbase,
             pbase,
             page_size,
-            user_ok,
-            writable_ok,
+            self.current_pcid(),
+            TlbEntryAttributes {
+                user: user_ok,
+                writable: writable_ok,
             nx,
             global,
-            self.current_pcid(),
-            pte_addr,
-            false,
+                leaf_addr: pte_addr,
+                leaf_is_64: false,
             dirty,
+            },
         );
         let paddr = pbase + (vaddr - vbase);
         Ok((entry, paddr))
@@ -600,6 +604,11 @@ impl Mmu {
     ) -> Result<(TlbEntry, u64), PageFault> {
         let nx_enabled = self.nx_enabled();
         let addr_mask = self.phys_addr_mask();
+        let ctx = EntryAccessContext {
+            vaddr,
+            access,
+            is_user,
+        };
 
         let pdpt_base = (self.cr3 & 0xffff_ffff) & !0x1f;
         let pdpt_index = (vaddr >> 30) & 0x3;
@@ -610,9 +619,7 @@ impl Mmu {
             bus,
             pdpte_addr,
             pdpte,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::PdptePae,
         )? {
             Some(v) => v,
@@ -635,9 +642,7 @@ impl Mmu {
             bus,
             pde_addr,
             pde,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::PdePae,
         )? {
             Some(v) => v,
@@ -669,14 +674,16 @@ impl Mmu {
                 vbase,
                 pbase,
                 page_size,
-                eff_user,
-                eff_writable,
-                eff_nx,
-                global,
                 self.current_pcid(),
-                pde_addr,
-                true,
+                TlbEntryAttributes {
+                    user: eff_user,
+                    writable: eff_writable,
+                    nx: eff_nx,
+                    global,
+                    leaf_addr: pde_addr,
+                    leaf_is_64: true,
                 dirty,
+                },
             );
             let paddr = pbase + (vaddr - vbase);
             return Ok((entry, paddr));
@@ -691,9 +698,7 @@ impl Mmu {
             bus,
             pte_addr,
             pte,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::PtePae,
         )? {
             Some(v) => v,
@@ -723,14 +728,16 @@ impl Mmu {
             vbase,
             pbase,
             page_size,
-            eff_user,
-            eff_writable,
-            eff_nx,
-            global,
             self.current_pcid(),
-            pte_addr,
-            true,
+            TlbEntryAttributes {
+                user: eff_user,
+                writable: eff_writable,
+                nx: eff_nx,
+                global,
+                leaf_addr: pte_addr,
+                leaf_is_64: true,
             dirty,
+            },
         );
         let paddr = pbase + (vaddr - vbase);
         Ok((entry, paddr))
@@ -745,6 +752,11 @@ impl Mmu {
     ) -> Result<(TlbEntry, u64), PageFault> {
         let nx_enabled = self.nx_enabled();
         let addr_mask = self.phys_addr_mask();
+        let ctx = EntryAccessContext {
+            vaddr,
+            access,
+            is_user,
+        };
 
         let pml4_base = (self.cr3 & addr_mask) & !0xfff;
         let pml4_index = (vaddr >> 39) & 0x1ff;
@@ -755,9 +767,7 @@ impl Mmu {
             bus,
             pml4e_addr,
             pml4e,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::Pml4e,
         )? {
             Some(v) => v,
@@ -777,9 +787,7 @@ impl Mmu {
             bus,
             pdpte_addr,
             pdpte,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::PdpteLong,
         )? {
             Some(v) => v,
@@ -811,14 +819,16 @@ impl Mmu {
                 vbase,
                 pbase,
                 page_size,
-                eff_user,
-                eff_writable,
-                eff_nx,
-                global,
                 self.current_pcid(),
-                pdpte_addr,
-                true,
+                TlbEntryAttributes {
+                    user: eff_user,
+                    writable: eff_writable,
+                    nx: eff_nx,
+                    global,
+                    leaf_addr: pdpte_addr,
+                    leaf_is_64: true,
                 dirty,
+                },
             );
             let paddr = pbase + (vaddr - vbase);
             return Ok((entry, paddr));
@@ -833,9 +843,7 @@ impl Mmu {
             bus,
             pde_addr,
             pde,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::PdeLong,
         )? {
             Some(v) => v,
@@ -867,14 +875,16 @@ impl Mmu {
                 vbase,
                 pbase,
                 page_size,
-                eff_user,
-                eff_writable,
-                eff_nx,
-                global,
                 self.current_pcid(),
-                pde_addr,
-                true,
+                TlbEntryAttributes {
+                    user: eff_user,
+                    writable: eff_writable,
+                    nx: eff_nx,
+                    global,
+                    leaf_addr: pde_addr,
+                    leaf_is_64: true,
                 dirty,
+                },
             );
             let paddr = pbase + (vaddr - vbase);
             return Ok((entry, paddr));
@@ -889,9 +899,7 @@ impl Mmu {
             bus,
             pte_addr,
             pte,
-            vaddr,
-            access,
-            is_user,
+            ctx,
             EntryKind64::PteLong,
         )? {
             Some(v) => v,
@@ -921,14 +929,16 @@ impl Mmu {
             vbase,
             pbase,
             page_size,
-            eff_user,
-            eff_writable,
-            eff_nx,
-            global,
             self.current_pcid(),
-            pte_addr,
-            true,
+            TlbEntryAttributes {
+                user: eff_user,
+                writable: eff_writable,
+                nx: eff_nx,
+                global,
+                leaf_addr: pte_addr,
+                leaf_is_64: true,
             dirty,
+            },
         );
         let paddr = pbase + (vaddr - vbase);
         Ok((entry, paddr))
@@ -962,9 +972,7 @@ impl Mmu {
         bus: &mut impl MemoryBus,
         entry_addr: u64,
         entry: u64,
-        vaddr: u64,
-        access: AccessType,
-        is_user: bool,
+        ctx: EntryAccessContext,
         kind: EntryKind64,
     ) -> Result<Option<u64>, PageFault> {
         if entry & PTE_P64 == 0 {
@@ -972,7 +980,7 @@ impl Mmu {
         }
 
         if self.has_reserved_bits64(entry, kind) {
-            return Err(self.page_fault_rsvd(vaddr, access, is_user));
+            return Err(self.page_fault_rsvd(ctx.vaddr, ctx.access, ctx.is_user));
         }
 
         // IA-32 PAE PDPT entries do not have Accessed/Dirty bits; all other
@@ -1093,6 +1101,13 @@ enum EntryKind64 {
     PdptePae,
     PdePae,
     PtePae,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EntryAccessContext {
+    vaddr: u64,
+    access: AccessType,
+    is_user: bool,
 }
 
 #[inline]

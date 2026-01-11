@@ -25,7 +25,7 @@ fn bench_convert_44k1_s16_stereo_to_48k_stereo(c: &mut Criterion) {
     let mut bytes = Vec::with_capacity(frames * 2 * 2);
     for i in 0..frames {
         let l = ((i as i32 * 257 + 12345) % 65536 - 32768) as i16;
-        let r = l.wrapping_neg();
+        let r = -l;
         bytes.extend_from_slice(&l.to_le_bytes());
         bytes.extend_from_slice(&r.to_le_bytes());
     }

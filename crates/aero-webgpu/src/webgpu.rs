@@ -25,7 +25,7 @@ impl Default for WebGpuInitOptions {
 /// A `wgpu` adapter/device/queue bundle with negotiated capabilities.
 ///
 /// On `wasm32`, this can represent either a WebGPU backend (`Backends::BROWSER_WEBGPU`)
-/// or a WebGL2 backend (`Backends::GL`). Use [`WebGpuContext::kind`] to
+/// or a WebGL2 backend (`Backends::BROWSER_WEBGL`). Use [`WebGpuContext::kind`] to
 /// distinguish between them.
 pub struct WebGpuContext {
     kind: BackendKind,
@@ -201,9 +201,10 @@ fn negotiated_limits(adapter: &wgpu::Adapter, desired_max_buffer_size: u64) -> w
     let desired_storage_binding_size = max_buffer_size
         .min(u64::from(adapter_limits.max_storage_buffer_binding_size))
         .min(u64::from(u32::MAX));
+
     wgpu::Limits {
         max_buffer_size,
         max_storage_buffer_binding_size: desired_storage_binding_size as u32,
-        ..wgpu::Limits::default()
+        ..Default::default()
     }
 }

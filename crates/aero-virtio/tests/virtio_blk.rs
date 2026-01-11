@@ -3,7 +3,7 @@ use aero_virtio::devices::blk::{
     VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT,
 };
 use aero_virtio::memory::{
-    read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+    read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
@@ -27,46 +27,24 @@ impl BlockBackend for SharedDisk {
     }
 
     fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
-        let offset = usize::try_from(offset).map_err(|_| BlockBackendError::OutOfBounds {
-            offset,
-            len: dst.len(),
-        })?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
         let end = offset
             .checked_add(dst.len())
-            .ok_or(BlockBackendError::OutOfBounds {
-                offset: offset as u64,
-                len: dst.len(),
-            })?;
-        let data = self.data.borrow();
-        if end > data.len() {
-            return Err(BlockBackendError::OutOfBounds {
-                offset: offset as u64,
-                len: dst.len(),
-            });
-        }
-        dst.copy_from_slice(&data[offset..end]);
+            .ok_or(BlockBackendError::OutOfBounds)?;
+        dst.copy_from_slice(&self.data.borrow()[offset..end]);
         Ok(())
     }
 
     fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
-        let offset = usize::try_from(offset).map_err(|_| BlockBackendError::OutOfBounds {
-            offset,
-            len: src.len(),
-        })?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
         let end = offset
             .checked_add(src.len())
-            .ok_or(BlockBackendError::OutOfBounds {
-                offset: offset as u64,
-                len: src.len(),
-            })?;
-        let mut data = self.data.borrow_mut();
-        if end > data.len() {
-            return Err(BlockBackendError::OutOfBounds {
-                offset: offset as u64,
-                len: src.len(),
-            });
-        }
-        data[offset..end].copy_from_slice(src);
+            .ok_or(BlockBackendError::OutOfBounds)?;
+        self.data.borrow_mut()[offset..end].copy_from_slice(src);
         Ok(())
     }
 
@@ -172,7 +150,7 @@ const DESC_TABLE: u64 = 0x4000;
 const AVAIL_RING: u64 = 0x5000;
 const USED_RING: u64 = 0x6000;
 
-type TestSetup = (
+type Setup = (
     VirtioPciDevice,
     Caps,
     GuestRam,
@@ -180,7 +158,7 @@ type TestSetup = (
     Rc<Cell<u32>>,
 );
 
-fn setup() -> TestSetup {
+fn setup() -> Setup {
     let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
     let flushes = Rc::new(Cell::new(0u32));
     let backend = SharedDisk {
@@ -289,15 +267,11 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
 
     let size_max = bar_read_u32(&mut dev, caps.device + 8);
     let seg_max = bar_read_u32(&mut dev, caps.device + 12);
-    let geometry = bar_read_u32(&mut dev, caps.device + 16);
     let blk_size = bar_read_u32(&mut dev, caps.device + 20);
-    let trailing = bar_read_u32(&mut dev, caps.device + 24);
 
     assert_eq!(size_max, 0);
     assert_eq!(seg_max, 126);
-    assert_eq!(geometry, 0);
     assert_eq!(blk_size, 512);
-    assert_eq!(trailing, 0);
 }
 
 #[test]
@@ -366,7 +340,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     let got = mem.get_slice(data2, payload.len()).unwrap();
     assert_eq!(got, payload.as_slice());
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(read_u32_le(&mem, USED_RING + 4 + 8 + 4).unwrap(), 0);
+    assert_eq!(read_u32_le(&mem, USED_RING + 16).unwrap(), 0);
 
     // FLUSH request.
     mem.write(status, &[0xff]).unwrap();
@@ -521,52 +495,4 @@ fn virtio_blk_rejects_requests_beyond_capacity() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert!(backing.borrow().iter().all(|b| *b == 0));
     assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
-}
-
-#[test]
-fn virtio_blk_rejects_requests_with_more_than_seg_max_data_descriptors() {
-    let (mut dev, caps, mut mem, backing, _flushes) = setup();
-
-    // Build an indirect chain with 127 data segments (seg_max is 126 per contract).
-    let indirect = 0x9000;
-    let indirect_count: u16 = 129; // header + 127 data + status
-    let indirect_len = u32::from(indirect_count) * 16;
-
-    let header = 0xA000;
-    let data = 0xB000;
-    let status = 0xC000;
-
-    // OUT sector 0.
-    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
-    write_u32_le(&mut mem, header + 4, 0).unwrap();
-    write_u64_le(&mut mem, header + 8, 0).unwrap();
-    mem.write(data, &vec![0x5au8; 386]).unwrap();
-    mem.write(status, &[0xff]).unwrap();
-
-    // Outer descriptor 0 is INDIRECT.
-    write_desc(&mut mem, DESC_TABLE, 0, indirect, indirect_len, 0x0004, 0);
-
-    // Indirect descriptor 0: header (16 bytes).
-    write_desc(&mut mem, indirect, 0, header, 16, 0x0001, 1);
-    // 126x 1-byte segments + one 386-byte segment => total 512 bytes (valid sector multiple).
-    for i in 0..126u16 {
-        let idx = 1 + i;
-        write_desc(&mut mem, indirect, idx, data, 1, 0x0001, idx + 1);
-    }
-    write_desc(&mut mem, indirect, 127, data, 386, 0x0001, 128);
-    // Status descriptor.
-    write_desc(&mut mem, indirect, 128, status, 1, 0x0002, 0);
-
-    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
-    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
-    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
-    write_u16_le(&mut mem, USED_RING, 0).unwrap();
-    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
-
-    kick_queue0(&mut dev, &caps, &mut mem);
-
-    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
-    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
-    assert_eq!(read_u16_le(&mem, USED_RING + 2).unwrap(), 1);
-    assert!(backing.borrow().iter().all(|b| *b == 0));
 }

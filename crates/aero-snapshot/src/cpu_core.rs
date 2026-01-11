@@ -19,15 +19,16 @@ pub fn cpu_state_from_cpu_core(core: &CoreCpuState) -> CpuState {
     let mut core = core.clone();
     // Snapshot encoding stores materialized RFLAGS (no lazy flags).
     core.commit_lazy_flags();
+
     CpuState {
         rax: core.gpr[core_gpr::RAX],
-        rbx: core.gpr[core_gpr::RBX],
         rcx: core.gpr[core_gpr::RCX],
         rdx: core.gpr[core_gpr::RDX],
+        rbx: core.gpr[core_gpr::RBX],
+        rsp: core.gpr[core_gpr::RSP],
+        rbp: core.gpr[core_gpr::RBP],
         rsi: core.gpr[core_gpr::RSI],
         rdi: core.gpr[core_gpr::RDI],
-        rbp: core.gpr[core_gpr::RBP],
-        rsp: core.gpr[core_gpr::RSP],
         r8: core.gpr[core_gpr::R8],
         r9: core.gpr[core_gpr::R9],
         r10: core.gpr[core_gpr::R10],
@@ -80,12 +81,21 @@ pub fn mmu_state_from_cpu_core(core: &CoreCpuState) -> MmuState {
         cr3: core.control.cr3,
         cr4: core.control.cr4,
         cr8: core.control.cr8,
+
+        gdtr_base: core.tables.gdtr.base,
+        gdtr_limit: core.tables.gdtr.limit,
+        idtr_base: core.tables.idtr.base,
+        idtr_limit: core.tables.idtr.limit,
+        ldtr: segment_from_core(&core.tables.ldtr),
+        tr: segment_from_core(&core.tables.tr),
+
         dr0: core.debug.dr[0],
         dr1: core.debug.dr[1],
         dr2: core.debug.dr[2],
         dr3: core.debug.dr[3],
         dr6: core.debug.dr6,
         dr7: core.debug.dr7,
+
         efer: core.msr.efer,
         star: core.msr.star,
         lstar: core.msr.lstar,
@@ -99,12 +109,6 @@ pub fn mmu_state_from_cpu_core(core: &CoreCpuState) -> MmuState {
         kernel_gs_base: core.msr.kernel_gs_base,
         apic_base: core.msr.apic_base,
         tsc: core.msr.tsc,
-        gdtr_base: core.tables.gdtr.base,
-        gdtr_limit: core.tables.gdtr.limit,
-        idtr_base: core.tables.idtr.base,
-        idtr_limit: core.tables.idtr.limit,
-        ldtr: segment_from_core(&core.tables.ldtr),
-        tr: segment_from_core(&core.tables.tr),
         ..Default::default()
     }
 }

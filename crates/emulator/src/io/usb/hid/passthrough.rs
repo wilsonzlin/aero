@@ -26,11 +26,6 @@ const DEFAULT_MAX_PACKET_SIZE: u16 = 64;
 const DEFAULT_MAX_PENDING_INPUT_REPORTS: usize = 256;
 const DEFAULT_MAX_PENDING_OUTPUT_REPORTS: usize = 256;
 
-type ReportLengthMap = HashMap<u8, usize>;
-type ReportBitsMap = HashMap<u8, u64>;
-type ReportLengthsInfo = (bool, ReportLengthMap, ReportLengthMap, ReportLengthMap);
-type ReportBitsInfo = (bool, ReportBitsMap, ReportBitsMap, ReportBitsMap);
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsbHidPassthroughOutputReport {
     /// HID report type as used by GET_REPORT/SET_REPORT:
@@ -182,12 +177,6 @@ impl UsbHidPassthrough {
             .map(build_string_descriptor_utf16le)
             .map(|v| Rc::<[u8]>::from(v.into_boxed_slice()));
 
-        // USB HID encodes the report descriptor length as a u16 (wDescriptorLength). Truncate
-        // oversized descriptors so the device's own descriptors remain self-consistent.
-        let mut hid_report_descriptor = hid_report_descriptor;
-        if hid_report_descriptor.len() > u16::MAX as usize {
-            hid_report_descriptor.truncate(u16::MAX as usize);
-        }
         let hid_report_descriptor: Rc<[u8]> = Rc::from(hid_report_descriptor.into_boxed_slice());
 
         let i_serial = if serial_string_descriptor.is_some() {
@@ -779,7 +768,7 @@ fn build_device_descriptor(
 }
 
 fn build_hid_descriptor(report_descriptor: &[u8]) -> Vec<u8> {
-    let report_len = u16::try_from(report_descriptor.len()).unwrap_or(u16::MAX);
+    let report_len = report_descriptor.len() as u16;
     let mut out = Vec::with_capacity(9);
     out.extend_from_slice(&[
         0x09,                    // bLength
@@ -855,7 +844,9 @@ fn build_config_descriptor(
     out
 }
 
-fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLengthsInfo {
+fn report_descriptor_report_lengths(
+    report_descriptor_bytes: &[u8],
+) -> ReportLengthMaps {
     let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
         let (report_ids_in_use, input_bits, output_bits, feature_bits) =
             scan_report_descriptor_bits(report_descriptor_bytes);
@@ -868,9 +859,9 @@ fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLen
     };
 
     let mut report_ids_in_use = false;
-    let mut input_bits: ReportBitsMap = HashMap::new();
-    let mut output_bits: ReportBitsMap = HashMap::new();
-    let mut feature_bits: ReportBitsMap = HashMap::new();
+    let mut input_bits: HashMap<u8, u64> = HashMap::new();
+    let mut output_bits: HashMap<u8, u64> = HashMap::new();
+    let mut feature_bits: HashMap<u8, u64> = HashMap::new();
 
     for collection in &parsed.collections {
         accumulate_report_bits(
@@ -890,10 +881,10 @@ fn report_descriptor_report_lengths(report_descriptor_bytes: &[u8]) -> ReportLen
     )
 }
 
-fn bits_to_report_lengths(bits: &ReportBitsMap) -> ReportLengthMap {
-    let mut out: ReportLengthMap = HashMap::new();
+fn bits_to_report_lengths(bits: &HashMap<u8, u64>) -> HashMap<u8, usize> {
+    let mut out = HashMap::new();
     for (&report_id, &total_bits) in bits {
-        let mut bytes = usize::try_from(total_bits.div_ceil(8)).unwrap_or(usize::MAX);
+        let mut bytes = total_bits.div_ceil(8) as usize;
         if report_id != 0 {
             bytes = bytes.saturating_add(1);
         }
@@ -965,6 +956,9 @@ fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
+type ReportLengthMaps = (bool, HashMap<u8, usize>, HashMap<u8, usize>, HashMap<u8, usize>);
+type ReportBitMaps = (bool, HashMap<u8, u64>, HashMap<u8, u64>, HashMap<u8, u64>);
+
 #[derive(Debug, Clone, Copy, Default)]
 struct ScanGlobalState {
     report_id: u32,
@@ -982,14 +976,16 @@ fn scan_parse_unsigned(data: &[u8]) -> u32 {
     }
 }
 
-fn scan_report_descriptor_bits(report_descriptor: &[u8]) -> ReportBitsInfo {
+fn scan_report_descriptor_bits(
+    report_descriptor: &[u8],
+) -> ReportBitMaps {
     let mut global = ScanGlobalState::default();
     let mut global_stack: Vec<ScanGlobalState> = Vec::new();
 
     let mut report_ids_in_use = false;
-    let mut input_bits: ReportBitsMap = HashMap::new();
-    let mut output_bits: ReportBitsMap = HashMap::new();
-    let mut feature_bits: ReportBitsMap = HashMap::new();
+    let mut input_bits: HashMap<u8, u64> = HashMap::new();
+    let mut output_bits: HashMap<u8, u64> = HashMap::new();
+    let mut feature_bits: HashMap<u8, u64> = HashMap::new();
 
     let mut i = 0usize;
     while i < report_descriptor.len() {

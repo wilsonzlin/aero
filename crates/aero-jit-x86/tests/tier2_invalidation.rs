@@ -209,7 +209,9 @@ impl WasmiTraceBackend {
         let mut linker = Linker::new(&engine);
 
         let memory = Memory::new(&mut store, MemoryType::new(2, None)).expect("alloc memory");
-        linker.define(IMPORT_MODULE, IMPORT_MEMORY, memory).unwrap();
+        linker
+            .define(IMPORT_MODULE, IMPORT_MEMORY, memory)
+            .unwrap();
         define_mem_helpers(&mut store, &mut linker, memory);
         linker
             .define(

@@ -13,5 +13,5 @@ pub use format::{
 };
 pub use reader::{TraceReadError, TraceReader, TraceRecord};
 pub use writer::{
-    AerogpuMemoryRangeCapture, AerogpuSubmissionInfo, Recorder, TraceWriteError, TraceWriter,
+    AerogpuMemoryRangeCapture, AerogpuSubmissionCapture, Recorder, TraceWriteError, TraceWriter,
 };

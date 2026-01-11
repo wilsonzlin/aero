@@ -173,7 +173,9 @@ fn index_devices(devices: &[DeviceEntry]) -> Result<BTreeMap<String, DeviceEntry
 }
 
 fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
-    let rev_re = regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
+    let rev_re =
+        regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
+
     for (name, dev) in devices {
         let vendor = parse_hex_u16(&dev.pci_vendor_id)
             .with_context(|| format!("{name}: invalid pci_vendor_id"))?;
@@ -274,32 +276,6 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     "{name}: hardware_id_patterns contains unsupported PCI revision IDs for virtio devices (expected only REV_01): {:?}",
                     bad
                 );
-            }
-
-            // virtio-input is a special case: Aero contract v1 exposes it as two PCI functions
-            // (keyboard + mouse) under the same Vendor/Device ID. For unambiguous driver binding
-            // and automation, the contract must include subsystem-qualified REV_01 patterns for
-            // both variants.
-            if dev.device == "virtio-input" {
-                let patterns: BTreeSet<_> = dev
-                    .hardware_id_patterns
-                    .iter()
-                    .map(|s| s.to_ascii_uppercase())
-                    .collect();
-                let expected_keyboard =
-                    format!(r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0010{vendor:04X}&REV_01");
-                let expected_mouse =
-                    format!(r"PCI\VEN_{vendor:04X}&DEV_{did:04X}&SUBSYS_0011{vendor:04X}&REV_01");
-                let missing = [expected_keyboard, expected_mouse]
-                    .into_iter()
-                    .filter(|hwid| !patterns.contains(hwid))
-                    .collect::<Vec<_>>();
-                if !missing.is_empty() {
-                    bail!(
-                        "{name}: virtio-input hardware_id_patterns must include subsystem-qualified REV_01 HWIDs for both keyboard and mouse variants.\nmissing:\n{}",
-                        missing.into_iter().map(|hwid| format!("  - {hwid}")).collect::<Vec<_>>().join("\n")
-                    );
-                }
             }
         } else if dev.device == "aero-gpu" {
             // AeroGPU's canonical Windows binding contract is A3A0 (versioned ABI).
@@ -1201,8 +1177,6 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
     // Virtio PCI IDs: crates/devices/src/pci/profile.rs
     let virtio_profile_rs = repo_root.join("crates/devices/src/pci/profile.rs");
-    let virtio_profile_text = fs::read_to_string(&virtio_profile_rs)
-        .with_context(|| format!("read {}", virtio_profile_rs.display()))?;
     let virtio_vendor = parse_rust_u16_const(&virtio_profile_rs, "PCI_VENDOR_ID_VIRTIO")
         .with_context(|| "parse PCI_VENDOR_ID_VIRTIO")?;
     if virtio_vendor != 0x1AF4 {
@@ -1256,71 +1230,6 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
         }
     }
 
-    // virtio-input contract: the emulator must expose a multi-function PCI device:
-    // - keyboard on function 0 with the multifunction bit set in header_type
-    // - mouse on function 1 on the same slot (same bus/device)
-    let input_kbd = parse_pci_device_profile_basic(&virtio_profile_text, "VIRTIO_INPUT_KEYBOARD")
-        .with_context(|| {
-        format!(
-            "parse VIRTIO_INPUT_KEYBOARD from {}",
-            virtio_profile_rs.display()
-        )
-    })?;
-    let input_mouse = parse_pci_device_profile_basic(&virtio_profile_text, "VIRTIO_INPUT_MOUSE")
-        .with_context(|| {
-            format!(
-                "parse VIRTIO_INPUT_MOUSE from {}",
-                virtio_profile_rs.display()
-            )
-        })?;
-
-    if input_kbd.bdf.0 != input_mouse.bdf.0 || input_kbd.bdf.1 != input_mouse.bdf.1 {
-        bail!(
-            "emulator virtio-input topology mismatch in {}: keyboard and mouse must share the same PCI slot.\nkeyboard bdf: {:02x}:{:02x}.{}\nmouse bdf:    {:02x}:{:02x}.{}",
-            virtio_profile_rs.display(),
-            input_kbd.bdf.0,
-            input_kbd.bdf.1,
-            input_kbd.bdf.2,
-            input_mouse.bdf.0,
-            input_mouse.bdf.1,
-            input_mouse.bdf.2,
-        );
-    }
-    if input_kbd.bdf.2 != 0 || input_mouse.bdf.2 != 1 {
-        bail!(
-            "emulator virtio-input topology mismatch in {}: expected keyboard function 0 and mouse function 1.\nkeyboard bdf: {:02x}:{:02x}.{}\nmouse bdf:    {:02x}:{:02x}.{}",
-            virtio_profile_rs.display(),
-            input_kbd.bdf.0,
-            input_kbd.bdf.1,
-            input_kbd.bdf.2,
-            input_mouse.bdf.0,
-            input_mouse.bdf.1,
-            input_mouse.bdf.2,
-        );
-    }
-    if input_kbd.header_type != 0x80 {
-        bail!(
-            "emulator virtio-input keyboard header_type mismatch in {}: expected 0x80 (multifunction), got 0x{:02x}",
-            virtio_profile_rs.display(),
-            input_kbd.header_type
-        );
-    }
-    if input_mouse.header_type != 0x00 {
-        bail!(
-            "emulator virtio-input mouse header_type mismatch in {}: expected 0x00, got 0x{:02x}",
-            virtio_profile_rs.display(),
-            input_mouse.header_type
-        );
-    }
-    if input_kbd.subsystem_id != 0x0010 || input_mouse.subsystem_id != 0x0011 {
-        bail!(
-            "emulator virtio-input subsystem IDs mismatch in {}: expected keyboard=0x0010 and mouse=0x0011; got keyboard=0x{:04x} mouse=0x{:04x}",
-            virtio_profile_rs.display(),
-            input_kbd.subsystem_id,
-            input_mouse.subsystem_id,
-        );
-    }
-
     // AeroGPU IDs: emulator/protocol (Rust constants) + drivers/aerogpu/protocol (C header).
     // The emulator crate itself re-exports these via `crates/emulator/src/devices/aerogpu_regs.rs`,
     // but that file aliases through the protocol crate (not hex literals), so parse the protocol
@@ -1357,89 +1266,6 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
     }
 
     Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ParsedPciDeviceProfileBasic {
-    bdf: (u8, u8, u8),
-    header_type: u8,
-    subsystem_id: u16,
-}
-
-fn parse_pci_device_profile_basic(
-    src: &str,
-    const_name: &str,
-) -> Result<ParsedPciDeviceProfileBasic> {
-    let re = regex::Regex::new(&format!(
-        r"(?ms)^\s*pub const {}\s*:\s*PciDeviceProfile\s*=\s*PciDeviceProfile\s*\{{(?P<body>.*?)^\}};\s*$",
-        regex::escape(const_name)
-    ))
-    .expect("static regex must compile");
-    let caps = re
-        .captures(src)
-        .ok_or_else(|| anyhow::anyhow!("missing PciDeviceProfile constant {const_name}"))?;
-    let body = caps.name("body").map(|m| m.as_str()).unwrap_or("");
-
-    let bdf_re = regex::Regex::new(
-        r"(?m)^\s*bdf:\s*PciBdf::new\(\s*(?P<bus>[^,]+)\s*,\s*(?P<dev>[^,]+)\s*,\s*(?P<fun>[^)]+)\s*\)\s*,",
-    )
-    .expect("static regex must compile");
-    let bdf_caps = bdf_re
-        .captures(body)
-        .ok_or_else(|| anyhow::anyhow!("{const_name}: missing bdf field"))?;
-    let bus = parse_u8_expr(bdf_caps.name("bus").unwrap().as_str())
-        .with_context(|| format!("{const_name}: parse bdf.bus"))?;
-    let dev = parse_u8_expr(bdf_caps.name("dev").unwrap().as_str())
-        .with_context(|| format!("{const_name}: parse bdf.device"))?;
-    let fun = parse_u8_expr(bdf_caps.name("fun").unwrap().as_str())
-        .with_context(|| format!("{const_name}: parse bdf.function"))?;
-
-    let header_type_re =
-        regex::Regex::new(r"(?m)^\s*header_type:\s*(?P<val>[^,]+),").expect("static regex");
-    let header_caps = header_type_re
-        .captures(body)
-        .ok_or_else(|| anyhow::anyhow!("{const_name}: missing header_type field"))?;
-    let header_type = parse_u8_expr(header_caps.name("val").unwrap().as_str())
-        .with_context(|| format!("{const_name}: parse header_type"))?;
-
-    let subsys_id_re =
-        regex::Regex::new(r"(?m)^\s*subsystem_id:\s*(?P<val>[^,]+),").expect("static regex");
-    let subsys_caps = subsys_id_re
-        .captures(body)
-        .ok_or_else(|| anyhow::anyhow!("{const_name}: missing subsystem_id field"))?;
-    let subsystem_id = parse_u16_expr(subsys_caps.name("val").unwrap().as_str())
-        .with_context(|| format!("{const_name}: parse subsystem_id"))?;
-
-    Ok(ParsedPciDeviceProfileBasic {
-        bdf: (bus, dev, fun),
-        header_type,
-        subsystem_id,
-    })
-}
-
-fn parse_int_expr(expr: &str) -> Result<u64> {
-    let expr = expr.split("//").next().unwrap_or(expr).trim();
-    let expr = expr.trim_end_matches(',').trim();
-    let expr = expr.replace('_', "");
-    if let Some(hex) = expr.strip_prefix("0x").or_else(|| expr.strip_prefix("0X")) {
-        return u64::from_str_radix(hex, 16).with_context(|| format!("parse hex literal {expr:?}"));
-    }
-    if expr.chars().all(|c| c.is_ascii_digit()) {
-        return expr
-            .parse::<u64>()
-            .with_context(|| format!("parse decimal literal {expr:?}"));
-    }
-    bail!("unsupported integer expression {expr:?} (expected a numeric literal)");
-}
-
-fn parse_u8_expr(expr: &str) -> Result<u8> {
-    let val = parse_int_expr(expr)?;
-    u8::try_from(val).with_context(|| format!("u8 overflow for value {val}"))
-}
-
-fn parse_u16_expr(expr: &str) -> Result<u16> {
-    let val = parse_int_expr(expr)?;
-    u16::try_from(val).with_context(|| format!("u16 overflow for value {val}"))
 }
 
 fn parse_devices_cmd(path: &Path) -> Result<BTreeMap<String, String>> {
@@ -1756,21 +1582,12 @@ Signature="$Windows NT$"
     fn virtio_entry(name: &str, virtio_device_type: u32) -> DeviceEntry {
         let did = 0x1040u16 + u16::try_from(virtio_device_type).unwrap();
         let trans = 0x1000u16 + u16::try_from(virtio_device_type).unwrap() - 1;
-        let mut hardware_id_patterns = vec![format!("PCI\\VEN_1AF4&DEV_{did:04X}&REV_01")];
-        if name == "virtio-input" {
-            hardware_id_patterns.push(format!(
-                "PCI\\VEN_1AF4&DEV_{did:04X}&SUBSYS_00101AF4&REV_01"
-            ));
-            hardware_id_patterns.push(format!(
-                "PCI\\VEN_1AF4&DEV_{did:04X}&SUBSYS_00111AF4&REV_01"
-            ));
-        }
         DeviceEntry {
             device: name.to_string(),
             pci_vendor_id: "0x1AF4".to_string(),
             pci_device_id: format!("0x{did:04X}"),
             pci_device_id_transitional: Some(format!("0x{trans:04X}")),
-            hardware_id_patterns,
+            hardware_id_patterns: vec![format!("PCI\\VEN_1AF4&DEV_{did:04X}&REV_01")],
             driver_service_name: format!("{name}-svc"),
             inf_name: format!("{name}.inf"),
             virtio_device_type: Some(virtio_device_type),

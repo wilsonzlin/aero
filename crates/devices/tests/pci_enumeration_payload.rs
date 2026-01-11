@@ -1,11 +1,19 @@
 use aero_devices::pci::{PciBdf, PciBus, PciConfigMechanism1, PciPlatform};
 
+fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    0x8000_0000
+        | (u32::from(bus) << 16)
+        | (u32::from(device) << 11)
+        | (u32::from(function) << 8)
+        | u32::from(offset)
+}
+
 /// A tiny "payload" that enumerates bus 0 using PCI configuration mechanism #1.
 fn enumerate_bus0(cfg: &mut PciConfigMechanism1, bus: &mut PciBus) -> Vec<(PciBdf, u16, u16)> {
     let mut found = Vec::new();
     for device in 0u8..32 {
         for function in 0u8..8 {
-            let addr = 0x8000_0000 | (u32::from(device) << 11) | (u32::from(function) << 8);
+            let addr = cfg_addr(0, device, function, 0);
 
             cfg.io_write(bus, 0xCF8, 4, addr);
             let id = cfg.io_read(bus, 0xCFC, 4);

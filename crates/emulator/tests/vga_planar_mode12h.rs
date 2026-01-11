@@ -89,8 +89,8 @@ fn program_stripes_vram(vram: &mut VgaMemory) {
                     }
                 }
             }
-            for (plane, &plane_byte) in plane_bytes.iter().enumerate() {
-                vram.write_plane_byte(plane, offset, plane_byte);
+            for (plane, &byte) in plane_bytes.iter().enumerate() {
+                vram.write_plane_byte(plane, offset, byte);
             }
         }
     }
