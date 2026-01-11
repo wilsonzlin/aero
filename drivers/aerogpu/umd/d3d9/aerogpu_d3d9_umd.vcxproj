@@ -110,6 +110,7 @@
     <ClCompile Include="src\aerogpu_d3d9_driver.cpp" />
     <ClCompile Include="src\aerogpu_kmd_query.cpp" />
     <ClCompile Include="src\aerogpu_log.cpp" />
+    <ClCompile Include="src\aerogpu_wddm_alloc_list.cpp" />
     <ClCompile Include="src\dllmain.cpp" />
   </ItemGroup>
 
@@ -119,6 +120,7 @@
     <ClInclude Include="src\aerogpu_d3d9_objects.h" />
     <ClInclude Include="src\aerogpu_kmd_query.h" />
     <ClInclude Include="src\aerogpu_log.h" />
+    <ClInclude Include="src\aerogpu_wddm_alloc_list.h" />
   </ItemGroup>
 
   <ItemGroup>

@@ -19,6 +19,9 @@
     <ClCompile Include="src\aerogpu_log.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\aerogpu_wddm_alloc_list.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\dllmain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -38,6 +41,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\aerogpu_log.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\aerogpu_wddm_alloc_list.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
