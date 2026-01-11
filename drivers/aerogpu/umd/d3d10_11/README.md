@@ -64,7 +64,9 @@ DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The pr
 
 The allocation private data blob is treated as **UMD → KMD input**: the UMD chooses `alloc_id` / `share_token` at creation time, the KMD validates/consumes it, and dxgkrnl preserves the bytes for shared allocations and returns them verbatim on `OpenResource`/`OpenAllocation` so other processes can observe the same IDs.
 
-If `alloc_id` is globally unique across guest processes, `share_token = (uint64_t)alloc_id` is sufficient; otherwise include a process-unique component (e.g. `((uint64_t)pid << 32) | alloc_id`). `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
+For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). A robust scheme is to allocate a monotonic 64-bit `share_token` from a cross-process counter (for example via named shared memory) and derive `alloc_id` from it (e.g. `alloc_id = share_token & 0x7fffffff`, non-zero).
+
+`share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
 
 ## Build
 

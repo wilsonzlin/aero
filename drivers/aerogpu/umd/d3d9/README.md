@@ -42,7 +42,9 @@ Cross-process shared resources are expressed explicitly in the command stream:
 
 `share_token` must be stable across guest processes. On Win7/WDDM 1.1 this is achieved by the UMD storing `share_token` in WDDM allocation private driver data (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`), and dxgkrnl preserving and returning it verbatim on `OpenResource`.
 
-If `alloc_id` is globally unique across guest processes, `share_token = (uint64_t)alloc_id` is sufficient; otherwise include a process-unique component (e.g. `((uint64_t)pid << 32) | alloc_id`). `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
+For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). The current AeroGPU D3D9 UMD allocates a monotonic 64-bit `share_token` from a cross-process counter (named file mapping) and derives `alloc_id` from it (for example `alloc_id = share_token & 0x7fffffff`, non-zero).
+
+`share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
 
 ## Build
 

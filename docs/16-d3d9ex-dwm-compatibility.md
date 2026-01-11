@@ -213,14 +213,11 @@ UMD-provided `share_token` stored in preserved WDDM allocation private data (and
 validated/consumed by the KMD) and the host mapping table keyed by that token.
 
 **Implementation note (AeroGPU/WDDM):**
-prefer deriving `share_token` from the preserved per-allocation ID (`alloc_id`, carried via allocation private driver data on Create/Open),
-instead of using raw Win32/D3DKMT handle values (which are process-local).
-The recommended scheme is:
+do not use raw Win32/D3DKMT handle values (which are process-local) as sharing keys.
 
-- If `alloc_id` is globally unique across guest processes:
-  - `share_token = (uint64_t)alloc_id`
-- Otherwise include a process-unique component, for example:
-  - `share_token = ((uint64_t)pid << 32) | (uint64_t)alloc_id`
+For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`).
+
+A robust scheme is to allocate a monotonic 64-bit `share_token` from a cross-process counter (for example via named shared memory) and derive a 31-bit `alloc_id` from it (e.g. `alloc_id = share_token & 0x7fffffff`, non-zero). Both values are then stored in preserved WDDM allocation private driver data so other processes can recover them on `OpenResource`.
 
 **Also:** `alloc_id` itself should avoid collisions across guest processes for
 shared allocations. DWM may open and compose many redirected surfaces from
