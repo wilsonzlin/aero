@@ -195,9 +195,18 @@
     <ClCompile Include="src\aerogpu_d3d10_11_wddm_submit.cpp">
       <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'!='1'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\aerogpu_d3d10_umd_wdk.cpp" />
-    <ClCompile Include="src\aerogpu_d3d10_1_umd_wdk.cpp" />
-    <ClCompile Include="src\aerogpu_d3d11_umd_wdk.cpp" />
+    <ClCompile Include="src\aerogpu_d3d10_umd_wdk.cpp">
+      <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'!='1'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\aerogpu_d3d10_1_umd_wdk.cpp">
+      <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'!='1'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\aerogpu_d3d11_umd_wdk.cpp">
+      <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'!='1'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\aerogpu_d3d10_11_umd.cpp">
+      <ExcludedFromBuild Condition="'$(AeroGpuUseWdkHeaders)'=='1'">true</ExcludedFromBuild>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h" />
