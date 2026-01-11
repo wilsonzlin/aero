@@ -1490,11 +1490,18 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
                          static_cast<unsigned>(AEROGPU_ABI_VERSION_U32));
     return E_INVALIDARG;
   }
-  if (stream_header->size_bytes != stream_size) {
-    AEROGPU_D3D10_11_LOG("wddm_submit: cmd stream size mismatch header=%u arg=%llu",
+  // Forward-compat: allow the caller to pass a buffer larger than the command stream declared
+  // size (for example, a fixed-capacity DMA buffer). The stream header carries the actual bytes
+  // used. Ignore any trailing bytes.
+  const size_t declared_stream_size = static_cast<size_t>(stream_header->size_bytes);
+  if (declared_stream_size < sizeof(aerogpu_cmd_stream_header) || declared_stream_size > stream_size) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: cmd stream size mismatch header=%u buffer=%llu",
                          static_cast<unsigned>(stream_header->size_bytes),
                          static_cast<unsigned long long>(stream_size));
     return E_INVALIDARG;
+  }
+  if (declared_stream_size == sizeof(aerogpu_cmd_stream_header)) {
+    return S_OK;
   }
 
   // Ensure we have at least a render callback for submission.
@@ -1507,7 +1514,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
   }
 
   const uint8_t* src = stream_bytes;
-  const size_t src_size = stream_size;
+  const size_t src_size = declared_stream_size;
 
   // Validate the packet list so we never submit a truncated/invalid stream.
   size_t validate_off = sizeof(aerogpu_cmd_stream_header);

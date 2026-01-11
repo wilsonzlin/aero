@@ -304,8 +304,9 @@ Every command buffer begins with:
 - `magic = AEROGPU_CMD_STREAM_MAGIC` (`0x444D4341`, `"ACMD"` LE)
 - `abi_version = AEROGPU_ABI_VERSION_U32`
 
-The header includes `size_bytes`, the total bytes in the stream including the header, and must
-have all reserved fields zeroed.
+The header includes `size_bytes`, the total bytes in the stream including the header. It must be
+`<= aerogpu_submit_desc::cmd_size_bytes`; any trailing bytes in the command buffer beyond
+`size_bytes` are ignored (forward-compatible padding/extension space).
 
 ### 4.2 Packet framing (`struct aerogpu_cmd_hdr`)
 
