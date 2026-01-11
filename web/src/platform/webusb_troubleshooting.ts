@@ -9,6 +9,8 @@ type ErrorLike = {
   message?: unknown;
 };
 
+type HostOs = "windows" | "linux" | "mac" | "unknown";
+
 function safeToString(value: unknown): string {
   try {
     return String(value);
@@ -37,6 +39,21 @@ function includesAny(haystack: string, needles: string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }
 
+function detectHostOs(): HostOs {
+  if (typeof navigator === "undefined" || typeof navigator.userAgent !== "string") {
+    return "unknown";
+  }
+
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("windows")) return "windows";
+  if (ua.includes("mac os") || ua.includes("macintosh")) return "mac";
+  // Android user agents contain "Linux"; treat Android separately and fall back
+  // to generic advice elsewhere.
+  if (ua.includes("android")) return "unknown";
+  if (ua.includes("linux")) return "linux";
+  return "unknown";
+}
+
 /**
  * Decode a WebUSB error into actionable troubleshooting hints.
  *
@@ -52,6 +69,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   const { name, message } = normalizeError(err);
   const msg = message ?? "";
   const msgLower = msg.toLowerCase();
+  const hostOs = detectHostOs();
 
   const hints: string[] = [];
   const seen = new Set<string>();
@@ -177,12 +195,18 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
 
   if (driverOrPermissionsLikely) {
     addHint("Close other applications that may be using the device, then unplug/replug it and try again.");
-    addHint(
-      "Windows: the interface usually needs to be bound to WinUSB for WebUSB to work. Install WinUSB (e.g. via Zadig) or ship Microsoft OS 2.0 descriptors / WinUSB compatible ID descriptors so Windows picks WinUSB automatically.",
-    );
-    addHint(
-      "Linux: ensure your user has device permissions (udev rules). Also ensure no kernel driver is attached to the interface (a bound kernel driver can prevent `claimInterface()`).",
-    );
+
+    if (hostOs === "windows" || hostOs === "unknown") {
+      addHint(
+        "Windows: the interface usually needs to be bound to WinUSB for WebUSB to work. Install WinUSB (e.g. via Zadig) or ship Microsoft OS 2.0 descriptors / WinUSB compatible ID descriptors so Windows picks WinUSB automatically.",
+      );
+    }
+
+    if (hostOs === "linux" || hostOs === "unknown") {
+      addHint(
+        "Linux: ensure your user has device permissions (udev rules). Also ensure no kernel driver is attached to the interface (a bound kernel driver can prevent `claimInterface()`).",
+      );
+    }
   }
 
   if (hints.length === 0) {

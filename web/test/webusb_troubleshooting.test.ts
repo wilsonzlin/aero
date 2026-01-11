@@ -3,6 +3,24 @@ import test from "node:test";
 
 import { explainWebUsbError } from "../src/platform/webusb_troubleshooting.ts";
 
+function withUserAgent<T>(userAgent: string, fn: () => T): T {
+  if (typeof navigator === "undefined") return fn();
+
+  const hadOwn = Object.prototype.hasOwnProperty.call(navigator, "userAgent");
+  const prev = navigator.userAgent;
+
+  Object.defineProperty(navigator, "userAgent", { value: userAgent, configurable: true });
+  try {
+    return fn();
+  } finally {
+    if (hadOwn) {
+      Object.defineProperty(navigator, "userAgent", { value: prev, configurable: true });
+    } else {
+      delete (navigator as unknown as { userAgent?: unknown }).userAgent;
+    }
+  }
+}
+
 test("explainWebUsbError: NotAllowedError includes a user-gesture hint", () => {
   const res = explainWebUsbError({
     name: "NotAllowedError",
@@ -24,11 +42,37 @@ test("explainWebUsbError: InvalidStateError suggests device.open() and selectCon
 });
 
 test("explainWebUsbError: claimInterface failures include WinUSB + udev hints", () => {
-  const res = explainWebUsbError("NetworkError: Unable to claim interface.");
+  const res = withUserAgent("Node.js/25", () => explainWebUsbError("NetworkError: Unable to claim interface."));
 
   assert.ok(res.title.toLowerCase().includes("claim") || res.title.toLowerCase().includes("communication"));
   assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+});
+
+test("explainWebUsbError: TypeError filter validation suggests adding vendorId/productId filters", () => {
+  const res = explainWebUsbError({
+    name: "TypeError",
+    message: "Failed to execute 'requestDevice' on 'USB': At least one filter must be specified.",
+  });
+
+  assert.ok(res.title.toLowerCase().includes("webusb"));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("vendorid")));
+});
+
+test("explainWebUsbError: Windows driver hints omit Linux udev guidance", () => {
+  const res = withUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", () =>
+    explainWebUsbError("NetworkError: Unable to claim interface."),
+  );
+
+  assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
+  assert.ok(!res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+});
+
+test("explainWebUsbError: Linux permission hints omit Windows WinUSB guidance", () => {
+  const res = withUserAgent("Mozilla/5.0 (X11; Linux x86_64)", () => explainWebUsbError("NetworkError: Unable to claim interface."));
+
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+  assert.ok(!res.hints.some((hint) => hint.includes("WinUSB")));
 });
 
 test("explainWebUsbError: SecurityError mentions protected interface classes", () => {
@@ -56,4 +100,3 @@ test("explainWebUsbError: includes secure-context hint when isSecureContext is f
     }
   }
 });
-
