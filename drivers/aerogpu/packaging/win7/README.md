@@ -78,7 +78,7 @@ To inspect what was actually written after install, you can query the adapter’
 
 ```bat
 :: Find the AeroGPU adapter instance key under the Display class (note the \0000 / \0001 path):
-reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /f "AeroGPU Display Adapter" /d
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /f "AeroGPU Display Adapter" /d
 
 :: Then query values (replace <KEY> with the path printed above):
 reg query "<KEY>" /v InstalledDisplayDrivers
