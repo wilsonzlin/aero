@@ -896,13 +896,29 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
      *  - Set DRIVER_OK.
      */
     negotiated = 0;
-    status = VirtioPciNegotiateFeatures(&deviceContext->PciDevice, VIRTIO_F_RING_INDIRECT_DESC, 0, &negotiated);
+    status = VirtioPciNegotiateFeatures(
+        &deviceContext->PciDevice,
+        (1ui64 << VIRTIO_F_RING_INDIRECT_DESC),
+        0,
+        &negotiated);
     if (!NT_SUCCESS(status)) {
         VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "VirtioPciNegotiateFeatures failed: %!STATUS!\n", status);
         VirtioPciResetDevice(&deviceContext->PciDevice);
         return status;
     }
     deviceContext->NegotiatedFeatures = negotiated;
+
+    /*
+     * Contract v1: drivers MUST NOT negotiate EVENT_IDX (split-ring event index).
+     * `VirtioPciNegotiateFeatures` only negotiates features explicitly requested,
+     * so this should never be set, but keep the check as a guard against future
+     * changes.
+     */
+    if ((negotiated & (1ui64 << VIRTIO_F_RING_EVENT_IDX)) != 0) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "negotiated forbidden feature: EVENT_IDX\n");
+        VirtioPciFailDevice(&deviceContext->PciDevice);
+        return STATUS_NOT_SUPPORTED;
+    }
 
     status = VirtioPciInterruptsProgramMsixVectors(&deviceContext->Interrupts, deviceContext->PciDevice.CommonCfg);
     if (!NT_SUCCESS(status)) {
