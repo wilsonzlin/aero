@@ -121,6 +121,7 @@ struct Query {
   uint32_t type = 0;
   std::atomic<uint64_t> fence_value{0};
   std::atomic<bool> issued{false};
+  std::atomic<bool> completion_logged{false};
 };
 
 struct Adapter {

@@ -96,6 +96,7 @@ constexpr HRESULT kSPresentOccluded = 0x08760868L;
 // D3D9 API/UMD query constants (numeric values from d3d9types.h).
 constexpr uint32_t kD3DQueryTypeEvent = 8u;
 constexpr uint32_t kD3DIssueEnd = 0x1u;
+constexpr uint32_t kD3DIssueEndAlt = 0x2u;
 constexpr uint32_t kD3DGetDataFlush = 0x1u;
 
 uint32_t f32_bits(float v) {
@@ -3289,6 +3290,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_query(
   }
 
   if (!is_event) {
+    pCreateQuery->hQuery.pDrvPrivate = nullptr;
     return D3DERR_NOTAVAILABLE;
   }
 
@@ -3331,22 +3333,43 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
     return D3DERR_NOTAVAILABLE;
   }
 
-  // Event queries only care about END. BEGIN is ignored.
-  if ((pIssueQuery->flags & kD3DIssueEnd) == 0) {
+  const uint32_t flags = pIssueQuery->flags;
+  const bool end = (flags == 0) || ((flags & kD3DIssueEnd) != 0) || ((flags & kD3DIssueEndAlt) != 0);
+  if (!end) {
     return S_OK;
   }
 
   // Ensure all prior GPU work is submitted and capture the submission fence.
   const uint64_t submit_fence = submit(dev);
 
-  // Prefer the fence returned by submit() when it is backed by the real runtime
-  // submission fence. Fallback (and safety net): query the KMD's last submitted
-  // fence and use whichever is larger.
-  const uint64_t fence_value =
-      std::max<uint64_t>(submit_fence, refresh_fence_snapshot(adapter).last_submitted);
+  uint64_t kmd_submitted = 0;
+  uint64_t kmd_completed = 0;
+  bool have_kmd_fence = false;
+#if defined(_WIN32)
+  if (adapter->kmd_query_available.load(std::memory_order_acquire)) {
+    have_kmd_fence = adapter->kmd_query.QueryFence(&kmd_submitted, &kmd_completed);
+    if (!have_kmd_fence) {
+      adapter->kmd_query_available.store(false, std::memory_order_release);
+    }
+  }
+#endif
+
+  uint64_t fence_value = submit_fence;
+  if (have_kmd_fence) {
+    {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, kmd_submitted);
+      adapter->completed_fence = std::max(adapter->completed_fence, kmd_completed);
+    }
+    fence_value = std::max<uint64_t>(fence_value, kmd_submitted);
+  } else {
+    // Fallback (and safety net): use the cached KMD fence snapshot if present.
+    fence_value = std::max<uint64_t>(fence_value, refresh_fence_snapshot(adapter).last_submitted);
+  }
 
   q->fence_value.store(fence_value, std::memory_order_release);
   q->issued.store(true, std::memory_order_release);
+  q->completion_logged.store(false, std::memory_order_relaxed);
   return S_OK;
 }
 
@@ -3375,7 +3398,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     return D3DERR_NOTAVAILABLE;
   }
   if (!q->issued.load(std::memory_order_acquire)) {
-    return S_FALSE;
+    return kD3DErrInvalidCall;
   }
 
   // If no output buffer provided, just report readiness via HRESULT.
@@ -3383,16 +3406,18 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
 
   const uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
 
-  FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
-  if (wait_res == FenceWaitResult::NotReady && (pGetQueryData->flags & kD3DGetDataFlush)) {
+  uint64_t completed = refresh_fence_snapshot(adapter).last_completed;
+  if (completed < fence_value && (pGetQueryData->flags & kD3DGetDataFlush)) {
+    // Non-blocking GetData(FLUSH): attempt a single flush then re-check. Never
+    // wait here (DWM can call into GetData while holding global locks).
     {
       std::lock_guard<std::mutex> lock(dev->mutex);
-      (void)submit(dev);
+      (void)flush_locked(dev);
     }
-    wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/16);
+    completed = refresh_fence_snapshot(adapter).last_completed;
   }
 
-  if (wait_res == FenceWaitResult::Complete) {
+  if (completed >= fence_value) {
     if (need_data) {
       // D3DQUERYTYPE_EVENT expects a BOOL-like result.
       if (pGetQueryData->data_size < sizeof(uint32_t)) {
@@ -3400,10 +3425,13 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
       }
       *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = TRUE;
     }
+
+    if (!q->completion_logged.exchange(true, std::memory_order_relaxed)) {
+      logf("aerogpu-d3d9: event_query ready fence=%llu completed=%llu\n",
+           static_cast<unsigned long long>(fence_value),
+           static_cast<unsigned long long>(completed));
+    }
     return S_OK;
-  }
-  if (wait_res == FenceWaitResult::Failed) {
-    return E_FAIL;
   }
   return S_FALSE;
 }
