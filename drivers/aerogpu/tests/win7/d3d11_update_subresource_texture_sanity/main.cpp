@@ -20,16 +20,46 @@ static int FailD3D11WithRemovedReason(const char* test_name,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
-static void FillBGRA8Pattern(uint8_t* dst, int width, int height, int row_pitch) {
+static uint32_t PackBGRA(uint8_t b, uint8_t g, uint8_t r, uint8_t a) {
+  return ((uint32_t)b) | ((uint32_t)g << 8) | ((uint32_t)r << 16) | ((uint32_t)a << 24);
+}
+
+static uint32_t ExpectedBasePixel(int x, int y) {
+  // BGRA8. Keep A at 0xFF to make it obvious if alpha gets clobbered.
+  const uint8_t b = (uint8_t)(x & 0xFF);
+  const uint8_t g = (uint8_t)(y & 0xFF);
+  const uint8_t r = (uint8_t)((x ^ y) & 0xFF);
+  const uint8_t a = 0xFFu;
+  return PackBGRA(b, g, r, a);
+}
+
+static uint32_t ExpectedPatchPixel(int x, int y) {
+  // Intentionally different from ExpectedBasePixel so a broken box update is obvious.
+  const uint8_t b = (uint8_t)((x * 3 + 17) & 0xFF);
+  const uint8_t g = (uint8_t)((y * 5 + 101) & 0xFF);
+  const uint8_t r = (uint8_t)((x + y + 11) & 0xFF);
+  const uint8_t a = 0xFFu;
+  return PackBGRA(b, g, r, a);
+}
+
+static void FillUploadBGRA8(uint8_t* dst,
+                            int width,
+                            int height,
+                            int row_pitch,
+                            int x_offset,
+                            int y_offset,
+                            bool patch_pattern) {
   for (int y = 0; y < height; ++y) {
     uint8_t* row = dst + y * row_pitch;
     for (int x = 0; x < width; ++x) {
+      const int gx = x + x_offset;
+      const int gy = y + y_offset;
+      const uint32_t v = patch_pattern ? ExpectedPatchPixel(gx, gy) : ExpectedBasePixel(gx, gy);
       uint8_t* p = row + x * 4;
-      // BGRA8. Keep A at 0xFF to make it obvious if alpha gets clobbered.
-      p[0] = (uint8_t)(x & 0xFF);            // B
-      p[1] = (uint8_t)(y & 0xFF);            // G
-      p[2] = (uint8_t)((x ^ y) & 0xFF);      // R
-      p[3] = (uint8_t)(0xFFu);               // A
+      p[0] = (uint8_t)((v >> 0) & 0xFF);
+      p[1] = (uint8_t)((v >> 8) & 0xFF);
+      p[2] = (uint8_t)((v >> 16) & 0xFF);
+      p[3] = (uint8_t)((v >> 24) & 0xFF);
     }
   }
 }
@@ -190,10 +220,35 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
   // RowPitch == Width*BytesPerPixel for UpdateSubresource uploads.
   const int upload_row_pitch = kWidth * 4 + 16;
   std::vector<uint8_t> upload((size_t)upload_row_pitch * (size_t)kHeight, 0);
-  FillBGRA8Pattern(&upload[0], kWidth, kHeight, upload_row_pitch);
+  FillUploadBGRA8(&upload[0], kWidth, kHeight, upload_row_pitch, 0, 0, false);
 
   // Exercises pfnUpdateSubresourceUP on Win7.
   context->UpdateSubresource(tex.get(), 0, NULL, &upload[0], upload_row_pitch, 0);
+
+  // Also exercise the boxed update path (non-NULL D3D11_BOX).
+  const int kPatchLeft = 7;
+  const int kPatchTop = 9;
+  const int kPatchWidth = 17;
+  const int kPatchHeight = 13;
+  const int kPatchRight = kPatchLeft + kPatchWidth;
+  const int kPatchBottom = kPatchTop + kPatchHeight;
+  if (kPatchRight > kWidth || kPatchBottom > kHeight) {
+    return aerogpu_test::Fail(kTestName, "internal error: patch box out of bounds");
+  }
+
+  D3D11_BOX patch_box;
+  patch_box.left = (UINT)kPatchLeft;
+  patch_box.top = (UINT)kPatchTop;
+  patch_box.front = 0;
+  patch_box.right = (UINT)kPatchRight;
+  patch_box.bottom = (UINT)kPatchBottom;
+  patch_box.back = 1;
+
+  const int patch_row_pitch = kPatchWidth * 4 + 12;
+  std::vector<uint8_t> patch((size_t)patch_row_pitch * (size_t)kPatchHeight, 0);
+  FillUploadBGRA8(&patch[0], kPatchWidth, kPatchHeight, patch_row_pitch, kPatchLeft, kPatchTop, true);
+
+  context->UpdateSubresource(tex.get(), 0, &patch_box, &patch[0], patch_row_pitch, 0);
 
   D3D11_TEXTURE2D_DESC st_desc = desc;
   st_desc.Usage = D3D11_USAGE_STAGING;
@@ -243,15 +298,13 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
   }
 
   for (int y = 0; y < kHeight; ++y) {
-    const uint8_t* got_row = (const uint8_t*)map.pData + (size_t)y * (size_t)map.RowPitch;
-    const uint8_t* exp_row = &upload[(size_t)y * (size_t)upload_row_pitch];
     for (int x = 0; x < kWidth; ++x) {
-      const uint8_t* got_px = got_row + x * 4;
-      const uint8_t* exp_px = exp_row + x * 4;
-      if (got_px[0] != exp_px[0] || got_px[1] != exp_px[1] || got_px[2] != exp_px[2] ||
-          got_px[3] != exp_px[3]) {
-        const uint32_t got = aerogpu_test::ReadPixelBGRA(got_row, (int)map.RowPitch, x, 0);
-        const uint32_t exp = aerogpu_test::ReadPixelBGRA(exp_row, upload_row_pitch, x, 0);
+      const bool in_patch =
+          (x >= kPatchLeft && x < kPatchRight && y >= kPatchTop && y < kPatchBottom);
+      const uint32_t exp = in_patch ? ExpectedPatchPixel(x, y) : ExpectedBasePixel(x, y);
+      const uint32_t got =
+          aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, x, y);
+      if (got != exp) {
         context->Unmap(staging.get(), 0);
         return aerogpu_test::Fail(
             kTestName,
