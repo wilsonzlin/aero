@@ -193,8 +193,7 @@ VOID StopDevice(_Inout_ DEVICE_CONTEXT *ctx)
 
 ## Optional: use the shared WDM wrapper (`virtio_pci_modern_wdm`)
 
-Some WDM drivers (notably the Windows 7 `virtio-snd` PortCls driver) use the
-shared helper in:
+Some WDM drivers may choose to use the shared helper in:
 
 - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
 - `drivers/windows7/virtio/common/include/virtio_pci_modern_wdm.h`
