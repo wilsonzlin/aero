@@ -11,30 +11,50 @@ It is intentionally **not KMDF/WDF**. The goal is to make it possible to impleme
 2) mapping **BAR0 MMIO** from the miniport’s resource list, and  
 3) the **INTx ACK rule** for virtio (read-to-clear ISR byte).
 
-## Recommended: use Aero’s canonical modern transport module
+## Shipping Win7 miniports: Win7 common miniport shim (`VirtioPciModernMiniport*`)
 
-In this repo, Aero’s Windows 7 miniport drivers (NDIS/StorPort) use the single
-canonical, WDF-free virtio-pci modern transport implementation:
+In this repo, the **shipping** Windows 7 miniport drivers:
 
-- `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.{c,h}`
+* `drivers/windows7/virtio-net/` (NDIS 6.20 miniport)
+* `drivers/windows7/virtio-blk/` (StorPort miniport)
 
-This module already handles:
+use the Win7 common, WDF-free miniport shim:
 
-- strict contract-v1 checks (PCI identity + fixed BAR0 layout + notify multiplier),
-- PCI vendor-capability parsing (COMMON/NOTIFY/ISR/DEVICE),
-- queue programming helpers (`queue_desc/avail/used` + `queue_enable`),
-- feature negotiation helpers (64-bit + `VIRTIO_F_VERSION_1`).
+* `drivers/windows7/virtio/common/include/virtio_pci_modern_miniport.h`
+* `drivers/windows7/virtio/common/src/virtio_pci_modern_miniport.c`
 
-Miniports integrate it by implementing `VIRTIO_PCI_MODERN_OS_INTERFACE`:
+The miniport shim is shaped for the NDIS/StorPort miniport model: the driver
+does the OS-specific work up front, then passes two concrete inputs into the
+shim:
 
-- PCI config reads (`PciRead8/16/32`) from a cached 256-byte PCI config snapshot (`NdisMGetBusData` for NDIS, `StorPortGetBusData` for StorPort)
-- BAR0 map/unmap (`MapMmio/UnmapMmio`) using `NdisMMapIoSpace` or `StorPortGetDeviceBase`
-- a microsecond stall (`StallUs`) for bounded reset polling
-- a selector-serialization lock (`Spinlock*`) for `common_cfg` selector registers
+* a **BAR0 MMIO mapping** (`Bar0Va` + `Bar0Length`), and
+* a cached **256-byte PCI config snapshot** (for ID checks + vendor-cap parsing):
+  * NDIS: `NdisMGetBusData(..., PCI_WHICHSPACE_CONFIG, cfg, 0, 256)`
+  * StorPort: `StorPortGetBusData(..., PCIConfiguration, ..., cfg, 0, 256)`
+
+The entry point is `VirtioPciModernMiniportInit`, which parses vendor
+capabilities and fills a `VIRTIO_PCI_DEVICE` (COMMON/NOTIFY/ISR/DEVICE config
+windows, plus helpers like `VirtioPciNegotiateFeatures`, `VirtioPciSetupQueue`,
+`VirtioPciNotifyQueue`, and `VirtioPciReadIsr`).
+
+This is what `drivers/windows7/virtio-net/src/aero_virtio_net.c` and
+`drivers/windows7/virtio-blk/src/aero_virtio_blk.c` are wired against today.
+
+## Alternative: generic OS-callback transport (`virtio_pci_modern_transport`)
+
+This repo also contains a more generic, OS-callback based virtio-pci modern
+transport implementation:
+
+* `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.{c,h}`
+
+It is not specific to miniports; you integrate it by implementing
+`VIRTIO_PCI_MODERN_OS_INTERFACE` (PCI config reads, BAR mapping, stalls, and a
+selector-serialization lock). This can be a better fit for other driver models
+(WDM/KMDF) or codebases that want the transport layer to own BAR mapping.
 
 The rest of this document explains the underlying mechanics (PCI config offsets,
-BAR discovery/mapping, INTx ISR semantics) and is useful when wiring up those OS
-callbacks or debugging contract failures.
+BAR discovery/mapping, INTx ISR semantics) and is useful when wiring up either
+transport or debugging contract failures.
 
 Definitive contract for what Aero expects from virtio devices/drivers:
 

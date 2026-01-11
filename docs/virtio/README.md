@@ -41,9 +41,11 @@ header named `virtqueue_split.h` in-tree. The legacy portable header is named
 `virtqueue_split_legacy.h` to avoid include-path ambiguity.
 
 With this policy in place, every in-tree `#include "virtqueue_split.h"` resolves
-to `drivers/windows/virtio/common/virtqueue_split.h`. CI enforces that drivers
-which include `virtqueue_split.h` (for example `virtio-input` and `virtio-snd`)
-include `drivers/windows/virtio/common` in their include paths.
+to `drivers/windows/virtio/common/virtqueue_split.h`. CI guardrails also check
+that drivers which include `virtqueue_split.h` (for example `virtio-input` and
+`virtio-snd`) include `drivers/windows/virtio/common` in their include paths,
+and that each Windows 7 driver project compiles the intended engine (canonical
+vs legacy) so include-path ordering cannot silently change behavior.
 
 ## Build wiring (where each engine is compiled)
 
