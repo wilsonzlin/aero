@@ -61,6 +61,76 @@ VirtioPciModernUnmapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
     }
 }
 
+#if !VIRTIO_CORE_USE_WDF
+typedef struct _VIRTIO_PCI_WDM_SYNC_CTX {
+    KEVENT Event;
+} VIRTIO_PCI_WDM_SYNC_CTX, *PVIRTIO_PCI_WDM_SYNC_CTX;
+
+static NTSTATUS
+VirtioPciWdmSyncCompletionRoutine(
+    _In_ PDEVICE_OBJECT DeviceObject,
+    _In_ PIRP Irp,
+    _In_ PVOID Context)
+{
+    PVIRTIO_PCI_WDM_SYNC_CTX ctx;
+
+    UNREFERENCED_PARAMETER(DeviceObject);
+    UNREFERENCED_PARAMETER(Irp);
+
+    ctx = (PVIRTIO_PCI_WDM_SYNC_CTX)Context;
+    KeSetEvent(&ctx->Event, IO_NO_INCREMENT, FALSE);
+    return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
+static NTSTATUS
+VirtioPciWdmQueryInterface(
+    _In_ PDEVICE_OBJECT TargetDeviceObject,
+    _In_ const GUID* InterfaceType,
+    _In_ USHORT Size,
+    _In_ USHORT Version,
+    _Out_writes_bytes_(Size) PVOID Interface)
+{
+    PIRP irp;
+    IO_STACK_LOCATION* stack;
+    VIRTIO_PCI_WDM_SYNC_CTX ctx;
+    NTSTATUS status;
+
+    if (TargetDeviceObject == NULL || InterfaceType == NULL || Interface == NULL || Size == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    irp = IoAllocateIrp(TargetDeviceObject->StackSize, FALSE);
+    if (irp == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    KeInitializeEvent(&ctx.Event, NotificationEvent, FALSE);
+
+    irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
+    irp->IoStatus.Information = 0;
+
+    stack = IoGetNextIrpStackLocation(irp);
+    stack->MajorFunction = IRP_MJ_PNP;
+    stack->MinorFunction = IRP_MN_QUERY_INTERFACE;
+    stack->Parameters.QueryInterface.InterfaceType = (PGUID)InterfaceType;
+    stack->Parameters.QueryInterface.Size = Size;
+    stack->Parameters.QueryInterface.Version = Version;
+    stack->Parameters.QueryInterface.Interface = (PINTERFACE)Interface;
+    stack->Parameters.QueryInterface.InterfaceSpecificData = NULL;
+
+    IoSetCompletionRoutine(irp, VirtioPciWdmSyncCompletionRoutine, &ctx, TRUE, TRUE, TRUE);
+
+    status = IoCallDriver(TargetDeviceObject, irp);
+    if (status == STATUS_PENDING) {
+        KeWaitForSingleObject(&ctx.Event, Executive, KernelMode, FALSE, NULL);
+        status = irp->IoStatus.Status;
+    }
+
+    IoFreeIrp(irp);
+    return status;
+}
+#endif
+
 static NTSTATUS
 VirtioPciModernReadAndValidatePciIdentity(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
 {
@@ -470,6 +540,7 @@ VirtioPciAeroContractV1LayoutFailureToString(_In_ VIRTIO_PCI_AERO_CONTRACT_V1_LA
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
+#if VIRTIO_CORE_USE_WDF
 VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE Dev)
 {
     NTSTATUS status;
@@ -544,6 +615,73 @@ VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE De
 
     return STATUS_SUCCESS;
 }
+#else
+VirtioPciModernInitWdm(_In_ PDEVICE_OBJECT DeviceObject,
+                       _In_ PDEVICE_OBJECT LowerDeviceObject,
+                       _Out_ PVIRTIO_PCI_MODERN_DEVICE Dev)
+{
+    NTSTATUS status;
+
+    if (Dev == NULL || DeviceObject == NULL || LowerDeviceObject == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(Dev, sizeof(*Dev));
+    Dev->DeviceObject = DeviceObject;
+    Dev->LowerDeviceObject = LowerDeviceObject;
+
+    KeInitializeSpinLock(&Dev->CommonCfgLock);
+#if DBG
+    Dev->CommonCfgLockOwner = NULL;
+#endif
+
+    status = VirtioPciWdmQueryInterface(LowerDeviceObject,
+                                        &GUID_PCI_BUS_INTERFACE_STANDARD,
+                                        (USHORT)sizeof(Dev->PciInterface),
+                                        (USHORT)PCI_BUS_INTERFACE_STANDARD_VERSION,
+                                        &Dev->PciInterface);
+    if (!NT_SUCCESS(status)) {
+        VIRTIO_CORE_PRINT("IRP_MN_QUERY_INTERFACE(PCI_BUS_INTERFACE_STANDARD) failed: 0x%08x\n", status);
+        VirtioPciModernUninit(Dev);
+        return status;
+    }
+
+    if (Dev->PciInterface.InterfaceReference != NULL) {
+        Dev->PciInterface.InterfaceReference(Dev->PciInterface.Context);
+        Dev->PciInterfaceAcquired = TRUE;
+    }
+
+    status = VirtioPciModernReadAndValidatePciIdentity(Dev);
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUninit(Dev);
+        return status;
+    }
+
+    status = VirtioPciModernReadBarsFromConfig(Dev);
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUninit(Dev);
+        return status;
+    }
+
+    {
+        ULONGLONG barBases[VIRTIO_PCI_MAX_BARS];
+        ULONG i;
+
+        RtlZeroMemory(barBases, sizeof(barBases));
+        for (i = 0; i < VIRTIO_PCI_MAX_BARS; i++) {
+            barBases[i] = Dev->Bars[i].Base;
+        }
+
+        status = VirtioPciCapsDiscover(&Dev->PciInterface, barBases, &Dev->Caps);
+    }
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUninit(Dev);
+        return status;
+    }
+
+    return STATUS_SUCCESS;
+}
+#endif
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
@@ -593,6 +731,7 @@ VirtioPciModernEnforceDeviceIds(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev,
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
+#if VIRTIO_CORE_USE_WDF
 VirtioPciModernMapBars(
     _Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
     _In_ WDFCMRESLIST ResourcesRaw,
@@ -810,12 +949,233 @@ VirtioPciModernMapBars(
 
     return STATUS_SUCCESS;
 }
+#else
+VirtioPciModernMapBarsWdm(
+    _Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+    _In_opt_ PCM_RESOURCE_LIST ResourcesRaw,
+    _In_opt_ PCM_RESOURCE_LIST ResourcesTranslated)
+{
+    NTSTATUS status;
+    ULONG requiredMask;
+    ULONG i;
+    ULONG listIndex;
+
+    if (Dev == NULL || ResourcesRaw == NULL || ResourcesTranslated == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Re-prepare is possible (PnP stop/start). Always start from a clean state. */
+    VirtioPciModernUnmapBars(Dev);
+
+    status = VirtioPciModernReadBarsFromConfig(Dev);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    requiredMask = 0;
+    for (i = 0; i < Dev->Caps.AllCount; i++) {
+        const VIRTIO_PCI_CAP_INFO *c;
+        c = &Dev->Caps.All[i];
+        if (!c->Present) {
+            continue;
+        }
+
+        if (c->Bar < VIRTIO_PCI_MAX_BARS) {
+            requiredMask |= (1u << c->Bar);
+        }
+    }
+
+    if (ResourcesRaw->Count != ResourcesTranslated->Count) {
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    for (listIndex = 0; listIndex < ResourcesRaw->Count; listIndex++) {
+        PCM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
+        PCM_PARTIAL_RESOURCE_DESCRIPTOR transDesc;
+        ULONG resCount;
+
+        resCount = ResourcesRaw->List[listIndex].PartialResourceList.Count;
+        if (resCount != ResourcesTranslated->List[listIndex].PartialResourceList.Count) {
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        rawDesc = ResourcesRaw->List[listIndex].PartialResourceList.PartialDescriptors;
+        transDesc = ResourcesTranslated->List[listIndex].PartialResourceList.PartialDescriptors;
+
+        for (i = 0; i < resCount; i++) {
+            ULONGLONG rawStart;
+            SIZE_T rawLen;
+            ULONG bar;
+
+            if (rawDesc[i].Type != CmResourceTypeMemory) {
+                continue;
+            }
+
+            rawStart = (ULONGLONG)rawDesc[i].u.Memory.Start.QuadPart;
+            rawLen = (SIZE_T)rawDesc[i].u.Memory.Length;
+
+            for (bar = 0; bar < VIRTIO_PCI_MAX_BARS; bar++) {
+                if ((requiredMask & (1u << bar)) == 0) {
+                    continue;
+                }
+
+                if (!Dev->Bars[bar].Present || !Dev->Bars[bar].IsMemory || Dev->Bars[bar].IsUpperHalf) {
+                    continue;
+                }
+
+                if (Dev->Bars[bar].Base != rawStart) {
+                    continue;
+                }
+
+                if (Dev->Bars[bar].Length != 0) {
+                    VIRTIO_CORE_PRINT("BAR%lu matches multiple resources (keeping first)\n", bar);
+                    continue;
+                }
+
+                Dev->Bars[bar].RawStart = rawDesc[i].u.Memory.Start;
+                Dev->Bars[bar].TranslatedStart = transDesc[i].u.Memory.Start;
+                Dev->Bars[bar].Length = rawLen;
+            }
+        }
+    }
+
+    /* Ensure every required BAR has a matched resource. */
+    for (i = 0; i < VIRTIO_PCI_MAX_BARS; i++) {
+        if ((requiredMask & (1u << i)) == 0) {
+            continue;
+        }
+
+        if (Dev->Bars[i].Length == 0) {
+            VIRTIO_CORE_PRINT("Required BAR%lu (base=0x%I64x) has no matching CM resource\n",
+                              i,
+                              Dev->Bars[i].Base);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+    }
+
+    /* Map each required BAR once. */
+    for (i = 0; i < VIRTIO_PCI_MAX_BARS; i++) {
+        if ((requiredMask & (1u << i)) == 0) {
+            continue;
+        }
+
+        Dev->Bars[i].Va = MmMapIoSpace(Dev->Bars[i].TranslatedStart, Dev->Bars[i].Length, MmNonCached);
+        if (Dev->Bars[i].Va == NULL) {
+            VIRTIO_CORE_PRINT("MmMapIoSpace failed for BAR%lu (phys=0x%I64x len=0x%Ix)\n",
+                              i,
+                              (ULONGLONG)Dev->Bars[i].TranslatedStart.QuadPart,
+                              Dev->Bars[i].Length);
+            VirtioPciModernUnmapBars(Dev);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+    }
+
+    /* Validate required capability windows against BAR lengths. */
+    status = VirtioPciModernValidateCapInBar(Dev, &Dev->Caps.CommonCfg, sizeof(virtio_pci_common_cfg), "COMMON_CFG");
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUnmapBars(Dev);
+        return status;
+    }
+
+    /* Notify register writes are 16-bit MMIO. */
+    status = VirtioPciModernValidateCapInBar(Dev, &Dev->Caps.NotifyCfg, sizeof(USHORT), "NOTIFY_CFG");
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUnmapBars(Dev);
+        return status;
+    }
+
+    status = VirtioPciModernValidateCapInBar(Dev, &Dev->Caps.IsrCfg, 1, "ISR_CFG");
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUnmapBars(Dev);
+        return status;
+    }
+
+    status = VirtioPciModernValidateCapInBar(Dev, &Dev->Caps.DeviceCfg, 1, "DEVICE_CFG");
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUnmapBars(Dev);
+        return status;
+    }
+
+#if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+    status = VirtioPciModernValidateAeroMmioLayout(Dev);
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUnmapBars(Dev);
+        return status;
+    }
+#endif
+
+    /*
+     * Validate every discovered virtio vendor capability against the
+     * corresponding BAR resource length (defensive against malformed devices).
+     */
+    for (i = 0; i < Dev->Caps.AllCount; i++) {
+        const VIRTIO_PCI_CAP_INFO *c;
+        ULONGLONG end;
+
+        c = &Dev->Caps.All[i];
+        if (!c->Present) {
+            continue;
+        }
+
+        if (c->Bar >= VIRTIO_PCI_MAX_BARS) {
+            VIRTIO_CORE_PRINT("Virtio cap at 0x%02lx references invalid BAR %u\n",
+                              (ULONG)c->CapOffset,
+                              (UINT)c->Bar);
+            VirtioPciModernUnmapBars(Dev);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        if (Dev->Bars[c->Bar].IsUpperHalf) {
+            VIRTIO_CORE_PRINT("Virtio cap at 0x%02lx references upper-half BAR slot %u\n",
+                              (ULONG)c->CapOffset,
+                              (UINT)c->Bar);
+            VirtioPciModernUnmapBars(Dev);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        if (!Dev->Bars[c->Bar].Present || !Dev->Bars[c->Bar].IsMemory || Dev->Bars[c->Bar].Length == 0) {
+            VIRTIO_CORE_PRINT("Virtio cap at 0x%02lx references unmapped BAR %u\n",
+                              (ULONG)c->CapOffset,
+                              (UINT)c->Bar);
+            VirtioPciModernUnmapBars(Dev);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        end = (ULONGLONG)c->Offset + (ULONGLONG)c->Length;
+        if (end > (ULONGLONG)Dev->Bars[c->Bar].Length) {
+            VIRTIO_CORE_PRINT(
+                "Virtio cap at 0x%02lx overruns BAR%u (off=0x%lx len=0x%lx bar_len=0x%Ix)\n",
+                (ULONG)c->CapOffset,
+                (UINT)c->Bar,
+                (ULONG)c->Offset,
+                (ULONG)c->Length,
+                Dev->Bars[c->Bar].Length);
+            VirtioPciModernUnmapBars(Dev);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+    }
+
+    /* Expose per-capability virtual addresses. */
+    Dev->CommonCfg = (volatile virtio_pci_common_cfg *)((PUCHAR)Dev->Bars[Dev->Caps.CommonCfg.Bar].Va +
+                                                        Dev->Caps.CommonCfg.Offset);
+    Dev->NotifyBase = (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.NotifyCfg.Bar].Va + Dev->Caps.NotifyCfg.Offset);
+    Dev->NotifyOffMultiplier = Dev->Caps.NotifyOffMultiplier;
+    Dev->NotifyLength = (SIZE_T)Dev->Caps.NotifyCfg.Length;
+    Dev->IsrStatus = (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.IsrCfg.Bar].Va + Dev->Caps.IsrCfg.Offset);
+    Dev->DeviceCfg =
+        (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.DeviceCfg.Bar].Va + Dev->Caps.DeviceCfg.Offset);
+
+    return STATUS_SUCCESS;
+}
+#endif
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID
 VirtioPciModernUninit(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
 {
+#if VIRTIO_CORE_USE_WDF
     WDFSPINLOCK lockToDelete;
+#endif
 
     if (Dev == NULL) {
         return;
@@ -828,11 +1188,13 @@ VirtioPciModernUninit(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
         Dev->PciInterfaceAcquired = FALSE;
     }
 
+#if VIRTIO_CORE_USE_WDF
     lockToDelete = Dev->CommonCfgLock;
     if (lockToDelete != NULL) {
         Dev->CommonCfgLock = NULL;
         WdfObjectDelete(lockToDelete);
     }
+#endif
 
     RtlZeroMemory(Dev, sizeof(*Dev));
 }
@@ -945,19 +1307,29 @@ VirtioPciCommonCfgLock(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
 #endif
 
     NT_ASSERT(Dev != NULL);
-    NT_ASSERT(Dev->CommonCfgLock != NULL);
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
 #if DBG
     currentThread = KeGetCurrentThread();
     NT_ASSERT(Dev->CommonCfgLockOwner != currentThread);
+#endif
+
+#if VIRTIO_CORE_USE_WDF
+    NT_ASSERT(Dev->CommonCfgLock != NULL);
 
     WdfSpinLockAcquire(Dev->CommonCfgLock);
 
+#if DBG
     NT_ASSERT(Dev->CommonCfgLockOwner == NULL);
     Dev->CommonCfgLockOwner = currentThread;
+#endif
 #else
-    WdfSpinLockAcquire(Dev->CommonCfgLock);
+    KeAcquireSpinLock(&Dev->CommonCfgLock, &Dev->CommonCfgLockIrql);
+
+#if DBG
+    NT_ASSERT(Dev->CommonCfgLockOwner == NULL);
+    Dev->CommonCfgLockOwner = currentThread;
+#endif
 #endif
 }
 
@@ -966,7 +1338,6 @@ VOID
 VirtioPciCommonCfgUnlock(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
 {
     NT_ASSERT(Dev != NULL);
-    NT_ASSERT(Dev->CommonCfgLock != NULL);
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
 #if DBG
@@ -974,7 +1345,12 @@ VirtioPciCommonCfgUnlock(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev)
     Dev->CommonCfgLockOwner = NULL;
 #endif
 
+#if VIRTIO_CORE_USE_WDF
+    NT_ASSERT(Dev->CommonCfgLock != NULL);
     WdfSpinLockRelease(Dev->CommonCfgLock);
+#else
+    KeReleaseSpinLock(&Dev->CommonCfgLock, Dev->CommonCfgLockIrql);
+#endif
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)

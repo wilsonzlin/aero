@@ -457,13 +457,13 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq)
         return VIRTIO_FALSE;
     }
 
-    if (vq->event_idx != VIRTIO_FALSE && vq->used_event != NULL) {
+    if (vq->event_idx != VIRTIO_FALSE && vq->avail_event != NULL) {
         uint16_t event;
         uint16_t old;
 
         old = vq->last_kick_avail;
         virtio_rmb(vq->os, vq->os_ctx);
-        event = *vq->used_event;
+        event = *vq->avail_event;
         if (virtqueue_split_need_event(event, new_idx, old) != VIRTIO_FALSE) {
             vq->last_kick_avail = new_idx;
             return VIRTIO_TRUE;

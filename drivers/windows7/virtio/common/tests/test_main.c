@@ -171,8 +171,8 @@ static void sim_process(vring_device_sim_t *sim)
         sim->last_avail_idx++;
     }
 
-    if (vq->event_idx != VIRTIO_FALSE && vq->used_event != NULL) {
-        *vq->used_event = (uint16_t)(sim->last_avail_idx + (sim->notify_batch - 1u));
+    if (vq->event_idx != VIRTIO_FALSE && vq->avail_event != NULL) {
+        *vq->avail_event = (uint16_t)(sim->last_avail_idx + (sim->notify_batch - 1u));
     }
 }
 
@@ -365,9 +365,9 @@ static void test_fuzz(void)
     exp_tail = 0;
     next_cookie = 1;
 
-    /* Prime used_event for event idx batching. */
-    if (vq.used_event != NULL) {
-        *vq.used_event = (uint16_t)(sim.notify_batch - 1u);
+    /* Prime avail_event for event idx batching. */
+    if (vq.avail_event != NULL) {
+        *vq.avail_event = (uint16_t)(sim.notify_batch - 1u);
     }
 
     for (iter = 0; iter < 20000u; iter++) {

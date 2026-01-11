@@ -6,8 +6,15 @@
  */
 
 #include <ntddk.h>
-#include <wdf.h>
 #include <wdmguid.h>
+
+#ifndef VIRTIO_CORE_USE_WDF
+#define VIRTIO_CORE_USE_WDF 1
+#endif
+
+#if VIRTIO_CORE_USE_WDF
+#include <wdf.h>
+#endif
 
 #include "virtio_pci_caps.h"
 #include "virtio_spec.h"
@@ -59,7 +66,12 @@ typedef struct _VIRTIO_PCI_BAR {
 } VIRTIO_PCI_BAR, *PVIRTIO_PCI_BAR;
 
 typedef struct _VIRTIO_PCI_MODERN_DEVICE {
+#if VIRTIO_CORE_USE_WDF
     WDFDEVICE WdfDevice;
+#else
+    PDEVICE_OBJECT DeviceObject;
+    PDEVICE_OBJECT LowerDeviceObject;
+#endif
 
     PCI_BUS_INTERFACE_STANDARD PciInterface;
     BOOLEAN PciInterfaceAcquired;
@@ -106,7 +118,12 @@ typedef struct _VIRTIO_PCI_MODERN_DEVICE {
      * multiple threads (queues, DPCs, power callbacks, etc.) touch common_cfg
      * concurrently.
      */
+#if VIRTIO_CORE_USE_WDF
     WDFSPINLOCK CommonCfgLock;
+#else
+    KSPIN_LOCK CommonCfgLock;
+    KIRQL CommonCfgLockIrql;
+#endif
 
 #if DBG
     PKTHREAD CommonCfgLockOwner;
@@ -140,6 +157,7 @@ typedef VIRTIO_PCI_MODERN_DEVICE VIRTIO_PCI_DEVICE;
 typedef PVIRTIO_PCI_MODERN_DEVICE PVIRTIO_PCI_DEVICE;
 
 /* Initialization / discovery */
+#if VIRTIO_CORE_USE_WDF
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
 VirtioPciModernInit(_In_ WDFDEVICE WdfDevice, _Out_ PVIRTIO_PCI_MODERN_DEVICE Dev);
@@ -149,6 +167,19 @@ NTSTATUS
 VirtioPciModernMapBars(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
                        _In_ WDFCMRESLIST ResourcesRaw,
                        _In_ WDFCMRESLIST ResourcesTranslated);
+#else
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernInitWdm(_In_ PDEVICE_OBJECT DeviceObject,
+                       _In_ PDEVICE_OBJECT LowerDeviceObject,
+                       _Out_ PVIRTIO_PCI_MODERN_DEVICE Dev);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+NTSTATUS
+VirtioPciModernMapBarsWdm(_Inout_ PVIRTIO_PCI_MODERN_DEVICE Dev,
+                          _In_opt_ PCM_RESOURCE_LIST ResourcesRaw,
+                          _In_opt_ PCM_RESOURCE_LIST ResourcesTranslated);
+#endif
 
 typedef enum _VIRTIO_PCI_AERO_CONTRACT_V1_LAYOUT_FAILURE {
     VirtioPciAeroContractV1LayoutFailureNone = 0,
