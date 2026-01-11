@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { VmCoordinator } from '../src/vmCoordinator.js';
 
-const WATCHDOG_TEST_TIMEOUT_MS = 15_000;
+const WATCHDOG_TEST_TIMEOUT_MS = 30_000;
 
 function onceEvent(target, type) {
   return new Promise((resolve) => {

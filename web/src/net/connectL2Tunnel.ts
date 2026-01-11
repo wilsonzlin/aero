@@ -251,6 +251,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       teardownTunnel();
       scheduleReconnect();
     }, idleTimeoutMs);
+    (idleTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   function installTunnel(sendFrame: (frame: Uint8Array) => void, close: () => void): void {
@@ -305,6 +306,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
         emitErrorThrottled(err);
       }
     }, delayMs);
+    (reconnectTimer as unknown as { unref?: () => void }).unref?.();
   };
 
   const makeSink = (gen: number): L2TunnelSink => {
