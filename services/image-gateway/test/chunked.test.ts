@@ -248,6 +248,50 @@ describe("chunked delivery", () => {
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
   });
 
+  it("rejects non-identity Content-Encoding for chunk objects", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          return {
+            Body: Readable.from([Buffer.from("0123")]),
+            ContentType: "application/octet-stream",
+            ContentLength: 4,
+            ContentEncoding: "gzip",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/chunks/0`,
+      headers: { "x-user-id": ownerId },
+    });
+
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({ error: { code: "S3_ERROR" } });
+  });
+
   it("accepts padded chunk filenames (00000000.bin) in the gateway route", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
