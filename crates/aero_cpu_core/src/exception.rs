@@ -61,6 +61,11 @@ impl Exception {
     pub fn ts(code: u16) -> Self {
         Self::InvalidTss(code)
     }
+
+    #[inline]
+    pub fn pf(addr: u64, error_code: u32) -> Self {
+        Self::PageFault { addr, error_code }
+    }
 }
 
 impl fmt::Display for Exception {
