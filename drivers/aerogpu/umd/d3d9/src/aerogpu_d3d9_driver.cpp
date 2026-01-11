@@ -68,6 +68,24 @@ D3DDDI_ADAPTERCALLBACKS2* get_adapter_callbacks2(T* open) {
   return nullptr;
 }
 
+template <typename T, typename = void>
+struct has_vid_pn_source_id_member : std::false_type {};
+
+template <typename T>
+struct has_vid_pn_source_id_member<T, std::void_t<decltype(std::declval<T>().VidPnSourceId)>> : std::true_type {};
+
+template <typename T>
+void set_vid_pn_source_id(T* open, UINT vid_pn_source_id) {
+  if (!open) {
+    return;
+  }
+  if constexpr (has_vid_pn_source_id_member<T>::value) {
+    open->VidPnSourceId = vid_pn_source_id;
+  } else {
+    (void)vid_pn_source_id;
+  }
+}
+
 } // namespace
 
 namespace aerogpu {
@@ -2527,6 +2545,12 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return trace.ret(E_INVALIDARG);
   }
 
+  if (res->pool != kD3DPOOL_SYSTEMMEM && res->kind != ResourceKind::Buffer) {
+    if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
+  }
+
   try {
     res->storage.resize(res->size_bytes);
   } catch (...) {
@@ -2718,6 +2742,12 @@ static HRESULT device_open_resource_impl(
     res->slice_pitch = 0;
   } else {
     return E_INVALIDARG;
+  }
+
+  if (res->kind != ResourceKind::Buffer) {
+    if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
+      return E_INVALIDARG;
+    }
   }
 
   if (!res->size_bytes) {
@@ -6073,6 +6103,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
         adapter->vid_pn_source_id = 0;
         adapter->vid_pn_source_id_valid = false;
       }
+      set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
@@ -6180,6 +6211,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
         adapter->vid_pn_source_id = 0;
         adapter->vid_pn_source_id_valid = false;
       }
+      set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
@@ -6285,6 +6317,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
         adapter->vid_pn_source_id = 0;
         adapter->vid_pn_source_id_valid = false;
       }
+      set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
@@ -6367,6 +6400,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
         adapter->vid_pn_source_id = 0;
         adapter->vid_pn_source_id_valid = false;
       }
+      set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
       uint64_t submitted = 0;
