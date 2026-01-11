@@ -779,6 +779,7 @@ function runLoopInner(): void {
   }
 
   setReadyFlag(status, role, false);
+  detachMicBridge();
   detachAudioOutput();
   ctx.close();
 }
