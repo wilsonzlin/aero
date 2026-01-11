@@ -55,8 +55,11 @@ For HID peripherals, prefer WebHID.
 ## High-level architecture
 
 The key constraint is that **browser device handles are main-thread objects**.
-`HIDDevice`/`USBDevice` are not transferable to a worker, and even if they were,
-the permission model and UI requirements are tied to the Window’s event loop.
+
+- `HIDDevice` is not structured-cloneable and cannot be transferred to a worker.
+- `USBDevice` transfer/worker support is browser-dependent, but Aero’s baseline
+  architecture assumes the handle stays on the main thread (user-activation and
+  permission UX are tied to the Window event loop).
 
 So the design is split:
 
@@ -82,9 +85,12 @@ Guest Windows USB/HID stack
 ### Why the main thread owns it
 
 - `navigator.hid.requestDevice(...)` / `navigator.usb.requestDevice(...)` must
-  be called from a **user gesture** and returns a handle tied to the Window.
-- `HIDDevice` / `USBDevice` are **not structured-cloneable** and therefore
-  cannot be sent to a Worker via `postMessage`.
+  be called from a **user gesture** on the main thread.
+- `HIDDevice` is **not structured-cloneable** and therefore cannot be sent to a
+  Worker via `postMessage`.
+- `USBDevice` structured clone / worker access is not reliable enough to be a
+  design assumption; treat the main thread as the default owner and proxy I/O as
+  needed (see [`docs/webusb-passthrough.md`](./webusb-passthrough.md)).
 
 ### Responsibilities
 
