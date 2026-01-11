@@ -6,11 +6,13 @@ use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit};
 use wasmtime::{Caller, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 use super::Tier1Cpu;
+use crate::abi::{CPU_AND_JIT_CTX_BYTE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET};
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_MMU_TRANSLATE, IMPORT_PAGE_FAULT,
+    IMPORT_JIT_EXIT_MMIO, JIT_EXIT_SENTINEL_I64,
 };
 
 /// Reference `wasmtime`-powered backend that can execute Tier-1 compiled blocks.
@@ -65,19 +67,19 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             .expect("define env.memory import");
 
         define_mem_helpers(&mut linker, memory);
-        define_stub_helpers(&mut linker);
+        define_stub_helpers(&mut linker, memory);
 
         // Verify the configured CpuState window fits within the linear memory.
         let byte_len = (memory_pages as usize)
             .checked_mul(65_536)
             .expect("memory_pages overflow");
         let end = (cpu_ptr as usize)
-            .checked_add(CpuState::BYTE_SIZE)
+            .checked_add(CPU_AND_JIT_CTX_BYTE_SIZE as usize)
             .expect("cpu_ptr overflow");
         assert!(
             end <= byte_len,
-            "cpu_ptr (0x{cpu_ptr:x}) + CpuState::BYTE_SIZE ({}) must fit in linear memory ({} bytes)",
-            CpuState::BYTE_SIZE,
+            "cpu_ptr (0x{cpu_ptr:x}) + CPU_AND_JIT_CTX_BYTE_SIZE ({}) must fit in linear memory ({} bytes)",
+            CPU_AND_JIT_CTX_BYTE_SIZE,
             byte_len
         );
 
@@ -115,6 +117,19 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         self.memory
             .write(&mut self.store, self.cpu_ptr as usize, &buf)
             .expect("write CpuState into linear memory");
+
+        // Keep the Tier-1 JIT context fields initialized even when running with the minimal
+        // `aero_cpu::CpuState` prefix.
+        //
+        // The inline-TLB fast-path expects these fields at offsets derived from the
+        // `aero_cpu_core::state::CpuState` ABI; we treat the region between the minimal CpuState
+        // and the JIT context as reserved padding.
+        let mem = self.memory.data_mut(&mut self.store);
+        let base = self.cpu_ptr as usize;
+        mem[base + JIT_CTX_RAM_BASE_OFFSET as usize..base + JIT_CTX_RAM_BASE_OFFSET as usize + 8]
+            .copy_from_slice(&0u64.to_le_bytes()); // guest RAM begins at linear address 0
+        mem[base + JIT_CTX_TLB_SALT_OFFSET as usize..base + JIT_CTX_TLB_SALT_OFFSET as usize + 8]
+            .copy_from_slice(&0x1234_5678_9abc_def0u64.to_le_bytes());
     }
 
     fn sync_cpu_from_wasm(&mut self, cpu: &mut CpuState) {
@@ -287,7 +302,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
     }
 }
 
-fn define_stub_helpers(linker: &mut Linker<()>) {
+fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
     // Present for ABI completeness. The minimal backend does not currently model faults/MMU.
     linker
         .func_wrap(
@@ -296,6 +311,64 @@ fn define_stub_helpers(linker: &mut Linker<()>) {
             |_caller: Caller<'_, ()>, _cpu_ptr: i32, _addr: i64| -> i64 { JIT_EXIT_SENTINEL_I64 },
         )
         .expect("define page_fault");
+
+    // Minimal inline-TLB translation helper: identity map addresses that fall within the guest RAM
+    // window (0..cpu_ptr) and classify anything else as MMIO.
+    {
+        let mem = memory;
+        linker
+            .func_wrap(
+                IMPORT_MODULE,
+                IMPORT_MMU_TRANSLATE,
+                move |mut caller: Caller<'_, ()>, cpu_ptr: i32, vaddr: i64, _access: i32| -> i64 {
+                    let vaddr_u = vaddr as u64;
+                    let vpn = vaddr_u >> crate::PAGE_SHIFT;
+                    let idx = (vpn & crate::JIT_TLB_INDEX_MASK) as u64;
+
+                    let tlb_salt = {
+                        let addr = cpu_ptr as usize + JIT_CTX_TLB_SALT_OFFSET as usize;
+                        let bytes: [u8; 8] = mem.data(&caller)[addr..addr + 8].try_into().unwrap();
+                        u64::from_le_bytes(bytes)
+                    };
+
+                    // tag = (vpn ^ salt) | 1, keep tag 0 reserved for invalidation.
+                    let tag = (vpn ^ tlb_salt) | 1;
+
+                    let is_ram = vaddr_u < cpu_ptr as u64;
+                    let phys_base = vaddr_u & crate::PAGE_BASE_MASK;
+                    let flags = crate::TLB_FLAG_READ
+                        | crate::TLB_FLAG_WRITE
+                        | crate::TLB_FLAG_EXEC
+                        | if is_ram { crate::TLB_FLAG_IS_RAM } else { 0 };
+                    let data = phys_base | flags;
+
+                    let entry_addr = cpu_ptr as usize
+                        + JIT_CTX_TLB_OFFSET as usize
+                        + (idx as usize) * (crate::JIT_TLB_ENTRY_SIZE as usize);
+                    let mem_mut = mem.data_mut(&mut caller);
+                    mem_mut[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+                    mem_mut[entry_addr + 8..entry_addr + 16].copy_from_slice(&data.to_le_bytes());
+
+                    data as i64
+                },
+            )
+            .expect("define mmu_translate");
+    }
+
+    linker
+        .func_wrap(
+            IMPORT_MODULE,
+            IMPORT_JIT_EXIT_MMIO,
+            |_caller: Caller<'_, ()>,
+             _cpu_ptr: i32,
+             _vaddr: i64,
+             _size: i32,
+             _is_write: i32,
+             _value: i64,
+             _rip: i64|
+             -> i64 { JIT_EXIT_SENTINEL_I64 },
+        )
+        .expect("define jit_exit_mmio");
 
     linker
         .func_wrap(

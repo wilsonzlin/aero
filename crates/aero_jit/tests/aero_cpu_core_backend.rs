@@ -3,13 +3,14 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aero_cpu::CpuState;
+use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime};
+use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, JitRuntime};
 use aero_jit::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit::tier1_ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::Tier1WasmCodegen;
+use aero_jit::wasm::tier1::Tier1WasmOptions;
 use aero_types::{FlagSet, Gpr, Width};
 
 #[derive(Default)]
@@ -186,3 +187,48 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
     assert_eq!(cpu.state.read_gpr(Gpr::Rcx), 0x99);
 }
 
+#[test]
+fn wasmtime_backend_executes_inline_tlb_load_store() {
+    let entry = 0x1000u64;
+
+    let mut builder = IrBuilder::new(entry);
+    let addr = builder.const_int(Width::W64, 0x10);
+    let value = builder.const_int(Width::W32, 0x1122_3344);
+    builder.store(Width::W32, addr, value);
+    let loaded = builder.load(Width::W32, addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    let idx = backend.add_compiled_block(&wasm);
+
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+
+    let exit = backend.execute(idx, &mut cpu);
+    assert_eq!(exit.next_rip, 0x2000);
+    assert!(!exit.exit_to_interpreter);
+    assert_eq!(cpu.read_gpr(Gpr::Rax), 0x1122_3344);
+
+    let bytes = [
+        backend.read_u8(0x10),
+        backend.read_u8(0x11),
+        backend.read_u8(0x12),
+        backend.read_u8(0x13),
+    ];
+    assert_eq!(u32::from_le_bytes(bytes), 0x1122_3344);
+}
