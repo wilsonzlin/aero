@@ -69,6 +69,30 @@ function mockCollection(overrides: Partial<HidCollectionInfo> = {}): HidCollecti
 }
 
 describe("normalizeCollections(WebHID)", () => {
+  it("accepts partial WebHID dictionary shapes (optional fields)", () => {
+    const collections: HIDCollectionInfo[] = [
+      {
+        usagePage: 1,
+        usage: 2,
+        type: 1,
+        inputReports: [{}],
+      },
+    ];
+
+    const normalized = normalizeCollections(collections);
+    expect(normalized).toEqual([
+      {
+        usagePage: 1,
+        usage: 2,
+        collectionType: 1,
+        children: [],
+        inputReports: [{ reportId: 0, items: [] }],
+        outputReports: [],
+        featureReports: [],
+      },
+    ]);
+  });
+
   it("deep-copies the full tree and produces mutable JS arrays", () => {
     const itemUsages = Object.freeze([0xe0, 0xe7]) as unknown as readonly number[];
     const itemStrings = Object.freeze([]) as unknown as readonly number[];
