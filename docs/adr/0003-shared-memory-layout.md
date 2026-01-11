@@ -65,11 +65,13 @@ Contract:
 - JS/TS code must bounds-check guest accesses against `[0, guest_size)` and reject anything outside.
 - The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
 - The WASM build uses a **bounded global allocator** so Rust heap allocations cannot grow past `runtime_reserved` and silently corrupt guest RAM.
+- The WASM build links with `wasm-ld --stack-first` so the stack stays at low addresses; the stack must fit within `runtime_reserved`.
 
 Reference implementation:
 
 - Shared-memory segment allocation + layout computation: [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)
 - WASM-exported layout API: `crates/aero-wasm/src/lib.rs` (`guest_ram_layout`)
+- WASM build flags (imported memory, max memory, stack placement): [`web/scripts/build_wasm.mjs`](../../web/scripts/build_wasm.mjs)
 - IPC protocol (binary rings + atomics contracts): [`docs/ipc-protocol.md`](../ipc-protocol.md)
 
 ## Alternatives considered

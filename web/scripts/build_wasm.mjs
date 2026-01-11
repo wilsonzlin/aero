@@ -236,6 +236,9 @@ if (isRelease) {
 requiredRustflags.push(
     "-C link-arg=--import-memory",
     "-C link-arg=--export-memory",
+    // Place the Rust/WASM stack at low addresses so the runtime-reserved region
+    // is contiguous and guest RAM can live at high addresses (`guest_base`).
+    "-C link-arg=--stack-first",
     `-C link-arg=--max-memory=${maxMemoryBytes}`,
 );
 
