@@ -191,44 +191,10 @@ VOID StopDevice(_Inout_ DEVICE_CONTEXT *ctx)
 }
 ```
 
-## Optional: use the shared WDM wrapper (`virtio_pci_modern_wdm`)
-
-Some WDM drivers may choose to use the shared helper in:
-
-- `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
-- `drivers/windows7/virtio/common/include/virtio_pci_modern_wdm.h`
-
-This module is **not** a second transport implementation: it is a WDM-specific
-shim around the canonical `VirtioPciModernTransport` that wires up:
-
-- `GUID_PCI_BUS_INTERFACE_STANDARD` config reads
-- BAR0 discovery from `CM_RESOURCE_LIST`
-- `MmMapIoSpace` mapping
-- a selector spinlock for `common_cfg`
-- optional notify-address caching (`VirtioPciGetQueueNotifyAddress`)
-
-### What it does internally (debugging)
-
-- `VirtioPciModernWdmInit`:
-  - queries `GUID_PCI_BUS_INTERFACE_STANDARD` from the lower stack
-  - reads BAR0 programming from PCI config (bus address base)
-
-- `VirtioPciModernWdmMapBars`:
-  - matches BAR0 against `IRP_MN_START_DEVICE` resources
-  - initializes the underlying `VIRTIO_PCI_MODERN_TRANSPORT` in strict mode
-    (contract v1 checks + cap parsing)
-  - maps BAR0 MMIO and exposes `Dev->CommonCfg`, `Dev->NotifyBase`,
-    `Dev->IsrStatus`, `Dev->DeviceCfg`, and `Dev->NotifyOffMultiplier`
-
-- `VirtioIntxConnect`:
-  - connects an INTx ISR via `IoConnectInterrupt` using the *translated* interrupt resource
-  - the ISR performs the required virtio read-to-ack by reading the ISR status byte
-  - work is dispatched to optional per-device callbacks from a DPC; disconnect waits for in-flight DPC completion
-
 Note: in strict mode `VirtioPciModernTransportInit` verifies that the BAR0
-address passed to it matches the BAR0 base programmed in PCI config space. If
-your driver framework reports different raw vs translated addresses, pass the
-BAR0 bus address and translate inside `MapMmio`.
+physical address passed to it matches the BAR0 base programmed in PCI config
+space. If your driver stack reports different *raw* vs *translated* addresses,
+pass the BAR0 bus address and translate inside your `MapMmio` callback.
 
 ## How this relates to other virtio code in this repo
 
@@ -247,6 +213,7 @@ StorPort/NDIS drivers provide the required OS callbacks for PCI config access an
 
 `virtio-core` provides a more general virtio-pci modern discovery/mapping layer, primarily targeted at **KMDF** drivers.
 
-It can be built without WDF (`VIRTIO_CORE_USE_WDF=0`), but it exports several transport helper symbols
-(`VirtioPciResetDevice`, `VirtioPciNegotiateFeatures`, etc.) that overlap with `virtio_pci_modern_wdm`.
-Don’t link both into the same driver without resolving the symbol/name conflicts.
+It can be built without WDF (`VIRTIO_CORE_USE_WDF=0`) but uses a different device
+abstraction (`VIRTIO_PCI_MODERN_DEVICE`) and provides its own init/mapping
+helpers. For WDF-free drivers in this repo, prefer the canonical transport in
+`drivers/windows/virtio/pci-modern/`.

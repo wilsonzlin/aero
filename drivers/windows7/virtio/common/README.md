@@ -17,26 +17,16 @@ MMIO via a small OS callback interface (`VIRTIO_PCI_MODERN_OS_INTERFACE`), and
 enforces the **AERO-W7-VIRTIO v1** contract in **STRICT** mode (REV_01, BAR0
 layout/length, `notify_off_multiplier`, required features, etc).
 
-### Optional WDM wrapper (`virtio_pci_modern_wdm`)
+See:
 
-For WDM stack drivers, this directory provides a thin wrapper that wires up:
+- [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md) (WDM)
+- [`docs/windows/win7-miniport-virtio-pci-modern.md`](../../../../docs/windows/win7-miniport-virtio-pci-modern.md) (NDIS/StorPort)
 
-- `GUID_PCI_BUS_INTERFACE_STANDARD` config reads
-- BAR discovery via `CM_RESOURCE_LIST`
-- `MmMapIoSpace` mapping
+This directory provides shared helpers often used alongside the canonical
+transport:
 
-This wrapper then delegates to the canonical transport:
-
-- `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
-
-This wrapper intentionally contains **no independent modern transport
-implementation**; it only exposes a small `VirtioPci*` convenience API over the
-canonical `VirtioPciModernTransport*` implementation.
-
-Other shared helpers:
-
-- `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c` — WDM INTx ISR read-to-ack + DPC dispatch
-- `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c` — AERO-W7-VIRTIO v1 PCI identity validation helpers
+- `virtio_pci_intx_wdm.*` — WDM INTx ISR read-to-ack + DPC dispatch
+- `virtio_pci_contract.*` — AERO-W7-VIRTIO v1 PCI identity validation helpers
 
 ## Aero contract v1 (AERO-W7-VIRTIO)
 
@@ -90,8 +80,6 @@ is retained only for compatibility/testing with transitional/QEMU devices.
   - Shared WDM INTx ISR + DPC helper for virtio-pci devices (ISR read-to-ack, then DPC dispatch).
 - `include/virtio_pci_contract.h` + `src/virtio_pci_contract.c`
   - Optional PCI identity validation helpers (AERO-W7-VIRTIO contract checks).
-- `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
-  - WDM wrapper over the canonical virtio-pci modern transport.
 - `include/virtio_pci_legacy.h` + `src/virtio_pci_legacy.c`
   - Legacy/transitional virtio-pci transport (virtio 0.9 I/O-port register set).
 - `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
