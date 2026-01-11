@@ -160,6 +160,17 @@ test("startAudioPerfSampling() emits audio.* counters and prefers worklet underr
     const underrunValues = calls.filter((c) => c.name === "audio.underrunFrames").map((c) => c.value);
     assert.equal(underrunValues[0], 1);
     assert.ok(underrunValues.includes(123));
+
+    // Counter is a wrapping u32; ensure perf sampling doesn't clamp via Math.max and
+    // can observe a wrap back to a small value.
+    port.dispatchMessage({ type: "underrun", underrunFramesTotal: 0xffff_fffe });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    port.dispatchMessage({ type: "underrun", underrunFramesTotal: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const underrunValuesAfterWrap = calls.filter((c) => c.name === "audio.underrunFrames").map((c) => c.value);
+    assert.ok(underrunValuesAfterWrap.includes(0xffff_fffe));
+    assert.ok(underrunValuesAfterWrap.includes(2));
   } finally {
     stop();
   }
