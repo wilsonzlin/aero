@@ -231,13 +231,6 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   context->OMSetRenderTargets(1, rtvs1, NULL);
   context->ClearRenderTargetView(rtv1.get(), green);
 
-  context->Flush();
-
-  hr = swapchain->Present(0, 0);
-  if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "IDXGISwapChain::Present", hr, device.get());
-  }
-
   D3D11_TEXTURE2D_DESC st_desc = bb_desc;
   st_desc.Usage = D3D11_USAGE_STAGING;
   st_desc.BindFlags = 0;
@@ -256,13 +249,54 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging1)", hr);
   }
 
+  // Validate the pre-present contents to make swapchain-rotation failures clearer. If these don't
+  // match, the failure is in rendering/readback rather than RotateResourceIdentities.
+  context->CopyResource(staging0.get(), buffer0.get());
+  context->CopyResource(staging1.get(), buffer1.get());
+  context->Flush();
+
+  D3D11_MAPPED_SUBRESOURCE map;
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(staging0.get(), 0, D3D11_MAP_READ, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging0, pre-present)", hr, device.get());
+  }
+  const uint32_t before0 =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
+  context->Unmap(staging0.get(), 0);
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(staging1.get(), 0, D3D11_MAP_READ, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging1, pre-present)", hr, device.get());
+  }
+  const uint32_t before1 =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
+  context->Unmap(staging1.get(), 0);
+
+  const uint32_t expected_before0 = 0xFFFF0000u;
+  const uint32_t expected_before1 = 0xFF00FF00u;
+  if ((before0 & 0x00FFFFFFu) != (expected_before0 & 0x00FFFFFFu) ||
+      (before1 & 0x00FFFFFFu) != (expected_before1 & 0x00FFFFFFu)) {
+    return aerogpu_test::Fail(kTestName,
+                              "pre-present buffer contents mismatch: buffer0=0x%08lX buffer1=0x%08lX (expected buffer0~0x%08lX buffer1~0x%08lX)",
+                              (unsigned long)before0,
+                              (unsigned long)before1,
+                              (unsigned long)expected_before0,
+                              (unsigned long)expected_before1);
+  }
+
+  hr = swapchain->Present(0, 0);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "IDXGISwapChain::Present", hr, device.get());
+  }
+
   context->CopyResource(staging0.get(), buffer0.get());
   context->CopyResource(staging1.get(), buffer1.get());
   context->Flush();
 
   const std::wstring dir = aerogpu_test::GetModuleDir();
 
-  D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging0.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
@@ -309,7 +343,9 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   if ((after0 & 0x00FFFFFFu) != (expected0 & 0x00FFFFFFu) ||
       (after1 & 0x00FFFFFFu) != (expected1 & 0x00FFFFFFu)) {
     return aerogpu_test::Fail(kTestName,
-                              "swapchain buffer identity mismatch after Present: buffer0=0x%08lX buffer1=0x%08lX (expected buffer0~0x%08lX buffer1~0x%08lX)",
+                              "swapchain buffer identity mismatch after Present: before(buffer0=0x%08lX buffer1=0x%08lX) after(buffer0=0x%08lX buffer1=0x%08lX) (expected after buffer0~0x%08lX buffer1~0x%08lX)",
+                              (unsigned long)before0,
+                              (unsigned long)before1,
                               (unsigned long)after0,
                               (unsigned long)after1,
                               (unsigned long)expected0,
