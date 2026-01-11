@@ -104,6 +104,12 @@ Cancellation behavior (important):
 - Stale completions are therefore expected and must be safely ignored (the Rust model already
   does this by checking `id` against in-flight state).
 
+Descriptor status (current code):
+
+- `UsbPassthroughDevice` currently returns empty device/config/HID descriptors. Full passthrough
+  enumeration requires synthesizing guest-visible descriptors from the physical device (including
+  `OTHER_SPEED_CONFIGURATION` fixups for UHCI/full-speed).
+
 ### Layer 2 (host/TS): WebUSB executor + broker (main thread)
 
 The host side owns the actual `USBDevice` handle and performs WebUSB calls:
