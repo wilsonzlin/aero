@@ -201,7 +201,7 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
         NULL,
         KSPIN_DATAFLOW_IN,
         KSPIN_COMMUNICATION_BRIDGE,
-        &KSCATEGORY_AUDIO,
+        &KSNODETYPE_WAVE_OUT,
         &KSPINNAME_WAVE_OUT
     },
 
@@ -215,7 +215,7 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
         NULL,
         KSPIN_DATAFLOW_OUT,
         KSPIN_COMMUNICATION_NONE,
-        &KSCATEGORY_AUDIO,
+        &KSNODETYPE_SPEAKER,
         &KSPINNAME_SPEAKER
     },
 };
