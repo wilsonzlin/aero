@@ -64,7 +64,9 @@ jobs:
         with:
           browsers: chromium
           working-directory: base
-          lockfile: base/package-lock.json
+          # Use the candidate lockfile for caching so we restore once per job (the baseline
+          # invocation will still install any additional browser revisions it needs).
+          lockfile: head/package-lock.json
 
       - name: Run storage perf (baseline)
         working-directory: base

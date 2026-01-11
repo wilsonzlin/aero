@@ -54,6 +54,15 @@ jobs:
           working-directory: ${{ steps.node-workspace-head.outputs.dir }}
           lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
+      - name: Setup Playwright (cached, baseline)
+        uses: ./head/.github/actions/setup-playwright
+        with:
+          browsers: chromium
+          working-directory: ${{ steps.node-workspace-base.outputs.dir }}
+          # Use the candidate lockfile for caching so we restore once per job (the baseline
+          # invocation will still install any additional browser revisions it needs).
+          lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
+
       - name: Write scenario params
         working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
