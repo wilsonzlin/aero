@@ -339,8 +339,7 @@ async function runLoop(): Promise<void> {
       if (frameId !== 0 && frameId !== perfLastFrameId) {
         perfLastFrameId = frameId;
         perfWriter.frameSample(frameId, {
-          durations: { jit_ms: perfJitMs > 0 ? perfJitMs : 0.01 },
-          counters: { instructions: perfBlocksCompiled },
+          durations: { jit_ms: perfJitMs },
         });
         perfJitMs = 0;
         perfBlocksCompiled = 0;
