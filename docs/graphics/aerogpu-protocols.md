@@ -1,14 +1,15 @@
 # AeroGPU protocols in this repository
 
 This repository contains multiple guest↔host GPU “protocols” that have accumulated during
-bring-up. Only **one** of them is the real Windows 7 (WDDM-style) AeroGPU ABI.
+bring-up. Only **one** of them is the real Windows 7 (WDDM-style) **versioned** AeroGPU ABI
+that new work should target.
 
 If you are doing new work and you are not explicitly working on a prototype, **target the
 Win7/WDDM ABI** described below.
 
 ## Win7/WDDM target ABI (the real AeroGPU protocol)
 
-**Source of truth (stable ABI headers):** `drivers/aerogpu/protocol/*`
+**Source of truth (versioned ABI headers):** `drivers/aerogpu/protocol/*`
 
 - `aerogpu_pci.h` — PCI IDs, BAR0 layout, MMIO register map, feature bits.
 - `aerogpu_ring.h` — ring header + submission descriptors + (optional) fence page.
@@ -24,6 +25,16 @@ Win7/WDDM ABI** described below.
 
 This is the ABI that the Windows 7 WDDM 1.1 driver stack (KMD + UMD) targets.
 
+### Legacy bring-up ABI (still present, but not the long-term target)
+
+There is also a **legacy bring-up** PCI/MMIO ABI:
+
+- Header: `drivers/aerogpu/protocol/aerogpu_protocol.h`
+- Host device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
+
+It exists for migration/compatibility and should generally not be the target for new features.
+For a concise mapping of PCI IDs ↔ ABI ↔ device model, see `docs/abi/aerogpu-pci-identity.md`.
+
 ## Legacy prototype: toy CREATE_SURFACE/PRESENT protocol (removed)
 
 This repository previously contained a minimal, self-contained paravirtual GPU used for early
@@ -35,6 +46,8 @@ The protocol is still documented for reference in `docs/abi/gpu-command-protocol
 
 - Commands are things like `CREATE_SURFACE`, `UPDATE_SURFACE`, `CLEAR_RGBA`, `PRESENT`.
 - The code is intentionally simple and does not model WDDM concepts.
+- It used stale placeholder PCI IDs (`VEN_1AE0` / `DEV_E001`) and must not be used as a driver
+  contract (see `docs/abi/aerogpu-pci-identity.md`).
 
 It is **not** compatible with the Win7/WDDM AeroGPU protocol.
 

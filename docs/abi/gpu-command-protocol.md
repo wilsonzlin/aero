@@ -6,6 +6,9 @@ This document specifies a **toy/prototype** guest ↔ host command ABI (commands
 The in-tree implementation previously lived under `crates/aero-emulator`, but it has since
 been removed in favor of the canonical Win7/WDDM path.
 
+It also used stale placeholder PCI IDs (`VEN_1AE0` / `DEV_E001`) and must not be used as a
+Windows driver contract (see `docs/abi/aerogpu-pci-identity.md`).
+
 It is **not** the Windows 7 / WDDM AeroGPU protocol. For the Win7/WDDM target ABI, see
 `drivers/aerogpu/protocol/*` and `docs/graphics/aerogpu-protocols.md`.
 
