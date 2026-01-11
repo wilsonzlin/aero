@@ -11,9 +11,9 @@ mod dns;
 mod origin;
 mod overrides;
 mod policy;
-mod session_limits;
 mod server;
 mod session;
+mod session_limits;
 
 pub use config::{AllowedOrigins, AuthMode, ProxyConfig, SecurityConfig};
 pub use policy::EgressPolicy;

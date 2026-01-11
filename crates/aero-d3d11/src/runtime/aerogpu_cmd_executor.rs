@@ -2159,7 +2159,10 @@ impl AerogpuD3d11Executor {
 
         let group_layouts: Vec<CachedBindGroupLayout> = group_entries
             .iter()
-            .map(|entries| self.bind_group_layout_cache.get_or_create(&self.device, entries))
+            .map(|entries| {
+                self.bind_group_layout_cache
+                    .get_or_create(&self.device, entries)
+            })
             .collect();
 
         let layout_key = PipelineLayoutKey {
@@ -2171,14 +2174,13 @@ impl AerogpuD3d11Executor {
         } else {
             let bgl_refs: Vec<&wgpu::BindGroupLayout> =
                 group_layouts.iter().map(|l| l.layout.as_ref()).collect();
-            let pipeline_layout = Arc::new(
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("aerogpu_cmd pipeline layout"),
-                        bind_group_layouts: &bgl_refs,
-                        push_constant_ranges: &[],
-                    }),
-            );
+            let pipeline_layout = Arc::new(self.device.create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu_cmd pipeline layout"),
+                    bind_group_layouts: &bgl_refs,
+                    push_constant_ranges: &[],
+                },
+            ));
             self.pipeline_layout_cache
                 .insert(layout_key.clone(), pipeline_layout.clone());
             pipeline_layout

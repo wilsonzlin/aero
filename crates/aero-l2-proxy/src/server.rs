@@ -297,13 +297,11 @@ async fn l2_ws_handler(
         },
     };
 
-    let session_tunnel_permit: Option<SessionTunnelPermit> = match (
-        session_id.as_deref(),
-        state.session_tunnels.as_ref(),
-    ) {
-        (Some(session_id), Some(tracker)) => tracker.try_acquire(session_id),
-        _ => None,
-    };
+    let session_tunnel_permit: Option<SessionTunnelPermit> =
+        match (session_id.as_deref(), state.session_tunnels.as_ref()) {
+            (Some(session_id), Some(tracker)) => tracker.try_acquire(session_id),
+            _ => None,
+        };
 
     if session_id.is_some() && state.session_tunnels.is_some() && session_tunnel_permit.is_none() {
         state.metrics.upgrade_reject_max_tunnels_per_session();
