@@ -114,6 +114,67 @@ async fn range_single_byte_returns_206() {
 }
 
 #[tokio::test]
+async fn range_with_if_range_matching_etag_returns_206() {
+    let (app, _dir) = setup_app(1024).await;
+
+    let head = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/v1/images/test.img")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let etag = head.headers()[header::ETAG].to_str().unwrap().to_string();
+    assert!(
+        !etag.starts_with("W/"),
+        "If-Range support requires a strong ETag, got {etag:?}"
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img")
+                .header(header::RANGE, "bytes=0-0")
+                .header(header::IF_RANGE, etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"H");
+}
+
+#[tokio::test]
+async fn range_with_if_range_mismatch_returns_200() {
+    let (app, _dir) = setup_app(1024).await;
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images/test.img")
+                .header(header::RANGE, "bytes=0-0")
+                .header(header::IF_RANGE, "\"mismatch\"")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"Hello, world!");
+}
+
+#[tokio::test]
 async fn range_unsatisfiable_returns_416_with_content_range_star() {
     let (app, _dir) = setup_app(1024).await;
 

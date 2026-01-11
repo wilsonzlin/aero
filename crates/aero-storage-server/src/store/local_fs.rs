@@ -95,7 +95,7 @@ impl LocalFsImageStore {
     async fn meta_from_path(&self, path: &Path) -> Result<ImageMeta, StoreError> {
         let meta = fs::metadata(path).await.map_err(map_not_found)?;
         let last_modified = meta.modified().ok();
-        let etag = Some(weak_etag_from_size_and_mtime(meta.len(), last_modified));
+        let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
 
         Ok(ImageMeta {
             size: meta.len(),
@@ -116,8 +116,8 @@ struct ResolvedImage {
     path: PathBuf,
 }
 
-fn weak_etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> String {
-    // Deterministic weak ETag based on (size, mtime). This avoids hashing large images.
+fn etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> String {
+    // Deterministic ETag based on (size, mtime). This avoids hashing large images.
     //
     // Note: filesystems with coarse mtime resolution may not change this ETag for rapid edits.
     let mtime = mtime
@@ -125,11 +125,7 @@ fn weak_etag_from_size_and_mtime(size: u64, mtime: Option<SystemTime>) -> String
         .map(|d| (d.as_secs(), d.subsec_nanos()))
         .unwrap_or((0, 0));
 
-    format!(
-        "W/\"{size:x}-{sec:x}-{nsec:x}\"",
-        sec = mtime.0,
-        nsec = mtime.1
-    )
+    format!("\"{size:x}-{sec:x}-{nsec:x}\"", sec = mtime.0, nsec = mtime.1)
 }
 
 fn map_not_found(err: std::io::Error) -> StoreError {
