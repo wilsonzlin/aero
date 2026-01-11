@@ -407,6 +407,11 @@ struct AeroGpuResource {
 
   std::vector<uint8_t> storage;
 
+  // Fence value of the most recent GPU submission that writes into this resource
+  // (conservative). Used for staging readback Map(READ) synchronization so
+  // Map(DO_NOT_WAIT) does not spuriously fail due to unrelated in-flight work.
+  uint64_t last_gpu_write_fence = 0;
+
   // Map state (for UP resources backed by `storage`).
   bool mapped = false;
   bool mapped_write = false;
@@ -486,6 +491,12 @@ struct AeroGpuDevice {
   // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
+
+  // Staging resources written by commands recorded since the last submission.
+  // After submission, their `last_gpu_write_fence` is updated to the returned
+  // fence value.
+  std::vector<AeroGpuResource*> pending_staging_writes;
+
   // Monitored fence state for Win7/WDDM 1.1.
   // These fields are expected to be initialized by the real WDDM submission path.
   D3DKMT_HANDLE kmt_device = 0;
@@ -540,6 +551,31 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
   }
 }
 
+static bool SupportsTransfer(const AeroGpuDevice* dev) {
+  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
+    return false;
+  }
+  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
+  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
+    return false;
+  }
+  const uint32_t major = blob.device_abi_version_u32 >> 16;
+  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
+  return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
+}
+
+static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
+  if (!dev || !dst) {
+    return;
+  }
+  if (dst->bind_flags != 0) {
+    return;
+  }
+  if (dst->backing_alloc_id == 0) {
+    return;
+  }
+  dev->pending_staging_writes.push_back(dst);
+}
 template <typename Fn, typename Handle, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
   // Some WDK revisions disagree on whether the first parameter is a D3D10 or
@@ -807,6 +843,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   }
   if (dev->cmd.empty()) {
     dev->wddm_submit_allocation_handles.clear();
+    dev->pending_staging_writes.clear();
     return 0;
   }
   if (!dev->adapter) {
@@ -815,6 +852,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     }
     dev->cmd.reset();
     dev->wddm_submit_allocation_handles.clear();
+    dev->pending_staging_writes.clear();
     return 0;
   }
 
@@ -830,10 +868,20 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   dev->cmd.reset();
   dev->wddm_submit_allocation_handles.clear();
   if (FAILED(hr)) {
+    dev->pending_staging_writes.clear();
     if (out_hr) {
       *out_hr = hr;
     }
     return 0;
+  }
+
+  if (!dev->pending_staging_writes.empty()) {
+    for (AeroGpuResource* res : dev->pending_staging_writes) {
+      if (res) {
+        res->last_gpu_write_fence = fence;
+      }
+    }
+    dev->pending_staging_writes.clear();
   }
 
   if (fence != 0) {
@@ -1425,9 +1473,10 @@ void InitDeviceFuncsWithStubs(FuncsT* funcs) {
   }
 }
 
-// Minimal CopyResource implementation used by the Win7 triangle tests.
-// Emit a COPY_* command so the host executor can perform the copy (and, for
-// staging resources, write back the results into guest memory).
+// CopyResource is used by the Win7 staging readback path (copy backbuffer ->
+// staging, then Map). Prefer emitting COPY_* commands so the host executor can
+// perform the copy; for staging destinations request WRITEBACK_DST so Map(READ)
+// observes the updated bytes.
 template <typename FnPtr>
 struct CopyResourceImpl;
 
@@ -1489,71 +1538,154 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
     if (!dev) {
       return finish(E_INVALIDARG);
     }
-    if (dst->kind != src->kind) {
-      return finish(E_INVALIDARG);
-    }
 
-    TrackWddmAllocForSubmitLocked(dev, dst);
-    TrackWddmAllocForSubmitLocked(dev, src);
-
-    if (dst->kind == ResourceKind::Buffer) {
-      const uint64_t bytes = std::min(dst->size_bytes, src->size_bytes);
-      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
-      if (!cmd) {
-        return finish(E_OUTOFMEMORY);
-      }
-      cmd->dst_buffer = dst->handle;
-      cmd->src_buffer = src->handle;
-      cmd->dst_offset_bytes = 0;
-      cmd->src_offset_bytes = 0;
-      cmd->size_bytes = bytes;
-      uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-      if (dst->backing_alloc_id != 0 && dst->bind_flags == 0) {
-        copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
-      }
-      cmd->flags = copy_flags;
-      cmd->reserved0 = 0;
-      return finish(S_OK);
-    }
-
-    if (dst->kind == ResourceKind::Texture2D) {
-      if (dst->dxgi_format != src->dxgi_format) {
+    try {
+      if (dst->kind != src->kind) {
         return finish(E_INVALIDARG);
       }
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu(dst->dxgi_format);
-      if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-        return finish(E_NOTIMPL);
-      }
 
-      const uint32_t copy_w = std::min(dst->width, src->width);
-      const uint32_t copy_h = std::min(dst->height, src->height);
+      if (dst->kind == ResourceKind::Buffer) {
+        const uint64_t copy_bytes = std::min<uint64_t>(dst->size_bytes, src->size_bytes);
 
-      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
-      if (!cmd) {
-        return finish(E_OUTOFMEMORY);
+        const uint64_t dst_storage_bytes = AlignUpU64(dst->size_bytes ? dst->size_bytes : 1, 4);
+        const uint64_t src_storage_bytes = AlignUpU64(src->size_bytes ? src->size_bytes : 1, 4);
+        if (dst_storage_bytes > static_cast<uint64_t>(SIZE_MAX) || src_storage_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+          return finish(E_OUTOFMEMORY);
+        }
+
+        if (dst->storage.size() < static_cast<size_t>(dst_storage_bytes)) {
+          dst->storage.resize(static_cast<size_t>(dst_storage_bytes), 0);
+        }
+        if (src->storage.size() < static_cast<size_t>(src_storage_bytes)) {
+          src->storage.resize(static_cast<size_t>(src_storage_bytes), 0);
+        }
+
+        if (copy_bytes) {
+          std::memcpy(dst->storage.data(), src->storage.data(), static_cast<size_t>(copy_bytes));
+        }
+
+        const bool transfer_aligned = ((copy_bytes & 3ull) == 0);
+        const bool same_buffer = (dst->handle == src->handle);
+        if (SupportsTransfer(dev) && transfer_aligned && !same_buffer) {
+          TrackWddmAllocForSubmitLocked(dev, dst);
+          TrackWddmAllocForSubmitLocked(dev, src);
+
+          auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+          if (!cmd) {
+            return finish(E_OUTOFMEMORY);
+          }
+          cmd->dst_buffer = dst->handle;
+          cmd->src_buffer = src->handle;
+          cmd->dst_offset_bytes = 0;
+          cmd->src_offset_bytes = 0;
+          cmd->size_bytes = copy_bytes;
+          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+          if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
+            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+          }
+          cmd->flags = copy_flags;
+          cmd->reserved0 = 0;
+          TrackStagingWriteLocked(dev, dst);
+        } else if (copy_bytes) {
+          TrackWddmAllocForSubmitLocked(dev, dst);
+          emit_upload_resource_locked(dev, dst, 0, copy_bytes);
+        }
+      } else if (dst->kind == ResourceKind::Texture2D) {
+        if (dst->dxgi_format != src->dxgi_format) {
+          return finish(E_INVALIDARG);
+        }
+
+        const uint32_t aer_fmt = dxgi_format_to_aerogpu(dst->dxgi_format);
+        if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+          return finish(E_NOTIMPL);
+        }
+        const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+        if (bpp == 0) {
+          return finish(E_NOTIMPL);
+        }
+
+        auto ensure_row_pitch = [&](AeroGpuResource* res) -> bool {
+          if (!res) {
+            return false;
+          }
+          if (res->row_pitch_bytes != 0) {
+            return true;
+          }
+          const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+          if (row_bytes_u64 == 0 || row_bytes_u64 > UINT32_MAX) {
+            return false;
+          }
+          res->row_pitch_bytes = static_cast<uint32_t>(row_bytes_u64);
+          return true;
+        };
+        if (!ensure_row_pitch(dst) || !ensure_row_pitch(src)) {
+          return finish(E_OUTOFMEMORY);
+        }
+
+        const uint32_t copy_w = std::min(dst->width, src->width);
+        const uint32_t copy_h = std::min(dst->height, src->height);
+        const uint64_t row_bytes_u64 = static_cast<uint64_t>(copy_w) * static_cast<uint64_t>(bpp);
+        if (row_bytes_u64 > static_cast<uint64_t>(SIZE_MAX)) {
+          return finish(E_OUTOFMEMORY);
+        }
+        const size_t row_bytes = static_cast<size_t>(row_bytes_u64);
+
+        const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
+        const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
+        if (dst_total > static_cast<uint64_t>(SIZE_MAX) || src_total > static_cast<uint64_t>(SIZE_MAX)) {
+          return finish(E_OUTOFMEMORY);
+        }
+        if (dst->storage.size() < static_cast<size_t>(dst_total)) {
+          dst->storage.resize(static_cast<size_t>(dst_total), 0);
+        }
+        if (src->storage.size() < static_cast<size_t>(src_total)) {
+          src->storage.resize(static_cast<size_t>(src_total), 0);
+        }
+
+        for (uint32_t y = 0; y < copy_h; ++y) {
+          const uint8_t* src_row = src->storage.data() + static_cast<size_t>(y) * src->row_pitch_bytes;
+          uint8_t* dst_row = dst->storage.data() + static_cast<size_t>(y) * dst->row_pitch_bytes;
+          std::memcpy(dst_row, src_row, row_bytes);
+        }
+
+        const bool same_texture = (dst->handle == src->handle);
+        if (SupportsTransfer(dev) && !same_texture) {
+          TrackWddmAllocForSubmitLocked(dev, dst);
+          TrackWddmAllocForSubmitLocked(dev, src);
+
+          auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+          if (!cmd) {
+            return finish(E_OUTOFMEMORY);
+          }
+          cmd->dst_texture = dst->handle;
+          cmd->src_texture = src->handle;
+          cmd->dst_mip_level = 0;
+          cmd->dst_array_layer = 0;
+          cmd->src_mip_level = 0;
+          cmd->src_array_layer = 0;
+          cmd->dst_x = 0;
+          cmd->dst_y = 0;
+          cmd->src_x = 0;
+          cmd->src_y = 0;
+          cmd->width = copy_w;
+          cmd->height = copy_h;
+          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+          if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
+            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+          }
+          cmd->flags = copy_flags;
+          cmd->reserved0 = 0;
+          TrackStagingWriteLocked(dev, dst);
+        } else if (dst_total != 0) {
+          TrackWddmAllocForSubmitLocked(dev, dst);
+          emit_upload_resource_locked(dev, dst, 0, dst_total);
+        }
       }
-      cmd->dst_texture = dst->handle;
-      cmd->src_texture = src->handle;
-      cmd->dst_mip_level = 0;
-      cmd->dst_array_layer = 0;
-      cmd->src_mip_level = 0;
-      cmd->src_array_layer = 0;
-      cmd->dst_x = 0;
-      cmd->dst_y = 0;
-      cmd->src_x = 0;
-      cmd->src_y = 0;
-      cmd->width = copy_w;
-      cmd->height = copy_h;
-      uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-      if (dst->backing_alloc_id != 0 && dst->bind_flags == 0) {
-        copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
-      }
-      cmd->flags = copy_flags;
-      cmd->reserved0 = 0;
-      return finish(S_OK);
+    } catch (...) {
+      return finish(E_OUTOFMEMORY);
     }
 
-    return finish(E_NOTIMPL);
+    return finish(S_OK);
   }
 };
 
@@ -2303,6 +2435,11 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!dev->pending_staging_writes.empty()) {
+    dev->pending_staging_writes.erase(
+        std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
+        dev->pending_staging_writes.end());
+  }
   if (res->mapped) {
     unmap_resource_locked(dev, res, res->mapped_subresource);
   }
@@ -2511,7 +2648,6 @@ HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uin
   }
 
   // Only apply implicit readback synchronization for staging-style resources.
-  // (This file is still conservative and uses the device fence rather than per-resource tracking.)
   if (res->bind_flags != 0) {
     return S_OK;
   }
@@ -2525,7 +2661,7 @@ HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uin
     }
   }
 
-  const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
+  const uint64_t fence = res->last_gpu_write_fence;
   if (fence == 0) {
     return S_OK;
   }
@@ -2705,6 +2841,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
   }
 
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
   if (!res->storage.empty()) {
     if (map_type == kD3DMapWriteDiscard) {
       if (res->kind == ResourceKind::Texture2D) {
@@ -2716,7 +2853,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
       } else {
         std::memset(lock_cb.pData, 0, res->storage.size());
       }
-    } else if (res->kind == ResourceKind::Texture2D) {
+    } else if (!is_guest_backed && res->kind == ResourceKind::Texture2D) {
       const uint32_t src_pitch = res->row_pitch_bytes;
       const uint32_t dst_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : src_pitch;
       const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
@@ -2738,8 +2875,33 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
       } else {
         std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
       }
-    } else {
+    } else if (!is_guest_backed) {
       std::memcpy(lock_cb.pData, res->storage.data(), res->storage.size());
+    } else if (want_read && res->kind == ResourceKind::Texture2D) {
+      const uint32_t dst_pitch = res->row_pitch_bytes;
+      const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : dst_pitch;
+
+      const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+      const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+          src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+        const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+        const uint8_t* src_bytes = static_cast<const uint8_t*>(lock_cb.pData);
+        auto* dst_bytes = res->storage.data();
+        for (uint32_t y = 0; y < res->height; y++) {
+          std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
+                      src_bytes + static_cast<size_t>(y) * src_pitch,
+                      row_bytes);
+          if (dst_pitch > row_bytes) {
+            std::memset(dst_bytes + static_cast<size_t>(y) * dst_pitch + row_bytes, 0, dst_pitch - row_bytes);
+          }
+        }
+      } else {
+        std::memcpy(res->storage.data(), lock_cb.pData, res->storage.size());
+      }
+    } else if (want_read) {
+      std::memcpy(res->storage.data(), lock_cb.pData, res->storage.size());
     }
   }
 
@@ -4744,6 +4906,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     uint32_t wddm_allocation_handle = 0;
     AeroGpuResource::WddmIdentity wddm;
     std::vector<uint8_t> storage;
+    uint64_t last_gpu_write_fence = 0;
     bool mapped = false;
     bool mapped_write = false;
     uint32_t mapped_subresource = 0;
@@ -4762,6 +4925,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     id.wddm_allocation_handle = res->wddm_allocation_handle;
     id.wddm = std::move(res->wddm);
     id.storage = std::move(res->storage);
+    id.last_gpu_write_fence = res->last_gpu_write_fence;
     id.mapped = res->mapped;
     id.mapped_write = res->mapped_write;
     id.mapped_subresource = res->mapped_subresource;
@@ -4780,6 +4944,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     res->wddm_allocation_handle = id.wddm_allocation_handle;
     res->wddm = std::move(id.wddm);
     res->storage = std::move(id.storage);
+    res->last_gpu_write_fence = id.last_gpu_write_fence;
     res->mapped = id.mapped;
     res->mapped_write = id.mapped_write;
     res->mapped_subresource = id.mapped_subresource;
