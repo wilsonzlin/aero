@@ -4504,6 +4504,24 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
 }
 #endif // _WIN32
 
+static void resolve_pending_event_queries(Device* dev, uint64_t fence_value) {
+  if (!dev) {
+    return;
+  }
+  if (dev->pending_event_queries.empty()) {
+    return;
+  }
+
+  for (Query* q : dev->pending_event_queries) {
+    if (!q) {
+      continue;
+    }
+    q->fence_value.store(fence_value, std::memory_order_release);
+    q->submitted.store(true, std::memory_order_release);
+  }
+  dev->pending_event_queries.clear();
+}
+
 uint64_t submit(Device* dev, bool is_present) {
   if (!dev) {
     return 0;
@@ -4525,6 +4543,7 @@ uint64_t submit(Device* dev, bool is_present) {
     }
 #endif
     const uint64_t fence = dev->last_submission_fence;
+    resolve_pending_event_queries(dev, fence);
     dev->cmd.reset();
     dev->alloc_list_tracker.reset();
     dev->wddm_context.reset_submission_buffers();
@@ -4811,6 +4830,7 @@ uint64_t submit(Device* dev, bool is_present) {
   }
 
   dev->last_submission_fence = per_submission_fence;
+  resolve_pending_event_queries(dev, per_submission_fence);
   dev->cmd.reset();
   dev->alloc_list_tracker.reset();
   dev->wddm_context.reset_submission_buffers();
@@ -4822,7 +4842,17 @@ HRESULT flush_locked(Device* dev) {
   // D3DGETDATA_FLUSH polling loops (e.g. DWM EVENT queries): if we submit an
   // empty buffer every poll we can flood the KMD/emulator with redundant
   // submissions and increase CPU usage.
-  if (!dev || dev->cmd.empty()) {
+  if (!dev) {
+    return S_OK;
+  }
+  if (dev->cmd.empty()) {
+    // If we have pending EVENT queries waiting for a submission fence, allow
+    // this flush call to "resolve" them without forcing an empty DMA buffer to
+    // the kernel. `submit()`'s empty-path stamps queries with
+    // `last_submission_fence`.
+    if (!dev->pending_event_queries.empty()) {
+      (void)submit(dev);
+    }
     return S_OK;
   }
   // If we cannot fit an explicit FLUSH marker into the remaining space, just
@@ -10569,7 +10599,16 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_query(
                       d3d9_trace_arg_ptr(hQuery.pDrvPrivate),
                       0,
                       0);
-  delete as_query(hQuery);
+  auto* dev = as_device(hDevice);
+  auto* q = as_query(hQuery);
+  if (dev && q) {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto& pending = dev->pending_event_queries;
+    if (!pending.empty()) {
+      pending.erase(std::remove(pending.begin(), pending.end(), q), pending.end());
+    }
+  }
+  delete q;
   return trace.ret(S_OK);
 }
 
@@ -10613,17 +10652,26 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
     return trace.ret(S_OK);
   }
 
-  // Ensure all prior GPU work is submitted and capture the submission fence.
-  const uint64_t submit_fence = submit(dev);
-
-  // Use the per-submission fence returned by submit(). Do not infer fence IDs
-  // from a global "last submitted" query, which can be skewed by other
-  // devices/processes submitting concurrently (e.g. DWM + apps).
-  const uint64_t fence_value = submit_fence;
-
-  q->fence_value.store(fence_value, std::memory_order_release);
+  // D3D9Ex EVENT queries are polled by DWM using GetData(DONOTFLUSH). Issue(END)
+  // must therefore not force a submission: the query should remain "not ready"
+  // until an explicit flush/submission boundary occurs (Flush/Present/etc).
+  //
+  // If the device has no pending recorded commands, we can associate the query
+  // with the most recent submission fence immediately.
+  dev->pending_event_queries.erase(std::remove(dev->pending_event_queries.begin(),
+                                               dev->pending_event_queries.end(),
+                                               q),
+                                   dev->pending_event_queries.end());
+  q->fence_value.store(0, std::memory_order_relaxed);
+  q->submitted.store(false, std::memory_order_relaxed);
   q->issued.store(true, std::memory_order_release);
   q->completion_logged.store(false, std::memory_order_relaxed);
+  if (dev->cmd.empty()) {
+    q->fence_value.store(dev->last_submission_fence, std::memory_order_release);
+    q->submitted.store(true, std::memory_order_release);
+  } else {
+    dev->pending_event_queries.push_back(q);
+  }
   return trace.ret(S_OK);
 }
 
@@ -10688,7 +10736,27 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     return trace.ret(S_FALSE);
   }
 
-  const uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
+  // EVENT query has been issued but not yet associated with a submission fence.
+  // This happens when Issue(END) was called but we have not hit a flush/submission
+  // boundary yet.
+  if (!q->submitted.load(std::memory_order_acquire)) {
+    if (flags & kD3DGetDataFlush) {
+      // Non-blocking GetData(FLUSH): attempt a single flush to force a submission
+      // boundary, then re-check. Never wait here (DWM can call into GetData while
+      // holding global locks). Also avoid blocking on the device mutex: if another
+      // thread is inside the UMD we skip the flush attempt and fall back to
+      // polling.
+      std::unique_lock<std::mutex> dev_lock(dev->mutex, std::try_to_lock);
+      if (dev_lock.owns_lock()) {
+        (void)flush_locked(dev);
+      }
+    }
+    if (!q->submitted.load(std::memory_order_acquire)) {
+      return trace.ret(S_FALSE);
+    }
+  }
+
+  uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
 
   FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
   if (wait_res == FenceWaitResult::NotReady && (flags & kD3DGetDataFlush)) {
@@ -10700,6 +10768,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     if (dev_lock.owns_lock()) {
       (void)flush_locked(dev);
     }
+    fence_value = q->fence_value.load(std::memory_order_acquire);
     wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
   }
 

@@ -122,6 +122,14 @@ struct VertexDecl {
 struct Query {
   uint32_t type = 0;
   std::atomic<uint64_t> fence_value{0};
+  // True once the query has been associated with a specific submission fence.
+  //
+  // For D3D9Ex EVENT queries, `Issue(END)` does not necessarily flush commands
+  // to the kernel. DWM relies on polling `GetData(DONOTFLUSH)` without forcing
+  // a submission; in that state the query must report "not ready" even if the
+  // GPU is idle. We therefore keep EVENT queries "unsubmitted" until an
+  // explicit flush/submission boundary stamps them with a fence value.
+  std::atomic<bool> submitted{false};
   std::atomic<bool> issued{false};
   std::atomic<bool> completion_logged{false};
 };
@@ -284,6 +292,10 @@ struct Device {
   // device/context. This is required to correctly wait for "our own" work under
   // multi-device / multi-process workloads (DWM + apps).
   uint64_t last_submission_fence = 0;
+
+  // D3D9Ex EVENT queries are tracked as "pending" until the next submission
+  // boundary stamps them with a fence value (see `Query::submitted`).
+  std::vector<Query*> pending_event_queries;
 
   // D3D9Ex throttling + present statistics.
   //

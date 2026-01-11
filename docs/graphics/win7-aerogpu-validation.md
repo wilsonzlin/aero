@@ -25,6 +25,41 @@ These aren’t requirements, but if you deviate you should explicitly note it in
 - **Symbol/debug access:** Either kernel debugger, serial output, or at least user-mode logs + Event Viewer.
 - **Driver build:** test-signed or test mode enabled.
 
+### 0.1 Validation record (copy/paste template)
+
+When claiming “works on Win7” (or filing a bug), capture a minimal, comparable record. This makes it much easier to spot regressions across commits and across x86/x64 guests.
+
+```text
+Date:
+Repo commit (host/emulator + drivers):
+Driver package version (INF/UMD/KMD build id):
+Device HWID: VID=0xA3A0 / DID=0x0001
+Test signing: (on/off)
+Session: (local console / RDP / other)
+
+Guest OS:
+- Win7 SP1 x86: (winver string, e.g. 6.1.7601 Service Pack 1 Build 7601)
+- Win7 SP1 x64: (winver string, e.g. 6.1.7601 Service Pack 1 Build 7601)
+
+Test suite:
+- x86 command:
+  bin\\aerogpu_test_runner.exe --json --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+- x64 command:
+  bin\\aerogpu_test_runner.exe --json --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+
+Results summary:
+- Win7 x86: PASS=  FAIL=  SKIP=
+- Win7 x64: PASS=  FAIL=  SKIP=
+
+Artifacts collected:
+- report.json (path):
+- per-test JSON outputs (dir):
+- failing test --dump outputs (BMP/bin) (dir):
+- Event Viewer: dxgkrnl/display events around failures (exported EVTX):
+- KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank (outputs saved):
+Notes:
+```
+
 ---
 
 ## 1) Bring-up checklist (smoke tests in strict order)
