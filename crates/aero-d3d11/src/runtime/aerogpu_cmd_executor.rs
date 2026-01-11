@@ -5219,7 +5219,8 @@ mod tests {
             let vec4_count = 1u32;
             let size_bytes = (24 + 16) as u32;
             let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
-            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
+            cmd_bytes
+                .extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
             cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
             cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
             cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
