@@ -2,8 +2,12 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::FourCC;
 use aero_gpu::VecGuestMemory;
-use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC};
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdOpcode, AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+};
+use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -29,18 +33,9 @@ const OPCODE_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
 const OPCODE_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
 const OPCODE_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 
-const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1u32 << 0;
-const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1u32 << 4;
+const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 
-const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
-
-const AEROGPU_CLEAR_COLOR: u32 = 1u32 << 0;
-
-const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
-
-// ILAY input layout blob format.
-const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY"
-const AEROGPU_INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
+const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
 
 // DXGI_FORMAT_R32G32B32A32_FLOAT
 const DXGI_FORMAT_R32G32B32A32_FLOAT: u32 = 2;
