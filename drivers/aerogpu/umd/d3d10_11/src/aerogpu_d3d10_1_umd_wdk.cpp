@@ -2702,12 +2702,13 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   return S_OK;
 }
 
+template <typename = void>
 HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
-                                           D3D10DDI_HRESOURCE hResource,
-                                           UINT subresource,
-                                           D3D10_DDI_MAP map_type,
-                                           UINT map_flags,
-                                           D3D10DDI_MAPPED_SUBRESOURCE* pMapped) {
+                                            D3D10DDI_HRESOURCE hResource,
+                                            UINT subresource,
+                                            D3D10_DDI_MAP map_type,
+                                            UINT map_flags,
+                                            D3D10DDI_MAPPED_SUBRESOURCE* pMapped) {
   AEROGPU_D3D10_11_LOG("pfnStagingResourceMap subresource=%u map_type=%u map_flags=0x%X",
                        static_cast<unsigned>(subresource),
                        static_cast<unsigned>(map_type),
@@ -2734,6 +2735,7 @@ HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   return map_resource_locked(dev, res, subresource, map_type_u, map_flags, pMapped);
 }
 
+template <typename = void>
 void AEROGPU_APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
   AEROGPU_D3D10_11_LOG("pfnStagingResourceUnmap subresource=%u", static_cast<unsigned>(subresource));
 
@@ -2750,6 +2752,7 @@ void AEROGPU_APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   unmap_resource_locked(dev, res, subresource);
 }
 
+template <typename = void>
 HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
   AEROGPU_D3D10_11_LOG_CALL();
 
@@ -2769,6 +2772,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D
   return map_dynamic_buffer_locked(dev, res, /*discard=*/true, ppData);
 }
 
+template <typename = void>
 HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice,
                                                        D3D10DDI_HRESOURCE hResource,
                                                        void** ppData) {
@@ -2790,6 +2794,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice,
   return map_dynamic_buffer_locked(dev, res, /*discard=*/false, ppData);
 }
 
+template <typename = void>
 void AEROGPU_APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
 
@@ -2806,6 +2811,7 @@ void AEROGPU_APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   unmap_resource_locked(dev, res, /*subresource=*/0);
 }
 
+template <typename = void>
 HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice,
                                                          D3D10DDI_HRESOURCE hResource,
                                                          void** ppData) {
@@ -2827,6 +2833,7 @@ HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevic
   return map_dynamic_buffer_locked(dev, res, /*discard=*/true, ppData);
 }
 
+template <typename = void>
 void AEROGPU_APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
 
@@ -4674,17 +4681,17 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnUnmap = &Unmap;
   using DeviceFuncs = std::remove_pointer_t<decltype(pCreateDevice->pDeviceFuncs)>;
   if constexpr (HasStagingResourceMap<DeviceFuncs>::value) {
-    pCreateDevice->pDeviceFuncs->pfnStagingResourceMap = &StagingResourceMap;
-    pCreateDevice->pDeviceFuncs->pfnStagingResourceUnmap = &StagingResourceUnmap;
+    pCreateDevice->pDeviceFuncs->pfnStagingResourceMap = &StagingResourceMap<>;
+    pCreateDevice->pDeviceFuncs->pfnStagingResourceUnmap = &StagingResourceUnmap<>;
   }
   if constexpr (HasDynamicIABufferMap<DeviceFuncs>::value) {
-    pCreateDevice->pDeviceFuncs->pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard;
-    pCreateDevice->pDeviceFuncs->pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite;
-    pCreateDevice->pDeviceFuncs->pfnDynamicIABufferUnmap = &DynamicIABufferUnmap;
+    pCreateDevice->pDeviceFuncs->pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard<>;
+    pCreateDevice->pDeviceFuncs->pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite<>;
+    pCreateDevice->pDeviceFuncs->pfnDynamicIABufferUnmap = &DynamicIABufferUnmap<>;
   }
   if constexpr (HasDynamicConstantBufferMap<DeviceFuncs>::value) {
-    pCreateDevice->pDeviceFuncs->pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard;
-    pCreateDevice->pDeviceFuncs->pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap;
+    pCreateDevice->pDeviceFuncs->pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard<>;
+    pCreateDevice->pDeviceFuncs->pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap<>;
   }
   pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
   pCreateDevice->pDeviceFuncs->pfnCopyResource =
