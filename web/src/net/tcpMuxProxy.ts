@@ -161,6 +161,13 @@ export function encodeTcpMuxClosePayload(flags: number): Uint8Array {
   return buf;
 }
 
+export function decodeTcpMuxClosePayload(payload: Uint8Array): { flags: number } {
+  if (payload.byteLength !== 1) {
+    throw new Error("CLOSE payload must be exactly 1 byte");
+  }
+  return { flags: payload[0]! };
+}
+
 export function decodeTcpMuxErrorPayload(payload: Uint8Array): TcpMuxError {
   if (payload.byteLength < 4) throw new Error("ERROR payload too short");
   const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -218,7 +225,9 @@ export type TcpMuxProxyOptions = Readonly<{
 
 type StreamState = {
   openedNotified: boolean;
+  closeNotified: boolean;
   localFin: boolean;
+  remoteFin: boolean;
   closed: boolean;
 };
 
@@ -288,7 +297,13 @@ export class WebSocketTcpMuxProxyClient {
     }
     if (this.streams.has(streamId)) return;
 
-    this.streams.set(streamId, { openedNotified: false, localFin: false, closed: false });
+    this.streams.set(streamId, {
+      openedNotified: false,
+      closeNotified: false,
+      localFin: false,
+      remoteFin: false,
+      closed: false,
+    });
 
     try {
       const payload = encodeTcpMuxOpenPayload({ host, port, metadata });
@@ -335,6 +350,11 @@ export class WebSocketTcpMuxProxyClient {
     }
 
     st.localFin = true;
+    if (st.remoteFin) {
+      // Both directions have sent FIN; we can drop local state as soon as our
+      // CLOSE(FIN) frame is enqueued.
+      this.closeStream(streamId, { keepQueuedClose: true });
+    }
   }
 
   shutdown(): Promise<void> {
@@ -434,6 +454,39 @@ export class WebSocketTcpMuxProxyClient {
       }
       case TcpMuxMsgType.CLOSE: {
         this.maybeNotifyOpen(frame.streamId);
+        let flags: number;
+        try {
+          flags = decodeTcpMuxClosePayload(frame.payload).flags;
+        } catch (err) {
+          this.onError?.(frame.streamId, { code: 0, message: (err as Error).message });
+          this.closeStream(frame.streamId);
+          return;
+        }
+
+        if ((flags & TcpMuxCloseFlags.RST) !== 0) {
+          this.closeStream(frame.streamId);
+          return;
+        }
+
+        if ((flags & TcpMuxCloseFlags.FIN) !== 0) {
+          const st = this.streams.get(frame.streamId);
+          if (!st || st.closed) return;
+          st.remoteFin = true;
+
+          if (st.localFin) {
+            // We already sent FIN; stream is now fully closed.
+            this.closeStream(frame.streamId, { keepQueuedClose: true });
+            return;
+          }
+
+          if (!st.closeNotified) {
+            st.closeNotified = true;
+            this.onClose?.(frame.streamId);
+          }
+          return;
+        }
+
+        // Unknown flags: treat as a terminal close to avoid leaking stream state.
         this.closeStream(frame.streamId);
         return;
       }
@@ -480,7 +533,10 @@ export class WebSocketTcpMuxProxyClient {
     const st = this.streams.get(streamId);
     if (!st || st.closed) return;
     st.closed = true;
-    this.onClose?.(streamId);
+    if (!st.closeNotified) {
+      st.closeNotified = true;
+      this.onClose?.(streamId);
+    }
     this.streams.delete(streamId);
   }
 
@@ -500,4 +556,3 @@ export class WebSocketTcpMuxProxyClient {
     this.queuedBytes = remainingBytes;
   }
 }
-

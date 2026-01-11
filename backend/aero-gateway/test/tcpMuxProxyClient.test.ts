@@ -406,6 +406,77 @@ describe("tcp-mux browser client integration", () => {
     }
   });
 
+  it("allows sending DATA after receiving CLOSE(FIN) from the server (half-close)", async () => {
+    const halfCloseServer = net.createServer({ allowHalfOpen: true }, (socket) => {
+      socket.end("bye\n");
+    });
+    const halfClosePort = await listen(halfCloseServer, "127.0.0.1");
+
+    let receivedAfterFin = "";
+    const serverSawAfter = new Promise<void>((resolve, reject) => {
+      halfCloseServer.once("connection", (socket) => {
+        socket.on("data", (data) => {
+          receivedAfterFin += data.toString("utf8");
+          if (receivedAfterFin.includes("after\n")) resolve();
+        });
+        socket.on("error", reject);
+      });
+    });
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowedTargetHosts: ["8.8.8.8"],
+        allowedTargetPorts: [halfClosePort],
+        maxStreams: 16,
+        createConnection: (() =>
+          net.createConnection({
+            host: "127.0.0.1",
+            port: halfClosePort,
+            allowHalfOpen: true,
+          })) as typeof net.createConnection,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const client = new WebSocketTcpMuxProxyClient(`http://127.0.0.1:${proxyPort}`);
+    const streamId = 1;
+
+    let recv = "";
+    const gotBye = new Promise<void>((resolve) => {
+      client.onData = (id, data) => {
+        if (id !== streamId) return;
+        recv += new TextDecoder().decode(data);
+        if (recv.includes("bye\n")) resolve();
+      };
+    });
+
+    const gotRemoteFin = new Promise<void>((resolve, reject) => {
+      client.onClose = (id) => {
+        if (id === streamId) resolve();
+      };
+      client.onError = (id, err) => {
+        if (id === streamId) reject(new Error(`unexpected ERROR code=${err.code} message=${err.message}`));
+      };
+    });
+
+    client.open(streamId, "8.8.8.8", halfClosePort);
+
+    await withTimeout(gotBye, 2_000, "expected DATA before FIN");
+    await withTimeout(gotRemoteFin, 2_000, "expected remote CLOSE(FIN)");
+
+    client.send(streamId, new TextEncoder().encode("after\n"));
+    await withTimeout(serverSawAfter, 2_000, "expected server to receive DATA after FIN");
+
+    try {
+      client.close(streamId, { fin: true });
+      await client.shutdown();
+    } finally {
+      await closeServer(proxyServer);
+      await closeServer(halfCloseServer);
+    }
+  });
+
   it("OPEN encoding matches the gateway's expectations", () => {
     // Lightweight invariant test: ensure OPEN payload encoder can be decoded by
     // the gateway-side codec. This catches accidental endianness regressions.
