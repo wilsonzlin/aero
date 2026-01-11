@@ -103,8 +103,7 @@ namespace {
 constexpr int32_t kMinGpuThreadPriority = -7;
 constexpr int32_t kMaxGpuThreadPriority = 7;
 
-// D3DERR_INVALIDCALL from d3d9.h (returned by UMD for invalid arguments).
-constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
+// D3DERR_INVALIDCALL (0x8876086C) is returned by the UMD for invalid arguments.
 
 // S_PRESENT_OCCLUDED (0x08760868) is returned by CheckDeviceState/PresentEx when
 // the target window is occluded/minimized. Prefer the SDK macro when available
@@ -2491,7 +2490,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   const uint32_t mip_levels = std::max(1u, requested_mip_levels);
   if (wants_shared && requested_mip_levels != 1) {
     // MVP: shared surfaces must be single-allocation (no mip chains/arrays).
-    return trace.ret(kD3DErrInvalidCall);
+    return trace.ret(D3DERR_INVALIDCALL);
   }
 
   auto res = std::make_unique<Resource>();
@@ -2561,7 +2560,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // GPU object for readback destinations.
   if (res->pool == kD3DPOOL_SYSTEMMEM) {
     if (wants_shared) {
-      return trace.ret(kD3DErrInvalidCall);
+      return trace.ret(D3DERR_INVALIDCALL);
     }
     res->handle = 0;
     pCreateResource->hResource.pDrvPrivate = res.release();
@@ -2574,7 +2573,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       logf("aerogpu-d3d9: Create shared resource missing private data buffer (have=%u need=%u)\n",
            pCreateResource->KmdAllocPrivateDataSize,
            static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
-      return trace.ret(kD3DErrInvalidCall);
+      return trace.ret(D3DERR_INVALIDCALL);
     }
 
     // Allocate a stable cross-process alloc_id (31-bit) and a collision-resistant
@@ -5481,7 +5480,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     return trace.ret(D3DERR_NOTAVAILABLE);
   }
   if (!q->issued.load(std::memory_order_acquire)) {
-    return trace.ret(kD3DErrInvalidCall);
+    return trace.ret(D3DERR_INVALIDCALL);
   }
 
   const bool has_data_ptr = (pGetQueryData->pData != nullptr);
@@ -5489,7 +5488,13 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   // Mirror IDirect3DQuery9::GetData validation: pData must be NULL iff data_size
   // is 0. Treat mismatched pointer/size as D3DERR_INVALIDCALL.
   if (has_data_ptr != has_data_size) {
-    return trace.ret(kD3DErrInvalidCall);
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
+
+  // EVENT queries return a BOOL-like DWORD; validate the output buffer size even
+  // when the query is not yet ready so callers observe D3DERR_INVALIDCALL.
+  if (has_data_ptr && pGetQueryData->data_size < sizeof(uint32_t)) {
+    return trace.ret(D3DERR_INVALIDCALL);
   }
 
   // If no output buffer provided, just report readiness via HRESULT.
@@ -5514,7 +5519,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     if (need_data) {
       // D3DQUERYTYPE_EVENT expects a BOOL-like result.
       if (pGetQueryData->data_size < sizeof(uint32_t)) {
-        return trace.ret(kD3DErrInvalidCall);
+        return trace.ret(D3DERR_INVALIDCALL);
       }
       *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = TRUE;
     }
@@ -5965,6 +5970,73 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 }
 
 } // namespace
+
+aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
+  if (!adapter) {
+    return 0;
+  }
+
+#if defined(_WIN32)
+  // Allocate handles from a best-effort cross-process monotonic counter.
+  //
+  // The D3D9 UMD can be loaded into multiple guest processes (DWM + apps) and
+  // each process can submit AeroGPU command streams. Handles are interpreted by
+  // the host as global IDs, so we must avoid collisions across processes.
+  //
+  // We reuse the same named file mapping as the shared-allocation alloc_id token
+  // allocator (see `allocate_shared_alloc_id_token()`).
+  {
+    std::lock_guard<std::mutex> lock(adapter->share_token_mutex);
+
+    if (!adapter->share_token_view) {
+      wchar_t name[128];
+      swprintf(name,
+               sizeof(name) / sizeof(name[0]),
+               L"Local\\AeroGPU.GlobalHandleCounter");
+
+      HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+      if (mapping) {
+        void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
+        if (view) {
+          adapter->share_token_mapping = mapping;
+          adapter->share_token_view = view;
+        } else {
+          CloseHandle(mapping);
+        }
+      }
+    }
+
+    if (adapter->share_token_view) {
+      auto* counter = reinterpret_cast<volatile LONG64*>(adapter->share_token_view);
+      for (;;) {
+        const LONG64 token = InterlockedIncrement64(counter);
+        const aerogpu_handle_t handle =
+            static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
+        if (handle != 0) {
+          return handle;
+        }
+      }
+    }
+  }
+
+  // Fallback (should be rare): derive handles from a per-process counter mixed
+  // with PID bits to reduce collision probability if the file mapping APIs fail.
+  const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
+  const uint32_t pid_bits = (pid >> 2) & 0xFFFFu;
+  uint32_t seq = adapter->next_handle.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu;
+  if (seq == 0) {
+    seq = adapter->next_handle.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu;
+  }
+  const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>((pid_bits << 16) | seq);
+  return handle ? handle : 1u;
+#else
+  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  if (handle == 0) {
+    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
+  }
+  return handle;
+#endif
+}
 
 uint64_t submit_locked(Device* dev, bool is_present) {
   return submit(dev, is_present);

@@ -603,10 +603,48 @@ bool TestEventQueryGetDataSemantics() {
     }
   }
 
+  // D3D9 allows polling readiness without providing an output buffer.
+  AEROGPU_D3D9DDIARG_GETQUERYDATA get_no_data = get_data;
+  get_no_data.pData = nullptr;
+  get_no_data.data_size = 0;
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_no_data);
+  if (!Check(hr == S_FALSE, "GetQueryData (no buffer) not-ready returns S_FALSE")) {
+    return false;
+  }
+
+  // Invalid pointer/size combinations should fail even if the query is not ready.
+  AEROGPU_D3D9DDIARG_GETQUERYDATA get_bad = get_data;
+  get_bad.pData = nullptr;
+  get_bad.data_size = sizeof(done);
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_bad);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetQueryData rejects null pData with non-zero size")) {
+    return false;
+  }
+
+  get_bad.pData = &done;
+  get_bad.data_size = 0;
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_bad);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetQueryData rejects non-null pData with zero size")) {
+    return false;
+  }
+
+  uint16_t small = 0;
+  get_bad.pData = &small;
+  get_bad.data_size = sizeof(small);
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_bad);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetQueryData rejects undersized buffer")) {
+    return false;
+  }
+
   // Mark the fence complete and re-poll.
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     adapter->completed_fence = fence_value;
+  }
+
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_no_data);
+  if (!Check(hr == S_OK, "GetQueryData (no buffer) ready returns S_OK")) {
+    return false;
   }
 
   done = 0;
