@@ -13,6 +13,7 @@ import {
   type WorkerInitMessage,
   decodeProtocolMessage,
 } from "../runtime/protocol";
+import { waitUntilNotEqual } from "../runtime/atomics_wait";
 import { fnv1a32Hex } from "../utils/fnv1a";
 import { type JitCompileRequest, type JitWorkerResponse, isJitCompileRequest } from "./jit_protocol";
 
@@ -98,6 +99,26 @@ function cacheSet(key: string, module: WebAssembly.Module): void {
   if (moduleCache.size <= JIT_CACHE_MAX_ENTRIES) return;
   const oldest = moduleCache.keys().next().value as string | undefined;
   if (oldest !== undefined) moduleCache.delete(oldest);
+}
+
+async function waitForCommandRingDataNonBlocking(timeoutMs?: number): Promise<void> {
+  // `RingBuffer.waitForData()` uses blocking Atomics.wait() in workers for efficiency.
+  //
+  // The JIT worker also services structured `postMessage()` requests, so we must
+  // not block the worker thread; otherwise `jit:compile` messages would never
+  // be delivered while we're waiting for ring-buffer commands.
+  const start = timeoutMs === undefined ? 0 : performance.now();
+  while (true) {
+    // RingBuffer internal layout: meta[0]=head, meta[1]=tail.
+    const head = Atomics.load(commandRing.meta, 0);
+    const tail = Atomics.load(commandRing.meta, 1);
+    if (head !== tail) return;
+
+    const remaining =
+      timeoutMs === undefined ? undefined : Math.max(0, timeoutMs - (performance.now() - start));
+    const result = await waitUntilNotEqual(commandRing.meta, 0, head, { timeoutMs: remaining, canBlock: false });
+    if (result === "timed-out") return;
+  }
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
@@ -242,7 +263,7 @@ async function runLoop(): Promise<void> {
     }
 
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
-    await commandRing.waitForData();
+    await waitForCommandRingDataNonBlocking();
   }
 
   setReadyFlag(status, role, false);
