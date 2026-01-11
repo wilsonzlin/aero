@@ -76,7 +76,9 @@ fn parse_segment_descriptor_limit_granularity() {
 #[test]
 fn real_mode_a20_gate_wraps_addresses_when_disabled() {
     let mut cpu = CpuState::new(CpuMode::Real);
-    cpu.segments.ds.selector = 0xFFFF;
+    let mut bus = FlatTestBus::new(0x20);
+    cpu.load_seg(&mut bus, Seg::DS, 0xFFFF, LoadReason::Data)
+        .unwrap();
 
     cpu.a20_enabled = true;
     assert_eq!(

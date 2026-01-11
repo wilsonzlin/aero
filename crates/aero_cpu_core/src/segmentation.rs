@@ -188,7 +188,7 @@ impl CpuState {
         match self.cpu_mode() {
             CpuMode::Long => self.msr_seg_base(seg),
             CpuMode::Protected => self.seg_reg(seg).base,
-            CpuMode::Real | CpuMode::Vm86 => (self.seg_reg(seg).selector as u64) << 4,
+            CpuMode::Real | CpuMode::Vm86 => self.seg_reg(seg).base,
         }
     }
 
@@ -196,7 +196,7 @@ impl CpuState {
         match self.cpu_mode() {
             CpuMode::Long => 0xFFFF_FFFF,
             CpuMode::Protected => self.seg_reg(seg).limit,
-            CpuMode::Real | CpuMode::Vm86 => 0xFFFF,
+            CpuMode::Real | CpuMode::Vm86 => self.seg_reg(seg).limit,
         }
     }
 
@@ -205,10 +205,8 @@ impl CpuState {
     pub fn linearize(&self, seg: Seg, offset: u64, access: AccessType) -> Result<u64, Exception> {
         match self.cpu_mode() {
             CpuMode::Real | CpuMode::Vm86 => {
-                let base = (self.seg_reg(seg).selector as u64) << 4;
-                let linear = base.wrapping_add(offset);
-                let linear = if self.a20_enabled { linear } else { linear & 0xFFFFF };
-                Ok(linear)
+                let base = self.seg_reg(seg).base;
+                Ok(self.apply_a20(base.wrapping_add(offset)))
             }
             CpuMode::Protected => self.linearize_protected(seg, offset, access),
             CpuMode::Long => self.linearize_long(seg, offset),
