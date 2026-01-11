@@ -25,7 +25,7 @@ cd tools/packaging/aero_packager
 #   --out-dir /path/to/out \
 #   --version 1.2.3 \
 #   --build-id ci-123 \
-#   --signing-policy testsigning
+#   --signing-policy test
 
 # Example:
 #   drivers/ contains:
@@ -73,7 +73,10 @@ Virtio-win Guest Tools builds **must** use the virtio-win contract so `guest-too
 validate the boot-critical storage INF (`AddService = viostor, ...`) and pre-seed registry state
 without requiring `/skipstorage`.
 
-## Building Guest Tools from `virtio-win.iso` (Win7 virtio drivers)
+## Building Guest Tools from `virtio-win.iso` (Win7 virtio drivers, optional / compatibility)
+
+Official CI/release Guest Tools media is built from signed in-tree driver packages under `out/packages/**`
+(see the section below). The virtio-win flow is an alternative path for packaging upstream drivers.
 
 If you want Guest Tools to include the upstream virtio drivers (`viostor`, `netkvm`, etc.), use:
 
@@ -131,7 +134,7 @@ produce the Guest Tools ISO/zip from those artifacts using:
 
 - `ci/package-guest-tools.ps1`
   - Local default (when `-SpecPath` is omitted): `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
-  - CI/release workflows: `tools/packaging/specs/win7-signed.json` (HWID regex lists intentionally empty)
+  - CI/release workflows: `tools/packaging/specs/win7-signed.json` (derives HWID patterns from `devices.cmd`; no hardcoded regex list)
   - Device contract (for generated `config/devices.cmd`): `-WindowsDeviceContractPath` (default: `docs/windows-device-contract.json`)
 
 To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
