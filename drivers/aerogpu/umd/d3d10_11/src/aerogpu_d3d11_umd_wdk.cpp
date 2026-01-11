@@ -6037,6 +6037,8 @@ static HRESULT MapLocked11(Device* dev,
     res->mapped_wddm_slice_pitch = lock.SlicePitch;
   }
 
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
+
   // Keep the software-backed shadow copy (`res->storage`) in sync with the
   // runtime allocation pointer we hand back to the D3D runtime.
   if (!res->storage.empty()) {
@@ -6051,7 +6053,7 @@ static HRESULT MapLocked11(Device* dev,
       } else {
         std::memset(lock.pData, 0, res->storage.size());
       }
-    } else if (res->kind == ResourceKind::Texture2D) {
+    } else if (!is_guest_backed && res->kind == ResourceKind::Texture2D) {
       const uint32_t src_pitch = res->row_pitch_bytes;
       const uint32_t dst_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : src_pitch;
 
@@ -6074,8 +6076,37 @@ static HRESULT MapLocked11(Device* dev,
       } else {
         std::memcpy(lock.pData, res->storage.data(), res->storage.size());
       }
-    } else {
+    } else if (!is_guest_backed) {
       std::memcpy(lock.pData, res->storage.data(), res->storage.size());
+    } else if (want_read) {
+      // Guest-backed resources are updated by writing directly into the backing
+      // allocation (and emitting RESOURCE_DIRTY_RANGE). Avoid overwriting the
+      // runtime allocation contents with shadow storage; instead refresh the
+      // shadow copy for any Map() that reads.
+      if (res->kind == ResourceKind::Texture2D) {
+        const uint32_t dst_pitch = res->row_pitch_bytes;
+        const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : dst_pitch;
+
+        const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
+        const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+        const uint64_t row_bytes_u64 = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+        if (bpp != 0 && row_bytes_u64 != 0 && row_bytes_u64 <= UINT32_MAX && src_pitch != 0 && dst_pitch != 0 &&
+            src_pitch >= row_bytes_u64 && dst_pitch >= row_bytes_u64) {
+          const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+          const uint8_t* src_bytes = static_cast<const uint8_t*>(lock.pData);
+          auto* dst_bytes = res->storage.data();
+          for (uint32_t y = 0; y < res->height; y++) {
+            std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
+                        src_bytes + static_cast<size_t>(y) * src_pitch,
+                        row_bytes);
+            if (dst_pitch > row_bytes) {
+              std::memset(dst_bytes + static_cast<size_t>(y) * dst_pitch + row_bytes, 0, dst_pitch - row_bytes);
+            }
+          }
+        }
+      } else {
+        std::memcpy(res->storage.data(), lock.pData, res->storage.size());
+      }
     }
   }
 
@@ -6094,7 +6125,15 @@ static HRESULT MapLocked11(Device* dev,
   res->mapped_map_type = map_u32;
   res->mapped_map_flags = map_flags;
   res->mapped_offset = 0;
-  res->mapped_size = res->storage.size();
+  uint64_t mapped_size = 0;
+  if (res->kind == ResourceKind::Buffer) {
+    mapped_size = res->size_bytes;
+  } else if (res->kind == ResourceKind::Texture2D) {
+    mapped_size = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+  } else {
+    mapped_size = res->storage.size();
+  }
+  res->mapped_size = mapped_size;
   return S_OK;
 }
 
