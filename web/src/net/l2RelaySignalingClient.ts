@@ -16,7 +16,7 @@ export type ConnectL2RelaySignalingOptions = ConnectRelaySignalingOptions & {
   l2ChannelOptions?: RTCDataChannelInit;
 };
 
-// `docs/adr/0005-networking-l2-tunnel.md` + `docs/l2-tunnel-protocol.md` require
+// `docs/adr/0013-networking-l2-tunnel.md` + `docs/l2-tunnel-protocol.md` require
 // the L2 tunnel DataChannel to be reliable (no partial reliability settings).
 // Unordered delivery is permitted; our current project policy is unordered
 // reliable delivery (see `createL2TunnelDataChannel`).

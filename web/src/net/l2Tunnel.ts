@@ -567,7 +567,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * - `ordered: false`
  * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
  *
- * See `docs/adr/0005-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
+ * See `docs/adr/0013-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
  */
 export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   constructor(
