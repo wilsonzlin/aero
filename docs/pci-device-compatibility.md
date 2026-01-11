@@ -21,7 +21,8 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:06.0  | NIC    | 10EC:8139     | 02/00/00                 | INTA     | RTL8139 (alternate NIC option) |
 | 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1000) |
 | 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1001) |
-| 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1011) |
+| 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input keyboard (Aero Win7 contract v1: `SUBSYS_00101AF4`, `REV_01`, `header_type=0x80` for multi-function discovery) |
+| 00:0A.1  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input mouse (Aero Win7 contract v1: `SUBSYS_00111AF4`, `REV_01`) |
 | 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`) |
 
 ### Notes on virtio IDs (transitional vs modern)
@@ -91,7 +92,10 @@ For Windows 7 and Linux to bind drivers predictably:
    - NVMe: `01/08/02`
    - HDA: `04/03/00`
    - UHCI: `0C/03/00`
-3. **Header type** must be `0x00` (type-0 endpoint) for these devices.
+3. **Header type** must be `0x00` (type-0 endpoint), except when a device intentionally exposes
+   multiple functions on the same slot:
+   - `virtio-input` keyboard (function 0) must set `header_type = 0x80` (multi-function bit) so
+     guests enumerate the paired mouse function (function 1).
 4. **BAR types and sizes** must be correct:
    - Example: AHCI’s ABAR must be MMIO and large enough for the implemented port set (Aero uses 8KiB).
    - Example: HDA MMIO must be 16KiB (`0x4000`) per spec.

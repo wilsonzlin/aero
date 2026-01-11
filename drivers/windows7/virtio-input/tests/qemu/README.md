@@ -33,6 +33,12 @@ Hardware ID (HWID) references are documented in:
 
 The examples below are intentionally explicit and can be used as a starting point. Adjust paths, CPU accel, and disk/network options as needed.
 
+Note: QEMU’s `virtio-keyboard-pci` and `virtio-mouse-pci` are separate device frontends. If you
+want to mirror the **Aero contract v1** topology (single **multi-function** PCI device with
+keyboard on function 0 and mouse on function 1), you can place them on the same slot with explicit
+function numbers (`addr=...`) and enable multi-function enumeration on function 0
+(`multifunction=on`).
+
 ### Windows 7 SP1 x86
 
 Keep the default PS/2 devices enabled during initial driver installation so you do not lose input.
@@ -48,6 +54,13 @@ qemu-system-i386 \
   -net nic,model=e1000 -net user
 ```
 
+Optional (place both on slot 0x0A, functions 0 and 1):
+
+```bash
+-device virtio-keyboard-pci,addr=0x0a,multifunction=on,disable-legacy=on,x-pci-revision=0x01 \
+-device virtio-mouse-pci,addr=0x0a.1,disable-legacy=on,x-pci-revision=0x01
+```
+
 ### Windows 7 SP1 x64
 
 ```bash
@@ -59,6 +72,13 @@ qemu-system-x86_64 \
   -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
   -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01 \
   -net nic,model=e1000 -net user
+```
+
+Optional (place both on slot 0x0A, functions 0 and 1):
+
+```bash
+-device virtio-keyboard-pci,addr=0x0a,multifunction=on,disable-legacy=on,x-pci-revision=0x01 \
+-device virtio-mouse-pci,addr=0x0a.1,disable-legacy=on,x-pci-revision=0x01
 ```
 
 ### Modern-only vs transitional virtio-input

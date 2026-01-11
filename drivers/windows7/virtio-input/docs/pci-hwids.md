@@ -84,8 +84,8 @@ Keyboard: PCI device 1af4:1052
 ## Aero contract v1 expectations (keyboard vs mouse subsystem + revision)
 
 `AERO-W7-VIRTIO` v1 exposes **two** virtio-input PCI functions (keyboard + mouse)
-with the same Vendor/Device ID, and uses the PCI Subsystem Device ID to
-distinguish them:
+as a **single multi-function PCI device** (same slot, functions 0 and 1). It uses
+the PCI Subsystem Device ID to distinguish keyboard vs mouse:
 
 * Vendor/Device: `PCI\VEN_1AF4&DEV_1052`
 * Revision ID: `REV_01`
@@ -93,6 +93,12 @@ distinguish them:
 * Subsystem device:
   * keyboard: `0x0010` → `SUBSYS_00101AF4`
   * mouse: `0x0011` → `SUBSYS_00111AF4`
+
+Topology notes:
+
+* The keyboard must be **function 0** and must set the PCI multi-function bit
+  (`header_type = 0x80`) so guests enumerate function 1.
+* The mouse is **function 1** (`header_type = 0x00`).
 
 `docs/windows-device-contract.json` carries both strict and convenience HWID
 patterns; automation should prefer the strict `...&SUBSYS_...&REV_01` patterns
