@@ -226,6 +226,88 @@ def parse_w7_contract_pci_identities(md: str) -> Mapping[str, PciIdentity]:
         "virtio-input (mouse)": mouse_ids,
     }
 
+def parse_w7_contract_pci_identification_tables(md: str) -> tuple[int, int, int, Mapping[str, int], Mapping[str, int]]:
+    """
+    Parse the summary PCI identification tables in AERO-W7-VIRTIO §1.1.
+
+    These tables are normative and frequently edited; we validate them against
+    the per-device PCI ID blocks in §3 so the contract doc cannot drift
+    internally.
+    """
+
+    section = _extract_section(
+        md,
+        start=r"^###\s+1\.1\s+PCI identification",
+        end=r"^###\s+1\.2\s+",
+        file=W7_VIRTIO_CONTRACT_MD,
+        what="section 1.1 (PCI identification)",
+    )
+
+    def require_hex(label: str, pattern: str) -> int:
+        m = re.search(pattern, section, flags=re.M)
+        if not m:
+            fail(f"could not parse {label} from {W7_VIRTIO_CONTRACT_MD.as_posix()} section 1.1")
+        return int(m.group("hex"), 16)
+
+    vendor_id = require_hex("Vendor ID", r"^\*\*Vendor ID:\*\*\s*`(?P<hex>0x[0-9A-Fa-f]+)`")
+    revision_id = require_hex(
+        "PCI Revision ID", r"^\*\*PCI Revision ID:\*\*\s*`(?P<hex>0x[0-9A-Fa-f]+)`"
+    )
+    subsystem_vendor_id = require_hex(
+        "Subsystem Vendor ID", r"^\*\*Subsystem Vendor ID:\*\*\s*`(?P<hex>0x[0-9A-Fa-f]+)`"
+    )
+
+    device_ids_section = _extract_subsection(
+        section, heading=r"####\s+1\.1\.1\s+PCI Device IDs", file=W7_VIRTIO_CONTRACT_MD
+    )
+    virtio_device_types: dict[str, int] = {}
+    pci_device_ids: dict[str, int] = {}
+    for m in re.finditer(
+        r"^\|\s*(?P<device>virtio-[a-z0-9-]+)\s*\|\s*(?P<virtio_id>\d+)\s*\|\s*`(?P<pci_id>0x[0-9A-Fa-f]+)`\s*\|",
+        device_ids_section,
+        flags=re.M,
+    ):
+        device = m.group("device")
+        virtio_id = int(m.group("virtio_id"))
+        pci_id = int(m.group("pci_id"), 16)
+        if device in virtio_device_types:
+            fail(
+                f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: duplicate device row {device!r} in table 1.1.1"
+            )
+        virtio_device_types[device] = virtio_id
+        pci_device_ids[device] = pci_id
+
+    if not virtio_device_types:
+        fail(
+            f"could not parse any rows from {W7_VIRTIO_CONTRACT_MD.as_posix()} table 1.1.1 "
+            "(expected a markdown table listing virtio device IDs)"
+        )
+
+    subsys_section = _extract_subsection(
+        section, heading=r"####\s+1\.1\.2\s+Subsystem IDs", file=W7_VIRTIO_CONTRACT_MD
+    )
+    subsys_ids: dict[str, int] = {}
+    for m in re.finditer(
+        r"^\|\s*(?P<instance>virtio-[^|]+?)\s*\|\s*`(?P<subsys_id>0x[0-9A-Fa-f]+)`\s*\|",
+        subsys_section,
+        flags=re.M,
+    ):
+        instance = m.group("instance").strip()
+        subsys_id = int(m.group("subsys_id"), 16)
+        if instance in subsys_ids:
+            fail(
+                f"{W7_VIRTIO_CONTRACT_MD.as_posix()}: duplicate instance row {instance!r} in table 1.1.2"
+            )
+        subsys_ids[instance] = subsys_id
+
+    if not subsys_ids:
+        fail(
+            f"could not parse any rows from {W7_VIRTIO_CONTRACT_MD.as_posix()} table 1.1.2 "
+            "(expected a markdown table listing subsystem device IDs)"
+        )
+
+    return vendor_id, subsystem_vendor_id, revision_id, virtio_device_types, subsys_ids
+
 
 def _parse_queue_table_sizes(block: str, *, file: Path, context: str) -> dict[int, int]:
     sizes: dict[int, int] = {}
@@ -552,6 +634,13 @@ def main() -> None:
     contract_rev = parse_contract_revision_id(w7_md)
     contract_ids = parse_w7_contract_pci_identities(w7_md)
     contract_queues = parse_w7_contract_queue_sizes(w7_md)
+    (
+        contract_vendor_id,
+        contract_subsystem_vendor_id,
+        contract_revision_id,
+        contract_virtio_types,
+        contract_subsystem_ids,
+    ) = parse_w7_contract_pci_identification_tables(w7_md)
 
     # ---------------------------------------------------------------------
     # 0) Fixed virtio-pci invariants that must never drift.
@@ -587,6 +676,85 @@ def main() -> None:
                         ],
                     )
                 )
+
+    if contract_vendor_id != VIRTIO_PCI_VENDOR_ID:
+        errors.append(
+            format_error(
+                "AERO-W7-VIRTIO §1.1 Vendor ID mismatch:",
+                [
+                    f"expected: 0x{VIRTIO_PCI_VENDOR_ID:04X}",
+                    f"got: 0x{contract_vendor_id:04X}",
+                ],
+            )
+        )
+    if contract_subsystem_vendor_id != VIRTIO_PCI_VENDOR_ID:
+        errors.append(
+            format_error(
+                "AERO-W7-VIRTIO §1.1 Subsystem Vendor ID mismatch:",
+                [
+                    f"expected: 0x{VIRTIO_PCI_VENDOR_ID:04X}",
+                    f"got: 0x{contract_subsystem_vendor_id:04X}",
+                ],
+            )
+        )
+    if contract_revision_id != contract_rev:
+        errors.append(
+            format_error(
+                "AERO-W7-VIRTIO §1.1 PCI Revision ID mismatch:",
+                [
+                    f"expected (from contract header): 0x{contract_rev:02X}",
+                    f"got (from §1.1): 0x{contract_revision_id:02X}",
+                ],
+            )
+        )
+
+    for device, expected_type in VIRTIO_DEVICE_TYPE_IDS.items():
+        actual = contract_virtio_types.get(device)
+        if actual is None:
+            errors.append(
+                format_error(
+                    "AERO-W7-VIRTIO table 1.1.1 is missing a required virtio device:",
+                    [f"missing: {device!r}"],
+                )
+            )
+            continue
+        if actual != expected_type:
+            errors.append(
+                format_error(
+                    f"AERO-W7-VIRTIO table 1.1.1 virtio device id mismatch for {device}:",
+                    [
+                        f"expected: {expected_type}",
+                        f"got: {actual}",
+                    ],
+                )
+            )
+
+    for instance, expected_subsys in (
+        ("virtio-net", contract_ids["virtio-net"].subsystem_device_id),
+        ("virtio-blk", contract_ids["virtio-blk"].subsystem_device_id),
+        ("virtio-snd", contract_ids["virtio-snd"].subsystem_device_id),
+        ("virtio-input (keyboard)", contract_ids["virtio-input (keyboard)"].subsystem_device_id),
+        ("virtio-input (mouse)", contract_ids["virtio-input (mouse)"].subsystem_device_id),
+    ):
+        actual = contract_subsystem_ids.get(instance)
+        if actual is None:
+            errors.append(
+                format_error(
+                    "AERO-W7-VIRTIO table 1.1.2 is missing a required subsystem ID row:",
+                    [f"missing: {instance!r}"],
+                )
+            )
+            continue
+        if actual != expected_subsys:
+            errors.append(
+                format_error(
+                    f"AERO-W7-VIRTIO table 1.1.2 subsystem ID mismatch for {instance}:",
+                    [
+                        f"expected (from §3 PCI IDs): 0x{expected_subsys:04X}",
+                        f"got (from table):          0x{actual:04X}",
+                    ],
+                )
+            )
 
     # ---------------------------------------------------------------------
     # 1) windows-device-contract.md table must match authoritative contract.
