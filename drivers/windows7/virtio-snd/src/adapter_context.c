@@ -37,6 +37,8 @@ _Use_decl_annotations_
 VOID
 VirtIoSndAdapterContext_Initialize(VOID)
 {
+    InitializeListHead(&g_VirtIoSndAdapterContextList);
+
     /*
      * NOTE: KSPIN_LOCK is semantically initialized by KeInitializeSpinLock.
      * While the loader zeros BSS (and 0 is the unlocked state today), calling
