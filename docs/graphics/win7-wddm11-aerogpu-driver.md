@@ -777,7 +777,7 @@ The submission transport is a shared ring in guest physical memory, defined in `
   
 - The driver allocates a contiguous region in guest RAM and writes a `struct aerogpu_ring_header` at the start:
   - `magic = "ARNG"`, `abi_version = AEROGPU_ABI_VERSION_U32`
-  - `size_bytes` covers the full mapping (`sizeof(ring_header) + entry_count * entry_stride_bytes`)
+  - `size_bytes` is the declared ring size (`sizeof(ring_header) + entry_count * entry_stride_bytes`) and must be `<= AEROGPU_MMIO_REG_RING_SIZE_BYTES` (the mapped size; may be larger for page rounding / extension space)
   - `entry_count` must be a power-of-two
   - `entry_stride_bytes` must be `>= sizeof(struct aerogpu_submit_desc)` (64)
   - `head` is device-owned; `tail` is driver-owned (both monotonic counters)
