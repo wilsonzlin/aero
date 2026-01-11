@@ -2,6 +2,7 @@ import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import type { WasmInitResult } from "../runtime/wasm_loader";
 import { WebUsbBackend, type SetupPacket, type UsbHostAction, type UsbHostCompletion } from "./webusb_backend";
+import { formatHexBytes } from "./usb_hex";
 import { isUsbSetupPacket } from "./usb_proxy_protocol";
 
 export interface UhciHarnessLike {
@@ -220,20 +221,6 @@ function maybeCaptureDescriptorsFromHarnessStatus(capture: DescriptorCapture, st
       capture.configDescriptor = bytes;
     }
   }
-}
-
-function formatHexBytes(bytes: Uint8Array, maxBytes = 256): string {
-  const limit = Math.max(0, maxBytes | 0);
-  const head = bytes.subarray(0, Math.min(bytes.byteLength, limit));
-  const parts = Array.from(head, (b) => b.toString(16).padStart(2, "0"));
-  let hex = "";
-  for (let i = 0; i < parts.length; i += 1) {
-    if (i !== 0) hex += i % 16 === 0 ? "\n" : " ";
-    hex += parts[i]!;
-  }
-  if (bytes.byteLength <= limit) return hex;
-  const remaining = bytes.byteLength - limit;
-  return `${hex}\n… (+${remaining} bytes)`;
 }
 
 function safeJson(value: unknown): string {

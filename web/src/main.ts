@@ -48,6 +48,7 @@ import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
 import { isUsbUhciHarnessStatusMessage, type WebUsbUhciHarnessRuntimeSnapshot } from "./usb/webusb_harness_runtime";
 import { UsbBroker } from "./usb/usb_broker";
 import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
+import { formatHexBytes } from "./usb/usb_hex";
 import {
   isUsbPassthroughDemoResultMessage,
   type UsbPassthroughDemoResult,
@@ -2878,20 +2879,6 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   }) as HTMLButtonElement;
   runConfigFullButton.hidden = true;
 
-  function formatHexBytes(bytes: Uint8Array, maxBytes = 256): string {
-    const limit = Math.max(0, maxBytes | 0);
-    const head = bytes.subarray(0, Math.min(bytes.byteLength, limit));
-    const parts = Array.from(head, (b) => b.toString(16).padStart(2, "0"));
-    let hex = "";
-    for (let i = 0; i < parts.length; i += 1) {
-      if (i !== 0) hex += i % 16 === 0 ? "\n" : " ";
-      hex += parts[i]!;
-    }
-    if (bytes.byteLength <= limit) return hex;
-    const remaining = bytes.byteLength - limit;
-    return `${hex}\n… (+${remaining} bytes)`;
-  }
-
   const refreshUi = (): void => {
     const workerReady = !!attachedIoWorker;
     const selected = !!selectedInfo;
@@ -3083,20 +3070,6 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   const lastActionLine = el("pre", { class: "mono", text: "Last action: (none)" });
   const lastCompletionLine = el("pre", { class: "mono", text: "Last completion: (none)" });
   const errorLine = el("div", { class: "bad", text: "" });
-
-  function formatHexBytes(bytes: Uint8Array, maxBytes = 256): string {
-    const limit = Math.max(0, maxBytes | 0);
-    const head = bytes.subarray(0, Math.min(bytes.byteLength, limit));
-    const parts = Array.from(head, (b) => b.toString(16).padStart(2, "0"));
-    let hex = "";
-    for (let i = 0; i < parts.length; i += 1) {
-      if (i !== 0) hex += i % 16 === 0 ? "\n" : " ";
-      hex += parts[i]!;
-    }
-    if (bytes.byteLength <= limit) return hex;
-    const remaining = bytes.byteLength - limit;
-    return `${hex}\n… (+${remaining} bytes)`;
-  }
 
   function describeAction(action: UsbHostAction): string {
     switch (action.kind) {
