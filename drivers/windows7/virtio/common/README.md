@@ -148,6 +148,7 @@ must link **exactly one** of them.
   - Exposes helpers for:
     - device status/reset
     - 64-bit feature negotiation (always requires `VIRTIO_F_VERSION_1`)
+    - device config reads with `config_generation` retry logic (`VirtioPciReadDeviceConfig`)
     - queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`
     - notify doorbells + ISR read-to-ack
   - Designed to be used with `virtio_queue.*` and `virtqueue_split.*`.
@@ -163,6 +164,7 @@ must link **exactly one** of them.
     (i.e., **no legacy PFN programming**).
   - Feature negotiation is 64-bit and `VirtioPciNegotiateFeatures()` always
     requires `VIRTIO_F_VERSION_1`.
+  - Device config reads use `config_generation` retry logic (`VirtioPciReadDeviceConfig`).
   - IRQL:
     - init/map/unmap/uninit/negotiation helpers are **PASSIVE_LEVEL**
     - queue/config/notify helpers are **<= DISPATCH_LEVEL** (DPC-safe)
@@ -217,13 +219,17 @@ At a high level, drivers using Aero contract v1 devices should:
    - `VirtioPciModernMiniportInit(&Dev, Bar0Va, Bar0Len, PciCfg, PciCfgLen)`
 4. **Negotiate features** (64-bit; always requires `VIRTIO_F_VERSION_1`):
    - `VirtioPciNegotiateFeatures(&Dev, Required, Wanted, &Negotiated)`
-5. **Program queues** and cache notify addresses:
+5. **Read device-specific config** (optional; e.g. MAC address / capacity):
+   - `VirtioPciReadDeviceConfig(&Dev, ...)`
+6. **Program queues** and cache notify addresses:
    - Either call `VirtioPciSetupQueue(...)` / `VirtioPciGetQueueNotifyAddress(...)` directly, or
    - Use the convenience wrapper `VirtioQueueCreate(&Dev, &Queue, QueueIndex)`.
-6. **Handle INTx**:
+7. **Handle INTx**:
    - Read the ISR status byte in the ISR to ACK/deassert (read-to-ack), then do
      queue work in a DPC.
    - Miniport primitive: `VirtioPciReadIsr(&Dev)`.
+8. **Set `DRIVER_OK`** once queues and interrupts are ready:
+   - `VirtioPciAddStatus(&Dev, VIRTIO_STATUS_DRIVER_OK)`
 
 ### WDM drivers
 
@@ -232,8 +238,10 @@ WDM drivers can use the WDM transport + INTx helper:
 1. `VirtioPciModernWdmInit(LowerDeviceObject, &Dev)`
 2. `VirtioPciModernWdmMapBars(&Dev, ResourcesRaw, ResourcesTranslated)`
 3. `VirtioPciNegotiateFeatures(&Dev, ...)`
-4. `VirtioPciSetupQueue(&Dev, ...)` / `VirtioPciNotifyQueue(&Dev, ...)` (or your own queue implementation)
-5. `VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`
+4. `VirtioPciReadDeviceConfig(&Dev, ...)` (optional)
+5. `VirtioPciSetupQueue(&Dev, ...)` / `VirtioPciNotifyQueue(&Dev, ...)` (or your own queue implementation)
+6. `VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`
+7. `VirtioPciAddStatus(&Dev, VIRTIO_STATUS_DRIVER_OK)`
 
 Note: `virtio_queue.*` is built on the miniport `VIRTIO_PCI_DEVICE` type from
 `virtio_pci_modern_miniport.h` and is primarily intended for miniports. WDM
