@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-interp")]
+
 use aero_cpu_core::msr;
 use aero_cpu_core::system::Cpu;
 use aero_cpu_core::time_insn::BasicBlockBuilder;

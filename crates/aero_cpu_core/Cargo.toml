@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = []
+legacy-interp = []
 qemu-diff = ["dep:qemu_diff"]
 
 [dependencies]

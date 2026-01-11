@@ -263,7 +263,7 @@ impl Cpu {
     ///
     /// The [`Cpu`] model is used primarily by unit-test harnesses that run
     /// real-mode code, so this currently implements only real-mode IVT delivery.
-    pub fn deliver_pending_event<B: crate::Bus>(&mut self, bus: &mut B) -> Result<(), Exception> {
+    pub fn deliver_pending_event<B: crate::CpuBus>(&mut self, bus: &mut B) -> Result<(), Exception> {
         let Some(event) = self.pending_event.take() else {
             return Ok(());
         };
@@ -280,27 +280,32 @@ impl Cpu {
                     ));
                 }
 
-                fn push_u16<B: crate::Bus>(cpu: &mut Cpu, bus: &mut B, val: u16) {
+                fn push_u16<B: crate::CpuBus>(
+                    cpu: &mut Cpu,
+                    bus: &mut B,
+                    val: u16,
+                ) -> Result<(), Exception> {
                     let sp = (cpu.rsp as u16).wrapping_sub(2);
                     cpu.rsp = (cpu.rsp & !0xFFFF) | sp as u64;
                     let addr = ((cpu.ss as u64) << 4).wrapping_add(sp as u64);
-                    bus.write_u16(addr, val);
+                    bus.write_u16(addr, val)?;
+                    Ok(())
                 }
 
                 let flags = self.rflags as u16;
                 let cs = self.cs;
                 let ip = (saved_rip & 0xFFFF) as u16;
 
-                push_u16(self, bus, flags);
-                push_u16(self, bus, cs);
-                push_u16(self, bus, ip);
+                push_u16(self, bus, flags)?;
+                push_u16(self, bus, cs)?;
+                push_u16(self, bus, ip)?;
 
                 // Clear IF + TF (interrupt gate behavior).
                 self.set_rflags(self.rflags & !(Self::RFLAGS_IF | (1 << 8)));
 
                 let ivt = (vector as u64) * 4;
-                let new_ip = bus.read_u16(ivt) as u64;
-                let new_cs = bus.read_u16(ivt + 2);
+                let new_ip = bus.read_u16(ivt)? as u64;
+                let new_cs = bus.read_u16(ivt + 2)?;
 
                 self.cs = new_cs;
                 self.rip = new_ip;
@@ -311,23 +316,23 @@ impl Cpu {
     }
 
     /// Execute an `IRET` return from an interrupt handler.
-    pub fn iret<B: crate::Bus>(&mut self, bus: &mut B) -> Result<(), Exception> {
+    pub fn iret<B: crate::CpuBus>(&mut self, bus: &mut B) -> Result<(), Exception> {
         if self.mode != CpuMode::Real {
             return Err(Exception::Unimplemented("system::Cpu IRET outside real mode"));
         }
 
-        fn pop_u16<B: crate::Bus>(cpu: &mut Cpu, bus: &mut B) -> u16 {
+        fn pop_u16<B: crate::CpuBus>(cpu: &mut Cpu, bus: &mut B) -> Result<u16, Exception> {
             let sp = cpu.rsp as u16;
             let addr = ((cpu.ss as u64) << 4).wrapping_add(sp as u64);
-            let val = bus.read_u16(addr);
+            let val = bus.read_u16(addr)?;
             let new_sp = sp.wrapping_add(2);
             cpu.rsp = (cpu.rsp & !0xFFFF) | new_sp as u64;
-            val
+            Ok(val)
         }
 
-        let ip = pop_u16(self, bus);
-        let cs = pop_u16(self, bus);
-        let flags = pop_u16(self, bus);
+        let ip = pop_u16(self, bus)?;
+        let cs = pop_u16(self, bus)?;
+        let flags = pop_u16(self, bus)?;
 
         self.cs = cs;
         self.rip = ip as u64;

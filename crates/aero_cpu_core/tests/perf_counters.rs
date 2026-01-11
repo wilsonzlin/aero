@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-interp")]
+
 use aero_cpu_core::{Bus, Cpu, CpuMode, RamBus};
 use aero_perf::{PerfCounters, PerfWorker};
 use std::sync::Arc;
@@ -74,4 +76,3 @@ fn repe_cmpsb_reports_actual_iterations_executed() {
     assert_eq!(perf.lifetime_snapshot().rep_iterations, 4);
     assert_eq!(cpu.regs.ecx(), 1);
 }
-

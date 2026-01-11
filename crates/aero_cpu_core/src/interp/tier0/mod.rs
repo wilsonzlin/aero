@@ -1,3 +1,9 @@
+//! Tier-0 interpreter.
+//!
+//! This is the default interpreter for `aero_cpu_core` and operates directly on
+//! the canonical JIT-ABI [`crate::state::CpuState`] + [`crate::mem::CpuBus`].
+//! Higher tiers (JIT) build on the same state layout.
+
 pub mod exec;
 
 mod ops_atomic;

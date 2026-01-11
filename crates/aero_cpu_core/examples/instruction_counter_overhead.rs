@@ -1,9 +1,20 @@
+#[cfg(feature = "legacy-interp")]
 use aero_cpu_core::{Bus, Cpu, CpuMode, RamBus};
+#[cfg(feature = "legacy-interp")]
 use aero_perf::{PerfCounters, PerfWorker};
+#[cfg(feature = "legacy-interp")]
 use std::hint::black_box;
+#[cfg(feature = "legacy-interp")]
 use std::sync::Arc;
+#[cfg(feature = "legacy-interp")]
 use std::time::Instant;
 
+#[cfg(not(feature = "legacy-interp"))]
+fn main() {
+    eprintln!("This example requires `aero_cpu_core`'s `legacy-interp` feature.");
+}
+
+#[cfg(feature = "legacy-interp")]
 fn main() {
     let iterations: usize = std::env::args()
         .nth(1)

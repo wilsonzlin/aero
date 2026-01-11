@@ -1,5 +1,9 @@
 //! Canonical CPU state representation (x86 / x86-64).
 //!
+//! This is the single CPU state model used by Aero's default execution engines:
+//! the Tier-0 interpreter and the JIT runtime. Legacy interpreter stacks are
+//! feature-gated and must not introduce additional `CpuState` variants.
+//!
 //! # ABI stability
 //! `CpuState` is the *in-memory ABI* between the interpreter and dynamically
 //! generated WASM JIT blocks. The layout is intentionally `#[repr(C)]` and the
@@ -1262,6 +1266,22 @@ impl CpuState {
         }
     }
 
+    /// Implements `FNINIT` / `FINIT`.
+    #[inline]
+    pub fn fninit(&mut self) {
+        self.fpu.reset();
+    }
+
+    /// Implements `EMMS` (empty MMX state).
+    ///
+    /// We don't currently model MMX separately from x87, but the architectural
+    /// effect that matters for context switching is that the x87 tag word is
+    /// marked empty.
+    #[inline]
+    pub fn emms(&mut self) {
+        self.fpu.emms();
+    }
+
     // ---- FXSAVE/FXRSTOR and MXCSR -----------------------------------------
 
     /// Implements `STMXCSR m32`.
@@ -1269,9 +1289,58 @@ impl CpuState {
         dst.copy_from_slice(&self.sse.mxcsr.to_le_bytes());
     }
 
+    /// `STMXCSR` convenience wrapper that writes MXCSR into guest memory.
+    pub fn stmxcsr_to_mem<B: crate::mem::CpuBus>(
+        &self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        if addr & 0b11 != 0 {
+            return Err(Exception::gp0());
+        }
+        bus.write_u32(addr, self.sse.mxcsr)
+    }
+
     /// Implements `LDMXCSR m32`.
     pub fn ldmxcsr(&mut self, src: &[u8; 4]) -> Result<(), FxStateError> {
         self.sse.set_mxcsr(u32::from_le_bytes(*src))
+    }
+
+    /// `LDMXCSR` convenience wrapper that loads MXCSR from guest memory.
+    pub fn ldmxcsr_from_mem<B: crate::mem::CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        if addr & 0b11 != 0 {
+            return Err(Exception::gp0());
+        }
+        let value = bus.read_u32(addr)?;
+        self.sse.set_mxcsr(value)?;
+        Ok(())
+    }
+
+    /// Convenience wrapper for the legacy `FXSAVE` encoding (32-bit image).
+    #[inline]
+    pub fn fxsave(&self, dst: &mut [u8; FXSAVE_AREA_SIZE]) {
+        self.fxsave32(dst)
+    }
+
+    /// `FXSAVE` convenience wrapper that writes the 512-byte image into guest memory.
+    pub fn fxsave_to_mem<B: crate::mem::CpuBus>(
+        &self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        self.fxsave(&mut image);
+        for (i, byte) in image.iter().copied().enumerate() {
+            bus.write_u8(addr + i as u64, byte)?;
+        }
+        Ok(())
     }
 
     /// Implements the legacy (32-bit) `FXSAVE m512byte` memory image.
@@ -1354,6 +1423,29 @@ impl CpuState {
         Ok(())
     }
 
+    /// Convenience wrapper for the legacy `FXRSTOR` encoding (32-bit image).
+    #[inline]
+    pub fn fxrstor(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
+        self.fxrstor32(src)
+    }
+
+    /// `FXRSTOR` convenience wrapper that reads the 512-byte image from guest memory.
+    pub fn fxrstor_from_mem<B: crate::mem::CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        for i in 0..FXSAVE_AREA_SIZE {
+            image[i] = bus.read_u8(addr + i as u64)?;
+        }
+        self.fxrstor(&image)?;
+        Ok(())
+    }
+
     /// Implements the 64-bit `FXSAVE64 m512byte` memory image.
     pub fn fxsave64(&self, dst: &mut [u8; FXSAVE_AREA_SIZE]) {
         let mut out = [0u8; FXSAVE_AREA_SIZE];
@@ -1386,6 +1478,23 @@ impl CpuState {
         *dst = out;
     }
 
+    /// `FXSAVE64` convenience wrapper that writes the 512-byte image into guest memory.
+    pub fn fxsave64_to_mem<B: crate::mem::CpuBus>(
+        &self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        self.fxsave64(&mut image);
+        for (i, byte) in image.iter().copied().enumerate() {
+            bus.write_u8(addr + i as u64, byte)?;
+        }
+        Ok(())
+    }
+
     /// Implements the 64-bit `FXRSTOR64 m512byte` memory image.
     pub fn fxrstor64(&mut self, src: &[u8; FXSAVE_AREA_SIZE]) -> Result<(), FxStateError> {
         let mxcsr = fx_read_u32(src, 24);
@@ -1416,6 +1525,23 @@ impl CpuState {
 
         self.fpu = fpu;
         self.sse = sse;
+        Ok(())
+    }
+
+    /// `FXRSTOR64` convenience wrapper that reads the 512-byte image from guest memory.
+    pub fn fxrstor64_from_mem<B: crate::mem::CpuBus>(
+        &mut self,
+        bus: &mut B,
+        addr: u64,
+    ) -> Result<(), Exception> {
+        if addr & 0xF != 0 {
+            return Err(Exception::gp0());
+        }
+        let mut image = [0u8; FXSAVE_AREA_SIZE];
+        for i in 0..FXSAVE_AREA_SIZE {
+            image[i] = bus.read_u8(addr + i as u64)?;
+        }
+        self.fxrstor64(&image)?;
         Ok(())
     }
 }

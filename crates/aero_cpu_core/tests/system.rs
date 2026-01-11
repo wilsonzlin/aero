@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-interp")]
+
 use aero_cpu_core::cpuid::{cpuid, CpuFeatures};
 use aero_cpu_core::msr;
 use aero_cpu_core::system::{Cpu, CpuMode, PortIo};

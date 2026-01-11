@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-interp")]
+
 use aero_cpu_core::cpuid::{bits, cpuid, CpuFeatureOverrides, CpuFeatureSet, CpuFeatures, CpuProfile, CpuTopology};
 use aero_cpu_core::msr;
 use aero_cpu_core::system::Cpu;
@@ -102,4 +104,3 @@ fn optimized_profile_only_exposes_implemented_extra_bits() {
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_SSE42, 0);
     assert_eq!(leaf1.ecx & bits::LEAF1_ECX_POPCNT, 0);
 }
-
