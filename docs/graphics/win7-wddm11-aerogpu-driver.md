@@ -92,9 +92,10 @@ We ship UMDs as separate DLLs because Windows loads them per-API/runtime.
 - D3D11 UMD (if/when we implement DXGI 1.1 path and D3D11 DDI)
 
 For a minimal D3D10/D3D11 UMD bring-up checklist (DDI entrypoints, FL10_0 target, DXGI swapchain/present expectations), see:
-
-- `docs/graphics/win7-d3d10-11-umd-minimal.md`
  
+- `docs/graphics/win7-d3d10-11-umd-minimal.md`
+- `docs/graphics/win7-d3d11ddi-function-tables.md` (D3D11 `d3d11umddi.h` function-table checklist: REQUIRED vs stubbable for a crash-free FL10_0 skeleton)
+  
 ### 2.3 INF + packaging
  
  We ship a standard display driver package:
