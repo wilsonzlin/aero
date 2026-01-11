@@ -71,15 +71,27 @@ fn canonical_io_bus_enumerates_multifunction_devices() {
     // IDE + UHCI functions at 00:01.1 and 00:01.2.
     assert!(found.contains(&ISA_PIIX3.bdf), "missing {}", ISA_PIIX3.name);
     assert!(found.contains(&IDE_PIIX3.bdf), "missing {}", IDE_PIIX3.name);
-    assert!(found.contains(&USB_UHCI_PIIX3.bdf), "missing {}", USB_UHCI_PIIX3.name);
-    assert_eq!(read_header_type(&mut cfg, &mut bus, ISA_PIIX3.bdf) & 0x80, 0x80);
+    assert!(
+        found.contains(&USB_UHCI_PIIX3.bdf),
+        "missing {}",
+        USB_UHCI_PIIX3.name
+    );
+    assert_eq!(
+        read_header_type(&mut cfg, &mut bus, ISA_PIIX3.bdf) & 0x80,
+        0x80
+    );
 
     // virtio-input must enumerate as a multi-function device (keyboard fn0, mouse fn1).
-    assert!(found.contains(&VIRTIO_INPUT_KEYBOARD.bdf), "missing virtio-input keyboard");
-    assert!(found.contains(&VIRTIO_INPUT_MOUSE.bdf), "missing virtio-input mouse");
+    assert!(
+        found.contains(&VIRTIO_INPUT_KEYBOARD.bdf),
+        "missing virtio-input keyboard"
+    );
+    assert!(
+        found.contains(&VIRTIO_INPUT_MOUSE.bdf),
+        "missing virtio-input mouse"
+    );
     assert_eq!(
         read_header_type(&mut cfg, &mut bus, VIRTIO_INPUT_KEYBOARD.bdf) & 0x80,
         0x80
     );
 }
-
