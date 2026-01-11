@@ -7,6 +7,7 @@ bench/compare.json
 scratchpad.md
 handoff.md
 .cargo-home/
+/target-worker*/
 
 # Python
 __pycache__/
