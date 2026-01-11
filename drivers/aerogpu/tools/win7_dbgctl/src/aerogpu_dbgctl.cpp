@@ -1100,6 +1100,8 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       NTSTATUS st = f->GetScanLine(&s);
       if (NT_SUCCESS(st)) {
         wprintf(L"  scanline: %lu%s\n", (unsigned long)s.ScanLine, s.InVerticalBlank ? L" (vblank)" : L"");
+      } else if (st == STATUS_NOT_SUPPORTED) {
+        wprintf(L"  scanline: (not supported)\n");
       } else {
         PrintNtStatus(L"D3DKMTGetScanLine failed", f, st);
       }
