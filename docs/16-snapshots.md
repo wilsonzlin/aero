@@ -85,6 +85,10 @@ Guest RAM dominates snapshot size (multi-GB for Windows 7). `aero-snapshot` supp
 - When the VM tracks dirty pages, a snapshot may include only modified pages since the last snapshot.
 - Each page is stored as `(page_index, compressed_bytes)`.
 - Restore applies diffs on top of an existing memory image (e.g., after loading a base full snapshot).
+- **Important:** dirty-page snapshots require the RAM encoding `page_size` to match the VM's dirty
+  tracking page size. `page_index` is measured in units of the dirty tracking granularity, so using
+  a different `page_size` would corrupt offsets. `aero-snapshot` enforces this by requiring
+  `SaveOptions.ram.page_size == SnapshotSource::dirty_page_size()` when `RamMode::Dirty`.
 - Dirty snapshots are **not standalone**: they must only be applied on top of the snapshot they
   reference via `SnapshotMeta.parent_snapshot_id`.
   - Use `aero_snapshot::restore_snapshot_with_options` and pass

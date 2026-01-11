@@ -64,8 +64,20 @@ pub trait SnapshotSource {
     fn ram_len(&self) -> usize;
     fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()>;
 
-    /// Return and clear the set of dirty pages since the last snapshot. Each page index is
-    /// `offset / page_size` where `page_size` is `SaveOptions.ram.page_size`.
+    /// Dirty page size (in bytes) used by [`SnapshotSource::take_dirty_pages`].
+    ///
+    /// Defaults to 4096 bytes for backward compatibility.
+    ///
+    /// When saving dirty RAM snapshots (`RamMode::Dirty`), `SaveOptions.ram.page_size` **must**
+    /// equal this value to ensure dirty page indices are interpreted correctly.
+    fn dirty_page_size(&self) -> u32 {
+        4096
+    }
+
+    /// Return and clear the set of dirty pages since the last snapshot.
+    ///
+    /// Each page index is `offset / dirty_page_size()`, i.e. indices are measured in units of
+    /// [`SnapshotSource::dirty_page_size`].
     fn take_dirty_pages(&mut self) -> Option<Vec<u64>>;
 }
 
@@ -89,6 +101,16 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     source: &mut S,
     options: SaveOptions,
 ) -> Result<()> {
+    if options.ram.mode == RamMode::Dirty {
+        let source_page_size = source.dirty_page_size();
+        if options.ram.page_size != source_page_size {
+            return Err(SnapshotError::DirtyPageSizeMismatch {
+                options: options.ram.page_size,
+                dirty_page_size: source_page_size,
+            });
+        }
+    }
+
     write_file_header(w)?;
 
     write_section(w, SectionId::META, 1, 0, |w| {
@@ -441,6 +463,109 @@ mod tests {
             self.ram[offset..offset + data.len()].copy_from_slice(data);
             Ok(())
         }
+    }
+
+    #[derive(Clone)]
+    struct DirtyPageSizeSource {
+        ram: Vec<u8>,
+        dirty_pages: Vec<u64>,
+        dirty_page_size: u32,
+    }
+
+    impl DirtyPageSizeSource {
+        fn new(dirty_page_size: u32) -> Self {
+            let ram_len = 16 * 1024;
+            let mut ram = vec![0u8; ram_len];
+            for (idx, byte) in ram.iter_mut().enumerate() {
+                *byte = idx as u8;
+            }
+            Self {
+                ram,
+                dirty_pages: vec![0, 1],
+                dirty_page_size,
+            }
+        }
+    }
+
+    impl SnapshotSource for DirtyPageSizeSource {
+        fn snapshot_meta(&mut self) -> SnapshotMeta {
+            SnapshotMeta::default()
+        }
+
+        fn cpu_state(&self) -> CpuState {
+            CpuState::default()
+        }
+
+        fn mmu_state(&self) -> MmuState {
+            MmuState::default()
+        }
+
+        fn device_states(&self) -> Vec<DeviceState> {
+            Vec::new()
+        }
+
+        fn disk_overlays(&self) -> DiskOverlayRefs {
+            DiskOverlayRefs::default()
+        }
+
+        fn ram_len(&self) -> usize {
+            self.ram.len()
+        }
+
+        fn read_ram(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+            let offset: usize = offset
+                .try_into()
+                .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+            let end = offset
+                .checked_add(buf.len())
+                .ok_or(SnapshotError::Corrupt("ram read overflow"))?;
+            if end > self.ram.len() {
+                return Err(SnapshotError::Corrupt("ram read out of bounds"));
+            }
+            buf.copy_from_slice(&self.ram[offset..end]);
+            Ok(())
+        }
+
+        fn dirty_page_size(&self) -> u32 {
+            self.dirty_page_size
+        }
+
+        fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+            Some(std::mem::take(&mut self.dirty_pages))
+        }
+    }
+
+    #[test]
+    fn save_snapshot_rejects_dirty_page_size_mismatch() {
+        let mut source = DirtyPageSizeSource::new(8192);
+        let mut options = SaveOptions::default();
+        options.ram.mode = RamMode::Dirty;
+        options.ram.page_size = 4096;
+
+        let mut out = Cursor::new(Vec::new());
+        let err = save_snapshot(&mut out, &mut source, options).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SnapshotError::DirtyPageSizeMismatch {
+                    options: 4096,
+                    dirty_page_size: 8192
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn save_snapshot_allows_matching_dirty_page_size() {
+        let mut source = DirtyPageSizeSource::new(8192);
+        let mut options = SaveOptions::default();
+        options.ram.mode = RamMode::Dirty;
+        options.ram.page_size = 8192;
+
+        let mut out = Cursor::new(Vec::new());
+        save_snapshot(&mut out, &mut source, options).unwrap();
+        assert!(!out.into_inner().is_empty());
     }
 
     proptest! {
