@@ -112,6 +112,7 @@ pub enum CommandProcessorError {
     },
 
     // Allocation-backed resources
+    InvalidResourceHandle(u32),
     UnknownResourceHandle(u32),
     MissingAllocationTable(u32),
     UnknownAllocId(u32),
@@ -159,6 +160,12 @@ impl std::fmt::Display for CommandProcessorError {
                 f,
                 "shared surface alias handle 0x{alias:X} already bound (existing_handle=0x{existing:X} new_handle=0x{new:X})"
             ),
+            CommandProcessorError::InvalidResourceHandle(handle) => {
+                write!(
+                    f,
+                    "invalid resource handle 0x{handle:08X} (0 is reserved)"
+                )
+            }
             CommandProcessorError::UnknownResourceHandle(handle) => {
                 write!(f, "unknown resource handle 0x{handle:08X}")
             }
@@ -268,6 +275,9 @@ impl AeroGpuCommandProcessor {
     }
 
     fn register_shared_surface(&mut self, handle: u32) -> Result<(), CommandProcessorError> {
+        if handle == 0 {
+            return Err(CommandProcessorError::InvalidResourceHandle(handle));
+        }
         if self.shared_surface_handles.contains_key(&handle) {
             return Ok(());
         }
@@ -393,6 +403,9 @@ impl AeroGpuCommandProcessor {
                     backing_alloc_id,
                     backing_offset_bytes,
                 } => {
+                    if buffer_handle == 0 {
+                        return Err(CommandProcessorError::InvalidResourceHandle(buffer_handle));
+                    }
                     let desc = ResourceDesc::Buffer {
                         usage_flags,
                         size_bytes,
@@ -535,6 +548,9 @@ impl AeroGpuCommandProcessor {
                     resource_handle,
                     share_token,
                 } => {
+                    if resource_handle == 0 {
+                        return Err(CommandProcessorError::InvalidResourceHandle(resource_handle));
+                    }
                     // If the handle is itself an alias, normalize to the underlying surface.
                     let Some(underlying) = self.resolve_shared_surface_handle(resource_handle)
                     else {
@@ -562,6 +578,9 @@ impl AeroGpuCommandProcessor {
                     out_resource_handle,
                     share_token,
                 } => {
+                    if out_resource_handle == 0 {
+                        return Err(CommandProcessorError::InvalidResourceHandle(out_resource_handle));
+                    }
                     let Some(&underlying) = self.shared_surface_by_token.get(&share_token) else {
                         return Err(CommandProcessorError::UnknownShareToken(share_token));
                     };

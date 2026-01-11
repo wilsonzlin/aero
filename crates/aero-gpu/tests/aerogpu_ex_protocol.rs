@@ -152,6 +152,58 @@ fn importing_unknown_token_is_an_error() {
 }
 
 #[test]
+fn creating_buffer_with_zero_handle_is_an_error() {
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, 0); // buffer_handle
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidResourceHandle(0)));
+}
+
+#[test]
+fn creating_texture_with_zero_handle_is_an_error() {
+    let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0);
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidResourceHandle(0)));
+}
+
+#[test]
+fn importing_shared_surface_into_zero_handle_is_an_error() {
+    const TOKEN: u64 = 0x1122_3344_5566_7788;
+
+    let stream = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0); // out_resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    let err = processor.process_submission(&stream, 1).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::InvalidResourceHandle(0)));
+}
+
+#[test]
 fn exporting_the_same_token_twice_is_idempotent() {
     const TOKEN: u64 = 0x1111_2222_3333_4444;
 
