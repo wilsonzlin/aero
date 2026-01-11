@@ -38,6 +38,7 @@
 #include "aerogpu_d3d10_trace.h"
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
 #include "../../../protocol/aerogpu_umd_private.h"
+#include "../../../protocol/aerogpu_win7_abi.h"
 
 #ifndef NT_SUCCESS
   #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
@@ -721,6 +722,10 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 
     void* dma_ptr = nullptr;
     UINT dma_cap = 0;
+    void* dma_priv_ptr = nullptr;
+    size_t dma_priv_size = 0;
+    bool dma_priv_ptr_present = false;
+    bool dma_priv_size_present = false;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
       dma_ptr = alloc.pDmaBuffer;
     }
@@ -733,10 +738,96 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
       dma_cap = alloc.CommandBufferSize;
     }
+    __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
+      dma_priv_ptr = alloc.pDmaBufferPrivateData;
+      dma_priv_ptr_present = true;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
+      dma_priv_size = static_cast<size_t>(alloc.DmaBufferPrivateDataSize);
+      dma_priv_size_present = true;
+    }
 
     if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
       if (out_hr) {
         *out_hr = FAILED(alloc_hr) ? alloc_hr : E_OUTOFMEMORY;
+      }
+      dev->cmd.reset();
+      return 0;
+    }
+
+    if (dma_priv_size_present) {
+      if (dma_priv_size != 0 && dma_priv_ptr == nullptr) {
+        D3DDDICB_DEALLOCATE dealloc = {};
+        __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+          dealloc.pDmaBuffer = alloc.pDmaBuffer;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+          dealloc.pCommandBuffer = alloc.pCommandBuffer;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+          dealloc.pAllocationList = alloc.pAllocationList;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+          dealloc.pPatchLocationList = alloc.pPatchLocationList;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+          dealloc.pDmaBufferPrivateData = dma_priv_ptr;
+        }
+        CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
+
+        if (out_hr) {
+          *out_hr = E_FAIL;
+        }
+        dev->cmd.reset();
+        return 0;
+      }
+
+      if (dma_priv_size < static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES)) {
+        D3DDDICB_DEALLOCATE dealloc = {};
+        __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+          dealloc.pDmaBuffer = alloc.pDmaBuffer;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+          dealloc.pCommandBuffer = alloc.pCommandBuffer;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+          dealloc.pAllocationList = alloc.pAllocationList;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+          dealloc.pPatchLocationList = alloc.pPatchLocationList;
+        }
+        __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+          dealloc.pDmaBufferPrivateData = dma_priv_ptr;
+        }
+        CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
+
+        if (out_hr) {
+          *out_hr = E_FAIL;
+        }
+        dev->cmd.reset();
+        return 0;
+      }
+    } else if (dma_priv_ptr_present && dma_priv_ptr == nullptr) {
+      D3DDDICB_DEALLOCATE dealloc = {};
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+        dealloc.pDmaBuffer = alloc.pDmaBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+        dealloc.pCommandBuffer = alloc.pCommandBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+        dealloc.pAllocationList = alloc.pAllocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+        dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+        dealloc.pDmaBufferPrivateData = dma_priv_ptr;
+      }
+      CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
+
+      if (out_hr) {
+        *out_hr = E_FAIL;
       }
       dev->cmd.reset();
       return 0;
@@ -755,6 +846,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
       __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
         dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+        dealloc.pDmaBufferPrivateData = dma_priv_ptr;
       }
       CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
 
@@ -798,6 +892,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
         dealloc.pPatchLocationList = alloc.pPatchLocationList;
       }
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+        dealloc.pDmaBufferPrivateData = dma_priv_ptr;
+      }
       CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
 
       if (out_hr) {
@@ -817,6 +914,15 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 
     const bool is_last_chunk = (chunk_end == src_size);
     const bool do_present = want_present && is_last_chunk && cb->pfnPresentCb != nullptr;
+
+    if (dma_priv_ptr && dma_priv_size_present) {
+      const size_t clear_bytes = std::min(
+          dma_priv_size,
+          static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES));
+      if (clear_bytes) {
+        std::memset(dma_priv_ptr, 0, clear_bytes);
+      }
+    }
 
     HRESULT submit_hr = S_OK;
     UINT submission_fence = 0;
@@ -845,6 +951,12 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
       __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
         present.PatchLocationListSize = 0;
+      }
+      __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
+        present.pDmaBufferPrivateData = dma_priv_ptr;
+      }
+      __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
+        present.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
       }
 
       submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, dev->hrt_device, &present);
@@ -877,6 +989,12 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
         render.PatchLocationListSize = 0;
       }
+      __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
+        render.pDmaBufferPrivateData = dma_priv_ptr;
+      }
+      __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
+        render.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
+      }
 
       submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, dev->hrt_device, &render);
       __if_exists(D3DDDICB_RENDER::SubmissionFenceId) {
@@ -898,6 +1016,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
       __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
         dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBufferPrivateData) {
+        dealloc.pDmaBufferPrivateData = dma_priv_ptr;
       }
       CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
     }
