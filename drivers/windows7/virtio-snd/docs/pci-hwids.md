@@ -58,9 +58,11 @@ So, a fully-qualified expected HWID looks like:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
-Note: `docs/windows-device-contract.json` currently lists non-revision-gated patterns
-(`PCI\VEN_1AF4&DEV_1059` and `...&SUBSYS_00191AF4`) for tooling convenience. The virtio-snd INF is
-intentionally stricter and requires `REV_01`.
+Note: `docs/windows-device-contract.json` lists **both** revision-gated and
+non-revision-gated patterns for tooling convenience. Automation (Guest Tools,
+CI) should prefer the revision-gated forms (`...&REV_01`) as described in
+`docs/windows-device-contract.md`. The virtio-snd INF is intentionally stricter
+and requires `REV_01`.
 
 The repository also contains an optional **legacy filename alias** INF
 (`inf/virtio-snd.inf.disabled`). If you rename it back to `virtio-snd.inf` (and regenerate/sign
