@@ -14,11 +14,14 @@
 //
 // AeroGPU intentionally uses a "no patch list" submission strategy:
 // - The UMD leaves the WDDM patch-location list empty.
-// - GPU commands reference guest-backed memory via a stable 32-bit `alloc_id`
-//   persisted in WDDM allocation private-driver-data (`aerogpu_wddm_alloc_priv`).
-// - The KMD builds a per-submit `aerogpu_alloc_table` from the kernel allocation
-//   list keyed by that `alloc_id`, allowing the emulator to resolve
-//   alloc_id -> (GPA, size) without relocations.
+// - All GPU commands reference allocations by a stable 32-bit `alloc_id`.
+// - `alloc_id` is carried in the per-allocation private driver data blob
+//   (`aerogpu_wddm_alloc_priv`), consumed by the KMD and stored in
+//   `DXGK_ALLOCATION::AllocationId`.
+// - The KMD builds an allocation table (`aerogpu_alloc_table_header` in
+//   `aerogpu_ring.h`) for each submission from the WDDM allocation list and uses
+//   `AllocationId` as the lookup key. The host/emulator then resolves
+//   alloc_id -> guest physical pages without requiring any relocations.
 // - Since the patch-location list is unused, the allocation-list slot-id field
 //   is assigned densely (0..N-1) and is not required to match `alloc_id`.
 //

@@ -166,7 +166,6 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
     out.status = AllocRefStatus::kInvalidArgument;
     return out;
   }
-
   const uint64_t key = handle_key(hAllocation);
   auto it = handle_to_entry_.find(key);
   if (it != handle_to_entry_.end()) {
@@ -237,6 +236,10 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
 
   // Default: read-only.
   set_write_operation(entry, write);
+  // WDDM uses AllocationListSlotId to index patch list relocations. AeroGPU uses
+  // a no-patch-list submission strategy, but some runtimes still validate the
+  // slot-id range. Use the list index as the slot id and carry the stable
+  // `alloc_id` separately in the allocation's private driver data.
   set_allocation_list_slot_id(entry, idx);
 
   handle_to_entry_.emplace(key, Entry{idx, alloc_id});

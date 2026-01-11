@@ -14,9 +14,9 @@ add_executable(aerogpu_cmd_stream_writer_tests
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_log.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc_list.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_context.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/dllmain.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc_list.cpp
 )
 
 target_include_directories(aerogpu_cmd_stream_writer_tests PRIVATE

@@ -207,10 +207,23 @@ enum aerogpu_copy_flags {
 
 /*
  * CREATE_BUFFER
- * - `backing_alloc_id` is a stable per-allocation ID (`alloc_id`) which the host
- *   resolves using the submission's optional allocation table.
+ * - `backing_alloc_id` identifies the guest memory backing for this resource.
+ *   If non-zero, this is a stable per-allocation ID (`alloc_id`) key into the
+ *   submission's allocation table (see `struct aerogpu_alloc_table_header` /
+ *   `aerogpu_ring.h`).
  *   - It is **not** an array index; allocation tables may be re-ordered between
  *     submissions.
+ *
+ *   - `backing_alloc_id == 0` means the resource is host-allocated (no guest
+ *     backing memory and therefore no alloc-table entry).
+ *   - `backing_alloc_id != 0` requires the submission to provide an allocation
+ *     table entry for that alloc_id so the host can resolve the guest physical
+ *     pages.
+ *
+ *   Win7/WDDM UMDs typically source `alloc_id` from the per-allocation private
+ *   driver data blob (`aerogpu_wddm_alloc_priv` in `aerogpu_wddm_alloc.h`), which
+ *   the KMD copies into `DXGK_ALLOCATION::AllocationId` and then uses to build
+ *   the alloc table sideband for each submission.
  * - The host must validate that `backing_offset_bytes + size_bytes` is within
  *   the allocation's size.
  * - `size_bytes` must be a multiple of 4 (WebGPU `COPY_BUFFER_ALIGNMENT`).
@@ -232,9 +245,9 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_buffer) == 40);
 /*
  * CREATE_TEXTURE2D
  * - Textures are linear in guest memory when backed by an allocation.
+ * - `row_pitch_bytes` is required when `backing_alloc_id != 0`.
  * - `backing_alloc_id` follows the same `alloc_id` resolution rules as
  *   CREATE_BUFFER.
- * - `row_pitch_bytes` is required when `backing_alloc_id != 0`.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_create_texture2d {

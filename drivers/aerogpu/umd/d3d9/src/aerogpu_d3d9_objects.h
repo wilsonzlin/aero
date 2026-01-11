@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -274,6 +275,7 @@ struct Device {
   WddmDeviceCallbacks wddm_callbacks{};
   WddmHandle wddm_device = 0;
   WddmContext wddm_context{};
+  std::unique_ptr<AllocationListTracker> wddm_alloc_tracker;
 
   CmdWriter cmd;
   AllocationListTracker alloc_list_tracker;
