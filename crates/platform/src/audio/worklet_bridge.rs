@@ -11,8 +11,9 @@ pub const HEADER_U32_LEN: usize = 4;
 pub const READ_FRAME_INDEX: usize = 0;
 pub const WRITE_FRAME_INDEX: usize = 1;
 pub const UNDERRUN_COUNT_INDEX: usize = 2;
+pub const OVERRUN_COUNT_INDEX: usize = 3;
 
-/// Total bytes reserved for the header (including padding/reserved).
+/// Total bytes reserved for the header.
 pub const HEADER_BYTES: usize = HEADER_U32_LEN * 4;
 
 #[inline]
@@ -183,6 +184,9 @@ mod wasm {
 
         #[wasm_bindgen(js_namespace = Atomics)]
         fn store(array: &Uint32Array, index: u32, value: u32) -> u32;
+
+        #[wasm_bindgen(js_namespace = Atomics)]
+        fn add(array: &Uint32Array, index: u32, value: u32) -> u32;
     }
 
     #[inline]
@@ -193,6 +197,11 @@ mod wasm {
     #[inline]
     fn atomic_store_u32(array: &Uint32Array, index: usize, value: u32) {
         store(array, index as u32, value);
+    }
+
+    #[inline]
+    fn atomic_add_u32(array: &Uint32Array, index: usize, value: u32) {
+        let _ = add(array, index as u32, value);
     }
 
     /// Producer-side handle to the SharedArrayBuffer ring buffer consumed by the
@@ -232,6 +241,7 @@ mod wasm {
             atomic_store_u32(&header, READ_FRAME_INDEX, 0);
             atomic_store_u32(&header, WRITE_FRAME_INDEX, 0);
             atomic_store_u32(&header, UNDERRUN_COUNT_INDEX, 0);
+            atomic_store_u32(&header, OVERRUN_COUNT_INDEX, 0);
 
             Ok(Self {
                 sab,
@@ -311,6 +321,13 @@ mod wasm {
 
             let free = frames_free(read_idx, write_idx, self.capacity_frames);
             let frames_to_write = requested_frames.min(free);
+            if frames_to_write < requested_frames {
+                atomic_add_u32(
+                    &self.header,
+                    OVERRUN_COUNT_INDEX,
+                    requested_frames - frames_to_write,
+                );
+            }
             if frames_to_write == 0 {
                 return 0;
             }
@@ -319,26 +336,18 @@ mod wasm {
             let first_frames = frames_to_write.min(self.capacity_frames - write_pos);
             let second_frames = frames_to_write - first_frames;
 
-            let cc = self.channel_count;
+            let cc = self.channel_count as usize;
+            let first_samples = first_frames as usize * cc;
+            let write_sample_pos = write_pos as u32 * self.channel_count;
+            self.samples
+                .subarray(write_sample_pos, write_sample_pos + first_samples as u32)
+                .copy_from(&samples[..first_samples]);
 
-            // Copy the first contiguous chunk.
-            for frame in 0..first_frames {
-                let src_base = (frame * cc) as usize;
-                let dst_base = ((write_pos + frame) * cc) as u32;
-                for ch in 0..cc {
-                    self.samples
-                        .set_index(dst_base + ch, samples[src_base + ch as usize]);
-                }
-            }
-
-            // Copy the wrapped chunk (if any) to the start of the ring.
-            for frame in 0..second_frames {
-                let src_base = ((first_frames + frame) * cc) as usize;
-                let dst_base = (frame * cc) as u32;
-                for ch in 0..cc {
-                    self.samples
-                        .set_index(dst_base + ch, samples[src_base + ch as usize]);
-                }
+            if second_frames > 0 {
+                let second_samples = second_frames as usize * cc;
+                self.samples
+                    .subarray(0, second_samples as u32)
+                    .copy_from(&samples[first_samples..first_samples + second_samples]);
             }
 
             atomic_store_u32(&self.header, WRITE_FRAME_INDEX, write_idx.wrapping_add(frames_to_write));
@@ -353,6 +362,10 @@ mod wasm {
 
         pub fn underrun_count(&self) -> u32 {
             atomic_load_u32(&self.header, UNDERRUN_COUNT_INDEX)
+        }
+
+        pub fn overrun_count(&self) -> u32 {
+            atomic_load_u32(&self.header, OVERRUN_COUNT_INDEX)
         }
     }
 }

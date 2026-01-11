@@ -25,7 +25,7 @@ export type AudioRingBufferLayout = {
    * - u32 readFrameIndex (bytes 0..4)
    * - u32 writeFrameIndex (bytes 4..8)
    * - u32 underrunCount (bytes 8..12)
-   * - u32 reserved (bytes 12..16)
+   * - u32 overrunCount (bytes 12..16) - frames dropped by the producer due to buffer full
    * - f32 samples[] (bytes 16..)
    *
    * Indices are monotonically-increasing frame counters (wrapping naturally at
@@ -38,6 +38,7 @@ export type AudioRingBufferLayout = {
   readIndex: Uint32Array;
   writeIndex: Uint32Array;
   underrunCount: Uint32Array;
+  overrunCount: Uint32Array;
   samples: Float32Array;
   channelCount: number;
   capacityFrames: number;
@@ -60,6 +61,7 @@ export type EnabledAudioOutput = {
   writeInterleaved(samples: Float32Array, srcSampleRate: number): number;
   getBufferLevelFrames(): number;
   getUnderrunCount(): number;
+  getOverrunCount(): number;
 };
 
 export type DisabledAudioOutput = {
@@ -71,6 +73,7 @@ export type DisabledAudioOutput = {
   writeInterleaved(_samples: Float32Array, _srcSampleRate: number): number;
   getBufferLevelFrames(): number;
   getUnderrunCount(): number;
+  getOverrunCount(): number;
 };
 
 export type AudioOutput = EnabledAudioOutput | DisabledAudioOutput;
@@ -97,6 +100,7 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
   Atomics.store(header, 0, 0);
   Atomics.store(header, 1, 0);
   Atomics.store(header, 2, 0);
+  Atomics.store(header, 3, 0);
 
   return {
     buffer,
@@ -104,6 +108,7 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
     readIndex: header.subarray(0, 1),
     writeIndex: header.subarray(1, 2),
     underrunCount: header.subarray(2, 3),
+    overrunCount: header.subarray(3, 4),
     samples,
     channelCount,
     capacityFrames: ringBufferFrames,
@@ -128,6 +133,7 @@ function wrapRingBuffer(buffer: SharedArrayBuffer, channelCount: number, ringBuf
     readIndex: header.subarray(0, 1),
     writeIndex: header.subarray(1, 2),
     underrunCount: header.subarray(2, 3),
+    overrunCount: header.subarray(3, 4),
     samples,
     channelCount,
     capacityFrames: ringBufferFrames,
@@ -150,6 +156,7 @@ function inferRingBufferFrames(buffer: SharedArrayBuffer, channelCount: number):
 const READ_FRAME_INDEX = 0;
 const WRITE_FRAME_INDEX = 1;
 const UNDERRUN_COUNT = 2;
+const OVERRUN_COUNT = 3;
 
 function framesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
   return (writeFrameIndex - readFrameIndex) >>> 0;
@@ -171,6 +178,10 @@ export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): num
 
 export function getRingBufferUnderrunCount(ringBuffer: AudioRingBufferLayout): number {
   return Atomics.load(ringBuffer.header, UNDERRUN_COUNT) >>> 0;
+}
+
+export function getRingBufferOverrunCount(ringBuffer: AudioRingBufferLayout): number {
+  return Atomics.load(ringBuffer.header, OVERRUN_COUNT) >>> 0;
 }
 
 export function resampleLinearInterleaved(
@@ -226,6 +237,9 @@ export function writeRingBufferInterleaved(
 
   const free = framesFree(read, write, ringBuffer.capacityFrames);
   const framesToWrite = Math.min(requestedFrames, free);
+  if (framesToWrite < requestedFrames) {
+    Atomics.add(ringBuffer.header, OVERRUN_COUNT, requestedFrames - framesToWrite);
+  }
   if (framesToWrite === 0) return 0;
 
   const writePos = write % ringBuffer.capacityFrames;
@@ -291,6 +305,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       getUnderrunCount() {
         return 0;
       },
+      getOverrunCount() {
+        return 0;
+      },
     };
   }
 
@@ -321,6 +338,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       getUnderrunCount() {
         return 0;
       },
+      getOverrunCount() {
+        return 0;
+      },
     };
   }
 
@@ -349,6 +369,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       getUnderrunCount() {
         return 0;
       },
+      getOverrunCount() {
+        return 0;
+      },
     };
   }
 
@@ -370,6 +393,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
         return 0;
       },
       getUnderrunCount() {
+        return 0;
+      },
+      getOverrunCount() {
         return 0;
       },
     };
@@ -400,6 +426,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
         return 0;
       },
       getUnderrunCount() {
+        return 0;
+      },
+      getOverrunCount() {
         return 0;
       },
     };
@@ -434,6 +463,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     },
     getUnderrunCount() {
       return getRingBufferUnderrunCount(ringBuffer);
+    },
+    getOverrunCount() {
+      return getRingBufferOverrunCount(ringBuffer);
     },
   };
 }
