@@ -57,6 +57,9 @@ describe("runtime/wasm_preload", () => {
         add: (a: number, b: number) => a + b,
         version: () => 1,
         sum: (a: number, b: number) => a + b,
+        UsbPassthroughBridge: class {
+          free(): void {}
+        },
       }),
     };
 
@@ -68,6 +71,6 @@ describe("runtime/wasm_preload", () => {
     expect(variant).toBe("single");
     expect(api.add(2, 3)).toBe(5);
     expect(initInput).toBe(compiled.module);
+    expect(api.UsbPassthroughBridge).toBeDefined();
   });
 });
-
