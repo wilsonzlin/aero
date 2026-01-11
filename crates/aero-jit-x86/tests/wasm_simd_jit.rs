@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_jit_x86::simd::{
     compile_wasm_simd, interpret, Inst, JitOptions, Operand, Program, SseState, XmmReg,
     DEFAULT_WASM_LAYOUT, MXCSR_DEFAULT, STATE_SIZE_BYTES,

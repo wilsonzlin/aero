@@ -24,7 +24,9 @@ wasmtime = { version = "40.0.1", default-features = false, features = ["cranelif
 
 [dev-dependencies]
 memoffset = "0.9"
-rand = "0.8.5"
-rand_chacha = "0.3"
 wasmparser = "0.244.0"
 wasmi = "1.0.7"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rand = "0.8.5"
+rand_chacha = "0.3"

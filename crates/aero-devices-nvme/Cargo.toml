@@ -10,8 +10,10 @@ aero-io-snapshot = { path = "../aero-io-snapshot" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
-criterion = "0.5"
 emulator = { path = "../emulator" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.5"
 
 [[bench]]
 name = "nvme_vs_ahci"
