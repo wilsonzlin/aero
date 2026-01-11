@@ -15,6 +15,8 @@ This file is intended to be kept in sync with:
 The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to safely include
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 
+Some devices include multiple IDs (for example transitional + modern) so Guest Tools can recognize either enumeration.
+
 For Aero virtio devices, these IDs are expected to follow the repo's device contract (virtio-pci
 modern-only IDs plus PCI Revision ID `0x01`). Keep `devices.cmd` consistent with:
 

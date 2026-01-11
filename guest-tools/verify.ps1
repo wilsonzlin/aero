@@ -562,7 +562,7 @@ function Parse-InfMetadata([string]$path) {
         }
 
         # Hardware IDs typically appear as the last token(s) after a comma:
-        #   %Desc% = InstallSection, PCI\VEN_1AF4&DEV_1000
+        #   %Desc% = InstallSection, PCI\VEN_1AF4&DEV_1041
         if ($t.IndexOf(',') -ge 0) {
             $parts = $t -split ','
             if ($parts -and $parts.Length -ge 2) {
