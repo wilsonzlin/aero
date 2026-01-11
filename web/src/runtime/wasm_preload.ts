@@ -1,5 +1,6 @@
 import { perf } from "../perf/perf";
 import type { WasmVariant } from "./wasm_loader";
+import { registerPrecompiledWasmModule } from "./wasm_precompiled_registry";
 
 export type PrecompiledWasm = { module: WebAssembly.Module; url: string };
 
@@ -80,6 +81,7 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
       return await WebAssembly.compile(bytes);
     });
 
+    registerPrecompiledWasmModule(module, variant);
     return { module, url } satisfies PrecompiledWasm;
   })();
 
@@ -93,4 +95,3 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
     throw err;
   }
 }
-

@@ -1,4 +1,5 @@
 import type { UsbHostAction, UsbHostCompletion } from "../usb/webusb_backend";
+import { lookupPrecompiledWasmModuleVariant } from "./wasm_precompiled_registry";
 
 export type WasmVariant = "threaded" | "single";
 
@@ -840,6 +841,51 @@ async function loadThreaded(options: WasmInitOptions): Promise<WasmLoadResult> {
 export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitResult> {
     const requested = options.variant ?? "auto";
     const threadSupport = detectThreadSupport();
+    const moduleVariantHint = options.module ? lookupPrecompiledWasmModuleVariant(options.module) : undefined;
+
+    if (requested === "auto" && moduleVariantHint) {
+        if (moduleVariantHint === "single") {
+            const loaded = await loadSingle(options);
+            return {
+                api: loaded.api,
+                variant: "single",
+                reason: "Using single-threaded WASM because the provided WebAssembly.Module was precompiled for it.",
+                memory: describeMemory(loaded.memory),
+            };
+        }
+
+        // `precompileWasm("threaded")` can run in environments that cannot *instantiate* the
+        // shared-memory module (e.g. browsers without COOP/COEP). Treat the hint as a
+        // preference, not a hard requirement.
+        if (threadSupport.supported) {
+            try {
+                const loaded = await loadThreaded(options);
+                return {
+                    api: loaded.api,
+                    variant: "threaded",
+                    reason: `Using threaded WASM because the provided WebAssembly.Module was precompiled for it. (${threadSupport.reason})`,
+                    memory: describeMemory(loaded.memory),
+                };
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                const loaded = await loadSingle({ ...options, module: undefined });
+                return {
+                    api: loaded.api,
+                    variant: "single",
+                    reason: `Threaded WASM init failed (precompiled module provided); falling back to single. Error: ${message}`,
+                    memory: describeMemory(loaded.memory),
+                };
+            }
+        }
+
+        const loaded = await loadSingle({ ...options, module: undefined });
+        return {
+            api: loaded.api,
+            variant: "single",
+            reason: `Threaded precompiled module provided but the current runtime cannot use shared-memory WebAssembly; falling back to single. Reason: ${threadSupport.reason}`,
+            memory: describeMemory(loaded.memory),
+        };
+    }
 
     if (requested === "threaded") {
         if (!threadSupport.supported) {
