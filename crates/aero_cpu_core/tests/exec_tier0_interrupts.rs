@@ -54,6 +54,42 @@ fn run_to_halt<B: CpuBus>(cpu: &mut Vcpu<B>, interp: &mut Tier0Interpreter, max_
 }
 
 #[test]
+fn tier0_executes_cpuid_assist_in_exec_glue() {
+    let mut bus = FlatTestBus::new(0x1000);
+    let code_base = 0x0000u64;
+    bus.load(code_base, &[0x0F, 0xA2, 0xF4]); // CPUID; HLT
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Protected, bus);
+    cpu.cpu.state.segments.cs.selector = 0x08;
+    cpu.cpu.state.segments.ss.selector = 0x10;
+    cpu.cpu.state.segments.cs.base = 0;
+    cpu.cpu.state.segments.ss.base = 0;
+    cpu.cpu.state.write_gpr32(gpr::RSP, 0x800);
+    cpu.cpu.state.write_reg(Register::EAX, 0);
+    cpu.cpu.state.write_reg(Register::ECX, 0);
+    cpu.cpu.state.set_rflags(0x0002);
+    cpu.cpu.state.set_rip(code_base);
+
+    let mut interp = Tier0Interpreter::new(1024);
+    run_to_halt(&mut cpu, &mut interp, 16);
+
+    assert!(cpu.cpu.state.halted);
+    assert_eq!(cpu.cpu.state.read_reg(Register::EAX), 0x1F);
+    assert_eq!(
+        cpu.cpu.state.read_reg(Register::EBX),
+        u64::from(u32::from_le_bytes(*b"Genu"))
+    );
+    assert_eq!(
+        cpu.cpu.state.read_reg(Register::EDX),
+        u64::from(u32::from_le_bytes(*b"ineI"))
+    );
+    assert_eq!(
+        cpu.cpu.state.read_reg(Register::ECX),
+        u64::from(u32::from_le_bytes(*b"ntel"))
+    );
+}
+
+#[test]
 fn tier0_preserves_bios_interrupt_vector_for_hlt_hypercall() {
     let mut bus = FlatTestBus::new(0x100000);
 

@@ -1,4 +1,5 @@
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
+use crate::{assist::AssistContext, assist::handle_assist};
 
 pub trait ExecCpu {
     fn rip(&self) -> u64;
@@ -168,19 +169,28 @@ impl<B: crate::mem::CpuBus> ExecCpu for Vcpu<B> {
 /// Minimal [`Interpreter`] implementation that executes Tier-0 (`interp::tier0`)
 /// instructions.
 ///
-/// This is intended for unit tests / integration glue. It only handles interrupt
-/// and interrupt-flag assists (`INT*`, `IRET*`, `CLI`, `STI`, `INTO`), delegating
-/// BIOS interrupt exits (by re-storing the vector in [`crate::state::CpuState`])
-/// and all other assists to the caller.
+/// This is intended for unit tests / integration glue. It resolves Tier-0 assist
+/// exits so callers can drive the CPU using only [`Interpreter::exec_block`].
+///
+/// - Interrupt-related assists (`INT*`, `IRET*`, `CLI`, `STI`, `INTO`) are handled
+///   via the architectural delivery logic in [`crate::interrupts`].
+/// - Privileged/IO/time assists are handled via [`crate::assist::handle_assist`].
+///
+/// BIOS interrupt exits (real-mode `INT n` hypercalls) are surfaced by re-storing
+/// the vector in [`crate::state::CpuState`] so the embedding can dispatch it.
 #[derive(Debug, Default)]
 pub struct Tier0Interpreter {
     /// Maximum Tier-0 instructions executed in one `exec_block` call.
     pub max_insts: u64,
+    pub assist: AssistContext,
 }
 
 impl Tier0Interpreter {
     pub fn new(max_insts: u64) -> Self {
-        Self { max_insts }
+        Self {
+            max_insts,
+            assist: AssistContext::default(),
+        }
     }
 }
 
@@ -296,7 +306,12 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     // Preserve basic-block behavior: treat this instruction as a block boundary.
                     break;
                 }
-                StepExit::Assist(other) => panic!("unexpected tier0 assist: {other:?}"),
+                StepExit::Assist(other) => {
+                    handle_assist(&mut self.assist, &mut cpu.cpu.state, &mut cpu.bus, other)
+                        .expect("handle tier0 assist");
+                    cpu.cpu.pending.retire_instruction();
+                    break;
+                }
             }
         }
 
