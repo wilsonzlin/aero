@@ -791,10 +791,28 @@ async fn handle_tcp_relay_client(mut stream: TcpStream) -> std::io::Result<()> {
                     let k = url_decode_component(k_raw).unwrap_or_else(|| k_raw.to_string());
                     let v = url_decode_component(v_raw).unwrap_or_else(|| v_raw.to_string());
                     match k.as_str() {
-                        "v" => raw_version = Some(v),
-                        "host" => raw_host = Some(v),
-                        "port" => raw_port = Some(v),
-                        "target" => raw_target = Some(v),
+                        // Match WHATWG URLSearchParams.get() behavior: return the first value for a
+                        // given key when duplicates are present.
+                        "v" => {
+                            if raw_version.is_none() {
+                                raw_version = Some(v);
+                            }
+                        }
+                        "host" => {
+                            if raw_host.is_none() {
+                                raw_host = Some(v);
+                            }
+                        }
+                        "port" => {
+                            if raw_port.is_none() {
+                                raw_port = Some(v);
+                            }
+                        }
+                        "target" => {
+                            if raw_target.is_none() {
+                                raw_target = Some(v);
+                            }
+                        }
                         _ => {}
                     }
                 }

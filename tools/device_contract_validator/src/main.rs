@@ -1200,8 +1200,8 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
     // Virtio PCI IDs: crates/devices/src/pci/profile.rs
     let virtio_profile_rs = repo_root.join("crates/devices/src/pci/profile.rs");
-    let virtio_profile_text =
-        fs::read_to_string(&virtio_profile_rs).with_context(|| format!("read {}", virtio_profile_rs.display()))?;
+    let virtio_profile_text = fs::read_to_string(&virtio_profile_rs)
+        .with_context(|| format!("read {}", virtio_profile_rs.display()))?;
     let virtio_vendor = parse_rust_u16_const(&virtio_profile_rs, "PCI_VENDOR_ID_VIRTIO")
         .with_context(|| "parse PCI_VENDOR_ID_VIRTIO")?;
     if virtio_vendor != 0x1AF4 {
@@ -1259,9 +1259,19 @@ fn validate_emulator_ids(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
     // - keyboard on function 0 with the multifunction bit set in header_type
     // - mouse on function 1 on the same slot (same bus/device)
     let input_kbd = parse_pci_device_profile_basic(&virtio_profile_text, "VIRTIO_INPUT_KEYBOARD")
-        .with_context(|| format!("parse VIRTIO_INPUT_KEYBOARD from {}", virtio_profile_rs.display()))?;
+        .with_context(|| {
+        format!(
+            "parse VIRTIO_INPUT_KEYBOARD from {}",
+            virtio_profile_rs.display()
+        )
+    })?;
     let input_mouse = parse_pci_device_profile_basic(&virtio_profile_text, "VIRTIO_INPUT_MOUSE")
-        .with_context(|| format!("parse VIRTIO_INPUT_MOUSE from {}", virtio_profile_rs.display()))?;
+        .with_context(|| {
+            format!(
+                "parse VIRTIO_INPUT_MOUSE from {}",
+                virtio_profile_rs.display()
+            )
+        })?;
 
     if input_kbd.bdf.0 != input_mouse.bdf.0 || input_kbd.bdf.1 != input_mouse.bdf.1 {
         bail!(

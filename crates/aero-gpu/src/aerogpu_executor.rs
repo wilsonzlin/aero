@@ -1658,7 +1658,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         if writeback {
             let dst_backing = dst_backing.ok_or_else(|| {
                 ExecutorError::Validation(
-                    "COPY_TEXTURE2D: internal error: missing dst guest backing for writeback".into(),
+                    "COPY_TEXTURE2D: internal error: missing dst guest backing for writeback"
+                        .into(),
                 )
             })?;
             let Some(staging) = staging else {
