@@ -93,7 +93,18 @@ fn parse_signature_from_dxbc(
         return Ok(None);
     };
 
-    let chunk = res.map_err(|err| map_dxbc_signature_error(preferred, err))?;
+    let chunk = res.map_err(|err| {
+        // `DxbcFile::get_signature` wraps parse failures with a context string
+        // that starts with the chunk FourCC (e.g. `"ISGN signature chunk: ..."`).
+        // Prefer reporting that FourCC so callers get accurate diagnostics even
+        // when `preferred` falls back to its `*SGN`/`*SG1` variant.
+        let actual_fourcc = err
+            .context()
+            .get(0..4)
+            .and_then(FourCC::from_str)
+            .unwrap_or(preferred);
+        map_dxbc_signature_error(actual_fourcc, err)
+    })?;
     Ok(Some(convert_dxbc_signature_chunk(preferred, chunk)?))
 }
 
