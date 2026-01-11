@@ -252,10 +252,11 @@ impl AllocTable {
         let entry_count = header.entry_count;
         let entry_stride_bytes = header.entry_stride_bytes;
 
-        let entry_count_usize =
-            usize::try_from(entry_count).map_err(|_| ExecutorError::Validation(
+        let entry_count_usize = usize::try_from(entry_count).map_err(|_| {
+            ExecutorError::Validation(
                 "alloc table entry_count is out of range for host usize".into(),
-            ))?;
+            )
+        })?;
         let mut entries = Vec::<(u32, AllocEntry)>::new();
         if entries.try_reserve_exact(entry_count_usize).is_err() {
             return Err(ExecutorError::Validation(format!(
