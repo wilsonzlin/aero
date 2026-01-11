@@ -13,13 +13,15 @@ SOURCES= \
     src\virtio_statusq.c \
     ..\virtio\kmdf\virtio_pci_interrupts.c \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c \
+    ..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
     ..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c \
+    ..\virtio\common\virtqueue_split.c \
     src\log.c \
     src\hid.c \
     src\descriptor.c \
     src\power.c
 
-INCLUDES=$(INCLUDES);src;..\..\win7\virtio\virtio-core\include
+INCLUDES=$(INCLUDES);src;..\..\win7\virtio\virtio-core\include;..\virtio\common
 
 KMDF_VERSION_MAJOR=1
 KMDF_VERSION_MINOR=9

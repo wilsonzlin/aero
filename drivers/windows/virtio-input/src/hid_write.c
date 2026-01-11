@@ -99,7 +99,13 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
     }
 
     if (ctx->StatusQ != NULL) {
-        status = VirtioStatusQWriteKeyboardLedReport(ctx->StatusQ, ledBitfield);
+        if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 1) {
+            WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[1]);
+            status = VirtioStatusQWriteKeyboardLedReport(ctx->StatusQ, ledBitfield);
+            WdfSpinLockRelease(ctx->Interrupts.QueueLocks[1]);
+        } else {
+            status = VirtioStatusQWriteKeyboardLedReport(ctx->StatusQ, ledBitfield);
+        }
         if (!NT_SUCCESS(status)) {
             /*
              * LED reports are not required for keyboard/mouse input to function.

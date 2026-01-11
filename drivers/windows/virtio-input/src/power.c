@@ -10,12 +10,14 @@ static VOID VirtioInputDrainReportRing(_In_ PDEVICE_CONTEXT Ctx)
 
 static VOID VirtioInputFlushPendingReportRings(_In_ PDEVICE_CONTEXT Ctx)
 {
+    UCHAR i;
+
     if (Ctx->ReadReportLock == NULL) {
         return;
     }
 
     WdfSpinLockAcquire(Ctx->ReadReportLock);
-    for (UCHAR i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
+    for (i = 0; i <= VIRTIO_INPUT_MAX_REPORT_ID; i++) {
         Ctx->PendingReportRing[i].head = 0;
         Ctx->PendingReportRing[i].tail = 0;
         Ctx->PendingReportRing[i].count = 0;
@@ -25,7 +27,21 @@ static VOID VirtioInputFlushPendingReportRings(_In_ PDEVICE_CONTEXT Ctx)
 
 static VOID VirtioInputApplyTransportState(_In_ PDEVICE_CONTEXT Ctx)
 {
-    VirtioStatusQSetActive(Ctx->StatusQ, VirtioInputIsHidActive(Ctx));
+    BOOLEAN active;
+
+    if (Ctx == NULL || Ctx->StatusQ == NULL) {
+        return;
+    }
+
+    active = VirtioInputIsHidActive(Ctx);
+
+    if (Ctx->Interrupts.QueueLocks != NULL && Ctx->Interrupts.QueueCount > 1) {
+        WdfSpinLockAcquire(Ctx->Interrupts.QueueLocks[1]);
+        VirtioStatusQSetActive(Ctx->StatusQ, active);
+        WdfSpinLockRelease(Ctx->Interrupts.QueueLocks[1]);
+    } else {
+        VirtioStatusQSetActive(Ctx->StatusQ, active);
+    }
 }
 
 NTSTATUS VirtioInputHidActivateDevice(_In_ WDFDEVICE Device)

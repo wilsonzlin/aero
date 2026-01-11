@@ -193,6 +193,23 @@ enum hid_translate_report_id {
   HID_TRANSLATE_REPORT_ID_MOUSE = 0x02,
 };
 
+/*
+ * Report mask used to enable/disable subsets of reports.
+ *
+ * Aero contract v1 exposes virtio-input keyboard and mouse as two separate PCI
+ * functions. Each driver instance must expose only the report IDs that exist
+ * for that device.
+ *
+ * The translator defaults to enabling both keyboard and mouse reports for
+ * backward compatibility and for host-side unit tests. The Win7 KMDF driver
+ * sets this mask per device instance.
+ */
+enum hid_translate_report_mask {
+  HID_TRANSLATE_REPORT_MASK_KEYBOARD = 0x01,
+  HID_TRANSLATE_REPORT_MASK_MOUSE = 0x02,
+  HID_TRANSLATE_REPORT_MASK_ALL = HID_TRANSLATE_REPORT_MASK_KEYBOARD | HID_TRANSLATE_REPORT_MASK_MOUSE,
+};
+
 /* Sizes (bytes) of input reports emitted by the translator. */
 enum hid_translate_report_size {
   HID_TRANSLATE_KEYBOARD_REPORT_SIZE = 9,
@@ -213,6 +230,9 @@ struct hid_translate {
   hid_translate_emit_report_fn emit_report;
   void *emit_report_context;
 
+  /* Which report IDs this translator is allowed to emit (see hid_translate_report_mask). */
+  uint8_t enabled_reports;
+
   /* Keyboard state. */
   uint8_t keyboard_modifiers;
   uint8_t keyboard_pressed[HID_TRANSLATE_MAX_PRESSED_KEYS]; /* HID usages, in press order. */
@@ -228,6 +248,8 @@ struct hid_translate {
 };
 
 void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn emit_report, void *emit_report_context);
+
+void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_reports);
 
 /*
  * Clears internal state. If emit_reports is true, emits an all-zero keyboard

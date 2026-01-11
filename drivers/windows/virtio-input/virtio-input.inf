@@ -21,11 +21,9 @@ CatalogFile=virtio-input.cat
 
 [Aero.NTx86]
 %VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
-%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1011
 
 [Aero.NTamd64]
 %VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1052
-%VirtioInput.DeviceDesc%=VirtioInput_Install, PCI\VEN_1AF4&DEV_1011
 
 [DestinationDirs]
 VirtioInput.CopyFiles=12

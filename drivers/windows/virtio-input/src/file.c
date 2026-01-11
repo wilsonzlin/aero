@@ -96,8 +96,7 @@ static ULONG VirtioInputGetCollectionNumberFromCreateRequest(_In_ WDFREQUEST Req
 
 static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUEST Request, _In_ WDFFILEOBJECT FileObject)
 {
-    UNREFERENCED_PARAMETER(Device);
-
+    PDEVICE_CONTEXT devCtx = VirtioInputGetDeviceContext(Device);
     PVIRTIO_INPUT_FILE_CONTEXT fileCtx = VirtioInputGetFileContext(FileObject);
 
     PIRP irp = WdfRequestWdmGetIrp(Request);
@@ -108,10 +107,13 @@ static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUES
 
     switch (fileCtx->CollectionNumber) {
     case 1:
-        fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_KEYBOARD;
-        break;
-    case 2:
-        fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_MOUSE;
+        if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
+            fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_MOUSE;
+        } else if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
+            fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_KEYBOARD;
+        } else {
+            fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_ANY;
+        }
         break;
     default:
         fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_ANY;

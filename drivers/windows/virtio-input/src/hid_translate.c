@@ -221,6 +221,11 @@ static bool hid_translate_keyboard_list_append(struct hid_translate *t, uint8_t 
 }
 
 static void hid_translate_emit_keyboard_report(struct hid_translate *t) {
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_KEYBOARD) == 0) {
+    t->keyboard_dirty = false;
+    return;
+  }
+
   uint8_t report[HID_TRANSLATE_KEYBOARD_REPORT_SIZE];
   uint8_t i;
   hid_translate_memzero(report, sizeof(report));
@@ -337,6 +342,14 @@ static int8_t hid_translate_take_rel_chunk(int32_t *accum) {
 }
 
 static void hid_translate_emit_mouse_reports(struct hid_translate *t) {
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_MOUSE) == 0) {
+    t->mouse_dirty = false;
+    t->mouse_rel_x = 0;
+    t->mouse_rel_y = 0;
+    t->mouse_wheel = 0;
+    return;
+  }
+
   bool need_report = t->mouse_dirty || (t->mouse_rel_x != 0) || (t->mouse_rel_y != 0) || (t->mouse_wheel != 0);
   if (!need_report) {
     return;
@@ -371,6 +384,14 @@ void hid_translate_init(struct hid_translate *t, hid_translate_emit_report_fn em
   hid_translate_memzero(t, sizeof(*t));
   t->emit_report = emit_report;
   t->emit_report_context = emit_report_context;
+  t->enabled_reports = HID_TRANSLATE_REPORT_MASK_ALL;
+}
+
+void hid_translate_set_enabled_reports(struct hid_translate *t, uint8_t enabled_reports) {
+  if (t == NULL) {
+    return;
+  }
+  t->enabled_reports = enabled_reports;
 }
 
 void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
@@ -389,9 +410,13 @@ void hid_translate_reset(struct hid_translate *t, bool emit_reports) {
   }
 
   /* Emit all-zero reports to release any latched state in the HID stacks. */
-  hid_translate_emit_keyboard_report(t);
-  t->mouse_dirty = true;
-  hid_translate_emit_mouse_reports(t);
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_KEYBOARD) != 0) {
+    hid_translate_emit_keyboard_report(t);
+  }
+  if ((t->enabled_reports & HID_TRANSLATE_REPORT_MASK_MOUSE) != 0) {
+    t->mouse_dirty = true;
+    hid_translate_emit_mouse_reports(t);
+  }
 }
 
 void hid_translate_handle_event_le(struct hid_translate *t, const struct virtio_input_event_le *ev_le) {

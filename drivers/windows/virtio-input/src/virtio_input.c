@@ -144,6 +144,13 @@ void virtio_input_device_init(struct virtio_input_device *dev, virtio_input_repo
   hid_translate_init(&dev->translate, virtio_input_emit_report, dev);
 }
 
+void virtio_input_device_set_enabled_reports(struct virtio_input_device *dev, uint8_t enabled_reports) {
+  if (dev == NULL) {
+    return;
+  }
+  hid_translate_set_enabled_reports(&dev->translate, enabled_reports);
+}
+
 void virtio_input_device_reset_state(struct virtio_input_device *dev, bool emit_reports) {
   hid_translate_reset(&dev->translate, emit_reports);
 }

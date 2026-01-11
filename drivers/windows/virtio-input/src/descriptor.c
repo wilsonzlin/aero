@@ -1,6 +1,6 @@
 #include "descriptor.h"
 
-const UCHAR VirtioInputReportDescriptor[] = {
+const UCHAR VirtioInputKeyboardReportDescriptor[] = {
     //
     // Report ID 1: Keyboard (8 modifier bits + reserved + 6-key rollover)
     // Report ID 1: Keyboard LEDs (output)
@@ -38,7 +38,20 @@ const UCHAR VirtioInputReportDescriptor[] = {
     0x75, 0x03,        //   Report Size (3)
     0x91, 0x01,        //   Output (Const,Array,Abs) ; Padding
     0xC0,              // End Collection
+};
 
+const USHORT VirtioInputKeyboardReportDescriptorLength = (USHORT)sizeof(VirtioInputKeyboardReportDescriptor);
+
+const HID_DESCRIPTOR VirtioInputKeyboardHidDescriptor = {
+    (UCHAR)sizeof(HID_DESCRIPTOR),
+    HID_HID_DESCRIPTOR_TYPE,
+    HID_REVISION,
+    0,
+    1,
+    { HID_REPORT_DESCRIPTOR_TYPE, (USHORT)sizeof(VirtioInputKeyboardReportDescriptor) },
+};
+
+const UCHAR VirtioInputMouseReportDescriptor[] = {
     //
     // Report ID 2: Mouse (5 buttons + X/Y/Wheel)
     //
@@ -72,19 +85,20 @@ const UCHAR VirtioInputReportDescriptor[] = {
     0xC0,              // End Collection
 };
 
-const USHORT VirtioInputReportDescriptorLength = (USHORT)sizeof(VirtioInputReportDescriptor);
+const USHORT VirtioInputMouseReportDescriptorLength = (USHORT)sizeof(VirtioInputMouseReportDescriptor);
 
-const HID_DESCRIPTOR VirtioInputHidDescriptor = {
+const HID_DESCRIPTOR VirtioInputMouseHidDescriptor = {
     (UCHAR)sizeof(HID_DESCRIPTOR),
     HID_HID_DESCRIPTOR_TYPE,
     HID_REVISION,
     0,
     1,
-    { HID_REPORT_DESCRIPTOR_TYPE, (USHORT)sizeof(VirtioInputReportDescriptor) },
+    { HID_REPORT_DESCRIPTOR_TYPE, (USHORT)sizeof(VirtioInputMouseReportDescriptor) },
 };
 
-static const WCHAR VirtioInputManufacturerString[] = L"VirtIO";
-static const WCHAR VirtioInputProductString[] = L"VirtIO Input";
+static const WCHAR VirtioInputManufacturerString[] = L"Aero";
+static const WCHAR VirtioInputKeyboardProductString[] = L"Aero Virtio Keyboard";
+static const WCHAR VirtioInputMouseProductString[] = L"Aero Virtio Mouse";
 static const WCHAR VirtioInputSerialString[] = L"00000001";
 
 PCWSTR VirtioInputGetManufacturerString(void)
@@ -92,9 +106,14 @@ PCWSTR VirtioInputGetManufacturerString(void)
     return VirtioInputManufacturerString;
 }
 
-PCWSTR VirtioInputGetProductString(void)
+PCWSTR VirtioInputGetKeyboardProductString(void)
 {
-    return VirtioInputProductString;
+    return VirtioInputKeyboardProductString;
+}
+
+PCWSTR VirtioInputGetMouseProductString(void)
+{
+    return VirtioInputMouseProductString;
 }
 
 PCWSTR VirtioInputGetSerialString(void)

@@ -56,6 +56,8 @@ void virtio_input_device_init(struct virtio_input_device *dev, virtio_input_repo
                               void *report_ready_context, virtio_input_lock_fn lock, virtio_input_lock_fn unlock,
                               void *lock_context);
 
+void virtio_input_device_set_enabled_reports(struct virtio_input_device *dev, uint8_t enabled_reports);
+
 void virtio_input_device_reset_state(struct virtio_input_device *dev, bool emit_reports);
 
 void virtio_input_process_event_le(struct virtio_input_device *dev, const struct virtio_input_event_le *ev_le);
@@ -94,6 +96,20 @@ bool virtio_input_try_pop_report(struct virtio_input_device *dev, struct virtio_
 #define VIRTIO_INPUT_KBD_INPUT_REPORT_SIZE HID_TRANSLATE_KEYBOARD_REPORT_SIZE
 #define VIRTIO_INPUT_MOUSE_INPUT_REPORT_SIZE HID_TRANSLATE_MOUSE_REPORT_SIZE
 
+typedef enum _VIOINPUT_DEVICE_KIND {
+    VioInputDeviceKindUnknown = 0,
+    VioInputDeviceKindKeyboard,
+    VioInputDeviceKindMouse,
+} VIOINPUT_DEVICE_KIND;
+
+#define VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD 0x0010
+#define VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE 0x0011
+
+/*
+ * Forward declaration for the shared virtqueue implementation (drivers/windows/virtio/common).
+ */
+typedef struct _VIRTQ_SPLIT VIRTQ_SPLIT;
+
 typedef struct _VIRTIO_INPUT_FILE_CONTEXT {
     ULONG CollectionNumber;
     UCHAR DefaultReportId;
@@ -119,13 +135,26 @@ typedef struct _DEVICE_CONTEXT {
     struct virtio_input_report_ring PendingReportRing[VIRTIO_INPUT_MAX_REPORT_ID + 1];
 
     PVIRTIO_STATUSQ StatusQ;
+    VIRTQ_SPLIT* EventVq;
+    WDFCOMMONBUFFER EventRingCommonBuffer;
+    WDFCOMMONBUFFER EventRxCommonBuffer;
+    PVOID EventRxVa;
+    UINT64 EventRxPa;
+    USHORT EventQueueSize;
+
     VIOINPUT_COUNTERS Counters;
     VIRTIO_PCI_MODERN_DEVICE PciDevice;
+    WDFDMAENABLER DmaEnabler;
+    UINT64 NegotiatedFeatures;
 
     BOOLEAN HardwareReady;
     BOOLEAN InD0;
     BOOLEAN HidActivated;
+    volatile LONG VirtioStarted;
     ULONG NumDeviceInputBuffers;
+    VIOINPUT_DEVICE_KIND DeviceKind;
+    USHORT PciSubsystemDeviceId;
+    UCHAR PciRevisionId;
 
     VIRTIO_PCI_INTERRUPTS Interrupts;
 

@@ -472,6 +472,13 @@ NTSTATUS VirtioInputReportArrived(
 
     devCtx = VirtioInputGetDeviceContext(Device);
 
+    if (devCtx->DeviceKind == VioInputDeviceKindKeyboard && ReportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    if (devCtx->DeviceKind == VioInputDeviceKindMouse && ReportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
     WdfSpinLockAcquire(devCtx->ReadReportLock);
     if (!devCtx->ReadReportsEnabled) {
         WdfSpinLockRelease(devCtx->ReadReportLock);

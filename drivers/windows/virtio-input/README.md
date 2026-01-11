@@ -1,18 +1,24 @@
-# virtio-input (Windows 7 SP1) KMDF HID minidriver skeleton
+# virtio-input (Windows 7 SP1) KMDF HID minidriver
 
-This directory contains a minimal **KMDF** driver that registers itself as a **HID minidriver** using `HidRegisterMinidriver`, intended to bind to the PCI virtio-input device:
+This directory contains a **KMDF** driver that registers itself as a **HID minidriver** using `HidRegisterMinidriver`, intended to bind to the Aero contract v1 virtio-input PCI device:
 
 - Modern-only virtio-input: `PCI\VEN_1AF4&DEV_1052`
-- Transitional virtio-input: `PCI\VEN_1AF4&DEV_1011`
 
-The current implementation is a **skeleton**:
+The driver implements the Aero Windows 7 virtio contract (see `docs/windows7-virtio-driver-contract.md`):
 
-- Implements WDF boilerplate (`EvtDriverDeviceAdd`, power/PnP callbacks, default queue).
-- Implements the HIDCLASS-facing IOCTL surface (`IOCTL_HID_GET_*`) and exposes keyboard + mouse collections (Report IDs 1 and 2).
-- Implements `EvtIoInternalDeviceControl` for the core report IOCTLs:
-  - `IOCTL_HID_READ_REPORT` is routed by Report ID / collection handle context so keyboard and mouse reports do not get mixed.
-  - `IOCTL_HID_WRITE_REPORT` validates keyboard LED output reports (ReportID=1) and ignores unknown IDs.
-- Does **not** yet parse the virtio transport, negotiate features, or deliver real input reports.
+- virtio-pci **modern** transport (PCI capabilities + MMIO) with Revision ID `0x01`
+- Feature negotiation includes `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC`
+- Two split virtqueues (size 64 each):
+  - queue 0: `eventq` (device → driver)
+  - queue 1: `statusq` (driver → device, keyboard LEDs)
+- Interrupts:
+  - INTx (required)
+  - MSI(-X) optional if available
+
+In Aero contract v1, virtio-input is exposed as **two PCI functions** (keyboard and mouse). Each driver instance exposes only the matching HID report descriptor:
+
+- keyboard function: ReportID `1` only
+- mouse function: ReportID `2` only
 
 ## Building (WDK 7.1 recommended)
 
