@@ -273,6 +273,7 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   const historyPath = path.join(tmpDir, "history.json");
   const perfPath = path.join(tmpDir, "perf.json");
   const gpuPath = path.join(tmpDir, "gpu.json");
+  const gatewayPath = path.join(tmpDir, "gateway.json");
 
   fs.writeFileSync(
     perfPath,
@@ -310,6 +311,21 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
       2,
     ),
   );
+  fs.writeFileSync(
+    gatewayPath,
+    JSON.stringify(
+      {
+        meta: { mode: "smoke", nodeVersion: "v20.0.0", platform: "linux", arch: "x64", doh: { durationSeconds: 3 } },
+        tcpProxy: {
+          rttMs: { n: 3, min: 1, p50: 2, p90: 3, p99: 4, max: 5, mean: 2.5, stdev: 1, cv: 0.4 },
+          throughput: { bytes: 1024 * 1024, seconds: 1, mibPerSecond: 1, stats: { n: 3, min: 1, max: 1, mean: 1 } },
+        },
+        doh: { qps: 1000, qpsStats: { n: 3, min: 900, max: 1100, mean: 1000 }, cache: { hits: 1, misses: 0, hitRatio: 1 } },
+      },
+      null,
+      2,
+    ),
+  );
 
   const timestamp = "2025-01-01T00:00:00Z";
   const commit = "0123456789abcdef0123456789abcdef01234567";
@@ -317,6 +333,7 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
 
   appendHistoryEntry({ historyPath, inputPath: perfPath, timestamp, commitSha: commit, repository });
   appendHistoryEntry({ historyPath, inputPath: gpuPath, timestamp, commitSha: commit, repository });
+  appendHistoryEntry({ historyPath, inputPath: gatewayPath, timestamp, commitSha: commit, repository });
 
   const history = JSON.parse(fs.readFileSync(historyPath, "utf8"));
   const entryId = `${timestamp}-${commit}`;
@@ -324,8 +341,10 @@ test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   assert.ok(entry);
   assert.ok(entry.scenarios.browser);
   assert.ok(entry.scenarios["gpu/vga_text_scroll"]);
+  assert.ok(entry.scenarios.gateway);
   assert.equal(entry.environment.node, "v20.0.0");
   assert.equal(entry.environment.userAgent, "UA");
+  assert.equal(entry.environment.gatewayMode, "smoke");
 });
 
 test("appendHistoryEntry rejects duplicate metric keys during merge", () => {
