@@ -33,6 +33,7 @@ type WorkerToMainMessage =
 
 type InitResult = {
   wasmVariant: WasmVariant;
+  syncAccessHandles: boolean;
   streamingSnapshots: boolean;
   streamingRestore: boolean;
 };
@@ -129,6 +130,13 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
   serialBytes = 0;
   savedSerialBytesByPath.clear();
 
+  const syncAccessHandles =
+    typeof (globalThis as unknown as { FileSystemFileHandle?: unknown }).FileSystemFileHandle !== "undefined" &&
+    typeof (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).FileSystemFileHandle?.prototype?.createSyncAccessHandle
+    ) === "function";
+
   const streamingSnapshots = typeof (vm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function";
   const streamingRestore =
     typeof (vm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function";
@@ -141,7 +149,7 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
 
   startStepLoop();
 
-  return { wasmVariant: variant, streamingSnapshots, streamingRestore };
+  return { wasmVariant: variant, syncAccessHandles, streamingSnapshots, streamingRestore };
 }
 
 async function handleRunSteps(steps: number): Promise<{ steps: number; serialBytes: number | null }> {

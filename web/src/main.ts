@@ -592,10 +592,10 @@ function renderSnapshotPanel(): HTMLElement {
   });
 
   const platform = detectPlatformFeatures();
-  const opfsOk = platform.opfs && platform.opfsSyncAccessHandle;
+  const opfsOk = platform.opfs;
   if (!opfsOk) {
     clearAutosaveTimer();
-    status.textContent = "Snapshots unavailable (OPFS sync access handles missing).";
+    status.textContent = "Snapshots unavailable (OPFS missing).";
     setButtonsEnabled(false);
     setError(
       platform.opfs
@@ -661,10 +661,27 @@ function renderSnapshotPanel(): HTMLElement {
 
       void (async () => {
         try {
-          const init = await rpc<{ wasmVariant: string; streamingSnapshots: boolean; streamingRestore: boolean }>({
+          const init = await rpc<{
+            wasmVariant: string;
+            syncAccessHandles: boolean;
+            streamingSnapshots: boolean;
+            streamingRestore: boolean;
+          }>({
             type: "init",
             ramBytes: 256 * 1024,
           });
+
+          if (!init.syncAccessHandles) {
+            clearAutosaveTimer();
+            status.textContent = `Demo VM worker ready (WASM ${init.wasmVariant}) but OPFS sync access handles are unavailable.`;
+            setButtonsEnabled(false);
+            setError(
+              "OPFS sync access handles are required for streaming snapshots, but createSyncAccessHandle is missing in this browser.",
+            );
+            testState.ready = true;
+            testState.streaming = false;
+            return;
+          }
 
           if (!init.streamingSnapshots || !init.streamingRestore) {
             clearAutosaveTimer();
