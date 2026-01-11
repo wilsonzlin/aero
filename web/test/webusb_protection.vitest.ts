@@ -140,6 +140,48 @@ describe("webusb_protection (vitest)", () => {
     ]);
   });
 
+  it("considers all configurations exposed by device.configurations", () => {
+    const device = mockDevice([
+      {
+        configurationValue: 1,
+        interfaces: [
+          {
+            interfaceNumber: 0,
+            alternates: [
+              {
+                alternateSetting: 0,
+                interfaceClass: 0x03,
+                interfaceSubclass: 0x00,
+                interfaceProtocol: 0x00,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        configurationValue: 2,
+        interfaces: [
+          {
+            interfaceNumber: 3,
+            alternates: [
+              {
+                alternateSetting: 0,
+                interfaceClass: 0xff,
+                interfaceSubclass: 0x00,
+                interfaceProtocol: 0x00,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const result = classifyWebUsbDevice(device);
+    expect(result.hasUnprotectedInterfaces).toBe(true);
+    expect(result.protected.map((entry) => entry.configurationValue)).toEqual([1]);
+    expect(result.unprotected.map((entry) => entry.configurationValue)).toEqual([2]);
+  });
+
   it("audio/video examples are treated as protected", () => {
     const device = mockDevice([
       {
