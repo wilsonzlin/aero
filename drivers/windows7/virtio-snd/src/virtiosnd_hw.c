@@ -348,34 +348,15 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
-        USHORT expectedSize;
         USHORT notifyOff;
         volatile UINT16* notifyAddr;
         UINT64 descPa, availPa, usedPa;
         USHORT notifyOffReadback;
-        expectedSize = 0;
         notifyOff = 0;
         notifyAddr = NULL;
         descPa = 0;
         availPa = 0;
         usedPa = 0;
-        switch (q) {
-        case VIRTIOSND_QUEUE_CONTROL:
-            expectedSize = VIRTIOSND_QUEUE_SIZE_CONTROLQ;
-            break;
-        case VIRTIOSND_QUEUE_EVENT:
-            expectedSize = VIRTIOSND_QUEUE_SIZE_EVENTQ;
-            break;
-        case VIRTIOSND_QUEUE_TX:
-            expectedSize = VIRTIOSND_QUEUE_SIZE_TXQ;
-            break;
-        case VIRTIOSND_QUEUE_RX:
-            expectedSize = VIRTIOSND_QUEUE_SIZE_RXQ;
-            break;
-        default:
-            expectedSize = 0;
-            break;
-        }
 
         status = VirtioPciModernTransportGetQueueSize(&Dx->Transport, (USHORT)q, &size);
         if (!NT_SUCCESS(status)) {
@@ -387,15 +368,6 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
                 "queue %lu reports non-power-of-two size=%u\n",
                 q,
                 (UINT)size);
-            return STATUS_DEVICE_CONFIGURATION_ERROR;
-        }
-
-        if (expectedSize != 0 && size != expectedSize) {
-            VIRTIOSND_TRACE_ERROR(
-                "queue %lu size mismatch: device=%u expected=%u\n",
-                q,
-                (UINT)size,
-                (UINT)expectedSize);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
