@@ -219,6 +219,7 @@ struct GuestTextureBacking {
 struct BufferResource {
     buffer: wgpu::Buffer,
     size_bytes: u64,
+    usage_flags: u32,
     backing: Option<GuestBufferBacking>,
     dirty_ranges: Vec<Range<u64>>,
 }
@@ -227,6 +228,9 @@ struct BufferResource {
 struct TextureResource {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    usage_flags: u32,
+    format_raw: u32,
+    row_pitch_bytes: u32,
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
@@ -627,9 +631,14 @@ fn fs_main() -> @location(0) vec4<f32> {
         backing_offset_bytes: u32,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
-        if self.buffers.contains_key(&buffer_handle) || self.textures.contains_key(&buffer_handle) {
+        if buffer_handle == 0 {
+            return Err(ExecutorError::Validation(
+                "CREATE_BUFFER buffer_handle must be non-zero".into(),
+            ));
+        }
+        if self.textures.contains_key(&buffer_handle) {
             return Err(ExecutorError::Validation(format!(
-                "resource handle {buffer_handle} already exists"
+                "CREATE_BUFFER handle {buffer_handle} is already bound to a texture"
             )));
         }
 
@@ -686,6 +695,16 @@ fn fs_main() -> @location(0) vec4<f32> {
             wgpu_usage |= wgpu::BufferUsages::UNIFORM;
         }
 
+        if let Some(existing) = self.buffers.get_mut(&buffer_handle) {
+            if existing.size_bytes != size_bytes || existing.usage_flags != usage_flags {
+                return Err(ExecutorError::Validation(format!(
+                    "CREATE_* for existing handle {buffer_handle} has mismatched immutable properties; destroy and recreate the handle"
+                )));
+            }
+            existing.backing = backing;
+            return Ok(());
+        }
+
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu.executor.buffer"),
             size: size_bytes,
@@ -698,6 +717,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             BufferResource {
                 buffer,
                 size_bytes,
+                usage_flags,
                 backing,
                 dirty_ranges: Vec::new(),
             },
@@ -740,10 +760,14 @@ fn fs_main() -> @location(0) vec4<f32> {
         backing_offset_bytes: u32,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
-        if self.buffers.contains_key(&texture_handle) || self.textures.contains_key(&texture_handle)
-        {
+        if texture_handle == 0 {
+            return Err(ExecutorError::Validation(
+                "CREATE_TEXTURE2D texture_handle must be non-zero".into(),
+            ));
+        }
+        if self.buffers.contains_key(&texture_handle) {
             return Err(ExecutorError::Validation(format!(
-                "resource handle {texture_handle} already exists"
+                "CREATE_TEXTURE2D handle {texture_handle} is already bound to a buffer"
             )));
         }
 
@@ -811,6 +835,22 @@ fn fs_main() -> @location(0) vec4<f32> {
             })
         };
 
+        if let Some(existing) = self.textures.get_mut(&texture_handle) {
+            if existing.usage_flags != usage_flags
+                || existing.format_raw != format
+                || existing.width != width
+                || existing.height != height
+                || existing.row_pitch_bytes != row_pitch_bytes
+            {
+                return Err(ExecutorError::Validation(format!(
+                    "CREATE_* for existing handle {texture_handle} has mismatched immutable properties; destroy and recreate the handle"
+                )));
+            }
+
+            existing.backing = backing;
+            return Ok(());
+        }
+
         let mut usage = wgpu::TextureUsages::empty();
         if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_TEXTURE) != 0 {
             usage |= wgpu::TextureUsages::TEXTURE_BINDING;
@@ -847,6 +887,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             TextureResource {
                 texture,
                 view,
+                usage_flags,
+                format_raw: format,
+                row_pitch_bytes,
                 width,
                 height,
                 format: wgpu_format,
