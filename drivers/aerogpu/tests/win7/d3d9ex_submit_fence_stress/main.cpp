@@ -520,6 +520,10 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     return 0;
   }
 
+  // Enable per-submit fence logging in the AeroGPU D3D9 UMD (captured via DBWIN).
+  // This must be set before the UMD DLL is loaded.
+  SetEnvironmentVariableA("AEROGPU_D3D9_LOG_SUBMITS", "1");
+
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");

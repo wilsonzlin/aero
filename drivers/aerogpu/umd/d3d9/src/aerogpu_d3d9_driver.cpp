@@ -3,8 +3,10 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstddef>
 #include <cstring>
+#include <cstdlib>
 #include <cwchar>
 #include <initializer_list>
 #include <memory>
@@ -158,6 +160,39 @@ constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 // per-submission fence value via the callback out-params, we fall back to
 // querying the AeroGPU KMD fence counters via D3DKMTEscape so we still return a
 // real fence value for the submission.
+
+bool submit_log_enabled() {
+  static int cached = -1;
+  if (cached != -1) {
+    return cached != 0;
+  }
+#if defined(_WIN32)
+  char buf[32] = {};
+  const DWORD n = GetEnvironmentVariableA("AEROGPU_D3D9_LOG_SUBMITS", buf, static_cast<DWORD>(sizeof(buf)));
+  if (n == 0 || n >= sizeof(buf)) {
+    cached = 0;
+    return false;
+  }
+  for (char& c : buf) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  cached = (std::strcmp(buf, "1") == 0 || std::strcmp(buf, "true") == 0 || std::strcmp(buf, "yes") == 0 ||
+            std::strcmp(buf, "on") == 0)
+               ? 1
+               : 0;
+  return cached != 0;
+#else
+  const char* v = std::getenv("AEROGPU_D3D9_LOG_SUBMITS");
+  if (!v || !*v) {
+    cached = 0;
+    return false;
+  }
+  cached = (std::strcmp(v, "1") == 0 || std::strcmp(v, "true") == 0 || std::strcmp(v, "yes") == 0 || std::strcmp(v, "on") == 0)
+               ? 1
+               : 0;
+  return cached != 0;
+#endif
+}
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
 // Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
@@ -2631,6 +2666,13 @@ uint64_t submit(Device* dev, bool is_present) {
 
   if (updated) {
     adapter->fence_cv.notify_all();
+  }
+
+  if (submit_log_enabled()) {
+    logf("aerogpu-d3d9: submit cmd_bytes=%llu fence=%llu present=%u\n",
+         static_cast<unsigned long long>(cmd_bytes),
+         static_cast<unsigned long long>(per_submission_fence),
+         is_present ? 1u : 0u);
   }
 
   dev->last_submission_fence = per_submission_fence;
