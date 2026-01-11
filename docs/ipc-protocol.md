@@ -120,10 +120,13 @@ I/O worker.
 - Producer: coordinator/main thread.
 - Consumer: IO worker.
 - Record payload: a `HidInputReportRingRecord`:
+  - `u32 magic` (`0x5244_4948`, `"HIDR"` little-endian)
+  - `u32 version` (`1`)
   - `u32 device_id`
   - `u32 report_id`
-  - `u32 ts_ms`
-  - `data` bytes (HID report payload)
+  - `u32 ts_ms` (`0` means “absent”; otherwise milliseconds, truncated to `u32`)
+  - `u32 len` (payload byte length)
+  - `len` data bytes (HID report payload)
 
 See `web/src/hid/hid_input_report_ring.ts`.
 
