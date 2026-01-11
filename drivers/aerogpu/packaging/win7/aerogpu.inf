@@ -31,11 +31,9 @@ CatalogFile = aerogpu.cat
 
 [AeroGPU_Models.NTx86.6.1]
 %AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
-%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 [AeroGPU_Models.NTamd64.6.1]
 %AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
-%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 ; -------------------------------
 ; Install (x86)
