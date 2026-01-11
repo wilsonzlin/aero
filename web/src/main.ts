@@ -1595,11 +1595,11 @@ function renderAudioPanel(): HTMLElement {
           output.context.sampleRate,
         );
 
-        workerCoordinator.setAudioRingBuffer(
+        workerCoordinator.setAudioOutputRingBuffer(
           output.ringBuffer.buffer,
-          output.ringBuffer.capacityFrames,
-          output.ringBuffer.channelCount,
           output.context.sampleRate,
+          output.ringBuffer.channelCount,
+          output.ringBuffer.capacityFrames,
         );
 
         await output.resume();

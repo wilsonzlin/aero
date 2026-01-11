@@ -381,6 +381,21 @@ export class WorkerCoordinator {
     }
   }
 
+  /**
+   * Backwards-compatible alias for attaching an AudioWorklet output ring buffer.
+   *
+   * The newer runtime API uses `setAudioRingBuffer(...)` with explicit dstSampleRate;
+   * some callers (and older docs) refer to this as the "audio output ring buffer".
+   */
+  setAudioOutputRingBuffer(
+    ringBuffer: SharedArrayBuffer | null,
+    sampleRate: number,
+    channelCount: number,
+    capacityFrames: number,
+  ): void {
+    this.setAudioRingBuffer(ringBuffer, capacityFrames, channelCount, sampleRate);
+  }
+
   private broadcastConfig(config: AeroConfig): void {
     this.configVersion += 1;
     const version = this.configVersion;

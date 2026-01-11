@@ -8,7 +8,7 @@ test("AudioWorklet output runs and does not underrun with synthetic tone", async
   await page.click("#init-audio-output");
 
   await page.waitForFunction(() => {
-    // Exposed by `web/src/main.ts`.
+    // Exposed by the audio UI entrypoint (`src/main.ts` in the root app).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutput;
     return out?.enabled === true && out?.context?.state === "running";

@@ -282,6 +282,23 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
+  if ((msg as { type?: unknown }).type === "setAudioOutputRingBuffer") {
+    const legacy = msg as Partial<{
+      ringBuffer: SharedArrayBuffer | null;
+      sampleRate: number;
+      channelCount: number;
+      capacityFrames: number;
+    }>;
+    attachAudioRingBuffer({
+      type: "setAudioRingBuffer",
+      ringBuffer: (legacy.ringBuffer as SharedArrayBuffer | null) ?? null,
+      capacityFrames: legacy.capacityFrames ?? 0,
+      channelCount: legacy.channelCount ?? 0,
+      dstSampleRate: legacy.sampleRate ?? 0,
+    });
+    return;
+  }
+
   const init = msg as Partial<WorkerInitMessage>;
   if (init?.kind !== "init") return;
   void initAndRun(init as WorkerInitMessage);
