@@ -188,7 +188,9 @@ The ISR status capability (`cfg_type = 3`) is a single byte:
 - Bit 0: “queue interrupt”
 - Bit 1: “device config changed”
 
-Reading this byte acknowledges/clears the pending interrupt cause in the device (read-to-clear). Even with MSI-X enabled, many implementations still require reading the ISR byte to clear the underlying cause bit.
+Reading this byte acknowledges/clears the pending interrupt cause in the device (read-to-clear).
+
+For **INTx** (level-triggered), reading this register in the ISR is required to deassert the line. For **MSI-X**, drivers typically do not rely on `isr_status` for ACK/routing (the message vector already identifies the source), but the register may still be useful as a fallback/debug signal.
 
 ### MSI-X on Windows 7 (message-signaled interrupts)
 
@@ -199,10 +201,10 @@ When a PCI device is configured for MSI-X, Windows exposes one or more **message
   - one message vector with the device configuration change interrupt
   - one message vector per virtqueue (common for net with separate RX/TX)
 
-Virtio’s side of MSI-X routing is programmed through the common config:
+Virtio’s side of MSI-X routing is programmed through `virtio_pci_common_cfg`:
 
-- `config_msix_vector` selects which MSI-X vector the device uses for config-change interrupts.
-- `queue_msix_vector` (for a selected queue) selects which MSI-X vector the device uses for that queue.
+- `msix_config` selects which MSI-X vector the device uses for config-change interrupts.
+- `queue_msix_vector` (for a selected queue via `queue_select`) selects which MSI-X vector the device uses for that queue.
 - Writing `0xFFFF` disables MSI-X for that vector.
 
 If MSI-X resources are not available, the driver should fall back to a single INTx interrupt and use the ISR status byte to demultiplex causes.
@@ -220,3 +222,9 @@ A typical WDF flow is:
    - complete pending requests / indicate packets / report input events
 
 Device-specific drivers should avoid doing heavy work in the ISR.
+
+## See also (in-repo bring-up guides)
+
+- WDM bring-up (caps + BAR mapping + queues + INTx): [`docs/windows/virtio-pci-modern-wdm.md`](./windows/virtio-pci-modern-wdm.md)
+- Miniport bring-up (NDIS/StorPort): [`docs/windows/win7-miniport-virtio-pci-modern.md`](./windows/win7-miniport-virtio-pci-modern.md)
+- KMDF interrupts guide (MSI-X vs INTx): [`docs/windows/virtio-pci-modern-interrupts.md`](./windows/virtio-pci-modern-interrupts.md)
