@@ -8,42 +8,41 @@ What this test plan verifies:
 2. Windows 7 binds the virtio-snd driver package (INF/SYS) to that PCI function
 3. The Windows audio stack enumerates a **render** endpoint (Control Panel → Sound)
 4. Audio playback works (audible on the host, or captured to a WAV file in headless runs)
+5. The guest audio smoke test passes (selftest **Task 128**)
+
+References:
+
+- PCI ID/HWID reference: `drivers/windows7/virtio-snd/docs/pci-hwids.md`
+- Optional: offline/slipstream staging so Windows binds the driver on first boot:
+  - `drivers/windows7/virtio-snd/tests/offline-install/README.md`
 
 ## Prerequisites
 
 - A QEMU build new enough to expose a virtio-snd PCI device.
+  - Known-good reference: QEMU **8.2.x**.
 - A Windows 7 SP1 VM disk image (x86 or x64).
 - The virtio-snd driver package for the target architecture:
   - `drivers/windows7/virtio-snd/inf/virtio-snd.inf`
   - `virtiosnd.sys` built for x86 or x64 and placed next to the INF for installation
 - Test signing enabled in the guest (or a properly production-signed driver package).
 
-If you want Windows to bind the driver automatically on first boot (no manual “Have Disk…” step), see:
-
-- `../offline-install/README.md` — offline/slipstream staging with DISM (`install.wim`, offline `\Windows\`, and optional `boot.wim`)
-
 Optional (but recommended for headless hosts):
 
-- A QEMU audio backend that works without host audio hardware, e.g. `-audiodev wav,...` or `-audiodev none,...`.
-
-## Recommended QEMU versions
-
-Virtio-snd is relatively new compared to virtio-blk/virtio-net. For the most predictable results, use a recent QEMU release (QEMU **7.x+** recommended).
-
-If your QEMU build does not list a virtio-snd device in `-device help`, upgrade QEMU.
+- A QEMU audio backend that does not require host audio hardware.
+  - Recommended: `-audiodev wav,...` (captures guest audio to a host `.wav` file).
 
 ## Identify the virtio-snd device name in your QEMU build
 
-Virtio-snd is relatively new in QEMU, and device naming can vary by version/build. Always confirm what your QEMU binary calls the device:
+QEMU device naming can vary by version/build. Always confirm what your QEMU binary calls the device:
 
 ```bash
-qemu-system-x86_64 -device help | grep -E "virtio-(sound|snd)"
+qemu-system-x86_64 -device help | grep -E "virtio-(sound|snd)-pci"
 ```
 
 Common outputs include:
 
-- `virtio-sound-pci` (typical in modern QEMU)
-- `virtio-snd-pci` (some builds/aliases)
+- `virtio-sound-pci` (typical upstream name)
+- `virtio-snd-pci` (alias on some builds)
 
 If neither appears, upgrade QEMU.
 
@@ -51,22 +50,9 @@ If neither appears, upgrade QEMU.
 
 The examples below are intentionally explicit and can be used as a starting point. Adjust paths, CPU accel, and disk/network options as needed.
 
-### Audio backend options (headless-friendly)
+The audio backend uses QEMU `wav` so playback can be validated without relying on the host audio stack.
 
-QEMU audio devices should be paired with an explicit `-audiodev` so runs are deterministic:
-
-- **Capture audio to a file** (recommended for headless validation):
-  - `-audiodev wav,id=aerosnd0,path=virtio-snd.wav`
-- **Discard audio** (device still enumerates, but you will not hear output):
-  - `-audiodev none,id=aerosnd0`
-
-In both cases, attach virtio-snd with an explicit `audiodev=`:
-
-```
--device virtio-sound-pci,audiodev=aerosnd0
-```
-
-(Replace `virtio-sound-pci` with the device name discovered via `-device help`.)
+> Note: These command lines intentionally use an IDE boot disk and an e1000 NIC so you do not need any other virtio drivers installed just to boot Windows.
 
 ### Windows 7 SP1 x86
 
@@ -75,14 +61,11 @@ qemu-system-i386 \
   -machine pc,accel=kvm \
   -m 2048 \
   -cpu qemu32 \
-  -drive file=win7-x86.qcow2,if=virtio,format=qcow2 \
-  -netdev user,id=net0 \
-  -device virtio-net-pci,netdev=net0 \
+  -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
+  -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x86.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0
+  -device virtio-sound-pci,disable-legacy=on,audiodev=aerosnd0
 ```
-
-To run without networking, drop the `-netdev ...` and `-device virtio-net-pci,...` lines.
 
 ### Windows 7 SP1 x64
 
@@ -91,27 +74,45 @@ qemu-system-x86_64 \
   -machine pc,accel=kvm \
   -m 4096 \
   -cpu qemu64 \
-  -drive file=win7-x64.qcow2,if=virtio,format=qcow2 \
-  -netdev user,id=net0 \
-  -device virtio-net-pci,netdev=net0 \
+  -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
+  -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x64.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0
+  -device virtio-sound-pci,disable-legacy=on,audiodev=aerosnd0
 ```
 
-### Modern-only vs transitional virtio-snd (PCI IDs)
+### Audio backend alternatives
+
+If you cannot use the `wav` backend, replace `-audiodev wav,...` with a backend supported by your host:
+
+- Linux (PulseAudio): `-audiodev pa,id=aerosnd0`
+- Windows: `-audiodev dsound,id=aerosnd0`
+
+## Modern-only vs transitional virtio-snd (PCI IDs)
 
 Virtio-snd has two PCI IDs defined in the virtio spec:
 
-- **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1059`
+- **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1059` (**Aero contract v1**)
 - **Transitional (legacy+modern)**: `PCI\VEN_1AF4&DEV_1018`
 
-`drivers/windows7/virtio-snd/inf/virtio-snd.inf` is expected to match both.
+Aero contract v1 is **modern-only**, so this test plan expects `DEV_1059`.
 
-If you want to make your intent explicit (and force the modern/non-transitional PCI ID), include:
+To make the device enumerate as modern/non-transitional under QEMU, include `disable-legacy=on` (as shown in the command lines above).
 
-```bash
--device virtio-sound-pci,disable-legacy=on,audiodev=aerosnd0
-```
+## Verifying HWID in Device Manager
+
+Before installing the driver (or when troubleshooting binding), confirm the device HWID that Windows sees:
+
+1. In the Windows 7 VM, open **Device Manager**.
+2. Find the virtio-snd device (before installation it may appear as an unknown “PCI Device” under **Other devices**).
+3. Right-click → **Properties** → **Details** tab.
+4. In the **Property** dropdown, select **Hardware Ids**.
+
+Expected values include at least one of:
+
+- `PCI\VEN_1AF4&DEV_1059` (modern / non-transitional; expected for contract v1)
+- `PCI\VEN_1AF4&DEV_1018` (transitional; if you did not use `disable-legacy=on`)
+
+More specific forms may also appear (with `SUBSYS_...` and `REV_...`). The INF should match the shorter `VEN/DEV` form.
 
 ## Guest-side validation (Windows 7)
 
@@ -129,23 +130,32 @@ Reboot the VM. You should see “Test Mode” on the desktop after reboot.
 
 ### 2) Install the virtio-snd driver
 
+Use either Device Manager or PnPUtil.
+
+**Device Manager (interactive):**
+
 1. Boot the VM.
 2. Open **Device Manager**.
-3. Find the virtio-snd device (before installation it may appear as an unknown “PCI Device” under **Other devices**).
-4. Right click → **Update Driver Software...**
-5. **Browse my computer for driver software**
-6. Point it to: `drivers/windows7/virtio-snd/inf/`
-7. Reboot if prompted.
+3. Right click the virtio-snd device → **Update Driver Software...**
+4. **Browse my computer for driver software**
+5. Point it to the directory containing `virtio-snd.inf`:
+   - Repo layout: `drivers/windows7/virtio-snd/inf/`
+   - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
+
+**PnPUtil (scriptable, elevated CMD):**
+
+```bat
+pnputil -i -a X:\path\to\virtio-snd.inf
+```
+
+Reboot if prompted.
 
 ### 3) Verify the driver is bound in Device Manager
 
-1. In **Device Manager**, locate the installed device:
-   - Typical category: **Sound, video and game controllers** (after successful install)
+1. In **Device Manager**, locate the installed device (after successful install it should show under **Sound, video and game controllers**).
 2. Right click → **Properties**:
    - **General** should show “This device is working properly.”
-   - **Details** tab → **Hardware Ids** should include one of:
-     - `PCI\VEN_1AF4&DEV_1059`
-     - `PCI\VEN_1AF4&DEV_1018`
+   - **Details** tab → **Hardware Ids** should include `PCI\VEN_1AF4&DEV_1059...`
    - **Driver** tab → **Driver Details** should include at least:
      - `virtiosnd.sys`
      - `portcls.sys`
@@ -160,13 +170,25 @@ Reboot the VM. You should see “Test Mode” on the desktop after reboot.
 
 If you used the `wav` audio backend, the host-side `virtio-snd-*.wav` file should be created and grow when sound plays.
 
-### 5) (Optional) Future selftest integration
+## Run the selftest audio check (Task 128)
 
-Once the guest selftest includes a virtio-snd test (see `drivers/windows7/tests/`), use:
+The Windows 7 Guest Tools verification script includes an audio smoke test that can also attempt to play a system `.wav`.
 
-- `aero-virtio-selftest.exe` → virtio-snd test
+1. In the guest, open an elevated Command Prompt.
+2. Run (from the Guest Tools media):
+   ```bat
+   X:\verify.cmd -PlayTestSound
+   ```
+3. Review the logs:
+   - `C:\AeroGuestTools\report.txt`
+   - `C:\AeroGuestTools\report.json`
 
-instead of manually triggering playback in the UI.
+How to interpret results:
+
+- `Smoke Test: Audio` reports `PASS/WARN/FAIL` based on:
+  - whether a `Win32_SoundDevice` is present, and
+  - whether `-PlayTestSound` succeeded.
+- If QEMU is using the `wav` audiodev backend, successful playback should also produce a non-empty `.wav` file on the host.
 
 ## Troubleshooting
 
@@ -174,13 +196,13 @@ instead of manually triggering playback in the UI.
 
 - Ensure test signing is enabled (`bcdedit /set testsigning on`) and the guest was rebooted.
 - Ensure you installed the correct x86 vs x64 driver build.
-- If your driver package is completely unsigned, Windows 7 x64 may still refuse to load it even in test mode; prefer test-signing the SYS with a development certificate and importing that certificate into the guest.
+- If your packages are SHA-2 signed, ensure the Win7 SHA-2 update (commonly KB3033929) is installed.
 
 ### Code 10: device cannot start
 
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
-- If you forced `disable-legacy=on`, try without it (or vice versa) to see if the driver expects transitional vs modern behavior.
+- If you forced `disable-legacy=on`, try without it (or vice versa) to confirm whether the failure is specific to modern vs transitional mode.
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
@@ -188,9 +210,13 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 
 - Confirm **Windows Audio** and **Windows Audio Endpoint Builder** services are running.
 - Confirm the driver is installing a complete PortCls/WaveRT stack:
-  - A WaveRT render miniport alone is not sufficient; Windows expects the correct KS filter categories and (typically) a topology miniport as well.
+  - A WaveRT render miniport alone is not sufficient; Windows typically also expects the correct KS filter categories and (often) a topology miniport.
 - Re-check the INF:
   - The INF must match the emitted PCI ID (`DEV_1059` vs `DEV_1018`).
-  - The INF must register the correct audio/KS interfaces for render (e.g. `KSCATEGORY_AUDIO`, `KSCATEGORY_RENDER`).
 
-If you are iterating on INF/miniport registration, remove the device from Device Manager (check “Delete the driver software for this device” if present) before reinstalling to ensure the new registry/INF state is applied.
+If you are iterating on INF/miniport registration, remove the device from Device Manager (and delete the driver package if requested) before reinstalling so updated INF state is applied.
+
+### QEMU device option not found
+
+- Run `qemu-system-x86_64 -device help` and search for `virtio-sound` / `virtio-snd`.
+- Some distros package QEMU without certain audio backends; if `-audiodev wav,...` fails, switch to another backend supported by your host.

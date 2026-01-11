@@ -1,0 +1,4 @@
+{
+  "$schema": "../../../ci/driver-package.schema.json",
+  "additionalFiles": ["docs/README.md", "docs/pci-hwids.md", "tests/qemu/README.md"]
+}
