@@ -70,10 +70,11 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
     - `PCI\VEN_A3A0&DEV_0001`
     - `PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0` (optional; only if the INF matches it)
 - Legacy bring-up HWID (legacy ABI): `1AED:0001` (`drivers/aerogpu/protocol/aerogpu_protocol.h`)
-  - Legacy hardware ID: `PCI\VEN_1AED&DEV_0001`
-  - The Win7 KMD supports this legacy ABI, but the shipped INFs (`aerogpu.inf`, `aerogpu_dx11.inf`)
-    intentionally bind **only** to `PCI\VEN_A3A0&DEV_0001`. Use a custom INF if you need to install
-    against the legacy device model.
+   - Legacy hardware ID: `PCI\VEN_1AED&DEV_0001`
+   - The Win7 KMD supports this legacy ABI for compatibility. The shipped INFs (`aerogpu.inf`, `aerogpu_dx11.inf`)
+     intentionally match **both** `PCI\VEN_A3A0&DEV_0001` and `PCI\VEN_1AED&DEV_0001` to ease bring-up/migration.
+     Using the legacy HWID still requires the emulator to expose the legacy device model (`emulator/aerogpu-legacy`).
+     Legacy support is expected to be removed once migration is complete.
 
 > Note: these are virtual-only IDs used inside the guest; they are not required to be PCI-SIG allocated.
 >
@@ -84,8 +85,9 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 >
 > Legacy note: some bring-up builds may still expose the legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`.
-> The in-tree Win7 display driver INFs intentionally bind only to `PCI\VEN_A3A0&DEV_0001`;
-> installing against the legacy device model requires a custom INF.
+> The in-tree Win7 display driver INFs match both `PCI\VEN_A3A0&DEV_0001` and `PCI\VEN_1AED&DEV_0001`, but
+> `A3A0:0001` remains the canonical ABI identity and the legacy `1AED:0001` path is expected to be removed
+> once migration is complete.
 >
 > Older prototypes used PCI vendor ID `1AE0`; those stacks are deprecated and must not be treated as the
 > Windows driver binding contract.
@@ -106,7 +108,7 @@ All numeric values are shown as hexadecimal.
 Notes:
 
 - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
-- `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` only (legacy `1AED:0001` requires a custom INF).
+- `aerogpu.inf` / `aerogpu_dx11.inf` bind to both `PCI\VEN_A3A0&DEV_0001` (canonical) and `PCI\VEN_1AED&DEV_0001` (legacy bring-up ABI).
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
 
 Compatibility note (non-canonical virtio PCI Device IDs):

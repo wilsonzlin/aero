@@ -14,7 +14,8 @@ Win7/WDDM ABI** described below.
 - `aerogpu_pci.h` — PCI IDs, BAR0 layout, MMIO register map, feature bits.
 - `aerogpu_ring.h` — ring header + submission descriptors + (optional) fence page.
 - `aerogpu_cmd.h` — command stream packets (“AeroGPU IR”).
-- `aerogpu_dbgctl_escape.h` — bring-up `DxgkDdiEscape` packets used by tooling.
+- `aerogpu_escape.h` — stable `DxgkDdiEscape` packet header + base ops.
+- `aerogpu_dbgctl_escape.h` — bring-up/tooling `DxgkDdiEscape` packets (layered on `aerogpu_escape.h`).
 
 **Host/emulator implementation:** `crates/emulator`
 

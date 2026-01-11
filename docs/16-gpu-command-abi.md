@@ -16,6 +16,7 @@ The normative, versioned ABI is the C headers under [`drivers/aerogpu/protocol/`
 - [`drivers/aerogpu/protocol/aerogpu_pci.h`](../drivers/aerogpu/protocol/aerogpu_pci.h) – PCI IDs, BAR0 size, MMIO register map, shared enums
 - [`drivers/aerogpu/protocol/aerogpu_ring.h`](../drivers/aerogpu/protocol/aerogpu_ring.h) – submission ring, submit descriptor, allocation table, fence page
 - [`drivers/aerogpu/protocol/aerogpu_cmd.h`](../drivers/aerogpu/protocol/aerogpu_cmd.h) – command stream packet formats (“AeroGPU IR”)
+- [`drivers/aerogpu/protocol/aerogpu_escape.h`](../drivers/aerogpu/protocol/aerogpu_escape.h) – stable Escape packet header + base ops (`DxgkDdiEscape` / `D3DKMTEscape`)
 
 Host-side mirrors are provided for parsing/validation:
 
