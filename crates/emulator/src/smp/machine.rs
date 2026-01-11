@@ -1,4 +1,7 @@
 //! A minimal "machine" model: multiple vCPUs, shared memory, and APIC IPI wiring.
+//!
+//! Note: this is **not** the canonical full-system VM wiring crate used by the browser runtime.
+//! For the canonical machine integration layer see `crates/aero-machine` (`aero_machine::Machine`).
 
 use super::cpu::CpuState;
 use super::lapic::{DeliveryMode, DestinationShorthand, Icr, Level, LocalApic};
