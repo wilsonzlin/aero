@@ -1,4 +1,9 @@
 use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR,
+};
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
@@ -224,58 +229,36 @@ impl AerogpuSoftwareExecutor {
     }
 
     fn process_cmd_stream(&mut self, bytes: &[u8], mem: &SubmissionMemory) -> Result<(), String> {
-        const STREAM_HEADER_SIZE: usize = 24;
-        const STREAM_MAGIC: u32 = 0x444D_4341; // "ACMD"
+        let mut iter = AerogpuCmdStreamIter::new(bytes)
+            .map_err(|err| format!("failed to decode cmd stream: {err:?}"))?;
 
-        if bytes.len() < STREAM_HEADER_SIZE {
-            return Err("cmd stream too small".into());
-        }
-        let magic = read_u32(bytes, 0);
-        if magic != STREAM_MAGIC {
-            return Err(format!("bad cmd stream magic 0x{magic:08x}"));
-        }
-        let size_bytes = read_u32(bytes, 8) as usize;
-        if size_bytes < STREAM_HEADER_SIZE || size_bytes > bytes.len() {
-            return Err(format!(
-                "cmd stream size_bytes={size_bytes} out of range (buf={})",
-                bytes.len()
-            ));
-        }
+        // Track offsets for diagnostics (iterator itself doesn't expose it).
+        let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+        while let Some(packet) = iter.next() {
+            let packet = packet
+                .map_err(|err| format!("cmd packet decode error at offset {offset}: {err:?}"))?;
 
-        let mut offset = STREAM_HEADER_SIZE;
-        while offset < size_bytes {
-            if offset + 8 > size_bytes {
-                return Err("truncated cmd hdr".into());
-            }
-            let opcode = read_u32(bytes, offset);
-            let cmd_size = read_u32(bytes, offset + 4) as usize;
-            if cmd_size < 8 || cmd_size % 4 != 0 {
-                return Err(format!("invalid cmd size_bytes={cmd_size}"));
-            }
-            if offset + cmd_size > size_bytes {
-                return Err("cmd packet overruns stream".into());
-            }
-
-            let payload = &bytes[offset + 8..offset + cmd_size];
-            match opcode {
-                0 => {} // NOP
-                0x100 => self.cmd_create_buffer(payload, mem)?,
-                0x101 => self.cmd_create_texture2d(payload, mem)?,
-                0x102 => self.cmd_destroy_resource(payload)?,
-                0x400 => self.cmd_set_render_targets(payload)?,
-                0x401 => self.cmd_set_viewport(payload)?,
-                0x500 => self.cmd_set_vertex_buffers(payload)?,
-                0x502 => self.cmd_set_primitive_topology(payload)?,
-                0x600 => self.cmd_clear(payload)?,
-                0x601 => self.cmd_draw(payload)?,
-                0x700 => self.cmd_present(payload)?,
-                other => {
-                    // Unknown opcode: skip.
-                    let _ = other;
+            match packet.opcode {
+                Some(AerogpuCmdOpcode::Nop) | Some(AerogpuCmdOpcode::DebugMarker) => {}
+                Some(AerogpuCmdOpcode::CreateBuffer) => self.cmd_create_buffer(packet.payload, mem)?,
+                Some(AerogpuCmdOpcode::CreateTexture2d) => self.cmd_create_texture2d(packet.payload, mem)?,
+                Some(AerogpuCmdOpcode::DestroyResource) => self.cmd_destroy_resource(packet.payload)?,
+                Some(AerogpuCmdOpcode::SetRenderTargets) => self.cmd_set_render_targets(packet.payload)?,
+                Some(AerogpuCmdOpcode::SetViewport) => self.cmd_set_viewport(packet.payload)?,
+                Some(AerogpuCmdOpcode::SetVertexBuffers) => self.cmd_set_vertex_buffers(packet.payload)?,
+                Some(AerogpuCmdOpcode::SetPrimitiveTopology) => self.cmd_set_primitive_topology(packet.payload)?,
+                Some(AerogpuCmdOpcode::Clear) => self.cmd_clear(packet.payload)?,
+                Some(AerogpuCmdOpcode::Draw) => self.cmd_draw(packet.payload)?,
+                Some(AerogpuCmdOpcode::Present) => self.cmd_present(packet.payload)?,
+                _ => {
+                    // Unknown/unsupported opcode: skip.
                 }
             }
 
-            offset += cmd_size;
+            let cmd_size = packet.hdr.size_bytes as usize;
+            offset = offset
+                .checked_add(cmd_size)
+                .ok_or_else(|| "cmd stream offset overflow".to_string())?;
         }
 
         Ok(())
@@ -334,8 +317,8 @@ impl AerogpuSoftwareExecutor {
         if mip_levels != 1 || array_layers != 1 {
             return Err("only mip_levels=1, array_layers=1 supported".into());
         }
-        // aerogpu_format: accept only R8G8B8A8_UNORM (3) for now.
-        if format != 3 {
+        // aerogpu_format: accept only R8G8B8A8_UNORM for now.
+        if format != AerogpuFormat::R8G8B8A8Unorm as u32 {
             return Err(format!("unsupported texture format {format}"));
         }
         if backing_alloc_id != 0 {
@@ -439,8 +422,7 @@ impl AerogpuSoftwareExecutor {
             return Err("SET_PRIMITIVE_TOPOLOGY payload too small".into());
         }
         let topology = read_u32(payload, 0);
-        // aerogpu_primitive_topology::TRIANGLELIST = 4
-        if topology != 4 {
+        if topology != AerogpuPrimitiveTopology::TriangleList as u32 {
             return Err(format!("unsupported primitive topology {topology}"));
         }
         Ok(())
@@ -451,8 +433,7 @@ impl AerogpuSoftwareExecutor {
             return Err("CLEAR payload too small".into());
         }
         let flags = read_u32(payload, 0);
-        // aerogpu_clear_flags::AEROGPU_CLEAR_COLOR = 1
-        if (flags & 1) == 0 {
+        if (flags & AEROGPU_CLEAR_COLOR) == 0 {
             return Ok(());
         }
 

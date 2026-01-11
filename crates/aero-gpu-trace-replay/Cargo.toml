@@ -7,4 +7,4 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-gpu-trace = { path = "../aero-gpu-trace" }
 sha2 = "0.10"
-
+aero-protocol = { path = "../../emulator/protocol" }

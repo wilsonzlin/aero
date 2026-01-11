@@ -230,6 +230,7 @@ name = "aero-gpu-trace-replay"
 version = "0.1.0"
 dependencies = [
  "aero-gpu-trace",
+ "aero-protocol",
  "sha2",
 ]
 
