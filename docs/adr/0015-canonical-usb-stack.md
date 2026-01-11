@@ -11,9 +11,10 @@ The repository historically accumulated multiple overlapping USB/UHCI implementa
 - **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
   - Generic main-thread broker + worker client: `src/platform/webusb_{broker,client,protocol}.ts`
 - **Legacy/native/test path (parallel):**
-  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator`
-- **Legacy prototype (duplicate wire contract):**
-  - Early WebUSB passthrough bridge/types: `crates/aero-wasm/src/usb_passthrough.rs`
+  - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator/src/io/usb/*`
+- **Legacy prototype (duplicate wire contract; removed):**
+  - Early WebUSB passthrough bridge/types previously lived in `crates/aero-wasm/src/usb_passthrough.rs`
+    (now deleted; do not reintroduce).
 
 This split makes it easy to accidentally introduce a *third* “USB stack” (new UHCI model, new
 wire protocol, new TS runtime, etc.), and it forces duplicated work whenever a bug fix or feature
@@ -54,7 +55,7 @@ Rust and TS tests passing.
 
 ### 3) Status of the legacy `crates/emulator` USB stack
 
-The `crates/emulator` USB stack is considered **legacy/native-only**:
+The `crates/emulator/src/io/usb/*` USB stack is considered **legacy/native-only**:
 
 - It may remain temporarily for native bring-up and as a reference implementation.
 - It is **not** the canonical implementation for the browser runtime.
@@ -111,10 +112,11 @@ The `crates/emulator` USB stack is considered **legacy/native-only**:
    - Update related docs to link to this ADR and avoid implying `crates/emulator` is the primary
      path for browser USB.
 
-2. **Delete the legacy `aero-wasm` prototype**
-   - Delete `crates/aero-wasm/src/usb_passthrough.rs`.
-   - Remove any re-exports/use-sites so there is exactly one `UsbPassthroughBridge` surface, backed
-     by `aero_usb::passthrough::UsbPassthroughDevice`.
+2. **Keep the legacy `aero-wasm` prototype deleted**
+   - Do not reintroduce `crates/aero-wasm/src/usb_passthrough.rs` (it duplicated the passthrough
+     wire contract).
+   - Ensure there is exactly one `UsbPassthroughBridge` surface in `crates/aero-wasm`, backed by
+     `aero_usb::passthrough::UsbPassthroughDevice`.
 
 3. **Consolidate TypeScript WebUSB host integration**
    - Treat `web/src/usb/*` as the canonical WebUSB passthrough host integration for the
@@ -126,7 +128,7 @@ The `crates/emulator` USB stack is considered **legacy/native-only**:
 4. **Converge native on shared code**
     - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
       device models/UHCI (or gate the legacy code behind a feature flag and stop extending it).
-    - Deletion target: legacy USB stack under `crates/emulator` once unused.
+    - Deletion target: legacy USB stack under `crates/emulator/src/io/usb/*` once unused.
 
 ### Testing strategy
 
