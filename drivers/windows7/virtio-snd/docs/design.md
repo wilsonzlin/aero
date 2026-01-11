@@ -8,8 +8,8 @@ See `../SOURCES.md` for the authoritative list of references.
 
 The driver in this directory is a clean-room WDM function driver targeting the
 Aero virtio device contract. It includes a virtio-pci modern transport core and
-split-ring virtqueue plumbing, but it does not yet integrate PortCls/WaveRT
-miniports, so it does not expose audio endpoints to Windows yet.
+split-ring virtqueue plumbing, and integrates PortCls **WaveRT** + **Topology**
+miniports so Windows 7 can enumerate a render endpoint.
 
 ## High-level architecture
 
