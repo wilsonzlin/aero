@@ -8,6 +8,7 @@ class FakeRtcDataChannel {
   label = "";
   ordered = true;
   readyState: RTCDataChannelState;
+  ordered = true;
   maxRetransmits: number | null = null;
   maxPacketLifeTime: number | null = null;
 
