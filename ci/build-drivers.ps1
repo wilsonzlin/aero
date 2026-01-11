@@ -21,8 +21,11 @@ Discovery conventions (encoded here for CI determinism):
         common build-output directories: `obj/`, `out/`, `build/`, `target/`).
       - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile)
         by default (pass `-IncludeMakefileProjects` to opt in).
-        - For solutions, if any referenced `*.vcxproj` is a wrapper project, the solution is
-          skipped by default because MSBuild would invoke legacy `build.exe`.
+        - For mixed solutions (MSBuild projects + wrapper projects), the script builds only the
+          non-wrapper `*.vcxproj` projects to avoid invoking legacy `build.exe`.
+      - When a driver exists in both a legacy and a canonical location, CI builds only the
+        canonical target by default to avoid packaging duplicate INFs/HWIDs. To build the legacy
+        target, pass it explicitly via `-Drivers`.
   - Build outputs are staged under:
       - `out/drivers/<driver-relative-path>/<arch>/...`
 
@@ -659,19 +662,14 @@ function Get-MakefileSkipInfoForDriverTarget {
       })
     }
 
-    # Any MakeFileProj/Makefile wrapper project can invoke legacy WDK build.exe, which is not
-    # guaranteed to exist in CI. Therefore, a solution is only considered CI-buildable when
-    # it contains *no* such projects (unless -IncludeMakefileProjects is passed).
-    if ($makefileProjects.Count -eq 0) { return $null }
-
-    $reason = if ($makefileProjects.Count -eq $vcxprojs.Count) {
-      "it only contains MakeFileProj projects (legacy WDK build.exe)."
-    } else {
-      "it contains MakeFileProj projects (legacy WDK build.exe)."
-    }
+    # A solution is considered CI-buildable if it references at least one *non-makefile*
+    # vcxproj. If every referenced vcxproj is a WDK 7.1 NMake wrapper (Keyword=MakeFileProj /
+    # ConfigurationType=Makefile), skip the entire solution to avoid invoking legacy build.exe.
+    if ($makefileProjects.Count -eq 0) { return $null } # no makefile wrapper projects
+    if ($makefileProjects.Count -lt $vcxprojs.Count) { return $null } # at least one non-makefile project exists
 
     return [pscustomobject]@{
-      Reason = $reason
+      Reason = "it only contains MakeFileProj projects (legacy WDK build.exe)."
       MakefileProjects = $makefileProjects.ToArray()
     }
   }
@@ -725,11 +723,75 @@ Ensure-Directory -Path $outDriversRoot
 Ensure-Directory -Path $logRoot
 Ensure-Directory -Path $objRoot
 
+# Some drivers have both a legacy and a newer "canonical" location in the repo.
+# Building both can produce duplicate INFs matching the same hardware IDs, which
+# breaks Guest Tools packaging (and is confusing for end-users).
+#
+# Default CI behaviour: when both are present, build only the canonical target.
+# If a caller explicitly requested a legacy driver via -Drivers allowlist, do not
+# apply this filter (useful for debugging/regression builds).
+$supersededBy = @{}
+if (-not $Drivers -or $Drivers.Count -eq 0) {
+  $present = @{}
+  foreach ($t in $targets) {
+    if ($null -eq $t -or [string]::IsNullOrWhiteSpace($t.Name)) { continue }
+    $present[$t.Name.ToLowerInvariant()] = $true
+  }
+
+  $legacyToCanonical = @{
+    'win7/virtio-blk' = 'windows7/virtio/blk'
+    'win7/virtio-net' = 'windows7/virtio/net'
+  }
+
+  foreach ($legacy in $legacyToCanonical.Keys) {
+    $canonical = [string]$legacyToCanonical[$legacy]
+    if ([string]::IsNullOrWhiteSpace($canonical)) { continue }
+    if ($present.ContainsKey($legacy.ToLowerInvariant()) -and $present.ContainsKey($canonical.ToLowerInvariant())) {
+      $supersededBy[$legacy.ToLowerInvariant()] = $canonical
+    }
+  }
+}
+
 $results = New-Object System.Collections.Generic.List[object]
 $skippedTargets = New-Object System.Collections.Generic.List[object]
 $failed = $false
 
 foreach ($target in $targets) {
+  $targetKey = ([string]$target.Name).ToLowerInvariant()
+  if ($supersededBy.ContainsKey($targetKey)) {
+    $canonical = $supersededBy[$targetKey]
+    $reason = "it is superseded by '$canonical' (avoid packaging duplicate INFs for the same HWIDs)."
+
+    Write-Host ""
+    Write-Host ("Skipping driver '{0}' because {1}" -f $target.Name, $reason)
+    Write-Host ("==> Skipping driver '{0}' ({1})" -f $target.Name, $target.Kind)
+    Write-Host ("    Project: {0}" -f $target.BuildPath)
+    Write-Host ("    Reason:  {0}" -f $reason)
+
+    # Remove any stale outputs for the skipped driver so downstream catalog/sign/package
+    # steps don't accidentally pick them up.
+    foreach ($platform in $normalizedPlatforms) {
+      $arch = Platform-ToArch -Platform $platform
+      $driverOutDir = Join-Path (Join-Path $outDriversRoot $target.RelativePath) $arch
+      $driverObjDir = Join-Path (Join-Path $objRoot $target.RelativePath) $arch
+      if (Test-Path -LiteralPath $driverOutDir) {
+        Remove-Item -LiteralPath $driverOutDir -Recurse -Force -ErrorAction SilentlyContinue
+      }
+      if (Test-Path -LiteralPath $driverObjDir) {
+        Remove-Item -LiteralPath $driverObjDir -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    }
+
+    [void]$skippedTargets.Add([pscustomobject]@{
+      Driver = $target.Name
+      Kind = $target.Kind
+      Project = $target.BuildPath
+      Reason = $reason
+      MakefileProjects = $null
+    })
+    continue
+  }
+
   $skipInfo = Get-MakefileSkipInfoForDriverTarget -Target $target -IncludeMakefileProjects:$IncludeMakefileProjects
   if ($null -ne $skipInfo) {
     Write-Host ""
