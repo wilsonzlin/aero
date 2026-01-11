@@ -540,20 +540,24 @@ def main() -> None:
                 f"  got: {entry.hardware_id_patterns}"
             )
 
-        # 5) Subsystem IDs: require patterns that include the contract-defined SUBSYS fragment.
-        # Additionally require that each expected SUBSYS entry is revision-gated (SUBSYS + REV)
-        # so automation can reliably distinguish contract v1 devices (especially virtio-input
-        # keyboard vs mouse variants) without accidentally matching non-Aero virtio devices.
+        # 5) Subsystem IDs: require revision-gated, subsystem-qualified patterns for each
+        # contract-defined instance (SUBSYS + REV).
+        #
+        # This is important for devices with multiple instances under the same Vendor/Device ID
+        # (notably virtio-input keyboard vs mouse).
         expected_subsys_ids = sorted(
             subsys for label, subsys in w7_subsystem_ids.items() if label.split(" (", 1)[0].strip() == device_name
         )
         for subsys_id in expected_subsys_ids:
-            expected_subsys_fragment = f"SUBSYS_{subsys_id:04X}{w7_subsys_vendor:04X}"
-            if not any(expected_subsys_fragment in p and expected_rev_fragment in p for p in patterns_upper):
+            expected_subsys_rev = (
+                f"PCI\\VEN_{w7_vendor:04X}&DEV_{type_info.pci_device_id:04X}"
+                f"&SUBSYS_{subsys_id:04X}{w7_subsys_vendor:04X}&REV_{w7_revision:02X}"
+            )
+            if expected_subsys_rev.upper() not in patterns_upper:
                 fail(
                     f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()} entry {device_name!r}: "
                     "hardware_id_patterns missing the expected revision-gated, subsystem-qualified hardware ID:\n"
-                    f"  expected to contain: &{expected_subsys_fragment}&{expected_rev_fragment}\n"
+                    f"  expected: {expected_subsys_rev}\n"
                     f"  got: {entry.hardware_id_patterns}"
                 )
 
