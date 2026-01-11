@@ -184,21 +184,8 @@ rem ----------------------------------------------------------------------------
 :resolve_umd_reg_key
 rem HKR for display drivers is usually the Display class key instance, but some
 rem setups surface the UMD registration values under Control\Video\{VideoID}\0000.
-rem If the expected values aren't present under the class key, fall back via
-rem VideoID.
-
-set "NEED_VIDEO_FALLBACK=0"
-"%REGEXE%" query "%AEROGPU_CLASS_KEY%" /v InstalledDisplayDrivers >nul 2>nul
-if errorlevel 1 set "NEED_VIDEO_FALLBACK=1"
-if "%REQUIRE_DX11%"=="1" (
-  "%REGEXE%" query "%AEROGPU_CLASS_KEY%" /v UserModeDriverName >nul 2>nul
-  if errorlevel 1 set "NEED_VIDEO_FALLBACK=1"
-)
-
-if "%NEED_VIDEO_FALLBACK%"=="0" (
-  set "AEROGPU_KEY=%AEROGPU_CLASS_KEY%"
-  exit /b 0
-)
+rem Prefer the Control\Video key when it is present, since some installs surface
+rem UMD registration values there even when the Display class key exists.
 
 set "VIDEOID="
 for /f "skip=1 tokens=3" %%G in ('"%REGEXE%" query "%AEROGPU_CLASS_KEY%" /v VideoID 2^>nul') do (
