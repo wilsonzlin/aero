@@ -305,6 +305,9 @@ def main() -> int:
             return 2
 
     disk_image = Path(args.disk_image).resolve()
+    if not disk_image.exists():
+        print(f"ERROR: disk image not found: {disk_image}", file=sys.stderr)
+        return 2
     serial_log = Path(args.serial_log).resolve()
     serial_log.parent.mkdir(parents=True, exist_ok=True)
 
@@ -337,7 +340,16 @@ def main() -> int:
         },
     )
 
-    with _ReusableTcpServer(("127.0.0.1", args.http_port), handler) as httpd:
+    try:
+        httpd = _ReusableTcpServer(("127.0.0.1", args.http_port), handler)
+    except OSError as e:
+        print(
+            f"ERROR: failed to bind HTTP server on 127.0.0.1:{args.http_port} (port in use?): {e}",
+            file=sys.stderr,
+        )
+        return 2
+
+    with httpd:
         thread = Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
 
