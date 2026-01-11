@@ -38,6 +38,24 @@ impl Drop for EnvVarGuard {
     }
 }
 
+struct CommonL2Env {
+    _max_connections: EnvVarGuard,
+    _max_bytes: EnvVarGuard,
+    _max_fps: EnvVarGuard,
+    _ping_interval: EnvVarGuard,
+}
+
+impl CommonL2Env {
+    fn new() -> Self {
+        Self {
+            _max_connections: EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0"),
+            _max_bytes: EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0"),
+            _max_fps: EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0"),
+            _ping_interval: EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0"),
+        }
+    }
+}
+
 fn base_ws_request(addr: SocketAddr) -> tokio_tungstenite::tungstenite::http::Request<()> {
     let ws_url = format!("ws://{addr}/l2");
     let mut req = ws_url.into_client_request().unwrap();
@@ -59,10 +77,10 @@ fn assert_http_status(err: WsError, expected: StatusCode) {
 async fn subprotocol_required_rejects_missing_protocol() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -82,10 +100,10 @@ async fn subprotocol_required_rejects_missing_protocol() {
 async fn origin_required_by_default_rejects_missing_origin() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -104,10 +122,10 @@ async fn origin_required_by_default_rejects_missing_origin() {
 async fn wildcard_allowed_origins_still_requires_origin_header() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -126,8 +144,8 @@ async fn wildcard_allowed_origins_still_requires_origin_header() {
 async fn origin_allowlist_and_open_mode() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     // Allowlist enforcement.
     {
@@ -178,10 +196,10 @@ async fn origin_allowlist_and_open_mode() {
 async fn token_required_query_and_subprotocol() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -232,10 +250,10 @@ async fn token_required_query_and_subprotocol() {
 async fn open_mode_disables_origin_but_not_token_auth() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -265,10 +283,10 @@ async fn open_mode_disables_origin_but_not_token_auth() {
 async fn token_errors_take_precedence_over_origin_errors() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::set("AERO_L2_TOKEN", "sekrit");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -300,11 +318,11 @@ async fn token_errors_take_precedence_over_origin_errors() {
 async fn max_connections_enforced() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _max_conn = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "1");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -341,12 +359,11 @@ async fn max_connections_enforced() {
 async fn byte_quota_closes_connection() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _quota = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "100");
-    let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -392,12 +409,11 @@ async fn byte_quota_closes_connection() {
 async fn byte_quota_counts_tx_bytes() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _quota = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "40");
-    let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -440,13 +456,13 @@ async fn byte_quota_counts_tx_bytes() {
 async fn keepalive_ping_counts_toward_byte_quota() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     // A keepalive PING is 12 bytes (4-byte header + 8-byte ping id). Setting the quota below that
     // should cause the server-driven keepalive to immediately trigger a policy-violation close.
     let _quota = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "11");
-    let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
     let _ping = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "10");
 
     let cfg = ProxyConfig::from_env().unwrap();
@@ -482,12 +498,11 @@ async fn keepalive_ping_counts_toward_byte_quota() {
 async fn fps_quota_closes_connection() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
-    let _quota = EnvVarGuard::unset("AERO_L2_MAX_BYTES_PER_CONNECTION");
     let _fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "2");
-    let _ping = EnvVarGuard::unset("AERO_L2_PING_INTERVAL_MS");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
