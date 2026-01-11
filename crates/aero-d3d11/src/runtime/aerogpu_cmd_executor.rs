@@ -127,6 +127,8 @@ impl BufferResource {
 struct Texture2dDesc {
     width: u32,
     height: u32,
+    mip_level_count: u32,
+    array_layers: u32,
     format: wgpu::TextureFormat,
 }
 
@@ -138,6 +140,13 @@ struct Texture2dResource {
     backing: Option<ResourceBacking>,
     row_pitch_bytes: u32,
     dirty: bool,
+    /// CPU shadow for textures updated via `UPLOAD_RESOURCE`.
+    ///
+    /// The command stream expresses uploads as a linear byte range, but WebGPU uploads are 2D. For
+    /// partial updates we patch into this shadow buffer and then re-upload the full texture.
+    ///
+    /// The shadow is invalidated when the texture is written by GPU operations (draw/clear/copy).
+    host_shadow: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -567,7 +576,7 @@ impl AerogpuD3d11Executor {
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
-        for handle in render_targets {
+        for &handle in &render_targets {
             self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
@@ -587,6 +596,20 @@ impl AerogpuD3d11Executor {
         }
         for handle in ia_buffers {
             self.ensure_buffer_uploaded(handle, allocs, guest_mem)?;
+        }
+
+        // The upcoming render pass will write to bound targets. Invalidate any CPU shadow copies so
+        // that later partial `UPLOAD_RESOURCE` operations don't accidentally overwrite GPU-produced
+        // contents.
+        for &handle in &render_targets {
+            if let Some(tex) = self.resources.textures.get_mut(&handle) {
+                tex.host_shadow = None;
+            }
+        }
+        if let Some(handle) = depth_stencil {
+            if let Some(tex) = self.resources.textures.get_mut(&handle) {
+                tex.host_shadow = None;
+            }
         }
 
         let state = &self.state;
@@ -889,11 +912,14 @@ impl AerogpuD3d11Executor {
                 desc: Texture2dDesc {
                     width,
                     height,
+                    mip_level_count: mip_levels,
+                    array_layers,
                     format,
                 },
                 backing,
                 row_pitch_bytes,
                 dirty: backing.is_some(),
+                host_shadow: None,
             },
         );
         Ok(())
@@ -976,8 +1002,11 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
-        if let Some(tex) = self.resources.textures.get(&handle) {
-            // Minimal implementation: only supports full-texture uploads for RGBA8/BGRA8.
+        if let Some(tex) = self.resources.textures.get_mut(&handle) {
+            // Texture uploads are expressed as a linear byte range into mip0/layer0.
+            //
+            // WebGPU uploads are 2D; for partial updates we patch into a CPU shadow buffer and then
+            // re-upload the full texture.
             let bytes_per_row = if tex.row_pitch_bytes != 0 {
                 tex.row_pitch_bytes
             } else {
@@ -987,13 +1016,41 @@ impl AerogpuD3d11Executor {
                     .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: bytes_per_row overflow"))?
             };
             let expected = (bytes_per_row as u64).saturating_mul(tex.desc.height as u64);
-            if offset != 0 || size != expected {
-                bail!("UPLOAD_RESOURCE: only full-texture uploads are supported for now");
+
+            let end = offset
+                .checked_add(size)
+                .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: upload range overflows u64"))?;
+            if end > expected {
+                bail!("UPLOAD_RESOURCE: texture upload out of bounds");
             }
-            write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, data)?;
-            if let Some(tex_mut) = self.resources.textures.get_mut(&handle) {
-                tex_mut.dirty = false;
+
+            let expected_usize: usize = expected
+                .try_into()
+                .map_err(|_| anyhow!("UPLOAD_RESOURCE: texture upload size out of range"))?;
+            let offset_usize: usize = offset
+                .try_into()
+                .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset out of range"))?;
+            let end_usize: usize = end
+                .try_into()
+                .map_err(|_| anyhow!("UPLOAD_RESOURCE: end out of range"))?;
+
+            if offset == 0 && size == expected {
+                write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, data)?;
+                tex.host_shadow = Some(data.to_vec());
+                tex.dirty = false;
+                return Ok(());
             }
+
+            let shadow = tex.host_shadow.as_mut().ok_or_else(|| {
+                anyhow!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload")
+            })?;
+            if shadow.len() != expected_usize {
+                bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
+            }
+            shadow[offset_usize..end_usize].copy_from_slice(data);
+
+            write_texture_linear(&self.queue, &tex.texture, tex.desc, bytes_per_row, shadow)?;
+            tex.dirty = false;
             return Ok(());
         }
 
@@ -1133,6 +1190,31 @@ impl AerogpuD3d11Executor {
                 .get(&dst_texture)
                 .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
 
+            if src_mip_level >= src.desc.mip_level_count {
+                bail!(
+                    "COPY_TEXTURE2D: src_mip_level {src_mip_level} out of range (mip_levels={})",
+                    src.desc.mip_level_count
+                );
+            }
+            if dst_mip_level >= dst.desc.mip_level_count {
+                bail!(
+                    "COPY_TEXTURE2D: dst_mip_level {dst_mip_level} out of range (mip_levels={})",
+                    dst.desc.mip_level_count
+                );
+            }
+            if src_array_layer >= src.desc.array_layers {
+                bail!(
+                    "COPY_TEXTURE2D: src_array_layer {src_array_layer} out of range (array_layers={})",
+                    src.desc.array_layers
+                );
+            }
+            if dst_array_layer >= dst.desc.array_layers {
+                bail!(
+                    "COPY_TEXTURE2D: dst_array_layer {dst_array_layer} out of range (array_layers={})",
+                    dst.desc.array_layers
+                );
+            }
+
             if src.desc.format != dst.desc.format {
                 bail!("COPY_TEXTURE2D: format mismatch");
             }
@@ -1182,6 +1264,7 @@ impl AerogpuD3d11Executor {
         // would otherwise cause us to overwrite the copy with stale guest-memory contents.
         if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
             dst.dirty = false;
+            dst.host_shadow = None;
         }
 
         Ok(())
@@ -1548,7 +1631,7 @@ impl AerogpuD3d11Executor {
 
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
-        for handle in render_targets {
+        for &handle in &render_targets {
             self.ensure_texture_uploaded(handle, allocs, guest_mem)?;
         }
         if let Some(handle) = depth_stencil {
@@ -1564,6 +1647,22 @@ impl AerogpuD3d11Executor {
         ];
         let depth = f32::from_bits(read_u32_le(cmd_bytes, 28)?);
         let stencil = read_u32_le(cmd_bytes, 32)? as u32;
+
+        // Clear writes modify the underlying textures; invalidate any CPU shadows.
+        if flags & AEROGPU_CLEAR_COLOR != 0 {
+            for &handle in &render_targets {
+                if let Some(tex) = self.resources.textures.get_mut(&handle) {
+                    tex.host_shadow = None;
+                }
+            }
+        }
+        if (flags & (AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL)) != 0 {
+            if let Some(handle) = depth_stencil {
+                if let Some(tex) = self.resources.textures.get_mut(&handle) {
+                    tex.host_shadow = None;
+                }
+            }
+        }
 
         let (mut color_attachments, mut depth_stencil_attachment) =
             self.build_render_pass_attachments(wgpu::LoadOp::Load)?;
