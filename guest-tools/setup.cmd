@@ -7,6 +7,7 @@ rem Offline + built-in tooling only: certutil, pnputil, reg, bcdedit, shutdown.
 rem Standard exit codes (stable for automation/scripted use).
 set "EC_ADMIN_REQUIRED=10"
 set "EC_DRIVER_DIR_MISSING=11"
+set "EC_CERTS_MISSING=12"
 set "EC_STORAGE_SERVICE_MISMATCH=13"
 
 set "SCRIPT_DIR=%~dp0"
@@ -433,9 +434,14 @@ call :log ""
 call :log "Installing Aero certificate(s) from %CERT_DIR% ..."
 
 if not exist "%CERT_DIR%" (
-  call :log "WARNING: Certificate directory not found; skipping certificate installation."
-  call :log "         (If you are using test-signed/custom-signed drivers, ensure the required public certificate is present under certs\\ or already installed in Local Machine Root + TrustedPublisher.)"
-  exit /b 0
+  if /i "%SIGNING_POLICY%"=="none" (
+    call :log "Certificate directory not found; signing_policy=none; skipping certificate installation."
+    exit /b 0
+  )
+  call :log "ERROR: Certificate directory not found: %CERT_DIR% (signing_policy=%SIGNING_POLICY%)."
+  call :log "       Expected at least one: *.cer, *.crt, and/or *.p7b"
+  call :log "       (You can override signing_policy with /forcesigningpolicy:none for WHQL/production-signed drivers.)"
+  exit /b %EC_CERTS_MISSING%
 )
 
 set "FOUND_CERT=0"
@@ -462,9 +468,14 @@ for %%F in ("%CERT_DIR%\*.p7b") do (
 )
 
 if "%FOUND_CERT%"=="0" (
-  call :log "WARNING: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b). Skipping certificate installation."
-  call :log "         (If you are using test-signed/custom-signed drivers, ensure the required public certificate is present under certs\\ or already installed in Local Machine Root + TrustedPublisher.)"
-  exit /b 0
+  if /i "%SIGNING_POLICY%"=="none" (
+    call :log "No certificates found under %CERT_DIR%; signing_policy=none; skipping certificate installation."
+    exit /b 0
+  )
+  call :log "ERROR: No certificates found under %CERT_DIR% (signing_policy=%SIGNING_POLICY%)."
+  call :log "       Expected at least one: *.cer, *.crt, and/or *.p7b"
+  call :log "       (You can override signing_policy with /forcesigningpolicy:none for WHQL/production-signed drivers.)"
+  exit /b %EC_CERTS_MISSING%
 )
 
 exit /b 0
