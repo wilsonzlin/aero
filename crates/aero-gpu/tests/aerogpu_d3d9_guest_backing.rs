@@ -424,7 +424,7 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping alloc-table relocation test: wgpu adapter not found");
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
