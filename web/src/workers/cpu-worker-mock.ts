@@ -77,7 +77,7 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
   let frameToggle = false;
   const intervalMs = Math.floor(1000 / 30);
 
-  setInterval(() => {
+  const timer = setInterval(() => {
     const active = Atomics.load(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
     const back = active ^ 1;
 
@@ -138,4 +138,5 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
     // Wake the GPU worker (which waits on FRAME_SEQ).
     Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);
   }, intervalMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
 };

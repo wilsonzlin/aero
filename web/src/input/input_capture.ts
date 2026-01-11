@@ -377,6 +377,7 @@ export class InputCapture {
 
     const intervalMs = Math.max(1, Math.round(1000 / this.flushHz));
     this.flushTimer = window.setInterval(() => this.flushNow(), intervalMs);
+    (this.flushTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   stop(): void {

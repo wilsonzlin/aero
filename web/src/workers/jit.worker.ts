@@ -146,7 +146,7 @@ function stopPendingJitFlushTimer(): void {
 function maybeStartPendingJitFlushTimer(): void {
   if (pendingJitFlushTimer !== null) return;
   pendingJitFlushAttempts = 0;
-  pendingJitFlushTimer = setInterval(() => {
+  const timer = setInterval(() => {
     const writer = perfWriter;
     const header = perfFrameHeader;
     if (!writer || !header) {
@@ -180,6 +180,8 @@ function maybeStartPendingJitFlushTimer(): void {
       stopPendingJitFlushTimer();
     }
   }, PENDING_JIT_FLUSH_INTERVAL_MS) as unknown as number;
+  (timer as unknown as { unref?: () => void }).unref?.();
+  pendingJitFlushTimer = timer;
 }
 
 function maybeWritePerfSample(jitMs: number): void {

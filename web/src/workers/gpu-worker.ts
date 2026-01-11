@@ -991,7 +991,9 @@ async function telemetryTick(): Promise<void> {
 
 function startTelemetryPolling(): void {
   if (telemetryPollTimer !== null) return;
-  telemetryPollTimer = setInterval(() => void telemetryTick(), TELEMETRY_POLL_INTERVAL_MS) as unknown as number;
+  const timer = setInterval(() => void telemetryTick(), TELEMETRY_POLL_INTERVAL_MS) as unknown as number;
+  (timer as unknown as { unref?: () => void }).unref?.();
+  telemetryPollTimer = timer;
   void telemetryTick();
 }
 
@@ -1925,12 +1927,14 @@ function startRuntimePolling(): void {
   if (!status || runtimePollTimer !== null) return;
   // Keep the GPU worker responsive to `postMessage` frame scheduler traffic: avoid blocking
   // waits and instead poll the shutdown command ring at a low rate.
-  runtimePollTimer = setInterval(() => {
+  const timer = setInterval(() => {
     drainRuntimeCommands();
     if (status && Atomics.load(status, StatusIndex.StopRequested) === 1) {
       shutdownRuntime();
     }
   }, 8) as unknown as number;
+  (timer as unknown as { unref?: () => void }).unref?.();
+  runtimePollTimer = timer;
 }
 
 function drainRuntimeCommands(): void {

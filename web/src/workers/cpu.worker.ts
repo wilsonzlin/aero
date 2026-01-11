@@ -317,7 +317,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   }
   maybePostHdaDemoStats();
 
-  hdaDemoTimer = ctx.setInterval(() => {
+  const timer = ctx.setInterval(() => {
     if (!hdaDemoInstance || !hdaDemoHeader) return;
     const level = ringBufferLevelFrames(hdaDemoHeader, hdaDemoCapacityFrames);
     const target = hdaDemoTargetFrames(hdaDemoCapacityFrames, hdaDemoSampleRate);
@@ -328,6 +328,8 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
     }
     maybePostHdaDemoStats();
   }, 20);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  hdaDemoTimer = timer as unknown as number;
 
   ctx.postMessage({ type: "audioOutputHdaDemo.ready" } satisfies AudioOutputHdaDemoReadyMessage);
 }

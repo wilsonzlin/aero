@@ -468,14 +468,16 @@ function maybeInitUhciDevice(): void {
           pollIntervalMs: 0,
           initiallyBlocked: !usbAvailable,
           initialRingAttach: usbRingAttach ?? undefined,
-        });
-        usbPassthroughRuntime.start();
-        if (import.meta.env.DEV) {
-          usbPassthroughDebugTimer = setInterval(() => {
-            console.debug("[io.worker] UHCI runtime WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
-          }, 1000) as unknown as number;
-        }
-      }
+         });
+         usbPassthroughRuntime.start();
+         if (import.meta.env.DEV) {
+           const timer = setInterval(() => {
+             console.debug("[io.worker] UHCI runtime WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
+           }, 1000) as unknown as number;
+           (timer as unknown as { unref?: () => void }).unref?.();
+           usbPassthroughDebugTimer = timer;
+         }
+       }
 
       if (lastUsbSelected) {
         try {
@@ -530,14 +532,16 @@ function maybeInitUhciDevice(): void {
           pollIntervalMs: 0,
           initiallyBlocked: !usbAvailable,
           initialRingAttach: usbRingAttach ?? undefined,
-        });
-        usbPassthroughRuntime.start();
-        if (import.meta.env.DEV) {
-          usbPassthroughDebugTimer = setInterval(() => {
-            console.debug("[io.worker] UHCI WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
-          }, 1000) as unknown as number;
-        }
-      }
+       });
+       usbPassthroughRuntime.start();
+       if (import.meta.env.DEV) {
+         const timer = setInterval(() => {
+           console.debug("[io.worker] UHCI WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
+         }, 1000) as unknown as number;
+         (timer as unknown as { unref?: () => void }).unref?.();
+         usbPassthroughDebugTimer = timer;
+       }
+     }
 
       if (lastUsbSelected) {
         try {

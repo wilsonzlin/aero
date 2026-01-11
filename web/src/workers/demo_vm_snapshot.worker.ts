@@ -82,7 +82,7 @@ function stopStepLoop(): void {
 function startStepLoop(): void {
   stopStepLoop();
   stepLoopPaused = false;
-  stepTimer = ctx.setInterval(() => {
+  const timer = ctx.setInterval(() => {
     try {
       if (stepLoopPaused) return;
       const current = ensureVm();
@@ -104,6 +104,8 @@ function startStepLoop(): void {
       stopStepLoop();
     }
   }, TICK_MS);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  stepTimer = timer;
 }
 
 async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
