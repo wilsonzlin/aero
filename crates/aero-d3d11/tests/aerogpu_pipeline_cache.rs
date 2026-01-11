@@ -65,9 +65,32 @@ fn opcode_token(opcode: u32, len: u32) -> u32 {
     opcode | (len << 11)
 }
 
-fn operand_token(operand_type: u32) -> u32 {
-    // Our minimal operand decoder reads type from bits 4..=11.
-    operand_type << 4
+fn operand_dst_token(operand_type: u32) -> u32 {
+    // Our bootstrap translator only looks at the type bits, but the real SM4/5 decoder expects a
+    // full operand encoding (including index dimension and write mask).
+    //
+    // - 4-component operand (`num_components = 2`)
+    // - component selection mode = mask
+    // - 1D immediate register index
+    let mut token = 0u32;
+    token |= 2; // num_components (4)
+    token |= operand_type << 4;
+    token |= (0b1111u32) << 12; // write mask XYZW
+    token |= 1u32 << 20; // index dimension 1D
+    token
+}
+
+fn operand_src_token(operand_type: u32) -> u32 {
+    // - 4-component operand (`num_components = 2`)
+    // - component selection mode = swizzle
+    // - 1D immediate register index
+    let mut token = 0u32;
+    token |= 2; // num_components (4)
+    token |= 1u32 << 2; // selection mode = swizzle
+    token |= operand_type << 4;
+    token |= 0xE4u32 << 12; // swizzle XYZW
+    token |= 1u32 << 20; // index dimension 1D
+    token
 }
 
 fn build_isgn_chunk(params: &[(&str, u32, u32)]) -> Vec<u8> {
@@ -104,6 +127,11 @@ fn build_isgn_chunk(params: &[(&str, u32, u32)]) -> Vec<u8> {
     bytes
 }
 
+fn build_osgn_chunk(params: &[(&str, u32, u32)]) -> Vec<u8> {
+    // `ISGN` and `OSGN` chunks share the same binary layout.
+    build_isgn_chunk(params)
+}
+
 fn build_test_vs_dxbc() -> Vec<u8> {
     const OPCODE_MOV: u32 = 0x01;
     const OPCODE_RET: u32 = 0x3e;
@@ -114,17 +142,17 @@ fn build_test_vs_dxbc() -> Vec<u8> {
     // mov o0, v0
     let mov0 = [
         opcode_token(OPCODE_MOV, 5),
-        operand_token(OPERAND_OUTPUT),
+        operand_dst_token(OPERAND_OUTPUT),
         0,
-        operand_token(OPERAND_INPUT),
+        operand_src_token(OPERAND_INPUT),
         0,
     ];
     // mov o1, v1
     let mov1 = [
         opcode_token(OPCODE_MOV, 5),
-        operand_token(OPERAND_OUTPUT),
+        operand_dst_token(OPERAND_OUTPUT),
         1,
-        operand_token(OPERAND_INPUT),
+        operand_src_token(OPERAND_INPUT),
         1,
     ];
     let ret = [opcode_token(OPCODE_RET, 1)];
@@ -145,6 +173,49 @@ fn build_test_vs_dxbc() -> Vec<u8> {
     ])
 }
 
+fn build_test_vs_dxbc_with_osgn() -> Vec<u8> {
+    const OPCODE_MOV: u32 = 0x01;
+    const OPCODE_RET: u32 = 0x3e;
+
+    const OPERAND_INPUT: u32 = 1;
+    const OPERAND_OUTPUT: u32 = 2;
+
+    // mov o0, v0
+    let mov0 = [
+        opcode_token(OPCODE_MOV, 5),
+        operand_dst_token(OPERAND_OUTPUT),
+        0,
+        operand_src_token(OPERAND_INPUT),
+        0,
+    ];
+    // mov o1, v1
+    let mov1 = [
+        opcode_token(OPCODE_MOV, 5),
+        operand_dst_token(OPERAND_OUTPUT),
+        1,
+        operand_src_token(OPERAND_INPUT),
+        1,
+    ];
+    let ret = [opcode_token(OPCODE_RET, 1)];
+
+    // Stage type 1 is vertex.
+    let tokens = make_sm5_program_tokens(
+        1,
+        &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
+    );
+    make_dxbc(&[
+        (*b"SHEX", tokens_to_bytes(&tokens)),
+        (
+            *b"ISGN",
+            build_isgn_chunk(&[("Position", 0, 0), ("CoLoR", 0, 1)]),
+        ),
+        (
+            *b"OSGN",
+            build_osgn_chunk(&[("SV_Position", 0, 0), ("COLOR", 0, 1)]),
+        ),
+    ])
+}
+
 fn build_test_ps_dxbc() -> Vec<u8> {
     const OPCODE_MOV: u32 = 0x01;
     const OPCODE_RET: u32 = 0x3e;
@@ -155,9 +226,9 @@ fn build_test_ps_dxbc() -> Vec<u8> {
     // mov o0, v1
     let mov = [
         opcode_token(OPCODE_MOV, 5),
-        operand_token(OPERAND_OUTPUT),
+        operand_dst_token(OPERAND_OUTPUT),
         0,
-        operand_token(OPERAND_INPUT),
+        operand_src_token(OPERAND_INPUT),
         1,
     ];
     let ret = [opcode_token(OPCODE_RET, 1)];
@@ -165,6 +236,36 @@ fn build_test_ps_dxbc() -> Vec<u8> {
     // Stage type 0 is pixel.
     let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
     make_dxbc(&[(*b"SHEX", tokens_to_bytes(&tokens))])
+}
+
+fn build_test_ps_dxbc_with_signatures() -> Vec<u8> {
+    const OPCODE_MOV: u32 = 0x01;
+    const OPCODE_RET: u32 = 0x3e;
+
+    const OPERAND_INPUT: u32 = 1;
+    const OPERAND_OUTPUT: u32 = 2;
+
+    // mov o0, v1
+    let mov = [
+        opcode_token(OPCODE_MOV, 5),
+        operand_dst_token(OPERAND_OUTPUT),
+        0,
+        operand_src_token(OPERAND_INPUT),
+        1,
+    ];
+    let ret = [opcode_token(OPCODE_RET, 1)];
+
+    // Stage type 0 is pixel.
+    let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
+    make_dxbc(&[
+        (*b"SHEX", tokens_to_bytes(&tokens)),
+        // Match the varying produced by the VS: v1 @ location(1).
+        (
+            *b"ISGN",
+            build_isgn_chunk(&[("SV_Position", 0, 0), ("COLOR", 0, 1)]),
+        ),
+        (*b"OSGN", build_osgn_chunk(&[("SV_Target", 0, 0)])),
+    ])
 }
 
 fn build_input_layout_blob() -> Vec<u8> {
@@ -421,6 +522,174 @@ fn aerogpu_compacts_sparse_vertex_slots() {
         let stats = rt.pipeline_cache_stats();
         assert_eq!(stats.render_pipeline_misses, 1);
         assert_eq!(stats.render_pipeline_hits, 1);
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_mixes_signature_driven_vs_with_bootstrap_ps() {
+    // Regression test: ensure varying locations match when one stage is translated via signatures
+    // and the other falls back to the bootstrap translator.
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping mixed-translation test");
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const ILAY: u32 = 3;
+        const VB: u32 = 4;
+        const RTEX: u32 = 5;
+
+        rt.create_shader_dxbc(VS, &build_test_vs_dxbc_with_osgn())
+            .unwrap();
+        // No signatures for PS: forces bootstrap translation.
+        rt.create_shader_dxbc(PS, &build_test_ps_dxbc()).unwrap();
+        rt.create_input_layout(ILAY, &build_input_layout_blob())
+            .unwrap();
+
+        let vertices: [Vertex; 3] = [
+            Vertex {
+                pos: [-1.0, -1.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [3.0, -1.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [-1.0, 3.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+        ];
+
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            4,
+            4,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(ILAY));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<Vertex>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
+
+        let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
+        assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_mixes_bootstrap_vs_with_signature_driven_ps() {
+    pollster::block_on(async {
+        let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping mixed-translation test");
+                return;
+            }
+        };
+
+        const VS: u32 = 1;
+        const PS: u32 = 2;
+        const ILAY: u32 = 3;
+        const VB: u32 = 4;
+        const RTEX: u32 = 5;
+
+        // No OSGN for VS: forces bootstrap translation (ISGN is still present for ILAY mapping).
+        rt.create_shader_dxbc(VS, &build_test_vs_dxbc()).unwrap();
+        rt.create_shader_dxbc(PS, &build_test_ps_dxbc_with_signatures())
+            .unwrap();
+        rt.create_input_layout(ILAY, &build_input_layout_blob())
+            .unwrap();
+
+        let vertices: [Vertex; 3] = [
+            Vertex {
+                pos: [-1.0, -1.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [3.0, -1.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [-1.0, 3.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+        ];
+
+        rt.create_buffer(
+            VB,
+            std::mem::size_of_val(&vertices) as u64,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        );
+        rt.write_buffer(VB, 0, bytemuck::bytes_of(&vertices))
+            .unwrap();
+
+        rt.create_texture2d(
+            RTEX,
+            4,
+            4,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+
+        let mut colors = [None; 8];
+        colors[0] = Some(RTEX);
+        rt.set_render_targets(&colors, None);
+        rt.bind_shaders(Some(VS), Some(PS));
+        rt.set_input_layout(Some(ILAY));
+        rt.set_vertex_buffers(
+            0,
+            &[VertexBufferBinding {
+                buffer: VB,
+                stride: std::mem::size_of::<Vertex>() as u32,
+                offset: 0,
+            }],
+        );
+        rt.set_primitive_topology(PrimitiveTopology::TriangleList);
+        rt.set_rasterizer_state(RasterizerState {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            scissor_enable: false,
+        });
+
+        rt.draw(3, 1, 0, 0).unwrap();
+        rt.poll_wait();
 
         let pixels = rt.read_texture_rgba8(RTEX).await.unwrap();
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
