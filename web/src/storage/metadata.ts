@@ -5,7 +5,7 @@
  */
 
 export const DISK_MANAGER_DB_NAME = "aero-disk-manager";
-export const DISK_MANAGER_DB_VERSION = 2;
+export const DISK_MANAGER_DB_VERSION = 3;
 
 export const OPFS_AERO_DIR = "aero";
 export const OPFS_DISKS_DIR = "disks";
@@ -263,7 +263,6 @@ export async function openDiskManagerDb(): Promise<IDBDatabase> {
       const chunks = db.createObjectStore("chunks", { keyPath: ["id", "index"] });
       chunks.createIndex("by_id", "id", { unique: false });
     }
-
     // v2: add `source` discriminant to disk metadata records so we can support remote-backed disks.
     if (event.oldVersion < 2) {
       const cursorReq = disksStore.openCursor();
@@ -276,6 +275,17 @@ export async function openDiskManagerDb(): Promise<IDBDatabase> {
         }
         cursor.continue();
       };
+    }
+
+    // v3: Remote streaming disk cache (HTTP Range -> persisted chunks).
+    // Keyed by `{cacheKey, chunkIndex}` so multiple remote images can share the same DB.
+    if (!db.objectStoreNames.contains("remote_chunk_meta")) {
+      db.createObjectStore("remote_chunk_meta", { keyPath: "cacheKey" });
+    }
+    if (!db.objectStoreNames.contains("remote_chunks")) {
+      const remoteChunks = db.createObjectStore("remote_chunks", { keyPath: ["cacheKey", "chunkIndex"] });
+      remoteChunks.createIndex("by_cacheKey", "cacheKey", { unique: false });
+      remoteChunks.createIndex("by_cacheKey_lastAccess", ["cacheKey", "lastAccess"], { unique: false });
     }
   };
   return idbReq(req);

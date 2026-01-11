@@ -1,5 +1,7 @@
 import { openFileHandle, removeOpfsEntry } from "./opfs";
 import type { AsyncSectorDisk } from "../storage/disk";
+import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache";
+import { pickDefaultBackend, type DiskBackend } from "../storage/metadata";
 
 export type ByteRange = { start: number; end: number };
 
@@ -99,11 +101,13 @@ export type RemoteDiskProbeResult = {
   rangeProbeStatus: number;
   partialOk: boolean;
   contentRange: string;
+  etag: string | null;
 };
 
 export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResult> {
   let acceptRanges = "";
   let size: number | null = null;
+  let etag: string | null = null;
 
   // Prefer HEAD for a cheap size probe, but fall back to a Range GET for servers that
   // disallow HEAD (or omit Content-Length from HEAD).
@@ -115,6 +119,7 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
         size = headSize;
       }
       acceptRanges = head.headers.get("accept-ranges") ?? "";
+      etag = head.headers.get("etag");
     }
   } catch {
     // ignore; fall back to GET probe
@@ -123,6 +128,9 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
   const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
   const contentRange = probe.headers.get("content-range") ?? "";
   const partialOk = probe.status === 206;
+  if (etag === null) {
+    etag = probe.headers.get("etag");
+  }
 
   if (size === null && partialOk) {
     if (!contentRange) {
@@ -150,6 +158,7 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
     rangeProbeStatus: probe.status,
     partialOk,
     contentRange,
+    etag,
   };
 }
 
@@ -185,6 +194,7 @@ function parseContentRangeHeader(header: string): { start: number; endExclusive:
 type CacheMeta = {
   version: 1;
   url: string;
+  etag: string | null;
   totalSize: number;
   blockSize: number;
   downloaded: ByteRange[];
@@ -203,6 +213,7 @@ export type RemoteDiskOptions = {
   blockSize?: number;
   cacheLimitBytes?: number | null;
   prefetchSequentialBlocks?: number;
+  cacheBackend?: DiskBackend;
 };
 
 export type RemoteDiskTelemetrySnapshot = {
@@ -253,6 +264,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private readonly cacheLimitBytes: number | null;
   private readonly prefetchSequentialBlocks: number;
   private readonly cacheKey: string;
+  private readonly cacheBackend: DiskBackend;
+  private readonly etag: string | null;
 
   private meta: CacheMeta;
   private rangeSet: RangeSet;
@@ -260,6 +273,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private lastReadEnd: number | null = null;
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private metaLoaded = false;
+  private idbCache: IdbRemoteChunkCache | null = null;
 
   private telemetry: RemoteDiskTelemetry = {
     blockRequests: 0,
@@ -273,7 +287,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     lastFetchRange: null,
   };
 
-  private constructor(url: string, totalSize: number, cacheKey: string, options: Required<RemoteDiskOptions>) {
+  private constructor(url: string, totalSize: number, etag: string | null, cacheKey: string, options: Required<RemoteDiskOptions>) {
     this.url = url;
     this.totalSize = totalSize;
     this.capacityBytes = totalSize;
@@ -281,10 +295,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     this.cacheLimitBytes = options.cacheLimitBytes;
     this.prefetchSequentialBlocks = options.prefetchSequentialBlocks;
     this.cacheKey = cacheKey;
+    this.cacheBackend = options.cacheBackend;
+    this.etag = etag;
 
     this.meta = {
       version: 1,
       url,
+      etag,
       totalSize,
       blockSize: this.blockSize,
       downloaded: [],
@@ -307,6 +324,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       blockSize: options.blockSize ?? 1024 * 1024,
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
+      cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
     };
 
     if (!Number.isSafeInteger(resolved.blockSize) || resolved.blockSize <= 0) {
@@ -325,12 +343,45 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
 
     const cacheKey = await stableCacheKey(url);
-    const disk = new RemoteStreamingDisk(url, probe.size, cacheKey, resolved);
-    await disk.loadMeta();
+    const disk = new RemoteStreamingDisk(url, probe.size, probe.etag, cacheKey, resolved);
+    if (disk.cacheBackend === "idb") {
+      disk.idbCache = await IdbRemoteChunkCache.open({
+        cacheKey,
+        signature: {
+          imageId: url,
+          version: "1",
+          etag: probe.etag,
+          sizeBytes: probe.size,
+          chunkSize: resolved.blockSize,
+        },
+        cacheLimitBytes: resolved.cacheLimitBytes,
+      });
+      const status = await disk.idbCache.getStatus();
+      disk.cachedBytes = status.bytesUsed;
+    } else {
+      await disk.loadMeta();
+    }
     return disk;
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {
+    if (this.cacheBackend === "idb") {
+      if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
+      const status = await this.idbCache.getStatus();
+      this.cachedBytes = status.bytesUsed;
+      const indices = await this.idbCache.listChunkIndices();
+      const set = new RangeSet();
+      for (const idx of indices) {
+        const r = this.blockRange(idx);
+        set.insert(r.start, r.end);
+      }
+      return {
+        totalSize: this.totalSize,
+        cachedBytes: status.bytesUsed,
+        cachedRanges: set.getRanges(),
+        cacheLimitBytes: this.cacheLimitBytes,
+      };
+    }
     await this.loadMeta();
     return {
       totalSize: this.totalSize,
@@ -365,6 +416,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async flushCache(): Promise<void> {
+    if (this.cacheBackend === "idb") return;
     await this.loadMeta();
     await this.persistMeta();
   }
@@ -421,10 +473,17 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async clearCache(): Promise<void> {
-    await removeOpfsEntry(`state/remote-cache/${this.cacheKey}`, { recursive: true });
+    if (this.cacheBackend === "idb") {
+      if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
+      await this.idbCache.clear();
+    } else {
+      await removeOpfsEntry(`state/remote-cache/${this.cacheKey}`, { recursive: true });
+    }
+
     this.meta = {
       version: 1,
       url: this.url,
+      etag: this.etag,
       totalSize: this.totalSize,
       blockSize: this.blockSize,
       downloaded: [],
@@ -447,6 +506,11 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       lastFetchAtMs: null,
       lastFetchRange: null,
     };
+  }
+
+  async close(): Promise<void> {
+    this.idbCache?.close();
+    this.idbCache = null;
   }
 
   private async maybePrefetch(offset: number, length: number, onLog?: (msg: string) => void): Promise<void> {
@@ -487,8 +551,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   private async getBlock(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
-    await this.loadMeta();
     this.telemetry.blockRequests++;
+    if (this.cacheBackend === "idb") {
+      return await this.getBlockIdb(blockIndex, onLog);
+    }
+
+    await this.loadMeta();
     const r = this.blockRange(blockIndex);
     if (this.rangeSet.containsRange(r.start, r.end)) {
       try {
@@ -559,6 +627,59 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
   }
 
+  private async getBlockIdb(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
+    if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
+
+    const r = this.blockRange(blockIndex);
+
+    const existing = this.inflight.get(blockIndex);
+    if (existing) {
+      this.telemetry.inflightJoins++;
+      return await existing;
+    }
+
+    const task = (async () => {
+      const start = performance.now();
+      const cached = await this.idbCache!.get(blockIndex);
+      if (cached) {
+        if (cached.byteLength === r.end - r.start) {
+          this.telemetry.cacheHits++;
+          return cached;
+        }
+        // Heal: cached but wrong size.
+        await this.idbCache!.delete(blockIndex);
+      }
+
+      this.telemetry.cacheMisses++;
+      this.telemetry.requests++;
+      this.telemetry.lastFetchRange = { ...r };
+      onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
+      const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
+      if (resp.status !== 206) {
+        throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
+      }
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      if (buf.length !== r.end - r.start) {
+        throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
+      }
+
+      await this.idbCache!.put(blockIndex, buf);
+      const status = await this.idbCache!.getStatus();
+      this.cachedBytes = status.bytesUsed;
+      this.telemetry.bytesDownloaded += buf.byteLength;
+      this.telemetry.lastFetchMs = performance.now() - start;
+      this.telemetry.lastFetchAtMs = Date.now();
+      return buf;
+    })();
+
+    this.inflight.set(blockIndex, task);
+    try {
+      return await task;
+    } finally {
+      this.inflight.delete(blockIndex);
+    }
+  }
+
   private async enforceCacheLimit(protectedBlock: number): Promise<void> {
     if (this.cacheLimitBytes === null) return;
 
@@ -596,11 +717,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       const file = await handle.getFile();
       const raw = await file.text();
       const parsed = JSON.parse(raw) as CacheMeta;
+      const parsedEtag = (parsed as CacheMeta & { etag?: string | null }).etag ?? null;
+      const currentEtag = this.etag ?? null;
 
       const compatible =
         parsed &&
         parsed.version === 1 &&
         parsed.url === this.url &&
+        parsedEtag === currentEtag &&
         parsed.totalSize === this.totalSize &&
         parsed.blockSize === this.blockSize;
 
