@@ -102,6 +102,17 @@ impl<'de> Deserialize<'de> for HidCollectionType {
                 self.visit_u64(value as u64)
             }
 
+            fn visit_f64<E>(self, value: f64) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > 0xFF as f64
+                {
+                    return Err(E::invalid_value(Unexpected::Float(value), &self));
+                }
+                self.visit_u64(value as u64)
+            }
+
             fn visit_str<E>(self, value: &str) -> core::result::Result<Self::Value, E>
             where
                 E: DeError,
@@ -524,6 +535,24 @@ mod tests {
             }"#,
         )
         .expect("deserialize type numeric alias form");
+
+        assert_eq!(collection.collection_type, HidCollectionType::Application);
+    }
+
+    #[test]
+    fn deserialize_accepts_collection_type_as_collectiontype_float_code() {
+        let collection: HidCollectionInfo = serde_json::from_str(
+            r#"{
+              "usagePage": 1,
+              "usage": 0,
+              "collectionType": 1.0,
+              "children": [],
+              "inputReports": [],
+              "outputReports": [],
+              "featureReports": []
+            }"#,
+        )
+        .expect("deserialize collectionType float form");
 
         assert_eq!(collection.collection_type, HidCollectionType::Application);
     }

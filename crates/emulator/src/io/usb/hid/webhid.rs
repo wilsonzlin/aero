@@ -101,6 +101,17 @@ impl<'de> Deserialize<'de> for HidCollectionType {
                 self.visit_u64(value as u64)
             }
 
+            fn visit_f64<E>(self, value: f64) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > 0xFF as f64
+                {
+                    return Err(E::invalid_value(Unexpected::Float(value), &self));
+                }
+                self.visit_u64(value as u64)
+            }
+
             fn visit_str<E>(self, value: &str) -> core::result::Result<Self::Value, E>
             where
                 E: DeError,
