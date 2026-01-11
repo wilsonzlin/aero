@@ -52,7 +52,8 @@ msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
 ```
 
 CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) via `ci/build-drivers.ps1`.
-If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it as a convenience wrapper around MSBuild/WDK10 that stages outputs under `drivers\aerogpu\build\out\win7\...`.
+
+Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around MSBuild/WDK10 that stages outputs under `drivers\aerogpu\build\out\win7\...`.
 
 ### Notes
 
