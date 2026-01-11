@@ -20,9 +20,10 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
     rt.webhid_attach_hub(hub_path, Some(16))
         .expect("attach external hub");
 
-    let collections: Vec<HidCollectionInfo> = serde_json::from_str(include_str!(
-        "../../tests/fixtures/hid/webhid_normalized_mouse.json"
-    ))
+    let collections: Vec<HidCollectionInfo> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
+    )))
     .expect("deserialize webhid_normalized_mouse.json fixture");
     let collections_json =
         serde_wasm_bindgen::to_value(&collections).expect("collections to_value");
