@@ -4,7 +4,8 @@ use std::io::{Read, Seek, SeekFrom};
 
 use aero_opfs::io::snapshot_file::{OpfsSyncFile, OpfsSyncFileHandle};
 use aero_snapshot::{
-    CpuState, DiskOverlayRefs, MmuState, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
+    CpuState, DiskOverlayRefs, MmuState, RestoreOptions, SaveOptions, SnapshotMeta, SnapshotSource,
+    SnapshotTarget,
 };
 
 #[derive(Default, Debug)]
@@ -198,4 +199,73 @@ fn snapshot_round_trip_uses_seekable_opfs_file() {
     let mut header = [0u8; 8];
     file.read_exact(&mut header).unwrap();
     assert_eq!(&header, aero_snapshot::SNAPSHOT_MAGIC);
+}
+
+#[test]
+fn restore_snapshot_with_options_checks_parent_using_opfs_file() {
+    let mut source = DummyVm::new(64 * 1024);
+
+    // Base snapshot (id=1, parent=None).
+    source.meta.snapshot_id = 1;
+    source.meta.parent_snapshot_id = None;
+    let mut base_file = OpfsSyncFile::from_handle(MockHandle::default());
+    aero_snapshot::save_snapshot(&mut base_file, &mut source, SaveOptions::default()).unwrap();
+    let base_bytes = base_file.into_inner().unwrap().data;
+
+    // Mutate RAM + create a dirty snapshot (id=2, parent=1).
+    source.ram[0] ^= 0xFF;
+    source.dirty_pages = vec![0];
+    source.meta.snapshot_id = 2;
+    source.meta.parent_snapshot_id = Some(1);
+
+    let mut dirty_opts = SaveOptions::default();
+    dirty_opts.ram.mode = aero_snapshot::RamMode::Dirty;
+    let mut diff_file = OpfsSyncFile::from_handle(MockHandle::default());
+    aero_snapshot::save_snapshot(&mut diff_file, &mut source, dirty_opts).unwrap();
+    let diff_bytes = diff_file.into_inner().unwrap().data;
+
+    // Applying the diff without having restored its base should fail fast during the prescan.
+    let mut restored = DummyVm::new(64 * 1024);
+    restored.ram.fill(0);
+    let mut diff_reader = OpfsSyncFile::from_handle(MockHandle { data: diff_bytes.clone() });
+    let err = aero_snapshot::restore_snapshot_with_options(
+        &mut diff_reader,
+        &mut restored,
+        RestoreOptions {
+            expected_parent_snapshot_id: None,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("snapshot parent mismatch"),
+        "unexpected error: {err}"
+    );
+
+    // Restoring base + diff with the correct parent should succeed and apply the RAM change.
+    let mut restored = DummyVm::new(64 * 1024);
+    restored.ram.fill(0);
+
+    let mut base_reader = OpfsSyncFile::from_handle(MockHandle { data: base_bytes });
+    aero_snapshot::restore_snapshot_with_options(
+        &mut base_reader,
+        &mut restored,
+        RestoreOptions {
+            expected_parent_snapshot_id: None,
+        },
+    )
+    .unwrap();
+
+    let mut diff_reader = OpfsSyncFile::from_handle(MockHandle { data: diff_bytes });
+    aero_snapshot::restore_snapshot_with_options(
+        &mut diff_reader,
+        &mut restored,
+        RestoreOptions {
+            expected_parent_snapshot_id: Some(1),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(restored.ram, source.ram);
+    assert_eq!(restored.meta.snapshot_id, 2);
+    assert_eq!(restored.meta.parent_snapshot_id, Some(1));
 }
