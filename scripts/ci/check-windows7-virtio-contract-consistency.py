@@ -35,6 +35,36 @@ WINDOWS_DEVICE_CONTRACT_MD = REPO_ROOT / "docs/windows-device-contract.md"
 WINDOWS_DEVICE_CONTRACT_JSON = REPO_ROOT / "docs/windows-device-contract.json"
 WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
 
+# Guest Tools packager specs that hardcode expected HWID regexes. These should
+# stay aligned with the canonical Windows device contract; otherwise Guest Tools
+# builds can silently start rejecting/accepting the wrong drivers.
+AERO_GUEST_TOOLS_PACKAGING_SPECS: tuple[Path, ...] = (
+    REPO_ROOT / "tools/packaging/specs/win7-aero-guest-tools.json",
+    REPO_ROOT / "tools/packaging/specs/win7-aero-virtio.json",
+    REPO_ROOT / "tools/packaging/specs/win7-virtio-win.json",
+    REPO_ROOT / "tools/packaging/specs/win7-virtio-full.json",
+)
+
+PACKAGING_SPEC_DRIVER_TO_CONTRACT_DEVICE: Mapping[str, str] = {
+    # Canonical in-repo driver directory names.
+    "virtio-blk": "virtio-blk",
+    "virtio-net": "virtio-net",
+    "virtio-input": "virtio-input",
+    "virtio-snd": "virtio-snd",
+    # In-tree driver/service names.
+    "aerovblk": "virtio-blk",
+    "aerovnet": "virtio-net",
+    "virtioinput": "virtio-input",
+    "aeroviosnd": "virtio-snd",
+    # virtio-win payload driver directory names.
+    "viostor": "virtio-blk",
+    "netkvm": "virtio-net",
+    "vioinput": "virtio-input",
+    "viosnd": "virtio-snd",
+    # Non-virtio driver directory names.
+    "aerogpu": "aero-gpu",
+}
+
 # Canonical in-tree Win7 driver INFs that are expected to follow AERO-W7-VIRTIO v1
 # identity policy (modern IDs + contract major version encoded in PCI Revision ID).
 WIN7_VIRTIO_DRIVER_INFS: Mapping[str, Path] = {
@@ -719,6 +749,75 @@ def _manifest_contains_exact(patterns: list[str], expected: str) -> bool:
 def _normalize_hwid_patterns(patterns: list[str]) -> list[str]:
     # Normalize for case-insensitive, order-insensitive comparisons.
     return sorted({p.upper() for p in patterns})
+
+
+def hwid_to_packaging_spec_regex(hwid: str) -> str:
+    """
+    Convert a literal HWID (e.g. `PCI\\VEN_1AF4&DEV_1042`) into the regex string
+    expected by `tools/packaging/specs/*.json`.
+
+    Packaging specs match HWIDs using regexes, so literal backslashes must be
+    escaped (`\\`).
+    """
+
+    return hwid.replace("\\", "\\\\")
+
+
+@dataclass
+class PackagingSpecDriver:
+    name: str
+    expected_hardware_ids: list[str]
+
+
+def normalize_packaging_spec_driver_name(name: str) -> str:
+    # Keep behaviour aligned with `tools/packaging/aero_packager/src/spec.rs`.
+    if name.lower() == "aero-gpu":
+        return "aerogpu"
+    return name
+
+
+def parse_packaging_spec_drivers(spec: Mapping[str, object], *, file: Path) -> list[PackagingSpecDriver]:
+    raw_drivers = spec.get("drivers", [])
+    if not isinstance(raw_drivers, list):
+        fail(f"{file.as_posix()}: 'drivers' must be a list")
+
+    raw_required = spec.get("required_drivers", [])
+    if not isinstance(raw_required, list):
+        fail(f"{file.as_posix()}: 'required_drivers' must be a list")
+
+    out: list[PackagingSpecDriver] = []
+    index_by_name: dict[str, int] = {}
+
+    def merge_entry(raw: object, *, field: str, idx: int) -> None:
+        if not isinstance(raw, dict):
+            fail(f"{file.as_posix()}: {field}[{idx}] must be an object")
+        name_raw = raw.get("name")
+        if not isinstance(name_raw, str) or not name_raw.strip():
+            fail(f"{file.as_posix()}: {field}[{idx}].name must be a non-empty string")
+        name = normalize_packaging_spec_driver_name(name_raw.strip())
+        hwids_raw = raw.get("expected_hardware_ids", [])
+        if not isinstance(hwids_raw, list) or not all(isinstance(v, str) and v.strip() for v in hwids_raw):
+            fail(f"{file.as_posix()}: driver {name!r} expected_hardware_ids must be list[str]")
+        hwids = [v.strip() for v in hwids_raw]
+
+        key = name.lower()
+        existing_idx = index_by_name.get(key)
+        if existing_idx is None:
+            index_by_name[key] = len(out)
+            out.append(PackagingSpecDriver(name=name, expected_hardware_ids=hwids))
+            return
+
+        existing = out[existing_idx].expected_hardware_ids
+        for hwid in hwids:
+            if hwid not in existing:
+                existing.append(hwid)
+
+    for i, drv in enumerate(raw_drivers):
+        merge_entry(drv, field="drivers", idx=i)
+    for i, drv in enumerate(raw_required):
+        merge_entry(drv, field="required_drivers", idx=i)
+
+    return out
 
 
 def parse_manifest_device_map(manifest: Mapping[str, object], *, file: Path) -> dict[str, dict[str, object]]:
@@ -1649,6 +1748,68 @@ def main() -> None:
                     ],
                 )
             )
+
+    # ---------------------------------------------------------------------
+    # 2.3) Guest Tools packaging specs must stay aligned with device contract HWIDs.
+    # ---------------------------------------------------------------------
+    contract_device_map = parse_manifest_device_map(manifest, file=WINDOWS_DEVICE_CONTRACT_JSON)
+    allowed_hwid_regexes_by_device: dict[str, set[str]] = {}
+    for name, entry in contract_device_map.items():
+        patterns = _require_str_list(entry, "hardware_id_patterns", device=name)
+        allowed_hwid_regexes_by_device[name] = {hwid_to_packaging_spec_regex(p).upper() for p in patterns}
+
+    for spec_path in AERO_GUEST_TOOLS_PACKAGING_SPECS:
+        try:
+            raw = json.loads(read_text(spec_path))
+        except json.JSONDecodeError as e:
+            fail(f"invalid JSON in {spec_path.as_posix()}: {e}")
+        if not isinstance(raw, dict):
+            fail(f"{spec_path.as_posix()}: packaging spec must be a JSON object")
+
+        for drv in parse_packaging_spec_drivers(raw, file=spec_path):
+            if not drv.expected_hardware_ids:
+                continue
+
+            device = PACKAGING_SPEC_DRIVER_TO_CONTRACT_DEVICE.get(drv.name.lower())
+            if device is None:
+                errors.append(
+                    format_error(
+                        f"{spec_path.as_posix()}: cannot validate expected_hardware_ids for unknown driver {drv.name!r}:",
+                        [
+                            "hint: extend PACKAGING_SPEC_DRIVER_TO_CONTRACT_DEVICE in scripts/ci/check-windows7-virtio-contract-consistency.py",
+                            "expected_hardware_ids:",
+                            *[f"- {json.dumps(h)}" for h in drv.expected_hardware_ids],
+                        ],
+                    )
+                )
+                continue
+
+            allowed = allowed_hwid_regexes_by_device.get(device)
+            if allowed is None:
+                errors.append(
+                    format_error(
+                        f"{spec_path.as_posix()}: driver {drv.name!r} references unknown contract device {device!r}:",
+                        [
+                            f"known contract devices: {sorted(allowed_hwid_regexes_by_device)}",
+                        ],
+                    )
+                )
+                continue
+
+            invalid = [h for h in drv.expected_hardware_ids if h.upper() not in allowed]
+            if invalid:
+                allowed_sorted = sorted(allowed)
+                errors.append(
+                    format_error(
+                        f"{spec_path.as_posix()}: driver {drv.name!r} expected_hardware_ids must match {WINDOWS_DEVICE_CONTRACT_JSON.as_posix()} patterns for {device}:",
+                        [
+                            "unexpected expected_hardware_ids:",
+                            *[f"- {json.dumps(h)}" for h in invalid],
+                            "allowed patterns:",
+                            *[f"- {json.dumps(h)}" for h in allowed_sorted],
+                        ],
+                    )
+                )
 
     # Optional variant: a contract file intended for binding to virtio-win drivers
     # (different service/INF names) while keeping emulator-presented HWIDs stable.
