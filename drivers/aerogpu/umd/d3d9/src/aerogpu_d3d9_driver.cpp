@@ -8,6 +8,7 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 
 #if defined(_WIN32)
   #include <d3d9types.h>
@@ -589,7 +590,7 @@ Query* as_query(AEROGPU_D3D9DDI_HQUERY hQuery) {
 // Command emission helpers (protocol: drivers/aerogpu/protocol/aerogpu_cmd.h)
 // -----------------------------------------------------------------------------
 
-uint64_t submit(Device* dev);
+uint64_t submit(Device* dev, bool is_present = false);
 
 bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
   if (!dev) {
@@ -868,12 +869,145 @@ uint64_t allocate_share_token(Adapter* adapter) {
 #endif
 }
 
-uint64_t submit(Device* dev) {
-  // In the initial bring-up implementation we treat submission as synchronous:
-  // once the command buffer is "submitted", we immediately mark it complete.
-  // A real driver would forward the command buffer GPA/size to the KMD, which
-  // would then place a submit descriptor into the shared ring.
+namespace {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+template <typename T, typename = void>
+struct has_pfnRenderCb : std::false_type {};
+template <typename T>
+struct has_pfnRenderCb<T, std::void_t<decltype(std::declval<T>().pfnRenderCb)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_pfnPresentCb : std::false_type {};
+template <typename T>
+struct has_pfnPresentCb<T, std::void_t<decltype(std::declval<T>().pfnPresentCb)>> : std::true_type {};
+
+template <typename Fn>
+struct fn_first_param;
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(__stdcall*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename T, typename = void>
+struct has_member_hContext : std::false_type {};
+template <typename T>
+struct has_member_hContext<T, std::void_t<decltype(std::declval<T>().hContext)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pCommandBuffer : std::false_type {};
+template <typename T>
+struct has_member_pCommandBuffer<T, std::void_t<decltype(std::declval<T>().pCommandBuffer)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_CommandLength : std::false_type {};
+template <typename T>
+struct has_member_CommandLength<T, std::void_t<decltype(std::declval<T>().CommandLength)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_CommandBufferSize : std::false_type {};
+template <typename T>
+struct has_member_CommandBufferSize<T, std::void_t<decltype(std::declval<T>().CommandBufferSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pAllocationList : std::false_type {};
+template <typename T>
+struct has_member_pAllocationList<T, std::void_t<decltype(std::declval<T>().pAllocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AllocationListSize : std::false_type {};
+template <typename T>
+struct has_member_AllocationListSize<T, std::void_t<decltype(std::declval<T>().AllocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pPatchLocationList : std::false_type {};
+template <typename T>
+struct has_member_pPatchLocationList<T, std::void_t<decltype(std::declval<T>().pPatchLocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_PatchLocationListSize : std::false_type {};
+template <typename T>
+struct has_member_PatchLocationListSize<T, std::void_t<decltype(std::declval<T>().PatchLocationListSize)>> : std::true_type {};
+
+template <typename ArgsT>
+void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
+  if constexpr (has_member_hContext<ArgsT>::value) {
+    args.hContext = dev->wddm_context.hContext;
+  }
+  if constexpr (has_member_pCommandBuffer<ArgsT>::value) {
+    args.pCommandBuffer = dev->wddm_context.pCommandBuffer;
+  }
+  if constexpr (has_member_CommandLength<ArgsT>::value) {
+    args.CommandLength = command_length_bytes;
+  }
+  if constexpr (has_member_CommandBufferSize<ArgsT>::value) {
+    args.CommandBufferSize = dev->wddm_context.CommandBufferSize;
+  }
+  if constexpr (has_member_pAllocationList<ArgsT>::value) {
+    args.pAllocationList = dev->wddm_context.pAllocationList;
+  }
+  if constexpr (has_member_AllocationListSize<ArgsT>::value) {
+    args.AllocationListSize = dev->wddm_context.allocation_list_entries_used;
+  }
+  if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
+    args.pPatchLocationList = dev->wddm_context.pPatchLocationList;
+  }
+  if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
+    args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
+  }
+}
+
+template <typename ArgsT>
+void update_context_from_submit_args(Device* dev, const ArgsT& args) {
+  if constexpr (has_member_pCommandBuffer<ArgsT>::value) {
+    dev->wddm_context.pCommandBuffer = static_cast<uint8_t*>(args.pCommandBuffer);
+  }
+  if constexpr (has_member_CommandBufferSize<ArgsT>::value) {
+    dev->wddm_context.CommandBufferSize = args.CommandBufferSize;
+  }
+  if constexpr (has_member_pAllocationList<ArgsT>::value) {
+    dev->wddm_context.pAllocationList = args.pAllocationList;
+  }
+  if constexpr (has_member_AllocationListSize<ArgsT>::value) {
+    dev->wddm_context.AllocationListSize = args.AllocationListSize;
+  }
+  if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
+    dev->wddm_context.pPatchLocationList = args.pPatchLocationList;
+  }
+  if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
+    dev->wddm_context.PatchLocationListSize = args.PatchLocationListSize;
+  }
+}
+
+template <typename CallbackFn>
+HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_length_bytes) {
+  using ArgPtr = typename fn_first_param<CallbackFn>::type;
+  using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+
+  Arg args{};
+  fill_submit_args(args, dev, command_length_bytes);
+
+  const HRESULT hr = cb(static_cast<ArgPtr>(&args));
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  // The runtime may rotate command buffers/lists after a submission. Preserve the
+  // updated pointers and reset the book-keeping so the next submission starts
+  // from a clean command stream header.
+  update_context_from_submit_args(dev, args);
+  dev->wddm_context.reset_submission_buffers();
+  return hr;
+}
+#endif
+} // namespace
+
+uint64_t submit(Device* dev, bool is_present) {
   if (!dev) {
     return 0;
   }
@@ -890,14 +1024,78 @@ uint64_t submit(Device* dev) {
 
   dev->cmd.finalize();
 
-  uint64_t fence = 0;
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    fence = adapter->next_fence++;
-    adapter->last_submitted_fence = fence;
-    adapter->completed_fence = fence;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  // When built against the real Win7 WDK, we can submit the command buffer to
+  // dxgkrnl via the runtime callbacks captured at CreateDevice time.
+  //
+  // This forwards the DMA buffer to the AeroGPU KMD, which will forward it to
+  // the emulator host. For now we still keep the UMD fence model conservative
+  // (fallback to synchronous fences if KMD fence query is unavailable).
+  bool submitted_to_kmd = false;
+  if (dev->wddm_context.hContext != 0 && dev->wddm_context.pCommandBuffer && dev->wddm_context.CommandBufferSize) {
+    const size_t cmd_bytes = dev->cmd.size();
+    if (cmd_bytes <= dev->wddm_context.CommandBufferSize) {
+      std::memcpy(dev->wddm_context.pCommandBuffer, dev->cmd.data(), cmd_bytes);
+      dev->wddm_context.command_buffer_bytes_used = static_cast<uint32_t>(cmd_bytes);
+      dev->wddm_context.allocation_list_entries_used = 0;
+      dev->wddm_context.patch_location_entries_used = 0;
+
+      HRESULT submit_hr = E_NOTIMPL;
+      if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
+        if (is_present && dev->wddm_callbacks.pfnPresentCb) {
+          submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, static_cast<uint32_t>(cmd_bytes));
+        }
+      }
+      if (!SUCCEEDED(submit_hr)) {
+        if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
+          if (dev->wddm_callbacks.pfnRenderCb) {
+            submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, static_cast<uint32_t>(cmd_bytes));
+          }
+        }
+      }
+
+      if (SUCCEEDED(submit_hr)) {
+        submitted_to_kmd = true;
+      } else {
+        logf("aerogpu-d3d9: submit callbacks failed hr=0x%08x\n", static_cast<unsigned>(submit_hr));
+      }
+    } else {
+      logf("aerogpu-d3d9: submit command buffer too large (cmd=%llu cap=%u)\n",
+           static_cast<unsigned long long>(cmd_bytes),
+           static_cast<unsigned>(dev->wddm_context.CommandBufferSize));
+    }
   }
-  adapter->fence_cv.notify_all();
+#endif
+
+  uint64_t fence = 0;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (submitted_to_kmd) {
+    uint64_t submitted = 0;
+    uint64_t completed = 0;
+    if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+      {
+        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+        adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, submitted);
+        adapter->completed_fence = std::max(adapter->completed_fence, completed);
+        fence = adapter->last_submitted_fence;
+      }
+      adapter->fence_cv.notify_all();
+    }
+  }
+#endif
+
+  if (fence == 0) {
+    // Fallback fence path: keep the UMD self-contained even when KMD fence query
+    // is unavailable. This is the portable-path behavior and is also used when
+    // running in early bring-up configurations.
+    {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      fence = adapter->next_fence++;
+      adapter->last_submitted_fence = fence;
+      adapter->completed_fence = fence;
+    }
+    adapter->fence_cv.notify_all();
+  }
 
   // Light logging so we can confirm command flow during integration.
   logf("aerogpu-d3d9: submit cmd_bytes=%llu fence=%llu\n",
@@ -2674,7 +2872,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
   cmd->d3d9_present_flags = pPresentEx->d3d9_present_flags;
   cmd->reserved0 = 0;
 
-  const uint64_t submit_fence = submit(dev);
+  const uint64_t submit_fence = submit(dev, /*is_present=*/true);
   const uint64_t present_fence = std::max<uint64_t>(submit_fence, refresh_fence_snapshot(dev->adapter).last_submitted);
   if (present_fence) {
     dev->inflight_present_fences.push_back(present_fence);
@@ -2729,7 +2927,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   cmd->d3d9_present_flags = pPresent->flags;
   cmd->reserved0 = 0;
 
-  const uint64_t submit_fence = submit(dev);
+  const uint64_t submit_fence = submit(dev, /*is_present=*/true);
   const uint64_t present_fence = std::max<uint64_t>(submit_fence, refresh_fence_snapshot(dev->adapter).last_submitted);
   if (present_fence) {
     dev->inflight_present_fences.push_back(present_fence);
