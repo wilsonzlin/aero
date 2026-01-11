@@ -1023,7 +1023,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     // uploads so they don't remain queued indefinitely and reorder with later
                     // submissions.
                     self.queue.submit([]);
-                    return Err((0, err, packets_processed));
+                    return Err((packets_processed as usize, err, packets_processed));
                 }
             }
         }
