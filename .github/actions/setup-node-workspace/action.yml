@@ -1,0 +1,119 @@
+name: Setup Node workspace
+description: Detect the repo's Node workspace (package.json + lockfile), setup Node with npm cache, and run npm ci.
+
+inputs:
+  node-version:
+    description: Node version to use (defaults to .nvmrc when present).
+    required: false
+    default: ""
+  working-directory:
+    description: Path to the repository checkout root (useful when actions/checkout uses `path:`).
+    required: false
+    default: "."
+  skip-npm-ci:
+    description: Skip `npm ci` (for workflows that only need Node to parse lockfiles).
+    required: false
+    default: "false"
+
+outputs:
+  dir:
+    description: Resolved workspace directory (relative to GITHUB_WORKSPACE).
+    value: ${{ steps.detect.outputs.dir }}
+  lockfile:
+    description: Resolved lockfile path (relative to GITHUB_WORKSPACE).
+    value: ${{ steps.detect.outputs.lockfile }}
+  node_version:
+    description: Node version used by actions/setup-node.
+    value: ${{ steps.node-version.outputs.node_version }}
+
+runs:
+  using: composite
+  steps:
+    - id: node-version
+      name: Resolve Node version
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        requested="${{ inputs.node-version }}"
+        root="${{ inputs.working-directory }}"
+        if [[ -z "$root" ]]; then
+          root="."
+        fi
+
+        version=""
+        if [[ -n "$requested" ]]; then
+          version="$requested"
+        elif [[ -f "$root/.nvmrc" ]]; then
+          version="$(cat "$root/.nvmrc")"
+        elif [[ -f "$root/.node-version" ]]; then
+          version="$(cat "$root/.node-version")"
+        else
+          # Keep parity with existing workflows until Task 4 introduces a repo-wide standard file.
+          version="20"
+        fi
+
+        # Trim whitespace / CRLF
+        version="$(echo "$version" | tr -d '\r' | xargs)"
+        if [[ -z "$version" ]]; then
+          echo "error: resolved empty Node version" >&2
+          exit 1
+        fi
+
+        echo "node_version=$version" >> "$GITHUB_OUTPUT"
+
+    - id: detect
+      name: Detect Node workspace
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        root="${{ inputs.working-directory }}"
+        if [[ -z "$root" ]]; then
+          root="."
+        fi
+
+        resolver="$root/scripts/ci/detect-node-dir.mjs"
+        if [[ ! -f "$resolver" ]]; then
+          echo "error: workspace resolver not found at '$resolver' (working-directory='$root')" >&2
+          exit 1
+        fi
+
+        kv="$(node "$resolver" --require-lockfile)"
+
+        dir=""
+        lockfile=""
+        while IFS='=' read -r key value; do
+          case "$key" in
+            dir) dir="$value" ;;
+            lockfile) lockfile="$value" ;;
+          esac
+        done <<< "$kv"
+
+        if [[ -z "$dir" ]]; then
+          echo "error: resolver did not return dir" >&2
+          echo "$kv" >&2
+          exit 1
+        fi
+
+        if [[ -z "$lockfile" ]]; then
+          echo "error: resolver did not return lockfile (CI requires a lockfile)" >&2
+          echo "$kv" >&2
+          exit 1
+        fi
+
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ steps.node-version.outputs.node_version }}
+        cache: npm
+        cache-dependency-path: ${{ steps.detect.outputs.lockfile }}
+
+    - name: Install dependencies (npm ci)
+      if: ${{ inputs.skip-npm-ci != 'true' }}
+      shell: bash
+      working-directory: ${{ steps.detect.outputs.dir }}
+      run: npm ci

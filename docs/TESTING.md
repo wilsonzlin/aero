@@ -79,6 +79,12 @@ If your repo layout differs from the defaults, override directories:
 - `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json`
 - `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir`: the crate directory containing the WASM `Cargo.toml`
 
+To see what directory CI/local tooling will select by default, run:
+
+```bash
+node scripts/ci/detect-node-dir.mjs
+```
+
 ---
 
 ## Node workspaces: install once, run per-package scripts

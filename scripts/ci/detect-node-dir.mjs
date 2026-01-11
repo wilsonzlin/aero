@@ -6,13 +6,15 @@
  * selection across CI and local tooling (including `cargo xtask`).
  *
  * Output (stdout): key=value lines
- * - dir=<workspace dir>         (relative to the current working directory when possible; "." means cwd)
+ * - dir=<workspace dir>          (relative to the current working directory when possible; "." means cwd)
  * - lockfile=<package-lock.json> (relative to the current working directory when possible; empty when missing)
+ * - package_name=<npm package name> (from package.json; empty when missing)
+ * - package_version=<npm package version> (from package.json; empty when missing)
  *
  * Logs are written to stderr.
  */
 
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,6 +65,23 @@ function resolveWorkspace(searchRoot, dirArg, reason) {
         );
     }
     return dirAbs;
+}
+
+function readPackageInfo(outputRoot, workspaceAbs) {
+    const packageJsonAbs = path.join(workspaceAbs, "package.json");
+    try {
+        const raw = readFileSync(packageJsonAbs, "utf8");
+        const parsed = JSON.parse(raw);
+        return {
+            packageName: typeof parsed?.name === "string" ? parsed.name : "",
+            packageVersion: typeof parsed?.version === "string" ? parsed.version : "",
+        };
+    } catch (err) {
+        die(
+            `failed to read/parse package.json at '${toOutputRelativePath(outputRoot, packageJsonAbs)}': ` +
+                (err instanceof Error ? err.message : String(err)),
+        );
+    }
 }
 
 const argv = process.argv.slice(2);
@@ -173,7 +192,7 @@ if (overrideDir) {
 
 if (!workspaceAbs) {
     if (allowMissing) {
-        const empty = { dir: "", lockfile: "" };
+        const empty = { dir: "", lockfile: "", package_name: "", package_version: "" };
         process.stdout.write(
             Object.entries(empty)
                 .map(([k, v]) => `${k}=${v}`)
@@ -211,9 +230,13 @@ if (existsSync(lockfileAbs)) {
     }
 }
 
+const pkg = readPackageInfo(outputRoot, workspaceAbs);
+
 const out = {
     dir: toOutputRelativePath(outputRoot, workspaceAbs),
     lockfile,
+    package_name: pkg.packageName,
+    package_version: pkg.packageVersion,
 };
 
 if (githubOutputPath) {

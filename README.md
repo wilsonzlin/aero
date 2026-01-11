@@ -68,7 +68,7 @@ node scripts/check-node-version.mjs
 
 The `justfile` is intentionally configurable so it can survive repo refactors:
 
-- `WEB_DIR` (default: `web`)
+- `AERO_NODE_DIR` / `WEB_DIR` (default: auto-detected via `scripts/ci/detect-node-dir.mjs`)
 
 ## Repo layout
 

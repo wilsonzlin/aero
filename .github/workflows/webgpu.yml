@@ -21,22 +21,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
         with:
           browsers: chromium
-          lockfile: package-lock.json
+          working-directory: ${{ steps.node-workspace.outputs.dir }}
+          lockfile: ${{ steps.node-workspace.outputs.lockfile }}
 
       - name: Run Playwright WebGPU tests
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npx playwright test --project=chromium-webgpu
 
       - name: Upload Playwright report
@@ -45,5 +42,5 @@ jobs:
         with:
           name: playwright-report-webgpu-${{ matrix.os }}
           path: |
-            playwright-report/
-            test-results/
+            ${{ steps.node-workspace.outputs.dir }}/playwright-report/
+            ${{ steps.node-workspace.outputs.dir }}/test-results/

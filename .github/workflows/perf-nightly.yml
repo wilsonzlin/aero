@@ -32,18 +32,9 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Determine Node workspace directory
-        id: node-dir
-        run: node scripts/ci/detect_node_workspace.mjs >> "$GITHUB_OUTPUT"
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: ${{ steps.node-dir.outputs.lockfile }}
-
-      - name: Install dependencies (npm ci)
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
@@ -53,7 +44,7 @@ jobs:
           lockfile: package-lock.json
 
       - name: Run browser perf (nightly)
-        run: node scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-dir.outputs.dir }}" --preview --preview-port 4173 --out-dir perf-results/nightly
+        run: node scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace.outputs.dir }}" --preview --preview-port 4173 --out-dir perf-results/nightly
 
       - name: Write GPU perf scenario params
         run: |

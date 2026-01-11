@@ -17,8 +17,14 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# Canonical: AERO_NODE_DIR. Back-compat aliases: AERO_WEB_DIR, WEB_DIR.
-WEB_DIR := env_var_or_default("AERO_NODE_DIR", env_var_or_default("AERO_WEB_DIR", env_var_or_default("WEB_DIR", "web")))
+# Auto-detect the Node workspace (repo root vs web/ vs other) so `just` stays in
+# sync with CI and `./scripts/test-all.sh`.
+#
+# Canonical override: AERO_NODE_DIR. Deprecated: AERO_WEB_DIR, WEB_DIR.
+#
+# If `node` is unavailable (e.g. Rust-only workflows), fall back to a best-effort
+# heuristic rather than failing justfile parsing.
+WEB_DIR := env_var_or_default("AERO_NODE_DIR", env_var_or_default("AERO_WEB_DIR", env_var_or_default("WEB_DIR", `bash -c 'if command -v node >/dev/null 2>&1 && [[ -f scripts/ci/detect-node-dir.mjs ]]; then node scripts/ci/detect-node-dir.mjs | sed -n "s/^dir=//p" | head -n1 | tr -d "\\r" | xargs; elif [[ -f package.json ]]; then echo .; elif [[ -f frontend/package.json ]]; then echo frontend; elif [[ -f web/package.json ]]; then echo web; else echo .; fi'`)))
 
 [private]
 _warn_deprecated_env:
@@ -139,8 +145,8 @@ setup:
     echo "==> Tooling: wasm crate not found yet; skipping wasm-pack checks"
   fi
 
-  if [[ -f "package.json" ]]; then
-    echo "==> Node: installing JS dependencies (npm ci, workspaces)"
+  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    echo "==> Node: installing JS dependencies (npm ci)"
     if ! command -v npm >/dev/null; then
       echo "error: npm is required to install JS deps" >&2
       exit 1
@@ -148,9 +154,9 @@ setup:
     # Keep `just setup` fast by skipping the Playwright browser download. Install
     # browsers explicitly when you need to run E2E tests:
     #   npx playwright install --with-deps chromium
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm --prefix "{{WEB_DIR}}" ci
   else
-    echo "==> Node: package.json not found; skipping npm ci"
+    echo "==> Node: '{{WEB_DIR}}/package.json' not found; skipping npm ci"
   fi
 
   echo "==> Setup complete"
@@ -164,6 +170,17 @@ wasm:
   # Prefer the web app's wasm build scripts, which produce both:
   # - web/src/wasm/pkg-single
   # - web/src/wasm/pkg-threaded (shared-memory)
+  if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
+    if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
+      if ! command -v wasm-pack >/dev/null; then
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        exit 1
+      fi
+      echo "==> Building WASM (single + threaded) via 'web' workspace npm scripts"
+      npm --prefix "{{WEB_DIR}}" -w web run wasm:build
+      exit 0
+    fi
+  fi
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
@@ -171,7 +188,7 @@ wasm:
         exit 1
       fi
       echo "==> Building WASM (single + threaded) via '{{WEB_DIR}}' npm scripts"
-      npm -w "{{WEB_DIR}}" run wasm:build
+      npm --prefix "{{WEB_DIR}}" run wasm:build
       exit 0
     fi
   fi
@@ -197,6 +214,17 @@ wasm-single:
 
   just _warn_deprecated_env
 
+  if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
+    if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
+      if ! command -v wasm-pack >/dev/null; then
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        exit 1
+      fi
+      echo "==> Building WASM (single) via 'web' workspace npm scripts"
+      npm --prefix "{{WEB_DIR}}" -w web run wasm:build:single
+      exit 0
+    fi
+  fi
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
@@ -204,7 +232,7 @@ wasm-single:
         exit 1
       fi
       echo "==> Building WASM (single) via '{{WEB_DIR}}' npm scripts"
-      npm -w "{{WEB_DIR}}" run wasm:build:single
+      npm --prefix "{{WEB_DIR}}" run wasm:build:single
       exit 0
     fi
   fi
@@ -218,6 +246,17 @@ wasm-threaded:
 
   just _warn_deprecated_env
 
+  if [[ -f "{{WEB_DIR}}/web/package.json" ]]; then
+    if (cd "{{WEB_DIR}}/web" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
+      if ! command -v wasm-pack >/dev/null; then
+        echo "error: wasm-pack not found; run 'just setup' (or 'cargo install wasm-pack')" >&2
+        exit 1
+      fi
+      echo "==> Building WASM (threaded/shared-memory) via 'web' workspace npm scripts"
+      npm --prefix "{{WEB_DIR}}" -w web run wasm:build:threaded
+      exit 0
+    fi
+  fi
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
       if ! command -v wasm-pack >/dev/null; then
@@ -225,7 +264,7 @@ wasm-threaded:
         exit 1
       fi
       echo "==> Building WASM (threaded/shared-memory) via '{{WEB_DIR}}' npm scripts"
-      npm -w "{{WEB_DIR}}" run wasm:build:threaded
+      npm --prefix "{{WEB_DIR}}" run wasm:build:threaded
       exit 0
     fi
   fi
@@ -252,7 +291,7 @@ _maybe_run_web_script script:
 
   # Only run if the script exists, otherwise keep things green for partial checkouts.
   if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['{{script}}']) ? 0 : 1)" >/dev/null 2>&1); then
-    npm -w "{{WEB_DIR}}" run "{{script}}"
+    npm --prefix "{{WEB_DIR}}" run "{{script}}"
   else
     echo "==> Web: no npm script named '{{script}}' (skipping)"
   fi
@@ -262,7 +301,7 @@ dev:
   set -euo pipefail
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    if [[ ! -d "node_modules" ]]; then
+    if [[ ! -d "node_modules" && ! -d "{{WEB_DIR}}/node_modules" ]]; then
       echo "error: 'node_modules' not found; run 'just setup' first" >&2
       exit 1
     fi
@@ -291,7 +330,7 @@ dev:
       echo "     just wasm-watch  # rebuilds the threaded/shared-memory WASM variant"
     fi
 
-    npm -w "{{WEB_DIR}}" run dev
+    npm --prefix "{{WEB_DIR}}" run dev
   else
     echo '==> No `web/` app detected.'
     echo ""
@@ -333,13 +372,13 @@ build:
   just wasm
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    if [[ ! -d "node_modules" ]]; then
+    if [[ ! -d "node_modules" && ! -d "{{WEB_DIR}}/node_modules" ]]; then
       echo "error: 'node_modules' not found; run 'just setup' first" >&2
       exit 1
     fi
 
     echo "==> Building web bundle (production)"
-    npm -w "{{WEB_DIR}}" run build
+    npm --prefix "{{WEB_DIR}}" run build
   else
     echo "==> Web: '{{WEB_DIR}}/package.json' not found; skipping web build"
   fi
@@ -358,7 +397,7 @@ test:
   fi
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
-    if [[ ! -d "node_modules" ]]; then
+    if [[ ! -d "node_modules" && ! -d "{{WEB_DIR}}/node_modules" ]]; then
       echo "error: 'node_modules' not found; run 'just setup' first" >&2
       exit 1
     fi
@@ -366,7 +405,7 @@ test:
 
   # Prefer a dedicated unit-test script if available.
   if [[ -f "{{WEB_DIR}}/package.json" ]] && (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['test:unit']) ? 0 : 1)" >/dev/null 2>&1); then
-    npm -w "{{WEB_DIR}}" run test:unit
+    npm --prefix "{{WEB_DIR}}" run test:unit
   else
     just _maybe_run_web_script test
   fi

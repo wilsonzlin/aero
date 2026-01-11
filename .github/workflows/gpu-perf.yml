@@ -35,32 +35,27 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Node workspace (candidate)
+        id: node-workspace-head
+        uses: ./head/.github/actions/setup-node-workspace
         with:
-          node-version-file: head/.nvmrc
-          cache: npm
-          cache-dependency-path: |
-            head/package-lock.json
-            base/package-lock.json
+          working-directory: head
 
-      - name: Install dependencies (baseline)
-        working-directory: base
-        run: npm ci
-
-      - name: Install dependencies (candidate)
-        working-directory: head
-        run: npm ci
+      - name: Setup Node workspace (baseline)
+        id: node-workspace-base
+        uses: ./head/.github/actions/setup-node-workspace
+        with:
+          working-directory: base
 
       - name: Setup Playwright (cached)
         uses: ./head/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: head
-          lockfile: head/package-lock.json
+          working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+          lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Write scenario params
-        working-directory: head
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
           mkdir -p gpu-perf-results/{base,head,compare}
           cat > gpu-perf-results/scenario_params.json <<'JSON'
@@ -71,17 +66,17 @@ jobs:
           JSON
 
       - name: Run GPU perf (baseline)
-        working-directory: base
+        working-directory: ${{ steps.node-workspace-base.outputs.dir }}
         run: |
           node --experimental-strip-types bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit \
-            --scenario-params ../head/gpu-perf-results/scenario_params.json \
+            --scenario-params "$GITHUB_WORKSPACE/${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results/scenario_params.json" \
             --swiftshader true \
             --iterations ${{ env.GPU_PERF_ITERATIONS }} \
-            --output ../head/gpu-perf-results/base/gpu_bench.json
+            --output "$GITHUB_WORKSPACE/${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results/base/gpu_bench.json"
 
       - name: Run GPU perf (candidate)
-        working-directory: head
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
           node --experimental-strip-types bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit \
@@ -91,7 +86,7 @@ jobs:
             --output gpu-perf-results/head/gpu_bench.json
 
       - name: Compare GPU perf (job summary)
-        working-directory: head
+        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
         run: |
           set +e
           node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
@@ -113,5 +108,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gpu-perf-smoke-${{ github.run_id }}
-          path: head/gpu-perf-results
+          path: ${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results
           if-no-files-found: error

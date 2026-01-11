@@ -22,16 +22,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install Node dependencies
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run TypeScript unit tests with coverage
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run test:unit:coverage
 
       - name: Setup Rust
@@ -60,6 +56,6 @@ jobs:
       - name: Upload TypeScript coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage/lcov.info
+          files: ${{ steps.node-workspace.outputs.dir }}/coverage/lcov.info
           flags: typescript
           fail_ci_if_error: false

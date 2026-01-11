@@ -391,22 +391,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node (npm cache)
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies (npm ci)
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Lint (if present)
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run lint --if-present
 
       - name: Unit tests
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run test:unit
 
       - name: Publish Node unit test report
@@ -414,7 +410,7 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: Node unit tests
-          path: test-results/node-junit.xml
+          path: ${{ steps.node-workspace.outputs.dir }}/test-results/node-junit.xml
           reporter: java-junit
           fail-on-error: false
 
@@ -423,7 +419,7 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: Vitest
-          path: test-results/vitest-junit.xml
+          path: ${{ steps.node-workspace.outputs.dir }}/test-results/vitest-junit.xml
           reporter: java-junit
           fail-on-error: false
 
@@ -433,8 +429,8 @@ jobs:
         with:
           name: unit-test-results
           path: |
-            test-results/node-junit.xml
-            test-results/vitest-junit.xml
+            ${{ steps.node-workspace.outputs.dir }}/test-results/node-junit.xml
+            ${{ steps.node-workspace.outputs.dir }}/test-results/vitest-junit.xml
           if-no-files-found: warn
           retention-days: 7
 
@@ -445,12 +441,13 @@ jobs:
           {
             echo "### Unit test reports"
             echo ""
-            echo "- Node JUnit: \`test-results/node-junit.xml\`"
-            echo "- Vitest JUnit: \`test-results/vitest-junit.xml\`"
+            echo "- Node JUnit: \`${{ steps.node-workspace.outputs.dir }}/test-results/node-junit.xml\`"
+            echo "- Vitest JUnit: \`${{ steps.node-workspace.outputs.dir }}/test-results/vitest-junit.xml\`"
             echo "- Artifact: \`unit-test-results\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Production build
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run build
 
   smoke-matrix:
@@ -487,25 +484,22 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: cargo test --manifest-path tools/win-offline-cert-injector/Cargo.toml --locked
 
-      - name: Setup Node (npm cache)
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies (npm ci)
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Typecheck (if present)
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run typecheck --if-present
 
       - name: Unit tests
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run test:unit --if-present
 
       - name: Production build
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run build
 
       - name: Job summary
@@ -515,8 +509,8 @@ jobs:
           {
             echo "### Smoke matrix (${{ matrix.os }})"
             echo ""
-            echo "- Node dir: \\`.\\`"
-            echo "- Lockfile: \\`package-lock.json\\`"
+            echo "- Node dir: \\`${{ steps.node-workspace.outputs.dir }}\\`"
+            echo "- Lockfile: \\`${{ steps.node-workspace.outputs.lockfile }}\\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   playwright:
@@ -540,27 +534,27 @@ jobs:
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
-      - name: Setup Node (npm cache)
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
 
-      - name: Install dependencies (npm ci)
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Prepare test-results directory
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: mkdir -p test-results
 
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: .
-          lockfile: package-lock.json
+          working-directory: ${{ steps.node-workspace.outputs.dir }}
+          lockfile: ${{ steps.node-workspace.outputs.lockfile }}
 
       - name: Playwright tests (non-WebGPU)
+        env:
+          AERO_NODE_DIR: ${{ steps.node-workspace.outputs.dir }}
         run: cargo xtask test-all --skip-rust --skip-wasm --skip-ts --pw-project chromium
 
       - name: Publish E2E test report
@@ -568,7 +562,7 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: Playwright
-          path: test-results/junit.xml
+          path: ${{ steps.node-workspace.outputs.dir }}/test-results/junit.xml
           reporter: java-junit
           fail-on-error: false
 
@@ -578,8 +572,8 @@ jobs:
         with:
           name: playwright-report
           path: |
-            playwright-report/
-            test-results/
+            ${{ steps.node-workspace.outputs.dir }}/playwright-report/
+            ${{ steps.node-workspace.outputs.dir }}/test-results/
           if-no-files-found: warn
           retention-days: 7
 
@@ -590,7 +584,7 @@ jobs:
           {
             echo "### Playwright reports"
             echo ""
-            echo "- JUnit: \`test-results/junit.xml\`"
+            echo "- JUnit: \`${{ steps.node-workspace.outputs.dir }}/test-results/junit.xml\`"
             echo "- HTML report artifact: \`playwright-report\`"
           } >> "$GITHUB_STEP_SUMMARY"
 

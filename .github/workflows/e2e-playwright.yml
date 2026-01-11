@@ -21,22 +21,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Setup Playwright (cached)
         uses: ./.github/actions/setup-playwright
         with:
           browsers: chromium
-          lockfile: package-lock.json
+          working-directory: ${{ steps.node-workspace.outputs.dir }}
+          lockfile: ${{ steps.node-workspace.outputs.lockfile }}
 
       - name: Run visual regression suite
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npx playwright test --project=chromium tests/e2e/security-headers.spec.ts tests/e2e/visual.spec.ts
 
       - name: Upload Playwright artifacts
@@ -45,7 +42,7 @@ jobs:
         with:
           name: playwright-artifacts
           path: |
-            playwright-report/
-            test-results/
+            ${{ steps.node-workspace.outputs.dir }}/playwright-report/
+            ${{ steps.node-workspace.outputs.dir }}/test-results/
           if-no-files-found: ignore
           retention-days: 30

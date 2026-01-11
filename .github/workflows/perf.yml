@@ -39,43 +39,30 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: Determine Node workspace directory (candidate)
-        id: node-dir-head
-        run: node base/scripts/ci/detect_node_workspace.mjs --root head >> "$GITHUB_OUTPUT"
-
-      - name: Determine Node workspace directory (baseline)
-        id: node-dir-base
-        run: node base/scripts/ci/detect_node_workspace.mjs --root base >> "$GITHUB_OUTPUT"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Node workspace (candidate)
+        id: node-workspace-head
+        uses: ./head/.github/actions/setup-node-workspace
         with:
-          node-version-file: base/.nvmrc
-          cache: npm
-          cache-dependency-path: |
-            ${{ steps.node-dir-head.outputs.lockfile }}
-            ${{ steps.node-dir-base.outputs.lockfile }}
+          working-directory: head
 
-      - name: Install app dependencies (baseline)
-        run: npm ci
-        working-directory: ${{ steps.node-dir-base.outputs.dir }}
-
-      - name: Install app dependencies (candidate)
-        run: npm ci
-        working-directory: ${{ steps.node-dir-head.outputs.dir }}
+      - name: Setup Node workspace (baseline)
+        id: node-workspace-base
+        uses: ./head/.github/actions/setup-node-workspace
+        with:
+          working-directory: base
 
       - name: Setup Playwright (cached)
         uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
           working-directory: head/tools/perf
-          lockfile: head/package-lock.json
+          lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Run perf smoke (baseline)
-        run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-dir-base.outputs.dir }}" --preview --preview-port 4173 --out-dir head/perf-results/base --perf-runner head/tools/perf/run.mjs
+        run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace-base.outputs.dir }}" --preview --preview-port 4173 --out-dir head/perf-results/base --perf-runner head/tools/perf/run.mjs
 
       - name: Run perf smoke (candidate)
-        run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-dir-head.outputs.dir }}" --preview --preview-port 4174 --out-dir head/perf-results/head --perf-runner head/tools/perf/run.mjs
+        run: node base/scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace-head.outputs.dir }}" --preview --preview-port 4174 --out-dir head/perf-results/head --perf-runner head/tools/perf/run.mjs
 
       - name: Compare (fail on regression)
         run: |
