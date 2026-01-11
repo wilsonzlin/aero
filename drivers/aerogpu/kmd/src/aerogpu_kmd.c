@@ -911,59 +911,34 @@ static VOID AeroGpuAllocationUnmapCpu(_Inout_ AEROGPU_ALLOCATION* Alloc)
     Alloc->CpuMapWritePending = FALSE;
 }
 
-static VOID AeroGpuShareTokenRefIncrement(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken)
+static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken)
 {
     if (!Adapter || ShareToken == 0) {
-        return;
+        return 0;
     }
 
-    AEROGPU_SHARE_TOKEN_REF* newNode = NULL;
-
-    for (;;) {
-        ULONG newCount = 0;
-        BOOLEAN inserted = FALSE;
-
-        KIRQL oldIrql;
-        KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
-
-        for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
-            AEROGPU_SHARE_TOKEN_REF* node = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
-            if (node->ShareToken == ShareToken) {
-                node->OpenCount += 1;
-                newCount = node->OpenCount;
-                KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
-
-                if (newNode) {
-                    ExFreePoolWithTag(newNode, AEROGPU_POOL_TAG);
-                }
-
-                AEROGPU_LOG("ShareTokenRef++ token=0x%I64x open_count=%lu", ShareToken, newCount);
-                return;
-            }
+    /*
+     * Assumes Adapter->AllocationsLock is held by the caller so increments are
+     * atomic with respect to allocation tracking/untracking.
+     */
+    for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
+        AEROGPU_SHARE_TOKEN_REF* node = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
+        if (node->ShareToken == ShareToken) {
+            node->OpenCount += 1;
+            return node->OpenCount;
         }
-
-        if (newNode) {
-            InsertTailList(&Adapter->ShareTokenRefs, &newNode->ListEntry);
-            inserted = TRUE;
-            newCount = newNode->OpenCount;
-        }
-
-        KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
-
-        if (inserted) {
-            AEROGPU_LOG("ShareTokenRef++ token=0x%I64x open_count=%lu", ShareToken, newCount);
-            return;
-        }
-
-        newNode = (AEROGPU_SHARE_TOKEN_REF*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*newNode), AEROGPU_POOL_TAG);
-        if (!newNode) {
-            AEROGPU_LOG("ShareTokenRef++ token=0x%I64x failed (out of memory)", ShareToken);
-            return;
-        }
-        RtlZeroMemory(newNode, sizeof(*newNode));
-        newNode->ShareToken = ShareToken;
-        newNode->OpenCount = 1;
     }
+
+    AEROGPU_SHARE_TOKEN_REF* node =
+        (AEROGPU_SHARE_TOKEN_REF*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*node), AEROGPU_POOL_TAG);
+    if (!node) {
+        return 0;
+    }
+    RtlZeroMemory(node, sizeof(*node));
+    node->ShareToken = ShareToken;
+    node->OpenCount = 1;
+    InsertTailList(&Adapter->ShareTokenRefs, &node->ListEntry);
+    return node->OpenCount;
 }
 
 static BOOLEAN AeroGpuShareTokenRefDecrement(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken, _Out_ BOOLEAN* ShouldReleaseOut)
@@ -1147,9 +1122,16 @@ static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AER
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
     InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
+    const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken);
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
 
-    AeroGpuShareTokenRefIncrement(Adapter, Allocation->ShareToken);
+    if (Allocation->ShareToken != 0) {
+        if (shareTokenCount != 0) {
+            AEROGPU_LOG("ShareTokenRef++ token=0x%I64x open_count=%lu", Allocation->ShareToken, shareTokenCount);
+        } else {
+            AEROGPU_LOG("ShareTokenRef++ token=0x%I64x failed (out of memory)", Allocation->ShareToken);
+        }
+    }
 }
 
 static BOOLEAN AeroGpuTryUntrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ const AEROGPU_ALLOCATION* Allocation)
