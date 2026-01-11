@@ -4,15 +4,55 @@
 //! instruction/resource features required for FL10_0 bring-up. The decoder that
 //! produces this IR lives elsewhere (see Task 454).
 
-use crate::sm4::ShaderStage;
+use crate::sm4::{ShaderModel, ShaderStage};
 
 /// A decoded SM4/SM5 module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sm4Module {
     /// Shader stage declared by the DXBC version token.
     pub stage: ShaderStage,
+    /// Shader model declared by the DXBC version token.
+    pub model: ShaderModel,
+    /// Declarations that appear before the instruction stream.
+    pub decls: Vec<Sm4Decl>,
     /// Linear instruction stream in execution order.
     pub instructions: Vec<Sm4Inst>,
+}
+
+/// A single SM4/SM5 declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Sm4Decl {
+    Input {
+        reg: u32,
+        mask: WriteMask,
+    },
+    InputSiv {
+        reg: u32,
+        mask: WriteMask,
+        sys_value: u32,
+    },
+    Output {
+        reg: u32,
+        mask: WriteMask,
+    },
+    OutputSiv {
+        reg: u32,
+        mask: WriteMask,
+        sys_value: u32,
+    },
+    ConstantBuffer {
+        slot: u32,
+        reg_count: u32,
+    },
+    Sampler {
+        slot: u32,
+    },
+    ResourceTexture2D {
+        slot: u32,
+    },
+    Unknown {
+        opcode: u32,
+    },
 }
 
 /// A single SM4/SM5 instruction.
@@ -58,8 +98,14 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
-    Rcp { dst: DstOperand, src: SrcOperand },
-    Rsq { dst: DstOperand, src: SrcOperand },
+    Rcp {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    Rsq {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     /// `sample dest, coord, t#, s#`
     Sample {
         dst: DstOperand,

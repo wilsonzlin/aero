@@ -1,5 +1,8 @@
 use aero_d3d11::sm4::opcode::*;
-use aero_d3d11::{OperandModifier, RegFile, RegisterRef, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask};
+use aero_d3d11::{
+    OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program,
+    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+};
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
     // Version token layout:
@@ -44,7 +47,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -56,10 +60,7 @@ fn operand_token(
 }
 
 fn swizzle_bits(swz: [u8; 4]) -> u32 {
-    (swz[0] as u32)
-        | ((swz[1] as u32) << 2)
-        | ((swz[2] as u32) << 4)
-        | ((swz[3] as u32) << 6)
+    (swz[0] as u32) | ((swz[1] as u32) << 2) | ((swz[2] as u32) << 4) | ((swz[3] as u32) << 6)
 }
 
 fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
@@ -119,7 +120,14 @@ fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
 
 fn imm32_scalar(value: u32) -> Vec<u32> {
     vec![
-        operand_token(OPERAND_TYPE_IMMEDIATE32, 1, OPERAND_SEL_SELECT1, 0, 0, false),
+        operand_token(
+            OPERAND_TYPE_IMMEDIATE32,
+            1,
+            OPERAND_SEL_SELECT1,
+            0,
+            0,
+            false,
+        ),
         value,
     ]
 }
@@ -162,13 +170,52 @@ fn decodes_arithmetic_and_skips_decls() {
 
     let mut body = Vec::<u32>::new();
 
-    // A couple of declaration-like tokens that should be skipped.
-    body.extend_from_slice(&[
-        opcode_token(DCL_DUMMY, 3),
-        operand_token(OPERAND_TYPE_INPUT, 2, OPERAND_SEL_MASK, 0xF, 1, false),
-        0,
-    ]);
-    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 1, 2), 4]);
+    // Declarations that should be captured before the instruction stream.
+    // dcl_input v0.xyzw
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 3)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
+    // dcl_input_siv v1.xy, <sys_value=0x77>
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 1, 4)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 1, WriteMask(0b0011)));
+    body.push(0x77);
+    // dcl_output o0.xyzw
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 2, 3)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    // dcl_output_siv o1.xyzw, <sys_value=0x88>
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 3, 4)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    body.push(0x88);
+    // dcl_constantbuffer cb0[4]
+    let cb_decl = reg_src(
+        OPERAND_TYPE_CONSTANT_BUFFER,
+        &[0, 4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 4, 1 + cb_decl.len() as u32 + 1)]);
+    body.extend_from_slice(&cb_decl);
+    body.push(0); // access pattern token (ignored)
+                  // dcl_resource_texture2d t0
+    let tex_decl = reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 5, 1 + tex_decl.len() as u32 + 1)]);
+    body.extend_from_slice(&tex_decl);
+    body.push(2); // dimension token (ignored)
+                  // dcl_sampler s0
+    let samp_decl = reg_src(
+        OPERAND_TYPE_SAMPLER,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 6, 1 + samp_decl.len() as u32)]);
+    body.extend_from_slice(&samp_decl);
+    // Unknown declaration-like opcode (no operand token).
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY + 7, 2), 4]);
 
     // mov r0, v0
     let mut mov = vec![opcode_token(OPCODE_MOV, 5)];
@@ -347,6 +394,36 @@ fn decodes_arithmetic_and_skips_decls() {
         module,
         Sm4Module {
             stage: aero_d3d11::ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::Input {
+                    reg: 0,
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Decl::InputSiv {
+                    reg: 1,
+                    mask: WriteMask(0b0011),
+                    sys_value: 0x77,
+                },
+                Sm4Decl::Output {
+                    reg: 0,
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Decl::OutputSiv {
+                    reg: 1,
+                    mask: WriteMask::XYZW,
+                    sys_value: 0x88,
+                },
+                Sm4Decl::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 4,
+                },
+                Sm4Decl::ResourceTexture2D { slot: 0 },
+                Sm4Decl::Sampler { slot: 0 },
+                Sm4Decl::Unknown {
+                    opcode: DCL_DUMMY + 7
+                },
+            ],
             instructions: vec![
                 Sm4Inst::Mov {
                     dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
@@ -493,5 +570,7 @@ fn decodes_sample_and_sample_l() {
             sampler: aero_d3d11::SamplerRef { slot: 0 },
         }
     );
-}
 
+    assert_eq!(module.model, ShaderModel { major: 5, minor: 0 });
+    assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
+}

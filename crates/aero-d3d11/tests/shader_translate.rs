@@ -1,7 +1,7 @@
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, DxbcFile, DxbcSignatureParameter,
-    FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderStage, Sm4Inst, Sm4Module,
-    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel, ShaderStage, Sm4Inst,
+    Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -145,6 +145,8 @@ fn translates_vertex_passthrough_signature_io() {
 
     let module = Sm4Module {
         stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
         instructions: vec![
             Sm4Inst::Mov {
                 dst: dst(RegFile::Output, 0, WriteMask::XYZW),
@@ -192,6 +194,8 @@ fn translates_pixel_texture_sample_and_bindings() {
 
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
         instructions: vec![
             Sm4Inst::Sample {
                 dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
@@ -238,6 +242,8 @@ fn translates_cbuffer_and_arithmetic_ops() {
 
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
         instructions: vec![
             Sm4Inst::Mov {
                 dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
@@ -302,6 +308,8 @@ fn translates_sample_l() {
 
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
         instructions: vec![
             Sm4Inst::SampleL {
                 dst: dst(RegFile::Temp, 0, WriteMask::XYZW),

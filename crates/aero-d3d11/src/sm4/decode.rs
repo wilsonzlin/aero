@@ -1,8 +1,8 @@
 use core::fmt;
 
 use crate::sm4_ir::{
-    DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Inst, Sm4Module, SrcKind,
-    SrcOperand, Swizzle, TextureRef, WriteMask,
+    DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl, Sm4Inst, Sm4Module,
+    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -16,16 +16,37 @@ pub struct Sm4DecodeError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4DecodeErrorKind {
-    UnexpectedEof { wanted: usize, remaining: usize },
-    InvalidDeclaredLength { declared: usize, available: usize },
+    UnexpectedEof {
+        wanted: usize,
+        remaining: usize,
+    },
+    InvalidDeclaredLength {
+        declared: usize,
+        available: usize,
+    },
     InstructionLengthZero,
-    InstructionOutOfBounds { start: usize, len: usize, available: usize },
+    InstructionOutOfBounds {
+        start: usize,
+        len: usize,
+        available: usize,
+    },
     UnsupportedOperand(&'static str),
-    UnsupportedOperandType { ty: u32 },
-    UnsupportedIndexDimension { dim: u32 },
-    UnsupportedIndexRepresentation { rep: u32 },
-    UnsupportedExtendedOperand { ty: u32 },
-    InvalidRegisterIndices { ty: u32, indices: Vec<u32> },
+    UnsupportedOperandType {
+        ty: u32,
+    },
+    UnsupportedIndexDimension {
+        dim: u32,
+    },
+    UnsupportedIndexRepresentation {
+        rep: u32,
+    },
+    UnsupportedExtendedOperand {
+        ty: u32,
+    },
+    InvalidRegisterIndices {
+        ty: u32,
+        indices: Vec<u32>,
+    },
 }
 
 impl fmt::Display for Sm4DecodeError {
@@ -36,7 +57,10 @@ impl fmt::Display for Sm4DecodeError {
                 f,
                 "unexpected end of token stream (wanted {wanted} dwords, {remaining} remaining)"
             ),
-            Sm4DecodeErrorKind::InvalidDeclaredLength { declared, available } => write!(
+            Sm4DecodeErrorKind::InvalidDeclaredLength {
+                declared,
+                available,
+            } => write!(
                 f,
                 "declared program length {declared} is out of bounds (available {available})"
             ),
@@ -86,6 +110,7 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
     let toks = &program.tokens[..declared_len];
 
+    let mut decls = Vec::new();
     let mut instructions = Vec::new();
 
     let mut i = 2usize;
@@ -113,10 +138,12 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
         let inst_toks = &toks[i..i + len];
 
-        // All declarations are required to come before the instruction stream. We don't yet
-        // model declarations in the IR; instead, skip them until we hit an opcode we know is
-        // executable.
+        // All declarations are required to come before the instruction stream. Unknown
+        // declarations are preserved as `Sm4Decl::Unknown` so later stages can still decide
+        // whether they're important.
         if in_decls && !is_supported_instruction_opcode(opcode) {
+            let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
+            decls.push(decl);
             i += len;
             continue;
         }
@@ -128,6 +155,8 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
     Ok(Sm4Module {
         stage: program.stage,
+        model: program.model,
+        decls,
         instructions,
     })
 }
@@ -151,7 +180,11 @@ fn is_supported_instruction_opcode(opcode: u32) -> bool {
     )
 }
 
-fn decode_instruction(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Inst, Sm4DecodeError> {
+fn decode_instruction(
+    opcode: u32,
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Sm4Inst, Sm4DecodeError> {
     let mut r = InstrReader::new(inst_toks, at);
     let opcode_token = r.read_u32()?;
     let saturate = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
@@ -248,6 +281,80 @@ fn decode_instruction(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4In
             Ok(Sm4Inst::Unknown { opcode: other })
         }
     }
+}
+
+fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    // Declarations can also have extended opcode tokens; consume them even if we don't
+    // understand the contents.
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    if r.is_eof() {
+        return Ok(Sm4Decl::Unknown { opcode });
+    }
+
+    let op = decode_raw_operand(&mut r)?;
+    if op.imm32.is_some() {
+        return Ok(Sm4Decl::Unknown { opcode });
+    }
+
+    let mask = match op.selection_mode {
+        OPERAND_SEL_MASK => WriteMask((op.component_sel & 0xF) as u8),
+        _ => WriteMask::XYZW,
+    };
+
+    match op.ty {
+        OPERAND_TYPE_INPUT => {
+            let reg = one_index(op.ty, &op.indices, r.base_at)?;
+            if r.is_eof() {
+                return Ok(Sm4Decl::Input { reg, mask });
+            }
+            if r.toks.len().saturating_sub(r.pos) == 1 {
+                let sys_value = r.read_u32()?;
+                r.expect_eof()?;
+                return Ok(Sm4Decl::InputSiv {
+                    reg,
+                    mask,
+                    sys_value,
+                });
+            }
+        }
+        OPERAND_TYPE_OUTPUT => {
+            let reg = one_index(op.ty, &op.indices, r.base_at)?;
+            if r.is_eof() {
+                return Ok(Sm4Decl::Output { reg, mask });
+            }
+            if r.toks.len().saturating_sub(r.pos) == 1 {
+                let sys_value = r.read_u32()?;
+                r.expect_eof()?;
+                return Ok(Sm4Decl::OutputSiv {
+                    reg,
+                    mask,
+                    sys_value,
+                });
+            }
+        }
+        OPERAND_TYPE_CONSTANT_BUFFER => {
+            if let [slot, reg_count] = op.indices.as_slice() {
+                return Ok(Sm4Decl::ConstantBuffer {
+                    slot: *slot,
+                    reg_count: *reg_count,
+                });
+            }
+        }
+        OPERAND_TYPE_SAMPLER => {
+            let slot = one_index(op.ty, &op.indices, r.base_at)?;
+            return Ok(Sm4Decl::Sampler { slot });
+        }
+        OPERAND_TYPE_RESOURCE => {
+            let slot = one_index(op.ty, &op.indices, r.base_at)?;
+            return Ok(Sm4Decl::ResourceTexture2D { slot });
+        }
+        _ => {}
+    }
+
+    Ok(Sm4Decl::Unknown { opcode })
 }
 
 fn decode_sample_like(
@@ -672,4 +779,3 @@ impl<'a> InstrReader<'a> {
         }
     }
 }
-
