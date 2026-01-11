@@ -23,6 +23,7 @@ static void PrintUsage() {
   aerogpu_test::PrintfStdout("  --no-timeout          Disable timeouts.");
   aerogpu_test::PrintfStdout("  --json[=PATH]         Write a machine-readable JSON suite report.");
   aerogpu_test::PrintfStdout("                        Default path: next to aerogpu_test_runner.exe (report.json)");
+  aerogpu_test::PrintfStdout("                        Also writes per-test <test>.json files next to the suite report.");
   aerogpu_test::PrintfStdout("");
   aerogpu_test::PrintfStdout("All other flags are forwarded to each test (e.g. --dump, --hidden, --require-vid=...).");
 }
