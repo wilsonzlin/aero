@@ -94,6 +94,14 @@ enum UsbHostCompletion {
 The `id` correlates an action with its completion and is also how we prevent duplicate
 WebUSB calls when the guest retries a NAKed TD.
 
+Cancellation behavior (important):
+
+- A new control SETUP can legally abort a previous control transfer. The passthrough model may
+  drop the previous in-flight request and ignore its eventual completion (WebUSB does not provide
+  strong cancellation for an in-flight transfer).
+- Stale completions are therefore expected and must be safely ignored (the Rust model already
+  does this by checking `id` against in-flight state).
+
 ### Layer 2 (host/TS): WebUSB executor + broker (main thread)
 
 The host side owns the actual `USBDevice` handle and performs WebUSB calls:
@@ -121,6 +129,45 @@ shape for production when WebUSB work must be serviced on the main thread.
 There is also a smaller “direct executor” implementation under the production host tree:
 
 - `web/src/usb/webusb_backend.ts`
+
+### Device lifecycle: open/configuration/interface claiming
+
+WebUSB requires the browser process to:
+
+1. `device.open()`
+2. `device.selectConfiguration(...)` (if no active configuration)
+3. `device.claimInterface(...)` for any interface whose endpoints will be used
+
+In this repo, these operations are exposed to workers via the `WebUsbBroker`/`WebUsbClient`
+protocol (`src/platform/webusb_protocol.ts`). The current RPC surface includes:
+
+- open/close
+- select configuration
+- claim/release interface
+- reset
+- controlTransferIn/controlTransferOut
+- transferIn/transferOut
+
+If the guest requires alternate interface settings or endpoint-halt recovery, extend the
+protocol to cover `selectAlternateInterface` / `clearHalt` as needed.
+
+Important constraints for passthrough:
+
+- **Do not blindly claim every interface** on composite devices. Devices can expose a mix of
+  protected (unclaimable) and unprotected interfaces; claiming a protected interface can fail
+  even when the device was selectable due to an unprotected interface.
+  - Use the repo’s protected-class classifier (`web/src/platform/webusb_protection.ts`) to choose
+    claimable interfaces.
+- **Guest-visible configuration vs host-visible configuration:** the guest may issue
+  `SET_CONFIGURATION` / `SET_INTERFACE`. The passthrough backend must decide whether to:
+  - mirror those changes to the physical device (calling WebUSB `selectConfiguration` and
+    `claimInterface`/`selectAlternateInterface` as needed), or
+  - virtualize them (presenting descriptors/configuration state to the guest without mutating the
+    already-open physical device).
+
+The current Rust `UsbHostAction` surface does not yet include “select configuration / claim
+interface” actions; today these operations are expected to be performed by the host-side broker
+when attaching a physical device.
 
 Data flow (conceptual):
 
@@ -174,6 +221,9 @@ Aero mapping (current code):
     - `ControlResponse::Stall` → SETUP TD stalls.
   - For **Control-OUT** requests with `wLength > 0`, SETUP TD ACKs and the control pipe transitions to
     “collect OUT data bytes”.
+  - **`SET_ADDRESS` virtualization:** the control pipe intercepts the standard `SET_ADDRESS` request
+    and updates only the guest-visible address state. This request must **not** be forwarded to the
+    physical device (the host OS already enumerated it).
 
 - **DATA TD(s)**
   - **Control-IN:** IN DATA TDs read from the already-buffered `Data(bytes)` returned by
