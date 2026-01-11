@@ -270,6 +270,73 @@ describe("RemoteChunkedDisk", () => {
     await disk2.close();
   });
 
+  it("supports relative manifest URLs by resolving against global location.href", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [{ size: chunkSize, sha256: await sha256Hex(chunks[0]!) }],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunks[0]);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const prevLocation = (globalThis as any).location;
+    const prevFetch = globalThis.fetch;
+    (globalThis as any).location = { href: `${baseUrl}/` };
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const resolved =
+        typeof input === "string" && input.startsWith("/") ? `${baseUrl}${input}` : (input as RequestInfo | URL);
+      return prevFetch(resolved as any, init);
+    }) as typeof fetch;
+
+    try {
+      const disk = await RemoteChunkedDisk.open("/manifest.json", {
+        store: new TestMemoryStore(),
+        prefetchSequentialChunks: 0,
+        retryBaseDelayMs: 0,
+      });
+      const buf = new Uint8Array(512);
+      await disk.readSectors(0, buf);
+      expect(buf).toEqual(img.slice(0, 512));
+      expect(hits.get("/chunks/00000000.bin")).toBe(1);
+      await disk.close();
+    } finally {
+      globalThis.fetch = prevFetch;
+      (globalThis as any).location = prevLocation;
+    }
+  });
+
   it("evicts least-recently-used cached chunks when the cache limit is exceeded", async () => {
     const chunkSize = 1024; // multiple of 512
     const totalSize = chunkSize * 3;

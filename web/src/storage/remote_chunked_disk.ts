@@ -536,6 +536,15 @@ function stableImageIdFromUrl(url: string): string {
   }
 }
 
+function parseUrlMaybe(url: string): URL | null {
+  try {
+    const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+    return base ? new URL(url, base) : new URL(url);
+  } catch {
+    return null;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1100,7 +1109,24 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
   private chunkUrl(chunkIndex: number): string {
     const name = String(chunkIndex).padStart(this.manifest.chunkIndexWidth, "0");
-    return new URL(`chunks/${name}.bin`, this.lease.url).toString();
+    const manifestUrl = parseUrlMaybe(this.lease.url);
+    if (manifestUrl) {
+      const url = new URL(`chunks/${name}.bin`, manifestUrl);
+      // Preserve querystring auth material (e.g. signed URLs) when deriving chunk URLs.
+      // This intentionally does not affect cache key derivation, which uses stable identifiers.
+      url.search = manifestUrl.search;
+      return url.toString();
+    }
+
+    // Non-standard URLs or environments without a base URL (e.g. tests) can leave us without a parsed URL.
+    // Fall back to string manipulation so relative paths still work.
+    const base = this.lease.url;
+    const noHash = base.split("#", 1)[0] ?? base;
+    const [pathPart, queryPart] = noHash.split("?", 2) as [string, string?];
+    const slash = pathPart.lastIndexOf("/");
+    const prefix = slash >= 0 ? pathPart.slice(0, slash + 1) : "";
+    const chunkPath = `${prefix}chunks/${name}.bin`;
+    return queryPart ? `${chunkPath}?${queryPart}` : chunkPath;
   }
 
   private shouldRetry(err: unknown): boolean {
