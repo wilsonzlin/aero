@@ -101,6 +101,7 @@ if ($null -eq $resolvedDrivers -or $resolvedDrivers.Count -eq 0) {
 
 Write-Host "Resolved Guest Tools packaging inputs:"
 Write-Host "  profile : $Profile"
+Write-Host "  signing : $SigningPolicy"
 Write-Host "  spec    : $resolvedSpecPath"
 Write-Host "  drivers : $($resolvedDrivers -join ', ')"
 
