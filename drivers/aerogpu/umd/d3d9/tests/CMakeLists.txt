@@ -3,6 +3,7 @@ add_executable(aerogpu_cmd_stream_writer_tests
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_blit.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_caps.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_driver.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_blit.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_kmd_query.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_log.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/dllmain.cpp

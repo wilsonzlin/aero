@@ -5,6 +5,7 @@ This directory contains Windows 7 SP1 virtio driver packages that implement Aero
 space `DEV_104x`/`DEV_105x`).
 
 - Contract: `docs/windows7-virtio-driver-contract.md`
+- Host/portable virtio helpers (cap parser tests, etc.): `drivers/win7/virtio/`
 
 ## Why this matters (INF hardware ID conflicts)
 
@@ -16,8 +17,7 @@ contract v1 uses modern-only IDs like:
 
 To avoid Windows seeing **multiple** INFs that match the **same** modern device,
 make sure your driver set does **not** contain duplicate INFs that bind the
-same modern IDs (for example, both `drivers/windows7/virtio/blk/aerovblk.inf`
-and `drivers/win7/virtio-blk/aerovblk.inf`).
+same modern IDs.
 
 ## Contents
 

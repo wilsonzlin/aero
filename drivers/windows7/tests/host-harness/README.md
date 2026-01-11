@@ -274,9 +274,9 @@ For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `dri
 or `drivers/win7/virtio-net/`). Avoid installing multiple `aerovnet.inf` files that bind the same HWID,
 or disambiguate by passing a relative INF path via `-InfAllowList`.
 
-For virtio-blk, use a contract-v1 driver that binds `DEV_1042` (for example `drivers/windows7/virtio/blk/`
-or `drivers/win7/virtio-blk/`). Avoid installing multiple `aerovblk.inf` files that bind the same HWID,
-or disambiguate by passing a relative INF path via `-InfAllowList`.
+For virtio-blk, use the contract-v1 driver under `drivers/windows7/virtio/blk/` (binds `DEV_1042`).
+Avoid installing multiple `aerovblk.inf` files that bind the same HWID, or disambiguate by passing a
+relative INF path via `-InfAllowList`.
 
 For fully repeatable provisioning, pass `-InfAllowList` explicitly:
 

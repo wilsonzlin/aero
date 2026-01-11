@@ -24,6 +24,13 @@ The INF binds to the modern virtio-blk PCI ID:
 
 - `PCI\VEN_1AF4&DEV_1042` (modern-only virtio-blk; requires `disable-legacy=on`)
 
+## Repo layout note (canonical driver)
+
+This repository intentionally keeps **exactly one** `aerovblk` driver package that binds to
+`PCI\VEN_1AF4&DEV_1042` so CI builds and guest-tools packaging are deterministic.
+
+The older duplicate under `drivers/win7/virtio-blk/` has been removed.
+
 ## Installation (non-boot disk)
 
 1. Copy `aerovblk.sys` and `aerovblk.inf` onto the guest.

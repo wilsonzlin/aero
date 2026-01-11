@@ -72,6 +72,18 @@ typedef struct _LUID {
   #endif
 #endif
 
+// Windows-style HRESULT helpers (portable builds).
+//
+// When building on Windows, <windows.h> provides these macros. For portable host
+// tests we define them here so shared code can use SUCCEEDED/FAILED without
+// pulling in any platform headers.
+#ifndef SUCCEEDED
+  #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
+#endif
+#ifndef FAILED
+  #define FAILED(hr) (((HRESULT)(hr)) < 0)
+#endif
+
 // Common D3D9 HRESULTs used by D3D9Ex GetData/CreateQuery paths.
 #ifndef D3DERR_NOTAVAILABLE
   #define D3DERR_NOTAVAILABLE ((HRESULT)0x8876086AL)
