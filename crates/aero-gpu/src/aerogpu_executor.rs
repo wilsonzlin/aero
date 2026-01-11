@@ -1431,7 +1431,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             })?;
             if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
                 return Err(ExecutorError::Validation(format!(
-                    "COPY_BUFFER: dst backing_alloc_id={} is read-only",
+                    "COPY_BUFFER: WRITEBACK_DST to READONLY backing_alloc_id={}",
                     dst_backing.alloc_id
                 )));
             }
@@ -1693,13 +1693,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
                 )
             })?;
-            let alloc = table.get(dst_backing.alloc_id).ok_or_else(|| {
+            let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "COPY_TEXTURE2D: missing alloc table entry for alloc_id={}",
                     dst_backing.alloc_id
                 ))
             })?;
-            if (alloc.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
+            if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
                 return Err(ExecutorError::Validation(format!(
                     "COPY_TEXTURE2D: WRITEBACK_DST to READONLY alloc_id={}",
                     dst_backing.alloc_id
