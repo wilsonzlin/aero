@@ -6,6 +6,9 @@ Win7-era D3D10/11 UMD DDI headers (typically from a Windows SDK/WDK install).
 It exists to catch “wrong header version / wrong packing / wrong target arch” problems early by
 printing `sizeof`/`offsetof` for the key structs involved in Win7 (WDDM 1.1) D3D10/D3D11 UMD:
 
+- CreateDevice wiring (where `pCallbacks` / `pUMCallbacks` live):
+  - `D3D10DDIARG_CREATEDEVICE`
+  - `D3D11DDIARG_CREATEDEVICE`
 - device/context creation (kernel `hContext` + `hSyncObject` acquisition):
   - `D3DDDICB_CREATEDEVICE`
   - `D3DDDICB_CREATECONTEXT`

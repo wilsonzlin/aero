@@ -70,6 +70,40 @@ int main() {
   PRINT_OFF_OPT(D3D11DDI_DEVICECALLBACKS, pfnSetErrorCb);
   PrintSeparator();
 
+  // CreateDevice arg structs: where the runtime provides pCallbacks/pUMCallbacks.
+#if defined(_MSC_VER)
+  __if_exists(D3D10DDIARG_CREATEDEVICE) {
+    PRINT_SIZE(D3D10DDIARG_CREATEDEVICE);
+    PRINT_OFF_OPT(D3D10DDIARG_CREATEDEVICE, hRTDevice);
+    PRINT_OFF_OPT(D3D10DDIARG_CREATEDEVICE, pCallbacks);
+    PRINT_OFF_OPT(D3D10DDIARG_CREATEDEVICE, pUMCallbacks);
+    PRINT_OFF_OPT(D3D10DDIARG_CREATEDEVICE, pDeviceFuncs);
+    PrintSeparator();
+  }
+  __if_not_exists(D3D10DDIARG_CREATEDEVICE) {
+    printf("%-48s <n/a>\n", "D3D10DDIARG_CREATEDEVICE");
+    PrintSeparator();
+  }
+
+  __if_exists(D3D11DDIARG_CREATEDEVICE) {
+    PRINT_SIZE(D3D11DDIARG_CREATEDEVICE);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, hRTDevice);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, pCallbacks);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, pDeviceCallbacks);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, pUMCallbacks);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, hImmediateContext);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, hDeviceContext);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, pDeviceFuncs);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, pDeviceContextFuncs);
+    PRINT_OFF_OPT(D3D11DDIARG_CREATEDEVICE, pImmediateContextFuncs);
+    PrintSeparator();
+  }
+  __if_not_exists(D3D11DDIARG_CREATEDEVICE) {
+    printf("%-48s <n/a>\n", "D3D11DDIARG_CREATEDEVICE");
+    PrintSeparator();
+  }
+#endif
+
   // D3D11 adapter GetCaps / CheckFeatureSupport surfaces (helps keep pfnGetCaps implementations correct).
   PRINT_SIZE(D3D11DDIARG_GETCAPS);
   PRINT_OFF_OPT(D3D11DDIARG_GETCAPS, Type);

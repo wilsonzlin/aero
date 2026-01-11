@@ -80,9 +80,11 @@ Fields that matter for submission/sync:
 
 - `D3D10DDI_HDEVICE hDevice` — driver device handle (where your device object lives).
 - `D3D10DDI_HRTDEVICE hRTDevice` — runtime device handle (store it; needed for `pfnSetErrorCb`).
-- `const D3D10DDI_DEVICECALLBACKS* pCallbacks` — runtime callback table for:
-  - reporting errors from `void` DDIs (`pfnSetErrorCb`)
-  - creating contexts, acquiring DMA buffers, submitting render/present, and waiting fences (via `d3dumddi.h` “CB” entrypoints)
+- Runtime callbacks (naming varies across Win7-capable header vintages):
+  - `const D3D10DDI_DEVICECALLBACKS* pCallbacks`
+    - contains `pfnSetErrorCb` for reporting errors from `void` DDIs
+  - Some WDKs also expose `const D3DDDI_DEVICECALLBACKS* pUMCallbacks`
+    - this is the shared `d3dumddi.h` callback table containing the submission/sync entrypoints (`pfnCreateContextCb2`, `pfnAllocateCb`, `pfnRenderCb`, `pfnPresentCb`, `pfnWaitForSynchronizationObjectCb`, etc).
 - `D3D10DDI_DEVICEFUNCS* pDeviceFuncs` — output function table you fill.
 
 #### D3D11: `D3D11DDIARG_CREATEDEVICE`
@@ -92,7 +94,7 @@ The runtime calls your `D3D11DDI_ADAPTERFUNCS::pfnCreateDevice(...)`, passing a 
 Fields that matter for submission/sync:
 
 - `D3D11DDI_HDEVICE hDevice`
-- `D3D11DDI_HRTDEVICE hRTDevice` (still the handle passed to `pfnSetErrorCb`)
+- `D3D11DDI_HRTDEVICE hRTDevice` (present in Win7 headers; used by `pfnSetErrorCb` in header revisions where that callback takes `HRTDEVICE`)
 - `D3D11DDI_HDEVICECONTEXT hImmediateContext` (Win7 immediate context handle you own)
 - Runtime callbacks (naming varies across Win7-capable header vintages):
   - `const D3D11DDI_DEVICECALLBACKS* pCallbacks` **or** `pDeviceCallbacks`
@@ -120,17 +122,20 @@ On WDDM 1.1 / Win7, the D3D10/D3D11 runtimes provide an error callback named:
 It is reachable from the **device callbacks** you receive during `CreateDevice`:
 
 - D3D10: `D3D10DDIARG_CREATEDEVICE::pCallbacks->pfnSetErrorCb`
-- D3D11: `D3D11DDIARG_CREATEDEVICE::pCallbacks->pfnSetErrorCb`
+- D3D11: `D3D11DDIARG_CREATEDEVICE::{pCallbacks|pDeviceCallbacks}->pfnSetErrorCb`
 
-**Signature (conceptually):**
+**Signature (Win7 header variations):**
 
-- input: `D3D10DDI_HRTDEVICE` / `D3D11DDI_HRTDEVICE` plus an `HRESULT` describing the failure.
+- D3D10: `pfnSetErrorCb(D3D10DDI_HRTDEVICE, HRESULT)`
+- D3D11: commonly either:
+  - `pfnSetErrorCb(D3D11DDI_HRTDEVICE, HRESULT)`, or
+  - `pfnSetErrorCb(D3D11DDI_HDEVICE, HRESULT)`
 
 ### 2.2 Rule: “set error then return”
 
 When a `void` DDI encounters an error:
 
-1. Call `pfnSetErrorCb(hRTDevice, hr)`.
+1. Call `pfnSetErrorCb(<handle>, hr)` (using the handle type required by your header’s prototype).
 2. Return immediately (do not continue executing the DDI).
 
 The runtime associates the error with the originating API call.
@@ -606,6 +611,9 @@ Win7-era D3D10/11 UMD DDI headers:
 
 It includes the Win7 D3D10/11 UMD DDI headers and prints `sizeof`/`offsetof` for:
 
+- CreateDevice wiring (where `pCallbacks` / `pUMCallbacks` live):
+  - `D3D10DDIARG_CREATEDEVICE`
+  - `D3D11DDIARG_CREATEDEVICE`
 - Context bring-up:
   - `D3DDDICB_CREATEDEVICE`
   - `D3DDDICB_CREATECONTEXT`
