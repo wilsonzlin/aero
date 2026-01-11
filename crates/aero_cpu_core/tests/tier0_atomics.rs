@@ -1,6 +1,6 @@
 use aero_cpu_core::interp::tier0::exec::step;
 use aero_cpu_core::interp::tier0::exec::StepExit;
-use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+use aero_cpu_core::mem::{CpuBus, CpuBusValue, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_OF, FLAG_SF, FLAG_ZF};
 use aero_cpu_core::Exception;
 use aero_x86::Register;
@@ -19,6 +19,88 @@ fn exec_steps(state: &mut CpuState, bus: &mut FlatTestBus, code: &[u8], steps: u
         );
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct CountingBus {
+    inner: FlatTestBus,
+    atomic_rmw_calls: u64,
+}
+
+impl CountingBus {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: FlatTestBus::new(size),
+            atomic_rmw_calls: 0,
+        }
+    }
+
+    fn load(&mut self, addr: u64, bytes: &[u8]) {
+        self.inner.load(addr, bytes);
+    }
+}
+
+impl CpuBus for CountingBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.inner.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.inner.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
+    where
+        T: CpuBusValue,
+        Self: Sized,
+    {
+        self.atomic_rmw_calls += 1;
+        CpuBus::atomic_rmw(&mut self.inner, vaddr, f)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.inner.io_write(port, size, val)
+    }
 }
 
 #[test]
@@ -469,6 +551,11 @@ fn lock_prefix_on_register_operand_is_invalid_opcode() {
     state.set_rip(CODE_BASE);
     assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
 
+    // LOCK XCHG eax, ecx
+    bus.load(CODE_BASE, &[0xF0, 0x87, 0xC8]);
+    state.set_rip(CODE_BASE);
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
+
     // LOCK INC eax
     bus.load(CODE_BASE, &[0xF0, 0xFF, 0xC0]);
     state.set_rip(CODE_BASE);
@@ -478,4 +565,25 @@ fn lock_prefix_on_register_operand_is_invalid_opcode() {
     bus.load(CODE_BASE, &[0xF0, 0x0F, 0xAB, 0xC8]);
     state.set_rip(CODE_BASE);
     assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
+}
+
+#[test]
+fn xchg_memory_operand_is_implicitly_atomic_and_swaps() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    let mut bus = CountingBus::new(BUS_SIZE);
+    let addr = 0x200;
+    state.write_reg(Register::RSI, addr);
+
+    bus.write_u32(addr, 0xAABB_CCDD).unwrap();
+    state.write_reg(Register::EAX, 0x1234_5678);
+
+    // XCHG dword ptr [rsi], eax
+    bus.load(CODE_BASE, &[0x87, 0x06]);
+    state.set_rip(CODE_BASE);
+    let exit = step(&mut state, &mut bus).unwrap();
+    assert!(matches!(exit, StepExit::Continue | StepExit::Branch));
+
+    assert_eq!(bus.atomic_rmw_calls, 1);
+    assert_eq!(bus.read_u32(addr).unwrap(), 0x1234_5678);
+    assert_eq!(state.read_reg(Register::EAX), 0xAABB_CCDD);
 }
