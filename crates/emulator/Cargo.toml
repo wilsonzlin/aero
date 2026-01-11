@@ -7,6 +7,8 @@ license = "MIT OR Apache-2.0"
 default = []
 aerogpu-native = ["dep:aero-gpu", "dep:pollster"]
 aerogpu-exec = ["dep:anyhow", "dep:aero-d3d11", "dep:aero-gpu", "dep:pollster"]
+# Alias for the WebGPU-backed AeroGPU command executor.
+aerogpu-webgpu = ["aerogpu-exec"]
 net-trace = []
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
