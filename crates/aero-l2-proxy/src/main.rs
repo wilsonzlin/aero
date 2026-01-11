@@ -1,14 +1,76 @@
 #![forbid(unsafe_code)]
 
+use std::{io::Write, net::SocketAddr, str::FromStr};
+
 use aero_l2_proxy::{start_server, ProxyConfig};
+
+#[derive(Default)]
+struct CliArgs {
+    bind: Option<SocketAddr>,
+    ready_stdout: bool,
+}
+
+fn parse_args() -> Result<CliArgs, String> {
+    let mut out = CliArgs::default();
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--ready-stdout" {
+            out.ready_stdout = true;
+            continue;
+        }
+
+        if arg == "--bind" {
+            let value = args
+                .next()
+                .ok_or_else(|| "--bind requires a value like 127.0.0.1:0".to_string())?;
+            out.bind = Some(
+                SocketAddr::from_str(&value)
+                    .map_err(|_| format!("invalid --bind value {value:?}"))?,
+            );
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--bind=") {
+            out.bind = Some(
+                SocketAddr::from_str(value)
+                    .map_err(|_| format!("invalid --bind value {value:?}"))?,
+            );
+            continue;
+        }
+
+        if arg == "--help" || arg == "-h" {
+            println!(
+                "Usage: aero-l2-proxy [--bind <ip:port>] [--ready-stdout]\n\
+                 \n\
+                 Options:\n\
+                 \t--bind <ip:port>\tOverride the bind address (env: AERO_L2_PROXY_LISTEN_ADDR)\n\
+                 \t--ready-stdout\t\tPrint AERO_L2_PROXY_READY <ws-url> once listening"
+            );
+            std::process::exit(0);
+        }
+
+        return Err(format!("unknown argument {arg:?}"));
+    }
+
+    Ok(out)
+}
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let cli = match parse_args() {
+        Ok(cli) => cli,
+        Err(err) => {
+            eprintln!("error: {err}");
+            eprintln!("Run with --help for usage.");
+            std::process::exit(2);
+        }
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let config = match ProxyConfig::from_env() {
+    let mut config = match ProxyConfig::from_env() {
         Ok(config) => config,
         Err(err) => {
             tracing::error!("invalid config: {err:#}");
@@ -16,8 +78,23 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    if let Some(bind) = cli.bind {
+        config.bind_addr = bind;
+    }
+
     let handle = start_server(config).await?;
-    tracing::info!("aero-l2-proxy listening on http://{}", handle.local_addr());
+    let local_addr = handle.local_addr();
+
+    if cli.ready_stdout {
+        let host = match local_addr.ip() {
+            std::net::IpAddr::V4(ip) => ip.to_string(),
+            std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+        };
+        println!("AERO_L2_PROXY_READY ws://{host}:{}/l2", local_addr.port());
+        let _ = std::io::stdout().flush();
+    }
+
+    tracing::info!("aero-l2-proxy listening on http://{local_addr}");
 
     // Best-effort graceful shutdown on Ctrl+C / SIGTERM.
     let ctrl_c = tokio::signal::ctrl_c();
