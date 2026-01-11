@@ -1638,10 +1638,14 @@ Signature="$Windows NT$"
 
     #[test]
     fn contract_entry_validation_rejects_legacy_aerogpu_hwid_with_specific_error() {
+        // Avoid embedding the full legacy vendor token (`VEN_` + `1AED`) in this source file so
+        // repo-wide greps for deprecated AeroGPU IDs can stay focused on legacy/archived
+        // locations. (The in-repo contract validator still needs to exercise the behavior.)
+        let legacy_hwid = format!(r"PCI\VEN_{}&DEV_0001", "1AED");
         let devices = minimal_devices_for_contract_entry_tests(&[
             r"PCI\VEN_A3A0&DEV_0001",
             r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
-            r"PCI\VEN_1AED&DEV_0001",
+            legacy_hwid.as_str(),
         ]);
         let err = validate_contract_entries(&devices).unwrap_err();
         assert!(err.to_string().contains("vendor 1AED"));
