@@ -9,11 +9,17 @@ import {
   AerogpuCmdWriter,
   AerogpuShaderStage,
   decodeCmdDebugMarkerPayload,
+  decodeCmdDebugMarkerPayloadFromPacket,
   decodeCmdCreateInputLayoutBlob,
+  decodeCmdCreateInputLayoutBlobFromPacket,
   decodeCmdCreateShaderDxbcPayload,
+  decodeCmdCreateShaderDxbcPayloadFromPacket,
   decodeCmdSetShaderConstantsFPayload,
+  decodeCmdSetShaderConstantsFPayloadFromPacket,
   decodeCmdSetVertexBuffersBindings,
+  decodeCmdSetVertexBuffersBindingsFromPacket,
   decodeCmdUploadResourcePayload,
+  decodeCmdUploadResourcePayloadFromPacket,
   decodeCmdStreamView,
   iterCmdStream,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -198,4 +204,33 @@ test("decodeCmdStreamView collects header + packets", () => {
     view.packets.map((p) => p.opcode),
     [AerogpuCmdOpcode.CreateBuffer, AerogpuCmdOpcode.Draw, AerogpuCmdOpcode.Flush],
   );
+});
+
+test("variable-payload decoders accept AerogpuCmdPacket from iterCmdStream", () => {
+  const w = new AerogpuCmdWriter();
+  const dxbcBytes = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]);
+  const blobBytes = new Uint8Array([0x11, 0x22]);
+  const uploadBytes = new Uint8Array([1, 2, 3, 4]);
+  const shaderConstants = new Float32Array([1, 2, 3, 4]);
+  const bindings = [{ buffer: 10, strideBytes: 16, offsetBytes: 0 }];
+
+  w.createShaderDxbc(100, AerogpuShaderStage.Vertex, dxbcBytes);
+  w.setShaderConstantsF(AerogpuShaderStage.Pixel, 5, shaderConstants);
+  w.createInputLayout(200, blobBytes);
+  w.setVertexBuffers(1, bindings);
+  w.uploadResource(300, 0x1234n, uploadBytes);
+  w.debugMarker("hello");
+
+  const packets = Array.from(iterCmdStream(w.finish()));
+  assert.equal(packets.length, 6);
+
+  assert.deepEqual(decodeCmdCreateShaderDxbcPayloadFromPacket(packets[0]!).dxbcBytes, dxbcBytes);
+  assert.deepEqual(
+    Array.from(decodeCmdSetShaderConstantsFPayloadFromPacket(packets[1]!).data),
+    Array.from(shaderConstants),
+  );
+  assert.deepEqual(decodeCmdCreateInputLayoutBlobFromPacket(packets[2]!).blobBytes, blobBytes);
+  assert.deepEqual(decodeCmdSetVertexBuffersBindingsFromPacket(packets[3]!).bindings, bindings);
+  assert.deepEqual(decodeCmdUploadResourcePayloadFromPacket(packets[4]!).dataBytes, uploadBytes);
+  assert.equal(decodeCmdDebugMarkerPayloadFromPacket(packets[5]!).marker, "hello");
 });
