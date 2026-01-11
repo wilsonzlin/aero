@@ -85,20 +85,24 @@ function coerceBytes(value: unknown): Uint8Array | null {
   return null;
 }
 
-function wasmActionToProxyAction(action: WasmUsbHostAction): UsbHostAction | null {
+function wasmActionToProxyAction(action: WasmUsbHostAction): UsbHostAction {
   switch (action.kind) {
     case "controlIn":
       return { kind: "controlIn", id: action.id, setup: action.setup };
     case "controlOut": {
       const data = coerceBytes(action.data);
-      if (!data) return null;
+      if (!data) {
+        throw new Error("Invalid wasm USB controlOut action payload (expected bytes).");
+      }
       return { kind: "controlOut", id: action.id, setup: action.setup, data };
     }
     case "bulkIn":
       return { kind: "bulkIn", id: action.id, endpoint: action.endpoint, length: action.length };
     case "bulkOut": {
       const data = coerceBytes(action.data);
-      if (!data) return null;
+      if (!data) {
+        throw new Error("Invalid wasm USB bulkOut action payload (expected bytes).");
+      }
       return { kind: "bulkOut", id: action.id, endpoint: action.endpoint, data };
     }
     default: {
@@ -205,7 +209,6 @@ export class UsbPassthroughDemoRuntime {
       if (typeof (action as { kind?: unknown }).kind !== "string" || typeof (action as { id?: unknown }).id !== "number") continue;
 
       const proxy = wasmActionToProxyAction(action);
-      if (!proxy) continue;
 
       const proxyId = this.#nextProxyId;
       this.#nextProxyId += 1;

@@ -243,4 +243,22 @@ describe("UsbPassthroughDemoRuntime", () => {
     });
     expect(() => pollRuntime.pollResults()).toThrow("boom");
   });
+
+  it("throws when the demo emits an action with an invalid byte payload (so callers can reset instead of hanging)", () => {
+    const demo = new FakeDemo();
+    demo.actions.push({
+      kind: "bulkOut",
+      id: 1,
+      endpoint: 0x02,
+      // Invalid byte array: string entries are not allowed.
+      data: ["oops"],
+    });
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: () => undefined,
+    });
+
+    expect(() => runtime.tick()).toThrow(/bulkOut/i);
+  });
 });
