@@ -8,10 +8,11 @@
  * critical sizes/offsets/enums (captured from a Win7-era header set via the
  * probe tool) so future header/toolchain drift is caught at compile time.
  *
- * This file is intentionally inert unless AEROGPU_KMD_USE_WDK_DDI is defined.
+ * This file is intentionally inert unless AEROGPU_KMD_USE_WDK_DDI is defined
+ * and truthy (treat `AEROGPU_KMD_USE_WDK_DDI=0` as disabled).
  */
 
-#if !defined(AEROGPU_KMD_USE_WDK_DDI)
+#if !(defined(AEROGPU_KMD_USE_WDK_DDI) && AEROGPU_KMD_USE_WDK_DDI)
 /* Repo-local builds may not have the WDK headers; keep this header inert. */
 #else
 
