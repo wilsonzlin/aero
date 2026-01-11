@@ -108,6 +108,7 @@
     <ClCompile Include="src\virtiosnd_dma.c" />
     <ClCompile Include="src\virtiosnd_hw.c" />
     <ClCompile Include="src\virtiosnd_intx.c" />
+    <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c" />
     <ClCompile Include="src\virtiosnd_queue_split.c" />
     <ClCompile Include="src\virtiosnd_rx.c" />
     <ClCompile Include="src\virtiosnd_sg.c" />

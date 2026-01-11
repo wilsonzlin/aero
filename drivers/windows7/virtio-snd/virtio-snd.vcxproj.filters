@@ -43,6 +43,9 @@
     <ClCompile Include="src\virtiosnd_intx.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\virtiosnd_queue_split.c">
       <Filter>Source Files</Filter>
     </ClCompile>
