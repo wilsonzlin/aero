@@ -1,4 +1,4 @@
-import { startL2ProxyServer } from "./server.js";
+import { startL2ProxyServer } from "./server.ts";
 
 void (async () => {
   const running = await startL2ProxyServer();

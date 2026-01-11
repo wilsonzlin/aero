@@ -1,0 +1,459 @@
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import { EventEmitter } from "node:events";
+import { createHash, randomBytes } from "node:crypto";
+
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+function computeAccept(key) {
+  return createHash("sha1")
+    .update(`${key}${WS_GUID}`, "utf8")
+    .digest("base64");
+}
+
+function parseProtocolsHeader(header) {
+  const raw = Array.isArray(header) ? header.join(",") : typeof header === "string" ? header : "";
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
+function encodeFrame(opcode, payload, { mask }) {
+  const payloadBuf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+  const payloadLen = payloadBuf.length;
+
+  const finOpcode = 0x80 | (opcode & 0x0f);
+
+  let lenField = 0;
+  let extLen = Buffer.alloc(0);
+  if (payloadLen < 126) {
+    lenField = payloadLen;
+  } else if (payloadLen <= 0xffff) {
+    lenField = 126;
+    extLen = Buffer.allocUnsafe(2);
+    extLen.writeUInt16BE(payloadLen, 0);
+  } else {
+    lenField = 127;
+    extLen = Buffer.allocUnsafe(8);
+    // Note: we only need the low 32-bits for our use-cases (unit tests),
+    // but write the full u64 per RFC6455.
+    extLen.writeUInt32BE(0, 0);
+    extLen.writeUInt32BE(payloadLen >>> 0, 4);
+  }
+
+  const maskBit = mask ? 0x80 : 0x00;
+  const lenByte = maskBit | (lenField & 0x7f);
+
+  if (!mask) {
+    return Buffer.concat([Buffer.from([finOpcode, lenByte]), extLen, payloadBuf]);
+  }
+
+  const maskKey = randomBytes(4);
+  const masked = Buffer.allocUnsafe(payloadLen);
+  for (let i = 0; i < payloadLen; i++) masked[i] = payloadBuf[i] ^ maskKey[i & 3];
+  return Buffer.concat([Buffer.from([finOpcode, lenByte]), extLen, maskKey, masked]);
+}
+
+class WebSocket extends EventEmitter {
+  constructor(address, protocols = [], options = {}) {
+    super();
+
+    // Internal constructor for server-side accepted sockets.
+    if (address instanceof net.Socket) {
+      const { head = Buffer.alloc(0), isClient = false, protocol = "", maxPayload = 0 } = protocols ?? {};
+      this._initFromSocket(address, head, { isClient, protocol, maxPayload });
+      return;
+    }
+
+    /** @type {net.Socket | null} */
+    this._socket = null;
+    this._buffer = Buffer.alloc(0);
+    this._isClient = true;
+    this._maxPayload = 0;
+    this._protocol = "";
+
+    this._sentClose = false;
+    this._closeCode = null;
+    this._closeReason = Buffer.alloc(0);
+    this._closeEmitted = false;
+
+    this.binaryType = "nodebuffer";
+
+    let protos = protocols;
+    let opts = options;
+    if (protos && typeof protos === "object" && !Array.isArray(protos) && typeof protos !== "string") {
+      // new WebSocket(url, options)
+      opts = protos;
+      protos = [];
+    }
+    const protoList = Array.isArray(protos) ? protos : protos ? [protos] : [];
+
+    this._connect(address, protoList, opts ?? {});
+  }
+
+  get protocol() {
+    return this._protocol;
+  }
+
+  send(data, ...args) {
+    if (!this._socket) throw new Error("WebSocket is not connected");
+    const payload = normalizeSendData(data);
+    const frame = encodeFrame(Buffer.isBuffer(payload) ? 0x2 : 0x1, payload, {
+      mask: this._isClient,
+    });
+    const cb = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
+    if (cb) {
+      this._socket.write(frame, cb);
+    } else {
+      this._socket.write(frame);
+    }
+  }
+
+  close(code = 1000, reason = "") {
+    if (this._sentClose) return;
+    this._sentClose = true;
+    const payload = encodeClosePayload(code, reason);
+    if (this._socket) {
+      this._socket.write(encodeFrame(0x8, payload, { mask: this._isClient }));
+      this._socket.end();
+    }
+  }
+
+  terminate() {
+    if (this._socket) this._socket.destroy();
+  }
+
+  _connect(url, protocols, options) {
+    const u = new URL(url);
+    if (u.protocol !== "ws:" && u.protocol !== "wss:") {
+      queueMicrotask(() => this.emit("error", new Error(`Unsupported WebSocket URL scheme: ${u.protocol}`)));
+      return;
+    }
+
+    const secure = u.protocol === "wss:";
+    const mod = secure ? https : http;
+    const port = u.port ? Number.parseInt(u.port, 10) : secure ? 443 : 80;
+
+    const key = randomBytes(16).toString("base64");
+    const expectedAccept = computeAccept(key);
+
+    const headers = {
+      Connection: "Upgrade",
+      Upgrade: "websocket",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": key,
+      ...(protocols.length > 0 ? { "Sec-WebSocket-Protocol": protocols.join(", ") } : null),
+      ...(options.headers ?? {}),
+    };
+
+    const req = mod.request({
+      protocol: secure ? "https:" : "http:",
+      hostname: u.hostname,
+      port,
+      method: "GET",
+      path: `${u.pathname}${u.search}`,
+      headers,
+    });
+
+    let settled = false;
+
+    req.once("upgrade", (res, socket, head) => {
+      settled = true;
+
+      const accept = res.headers["sec-websocket-accept"];
+      if (typeof accept !== "string" || accept !== expectedAccept) {
+        socket.destroy();
+        this.emit("error", new Error("Invalid Sec-WebSocket-Accept in handshake response"));
+        return;
+      }
+
+      const protocol = typeof res.headers["sec-websocket-protocol"] === "string" ? res.headers["sec-websocket-protocol"] : "";
+
+      this._initFromSocket(socket, head, { isClient: true, protocol, maxPayload: options.maxPayload ?? 0 });
+      this.emit("open");
+    });
+
+    req.once("response", (res) => {
+      if (settled) return;
+      settled = true;
+      this.emit("unexpected-response", req, res);
+      // Ensure the response body is drained even if the consumer ignores it.
+      res.resume();
+    });
+
+    req.once("error", (err) => {
+      if (settled) return;
+      settled = true;
+      this.emit("error", err);
+    });
+
+    req.end();
+  }
+
+  _initFromSocket(socket, head, { isClient, protocol, maxPayload }) {
+    this._socket = socket;
+    this._buffer = head && head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+    this._isClient = Boolean(isClient);
+    this._protocol = protocol ?? "";
+    this._maxPayload = Number.isFinite(maxPayload) ? maxPayload : 0;
+
+    socket.setNoDelay(true);
+    socket.on("data", (chunk) => this._onData(chunk));
+    socket.on("error", (err) => this.emit("error", err));
+    socket.on("close", () => this._onSocketClose());
+    socket.resume();
+
+    if (this._buffer.length > 0) {
+      this._drainFrames();
+    }
+  }
+
+  _onData(chunk) {
+    if (chunk.length === 0) return;
+    this._buffer = this._buffer.length === 0 ? chunk : Buffer.concat([this._buffer, chunk]);
+    this._drainFrames();
+  }
+
+  _fail(code, reason) {
+    try {
+      this.close(code, reason);
+    } catch {
+      // ignore
+    }
+  }
+
+  _drainFrames() {
+    while (true) {
+      if (this._buffer.length < 2) return;
+
+      const b0 = this._buffer[0];
+      const b1 = this._buffer[1];
+
+      const fin = (b0 & 0x80) !== 0;
+      const opcode = b0 & 0x0f;
+      const masked = (b1 & 0x80) !== 0;
+      let len = b1 & 0x7f;
+
+      if (!fin) {
+        this._fail(1002, "Fragmented frames not supported");
+        return;
+      }
+
+      const expectMasked = !this._isClient;
+      if (masked !== expectMasked) {
+        this._fail(1002, "Invalid masking");
+        return;
+      }
+
+      let offset = 2;
+      if (len === 126) {
+        if (this._buffer.length < offset + 2) return;
+        len = this._buffer.readUInt16BE(offset);
+        offset += 2;
+      } else if (len === 127) {
+        if (this._buffer.length < offset + 8) return;
+        const big = this._buffer.readBigUInt64BE(offset);
+        if (big > BigInt(Number.MAX_SAFE_INTEGER)) {
+          this._fail(1009, "Message too large");
+          return;
+        }
+        len = Number(big);
+        offset += 8;
+      }
+
+      if (this._maxPayload > 0 && len > this._maxPayload) {
+        this._fail(1009, "Message too large");
+        return;
+      }
+
+      let maskKey = null;
+      if (masked) {
+        if (this._buffer.length < offset + 4) return;
+        maskKey = this._buffer.subarray(offset, offset + 4);
+        offset += 4;
+      }
+
+      if (this._buffer.length < offset + len) return;
+
+      let payload = this._buffer.subarray(offset, offset + len);
+      offset += len;
+
+      if (maskKey) {
+        const unmasked = Buffer.allocUnsafe(payload.length);
+        for (let i = 0; i < payload.length; i++) {
+          unmasked[i] = payload[i] ^ maskKey[i & 3];
+        }
+        payload = unmasked;
+      } else {
+        payload = Buffer.from(payload);
+      }
+
+      this._buffer = this._buffer.subarray(offset);
+
+      if (opcode === 0x1) {
+        this.emit("message", payload.toString("utf8"));
+        continue;
+      }
+      if (opcode === 0x2) {
+        this.emit("message", payload);
+        continue;
+      }
+      if (opcode === 0x9) {
+        // Ping → Pong.
+        if (this._socket) {
+          this._socket.write(encodeFrame(0x0a, payload, { mask: this._isClient }));
+        }
+        continue;
+      }
+      if (opcode === 0x0a) {
+        // Pong: ignore.
+        continue;
+      }
+      if (opcode === 0x8) {
+        const { code, reason } = decodeClosePayload(payload);
+        this._closeCode = code;
+        this._closeReason = reason;
+
+        if (!this._sentClose) {
+          this._sentClose = true;
+          if (this._socket) {
+            this._socket.write(encodeFrame(0x8, encodeClosePayload(code, reason), { mask: this._isClient }));
+          }
+        }
+        if (this._socket) this._socket.end();
+        continue;
+      }
+
+      this._fail(1002, "Unsupported opcode");
+      return;
+    }
+  }
+
+  _onSocketClose() {
+    if (this._closeEmitted) return;
+    this._closeEmitted = true;
+    const code = this._closeCode ?? (this._sentClose ? 1000 : 1006);
+    const reason = this._closeReason ?? Buffer.alloc(0);
+    this.emit("close", code, reason);
+  }
+}
+
+function normalizeSendData(data) {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  return Buffer.from(String(data));
+}
+
+function encodeClosePayload(code, reason) {
+  const reasonBuf = Buffer.isBuffer(reason) ? reason : Buffer.from(reason ?? "", "utf8");
+  const buf = Buffer.allocUnsafe(2 + reasonBuf.length);
+  buf.writeUInt16BE(code, 0);
+  reasonBuf.copy(buf, 2);
+  return buf;
+}
+
+function decodeClosePayload(payload) {
+  if (payload.length < 2) return { code: 1005, reason: Buffer.alloc(0) };
+  const code = payload.readUInt16BE(0);
+  return { code, reason: payload.subarray(2) };
+}
+
+class WebSocketServer extends EventEmitter {
+  constructor(options = {}) {
+    super();
+    this.clients = new Set();
+    this._noServer = Boolean(options.noServer);
+    this._maxPayload = Number.isFinite(options.maxPayload) ? options.maxPayload : 0;
+    this._handleProtocols = typeof options.handleProtocols === "function" ? options.handleProtocols : null;
+
+    this._server = null;
+    if (!this._noServer) {
+      const host = options.host ?? "127.0.0.1";
+      const port = options.port ?? 0;
+
+      const server = http.createServer();
+      this._server = server;
+
+      server.on("upgrade", (req, socket, head) => {
+        this.handleUpgrade(req, socket, head, (ws) => this.emit("connection", ws, req));
+      });
+      server.on("listening", () => this.emit("listening"));
+      server.on("error", (err) => this.emit("error", err));
+      server.listen(port, host);
+    }
+  }
+
+  address() {
+    return this._server ? this._server.address() : null;
+  }
+
+  close(cb) {
+    for (const client of this.clients) client.terminate();
+    this.clients.clear();
+
+    if (this._server) {
+      this._server.close(() => cb?.());
+      return;
+    }
+    cb?.();
+  }
+
+  handleUpgrade(req, socket, head, cb) {
+    try {
+      const key = req.headers["sec-websocket-key"];
+      if (typeof key !== "string" || key.length === 0) {
+        socket.destroy();
+        return;
+      }
+
+      const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
+      const offeredSet = new Set(offered);
+      let selected = "";
+      if (this._handleProtocols) {
+        const res = this._handleProtocols(offeredSet, req);
+        if (res === false) {
+          socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          return;
+        }
+        if (typeof res === "string") {
+          selected = res;
+        }
+      }
+
+      const accept = computeAccept(key);
+      const lines = [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${accept}`,
+        ...(selected ? [`Sec-WebSocket-Protocol: ${selected}`] : []),
+        "",
+        "",
+      ];
+      socket.write(lines.join("\r\n"));
+
+      const ws = new WebSocket(socket, {
+        head,
+        isClient: false,
+        protocol: selected,
+        maxPayload: this._maxPayload,
+      });
+      this.clients.add(ws);
+      const forget = () => this.clients.delete(ws);
+      ws.once("close", forget);
+      ws.once("error", forget);
+
+      cb(ws);
+    } catch {
+      socket.destroy();
+    }
+  }
+}
+
+export { WebSocket, WebSocketServer };
+export default WebSocket;

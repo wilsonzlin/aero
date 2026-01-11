@@ -2,7 +2,7 @@ import net from "node:net";
 import { randomInt } from "node:crypto";
 import { once } from "node:events";
 
-import { WebSocketServer } from "ws";
+import { WebSocketServer } from "../../tools/minimal_ws.js";
 
 import {
   TCP_FLAGS,

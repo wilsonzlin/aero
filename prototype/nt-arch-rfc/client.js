@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
-import WebSocket from "ws";
+import WebSocket from "../../tools/minimal_ws.js";
 
 import {
   TCP_FLAGS,

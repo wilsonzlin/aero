@@ -1,11 +1,11 @@
 import http from "node:http";
 import type { Duplex } from "node:stream";
 
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer, type WebSocket } from "../../../tools/minimal_ws.js";
 
-import { loadConfigFromEnv, type L2ProxyConfig } from "./config.js";
-import { ConnectionCounter, SessionQuota } from "./limits.js";
-import { chooseL2Subprotocol, L2_TUNNEL_PATH, validateL2WsUpgrade } from "./policy.js";
+import { loadConfigFromEnv, type L2ProxyConfig } from "./config.ts";
+import { ConnectionCounter, SessionQuota } from "./limits.ts";
+import { chooseL2Subprotocol, L2_TUNNEL_PATH, validateL2WsUpgrade } from "./policy.ts";
 
 export interface RunningL2ProxyServer {
   server: http.Server;

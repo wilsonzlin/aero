@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { WebSocket } from "ws";
+import { WebSocket } from "../tools/minimal_ws.js";
 
-import { startL2ProxyServer } from "../proxy/aero-l2-proxy/src/server.js";
+import { startL2ProxyServer } from "../proxy/aero-l2-proxy/src/server.ts";
 
 function getServerPort(server) {
   const addr = server.address();
