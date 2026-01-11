@@ -10,6 +10,10 @@ will bind the driver automatically when a virtio-input device is present.
 
 * **Virtio Specification** → *PCI bus binding* → “PCI Device IDs” table for
   vendor **`0x1AF4`** (Red Hat) and **virtio device type `VIRTIO_ID_INPUT`**.
+* **Aero Windows virtio contract (definitive)** → `docs/windows7-virtio-driver-contract.md`
+  (PCI identity rules; subsystem IDs for keyboard vs mouse; Revision ID policy).
+* **Aero Windows device contract (tooling manifest)** → `docs/windows-device-contract.md` and
+  `docs/windows-device-contract.json` (stable PCI IDs + strict HWID patterns for automation).
 * **QEMU** (runtime verification) → QEMU monitor command `info pci` shows the
   currently-emitted `vendor:device` IDs for each `-device ...` option.
 
@@ -76,3 +80,20 @@ Keyboard: PCI device 1af4:1052
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
+
+## Aero contract v1 expectations (keyboard vs mouse subsystem + revision)
+
+`AERO-W7-VIRTIO` v1 exposes **two** virtio-input PCI functions (keyboard + mouse)
+with the same Vendor/Device ID, and uses the PCI Subsystem Device ID to
+distinguish them:
+
+* Vendor/Device: `PCI\VEN_1AF4&DEV_1052`
+* Revision ID: `REV_01`
+* Subsystem vendor: `0x1AF4`
+* Subsystem device:
+  * keyboard: `0x0010` → `SUBSYS_00101AF4`
+  * mouse: `0x0011` → `SUBSYS_00111AF4`
+
+`docs/windows-device-contract.json` carries both strict and convenience HWID
+patterns; automation should prefer the strict `...&SUBSYS_...&REV_01` patterns
+to avoid false positives against non-Aero virtio-input devices.
