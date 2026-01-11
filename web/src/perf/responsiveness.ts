@@ -412,6 +412,7 @@ export class ResponsivenessTracker {
       recordMs(this.eventLoopLag, lag);
       this.expectedEventLoopTickMs = expected + interval;
     }, interval);
+    (this.eventLoopLagTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   private stopEventLoopLag(): void {

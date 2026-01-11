@@ -226,6 +226,7 @@ export class MemoryTelemetry {
     if (this.timer !== null) return;
     const intervalMs = Math.max(1, Math.floor(1000 / this.sampleHz));
     this.timer = setInterval(() => this.sampleNow(null), intervalMs);
+    (this.timer as unknown as { unref?: () => void }).unref?.();
   }
 
   stop(): void {

@@ -674,6 +674,7 @@ export function startAudioPerfSampling(
 
   sample();
   const intervalId = globalThis.setInterval(sample, intervalMs);
+  (intervalId as unknown as { unref?: () => void }).unref?.();
   let stopped = false;
   return () => {
     if (stopped) return;

@@ -375,9 +375,11 @@ export class PerfSession implements PerfApi {
 
   private startDrainTimer(): void {
     if (this.drainTimer !== null) return;
-    this.drainTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       this.aggregator.drain();
     }, 200);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.drainTimer = timer;
   }
 
   private stopDrainTimer(): void {

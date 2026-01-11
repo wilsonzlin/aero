@@ -75,6 +75,7 @@ export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticM
       remaining -= n;
     }
   }, tickMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
 
   return {
     ringBuffer: rb.sab,
