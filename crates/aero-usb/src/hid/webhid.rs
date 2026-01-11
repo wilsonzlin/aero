@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::de::{Error as DeError, Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use super::report_descriptor;
@@ -16,11 +17,117 @@ fn default_true() -> bool {
 pub struct HidCollectionInfo {
     pub usage_page: u32,
     pub usage: u32,
-    pub collection_type: u8,
+    // Normalized WebHID metadata uses a numeric `collectionType` code (0..=6) that matches the
+    // HID report descriptor `Collection(...)` payload. For resilience we also accept the WebHID
+    // string enum form under the `type` field.
+    #[serde(alias = "type")]
+    pub collection_type: HidCollectionType,
     pub children: Vec<HidCollectionInfo>,
     pub input_reports: Vec<HidReportInfo>,
     pub output_reports: Vec<HidReportInfo>,
     pub feature_reports: Vec<HidReportInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HidCollectionType {
+    Physical = 0x00,
+    Application = 0x01,
+    Logical = 0x02,
+    Report = 0x03,
+    NamedArray = 0x04,
+    UsageSwitch = 0x05,
+    UsageModifier = 0x06,
+}
+
+impl HidCollectionType {
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0x00 => Some(HidCollectionType::Physical),
+            0x01 => Some(HidCollectionType::Application),
+            0x02 => Some(HidCollectionType::Logical),
+            0x03 => Some(HidCollectionType::Report),
+            0x04 => Some(HidCollectionType::NamedArray),
+            0x05 => Some(HidCollectionType::UsageSwitch),
+            0x06 => Some(HidCollectionType::UsageModifier),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for HidCollectionType {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u8(self.code())
+    }
+}
+
+impl<'de> Deserialize<'de> for HidCollectionType {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct HidCollectionTypeVisitor;
+
+        impl<'de> Visitor<'de> for HidCollectionTypeVisitor {
+            type Value = HidCollectionType;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                formatter.write_str("a HID collection type (string enum or numeric code 0..=6)")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                let code = u8::try_from(value)
+                    .map_err(|_| E::invalid_value(Unexpected::Unsigned(value), &self))?;
+                HidCollectionType::from_code(code)
+                    .ok_or_else(|| E::invalid_value(Unexpected::Unsigned(u64::from(code)), &self))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                if value < 0 {
+                    return Err(E::invalid_value(Unexpected::Signed(value), &self));
+                }
+                self.visit_u64(value as u64)
+            }
+
+            fn visit_str<E>(self, value: &str) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                match value {
+                    "physical" => Ok(HidCollectionType::Physical),
+                    "application" => Ok(HidCollectionType::Application),
+                    "logical" => Ok(HidCollectionType::Logical),
+                    "report" => Ok(HidCollectionType::Report),
+                    "namedArray" => Ok(HidCollectionType::NamedArray),
+                    "usageSwitch" => Ok(HidCollectionType::UsageSwitch),
+                    "usageModifier" => Ok(HidCollectionType::UsageModifier),
+                    other => Err(E::invalid_value(Unexpected::Str(other), &self)),
+                }
+            }
+
+            fn visit_string<E>(self, value: String) -> core::result::Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        deserializer.deserialize_any(HidCollectionTypeVisitor)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -116,7 +223,7 @@ fn convert_collection(
     Ok(report_descriptor::HidCollectionInfo {
         usage_page: collection.usage_page,
         usage: collection.usage,
-        collection_type: collection.collection_type,
+        collection_type: collection.collection_type.code(),
         input_reports: collection
             .input_reports
             .iter()
@@ -233,7 +340,7 @@ mod tests {
         vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,
-            collection_type: 0x01,
+            collection_type: HidCollectionType::Application,
             children: vec![],
             input_reports: vec![HidReportInfo {
                 report_id: 0,
@@ -383,5 +490,65 @@ mod tests {
         .expect("deserialize without isRelative field");
 
         assert!(!collection.input_reports[0].items[0].is_absolute);
+    }
+
+    #[test]
+    fn deserialize_accepts_collection_type_as_type_string_alias() {
+        let collection: HidCollectionInfo = serde_json::from_str(
+            r#"{
+              "usagePage": 1,
+              "usage": 0,
+              "type": "application",
+              "children": [],
+              "inputReports": [],
+              "outputReports": [],
+              "featureReports": []
+            }"#,
+        )
+        .expect("deserialize type string alias form");
+
+        assert_eq!(collection.collection_type, HidCollectionType::Application);
+    }
+
+    #[test]
+    fn deserialize_accepts_collection_type_as_type_numeric_alias() {
+        let collection: HidCollectionInfo = serde_json::from_str(
+            r#"{
+              "usagePage": 1,
+              "usage": 0,
+              "type": 1,
+              "children": [],
+              "inputReports": [],
+              "outputReports": [],
+              "featureReports": []
+            }"#,
+        )
+        .expect("deserialize type numeric alias form");
+
+        assert_eq!(collection.collection_type, HidCollectionType::Application);
+    }
+
+    #[test]
+    fn collection_type_serializes_as_numeric_collection_type_field() {
+        let collection: HidCollectionInfo = serde_json::from_str(
+            r#"{
+              "usagePage": 1,
+              "usage": 0,
+              "type": "application",
+              "children": [],
+              "inputReports": [],
+              "outputReports": [],
+              "featureReports": []
+            }"#,
+        )
+        .expect("deserialize type string form");
+
+        let value = serde_json::to_value(&collection).expect("serialize collection");
+
+        assert_eq!(value.get("collectionType"), Some(&serde_json::json!(1)));
+        assert!(
+            value.get("type").is_none(),
+            "normalized JSON should not use the WebHID string enum field name: {value}"
+        );
     }
 }
