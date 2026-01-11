@@ -87,11 +87,14 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     if !opts.skip_rust {
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&repo_root)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
             .args(["fmt", "--all", "--", "--check"]);
         runner.run_step("Rust: cargo fmt --all -- --check", &mut cmd)?;
 
         let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root).arg("clippy");
+        cmd.current_dir(&repo_root)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
+            .arg("clippy");
         if cargo_locked {
             cmd.args(cargo_locked_args);
         }
@@ -106,7 +109,9 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         runner.run_step("Rust: cargo clippy", &mut cmd)?;
 
         let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root).arg("test");
+        cmd.current_dir(&repo_root)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
+            .arg("test");
         if cargo_locked {
             cmd.args(cargo_locked_args);
         }
@@ -120,6 +125,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
         let mut cmd = Command::new("wasm-pack");
         cmd.current_dir(&wasm_crate_dir)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
             .args(["test", "--node", "--"]);
         if cargo_locked {
             cmd.args(cargo_locked_args);

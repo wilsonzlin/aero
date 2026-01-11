@@ -9,6 +9,8 @@ use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 use wgpu::util::DeviceExt;
 
+mod common;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Vertex {
@@ -250,8 +252,10 @@ fn assert_rgba_near(actual: [u8; 4], expected: [u8; 4], tolerance: u8) {
 #[test]
 fn render_blend_mode_correctness() {
     let Some((device, queue)) = create_device() else {
-        // Some environments (e.g. CI containers without software adapters) cannot initialize wgpu.
-        // The state translation is covered by unit tests; skip these integration tests in that case.
+        common::skip_or_panic(
+            "render_blend_mode_correctness",
+            "wgpu adapter/device unavailable",
+        );
         return;
     };
     let (vs, fs) = create_shader_modules(&device);
@@ -420,6 +424,10 @@ fn render_blend_mode_correctness() {
 #[test]
 fn render_depth_test_correctness() {
     let Some((device, queue)) = create_device() else {
+        common::skip_or_panic(
+            "render_depth_test_correctness",
+            "wgpu adapter/device unavailable",
+        );
         return;
     };
     let (vs, fs) = create_shader_modules(&device);
@@ -573,6 +581,10 @@ fn render_depth_test_correctness() {
 #[test]
 fn render_stencil_correctness() {
     let Some((device, queue)) = create_device() else {
+        common::skip_or_panic(
+            "render_stencil_correctness",
+            "wgpu adapter/device unavailable",
+        );
         return;
     };
     let (vs, fs) = create_shader_modules(&device);

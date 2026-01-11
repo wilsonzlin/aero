@@ -7,7 +7,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use wgpu::util::DeviceExt;
 
-fn create_device() -> (wgpu::Device, wgpu::Queue) {
+mod common;
+
+fn create_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
         // Some WGPU backends complain loudly if this isn't set, even when we never create a surface.
         std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
@@ -25,8 +27,12 @@ fn create_device() -> (wgpu::Device, wgpu::Queue) {
             compatible_surface: None,
             force_fallback_adapter: false,
         }))
-    })
-    .expect("no compatible wgpu adapter found");
+    });
+
+    let Some(adapter) = adapter else {
+        common::skip_or_panic(test_name, "no compatible wgpu adapter found");
+        return None;
+    };
 
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
@@ -36,7 +42,12 @@ fn create_device() -> (wgpu::Device, wgpu::Queue) {
         },
         None,
     ))
-    .expect("failed to request wgpu device")
+    .map_err(|err| {
+        let reason = format!("failed to request wgpu device: {err}");
+        common::skip_or_panic(test_name, &reason);
+        err
+    })
+    .ok()
 }
 
 fn read_texture_rgba8(
@@ -333,7 +344,9 @@ fn render_single_stream_position_color_uv() {
         })
         .collect();
 
-    let (device, queue) = create_device();
+    let Some((device, queue)) = create_device("render_single_stream_position_color_uv") else {
+        return;
+    };
     let pipeline = create_pipeline(&device, QUAD_SHADER, &layouts);
 
     let color_red: u32 = 0xffff_0000;
@@ -460,7 +473,9 @@ fn render_two_stream_position_uv_color() {
         })
         .collect();
 
-    let (device, queue) = create_device();
+    let Some((device, queue)) = create_device("render_two_stream_position_uv_color") else {
+        return;
+    };
     let pipeline = create_pipeline(&device, QUAD_SHADER, &layouts);
 
     let positions = quad_positions();
@@ -597,7 +612,9 @@ fn render_instanced_draw_per_instance_color() {
         })
         .collect();
 
-    let (device, queue) = create_device();
+    let Some((device, queue)) = create_device("render_instanced_draw_per_instance_color") else {
+        return;
+    };
     let pipeline = create_pipeline(&device, INSTANCE_SHADER, &layouts);
 
     let base_quad: [VertexPos2; 6] = [

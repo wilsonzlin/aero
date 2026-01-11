@@ -2,17 +2,20 @@ use std::sync::mpsc;
 
 use aero_webgpu::WebGpuContext;
 
+mod common;
+
 // Smoke test: render a solid red fullscreen triangle into an offscreen texture and read back a pixel.
 //
 // The test is written to gracefully skip on environments that don't expose a usable adapter
-// (e.g. CI containers without Vulkan/GL drivers).
+// (e.g. CI containers without Vulkan/GL drivers), unless `AERO_REQUIRE_WEBGPU=1`.
 #[test]
 fn headless_webgpu_triangle_renders() {
     pollster::block_on(async {
         let ctx = match WebGpuContext::request_headless(Default::default()).await {
             Ok(ctx) => ctx,
             Err(err) => {
-                eprintln!("skipping WebGPU smoke test: {err}");
+                let reason = err.to_string();
+                common::skip_or_panic("headless_webgpu_triangle_renders", &reason);
                 return;
             }
         };
