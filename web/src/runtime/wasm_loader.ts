@@ -9,6 +9,16 @@ export type MicBridgeHandle = {
     free(): void;
 };
 
+export type SharedRingBufferHandle = {
+    capacity_bytes(): number;
+    try_push(payload: Uint8Array): boolean;
+    try_pop(): Uint8Array | null;
+    wait_for_data(): void;
+    push_blocking(payload: Uint8Array): void;
+    pop_blocking(): Uint8Array;
+    free(): void;
+};
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -16,6 +26,13 @@ export interface WasmApi {
     sum: (a: number, b: number) => number;
     mem_store_u32: (offset: number, value: number) => void;
     mem_load_u32: (offset: number) => number;
+    /**
+     * Aero IPC ring helpers for working directly with an AIPC `SharedArrayBuffer`.
+     *
+     * Optional for older WASM builds.
+     */
+    SharedRingBuffer?: new (buffer: SharedArrayBuffer, offsetBytes: number) => SharedRingBufferHandle;
+    open_ring_by_kind?: (buffer: SharedArrayBuffer, kind: number, nth: number) => SharedRingBufferHandle;
     /**
      * Demo renderer: writes an RGBA8888 test pattern into WASM linear memory at `dstOffset`.
      *
@@ -349,6 +366,8 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        SharedRingBuffer: mod.SharedRingBuffer,
+        open_ring_by_kind: mod.open_ring_by_kind,
         demo_render_rgba8888: mod.demo_render_rgba8888,
         UsbHidBridge: mod.UsbHidBridge,
         WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
