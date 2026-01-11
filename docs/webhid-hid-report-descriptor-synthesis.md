@@ -24,12 +24,15 @@ Windows 7 note: the output is intentionally “boring HID 1.11” to maximize co
 Implementation references:
 
 - Browser normalization: `web/src/hid/webhid_normalize.ts`
-- Rust synthesis: `crates/emulator/src/io/usb/hid/report_descriptor.rs`
-  - WebHID JSON schema + conversion layer: `crates/emulator/src/io/usb/hid/webhid.rs`
+- Rust synthesis: `crates/aero-usb/src/hid/report_descriptor.rs`
+  - WebHID JSON schema + conversion layer: `crates/aero-usb/src/hid/webhid.rs`
 - Wire contract fixtures:
   - Fixture JSON: `tests/fixtures/hid/webhid_normalized_mouse.json`
   - TS contract test: `web/test/webhid_normalize_fixture.test.ts`
-  - Rust contract test: `crates/emulator/tests/webhid_normalized_fixture.rs`
+  - Rust contract tests: `crates/aero-usb/tests/webhid_passthrough.rs`
+
+(The same synthesis stack is also implemented in the native emulator under
+`crates/emulator/src/io/usb/hid/`, but `crates/aero-usb` is the primary reference for the browser/WASM path.)
 
 TypeScript/WebHID types:
 
@@ -182,7 +185,7 @@ Synthesis interpretation:
 
 ### Deterministic per-item emission order
 
-Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching the canonical encoder in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which is called by `webhid.rs`):
+Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching the canonical encoder in `crates/aero-usb/src/hid/report_descriptor.rs`, which is called by `crates/aero-usb/src/hid/webhid.rs`):
 
 1. Globals (in this order):
    - `Usage Page` (`item.usagePage`)
@@ -210,7 +213,7 @@ The synthesis treats these flags as a single `u16` and emits either a 1-byte or 
 - if `flags <= 0xFF`: emit 1 byte
 - otherwise: emit 2 bytes (little-endian)
 
-Implementation note: we reuse the canonical synthesizer in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which preserves the main-item flags exposed by WebHID (including `hasNull` for hat switches) while following the HID 1.11 bit assignments for each main item kind.
+Implementation note: we reuse the canonical synthesizer in `crates/aero-usb/src/hid/report_descriptor.rs`, which preserves the main-item flags exposed by WebHID (including `hasNull` for hat switches) while following the HID 1.11 bit assignments for each main item kind.
 
 ### Bit layout (LSB = bit 0)
 
