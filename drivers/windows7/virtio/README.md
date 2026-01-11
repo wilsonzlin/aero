@@ -19,6 +19,11 @@ To avoid Windows seeing **multiple** INFs that match the **same** modern device,
 make sure your driver set does **not** contain duplicate INFs that bind the
 same modern IDs.
 
+For example, don't stage both:
+
+- `drivers/windows7/virtio/net/aerovnet.inf` (canonical clean-room driver), and
+- `drivers/win7/virtio-net/aerovnet.inf` (legacy copy kept for older workflows)
+
 ## Contents
 
 - `common/` – shared virtio helpers (legacy transport + split-virtqueue library).
