@@ -1732,8 +1732,8 @@ async fn auth_rejection_metrics_increment_for_missing_and_invalid_api_key() {
         missing_label >= 1,
         "expected missing-credentials label counter >= 1, got {missing_label}"
     );
-    let invalid_label = parse_metric(&body, r#"l2_auth_reject_total{reason="invalid_api_key"}"#)
-        .unwrap();
+    let invalid_label =
+        parse_metric(&body, r#"l2_auth_reject_total{reason="invalid_api_key"}"#).unwrap();
     assert!(
         invalid_label >= 1,
         "expected invalid-api-key label counter >= 1, got {invalid_label}"
@@ -1893,11 +1893,8 @@ async fn max_connections_per_session_enforced() {
         .text()
         .await
         .unwrap();
-    let rejected = parse_metric(
-        &body,
-        "l2_upgrade_reject_max_connections_per_session_total",
-    )
-    .unwrap();
+    let rejected =
+        parse_metric(&body, "l2_upgrade_reject_max_connections_per_session_total").unwrap();
     assert!(
         rejected >= 1,
         "expected per-session reject counter >= 1, got {rejected}"

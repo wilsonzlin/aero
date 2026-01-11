@@ -1,7 +1,7 @@
 mod common;
 
-use aero_d3d11::{parse_signatures, DxbcFile, DxbcSignatureParameter, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::{parse_signatures, DxbcFile, DxbcSignatureParameter, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
@@ -129,7 +129,9 @@ fn aerogpu_cmd_links_vs_ps_by_register_even_when_semantics_rename() {
             let sigs = parse_signatures(&dxbc).expect("parse signatures");
             let mut isgn = sigs.isgn.expect("ps fixture missing ISGN").parameters;
             for p in &mut isgn {
-                if p.system_value_type == 0 && p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("COLOR")
+                if p.system_value_type == 0
+                    && p.semantic_index == 0
+                    && p.semantic_name.eq_ignore_ascii_case("COLOR")
                 {
                     p.semantic_name = "TEXCOORD".to_owned();
                 }

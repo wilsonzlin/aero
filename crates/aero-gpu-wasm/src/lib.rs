@@ -448,7 +448,9 @@ mod wasm {
                 .map_err(|err| JsValue::from_str(&err.to_string())),
             (None, Some(mem)) => d3d9_state
                 .executor
-                .execute_cmd_stream_with_guest_memory_for_context_async(context_id, &bytes, mem, None)
+                .execute_cmd_stream_with_guest_memory_for_context_async(
+                    context_id, &bytes, mem, None,
+                )
                 .await
                 .map_err(|err| JsValue::from_str(&err.to_string())),
             (None, None) => d3d9_state

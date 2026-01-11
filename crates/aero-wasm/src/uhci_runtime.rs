@@ -5,12 +5,12 @@ use std::rc::Rc;
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
+use aero_usb::GuestMemory;
 use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::{UsbDevice, UsbSpeed};
-use aero_usb::GuestMemory;
 
 const DEFAULT_IO_BASE: u16 = 0x5000;
 const DEFAULT_IRQ_LINE: u8 = 11;
@@ -287,14 +287,16 @@ impl UhciRuntime {
 
         let port = self.alloc_port(preferred_port)?;
 
-        let collections: Vec<webhid::HidCollectionInfo> = serde_wasm_bindgen::from_value(collections_json)
-            .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+        let collections: Vec<webhid::HidCollectionInfo> =
+            serde_wasm_bindgen::from_value(collections_json)
+                .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
-        let report_descriptor = webhid::synthesize_report_descriptor(&collections).map_err(|err| {
-            js_error(&format!(
-                "Failed to synthesize HID report descriptor: {err}"
-            ))
-        })?;
+        let report_descriptor =
+            webhid::synthesize_report_descriptor(&collections).map_err(|err| {
+                js_error(&format!(
+                    "Failed to synthesize HID report descriptor: {err}"
+                ))
+            })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
 
@@ -473,4 +475,3 @@ fn webhid_output_report_to_js(device_id: u32, report: UsbHidPassthroughOutputRep
     let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
     obj.into()
 }
-

@@ -906,7 +906,9 @@ impl AerogpuD3d9Executor {
                                 )
                             })?;
                         let dst_off = row_off.checked_add(dst_x_bytes).ok_or_else(|| {
-                            AerogpuD3d9Error::Validation("texture writeback backing overflow".into())
+                            AerogpuD3d9Error::Validation(
+                                "texture writeback backing overflow".into(),
+                            )
                         })?;
                         let dst_end =
                             dst_off.checked_add(row_bytes.len() as u64).ok_or_else(|| {
@@ -995,7 +997,9 @@ impl AerogpuD3d9Executor {
                                 )
                             })?;
                         let dst_off = row_off.checked_add(dst_x_bytes).ok_or_else(|| {
-                            AerogpuD3d9Error::Validation("texture writeback backing overflow".into())
+                            AerogpuD3d9Error::Validation(
+                                "texture writeback backing overflow".into(),
+                            )
                         })?;
                         let dst_end =
                             dst_off.checked_add(row_bytes.len() as u64).ok_or_else(|| {
@@ -2544,8 +2548,10 @@ impl AerogpuD3d9Executor {
                                 alloc.size_bytes
                             )));
                         }
-                        let backing_gpa =
-                            alloc.gpa.checked_add(dst_backing.alloc_offset_bytes).ok_or_else(|| {
+                        let backing_gpa = alloc
+                            .gpa
+                            .checked_add(dst_backing.alloc_offset_bytes)
+                            .ok_or_else(|| {
                                 AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst backing overflow".into(),
                                 )

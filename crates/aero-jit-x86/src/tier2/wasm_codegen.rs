@@ -73,17 +73,17 @@ impl Tier2WasmCodegen {
 
     /// Compile a Tier-2 trace into a standalone WASM module.
     ///
-/// ABI:
-/// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
-/// - import `env.memory`
-/// - when the trace performs memory operations, import memory helpers described by the
-///   `IMPORT_MEM_*` constants
-/// - optionally import `env.mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access_code) -> i64` when
-///   inline-TLB is enabled
-/// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
-///   [`Tier2WasmOptions::code_version_guard_import`] is enabled.
-///
-/// The trace spills cached registers + `CpuState.rflags` on every side exit.
+    /// ABI:
+    /// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
+    /// - import `env.memory`
+    /// - when the trace performs memory operations, import memory helpers described by the
+    ///   `IMPORT_MEM_*` constants
+    /// - optionally import `env.mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access_code) -> i64` when
+    ///   inline-TLB is enabled
+    /// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
+    ///   [`Tier2WasmOptions::code_version_guard_import`] is enabled.
+    ///
+    /// The trace spills cached registers + `CpuState.rflags` on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
         self.compile_trace_with_options(trace, plan, Tier2WasmOptions::default())
     }
@@ -1041,39 +1041,35 @@ impl Emitter<'_> {
 
             match width {
                 Width::W8 => {
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_read_u8
-                                .expect("mem_read_u8 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_read_u8
+                            .expect("mem_read_u8 import missing"),
+                    ));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W16 => {
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_read_u16
-                                .expect("mem_read_u16 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_read_u16
+                            .expect("mem_read_u16 import missing"),
+                    ));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W32 => {
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_read_u32
-                                .expect("mem_read_u32 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_read_u32
+                            .expect("mem_read_u32 import missing"),
+                    ));
                     self.f.instruction(&Instruction::I64ExtendI32U);
                 }
                 Width::W64 => {
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_read_u64
-                                .expect("mem_read_u64 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_read_u64
+                            .expect("mem_read_u64 import missing"),
+                    ));
                 }
             }
 
@@ -1180,43 +1176,39 @@ impl Emitter<'_> {
                     self.f.instruction(&Instruction::I64Const(0xff));
                     self.f.instruction(&Instruction::I64And);
                     self.f.instruction(&Instruction::I32WrapI64);
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_write_u8
-                                .expect("mem_write_u8 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u8
+                            .expect("mem_write_u8 import missing"),
+                    ));
                 }
                 Width::W16 => {
                     self.f.instruction(&Instruction::I64Const(0xffff));
                     self.f.instruction(&Instruction::I64And);
                     self.f.instruction(&Instruction::I32WrapI64);
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_write_u16
-                                .expect("mem_write_u16 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u16
+                            .expect("mem_write_u16 import missing"),
+                    ));
                 }
                 Width::W32 => {
                     self.f
                         .instruction(&Instruction::I64Const(0xffff_ffffu64 as i64));
                     self.f.instruction(&Instruction::I64And);
                     self.f.instruction(&Instruction::I32WrapI64);
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_write_u32
-                                .expect("mem_write_u32 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u32
+                            .expect("mem_write_u32 import missing"),
+                    ));
                 }
                 Width::W64 => {
-                    self.f
-                        .instruction(&Instruction::Call(
-                            self.imported
-                                .mem_write_u64
-                                .expect("mem_write_u64 import missing"),
-                        ));
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u64
+                            .expect("mem_write_u64 import missing"),
+                    ));
                 }
             }
             return;
