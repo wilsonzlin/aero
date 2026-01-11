@@ -583,7 +583,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private readonly semaphore: Semaphore;
   private readonly maxAttempts: number;
   private readonly retryBaseDelayMs: number;
-  private abort = new AbortController();
+  private readonly abort = new AbortController();
 
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private lastReadEnd: number | null = null;
@@ -765,11 +765,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
   async clearCache(): Promise<void> {
     this.cacheGeneration += 1;
-    this.abort.abort();
-    const inflight = Array.from(this.inflight.values());
     this.inflight.clear();
-    await Promise.allSettled(inflight);
-    this.abort = new AbortController();
     this.lastReadEnd = null;
     await this.chunkCache.clear();
     this.telemetry = {

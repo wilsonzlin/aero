@@ -456,7 +456,8 @@ function renderRemoteDiskPanel(): HTMLElement {
         return;
       }
 
-      const hitRate = remote.blockRequests > 0 ? remote.cacheHits / remote.blockRequests : 0;
+      const hitRateDenom = remote.cacheHits + remote.cacheMisses;
+      const hitRate = hitRateDenom > 0 ? remote.cacheHits / hitRateDenom : 0;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
       const downloadAmplification = res.io.bytesRead > 0 ? remote.bytesDownloaded / res.io.bytesRead : 0;
 
@@ -464,7 +465,8 @@ function renderRemoteDiskPanel(): HTMLElement {
         `imageSize=${formatByteSize(remote.totalSize)}\n` +
         `cache=${formatByteSize(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${formatMaybeBytes(remote.cacheLimitBytes)}\n` +
         `blockSize=${formatByteSize(remote.blockSize)}\n` +
-        `ioReads=${res.io.reads} ioBytesRead=${formatByteSize(res.io.bytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
+        `ioReads=${res.io.reads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? '—' : res.io.lastReadMs.toFixed(1)}\n` +
+        `ioBytesRead=${formatByteSize(res.io.bytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
         `requests=${remote.requests} bytesDownloaded=${formatByteSize(remote.bytesDownloaded)}\n` +
         `blockRequests=${remote.blockRequests} hits=${remote.cacheHits} misses=${remote.cacheMisses} inflightJoins=${remote.inflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
         `inflightFetches=${remote.inflightFetches} lastFetchMs=${remote.lastFetchMs === null ? '—' : remote.lastFetchMs.toFixed(1)}\n`;
