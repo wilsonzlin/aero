@@ -230,7 +230,14 @@ On a clean Win7 SP1 VM:
 
 1. Device Manager → Display adapters shows **AeroGPU Display Adapter** (no yellow bang).
 2. No **Code 52** (signature), **Code 39**, or **Code 43**.
-3. Confirm UMD DLL placement:
+3. Run the quick verification script (prints file placement + registry values and returns non-zero on failure):
+
+   ```bat
+   cd C:\path\to\out\packages\aerogpu\x64
+   packaging\win7\verify_umd_registration.cmd
+   ```
+
+4. Confirm UMD DLL placement:
     - x64 VM:
       - `C:\Windows\System32\aerogpu_d3d9_x64.dll` exists
       - `C:\Windows\SysWOW64\aerogpu_d3d9.dll` exists
