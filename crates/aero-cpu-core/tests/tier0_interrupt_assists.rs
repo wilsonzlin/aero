@@ -69,6 +69,12 @@ fn write_idt_gate64(
     bus.write_u32(addr + 12, 0).unwrap();
 }
 
+fn write_ivt_entry(bus: &mut FlatTestBus, vector: u8, offset: u16, segment: u16) {
+    let addr = (vector as u64) * 4;
+    bus.write_u16(addr, offset).unwrap();
+    bus.write_u16(addr + 2, segment).unwrap();
+}
+
 #[test]
 fn tier0_assists_protected_int_iret_no_privilege_change() {
     const BUS_SIZE: usize = 0x20000;
@@ -307,4 +313,87 @@ fn tier0_cpu_core_runner_executes_int_iretq_in_long_mode() {
     assert_eq!(cpu.state.read_reg(Register::RAX), 0x1234);
     assert_eq!(cpu.state.read_reg(Register::RSP), INITIAL_RSP);
     assert!(cpu.state.get_flag(RFLAGS_IF));
+}
+
+#[test]
+fn tier0_cpu_core_runner_delivers_external_interrupt_after_sti_shadow() {
+    const BUS_SIZE: usize = 0x10000;
+    const CODE_BASE: u64 = 0x0100;
+    const HANDLER_BASE: u64 = 0x0500;
+    const STACK_TOP: u64 = 0x8000;
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // Code: sti; nop; hlt
+    bus.load(CODE_BASE, &[0xFB, 0x90, 0xF4]);
+    // Handler: hlt
+    bus.load(HANDLER_BASE, &[0xF4]);
+    // IVT[0x20] -> 0000:0500
+    write_ivt_entry(&mut bus, 0x20, HANDLER_BASE as u16, 0);
+
+    let mut cpu = CpuCore::new(CpuMode::Real);
+    cpu.state.write_reg(Register::CS, 0);
+    cpu.state.write_reg(Register::SS, 0);
+    cpu.state.write_reg(Register::SP, STACK_TOP);
+    cpu.state.set_rflags(RFLAGS_RESERVED1); // IF=0
+    cpu.state.set_rip(CODE_BASE);
+    cpu.pending.inject_external_interrupt(0x20);
+
+    let mut ctx = AssistContext::default();
+    let cfg = Tier0Config::default();
+    let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
+
+    assert_eq!(res.exit, BatchExit::Halted);
+    assert_eq!(res.executed, 3);
+    assert_eq!(cpu.state.rip(), HANDLER_BASE + 1);
+
+    // Interrupt frame should return to the HLT instruction at CODE_BASE+2.
+    let sp = cpu.state.stack_ptr();
+    assert_eq!(bus.read_u16(sp).unwrap(), (CODE_BASE + 2) as u16);
+}
+
+#[test]
+fn tier0_cpu_core_runner_delivers_external_interrupt_after_mov_ss_shadow() {
+    const BUS_SIZE: usize = 0x10000;
+    const CODE_BASE: u64 = 0x0100;
+    const HANDLER_BASE: u64 = 0x0500;
+    const STACK_TOP: u64 = 0x8000;
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // Code: mov ss, ax; nop; hlt
+    bus.load(CODE_BASE, &[0x8E, 0xD0, 0x90, 0xF4]);
+    // Handler: hlt
+    bus.load(HANDLER_BASE, &[0xF4]);
+    // IVT[0x20] -> 0000:0500
+    write_ivt_entry(&mut bus, 0x20, HANDLER_BASE as u16, 0);
+
+    let mut cpu = CpuCore::new(CpuMode::Real);
+    cpu.state.write_reg(Register::CS, 0);
+    cpu.state.write_reg(Register::SS, 0);
+    cpu.state.write_reg(Register::AX, 0);
+    cpu.state.write_reg(Register::SP, STACK_TOP);
+    cpu.state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF);
+    cpu.state.set_rip(CODE_BASE);
+
+    let mut ctx = AssistContext::default();
+    let cfg = Tier0Config::default();
+
+    // Execute MOV SS (creates an interrupt shadow for the next instruction).
+    let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1);
+    assert_eq!(res.exit, BatchExit::Completed);
+    assert_eq!(res.executed, 1);
+    assert_eq!(cpu.state.rip(), CODE_BASE + 2);
+
+    cpu.pending.inject_external_interrupt(0x20);
+
+    // NOP executes, then the interrupt is delivered before the final HLT.
+    let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
+    assert_eq!(res.exit, BatchExit::Halted);
+    assert_eq!(res.executed, 2);
+    assert_eq!(cpu.state.rip(), HANDLER_BASE + 1);
+
+    // Interrupt frame should return to the HLT instruction at CODE_BASE+3.
+    let sp = cpu.state.stack_ptr();
+    assert_eq!(bus.read_u16(sp).unwrap(), (CODE_BASE + 3) as u16);
 }

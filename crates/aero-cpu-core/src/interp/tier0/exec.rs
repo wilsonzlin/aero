@@ -212,6 +212,11 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
 /// IRET bookkeeping). When an interrupt assist is encountered, this helper
 /// returns [`BatchExit::Assist`] with [`AssistReason::Interrupt`].
 ///
+/// This helper will still deliver any already-queued events in
+/// [`crate::interrupts::PendingEventState`] (pending exceptions + external
+/// interrupt FIFO) at instruction boundaries, including waking the CPU from
+/// `HLT` when a maskable interrupt is delivered.
+///
 /// Use [`run_batch_cpu_core_with_assists`] if you need Tier-0 to resolve
 /// interrupt assists.
 pub fn run_batch_with_assists<B: CpuBus>(
@@ -231,15 +236,40 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
     bus: &mut B,
     max_insts: u64,
 ) -> BatchResult {
-    if cpu.state.halted {
+    if max_insts == 0 {
         return BatchResult {
             executed: 0,
-            exit: BatchExit::Halted,
+            exit: if cpu.state.halted {
+                BatchExit::Halted
+            } else {
+                BatchExit::Completed
+            },
         };
     }
 
     let mut executed = 0u64;
     while executed < max_insts {
+        // Give pending exceptions/interrupts a chance at instruction boundaries.
+        if cpu.pending.has_pending_event() {
+            cpu.deliver_pending_event(bus)
+                .unwrap_or_else(|exit| panic!("pending event delivery failed: {exit:?}"));
+            continue;
+        }
+        if !cpu.pending.external_interrupts.is_empty() {
+            let before = cpu.pending.external_interrupts.len();
+            cpu.deliver_external_interrupt(bus)
+                .unwrap_or_else(|exit| panic!("external interrupt delivery failed: {exit:?}"));
+            if cpu.pending.external_interrupts.len() != before {
+                continue;
+            }
+        }
+        if cpu.state.halted {
+            return BatchResult {
+                executed,
+                exit: BatchExit::Halted,
+            };
+        }
+
         bus.sync(&cpu.state);
 
         let ip = cpu.state.rip();
@@ -411,6 +441,10 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 /// This is the canonical Tier-0 runner for tests/embeddings that need correct
 /// interrupt semantics (`CLI`/`STI`/`INT*`/`IRET*`), including interrupt shadows
 /// and IRET frame bookkeeping.
+///
+/// Like [`crate::exec::Vcpu::maybe_deliver_interrupt`], this helper also gives
+/// any already-queued exceptions/interrupts in [`interrupts::PendingEventState`]
+/// a chance at instruction boundaries.
 pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
     cfg: &Tier0Config,
     ctx: &mut AssistContext,
@@ -420,15 +454,40 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
 ) -> BatchResult {
     use aero_x86::{Mnemonic, OpKind};
 
-    if cpu.state.halted {
+    if max_insts == 0 {
         return BatchResult {
             executed: 0,
-            exit: BatchExit::Halted,
+            exit: if cpu.state.halted {
+                BatchExit::Halted
+            } else {
+                BatchExit::Completed
+            },
         };
     }
 
     let mut executed = 0u64;
     while executed < max_insts {
+        // Give pending exceptions/interrupts a chance at instruction boundaries.
+        if cpu.pending.has_pending_event() {
+            cpu.deliver_pending_event(bus)
+                .unwrap_or_else(|exit| panic!("pending event delivery failed: {exit:?}"));
+            continue;
+        }
+        if !cpu.pending.external_interrupts.is_empty() {
+            let before = cpu.pending.external_interrupts.len();
+            cpu.deliver_external_interrupt(bus)
+                .unwrap_or_else(|exit| panic!("external interrupt delivery failed: {exit:?}"));
+            if cpu.pending.external_interrupts.len() != before {
+                continue;
+            }
+        }
+        if cpu.state.halted {
+            return BatchResult {
+                executed,
+                exit: BatchExit::Halted,
+            };
+        }
+
         bus.sync(&cpu.state);
 
         let ip = cpu.state.rip();
