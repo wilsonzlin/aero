@@ -3034,9 +3034,9 @@ impl AerogpuD3d9Executor {
             }
 
             for (underlying, format, width, height) in targets {
-                let Some((x, y, w, h)) = clamp_scissor_rect(
-                    scissor.0, scissor.1, scissor.2, scissor.3, width, height,
-                ) else {
+                let Some((x, y, w, h)) =
+                    clamp_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3, width, height)
+                else {
                     continue;
                 };
 
@@ -3085,7 +3085,12 @@ impl AerogpuD3d9Executor {
                     width,
                     height,
                     ..
-                } => (*format, *width, *height, matches!(format, wgpu::TextureFormat::Depth24PlusStencil8)),
+                } => (
+                    *format,
+                    *width,
+                    *height,
+                    matches!(format, wgpu::TextureFormat::Depth24PlusStencil8),
+                ),
                 _ => return Err(AerogpuD3d9Error::UnknownResource(depth_handle)),
             };
 
@@ -3211,9 +3216,9 @@ impl AerogpuD3d9Executor {
     }
 
     fn clear_depth_pipeline(&self, key: ClearDepthPipelineKey) -> &wgpu::RenderPipeline {
-        self.clear_depth_pipelines
-            .get(&key)
-            .expect("missing clear depth pipeline; ensure_clear_depth_pipeline should be called first")
+        self.clear_depth_pipelines.get(&key).expect(
+            "missing clear depth pipeline; ensure_clear_depth_pipeline should be called first",
+        )
     }
 
     fn ensure_clear_pipeline(&mut self, format: wgpu::TextureFormat) {
