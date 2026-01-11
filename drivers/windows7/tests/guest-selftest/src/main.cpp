@@ -51,6 +51,8 @@ struct Options {
   std::wstring blk_root;
   // Skip the virtio-snd test (emits a SKIP marker).
   bool disable_snd = false;
+  // Skip the virtio-snd capture test (emits a SKIP marker).
+  bool disable_snd_capture = false;
   // If set, missing virtio-snd device causes the overall selftest to fail (instead of SKIP).
   bool require_snd = false;
   // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
@@ -3292,30 +3294,35 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     return out;
   }
 
+  WAVEFORMATEX desired{};
+  desired.wFormatTag = WAVE_FORMAT_PCM;
+  desired.nChannels = 1;
+  desired.nSamplesPerSec = 48000;
+  desired.wBitsPerSample = 16;
+  desired.nBlockAlign = static_cast<WORD>((desired.nChannels * desired.wBitsPerSample) / 8);
+  desired.nAvgBytesPerSec = desired.nSamplesPerSec * desired.nBlockAlign;
+  desired.cbSize = 0;
+
+  log.Logf("virtio-snd: capture desired format=%s", WaveFormatToString(&desired).c_str());
+
   WAVEFORMATEX* mix = nullptr;
   hr = client->GetMixFormat(&mix);
-  if (FAILED(hr) || !mix) {
-    out.fail_reason = "get_mix_format_failed";
-    out.hr = FAILED(hr) ? hr : E_FAIL;
-    log.Logf("virtio-snd: capture GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
-    return out;
+  if (SUCCEEDED(hr) && mix) {
+    log.Logf("virtio-snd: capture mix format=%s", WaveFormatToString(mix).c_str());
+    CoTaskMemFree(mix);
+  } else {
+    log.Logf("virtio-snd: capture GetMixFormat failed hr=0x%08lx (continuing)", static_cast<unsigned long>(hr));
   }
-  const size_t mix_size = sizeof(WAVEFORMATEX) + mix->cbSize;
-  std::vector<BYTE> fmt_bytes(reinterpret_cast<const BYTE*>(mix),
-                              reinterpret_cast<const BYTE*>(mix) + mix_size);
-  const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
-  log.Logf("virtio-snd: capture mix format=%s", WaveFormatToString(fmt).c_str());
-  const DWORD sample_rate_hz = fmt->nSamplesPerSec;
-
   constexpr REFERENCE_TIME kBufferDuration100ms = 1000000; // 100ms in 100ns units
-  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, fmt, nullptr);
-  CoTaskMemFree(mix);
+  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, &desired, nullptr);
   if (FAILED(hr)) {
-    out.fail_reason = "initialize_shared_failed";
+    out.fail_reason = "initialize_fixed_failed";
     out.hr = hr;
-    log.Logf("virtio-snd: capture Initialize(shared) failed hr=0x%08lx", static_cast<unsigned long>(hr));
+    log.Logf("virtio-snd: capture Initialize(shared desired 48kHz S16 mono) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
     return out;
   }
+  const DWORD sample_rate_hz = desired.nSamplesPerSec;
 
   UINT32 buffer_frames = 0;
   hr = client->GetBufferSize(&buffer_frames);
@@ -3458,6 +3465,7 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
+      "  --disable-snd-capture     Skip virtio-snd capture test (emit SKIP)\n"
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --test-snd                Alias for --require-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
@@ -3536,6 +3544,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.log_file = v;
     } else if (arg == L"--disable-snd") {
       opt.disable_snd = true;
+    } else if (arg == L"--disable-snd-capture") {
+      opt.disable_snd_capture = true;
     } else if (arg == L"--require-snd" || arg == L"--test-snd") {
       opt.require_snd = true;
     } else if (arg == L"--require-snd-capture") {
@@ -3577,7 +3587,8 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
-  if (!opt.disable_snd && !opt.test_snd_capture && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE")) {
+  if (!opt.disable_snd && !opt.disable_snd_capture && !opt.test_snd_capture &&
+      EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE")) {
     opt.test_snd_capture = true;
   }
 
@@ -3586,6 +3597,13 @@ int wmain(int argc, wchar_t** argv) {
     fprintf(stderr,
             "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-capture, "
             "--test-snd-capture, or --require-non-silence\n");
+    PrintUsage();
+    return 2;
+  }
+  if (opt.disable_snd_capture && (opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence)) {
+    fprintf(stderr,
+            "--disable-snd-capture cannot be combined with --require-snd-capture, --test-snd-capture, or "
+            "--require-non-silence\n");
     PrintUsage();
     return 2;
   }
@@ -3621,7 +3639,8 @@ int wmain(int argc, wchar_t** argv) {
                       : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
   const bool want_snd_capture =
-      opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
+      !opt.disable_snd_capture &&
+      (opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence || want_snd_playback);
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
@@ -3630,7 +3649,8 @@ int wmain(int argc, wchar_t** argv) {
   } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture && !opt.require_non_silence) {
     log.LogLine("virtio-snd: skipped (enable with --test-snd)");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+    log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled"
+                                        : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
   } else {
     if (!want_snd_playback) {
       log.LogLine("virtio-snd: skipped (enable with --test-snd)");
@@ -3649,7 +3669,9 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = false;
       }
 
-      if (opt.require_snd_capture) {
+      if (opt.disable_snd_capture) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+      } else if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (device missing)");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|device_missing");
         all_ok = false;
@@ -3667,7 +3689,9 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = false;
       }
 
-      if (opt.require_snd_capture) {
+      if (opt.disable_snd_capture) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+      } else if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
         log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
         all_ok = false;
@@ -3682,7 +3706,9 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = false;
       }
 
-      if (opt.require_snd_capture) {
+      if (opt.disable_snd_capture) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+      } else if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
         all_ok = false;
@@ -3712,10 +3738,11 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = all_ok && snd_ok;
       }
 
-      if (want_snd_capture) {
+      if (opt.disable_snd_capture) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+      } else if (want_snd_capture) {
         const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
         const DWORD capture_wait_ms = (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
-
         bool capture_ok = false;
         const char* capture_method = "wasapi";
         bool capture_silence_only = false;
