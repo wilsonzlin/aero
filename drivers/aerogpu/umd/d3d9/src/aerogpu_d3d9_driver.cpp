@@ -3186,10 +3186,22 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->is_shared = wants_shared;
   res->is_shared_alias = open_existing_shared;
 
-  consume_wddm_alloc_priv(res.get(),
-                          pCreateResource->pKmdAllocPrivateData,
-                          pCreateResource->KmdAllocPrivateDataSize,
-                          wants_shared);
+  /*
+   * Only treat KMD allocation private data as an INPUT when opening an existing
+   * shared resource.
+   *
+   * For normal resource creation, `pKmdAllocPrivateData` is an output buffer
+   * owned by the runtime; consuming it before we populate it risks picking up
+   * stale bytes from a previous call (e.g. reusing an old alloc_id/share_token),
+   * which can lead to cross-process collisions and host-side shared-surface
+   * table corruption.
+   */
+  if (open_existing_shared) {
+    consume_wddm_alloc_priv(res.get(),
+                            pCreateResource->pKmdAllocPrivateData,
+                            pCreateResource->KmdAllocPrivateDataSize,
+                            /*is_shared_resource=*/true);
+  }
 
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
   if (pCreateResource->size) {
