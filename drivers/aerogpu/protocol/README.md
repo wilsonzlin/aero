@@ -261,6 +261,11 @@ Command buffers are byte streams in guest memory:
 1. `aerogpu_cmd_stream_header`
 2. A sequence of packets, each beginning with `aerogpu_cmd_hdr`.
 
+`aerogpu_cmd_stream_header.size_bytes` is the number of bytes used by the stream (including the
+header). It must be `>= sizeof(aerogpu_cmd_stream_header)` and `<= aerogpu_submit_desc.cmd_size_bytes`;
+any trailing bytes in the command buffer beyond `size_bytes` are ignored (forward-compatible padding /
+capacity).
+
 `aerogpu_cmd_hdr.size_bytes` provides the packet length for skipping unknown opcodes.
 
 ### Forward-compat rules
