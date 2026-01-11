@@ -77,9 +77,9 @@ def extract_virtio_snd_from_w7_contract(md: str) -> dict[str, int]:
 
 def extract_virtio_snd_from_windows_device_contract(md: str) -> dict[str, int]:
     # Parse the single-row table entry:
-    # | virtio-snd | `1AF4:1059` | `1AF4:0019` | ...
+    # | virtio-snd | `1AF4:1059` (REV `0x01`) | `1AF4:0019` | ...
     row = re.search(
-        r"^\|\s*virtio-snd\s*\|\s*`(?P<pci>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`\s*\|\s*`(?P<subsys>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`\s*\|",
+        r"^\|\s*virtio-snd\s*\|\s*`(?P<pci>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`[^|]*\|\s*`(?P<subsys>[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4})`[^|]*\|",
         md,
         flags=re.M,
     )
