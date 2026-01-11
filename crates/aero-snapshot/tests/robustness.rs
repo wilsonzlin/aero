@@ -213,9 +213,19 @@ fn restore_snapshot_rejects_dirty_ram_count_exceeding_max_pages() {
     bytes.push(0);
     bytes.extend_from_slice(&0u32.to_le_bytes());
 
+    let meta = SnapshotMeta {
+        snapshot_id: 2,
+        parent_snapshot_id: Some(1),
+        created_unix_ms: 0,
+        label: None,
+    };
+    let mut meta_payload = Vec::new();
+    meta.encode(&mut meta_payload).unwrap();
+    push_section(&mut bytes, SectionId::META, 1, 0, &meta_payload);
+
     let mut cpu_payload = Vec::new();
     CpuState::default().encode(&mut cpu_payload).unwrap();
-    push_section(&mut bytes, SectionId::CPU, 1, 0, &cpu_payload);
+    push_section(&mut bytes, SectionId::CPU, 2, 0, &cpu_payload);
 
     // Dirty RAM snapshot whose `count` exceeds max_pages (= ceil(total_len / page_size) = 1).
     let count = 2u64;

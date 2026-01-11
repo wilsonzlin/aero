@@ -198,9 +198,14 @@ Guest RAM dominates snapshot size (multi-GB for Windows 7). `aero-snapshot` supp
   `SaveOptions.ram.page_size == SnapshotSource::dirty_page_size()` when `RamMode::Dirty`.
 - Dirty snapshots are **not standalone**: they must only be applied on top of the snapshot they
   reference via `SnapshotMeta.parent_snapshot_id`.
-  - Use `aero_snapshot::restore_snapshot_with_options` and pass
-    `RestoreOptions { expected_parent_snapshot_id: Some(base_snapshot_id) }` to guard against
-    accidentally applying a diff to the wrong base.
+  - If you have a seekable reader (`Read + Seek`), use `aero_snapshot::restore_snapshot_with_options`
+    and pass `RestoreOptions { expected_parent_snapshot_id: Some(base_snapshot_id) }` to guard
+    against accidentally applying a diff to the wrong base.
+  - If you only have a non-seekable reader (`Read`, e.g. a network stream), use
+    `aero_snapshot::restore_snapshot_checked` with the same `RestoreOptions`.
+    - **Ordering requirement:** for non-seekable restores, dirty snapshots must place the `META`
+      section *before* the `RAM` section so the parent id can be validated safely before diffs are
+      applied.
   - Full snapshots are standalone and ignore the expected-parent option.
 
 ---

@@ -240,10 +240,116 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 }
 
 pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -> Result<()> {
+    restore_snapshot_impl(r, target, None, None)
+}
+
+/// Restore a snapshot, validating the dirty-page parent contract without requiring `Seek`.
+///
+/// Full snapshots are standalone and ignore `opts.expected_parent_snapshot_id`.
+///
+/// Dirty-page snapshots are diffs and require an exact match between the snapshot's
+/// `SnapshotMeta.parent_snapshot_id` and `opts.expected_parent_snapshot_id`.
+///
+/// For non-seekable readers, dirty snapshots must place the `META` section *before* the `RAM`
+/// section so the parent can be validated before applying diffs.
+pub fn restore_snapshot_checked<R: Read, T: SnapshotTarget>(
+    r: &mut R,
+    target: &mut T,
+    opts: RestoreOptions,
+) -> Result<()> {
+    restore_snapshot_impl(r, target, Some(opts), None)
+}
+
+pub fn restore_snapshot_with_options<R: Read + Seek, T: SnapshotTarget>(
+    r: &mut R,
+    target: &mut T,
+    opts: RestoreOptions,
+) -> Result<()> {
+    let start_pos = r.stream_position()?;
+
+    let prescan = prescan_snapshot(r)?;
+    if prescan.ram_mode == Some(RamMode::Dirty) {
+        let meta = prescan
+            .meta
+            .as_ref()
+            .ok_or(SnapshotError::Corrupt("missing META section"))?;
+        if meta.parent_snapshot_id != opts.expected_parent_snapshot_id {
+            return Err(SnapshotError::Corrupt("snapshot parent mismatch"));
+        }
+    }
+
+    r.seek(SeekFrom::Start(start_pos))?;
+    restore_snapshot_impl(r, target, Some(opts), prescan.meta)
+}
+
+#[derive(Debug, Clone)]
+struct SnapshotPrescan {
+    meta: Option<SnapshotMeta>,
+    ram_mode: Option<RamMode>,
+}
+
+fn prescan_snapshot<R: Read + Seek>(r: &mut R) -> Result<SnapshotPrescan> {
+    read_file_header(r)?;
+
+    let mut meta = None;
+    let mut ram_mode = None;
+
+    while let Some(header) = read_section_header(r)? {
+        let payload_start = r.stream_position()?;
+        match header.id {
+            id if id == SectionId::META => {
+                if header.version == 1 {
+                    let mut section_reader = r.take(header.len);
+                    meta = Some(SnapshotMeta::decode(&mut section_reader)?);
+                }
+            }
+            id if id == SectionId::RAM => {
+                if header.version == 1 {
+                    let mut section_reader = r.take(header.len);
+                    let _total_len = section_reader.read_u64_le()?;
+                    let _page_size = section_reader.read_u32_le()?;
+                    ram_mode = Some(RamMode::from_u8(section_reader.read_u8()?)?);
+                    let _compression = section_reader.read_u8()?;
+                    let _reserved = section_reader.read_u16_le()?;
+                }
+            }
+            _ => {}
+        }
+
+        let end = payload_start
+            .checked_add(header.len)
+            .ok_or(SnapshotError::Corrupt("section length overflow"))?;
+        r.seek(SeekFrom::Start(end))?;
+
+        if meta.is_some() && ram_mode.is_some() {
+            break;
+        }
+    }
+
+    Ok(SnapshotPrescan { meta, ram_mode })
+}
+
+fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
+    r: &mut R,
+    target: &mut T,
+    opts: Option<RestoreOptions>,
+    prescanned_meta: Option<SnapshotMeta>,
+) -> Result<()> {
     read_file_header(r)?;
 
     const MAX_DEVICES_SECTION_LEN: u64 = 256 * 1024 * 1024;
     const MAX_DEVICE_COUNT: usize = 4096;
+
+    // For dirty snapshots, we must validate parent snapshot id before applying RAM diffs.
+    //
+    // For `restore_snapshot` and `restore_snapshot_checked`, this means `META` must appear before
+    // `RAM` (since we cannot seek back, and buffering full RAM diffs would be unsafe/expensive).
+    //
+    // For `restore_snapshot_with_options`, the prescan provides `prescanned_meta`, allowing
+    // snapshots that place `META` after `RAM` to still be restored safely.
+    const DIRTY_META_MUST_PRECEDE_RAM: &str = "dirty snapshot requires META section before RAM";
+
+    let mut meta: Option<SnapshotMeta> = None;
 
     let mut seen_cpu = false;
     let mut seen_ram = false;
@@ -257,8 +363,9 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
         match header.id {
             id if id == SectionId::META => {
                 if header.version == 1 {
-                    let meta = SnapshotMeta::decode(&mut section_reader)?;
-                    target.restore_meta(meta);
+                    let decoded = SnapshotMeta::decode(&mut section_reader)?;
+                    meta = Some(decoded.clone());
+                    target.restore_meta(decoded);
                 }
             }
             id if id == SectionId::CPU => {
@@ -340,11 +447,42 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
             id if id == SectionId::RAM => {
                 if header.version == 1 {
                     let expected_len = target.ram_len() as u64;
-                    ram::decode_ram_section_into(
-                        &mut section_reader,
-                        expected_len,
-                        |offset, data| target.write_ram(offset, data),
-                    )?;
+
+                    // Read the fixed-size RAM header so we can validate the dirty-parent contract
+                    // before applying any RAM writes.
+                    let mut ram_header = [0u8; 16];
+                    section_reader.read_exact(&mut ram_header)?;
+                    let ram_mode = RamMode::from_u8(ram_header[12])?;
+
+                    if ram_mode == RamMode::Dirty {
+                        let meta = meta
+                            .as_ref()
+                            .or(prescanned_meta.as_ref())
+                            .ok_or(SnapshotError::Corrupt(DIRTY_META_MUST_PRECEDE_RAM))?;
+
+                        if meta.parent_snapshot_id.is_none() {
+                            return Err(SnapshotError::Corrupt(
+                                "dirty snapshot missing parent_snapshot_id",
+                            ));
+                        }
+
+                        if let Some(opts) = opts {
+                            if meta.parent_snapshot_id != opts.expected_parent_snapshot_id {
+                                return Err(SnapshotError::Corrupt("snapshot parent mismatch"));
+                            }
+                        }
+                    }
+
+                    {
+                        let mut replay =
+                            std::io::Cursor::new(ram_header).chain(&mut section_reader);
+                        ram::decode_ram_section_into(
+                            &mut replay,
+                            expected_len,
+                            |offset, data| target.write_ram(offset, data),
+                        )?;
+                    }
+
                     seen_ram = true;
                 }
             }
@@ -371,74 +509,6 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
     }
     target.post_restore()?;
     Ok(())
-}
-
-pub fn restore_snapshot_with_options<R: Read + Seek, T: SnapshotTarget>(
-    r: &mut R,
-    target: &mut T,
-    opts: RestoreOptions,
-) -> Result<()> {
-    let start_pos = r.stream_position()?;
-
-    let prescan = prescan_snapshot(r)?;
-    if prescan.ram_mode == Some(RamMode::Dirty) {
-        let meta = prescan
-            .meta
-            .ok_or(SnapshotError::Corrupt("missing META section"))?;
-        if meta.parent_snapshot_id != opts.expected_parent_snapshot_id {
-            return Err(SnapshotError::Corrupt("snapshot parent mismatch"));
-        }
-    }
-
-    r.seek(SeekFrom::Start(start_pos))?;
-    restore_snapshot(r, target)
-}
-
-#[derive(Debug, Clone)]
-struct SnapshotPrescan {
-    meta: Option<SnapshotMeta>,
-    ram_mode: Option<RamMode>,
-}
-
-fn prescan_snapshot<R: Read + Seek>(r: &mut R) -> Result<SnapshotPrescan> {
-    read_file_header(r)?;
-
-    let mut meta = None;
-    let mut ram_mode = None;
-
-    while let Some(header) = read_section_header(r)? {
-        let payload_start = r.stream_position()?;
-        match header.id {
-            id if id == SectionId::META => {
-                if header.version == 1 {
-                    let mut section_reader = r.take(header.len);
-                    meta = Some(SnapshotMeta::decode(&mut section_reader)?);
-                }
-            }
-            id if id == SectionId::RAM => {
-                if header.version == 1 {
-                    let mut section_reader = r.take(header.len);
-                    let _total_len = section_reader.read_u64_le()?;
-                    let _page_size = section_reader.read_u32_le()?;
-                    ram_mode = Some(RamMode::from_u8(section_reader.read_u8()?)?);
-                    let _compression = section_reader.read_u8()?;
-                    let _reserved = section_reader.read_u16_le()?;
-                }
-            }
-            _ => {}
-        }
-
-        let end = payload_start
-            .checked_add(header.len)
-            .ok_or(SnapshotError::Corrupt("section length overflow"))?;
-        r.seek(SeekFrom::Start(end))?;
-
-        if meta.is_some() && ram_mode.is_some() {
-            break;
-        }
-    }
-
-    Ok(SnapshotPrescan { meta, ram_mode })
 }
 
 #[derive(Debug, Clone, Copy)]
