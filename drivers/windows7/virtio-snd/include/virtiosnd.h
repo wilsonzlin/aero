@@ -68,7 +68,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
      * Split virtqueue rings + queue abstractions.
      *
      * QueueSplit[] owns the DMA memory and VIRTQ_SPLIT state.
-     * Queues[] provides a minimal Submit/PopUsed/Kick API used by future
+     * Queues[] provides a minimal Submit/PopUsed/Kick API used by higher-level
      * virtio-snd protocol code.
      */
     VIRTIOSND_QUEUE_SPLIT QueueSplit[VIRTIOSND_QUEUE_COUNT];

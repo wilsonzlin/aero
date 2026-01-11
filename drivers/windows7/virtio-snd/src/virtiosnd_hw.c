@@ -74,6 +74,22 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     const BOOLEAN eventIdx = (Dx->NegotiatedFeatures & (1ui64 << VIRTIO_F_RING_EVENT_IDX)) != 0;
     const BOOLEAN indirect = (Dx->NegotiatedFeatures & (1ui64 << VIRTIO_F_RING_INDIRECT_DESC)) != 0;
 
+    /*
+     * Contract v1 requires four virtqueues (control/event/tx/rx).
+     */
+    if (Dx->Transport.CommonCfg != NULL) {
+        USHORT numQueues;
+
+        numQueues = READ_REGISTER_USHORT((volatile USHORT*)&Dx->Transport.CommonCfg->num_queues);
+        if (numQueues < (USHORT)VIRTIOSND_QUEUE_COUNT) {
+            VIRTIOSND_TRACE_ERROR(
+                "device exposes %u queues (< %u required by contract v1)\n",
+                (ULONG)numQueues,
+                (ULONG)VIRTIOSND_QUEUE_COUNT);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+    }
+
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
         USHORT expectedSize;

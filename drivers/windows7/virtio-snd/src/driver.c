@@ -429,3 +429,4 @@ VirtIoSndDispatchPnp(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return VirtIoSndForwardIrpWithRemoveLock(dx, Irp);
     }
 }
+

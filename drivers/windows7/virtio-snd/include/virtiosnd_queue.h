@@ -22,12 +22,12 @@
 #define VIRTIOSND_QUEUE_INDEX_CONTROLQ ((USHORT)0u)
 #define VIRTIOSND_QUEUE_INDEX_EVENTQ ((USHORT)1u)
 #define VIRTIOSND_QUEUE_INDEX_TXQ ((USHORT)2u)
-#define VIRTIOSND_QUEUE_INDEX_RXQ ((USHORT)3u) /* Capture queue (buffers not submitted yet). */
+#define VIRTIOSND_QUEUE_INDEX_RXQ ((USHORT)3u)
 
 #define VIRTIOSND_QUEUE_SIZE_CONTROLQ ((USHORT)64u)
 #define VIRTIOSND_QUEUE_SIZE_EVENTQ ((USHORT)64u)
 #define VIRTIOSND_QUEUE_SIZE_TXQ ((USHORT)256u)
-#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)64u) /* Capture queue (buffers not submitted yet). */
+#define VIRTIOSND_QUEUE_SIZE_RXQ ((USHORT)64u)
 
 typedef struct _VIRTIOSND_SG {
     UINT64 addr;

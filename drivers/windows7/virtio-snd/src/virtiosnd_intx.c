@@ -10,7 +10,8 @@
 #define CM_RESOURCE_INTERRUPT_MESSAGE 0x0004
 #endif
 
-static __forceinline BOOLEAN VirtIoSndIntxStopping(_In_ const PVIRTIOSND_DEVICE_EXTENSION Dx) {
+static __forceinline BOOLEAN VirtIoSndIntxStopping(_In_ const PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
     return (Dx->Stopping != 0) ? TRUE : FALSE;
 }
 
@@ -34,6 +35,12 @@ static VOID VirtIoSndIntxQueueUsed(
     case VIRTIOSND_QUEUE_TX:
         VirtioSndTxOnUsed(&dx->Tx, Cookie, UsedLen);
         break;
+    case VIRTIOSND_QUEUE_RX:
+        VIRTIOSND_TRACE_ERROR("rxq unexpected completion: cookie=%p len=%lu\n", Cookie, (ULONG)UsedLen);
+        if (Cookie != NULL) {
+            ExFreePool(Cookie);
+        }
+        break;
     default:
         UNREFERENCED_PARAMETER(Cookie);
         UNREFERENCED_PARAMETER(UsedLen);
@@ -42,7 +49,8 @@ static VOID VirtIoSndIntxQueueUsed(
 }
 
 _Use_decl_annotations_
-VOID VirtIoSndIntxInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx) {
+VOID VirtIoSndIntxInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
     if (Dx == NULL) {
         return;
     }
@@ -65,7 +73,8 @@ VOID VirtIoSndIntxInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx) {
 }
 
 _Use_decl_annotations_
-NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOURCE_LIST TranslatedResources) {
+NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOURCE_LIST TranslatedResources)
+{
     ULONG listIndex;
     BOOLEAN sawMessageInterrupt;
 
@@ -124,7 +133,8 @@ NTSTATUS VirtIoSndIntxCaptureResources(PVIRTIOSND_DEVICE_EXTENSION Dx, PCM_RESOU
 }
 
 _Use_decl_annotations_
-NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
+NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
     NTSTATUS status;
 
     if (Dx == NULL) {
@@ -149,18 +159,17 @@ NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     Dx->Stopping = 0;
     Dx->DpcInFlight = 0;
 
-    status = IoConnectInterrupt(
-        &Dx->InterruptObject,
-        VirtIoSndIntxIsr,
-        Dx,
-        NULL,
-        Dx->InterruptVector,
-        Dx->InterruptIrql,
-        Dx->InterruptIrql,
-        Dx->InterruptMode,
-        Dx->InterruptShareVector,
-        Dx->InterruptAffinity,
-        FALSE);
+    status = IoConnectInterrupt(&Dx->InterruptObject,
+                                VirtIoSndIntxIsr,
+                                Dx,
+                                NULL,
+                                Dx->InterruptVector,
+                                Dx->InterruptIrql,
+                                Dx->InterruptIrql,
+                                Dx->InterruptMode,
+                                Dx->InterruptShareVector,
+                                Dx->InterruptAffinity,
+                                FALSE);
     if (!NT_SUCCESS(status)) {
         Dx->InterruptObject = NULL;
         Dx->Stopping = 1;
@@ -173,7 +182,8 @@ NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
 }
 
 _Use_decl_annotations_
-VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
+VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
     BOOLEAN removed;
     LARGE_INTEGER delay;
 
@@ -212,7 +222,9 @@ VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
             KeDelayExecutionThread(KernelMode, FALSE, &delay);
         }
     } else {
-        VIRTIOSND_TRACE_ERROR("VirtIoSndIntxDisconnect called at IRQL %lu; skipping DPC idle wait\n", (ULONG)KeGetCurrentIrql());
+        VIRTIOSND_TRACE_ERROR(
+            "VirtIoSndIntxDisconnect called at IRQL %lu; skipping DPC idle wait\n",
+            (ULONG)KeGetCurrentIrql());
     }
 
     (VOID)InterlockedExchange(&Dx->PendingIsrStatus, 0);
@@ -220,7 +232,8 @@ VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
 }
 
 _Use_decl_annotations_
-BOOLEAN VirtIoSndIntxIsr(PKINTERRUPT Interrupt, PVOID ServiceContext) {
+BOOLEAN VirtIoSndIntxIsr(PKINTERRUPT Interrupt, PVOID ServiceContext)
+{
     PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)ServiceContext;
     BOOLEAN stopping;
     UCHAR isr;
@@ -259,7 +272,8 @@ BOOLEAN VirtIoSndIntxIsr(PKINTERRUPT Interrupt, PVOID ServiceContext) {
 }
 
 _Use_decl_annotations_
-VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2) {
+VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
+{
     PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)DeferredContext;
     LONG isr;
     LONG remaining;

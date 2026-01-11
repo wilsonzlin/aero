@@ -31,9 +31,9 @@ VOID VirtIoSndIntxDisconnect(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 BOOLEAN VirtIoSndIntxIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext);
 
 VOID VirtIoSndIntxDpc(_In_ PKDPC Dpc,
-                       _In_opt_ PVOID DeferredContext,
-                       _In_opt_ PVOID SystemArgument1,
-                       _In_opt_ PVOID SystemArgument2);
+                      _In_opt_ PVOID DeferredContext,
+                      _In_opt_ PVOID SystemArgument1,
+                      _In_opt_ PVOID SystemArgument2);
 
 #ifdef __cplusplus
 } /* extern "C" */
