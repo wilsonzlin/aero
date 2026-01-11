@@ -1515,6 +1515,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_inf_active_pci_hwids_ignores_comments() {
+        let inf = r#"
+; comment mentioning PCI\VEN_1AF4&DEV_1042&REV_01 should be ignored
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg% = Models,NTx86
+
+[Models.NTx86]
+%VirtioBlk.DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1042&REV_01 ; inline comment
+%VirtioNet.DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+; %CommentedOut.DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1052&REV_01
+"#;
+
+        let hwids = parse_inf_active_pci_hwids(inf);
+        assert_eq!(
+            hwids,
+            BTreeSet::from([
+                "PCI\\VEN_1AF4&DEV_1041&REV_01".to_string(),
+                "PCI\\VEN_1AF4&DEV_1042&REV_01".to_string(),
+            ])
+        );
+    }
+
+    #[test]
     fn pattern_matches_transitional_virtio_ids_even_when_not_explicitly_listed() {
         let re = regex::RegexBuilder::new(r"PCI\\VEN_1AF4&DEV_10..")
             .case_insensitive(true)
