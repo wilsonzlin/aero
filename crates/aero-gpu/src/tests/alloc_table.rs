@@ -131,8 +131,12 @@ fn alloc_table_header_size_bytes_too_large_is_rejected() {
     let mut mem = VecGuestMemory::new(0x2000);
     mem.write(gpa, &buf).unwrap();
 
-    let err = AllocTable::decode_from_guest_memory(&mut mem, gpa, AerogpuAllocTableHeader::SIZE_BYTES as u32)
-        .expect_err("oversized alloc table header size_bytes must be rejected");
+    let err = AllocTable::decode_from_guest_memory(
+        &mut mem,
+        gpa,
+        AerogpuAllocTableHeader::SIZE_BYTES as u32,
+    )
+    .expect_err("oversized alloc table header size_bytes must be rejected");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
     };
