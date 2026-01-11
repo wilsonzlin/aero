@@ -266,6 +266,11 @@ uint64_t submit_locked(AeroGpuDevice* dev) {
 }
 
 HRESULT flush_locked(AeroGpuDevice* dev) {
+  if (dev) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
+    cmd->reserved0 = 0;
+    cmd->reserved1 = 0;
+  }
   submit_locked(dev);
   return S_OK;
 }
