@@ -11,11 +11,12 @@ mod wasm {
     use std::collections::HashSet;
 
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
-    use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
+    use aero_gpu::shader_lib::{wgsl as builtin_wgsl, BuiltinShader};
     use aero_gpu::{
         AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, AerogpuD3d9Executor,
         FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory, GuestMemoryError,
     };
+    use aero_protocol::aerogpu::aerogpu_cmd as cmd;
     use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
     use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
@@ -135,9 +136,52 @@ mod wasm {
         Ok(Uint8Array::from(out.as_slice()))
     }
 
-    fn decode_submission_allocations(
+    const MAX_ALLOC_TABLE_SIZE_BYTES: usize = 16 * 1024 * 1024;
+    const MAX_CMD_STREAM_SIZE_BYTES: usize = 64 * 1024 * 1024;
+
+    fn copy_cmd_stream_bytes(cmd_stream: &Uint8Array) -> Result<Vec<u8>, JsValue> {
+        let buf_len = cmd_stream.length() as usize;
+        if buf_len < cmd::AerogpuCmdStreamHeader::SIZE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "cmd stream too small (got {buf_len} bytes, need {})",
+                cmd::AerogpuCmdStreamHeader::SIZE_BYTES
+            )));
+        }
+
+        let mut header_bytes = [0u8; cmd::AerogpuCmdStreamHeader::SIZE_BYTES];
+        cmd_stream
+            .subarray(0, cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32)
+            .copy_to(&mut header_bytes);
+        let header = cmd::decode_cmd_stream_header_le(&header_bytes).map_err(|err| {
+            JsValue::from_str(&format!("failed to decode cmd stream header: {err:?}"))
+        })?;
+
+        let declared_size_bytes = header.size_bytes;
+        let size_bytes = declared_size_bytes as usize;
+        if size_bytes < cmd::AerogpuCmdStreamHeader::SIZE_BYTES || size_bytes > buf_len {
+            return Err(JsValue::from_str(&format!(
+                "invalid cmd stream header size_bytes={} (buffer_len={})",
+                declared_size_bytes, buf_len
+            )));
+        }
+        if size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "cmd stream header size_bytes too large (got {size_bytes}, max {MAX_CMD_STREAM_SIZE_BYTES})"
+            )));
+        }
+
+        // Forward-compat: command stream buffers may include trailing bytes beyond the header's
+        // `size_bytes` (capacity / page rounding). Only copy the declared prefix.
+        let mut bytes = vec![0u8; size_bytes];
+        cmd_stream
+            .subarray(0, declared_size_bytes)
+            .copy_to(&mut bytes);
+        Ok(bytes)
+    }
+
+    fn decode_alloc_table_bytes_used_prefix(
         buf: &Uint8Array,
-    ) -> Result<Vec<AeroGpuSubmissionAllocation>, JsValue> {
+    ) -> Result<(ring::AerogpuAllocTableHeader, Vec<u8>), JsValue> {
         let buf_len = buf.length() as usize;
         if buf_len < ring::AerogpuAllocTableHeader::SIZE_BYTES {
             return Err(JsValue::from_str(&format!(
@@ -146,11 +190,11 @@ mod wasm {
             )));
         }
 
-        let mut bytes = vec![0u8; buf_len];
-        buf.copy_to(&mut bytes);
-
+        let mut header_bytes = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
+        buf.subarray(0, ring::AerogpuAllocTableHeader::SIZE_BYTES as u32)
+            .copy_to(&mut header_bytes);
         let header =
-            ring::AerogpuAllocTableHeader::decode_from_le_bytes(&bytes).map_err(|err| {
+            ring::AerogpuAllocTableHeader::decode_from_le_bytes(&header_bytes).map_err(|err| {
                 JsValue::from_str(&format!("failed to decode alloc table header: {err:?}"))
             })?;
         header
@@ -160,13 +204,30 @@ mod wasm {
         let size_bytes = usize::try_from(header.size_bytes).map_err(|_| {
             JsValue::from_str("alloc table header size_bytes does not fit in usize")
         })?;
-        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_bytes > bytes.len() {
+        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_bytes > buf_len {
             return Err(JsValue::from_str(&format!(
                 "invalid alloc table header size_bytes={} (buffer_len={})",
-                header.size_bytes,
-                bytes.len()
+                header.size_bytes, buf_len
             )));
         }
+        if size_bytes > MAX_ALLOC_TABLE_SIZE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "alloc table header size_bytes too large (got {size_bytes}, max {MAX_ALLOC_TABLE_SIZE_BYTES})"
+            )));
+        }
+
+        // Forward-compat: alloc tables may include trailing bytes beyond the header's `size_bytes`.
+        // Only copy the declared prefix.
+        let mut bytes = vec![0u8; size_bytes];
+        buf.subarray(0, header.size_bytes).copy_to(&mut bytes);
+        Ok((header, bytes))
+    }
+
+    fn decode_submission_allocations(
+        buf: &Uint8Array,
+    ) -> Result<Vec<AeroGpuSubmissionAllocation>, JsValue> {
+        let (header, bytes) = decode_alloc_table_bytes_used_prefix(buf)?;
+        let size_bytes = bytes.len();
 
         let entry_count = usize::try_from(header.entry_count).map_err(|_| {
             JsValue::from_str("alloc table header entry_count does not fit in usize")
@@ -238,24 +299,7 @@ mod wasm {
     fn decode_alloc_table_bytes(
         buf: &Uint8Array,
     ) -> Result<(AllocTable, Vec<AeroGpuSubmissionAllocation>), JsValue> {
-        let buf_len = buf.length() as usize;
-        if buf_len < ring::AerogpuAllocTableHeader::SIZE_BYTES {
-            return Err(JsValue::from_str(&format!(
-                "alloc table too small (got {buf_len} bytes, need {})",
-                ring::AerogpuAllocTableHeader::SIZE_BYTES
-            )));
-        }
-
-        let mut bytes = vec![0u8; buf_len];
-        buf.copy_to(&mut bytes);
-
-        let header =
-            ring::AerogpuAllocTableHeader::decode_from_le_bytes(&bytes).map_err(|err| {
-                JsValue::from_str(&format!("failed to decode alloc table header: {err:?}"))
-            })?;
-        header
-            .validate_prefix()
-            .map_err(|err| JsValue::from_str(&format!("invalid alloc table header: {err:?}")))?;
+        let (header, bytes) = decode_alloc_table_bytes_used_prefix(buf)?;
 
         // Match the native emulator decoder: `entry_stride_bytes` must be large enough to hold an
         // `aerogpu_alloc_entry`, but may be larger for forward-compatible extensions.
@@ -267,16 +311,7 @@ mod wasm {
             )));
         }
 
-        let size_bytes = usize::try_from(header.size_bytes).map_err(|_| {
-            JsValue::from_str("alloc table header size_bytes does not fit in usize")
-        })?;
-        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_bytes > bytes.len() {
-            return Err(JsValue::from_str(&format!(
-                "invalid alloc table header size_bytes={} (buffer_len={})",
-                header.size_bytes,
-                bytes.len()
-            )));
-        }
+        let size_bytes = bytes.len();
 
         let entry_count = usize::try_from(header.entry_count).map_err(|_| {
             JsValue::from_str("alloc table header entry_count does not fit in usize")
@@ -367,8 +402,7 @@ mod wasm {
         };
         let allocations = allocations.as_deref();
 
-        let mut bytes = vec![0u8; cmd_stream.length() as usize];
-        cmd_stream.copy_to(&mut bytes);
+        let bytes = copy_cmd_stream_bytes(&cmd_stream)?;
 
         let present_count = PROCESSOR.with(|processor| {
             let mut processor = processor.borrow_mut();
@@ -410,8 +444,7 @@ mod wasm {
         context_id: u32,
         alloc_table: Option<Uint8Array>,
     ) -> Result<JsValue, JsValue> {
-        let mut bytes = vec![0u8; cmd_stream.length() as usize];
-        cmd_stream.copy_to(&mut bytes);
+        let bytes = copy_cmd_stream_bytes(&cmd_stream)?;
 
         let (alloc_table, allocations) = match alloc_table.as_ref() {
             Some(buf) => {
@@ -1704,7 +1737,11 @@ mod wasm {
                 let scale_fit = (canvas_w / src_w).min(canvas_h / src_h);
                 let scale = if mode == ScaleMode::Integer {
                     let integer = scale_fit.floor();
-                    if integer >= 1.0 { integer } else { scale_fit }
+                    if integer >= 1.0 {
+                        integer
+                    } else {
+                        scale_fit
+                    }
                 } else {
                     scale_fit
                 };
