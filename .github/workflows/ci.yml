@@ -152,7 +152,7 @@ jobs:
         uses: jetli/wasm-pack-action@v0.4.0
 
       - name: Threaded WASM build (dev, smoke)
-        run: node web/scripts/build_wasm.mjs threaded dev
+        run: cargo xtask wasm threaded dev
 
   rust:
     name: Rust (fmt, clippy, test)
@@ -355,7 +355,7 @@ jobs:
           install-wasm-pack: "true"
 
       - name: wasm-pack build (single, release)
-        run: node web/scripts/build_wasm.mjs single release
+        run: cargo xtask wasm single release
 
       - name: wasm-pack test (node)
         run: cargo xtask test-all --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
