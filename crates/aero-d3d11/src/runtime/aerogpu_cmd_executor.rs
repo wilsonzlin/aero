@@ -1407,11 +1407,17 @@ impl AerogpuD3d11Executor {
             bail!("SET_RENDER_TARGETS: color_count out of range: {color_count}");
         }
         let mut colors = Vec::with_capacity(color_count);
+        let mut seen_gap = false;
         for i in 0..color_count {
             let tex_id = read_u32_le(cmd_bytes, 16 + i * 4)?;
-            if tex_id != 0 {
-                colors.push(tex_id);
+            if tex_id == 0 {
+                seen_gap = true;
+                continue;
             }
+            if seen_gap {
+                bail!("SET_RENDER_TARGETS: render target slot {i} is set after an earlier slot was unbound (gaps are not supported yet)");
+            }
+            colors.push(tex_id);
         }
         self.state.render_targets = colors;
         self.state.depth_stencil = if depth_stencil == 0 {
