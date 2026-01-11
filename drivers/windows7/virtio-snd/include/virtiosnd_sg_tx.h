@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
 #pragma once
 
 #include <ntddk.h>
@@ -14,6 +16,10 @@
  * SG type.
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 ULONG VirtIoSndTxSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
                                        _In_ ULONG BufferBytes,
                                        _In_ ULONG OffsetBytes,
@@ -25,7 +31,10 @@ NTSTATUS VirtIoSndTxSgBuildFromMdlRegion(_In_ PMDL Mdl,
                                         _In_ ULONG OffsetBytes,
                                         _In_ ULONG LengthBytes,
                                         _In_ BOOLEAN Wrap,
-                                        _Out_writes_(MaxElems) VIRTIOSND_SG *Out,
-                                        _In_ USHORT MaxElems,
-                                        _Out_ USHORT *OutCount);
+                                         _Out_writes_(MaxElems) VIRTIOSND_SG *Out,
+                                         _In_ USHORT MaxElems,
+                                         _Out_ USHORT *OutCount);
 
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
