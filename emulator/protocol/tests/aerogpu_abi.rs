@@ -158,6 +158,67 @@ fn abi_dump() -> &'static AbiDump {
     ABI.get_or_init(compile_and_run_c_abi_dump)
 }
 
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn parse_c_cmd_opcode_const_names() -> Vec<String> {
+    let header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h");
+    let text = std::fs::read_to_string(&header_path).unwrap_or_else(|err| {
+        panic!("failed to read {}: {err}", header_path.display());
+    });
+
+    let enum_start = text
+        .find("enum aerogpu_cmd_opcode")
+        .expect("missing enum aerogpu_cmd_opcode in aerogpu_cmd.h");
+    let after_start = &text[enum_start..];
+
+    let open_brace = after_start
+        .find('{')
+        .expect("missing '{' for enum aerogpu_cmd_opcode");
+    let after_open = &after_start[open_brace + 1..];
+
+    let close = after_open
+        .find("};")
+        .expect("missing '};' for enum aerogpu_cmd_opcode");
+    let body = &after_open[..close];
+
+    let mut names = Vec::new();
+    let mut idx = 0;
+    while let Some(pos) = body[idx..].find("AEROGPU_CMD_") {
+        let start = idx + pos;
+        let mut end = start;
+        while end < body.len() {
+            let b = body.as_bytes()[end];
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        names.push(body[start..end].to_string());
+        idx = end;
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn upper_snake_to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let lower = part.to_ascii_lowercase();
+            let mut chars = lower.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn rust_layout_matches_c_headers() {
     let abi = abi_dump();
@@ -386,6 +447,50 @@ fn rust_layout_matches_c_headers() {
         "completed_fence"
     );
 
+    // Variable-length packets (must remain stable for parsing).
+    assert_off!(
+        AerogpuCmdCreateShaderDxbc,
+        dxbc_size_bytes,
+        "aerogpu_cmd_create_shader_dxbc",
+        "dxbc_size_bytes"
+    );
+    assert_off!(
+        AerogpuCmdSetShaderConstantsF,
+        vec4_count,
+        "aerogpu_cmd_set_shader_constants_f",
+        "vec4_count"
+    );
+    assert_off!(
+        AerogpuCmdCreateInputLayout,
+        blob_size_bytes,
+        "aerogpu_cmd_create_input_layout",
+        "blob_size_bytes"
+    );
+    assert_off!(
+        AerogpuCmdSetVertexBuffers,
+        buffer_count,
+        "aerogpu_cmd_set_vertex_buffers",
+        "buffer_count"
+    );
+    assert_off!(
+        AerogpuCmdUploadResource,
+        offset_bytes,
+        "aerogpu_cmd_upload_resource",
+        "offset_bytes"
+    );
+    assert_off!(
+        AerogpuCmdUploadResource,
+        size_bytes,
+        "aerogpu_cmd_upload_resource",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuInputLayoutBlobHeader,
+        element_count,
+        "aerogpu_input_layout_blob_header",
+        "element_count"
+    );
+
     // WDDM allocation private-data contract (stable across x86/x64).
     assert_eq!(abi.size("aerogpu_wddm_alloc_priv"), 40);
     assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "magic"), 0);
@@ -599,142 +704,27 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_RESOURCE_USAGE_SCANOUT"),
         AEROGPU_RESOURCE_USAGE_SCANOUT as u64
     );
+    assert_eq!(abi.konst("AEROGPU_MAX_RENDER_TARGETS"), AEROGPU_MAX_RENDER_TARGETS as u64);
+    for c_name in parse_c_cmd_opcode_const_names() {
+        let expected_rust = upper_snake_to_pascal_case(
+            c_name
+                .strip_prefix("AEROGPU_CMD_")
+                .expect("opcode constant missing AEROGPU_CMD_ prefix"),
+        );
+        let value_u32: u32 = abi
+            .konst(&c_name)
+            .try_into()
+            .expect("opcode did not fit in u32");
 
-    assert_eq!(
-        abi.konst("AEROGPU_MAX_RENDER_TARGETS"),
-        AEROGPU_MAX_RENDER_TARGETS as u64
-    );
-
-    assert_eq!(abi.konst("AEROGPU_CMD_NOP"), AerogpuCmdOpcode::Nop as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_DEBUG_MARKER"),
-        AerogpuCmdOpcode::DebugMarker as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_CREATE_BUFFER"),
-        AerogpuCmdOpcode::CreateBuffer as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_CREATE_TEXTURE2D"),
-        AerogpuCmdOpcode::CreateTexture2d as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_DESTROY_RESOURCE"),
-        AerogpuCmdOpcode::DestroyResource as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_RESOURCE_DIRTY_RANGE"),
-        AerogpuCmdOpcode::ResourceDirtyRange as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_UPLOAD_RESOURCE"),
-        AerogpuCmdOpcode::UploadResource as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_CREATE_SHADER_DXBC"),
-        AerogpuCmdOpcode::CreateShaderDxbc as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_DESTROY_SHADER"),
-        AerogpuCmdOpcode::DestroyShader as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_BIND_SHADERS"),
-        AerogpuCmdOpcode::BindShaders as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_SHADER_CONSTANTS_F"),
-        AerogpuCmdOpcode::SetShaderConstantsF as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_CREATE_INPUT_LAYOUT"),
-        AerogpuCmdOpcode::CreateInputLayout as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_DESTROY_INPUT_LAYOUT"),
-        AerogpuCmdOpcode::DestroyInputLayout as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_INPUT_LAYOUT"),
-        AerogpuCmdOpcode::SetInputLayout as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_BLEND_STATE"),
-        AerogpuCmdOpcode::SetBlendState as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_DEPTH_STENCIL_STATE"),
-        AerogpuCmdOpcode::SetDepthStencilState as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_RASTERIZER_STATE"),
-        AerogpuCmdOpcode::SetRasterizerState as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_RENDER_TARGETS"),
-        AerogpuCmdOpcode::SetRenderTargets as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_VIEWPORT"),
-        AerogpuCmdOpcode::SetViewport as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_SCISSOR"),
-        AerogpuCmdOpcode::SetScissor as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_VERTEX_BUFFERS"),
-        AerogpuCmdOpcode::SetVertexBuffers as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_INDEX_BUFFER"),
-        AerogpuCmdOpcode::SetIndexBuffer as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY"),
-        AerogpuCmdOpcode::SetPrimitiveTopology as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_TEXTURE"),
-        AerogpuCmdOpcode::SetTexture as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_SAMPLER_STATE"),
-        AerogpuCmdOpcode::SetSamplerState as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_SET_RENDER_STATE"),
-        AerogpuCmdOpcode::SetRenderState as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_CLEAR"),
-        AerogpuCmdOpcode::Clear as u64
-    );
-    assert_eq!(abi.konst("AEROGPU_CMD_DRAW"), AerogpuCmdOpcode::Draw as u64);
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_DRAW_INDEXED"),
-        AerogpuCmdOpcode::DrawIndexed as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_PRESENT"),
-        AerogpuCmdOpcode::Present as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_PRESENT_EX"),
-        AerogpuCmdOpcode::PresentEx as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_EXPORT_SHARED_SURFACE"),
-        AerogpuCmdOpcode::ExportSharedSurface as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_IMPORT_SHARED_SURFACE"),
-        AerogpuCmdOpcode::ImportSharedSurface as u64
-    );
-    assert_eq!(
-        abi.konst("AEROGPU_CMD_FLUSH"),
-        AerogpuCmdOpcode::Flush as u64
-    );
+        let opcode = AerogpuCmdOpcode::from_u32(value_u32)
+            .unwrap_or_else(|| panic!("missing Rust opcode binding for {c_name} ({value_u32:#x})"));
+        assert_eq!(
+            format!("{opcode:?}"),
+            expected_rust,
+            "opcode name for {c_name}"
+        );
+        assert_eq!(opcode as u32, value_u32, "opcode value for {c_name}");
+    }
 
     assert_eq!(abi.konst("AEROGPU_CLEAR_COLOR"), AEROGPU_CLEAR_COLOR as u64);
     assert_eq!(abi.konst("AEROGPU_CLEAR_DEPTH"), AEROGPU_CLEAR_DEPTH as u64);

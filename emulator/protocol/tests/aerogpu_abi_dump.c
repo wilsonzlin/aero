@@ -96,6 +96,14 @@ int main(void) {
   PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, input_slot_class);
   PRINT_OFF("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi, instance_data_step_rate);
 
+  /* Variable-length packet headers. */
+  PRINT_OFF("aerogpu_cmd_create_shader_dxbc", struct aerogpu_cmd_create_shader_dxbc, dxbc_size_bytes);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, vec4_count);
+  PRINT_OFF("aerogpu_cmd_create_input_layout", struct aerogpu_cmd_create_input_layout, blob_size_bytes);
+  PRINT_OFF("aerogpu_cmd_set_vertex_buffers", struct aerogpu_cmd_set_vertex_buffers, buffer_count);
+  PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, offset_bytes);
+  PRINT_OFF("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource, size_bytes);
+
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, magic);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, abi_version);
   PRINT_OFF("aerogpu_alloc_table_header", struct aerogpu_alloc_table_header, size_bytes);

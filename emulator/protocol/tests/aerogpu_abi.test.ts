@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -26,14 +27,14 @@ import {
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
-  AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE,
   AEROGPU_CMD_SET_INDEX_BUFFER_SIZE,
+  AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE,
   AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE,
   AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE,
-  AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
   AEROGPU_CMD_SET_RENDER_STATE_SIZE,
+  AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
   AEROGPU_CMD_SET_SAMPLER_STATE_SIZE,
   AEROGPU_CMD_SET_SCISSOR_SIZE,
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
@@ -77,8 +78,8 @@ import {
   AEROGPU_RESOURCE_USAGE_SCANOUT,
   AEROGPU_RESOURCE_USAGE_TEXTURE,
   AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
-  AerogpuPrimitiveTopology,
   AerogpuCmdOpcode,
+  AerogpuPrimitiveTopology,
   decodeCmdHdr,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -162,6 +163,9 @@ type AbiDump = {
   consts: Map<string, bigint>;
 };
 
+const testDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(testDir, "../../..");
+
 function parseAbiDump(text: string): AbiDump {
   const sizes = new Map<string, number>();
   const offsets = new Map<string, number>();
@@ -190,8 +194,6 @@ let cachedAbi: AbiDump | null = null;
 function abiDump(): AbiDump {
   if (cachedAbi) return cachedAbi;
 
-  const testDir = path.dirname(fileURLToPath(import.meta.url));
-  const repoRoot = path.resolve(testDir, "../../..");
   const cSrc = path.join(testDir, "aerogpu_abi_dump.c");
 
   const outPath = path.join(
@@ -207,6 +209,49 @@ function abiDump(): AbiDump {
 
   cachedAbi = parseAbiDump(run.stdout);
   return cachedAbi;
+}
+
+function parseCcmdOpcodeConstNames(): string[] {
+  const headerPath = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
+  const text = fs.readFileSync(headerPath, "utf8");
+
+  const start = text.indexOf("enum aerogpu_cmd_opcode");
+  assert.notEqual(start, -1, "missing enum aerogpu_cmd_opcode in aerogpu_cmd.h");
+  const afterStart = text.slice(start);
+
+  const open = afterStart.indexOf("{");
+  assert.notEqual(open, -1, "missing '{' for enum aerogpu_cmd_opcode");
+  const afterOpen = afterStart.slice(open + 1);
+
+  const close = afterOpen.indexOf("};");
+  assert.notEqual(close, -1, "missing '};' for enum aerogpu_cmd_opcode");
+  const body = afterOpen.slice(0, close);
+
+  const names = new Set<string>();
+  let idx = 0;
+  for (;;) {
+    const pos = body.indexOf("AEROGPU_CMD_", idx);
+    if (pos === -1) break;
+    let end = pos;
+    while (end < body.length) {
+      const ch = body.charCodeAt(end);
+      const isAlphaNum = (ch >= 0x30 && ch <= 0x39) || (ch >= 0x41 && ch <= 0x5a);
+      if (!isAlphaNum && ch !== 0x5f) break;
+      end++;
+    }
+    names.add(body.slice(pos, end));
+    idx = end;
+  }
+
+  return [...names].sort();
+}
+
+function upperSnakeToPascalCase(s: string): string {
+  return s
+    .split("_")
+    .filter((part) => part.length > 0)
+    .map((part) => part[0]!.toUpperCase() + part.slice(1).toLowerCase())
+    .join("");
 }
 
 test("TypeScript layout matches C headers", () => {
@@ -364,6 +409,14 @@ test("TypeScript layout matches C headers", () => {
   );
   assert.equal(off("aerogpu_umd_private_v1", "flags"), AEROGPU_UMD_PRIVATE_V1_OFF_FLAGS);
 
+  // Variable-length packets (must remain stable for parsing).
+  assert.equal(off("aerogpu_cmd_create_shader_dxbc", "dxbc_size_bytes"), 16);
+  assert.equal(off("aerogpu_cmd_set_shader_constants_f", "vec4_count"), 16);
+  assert.equal(off("aerogpu_cmd_create_input_layout", "blob_size_bytes"), 12);
+  assert.equal(off("aerogpu_cmd_set_vertex_buffers", "buffer_count"), 12);
+  assert.equal(off("aerogpu_cmd_upload_resource", "offset_bytes"), 16);
+  assert.equal(off("aerogpu_cmd_upload_resource", "size_bytes"), 24);
+
   // Constants.
   assert.equal(konst("AEROGPU_ABI_MAJOR"), BigInt(AEROGPU_ABI_MAJOR));
   assert.equal(konst("AEROGPU_ABI_MINOR"), BigInt(AEROGPU_ABI_MINOR));
@@ -409,41 +462,17 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_RESOURCE_USAGE_SCANOUT"), BigInt(AEROGPU_RESOURCE_USAGE_SCANOUT));
 
   assert.equal(konst("AEROGPU_MAX_RENDER_TARGETS"), BigInt(AEROGPU_MAX_RENDER_TARGETS));
+  const cOpcodeConsts = parseCcmdOpcodeConstNames();
+  const expectedTsKeys = cOpcodeConsts.map((cName) => upperSnakeToPascalCase(cName.replace(/^AEROGPU_CMD_/, "")));
 
-  assert.equal(konst("AEROGPU_CMD_NOP"), BigInt(AerogpuCmdOpcode.Nop));
-  assert.equal(konst("AEROGPU_CMD_DEBUG_MARKER"), BigInt(AerogpuCmdOpcode.DebugMarker));
-  assert.equal(konst("AEROGPU_CMD_CREATE_BUFFER"), BigInt(AerogpuCmdOpcode.CreateBuffer));
-  assert.equal(konst("AEROGPU_CMD_CREATE_TEXTURE2D"), BigInt(AerogpuCmdOpcode.CreateTexture2d));
-  assert.equal(konst("AEROGPU_CMD_DESTROY_RESOURCE"), BigInt(AerogpuCmdOpcode.DestroyResource));
-  assert.equal(konst("AEROGPU_CMD_RESOURCE_DIRTY_RANGE"), BigInt(AerogpuCmdOpcode.ResourceDirtyRange));
-  assert.equal(konst("AEROGPU_CMD_UPLOAD_RESOURCE"), BigInt(AerogpuCmdOpcode.UploadResource));
-  assert.equal(konst("AEROGPU_CMD_CREATE_SHADER_DXBC"), BigInt(AerogpuCmdOpcode.CreateShaderDxbc));
-  assert.equal(konst("AEROGPU_CMD_DESTROY_SHADER"), BigInt(AerogpuCmdOpcode.DestroyShader));
-  assert.equal(konst("AEROGPU_CMD_BIND_SHADERS"), BigInt(AerogpuCmdOpcode.BindShaders));
-  assert.equal(konst("AEROGPU_CMD_SET_SHADER_CONSTANTS_F"), BigInt(AerogpuCmdOpcode.SetShaderConstantsF));
-  assert.equal(konst("AEROGPU_CMD_CREATE_INPUT_LAYOUT"), BigInt(AerogpuCmdOpcode.CreateInputLayout));
-  assert.equal(konst("AEROGPU_CMD_DESTROY_INPUT_LAYOUT"), BigInt(AerogpuCmdOpcode.DestroyInputLayout));
-  assert.equal(konst("AEROGPU_CMD_SET_INPUT_LAYOUT"), BigInt(AerogpuCmdOpcode.SetInputLayout));
-  assert.equal(konst("AEROGPU_CMD_SET_BLEND_STATE"), BigInt(AerogpuCmdOpcode.SetBlendState));
-  assert.equal(konst("AEROGPU_CMD_SET_DEPTH_STENCIL_STATE"), BigInt(AerogpuCmdOpcode.SetDepthStencilState));
-  assert.equal(konst("AEROGPU_CMD_SET_RASTERIZER_STATE"), BigInt(AerogpuCmdOpcode.SetRasterizerState));
-  assert.equal(konst("AEROGPU_CMD_SET_RENDER_TARGETS"), BigInt(AerogpuCmdOpcode.SetRenderTargets));
-  assert.equal(konst("AEROGPU_CMD_SET_VIEWPORT"), BigInt(AerogpuCmdOpcode.SetViewport));
-  assert.equal(konst("AEROGPU_CMD_SET_SCISSOR"), BigInt(AerogpuCmdOpcode.SetScissor));
-  assert.equal(konst("AEROGPU_CMD_SET_VERTEX_BUFFERS"), BigInt(AerogpuCmdOpcode.SetVertexBuffers));
-  assert.equal(konst("AEROGPU_CMD_SET_INDEX_BUFFER"), BigInt(AerogpuCmdOpcode.SetIndexBuffer));
-  assert.equal(konst("AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY"), BigInt(AerogpuCmdOpcode.SetPrimitiveTopology));
-  assert.equal(konst("AEROGPU_CMD_SET_TEXTURE"), BigInt(AerogpuCmdOpcode.SetTexture));
-  assert.equal(konst("AEROGPU_CMD_SET_SAMPLER_STATE"), BigInt(AerogpuCmdOpcode.SetSamplerState));
-  assert.equal(konst("AEROGPU_CMD_SET_RENDER_STATE"), BigInt(AerogpuCmdOpcode.SetRenderState));
-  assert.equal(konst("AEROGPU_CMD_CLEAR"), BigInt(AerogpuCmdOpcode.Clear));
-  assert.equal(konst("AEROGPU_CMD_DRAW"), BigInt(AerogpuCmdOpcode.Draw));
-  assert.equal(konst("AEROGPU_CMD_DRAW_INDEXED"), BigInt(AerogpuCmdOpcode.DrawIndexed));
-  assert.equal(konst("AEROGPU_CMD_PRESENT"), BigInt(AerogpuCmdOpcode.Present));
-  assert.equal(konst("AEROGPU_CMD_PRESENT_EX"), BigInt(AerogpuCmdOpcode.PresentEx));
-  assert.equal(konst("AEROGPU_CMD_EXPORT_SHARED_SURFACE"), BigInt(AerogpuCmdOpcode.ExportSharedSurface));
-  assert.equal(konst("AEROGPU_CMD_IMPORT_SHARED_SURFACE"), BigInt(AerogpuCmdOpcode.ImportSharedSurface));
-  assert.equal(konst("AEROGPU_CMD_FLUSH"), BigInt(AerogpuCmdOpcode.Flush));
+  assert.deepEqual(new Set(Object.keys(AerogpuCmdOpcode)), new Set(expectedTsKeys), "opcode key set");
+  for (const cName of cOpcodeConsts) {
+    const key = upperSnakeToPascalCase(cName.replace(/^AEROGPU_CMD_/, ""));
+    const value = konst(cName);
+    const actual = (AerogpuCmdOpcode as Record<string, number>)[key];
+    assert.ok(actual !== undefined, `missing TS opcode binding for ${cName}`);
+    assert.equal(BigInt(actual), value, `opcode value for ${cName}`);
+  }
 
   assert.equal(konst("AEROGPU_CLEAR_COLOR"), BigInt(AEROGPU_CLEAR_COLOR));
   assert.equal(konst("AEROGPU_CLEAR_DEPTH"), BigInt(AEROGPU_CLEAR_DEPTH));
