@@ -41,8 +41,8 @@ qemu-system-i386 \
   -m 2048 \
   -cpu qemu32 \
   -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
-  -device virtio-keyboard-pci \
-  -device virtio-mouse-pci \
+  -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
+  -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01 \
   -net nic,model=e1000 -net user
 ```
 
@@ -54,8 +54,8 @@ qemu-system-x86_64 \
   -m 4096 \
   -cpu qemu64 \
   -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
-  -device virtio-keyboard-pci \
-  -device virtio-mouse-pci \
+  -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
+  -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01 \
   -net nic,model=e1000 -net user
 ```
 
@@ -100,8 +100,8 @@ After the driver is installed and confirmed working, you can ensure you are not 
 qemu-system-x86_64 \
   -machine pc,accel=kvm,i8042=off \
   ... \
-  -device virtio-keyboard-pci \
-  -device virtio-mouse-pci
+  -device virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01 \
+  -device virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01
 ```
 
 Only do this after you have a known-good virtio-input driver; otherwise you may lose keyboard/mouse access in the guest.
