@@ -7,7 +7,7 @@
 // - u32 readFrameIndex (bytes 0..4)
 // - u32 writeFrameIndex (bytes 4..8)
 // - u32 underrunCount (bytes 8..12)
-// - u32 reserved (bytes 12..16)
+// - u32 overrunCount (dropped frames, bytes 12..16)
 // - f32 samples[] (bytes 16..), interleaved by channel: L0, R0, L1, R1, ...
 
 const READ_FRAME_INDEX = 0;
