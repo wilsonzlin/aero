@@ -151,10 +151,30 @@ setup:
       echo "error: npm is required to install JS deps" >&2
       exit 1
     fi
+
+    # Workspaces: the lockfile lives at the repo root, even if users override
+    # `AERO_NODE_DIR` to point at a workspace subdir (e.g. `web/`).
+    #
+    # Running `npm ci` inside a workspace subdir can create a nested
+    # `web/node_modules` tree, which defeats the purpose of a single shared
+    # workspace install.
+    install_dir="{{WEB_DIR}}"
+    if command -v node >/dev/null 2>&1 && [[ -f scripts/ci/detect-node-dir.mjs ]]; then
+      lockfile="$(node scripts/ci/detect-node-dir.mjs --require-lockfile | sed -n 's/^lockfile=//p' | head -n1 | tr -d '\r' | xargs)"
+      if [[ -n "$lockfile" ]]; then
+        install_dir="$(dirname "$lockfile")"
+      fi
+    elif [[ -f package-lock.json ]]; then
+      install_dir="."
+    fi
+    if [[ -z "$install_dir" ]]; then
+      install_dir="."
+    fi
+
     # Keep `just setup` fast by skipping the Playwright browser download. Install
     # browsers explicitly when you need to run E2E tests:
     #   npx playwright install --with-deps chromium
-    (cd "{{WEB_DIR}}" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci)
+    (cd "$install_dir" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci)
   else
     echo "==> Node: '{{WEB_DIR}}/package.json' not found; skipping npm ci"
   fi
