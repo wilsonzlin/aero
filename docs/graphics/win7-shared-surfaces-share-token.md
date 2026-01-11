@@ -31,6 +31,7 @@ The **UMD** chooses a non-zero, collision-resistant token at creation time and w
 Note: On Win7/WDDM 1.1, treat allocation private driver data as **UMD → KMD input**.
 Do not rely on any KMD→UMD writeback semantics (see the header comment in
 `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+
 ## Expected flow (UMD ↔ KMD ↔ host)
 
 ### 1) Create shared resource → export (token)
