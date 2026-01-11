@@ -3714,7 +3714,7 @@ int wmain(int argc, wchar_t** argv) {
 
       if (want_snd_capture) {
         const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
-        const DWORD capture_wait_ms = (opt.require_snd_capture || capture_smoke_test) ? 20000 : 0;
+        const DWORD capture_wait_ms = (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
 
         bool capture_ok = false;
         const char* capture_method = "wasapi";
