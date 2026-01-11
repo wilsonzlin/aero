@@ -830,6 +830,280 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   return true;
 }
 
+bool TestCreateResourceRejectsUnsupportedGpuFormat() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+
+  // Use an obviously invalid D3D9 format value to ensure the UMD rejects unknown
+  // GPU formats in the default pool (rather than emitting invalid host commands).
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 0xFFFFFFFFu;
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == D3DERR_INVALIDCALL, "CreateResource rejects unsupported GPU format")) {
+    return false;
+  }
+  return Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle");
+}
+
+bool TestPresentStatsAndFrameLatency() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnPresentEx != nullptr, "PresentEx must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGetPresentStats != nullptr, "GetPresentStats must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGetLastPresentCount != nullptr, "GetLastPresentCount must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetMaximumFrameLatency != nullptr, "SetMaximumFrameLatency must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGetMaximumFrameLatency != nullptr, "GetMaximumFrameLatency must be available")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_PRESENTSTATS stats{};
+  hr = cleanup.device_funcs.pfnGetPresentStats(create_dev.hDevice, &stats);
+  if (!Check(hr == S_OK, "GetPresentStats initial")) {
+    return false;
+  }
+  if (!Check(stats.PresentCount == 0, "PresentCount initial == 0")) {
+    return false;
+  }
+
+  uint32_t last_present = 123;
+  hr = cleanup.device_funcs.pfnGetLastPresentCount(create_dev.hDevice, &last_present);
+  if (!Check(hr == S_OK, "GetLastPresentCount initial")) {
+    return false;
+  }
+  if (!Check(last_present == 0, "LastPresentCount initial == 0")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetMaximumFrameLatency(create_dev.hDevice, 0);
+  if (!Check(hr == E_INVALIDARG, "SetMaximumFrameLatency rejects 0")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetMaximumFrameLatency(create_dev.hDevice, 1);
+  if (!Check(hr == S_OK, "SetMaximumFrameLatency(1)")) {
+    return false;
+  }
+
+  uint32_t max_latency = 0;
+  hr = cleanup.device_funcs.pfnGetMaximumFrameLatency(create_dev.hDevice, &max_latency);
+  if (!Check(hr == S_OK, "GetMaximumFrameLatency")) {
+    return false;
+  }
+  if (!Check(max_latency == 1, "GetMaximumFrameLatency returns 1")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 1;
+  present.d3d9_present_flags = 0;
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx first")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnGetPresentStats(create_dev.hDevice, &stats);
+  if (!Check(hr == S_OK, "GetPresentStats after PresentEx")) {
+    return false;
+  }
+  if (!Check(stats.PresentCount == 1, "PresentCount == 1 after PresentEx")) {
+    return false;
+  }
+  if (!Check(stats.PresentRefreshCount == 1, "PresentRefreshCount == 1 after PresentEx")) {
+    return false;
+  }
+  if (!Check(stats.SyncRefreshCount == 1, "SyncRefreshCount == 1 after PresentEx")) {
+    return false;
+  }
+  if (!Check(stats.SyncQPCTime != 0, "SyncQPCTime non-zero after PresentEx")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnGetLastPresentCount(create_dev.hDevice, &last_present);
+  if (!Check(hr == S_OK, "GetLastPresentCount after PresentEx")) {
+    return false;
+  }
+  if (!Check(last_present == 1, "LastPresentCount == 1 after PresentEx")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  if (!Check(dev != nullptr && adapter != nullptr, "device/adapter pointers")) {
+    return false;
+  }
+
+  uint64_t first_present_fence = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->inflight_present_fences.size() == 1, "inflight_present_fences contains one fence")) {
+      return false;
+    }
+    first_present_fence = dev->inflight_present_fences.front();
+  }
+  if (!Check(first_present_fence != 0, "present fence value")) {
+    return false;
+  }
+
+  // Force the present fence into the "not completed" state so we can validate
+  // D3DPRESENT_DONOTWAIT throttling.
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    adapter->completed_fence = 0;
+  }
+
+  present.d3d9_present_flags = 0x1u; // D3DPRESENT_DONOTWAIT
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == D3DERR_WASSTILLDRAWING, "PresentEx DONOTWAIT returns WASSTILLDRAWING when throttled")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnGetLastPresentCount(create_dev.hDevice, &last_present);
+  if (!Check(hr == S_OK, "GetLastPresentCount after throttled PresentEx")) {
+    return false;
+  }
+  if (!Check(last_present == 1, "LastPresentCount unchanged after throttled PresentEx")) {
+    return false;
+  }
+
+  // Mark the fence complete and confirm presents proceed again.
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    adapter->completed_fence = first_present_fence;
+  }
+
+  present.d3d9_present_flags = 0;
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx after fence completion")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnGetPresentStats(create_dev.hDevice, &stats);
+  if (!Check(hr == S_OK, "GetPresentStats after second PresentEx")) {
+    return false;
+  }
+  if (!Check(stats.PresentCount == 2, "PresentCount == 2 after second PresentEx")) {
+    return false;
+  }
+  return true;
+}
+
 bool TestAllocationListSplitResetsOnEmptySubmit() {
   // Repro for a subtle WDDM-only failure mode:
   //
@@ -2477,6 +2751,8 @@ int main() {
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();
   failures += !aerogpu::TestAdapterCapsAndQueryAdapterInfo();
+  failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
+  failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
