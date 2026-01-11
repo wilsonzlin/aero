@@ -172,6 +172,26 @@ jobs:
             const fmtPct = (pct) => `${pct > 0 ? "+" : ""}${(pct * 100).toFixed(1)}%`;
             const fmtDelta = (n, unit) => `${n > 0 ? "+" : ""}${n.toFixed(1)}${unit ?? ""}`;
 
+            const fmtTraceStatus = (meta) => {
+              const trace = meta?.aeroPerf?.trace;
+              if (!trace || typeof trace !== "object") return "unknown";
+              const requested = trace.requested === true;
+              const available = trace.available === true;
+              const captured = trace.captured === true;
+              const timedOut = trace.timedOut === true;
+              if (!requested) return available ? "available (not captured)" : "not captured";
+              if (timedOut) return "timed out";
+              if (!available) return "unsupported";
+              return captured ? "captured" : "not captured";
+            };
+
+            const fmtPerfExportStatus = (meta) => {
+              const aeroPerf = meta?.aeroPerf;
+              if (!aeroPerf || typeof aeroPerf !== "object") return "unknown";
+              if (aeroPerf.exportApiTimedOut === true) return "timed out";
+              return aeroPerf.exportAvailable === true ? "available" : "unavailable";
+            };
+
             const lines = [];
             lines.push("<!-- aero-perf-smoke -->");
             lines.push("### Perf (smoke)");
@@ -182,6 +202,8 @@ jobs:
             lines.push(`Candidate: \`${summary.candidateMeta?.gitSha ?? "unknown"}\``);
             lines.push(`Policy: \`${summary.profile ?? "unknown"}\` (\`${summary.thresholdsFile ?? "unknown"}\`)`);
             lines.push(`Iterations: median-of-${summary.candidateMeta?.iterations ?? "?"}`);
+            lines.push(`Perf export: \`${fmtPerfExportStatus(summary.baselineMeta)}\` → \`${fmtPerfExportStatus(summary.candidateMeta)}\``);
+            lines.push(`Trace: \`${fmtTraceStatus(summary.baselineMeta)}\` → \`${fmtTraceStatus(summary.candidateMeta)}\``);
 
             if (summary.status === "unstable") {
               lines.push("");
