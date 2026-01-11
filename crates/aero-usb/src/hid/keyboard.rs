@@ -1,17 +1,25 @@
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::rc::Rc;
+use alloc::collections::VecDeque;
+use alloc::rc::Rc;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
 
-use crate::io::usb::core::UsbInResult;
-use crate::io::usb::{
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
+use crate::device::UsbInResult;
+use crate::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
 
 use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
     HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
-    HID_REQUEST_SET_PROTOCOL, USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE,
-    USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING,
+    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION,
+    USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_ENDPOINT, USB_DESCRIPTOR_TYPE_HID,
+    USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_INTERFACE, USB_DESCRIPTOR_TYPE_STRING,
     USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE,
     USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE,
     USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION,
@@ -19,37 +27,32 @@ use super::{
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
-const MAX_PENDING_REPORTS: usize = 128;
+const MAX_PENDING_REPORTS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GamepadReport {
-    pub buttons: u16,
-    /// Hat switch value (low 4 bits). `8` is used as the null/centered state.
-    pub hat: u8,
-    pub x: i8,
-    pub y: i8,
-    pub rx: i8,
-    pub ry: i8,
+pub struct KeyboardReport {
+    pub modifiers: u8,
+    pub reserved: u8,
+    pub keys: [u8; 6],
 }
 
-impl GamepadReport {
+impl KeyboardReport {
     pub fn to_bytes(self) -> [u8; 8] {
-        let [b0, b1] = self.buttons.to_le_bytes();
         [
-            b0,
-            b1,
-            self.hat & 0x0f,
-            self.x as u8,
-            self.y as u8,
-            self.rx as u8,
-            self.ry as u8,
-            0x00,
+            self.modifiers,
+            self.reserved,
+            self.keys[0],
+            self.keys[1],
+            self.keys[2],
+            self.keys[3],
+            self.keys[4],
+            self.keys[5],
         ]
     }
 }
 
 #[derive(Debug)]
-pub struct UsbHidGamepad {
+pub struct UsbHidKeyboard {
     address: u8,
     configuration: u8,
     remote_wakeup_enabled: bool,
@@ -58,70 +61,43 @@ pub struct UsbHidGamepad {
     interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
+    leds: u8,
 
-    buttons: u16,
-    hat: u8,
-    x: i8,
-    y: i8,
-    rx: i8,
-    ry: i8,
+    modifiers: u8,
+    pressed_keys: Vec<u8>,
 
     last_report: [u8; 8],
     pending_reports: VecDeque<[u8; 8]>,
 }
 
-/// Shareable handle for a USB HID gamepad model.
+/// Shareable handle for a USB HID keyboard model.
+///
+/// The UHCI root hub stores devices behind `Box<dyn UsbDeviceModel>`; by cloning this handle
+/// before attaching, the platform/input layer can continue to inject key events.
 #[derive(Clone, Debug)]
-pub struct UsbHidGamepadHandle(Rc<RefCell<UsbHidGamepad>>);
+pub struct UsbHidKeyboardHandle(Rc<RefCell<UsbHidKeyboard>>);
 
-impl UsbHidGamepadHandle {
+impl UsbHidKeyboardHandle {
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(UsbHidGamepad::new())))
+        Self(Rc::new(RefCell::new(UsbHidKeyboard::new())))
     }
 
     pub fn configured(&self) -> bool {
         self.0.borrow().configuration != 0
     }
 
-    /// Sets or clears a button.
-    ///
-    /// `button_idx` is **1-based** and maps directly to HID usages Button 1..16.
-    pub fn button_event(&self, button_idx: u8, pressed: bool) {
-        self.0.borrow_mut().button_event(button_idx, pressed);
-    }
-
-    pub fn set_buttons(&self, buttons: u16) {
-        self.0.borrow_mut().set_buttons(buttons);
-    }
-
-    /// Sets the hat switch direction.
-    ///
-    /// - `None` means centered (null state).
-    /// - `Some(0..=7)` corresponds to N, NE, E, SE, S, SW, W, NW.
-    pub fn set_hat(&self, hat: Option<u8>) {
-        self.0.borrow_mut().set_hat(hat);
-    }
-
-    pub fn set_axes(&self, x: i8, y: i8, rx: i8, ry: i8) {
-        self.0.borrow_mut().set_axes(x, y, rx, ry);
-    }
-
-    /// Updates the entire 8-byte gamepad report state in one call.
-    ///
-    /// This is useful for host-side gamepad polling, where the full state is refreshed at a
-    /// fixed rate and should enqueue at most one report per poll.
-    pub fn set_report(&self, report: GamepadReport) {
-        self.0.borrow_mut().set_report(report);
+    pub fn key_event(&self, usage: u8, pressed: bool) {
+        self.0.borrow_mut().key_event(usage, pressed);
     }
 }
 
-impl Default for UsbHidGamepadHandle {
+impl Default for UsbHidKeyboardHandle {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UsbDeviceModel for UsbHidGamepadHandle {
+impl UsbDeviceModel for UsbHidKeyboardHandle {
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }
@@ -149,24 +125,144 @@ impl UsbDeviceModel for UsbHidGamepadHandle {
     }
 }
 
-impl Default for UsbHidGamepad {
+impl Default for UsbHidKeyboard {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UsbHidGamepad {
-    pub fn new() -> Self {
-        let initial_report = GamepadReport {
-            buttons: 0,
-            hat: 8,
-            x: 0,
-            y: 0,
-            rx: 0,
-            ry: 0,
-        }
-        .to_bytes();
+impl IoSnapshot for UsbHidKeyboard {
+    const DEVICE_ID: [u8; 4] = *b"UKBD";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_REMOTE_WAKEUP_PENDING: u16 = 4;
+        const TAG_SUSPENDED: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_LEDS: u16 = 9;
+        const TAG_MODIFIERS: u16 = 10;
+        const TAG_PRESSED_KEYS: u16 = 11;
+        const TAG_LAST_REPORT: u16 = 12;
+        const TAG_PENDING_REPORTS: u16 = 13;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_REMOTE_WAKEUP_PENDING, self.remote_wakeup_pending);
+        w.field_bool(TAG_SUSPENDED, self.suspended);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_u8(TAG_PROTOCOL, self.protocol as u8);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+        w.field_u8(TAG_LEDS, self.leds);
+
+        w.field_u8(TAG_MODIFIERS, self.modifiers);
+        w.field_bytes(
+            TAG_PRESSED_KEYS,
+            Encoder::new().vec_u8(&self.pressed_keys).finish(),
+        );
+        w.field_bytes(TAG_LAST_REPORT, self.last_report.to_vec());
+
+        let pending: Vec<Vec<u8>> = self.pending_reports.iter().map(|r| r.to_vec()).collect();
+        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_REMOTE_WAKEUP_PENDING: u16 = 4;
+        const TAG_SUSPENDED: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_PROTOCOL: u16 = 7;
+        const TAG_IDLE_RATE: u16 = 8;
+        const TAG_LEDS: u16 = 9;
+        const TAG_MODIFIERS: u16 = 10;
+        const TAG_PRESSED_KEYS: u16 = 11;
+        const TAG_LAST_REPORT: u16 = 12;
+        const TAG_PENDING_REPORTS: u16 = 13;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.remote_wakeup_pending = r.bool(TAG_REMOTE_WAKEUP_PENDING)?.unwrap_or(false);
+        self.suspended = r.bool(TAG_SUSPENDED)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+
+        if let Some(protocol) = r.u8(TAG_PROTOCOL)? {
+            self.protocol = match protocol {
+                0 => HidProtocol::Boot,
+                1 => HidProtocol::Report,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
+            };
+        }
+
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+        self.leds = r.u8(TAG_LEDS)?.unwrap_or(0);
+        self.modifiers = r.u8(TAG_MODIFIERS)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_PRESSED_KEYS) {
+            let mut d = Decoder::new(buf);
+            self.pressed_keys = d.vec_u8()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_LAST_REPORT) {
+            if buf.len() != self.last_report.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard last report"));
+            }
+            self.last_report.copy_from_slice(buf);
+        }
+
+        if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let reports = d.vec_bytes()?;
+            d.finish()?;
+            if reports.len() > MAX_PENDING_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard pending reports"));
+            }
+            self.pending_reports.clear();
+            for report in reports {
+                if report.len() != self.last_report.len() {
+                    return Err(SnapshotError::InvalidFieldEncoding("keyboard report length"));
+                }
+                self.pending_reports
+                    .push_back(report.try_into().expect("len checked"));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl IoSnapshot for UsbHidKeyboardHandle {
+    const DEVICE_ID: [u8; 4] = UsbHidKeyboard::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = UsbHidKeyboard::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.0.borrow().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.0.borrow_mut().load_state(bytes)
+    }
+}
+
+impl UsbHidKeyboard {
+    pub fn new() -> Self {
         Self {
             address: 0,
             configuration: 0,
@@ -176,103 +272,60 @@ impl UsbHidGamepad {
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
-            buttons: 0,
-            hat: 8,
-            x: 0,
-            y: 0,
-            rx: 0,
-            ry: 0,
-            last_report: initial_report,
+            leds: 0,
+            modifiers: 0,
+            pressed_keys: Vec::new(),
+            last_report: [0; 8],
             pending_reports: VecDeque::new(),
         }
     }
 
-    pub fn button_event(&mut self, button_idx: u8, pressed: bool) {
-        if !(1..=16).contains(&button_idx) {
+    pub fn key_event(&mut self, usage: u8, pressed: bool) {
+        if usage == 0 {
             return;
         }
-        let bit = 1u16 << (button_idx - 1);
-        let before = self.buttons;
-        if pressed {
-            self.buttons |= bit;
+
+        let mut changed = false;
+        if let Some(bit) = modifier_bit(usage) {
+            let before = self.modifiers;
+            if pressed {
+                self.modifiers |= bit;
+            } else {
+                self.modifiers &= !bit;
+            }
+            changed = before != self.modifiers;
+        } else if pressed {
+            if !self.pressed_keys.contains(&usage) {
+                self.pressed_keys.push(usage);
+                changed = true;
+            }
         } else {
-            self.buttons &= !bit;
+            let before_len = self.pressed_keys.len();
+            self.pressed_keys.retain(|&k| k != usage);
+            changed = before_len != self.pressed_keys.len();
         }
-        if before != self.buttons {
+
+        if changed {
             self.enqueue_current_report();
+            if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
+                self.remote_wakeup_pending = true;
+            }
         }
     }
 
-    pub fn set_buttons(&mut self, buttons: u16) {
-        if self.buttons != buttons {
-            self.buttons = buttons;
-            self.enqueue_current_report();
+    pub fn current_input_report(&self) -> KeyboardReport {
+        let mut keys = [0u8; 6];
+        if self.pressed_keys.len() > 6 {
+            keys.fill(0x01); // ErrorRollOver
+        } else {
+            for (idx, &usage) in self.pressed_keys.iter().take(6).enumerate() {
+                keys[idx] = usage;
+            }
         }
-    }
-
-    pub fn set_hat(&mut self, hat: Option<u8>) {
-        let hat = match hat {
-            Some(v) if v <= 7 => v,
-            _ => 8,
-        };
-        if self.hat != hat {
-            self.hat = hat;
-            self.enqueue_current_report();
-        }
-    }
-
-    pub fn set_axes(&mut self, x: i8, y: i8, rx: i8, ry: i8) {
-        let x = x.clamp(-127, 127);
-        let y = y.clamp(-127, 127);
-        let rx = rx.clamp(-127, 127);
-        let ry = ry.clamp(-127, 127);
-
-        if self.x != x || self.y != y || self.rx != rx || self.ry != ry {
-            self.x = x;
-            self.y = y;
-            self.rx = rx;
-            self.ry = ry;
-            self.enqueue_current_report();
-        }
-    }
-
-    pub fn set_report(&mut self, report: GamepadReport) {
-        let hat = match report.hat {
-            v if v <= 7 => v,
-            _ => 8,
-        };
-        let x = report.x.clamp(-127, 127);
-        let y = report.y.clamp(-127, 127);
-        let rx = report.rx.clamp(-127, 127);
-        let ry = report.ry.clamp(-127, 127);
-
-        if self.buttons == report.buttons
-            && self.hat == hat
-            && self.x == x
-            && self.y == y
-            && self.rx == rx
-            && self.ry == ry
-        {
-            return;
-        }
-
-        self.buttons = report.buttons;
-        self.hat = hat;
-        self.x = x;
-        self.y = y;
-        self.rx = rx;
-        self.ry = ry;
-        self.enqueue_current_report();
-    }
-
-    pub fn current_input_report(&self) -> GamepadReport {
-        GamepadReport {
-            buttons: self.buttons,
-            hat: self.hat,
-            x: self.x,
-            y: self.y,
-            rx: self.rx,
-            ry: self.ry,
+        KeyboardReport {
+            modifiers: self.modifiers,
+            reserved: 0,
+            keys,
         }
     }
 
@@ -284,9 +337,6 @@ impl UsbHidGamepad {
                 self.pending_reports.pop_front();
             }
             self.pending_reports.push_back(report);
-            if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
-                self.remote_wakeup_pending = true;
-            }
         }
     }
 
@@ -294,7 +344,7 @@ impl UsbHidGamepad {
         match index {
             0 => Some(vec![0x04, USB_DESCRIPTOR_TYPE_STRING, 0x09, 0x04]), // en-US
             1 => Some(build_string_descriptor_utf16le("Aero")),
-            2 => Some(build_string_descriptor_utf16le("Aero USB HID Gamepad")),
+            2 => Some(build_string_descriptor_utf16le("Aero USB HID Keyboard")),
             _ => None,
         }
     }
@@ -315,7 +365,7 @@ impl UsbHidGamepad {
     }
 }
 
-impl UsbDeviceModel for UsbHidGamepad {
+impl UsbDeviceModel for UsbHidKeyboard {
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -323,12 +373,13 @@ impl UsbDeviceModel for UsbHidGamepad {
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
-        _data_stage: Option<&[u8]>,
+        data_stage: Option<&[u8]>,
     ) -> ControlResponse {
         match (setup.request_type(), setup.recipient()) {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -346,6 +397,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
                         if setup.request_direction() != RequestDirection::HostToDevice
                             || setup.w_index != 0
+                            || setup.w_length != 0
                         {
                             return ControlResponse::Stall;
                         }
@@ -359,6 +411,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
                         if setup.request_direction() != RequestDirection::HostToDevice
                             || setup.w_index != 0
+                            || setup.w_length != 0
                         {
                             return ControlResponse::Stall;
                         }
@@ -370,6 +423,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                 USB_REQUEST_SET_ADDRESS => {
                     if setup.request_direction() != RequestDirection::HostToDevice
                         || setup.w_index != 0
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -397,6 +451,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                 USB_REQUEST_SET_CONFIGURATION => {
                     if setup.request_direction() != RequestDirection::HostToDevice
                         || setup.w_index != 0
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -413,6 +468,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                 }
                 USB_REQUEST_GET_CONFIGURATION => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -424,6 +480,7 @@ impl UsbDeviceModel for UsbHidGamepad {
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -431,7 +488,9 @@ impl UsbDeviceModel for UsbHidGamepad {
                     ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
                 }
                 USB_REQUEST_GET_INTERFACE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_index == 0 {
@@ -444,7 +503,7 @@ impl UsbDeviceModel for UsbHidGamepad {
                     if setup.request_direction() != RequestDirection::HostToDevice {
                         return ControlResponse::Stall;
                     }
-                    if setup.w_index == 0 && setup.w_value == 0 {
+                    if setup.w_index == 0 && setup.w_value == 0 && setup.w_length == 0 {
                         ControlResponse::Ack
                     } else {
                         ControlResponse::Stall
@@ -522,12 +581,29 @@ impl UsbDeviceModel for UsbHidGamepad {
                     {
                         return ControlResponse::Stall;
                     }
+                    // wValue high byte: Report Type (1=input, 2=output, 3=feature)
                     let report_type = (setup.w_value >> 8) as u8;
                     match report_type {
                         1 => ControlResponse::Data(clamp_response(
                             self.current_input_report().to_bytes().to_vec(),
                             setup.w_length,
                         )),
+                        2 => ControlResponse::Data(clamp_response(vec![self.leds], setup.w_length)),
+                        _ => ControlResponse::Stall,
+                    }
+                }
+                HID_REQUEST_SET_REPORT => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let report_type = (setup.w_value >> 8) as u8;
+                    match (report_type, data_stage) {
+                        (2, Some(data)) if !data.is_empty() => {
+                            self.leds = data[0];
+                            ControlResponse::Ack
+                        }
                         _ => ControlResponse::Stall,
                     }
                 }
@@ -593,6 +669,8 @@ impl UsbDeviceModel for UsbHidGamepad {
 
     fn set_suspended(&mut self, suspended: bool) {
         self.suspended = suspended;
+        // Only wake events that occur *during* suspend should trigger remote wake; drop any stale
+        // pending flag when the suspend state changes.
         self.remote_wakeup_pending = false;
     }
 
@@ -610,7 +688,13 @@ impl UsbDeviceModel for UsbHidGamepad {
     }
 }
 
-// USB device descriptor (Gamepad)
+fn modifier_bit(usage: u8) -> Option<u8> {
+    (0xe0..=0xe7)
+        .contains(&usage)
+        .then(|| 1u8 << (usage - 0xe0))
+}
+
+// USB device descriptor (Keyboard)
 static DEVICE_DESCRIPTOR: [u8; 18] = [
     0x12, // bLength
     USB_DESCRIPTOR_TYPE_DEVICE,
@@ -622,8 +706,8 @@ static DEVICE_DESCRIPTOR: [u8; 18] = [
     0x40, // bMaxPacketSize0 (64)
     0x34,
     0x12, // idVendor (0x1234)
-    0x03,
-    0x00, // idProduct (0x0003)
+    0x01,
+    0x00, // idProduct (0x0001)
     0x00,
     0x01, // bcdDevice (1.00)
     0x01, // iManufacturer
@@ -647,13 +731,13 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     50,   // bMaxPower (100mA)
     // Interface descriptor
     0x09, // bLength
-    super::USB_DESCRIPTOR_TYPE_INTERFACE,
+    USB_DESCRIPTOR_TYPE_INTERFACE,
     0x00, // bInterfaceNumber
     0x00, // bAlternateSetting
     0x01, // bNumEndpoints
     0x03, // bInterfaceClass (HID)
-    0x00, // bInterfaceSubClass
-    0x00, // bInterfaceProtocol
+    0x01, // bInterfaceSubClass (Boot)
+    0x01, // bInterfaceProtocol (Keyboard)
     0x00, // iInterface
     // HID descriptor
     0x09, // bLength
@@ -667,7 +751,7 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     0x00, // wDescriptorLength
     // Endpoint descriptor (Interrupt IN)
     0x07, // bLength
-    super::USB_DESCRIPTOR_TYPE_ENDPOINT,
+    USB_DESCRIPTOR_TYPE_ENDPOINT,
     INTERRUPT_IN_EP, // bEndpointAddress
     0x03,            // bmAttributes (Interrupt)
     0x08,
@@ -675,58 +759,62 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     0x0a, // bInterval (10ms)
 ];
 
-pub(super) static HID_REPORT_DESCRIPTOR: [u8; 76] = [
+pub(super) static HID_REPORT_DESCRIPTOR: [u8; 63] = [
     0x05, 0x01, // Usage Page (Generic Desktop)
-    0x09, 0x05, // Usage (Game Pad)
+    0x09, 0x06, // Usage (Keyboard)
     0xa1, 0x01, // Collection (Application)
-    0x05, 0x09, // Usage Page (Button)
-    0x19, 0x01, // Usage Minimum (Button 1)
-    0x29, 0x10, // Usage Maximum (Button 16)
+    0x05, 0x07, // Usage Page (Keyboard/Keypad)
+    0x19, 0xe0, // Usage Minimum (Left Control)
+    0x29, 0xe7, // Usage Maximum (Right GUI)
     0x15, 0x00, // Logical Minimum (0)
     0x25, 0x01, // Logical Maximum (1)
     0x75, 0x01, // Report Size (1)
-    0x95, 0x10, // Report Count (16)
-    0x81, 0x02, // Input (Data,Var,Abs) Buttons
-    0x05, 0x01, // Usage Page (Generic Desktop)
-    0x09, 0x39, // Usage (Hat switch)
+    0x95, 0x08, // Report Count (8)
+    0x81, 0x02, // Input (Data,Var,Abs) Modifier byte
+    0x95, 0x01, // Report Count (1)
+    0x75, 0x08, // Report Size (8)
+    0x81, 0x01, // Input (Const,Array,Abs) Reserved byte
+    0x95, 0x05, // Report Count (5)
+    0x75, 0x01, // Report Size (1)
+    0x05, 0x08, // Usage Page (LEDs)
+    0x19, 0x01, // Usage Minimum (Num Lock)
+    0x29, 0x05, // Usage Maximum (Kana)
+    0x91, 0x02, // Output (Data,Var,Abs) LED report
+    0x95, 0x01, // Report Count (1)
+    0x75, 0x03, // Report Size (3)
+    0x91, 0x01, // Output (Const,Array,Abs) LED padding
+    0x95, 0x06, // Report Count (6)
+    0x75, 0x08, // Report Size (8)
     0x15, 0x00, // Logical Minimum (0)
-    0x25, 0x07, // Logical Maximum (7)
-    0x35, 0x00, // Physical Minimum (0)
-    0x46, 0x3b, 0x01, // Physical Maximum (315)
-    0x65, 0x14, // Unit (Eng Rot: Degrees)
-    0x75, 0x04, // Report Size (4)
-    0x95, 0x01, // Report Count (1)
-    0x81, 0x42, // Input (Data,Var,Abs,Null) Hat
-    0x65, 0x00, // Unit (None)
-    0x75, 0x04, // Report Size (4)
-    0x95, 0x01, // Report Count (1)
-    0x81, 0x01, // Input (Const,Array,Abs) Padding
-    0x09, 0x30, // Usage (X)
-    0x09, 0x31, // Usage (Y)
-    0x09, 0x33, // Usage (Rx)
-    0x09, 0x34, // Usage (Ry)
-    0x15, 0x81, // Logical Minimum (-127)
-    0x25, 0x7f, // Logical Maximum (127)
-    0x75, 0x08, // Report Size (8)
-    0x95, 0x04, // Report Count (4)
-    0x81, 0x02, // Input (Data,Var,Abs) Axes
-    0x75, 0x08, // Report Size (8)
-    0x95, 0x01, // Report Count (1)
-    0x81, 0x01, // Input (Const,Array,Abs) Padding
+    0x25, 0x65, // Logical Maximum (101)
+    0x05, 0x07, // Usage Page (Keyboard/Keypad)
+    0x19, 0x00, // Usage Minimum (0)
+    0x29, 0x65, // Usage Maximum (101)
+    0x81, 0x00, // Input (Data,Array,Abs) Key arrays (6 bytes)
     0xc0, // End Collection
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn w_le(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
-    fn configure_gamepad(pad: &mut UsbHidGamepad) {
+    fn poll_interrupt_in(dev: &mut UsbHidKeyboard) -> Option<Vec<u8>> {
+        match dev.handle_in_transfer(INTERRUPT_IN_EP, 8) {
+            UsbInResult::Data(data) => Some(data),
+            UsbInResult::Nak => None,
+            UsbInResult::Stall => panic!("unexpected STALL on interrupt IN"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT on interrupt IN"),
+        }
+    }
+
+    fn configure_keyboard(kb: &mut UsbHidKeyboard) {
         assert_eq!(
-            pad.handle_control_request(
+            kb.handle_control_request(
                 SetupPacket {
                     bm_request_type: 0x00,
                     b_request: USB_REQUEST_SET_CONFIGURATION,
@@ -742,8 +830,8 @@ mod tests {
 
     #[test]
     fn device_descriptor_is_well_formed() {
-        let mut pad = UsbHidGamepad::new();
-        let dev = match pad.handle_control_request(
+        let mut kb = UsbHidKeyboard::new();
+        let dev = match kb.handle_control_request(
             SetupPacket {
                 bm_request_type: 0x80,
                 b_request: USB_REQUEST_GET_DESCRIPTOR,
@@ -763,8 +851,8 @@ mod tests {
 
     #[test]
     fn config_descriptor_has_expected_layout() {
-        let mut pad = UsbHidGamepad::new();
-        let cfg = match pad.handle_control_request(
+        let mut kb = UsbHidKeyboard::new();
+        let cfg = match kb.handle_control_request(
             SetupPacket {
                 bm_request_type: 0x80,
                 b_request: USB_REQUEST_GET_DESCRIPTOR,
@@ -790,63 +878,208 @@ mod tests {
         assert_eq!(w_le(hid, 7) as usize, HID_REPORT_DESCRIPTOR.len());
 
         let ep = &cfg[27..34];
-        assert_eq!(ep[1], super::super::USB_DESCRIPTOR_TYPE_ENDPOINT);
+        assert_eq!(ep[1], USB_DESCRIPTOR_TYPE_ENDPOINT);
         assert_eq!(ep[2], INTERRUPT_IN_EP);
-        assert_eq!(w_le(ep, 4), 8);
     }
 
     #[test]
-    fn get_report_returns_current_state() {
-        let mut pad = UsbHidGamepad::new();
-        pad.set_buttons(0x0001);
-        pad.set_hat(Some(2));
-        pad.set_axes(1, -1, 5, -5);
+    fn keyboard_report_generation_and_rollover() {
+        let mut kb = UsbHidKeyboard::new();
+        configure_keyboard(&mut kb);
 
-        let resp = pad.handle_control_request(
+        kb.key_event(0x04, true); // 'a'
+        let report = poll_interrupt_in(&mut kb).unwrap();
+        assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
+
+        kb.key_event(0xe1, true); // LeftShift
+        let report = poll_interrupt_in(&mut kb).unwrap();
+        assert_eq!(report[0], 0x02);
+        assert_eq!(report[2], 0x04);
+
+        // Press 6 additional keys to trigger rollover (>6 non-modifiers).
+        for usage in 0x05..=0x0a {
+            kb.key_event(usage, true);
+        }
+        let mut rollover = None;
+        while let Some(report) = poll_interrupt_in(&mut kb) {
+            rollover = Some(report);
+        }
+        let rollover = rollover.unwrap();
+        assert_eq!(&rollover[2..], &[0x01; 6]);
+
+        // Release one key; should go back to explicit list.
+        kb.key_event(0x0a, false);
+        let report = poll_interrupt_in(&mut kb).unwrap();
+        assert_ne!(&report[2..], &[0x01; 6]);
+        assert_eq!(report[0], 0x02);
+    }
+
+    #[test]
+    fn keyboard_report_compacts_on_release_property() {
+        let mut kb = UsbHidKeyboard::new();
+        let keys: [u8; 6] = [0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
+
+        // Simple deterministic PRNG (LCG) to avoid external dependencies.
+        let mut seed = 0x1234_5678u32;
+        let mut expected: Vec<u8> = Vec::new();
+
+        for _ in 0..10_000 {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            let idx = (seed as usize) % keys.len();
+            let usage = keys[idx];
+            let pressed = (seed & 0x8000_0000) != 0;
+
+            kb.key_event(usage, pressed);
+
+            // Maintain the expected insertion-ordered, compacted set.
+            if pressed {
+                if !expected.contains(&usage) {
+                    expected.push(usage);
+                }
+            } else {
+                expected.retain(|&k| k != usage);
+            }
+
+            let report = kb.current_input_report().to_bytes();
+            let report_keys = &report[2..];
+
+            // Verify: no gaps (all zeros are at the end) and ordering matches expectation.
+            let first_zero = report_keys.iter().position(|&k| k == 0).unwrap_or(6);
+            // If there are zeros, everything after the first zero must be zero.
+            for &k in &report_keys[first_zero..] {
+                assert_eq!(k, 0);
+            }
+            // The non-zero prefix matches the expected pressed key list.
+            let non_zero_len = first_zero;
+            assert_eq!(&report_keys[..non_zero_len], &expected[..non_zero_len]);
+        }
+    }
+
+    #[test]
+    fn keyboard_standard_requests_track_status_bits() {
+        let mut kb = UsbHidKeyboard::new();
+
+        // Default: remote wakeup disabled.
+        let resp = kb.handle_control_request(
             SetupPacket {
-                bm_request_type: 0xa1,
-                b_request: HID_REQUEST_GET_REPORT,
-                w_value: 0x0100,
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
                 w_index: 0,
-                w_length: 8,
+                w_length: 2,
             },
             None,
         );
+        assert_eq!(resp, ControlResponse::Data(vec![0x00, 0x00]));
 
+        // Enable remote wakeup.
         assert_eq!(
-            resp,
-            ControlResponse::Data(vec![0x01, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
         );
+
+        let resp = kb.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
+                w_index: 0,
+                w_length: 2,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![0x02, 0x00]));
+
+        // Halt endpoint and verify status.
+        assert_eq!(
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x02,
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_ENDPOINT_HALT,
+                    w_index: INTERRUPT_IN_EP as u16,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        let resp = kb.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x82,
+                b_request: USB_REQUEST_GET_STATUS,
+                w_value: 0,
+                w_index: INTERRUPT_IN_EP as u16,
+                w_length: 2,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Data(vec![0x01, 0x00]));
+
+        // SET_ADDRESS should be accepted and stored.
+        assert_eq!(
+            kb.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_ADDRESS,
+                    w_value: 7,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        assert_eq!(kb.address, 7);
+    }
+
+    #[test]
+    fn stalls_on_wrong_direction() {
+        let mut kb = UsbHidKeyboard::new();
+        let resp = kb.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00, // HostToDevice but GET_DESCRIPTOR expects DeviceToHost.
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
+                w_index: 0,
+                w_length: 18,
+            },
+            None,
+        );
+        assert_eq!(resp, ControlResponse::Stall);
     }
 
     #[test]
     fn does_not_send_interrupt_reports_until_configured() {
-        let mut pad = UsbHidGamepad::new();
-        pad.button_event(1, true);
-        assert_eq!(pad.handle_in_transfer(INTERRUPT_IN_EP, 8), UsbInResult::Nak);
+        let mut kb = UsbHidKeyboard::new();
 
-        configure_gamepad(&mut pad);
-        assert!(matches!(
-            pad.handle_in_transfer(INTERRUPT_IN_EP, 8),
-            UsbInResult::Data(_)
-        ));
+        kb.key_event(0x04, true);
+        assert!(poll_interrupt_in(&mut kb).is_none());
+
+        configure_keyboard(&mut kb);
+        assert!(poll_interrupt_in(&mut kb).is_some());
     }
 
     #[test]
-    fn report_queue_is_bounded_and_deduped() {
-        let mut pad = UsbHidGamepad::new();
-        configure_gamepad(&mut pad);
-
-        pad.button_event(1, true);
-        assert_eq!(pad.pending_reports.len(), 1);
-        pad.enqueue_current_report();
-        assert_eq!(pad.pending_reports.len(), 1);
+    fn report_queue_is_bounded() {
+        let mut kb = UsbHidKeyboard::new();
+        configure_keyboard(&mut kb);
 
         for _ in 0..(MAX_PENDING_REPORTS + 32) {
-            pad.button_event(1, true);
-            pad.button_event(1, false);
+            kb.key_event(0x04, true);
+            kb.key_event(0x04, false);
         }
 
-        assert!(pad.pending_reports.len() <= MAX_PENDING_REPORTS);
+        assert!(kb.pending_reports.len() <= MAX_PENDING_REPORTS);
     }
 }

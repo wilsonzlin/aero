@@ -1,15 +1,15 @@
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
-    UsbHostCompletionOut, UsbWebUsbPassthroughDevice,
+    UsbHostCompletionOut,
 };
+use aero_usb::uhci::regs;
 use aero_usb::uhci::UhciController;
-use aero_usb::usb::SetupPacket;
-use aero_usb::GuestMemory;
+use aero_usb::{SetupPacket, UsbWebUsbPassthroughDevice};
 
 mod util;
 
 use util::{
-    actlen, install_frame_list, td_ctrl, td_token, write_qh, write_td, Alloc, TestIrq, TestMemory,
+    actlen, install_frame_list, td_ctrl, td_token, write_qh, write_td, Alloc, TestMemory,
     LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC1, REG_USBCMD, REG_USBINTR, TD_CTRL_ACTIVE,
     TD_CTRL_NAK, TD_CTRL_STALLED, USBCMD_RUN, USBINTR_IOC,
 };
@@ -20,61 +20,57 @@ const USBSTS_USBERRINT: u16 = 1 << 1;
 const TD_CTRL_CRCERR: u32 = 1 << 18;
 
 fn setup_packet_bytes(setup: SetupPacket) -> [u8; 8] {
-    let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    bytes
+    [
+        setup.bm_request_type,
+        setup.b_request,
+        setup.w_value.to_le_bytes()[0],
+        setup.w_value.to_le_bytes()[1],
+        setup.w_index.to_le_bytes()[0],
+        setup.w_index.to_le_bytes()[1],
+        setup.w_length.to_le_bytes()[0],
+        setup.w_length.to_le_bytes()[1],
+    ]
 }
 
-fn setup_controller(io_base: u16) -> (UhciController, TestMemory, TestIrq, Alloc, u32) {
-    let mut ctrl = UhciController::new(io_base, 11);
-    ctrl.connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
+fn setup_controller() -> (
+    UhciController,
+    TestMemory,
+    Alloc,
+    u32,
+    UsbWebUsbPassthroughDevice,
+) {
+    let mut ctrl = UhciController::new();
+    let dev = UsbWebUsbPassthroughDevice::new();
+    ctrl.hub_mut().attach(0, Box::new(dev.clone()));
 
     let mut mem = TestMemory::new(0x40000);
-    let mut irq = TestIrq::default();
     let alloc = Alloc::new(0x2000);
 
     let fl_base = 0x1000;
-    ctrl.port_write(io_base + REG_FRBASEADD, 4, fl_base, &mut irq);
-    ctrl.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32, &mut irq);
+    ctrl.io_write(REG_FRBASEADD, 4, fl_base);
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
 
     // Reset + enable port 1.
-    ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PR as u32, &mut irq);
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
     for _ in 0..50 {
-        ctrl.step_frame(&mut mem, &mut irq);
+        ctrl.tick_1ms(&mut mem);
     }
 
-    ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+    ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
 
-    (ctrl, mem, irq, alloc, fl_base)
-}
-
-fn passthrough_device_mut(ctrl: &mut UhciController) -> &mut UsbWebUsbPassthroughDevice {
-    ctrl.bus_mut()
-        .port_mut(0)
-        .unwrap()
-        .device
-        .as_mut()
-        .unwrap()
-        .as_any_mut()
-        .downcast_mut::<UsbWebUsbPassthroughDevice>()
-        .unwrap()
+    (ctrl, mem, alloc, fl_base, dev)
 }
 
 #[test]
 fn control_in_pending_produces_td_nak_until_completion() {
-    let io_base = 0x5200;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     let setup = SetupPacket {
-        request_type: 0x80,
-        request: 0x06,
-        value: 0x0100,
-        index: 0,
-        length: 18,
+        bm_request_type: 0x80,
+        b_request: 0x06,
+        w_value: 0x0100,
+        w_index: 0,
+        w_length: 18,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -139,7 +135,7 @@ fn control_in_pending_produces_td_nak_until_completion() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: SETUP completes but first IN DATA TD NAKs (pending).
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
 
@@ -148,7 +144,7 @@ fn control_in_pending_produces_td_nak_until_completion() {
     assert_ne!(data1_ctrl & TD_CTRL_NAK, 0);
 
     // Only one host action should be queued for the in-flight control request.
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one queued host action");
     let action = actions.pop().unwrap();
 
@@ -160,17 +156,17 @@ fn control_in_pending_produces_td_nak_until_completion() {
     assert_eq!(
         got_setup,
         HostSetupPacket {
-            bm_request_type: setup.request_type,
-            b_request: setup.request,
-            w_value: setup.value,
-            w_index: setup.index,
-            w_length: setup.length,
+            bm_request_type: setup.bm_request_type,
+            b_request: setup.b_request,
+            w_value: setup.w_value,
+            w_index: setup.w_index,
+            w_length: setup.w_length,
         }
     );
 
     // Inject completion with a deterministic payload.
     let payload: Vec<u8> = (0u8..18u8).collect();
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+    dev.push_completion(UsbHostCompletion::ControlIn {
         id,
         result: UsbHostCompletionIn::Success {
             data: payload.clone(),
@@ -178,7 +174,7 @@ fn control_in_pending_produces_td_nak_until_completion() {
     });
 
     // Frame #2: All DATA TDs complete and buffers are filled.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     for (td, expected_len) in [(data1_td, 8usize), (data2_td, 8), (data3_td, 2)] {
         let ctrl_sts = mem.read_u32(td + 4);
@@ -201,34 +197,28 @@ fn control_in_pending_produces_td_nak_until_completion() {
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
 
     // No duplicate host actions should be emitted across retries.
-    assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
-        "expected no new host actions after completion"
-    );
+    assert!(dev.drain_actions().is_empty());
 }
 
 #[test]
 fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
-    let io_base = 0x5240;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // Enable short packet interrupts so the test can observe IRQ assertion.
-    ctrl.port_write(
-        io_base + REG_USBINTR,
+    ctrl.io_write(
+        REG_USBINTR,
         2,
         (USBINTR_IOC | USBINTR_SHORT_PACKET) as u32,
-        &mut irq,
     );
-    irq.raised = false;
 
     // Control-IN request with a large wLength. The host completion will provide fewer bytes,
     // resulting in a short packet on the first DATA TD.
     let setup = SetupPacket {
-        request_type: 0x80,
-        request: 0x06,
-        value: 0x0100,
-        index: 0,
-        length: 128,
+        bm_request_type: 0x80,
+        b_request: 0x06,
+        w_value: 0x0100,
+        w_index: 0,
+        w_length: 128,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -282,20 +272,20 @@ fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: SETUP completes and first DATA TD NAKs (pending).
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
     assert_ne!(mem.read_u32(data1_td + 4) & TD_CTRL_NAK, 0);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
-    let (id, _) = match actions.pop().unwrap() {
-        UsbHostAction::ControlIn { id, setup } => (id, setup),
+    let id = match actions.pop().unwrap() {
+        UsbHostAction::ControlIn { id, .. } => id,
         other => panic!("unexpected action: {other:?}"),
     };
 
     // Provide a short completion (18 bytes).
     let payload: Vec<u8> = (0u8..18u8).collect();
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+    dev.push_completion(UsbHostCompletion::ControlIn {
         id,
         result: UsbHostCompletionIn::Success {
             data: payload.clone(),
@@ -304,7 +294,7 @@ fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
 
     // Frame #2: first DATA TD completes with a short packet and SPD stops processing within this
     // QH, so the second DATA TD is not NAKed yet.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     let data1_ctrl = mem.read_u32(data1_td + 4);
     assert_eq!(data1_ctrl & TD_CTRL_ACTIVE, 0);
@@ -317,14 +307,15 @@ fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
     let data2_ctrl = mem.read_u32(data2_td + 4);
     assert_ne!(data2_ctrl & TD_CTRL_ACTIVE, 0);
     assert_eq!(data2_ctrl & TD_CTRL_NAK, 0);
-    assert!(irq.raised, "short packet interrupt should assert IRQ");
+    assert!(ctrl.irq_level(), "short packet interrupt should assert IRQ");
 
     // Simulate a guest driver that handles the short packet interrupt by skipping the remaining
     // DATA TDs and proceeding directly to the STATUS stage.
+    ctrl.io_write(regs::REG_USBSTS, 2, regs::USBSTS_USBINT as u32);
     mem.write_u32(qh_addr + 4, status_td);
 
     // Frame #3: STATUS stage completes (OUT ZLP).
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let status_ctrl = mem.read_u32(status_td + 4);
     assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_eq!(actlen(status_ctrl), 0);
@@ -333,15 +324,14 @@ fn control_in_short_completion_with_spd_stops_additional_data_tds_in_frame() {
 
 #[test]
 fn control_out_pending_acks_data_then_naks_status_until_completion() {
-    let io_base = 0x5250;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     let setup = SetupPacket {
-        request_type: 0x40, // Vendor, host-to-device.
-        request: 0x01,
-        value: 0x1234,
-        index: 0,
-        length: 3,
+        bm_request_type: 0x40, // Vendor, host-to-device.
+        b_request: 0x01,
+        w_value: 0x1234,
+        w_index: 0,
+        w_length: 3,
     };
     let payload = [0xAAu8, 0xBB, 0xCC];
 
@@ -385,7 +375,7 @@ fn control_out_pending_acks_data_then_naks_status_until_completion() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: SETUP and OUT DATA TDs complete, STATUS stage NAKs (pending).
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
     assert_eq!(mem.read_u32(data_td + 4) & TD_CTRL_ACTIVE, 0);
@@ -394,7 +384,7 @@ fn control_out_pending_acks_data_then_naks_status_until_completion() {
     assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one queued host action");
     let action = actions.pop().unwrap();
     let (id, got_setup, got_data) = match action {
@@ -404,56 +394,55 @@ fn control_out_pending_acks_data_then_naks_status_until_completion() {
     assert_eq!(
         got_setup,
         HostSetupPacket {
-            bm_request_type: setup.request_type,
-            b_request: setup.request,
-            w_value: setup.value,
-            w_index: setup.index,
-            w_length: setup.length,
+            bm_request_type: setup.bm_request_type,
+            b_request: setup.b_request,
+            w_value: setup.w_value,
+            w_index: setup.w_index,
+            w_length: setup.w_length,
         }
     );
     assert_eq!(got_data, payload);
 
     // Frame #2: still pending, should NAK again without emitting a duplicate action.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let status_ctrl = mem.read_u32(status_td + 4);
     assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "expected no duplicate host actions while pending"
     );
 
     // Provide completion and ensure the next frame completes the STATUS stage.
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlOut {
+    dev.push_completion(UsbHostCompletion::ControlOut {
         id,
         result: UsbHostCompletionOut::Success {
             bytes_written: payload.len() as u32,
         },
     });
 
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let status_ctrl = mem.read_u32(status_td + 4);
     assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_eq!(actlen(status_ctrl), 0);
 
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
-    assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+    assert!(dev.drain_actions().is_empty());
 }
 
 #[test]
 fn control_in_error_completion_maps_to_timeout_and_sets_usberrint() {
-    let io_base = 0x5260;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // Enable error interrupts so we can observe USBSTS_USBERRINT.
-    ctrl.port_write(io_base + REG_USBINTR, 2, 0x01u32, &mut irq); // USBINTR_TIMEOUT_CRC
+    ctrl.io_write(REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
 
     let setup = SetupPacket {
-        request_type: 0x80,
-        request: 0x06,
-        value: 0x0100,
-        index: 0,
-        length: 8,
+        bm_request_type: 0x80,
+        b_request: 0x06,
+        w_value: 0x0100,
+        w_index: 0,
+        w_length: 8,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -493,16 +482,16 @@ fn control_in_error_completion_maps_to_timeout_and_sets_usberrint() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: SETUP completes, DATA TD NAKs while pending.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
     let id = match actions.pop().unwrap() {
         UsbHostAction::ControlIn { id, .. } => id,
         other => panic!("unexpected action: {other:?}"),
     };
 
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+    dev.push_completion(UsbHostCompletion::ControlIn {
         id,
         result: UsbHostCompletionIn::Error {
             message: "boom".to_string(),
@@ -510,7 +499,7 @@ fn control_in_error_completion_maps_to_timeout_and_sets_usberrint() {
     });
 
     // Frame #2: DATA TD completes with TIMEOUT/CRCERR, and controller sets USBERRINT.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     let data_ctrl = mem.read_u32(data_td + 4);
     assert_eq!(data_ctrl & TD_CTRL_ACTIVE, 0);
@@ -520,23 +509,26 @@ fn control_in_error_completion_maps_to_timeout_and_sets_usberrint() {
     assert_eq!(mem.read_u32(qh_addr + 4), status_td);
 
     assert_ne!(
-        ctrl.port_read(io_base + 0x02, 2) as u16 & USBSTS_USBERRINT,
+        ctrl.io_read(regs::REG_USBSTS, 2) as u16 & USBSTS_USBERRINT,
         0
     );
-    assert!(irq.raised, "USBERRINT should assert IRQ when enabled");
+    assert!(ctrl.irq_level(), "USBERRINT should assert IRQ when enabled");
 }
 
 #[test]
 fn set_address_is_virtualized_and_applied_after_status_stage() {
-    let io_base = 0x5300;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
+
+    // Device starts at address 0.
+    assert!(ctrl.hub_mut().device_mut_for_address(0).is_some());
+    assert!(ctrl.hub_mut().device_mut_for_address(1).is_none());
 
     let setup = SetupPacket {
-        request_type: 0x00,
-        request: 0x05, // SET_ADDRESS
-        value: 1,
-        index: 0,
-        length: 0,
+        bm_request_type: 0x00,
+        b_request: 0x05, // SET_ADDRESS
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -565,24 +557,24 @@ fn set_address_is_virtualized_and_applied_after_status_stage() {
     write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
     install_frame_list(&mut mem, fl_base, qh_addr);
 
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "SET_ADDRESS must not be forwarded as a host action"
     );
-    assert_eq!(passthrough_device_mut(&mut ctrl).address(), 1);
+    assert!(ctrl.hub_mut().device_mut_for_address(1).is_some());
+    assert!(ctrl.hub_mut().device_mut_for_address(0).is_none());
 
     // Negative case: malformed SET_ADDRESS (DeviceToHost bmRequestType) must STALL.
-    let io_base = 0x5310;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     let bad_setup = SetupPacket {
-        request_type: 0x80,
-        request: 0x05,
-        value: 1,
-        index: 0,
-        length: 0,
+        bm_request_type: 0x80,
+        b_request: 0x05,
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -599,43 +591,43 @@ fn set_address_is_virtualized_and_applied_after_status_stage() {
         td_token(0x2D, 0, 0, false, 8),
         setup_buf,
     );
-    // For bmRequestType=IN and wLength=0, the STATUS stage is OUT.
     write_td(
         &mut mem,
         status_td,
         LINK_PTR_T,
         td_ctrl(true, true),
-        td_token(0xE1, 0, 0, true, 0),
+        td_token(0x69, 0, 0, true, 0),
         0,
     );
     write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
     install_frame_list(&mut mem, fl_base, qh_addr);
 
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
-    let status_ctrl = mem.read_u32(status_td + 4);
-    assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
-    assert_ne!(status_ctrl & TD_CTRL_STALLED, 0);
+    let setup_ctrl = mem.read_u32(setup_td + 4);
+    assert_eq!(setup_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(setup_ctrl & TD_CTRL_STALLED, 0);
 
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "malformed SET_ADDRESS must not be forwarded"
     );
+    assert!(ctrl.hub_mut().device_mut_for_address(0).is_some());
+    assert!(ctrl.hub_mut().device_mut_for_address(1).is_none());
 }
 
 #[test]
 fn vendor_request_with_brequest_05_is_forwarded() {
-    let io_base = 0x5320;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // bRequest=0x05 is SET_ADDRESS only for standard device requests. Vendor requests may legally
     // reuse the same request code and must be forwarded.
     let setup = SetupPacket {
-        request_type: 0x40, // Vendor, host-to-device.
-        request: 0x05,
-        value: 0x1234,
-        index: 0,
-        length: 0,
+        bm_request_type: 0x40, // Vendor, host-to-device.
+        b_request: 0x05,
+        w_value: 0x1234,
+        w_index: 0,
+        w_length: 0,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -665,7 +657,7 @@ fn vendor_request_with_brequest_05_is_forwarded() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: SETUP completes but status stage NAKs until the host provides a completion.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
 
@@ -674,7 +666,7 @@ fn vendor_request_with_brequest_05_is_forwarded() {
     assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
     assert_eq!(status_ctrl & TD_CTRL_STALLED, 0);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one queued host action");
     let action = actions.pop().unwrap();
 
@@ -685,47 +677,57 @@ fn vendor_request_with_brequest_05_is_forwarded() {
     assert_eq!(
         got_setup,
         HostSetupPacket {
-            bm_request_type: setup.request_type,
-            b_request: setup.request,
-            w_value: setup.value,
-            w_index: setup.index,
-            w_length: setup.length,
+            bm_request_type: setup.bm_request_type,
+            b_request: setup.b_request,
+            w_value: setup.w_value,
+            w_index: setup.w_index,
+            w_length: setup.w_length,
         }
     );
     assert!(got_data.is_empty());
 
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlOut {
+    // Address must not change (this is not a standard SET_ADDRESS request).
+    assert!(ctrl.hub_mut().device_mut_for_address(0).is_some());
+    assert!(ctrl.hub_mut().device_mut_for_address(1).is_none());
+
+    // Frame #2: still pending, no duplicate host actions should be emitted.
+    ctrl.tick_1ms(&mut mem);
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
+    assert!(
+        dev.drain_actions().is_empty(),
+        "expected no duplicate host actions while pending"
+    );
+
+    dev.push_completion(UsbHostCompletion::ControlOut {
         id,
         result: UsbHostCompletionOut::Success { bytes_written: 0 },
     });
 
-    // Frame #2: status stage completes.
-    ctrl.step_frame(&mut mem, &mut irq);
-
+    // Frame #3: status stage completes.
+    ctrl.tick_1ms(&mut mem);
     let status_ctrl = mem.read_u32(status_td + 4);
     assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_eq!(actlen(status_ctrl), 0);
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
 
-    assert_eq!(passthrough_device_mut(&mut ctrl).address(), 0);
-    assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
-        "expected no extra host actions"
-    );
+    assert!(dev.drain_actions().is_empty());
+    assert!(ctrl.hub_mut().device_mut_for_address(0).is_some());
+    assert!(ctrl.hub_mut().device_mut_for_address(1).is_none());
 }
 
 #[test]
 fn control_in_zero_length_pending_naks_status_until_completion() {
-    let io_base = 0x5330;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // Device-to-host control request with wLength=0: no DATA stage, STATUS is an OUT ZLP.
     let setup = SetupPacket {
-        request_type: 0xC0, // Vendor, device-to-host.
-        request: 0x01,
-        value: 0x1234,
-        index: 0,
-        length: 0,
+        bm_request_type: 0xC0, // Vendor, device-to-host.
+        b_request: 0x01,
+        w_value: 0x1234,
+        w_index: 0,
+        w_length: 0,
     };
 
     let qh_addr = alloc.alloc(0x20, 0x10);
@@ -756,7 +758,7 @@ fn control_in_zero_length_pending_naks_status_until_completion() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: SETUP completes; STATUS NAKs while the host action is pending.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
 
     let status_ctrl = mem.read_u32(status_td + 4);
@@ -764,7 +766,7 @@ fn control_in_zero_length_pending_naks_status_until_completion() {
     assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
     assert_eq!(status_ctrl & TD_CTRL_STALLED, 0);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one queued host action");
     let action = actions.pop().unwrap();
     let (id, got_setup) = match action {
@@ -774,26 +776,26 @@ fn control_in_zero_length_pending_naks_status_until_completion() {
     assert_eq!(
         got_setup,
         HostSetupPacket {
-            bm_request_type: setup.request_type,
-            b_request: setup.request,
-            w_value: setup.value,
-            w_index: setup.index,
-            w_length: setup.length,
+            bm_request_type: setup.bm_request_type,
+            b_request: setup.b_request,
+            w_value: setup.w_value,
+            w_index: setup.w_index,
+            w_length: setup.w_length,
         }
     );
 
     // Frame #2: still pending, no duplicate host actions should be emitted.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let status_ctrl = mem.read_u32(status_td + 4);
     assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "expected no duplicate host actions while pending"
     );
 
     // Complete and ensure the next frame ACKs the status stage (OUT ZLP).
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+    dev.push_completion(UsbHostCompletion::ControlIn {
         id,
         result: UsbHostCompletionIn::Success {
             // wLength=0; any payload is ignored/truncated.
@@ -801,30 +803,28 @@ fn control_in_zero_length_pending_naks_status_until_completion() {
         },
     });
 
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
 
     let status_ctrl = mem.read_u32(status_td + 4);
     assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
     assert_eq!(actlen(status_ctrl), 0);
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
 
-    assert_eq!(passthrough_device_mut(&mut ctrl).address(), 0);
-    assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+    assert!(dev.drain_actions().is_empty());
 }
 
 #[test]
 fn bulk_in_pending_queues_once_and_naks_until_completion() {
-    let io_base = 0x5400;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // First, set device address to 1 (virtualized).
     {
         let setup = SetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         };
 
         let qh_addr = alloc.alloc(0x20, 0x10);
@@ -852,9 +852,10 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
         write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
         install_frame_list(&mut mem, fl_base, qh_addr);
 
-        ctrl.step_frame(&mut mem, &mut irq);
-        assert_eq!(passthrough_device_mut(&mut ctrl).address(), 1);
-        assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+        ctrl.tick_1ms(&mut mem);
+        assert!(dev.drain_actions().is_empty());
+        assert!(ctrl.hub_mut().device_mut_for_address(1).is_some());
+        assert!(ctrl.hub_mut().device_mut_for_address(0).is_none());
     }
 
     // Schedule a bulk IN TD to endpoint 1 (ep addr 0x81), length 8.
@@ -874,12 +875,12 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: TD should NAK and emit one BulkIn host action.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let ctrl_sts = mem.read_u32(td_addr + 4);
     assert_ne!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_ne!(ctrl_sts & TD_CTRL_NAK, 0);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one BulkIn action");
     let action = actions.pop().unwrap();
     let id = match action {
@@ -896,17 +897,17 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
     };
 
     // Frame #2 without completion: still NAK, and no duplicate action should be queued.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let ctrl_sts = mem.read_u32(td_addr + 4);
     assert_ne!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_ne!(ctrl_sts & TD_CTRL_NAK, 0);
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "expected no duplicate BulkIn actions while in-flight"
     );
 
     // Inject completion with more bytes than requested; device should truncate to TD length.
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::BulkIn {
+    dev.push_completion(UsbHostCompletion::BulkIn {
         id,
         result: UsbHostCompletionIn::Success {
             data: vec![0xAA, 0xBB, 0xCC, 0xDD, 1, 2, 3, 4, 5, 6, 7],
@@ -914,18 +915,17 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
     });
 
     // Frame #3: TD completes and buffer contains first 8 bytes.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let ctrl_sts = mem.read_u32(td_addr + 4);
     assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_eq!(actlen(ctrl_sts), 8);
 
-    assert_eq!(
-        &mem.data[buf_addr as usize..buf_addr as usize + 8],
-        &[0xAA, 0xBB, 0xCC, 0xDD, 1, 2, 3, 4]
-    );
+    let mut got = [0u8; 8];
+    mem.read(buf_addr, &mut got);
+    assert_eq!(&got, &[0xAA, 0xBB, 0xCC, 0xDD, 1, 2, 3, 4]);
 
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "expected no extra actions after completion"
     );
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
@@ -933,17 +933,16 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
 
 #[test]
 fn bulk_out_pending_queues_once_and_naks_until_completion() {
-    let io_base = 0x5410;
-    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+    let (mut ctrl, mut mem, mut alloc, fl_base, dev) = setup_controller();
 
     // First, set device address to 1 (virtualized).
     {
         let setup = SetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         };
 
         let qh_addr = alloc.alloc(0x20, 0x10);
@@ -971,9 +970,10 @@ fn bulk_out_pending_queues_once_and_naks_until_completion() {
         write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
         install_frame_list(&mut mem, fl_base, qh_addr);
 
-        ctrl.step_frame(&mut mem, &mut irq);
-        assert_eq!(passthrough_device_mut(&mut ctrl).address(), 1);
-        assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+        ctrl.tick_1ms(&mut mem);
+        assert!(dev.drain_actions().is_empty());
+        assert!(ctrl.hub_mut().device_mut_for_address(1).is_some());
+        assert!(ctrl.hub_mut().device_mut_for_address(0).is_none());
     }
 
     let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];
@@ -996,12 +996,12 @@ fn bulk_out_pending_queues_once_and_naks_until_completion() {
     install_frame_list(&mut mem, fl_base, qh_addr);
 
     // Frame #1: TD should NAK and emit one BulkOut host action.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let ctrl_sts = mem.read_u32(td_addr + 4);
     assert_ne!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_ne!(ctrl_sts & TD_CTRL_NAK, 0);
 
-    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1, "expected exactly one BulkOut action");
     let action = actions.pop().unwrap();
     let id = match action {
@@ -1014,17 +1014,16 @@ fn bulk_out_pending_queues_once_and_naks_until_completion() {
     };
 
     // Frame #2 without completion: still NAK, and no duplicate action should be queued.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let ctrl_sts = mem.read_u32(td_addr + 4);
     assert_ne!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_ne!(ctrl_sts & TD_CTRL_NAK, 0);
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "expected no duplicate BulkOut actions while in-flight"
     );
 
-    // Inject completion and ensure the next frame completes the TD.
-    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::BulkOut {
+    dev.push_completion(UsbHostCompletion::BulkOut {
         id,
         result: UsbHostCompletionOut::Success {
             bytes_written: payload.len() as u32,
@@ -1032,12 +1031,12 @@ fn bulk_out_pending_queues_once_and_naks_until_completion() {
     });
 
     // Frame #3: TD completes.
-    ctrl.step_frame(&mut mem, &mut irq);
+    ctrl.tick_1ms(&mut mem);
     let ctrl_sts = mem.read_u32(td_addr + 4);
     assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_eq!(actlen(ctrl_sts), payload.len());
     assert!(
-        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        dev.drain_actions().is_empty(),
         "expected no extra actions after completion"
     );
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);

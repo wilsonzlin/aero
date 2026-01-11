@@ -1,9 +1,8 @@
 use js_sys::{Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
-use aero_usb::GuestMemory;
-use aero_usb::uhci::{InterruptController, UhciController};
-use aero_usb::usb::SetupPacket as BusSetupPacket;
+use aero_usb::uhci::UhciController;
+use aero_usb::{MemoryBus, SetupPacket as BusSetupPacket};
 
 use aero_usb::passthrough::{
     UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut, UsbWebUsbPassthroughDevice,
@@ -82,14 +81,6 @@ fn td_actlen(ctrl_sts: u32) -> usize {
     }
 }
 
-#[derive(Default)]
-struct DummyIrq;
-
-impl InterruptController for DummyIrq {
-    fn raise_irq(&mut self, _irq: u8) {}
-    fn lower_irq(&mut self, _irq: u8) {}
-}
-
 #[derive(Clone, Copy)]
 struct VecMemory {
     base: u32,
@@ -156,8 +147,9 @@ impl VecMemory {
     }
 }
 
-impl GuestMemory for VecMemory {
-    fn read(&self, addr: u32, buf: &mut [u8]) {
+impl MemoryBus for VecMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let addr = u32::try_from(paddr).expect("VecMemory address must fit in u32");
         let linear = self.linear_addr(addr, buf.len());
         // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
         unsafe {
@@ -165,7 +157,8 @@ impl GuestMemory for VecMemory {
         }
     }
 
-    fn write(&mut self, addr: u32, buf: &[u8]) {
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let addr = u32::try_from(paddr).expect("VecMemory address must fit in u32");
         let linear = self.linear_addr(addr, buf.len());
         // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
         unsafe {
@@ -264,19 +257,19 @@ impl ControlChain {
         None
     }
 
-    fn collect_in_bytes(&self, mem: &VecMemory) -> Vec<u8> {
+    fn collect_in_bytes(&self, mem: &mut VecMemory) -> Vec<u8> {
         if !self.direction_in {
             return Vec::new();
         }
         let mut out = Vec::new();
         for (td_addr, buf_addr) in &self.data_tds {
-            let ctrl_sts = mem.read_u32(*td_addr + 4);
+            let ctrl_sts = VecMemory::read_u32(mem, *td_addr + 4);
             let got = td_actlen(ctrl_sts);
             if got == 0 {
                 continue;
             }
             let mut tmp = vec![0u8; got];
-            mem.read(*buf_addr, &mut tmp);
+            mem.read_physical(u64::from(*buf_addr), &mut tmp);
             out.extend_from_slice(&tmp);
         }
         out
@@ -314,17 +307,17 @@ fn build_control_in_chain(
     let setup_td = alloc.alloc(0x20, 0x10);
 
     let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    mem.write(setup_buf, &bytes);
+    bytes[0] = setup.bm_request_type;
+    bytes[1] = setup.b_request;
+    bytes[2..4].copy_from_slice(&setup.w_value.to_le_bytes());
+    bytes[4..6].copy_from_slice(&setup.w_index.to_le_bytes());
+    bytes[6..8].copy_from_slice(&setup.w_length.to_le_bytes());
+    mem.write_physical(u64::from(setup_buf), &bytes);
 
     let mut tds = Vec::new();
     tds.push((setup_td, setup_buf, 8usize, PID_SETUP, false));
 
-    let mut remaining = setup.length as usize;
+    let mut remaining = setup.w_length as usize;
     let mut toggle = true;
     let mut data_tds = Vec::new();
     while remaining != 0 {
@@ -384,12 +377,12 @@ fn build_control_out_no_data_chain(
     let status_td = alloc.alloc(0x20, 0x10);
 
     let mut bytes = [0u8; 8];
-    bytes[0] = setup.request_type;
-    bytes[1] = setup.request;
-    bytes[2..4].copy_from_slice(&setup.value.to_le_bytes());
-    bytes[4..6].copy_from_slice(&setup.index.to_le_bytes());
-    bytes[6..8].copy_from_slice(&setup.length.to_le_bytes());
-    mem.write(setup_buf, &bytes);
+    bytes[0] = setup.bm_request_type;
+    bytes[1] = setup.b_request;
+    bytes[2..4].copy_from_slice(&setup.w_value.to_le_bytes());
+    bytes[4..6].copy_from_slice(&setup.w_index.to_le_bytes());
+    bytes[6..8].copy_from_slice(&setup.w_length.to_le_bytes());
+    mem.write_physical(u64::from(setup_buf), &bytes);
 
     write_td(
         mem,
@@ -426,7 +419,7 @@ fn build_control_out_no_data_chain(
 pub struct WebUsbUhciPassthroughHarness {
     ctrl: UhciController,
     mem: VecMemory,
-    irq: DummyIrq,
+    webusb: UsbWebUsbPassthroughDevice,
     alloc: Alloc,
 
     qh_addr: u32,
@@ -449,41 +442,23 @@ pub struct WebUsbUhciPassthroughHarness {
 }
 
 impl WebUsbUhciPassthroughHarness {
-    fn passthrough_device(&self) -> &UsbWebUsbPassthroughDevice {
-        let port = self.ctrl.bus().port(0).expect("UHCI port 0 exists");
-        let dev = port.device.as_deref().expect("UHCI port 0 device attached");
-        dev.as_any()
-            .downcast_ref::<UsbWebUsbPassthroughDevice>()
-            .expect("UHCI port 0 device is UsbWebUsbPassthroughDevice")
-    }
-
-    fn passthrough_device_mut(&mut self) -> &mut UsbWebUsbPassthroughDevice {
-        let port = self.ctrl.bus_mut().port_mut(0).expect("UHCI port 0 exists");
-        let dev = port.device.as_mut().expect("UHCI port 0 device attached");
-        dev.as_any_mut()
-            .downcast_mut::<UsbWebUsbPassthroughDevice>()
-            .expect("UHCI port 0 device is UsbWebUsbPassthroughDevice")
-    }
-
     fn init_with_mem(mut mem: VecMemory) -> Self {
-        let io_base = 0x5000;
-        let mut ctrl = UhciController::new(io_base, 11);
-
-        ctrl.connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
+        let mut ctrl = UhciController::new();
+        let webusb = UsbWebUsbPassthroughDevice::new();
+        ctrl.hub_mut().attach(0, Box::new(webusb.clone()));
 
         mem.clear();
-        let mut irq = DummyIrq::default();
         let alloc = Alloc::new(0x3000);
 
         let fl_base = 0x1000;
         let qh_addr = 0x2000;
 
         // Program frame list base and enable IOC interrupts (not strictly needed, but keeps the model realistic).
-        ctrl.port_write(io_base + REG_FRBASEADD, 4, fl_base, &mut irq);
-        ctrl.port_write(io_base + REG_USBINTR, 2, USBINTR_IOC as u32, &mut irq);
+        ctrl.io_write(REG_FRBASEADD, 4, fl_base);
+        ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
 
         // Start port reset; we will tick for 50 frames before enabling RUN.
-        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PR as u32, &mut irq);
+        ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
 
         // Install a terminating QH so we can patch in TD chains later.
         write_qh(&mut mem, qh_addr, LINK_PTR_T, LINK_PTR_T);
@@ -492,7 +467,7 @@ impl WebUsbUhciPassthroughHarness {
         Self {
             ctrl,
             mem,
-            irq,
+            webusb,
             alloc,
             qh_addr,
             fl_base,
@@ -532,7 +507,7 @@ impl WebUsbUhciPassthroughHarness {
     }
 
     pub fn status(&self) -> JsValue {
-        let summary = self.passthrough_device().pending_summary();
+        let summary = self.webusb.pending_summary();
 
         let obj = Object::new();
         let _ = Reflect::set(
@@ -629,7 +604,7 @@ impl WebUsbUhciPassthroughHarness {
     pub fn tick(&mut self) -> JsValue {
         self.frames_stepped = self.frames_stepped.saturating_add(1);
         // Drive one UHCI frame worth of work.
-        self.ctrl.step_frame(&mut self.mem, &mut self.irq);
+        self.ctrl.tick_1ms(&mut self.mem);
 
         if let Some(chain) = &self.pending_chain {
             if let Some(err) = chain.error_reason(&self.mem) {
@@ -655,9 +630,7 @@ impl WebUsbUhciPassthroughHarness {
                 }
 
                 // Enable the controller once the port reset window is done.
-                let io_base = self.ctrl.io_base();
-                self.ctrl
-                    .port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut self.irq);
+                self.ctrl.io_write(REG_USBCMD, 2, USBCMD_RUN as u32);
 
                 self.phase = HarnessPhase::GetDeviceDesc8;
                 self.phase_detail = "GET_DESCRIPTOR(Device, 8)".to_string();
@@ -669,11 +642,11 @@ impl WebUsbUhciPassthroughHarness {
                     0,
                     self.max_packet,
                     BusSetupPacket {
-                        request_type: 0x80,
-                        request: 0x06,
-                        value: 0x0100,
-                        index: 0,
-                        length: 8,
+                        bm_request_type: 0x80,
+                        b_request: 0x06,
+                        w_value: 0x0100,
+                        w_index: 0,
+                        w_length: 8,
                     },
                 ));
             }
@@ -682,7 +655,7 @@ impl WebUsbUhciPassthroughHarness {
                     if !chain.is_complete(&self.mem) {
                         return self.status();
                     }
-                    let bytes = chain.collect_in_bytes(&self.mem);
+                    let bytes = chain.collect_in_bytes(&mut self.mem);
                     if bytes.len() >= 8 {
                         self.max_packet = bytes[7] as usize;
                         if self.max_packet == 0 {
@@ -700,11 +673,11 @@ impl WebUsbUhciPassthroughHarness {
                         0,
                         self.max_packet,
                         BusSetupPacket {
-                            request_type: 0x80,
-                            request: 0x06,
-                            value: 0x0100,
-                            index: 0,
-                            length: 18,
+                            bm_request_type: 0x80,
+                            b_request: 0x06,
+                            w_value: 0x0100,
+                            w_index: 0,
+                            w_length: 18,
                         },
                     ));
                 }
@@ -714,7 +687,7 @@ impl WebUsbUhciPassthroughHarness {
                     if !chain.is_complete(&self.mem) {
                         return self.status();
                     }
-                    self.device_descriptor = chain.collect_in_bytes(&self.mem);
+                    self.device_descriptor = chain.collect_in_bytes(&mut self.mem);
 
                     self.phase = HarnessPhase::SetAddress;
                     self.phase_detail = "SET_ADDRESS(1)".to_string();
@@ -725,11 +698,11 @@ impl WebUsbUhciPassthroughHarness {
                         self.fl_base,
                         0,
                         BusSetupPacket {
-                            request_type: 0x00,
-                            request: REQ_SET_ADDRESS,
-                            value: 1,
-                            index: 0,
-                            length: 0,
+                            bm_request_type: 0x00,
+                            b_request: REQ_SET_ADDRESS,
+                            w_value: 1,
+                            w_index: 0,
+                            w_length: 0,
                         },
                     ));
                 }
@@ -750,11 +723,11 @@ impl WebUsbUhciPassthroughHarness {
                         1,
                         self.max_packet,
                         BusSetupPacket {
-                            request_type: 0x80,
-                            request: 0x06,
-                            value: 0x0200,
-                            index: 0,
-                            length: 9,
+                            bm_request_type: 0x80,
+                            b_request: 0x06,
+                            w_value: 0x0200,
+                            w_index: 0,
+                            w_length: 9,
                         },
                     ));
                 }
@@ -764,7 +737,7 @@ impl WebUsbUhciPassthroughHarness {
                     if !chain.is_complete(&self.mem) {
                         return self.status();
                     }
-                    let bytes = chain.collect_in_bytes(&self.mem);
+                    let bytes = chain.collect_in_bytes(&mut self.mem);
                     if bytes.len() >= 9 {
                         self.config_total_len = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
                         self.config_value = bytes[5];
@@ -784,11 +757,11 @@ impl WebUsbUhciPassthroughHarness {
                         1,
                         self.max_packet,
                         BusSetupPacket {
-                            request_type: 0x80,
-                            request: 0x06,
-                            value: 0x0200,
-                            index: 0,
-                            length: self.config_total_len.min(u16::MAX as usize) as u16,
+                            bm_request_type: 0x80,
+                            b_request: 0x06,
+                            w_value: 0x0200,
+                            w_index: 0,
+                            w_length: self.config_total_len.min(u16::MAX as usize) as u16,
                         },
                     ));
                 }
@@ -798,7 +771,7 @@ impl WebUsbUhciPassthroughHarness {
                     if !chain.is_complete(&self.mem) {
                         return self.status();
                     }
-                    self.config_descriptor = chain.collect_in_bytes(&self.mem);
+                    self.config_descriptor = chain.collect_in_bytes(&mut self.mem);
                     self.phase = HarnessPhase::SetConfiguration;
                     self.phase_detail = format!("SET_CONFIGURATION({})", self.config_value);
                     self.pending_chain = Some(build_control_out_no_data_chain(
@@ -808,11 +781,11 @@ impl WebUsbUhciPassthroughHarness {
                         self.fl_base,
                         1,
                         BusSetupPacket {
-                            request_type: 0x00,
-                            request: REQ_SET_CONFIGURATION,
-                            value: self.config_value as u16,
-                            index: 0,
-                            length: 0,
+                            bm_request_type: 0x00,
+                            b_request: REQ_SET_CONFIGURATION,
+                            w_value: self.config_value as u16,
+                            w_index: 0,
+                            w_length: 0,
                         },
                     ));
                 }
@@ -840,7 +813,7 @@ impl WebUsbUhciPassthroughHarness {
 
     /// Drain all queued UsbHostAction objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
-        let actions = self.passthrough_device_mut().drain_actions();
+        let actions = self.webusb.drain_actions();
         self.total_actions_drained = self
             .total_actions_drained
             .saturating_add(actions.len() as u32);
@@ -885,7 +858,7 @@ impl WebUsbUhciPassthroughHarness {
                 _ => {}
             },
         }
-        self.passthrough_device_mut().push_completion(completion);
+        self.webusb.push_completion(completion);
         self.total_completions_pushed = self.total_completions_pushed.saturating_add(1);
         Ok(())
     }

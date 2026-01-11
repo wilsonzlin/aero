@@ -1,5 +1,10 @@
-use crate::io::usb::core::{UsbInResult, UsbOutResult};
-use crate::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::device::{UsbInResult, UsbOutResult};
+use crate::{ControlResponse, SetupPacket, UsbDeviceModel};
 
 use super::{UsbHub, UsbHubDevice};
 

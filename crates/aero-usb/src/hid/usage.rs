@@ -1,19 +1,17 @@
 //! Helpers for mapping browser input events to USB HID usages.
 //!
 //! The browser host (TypeScript) captures keyboard and mouse events using
-//! `KeyboardEvent.code`, `MouseEvent.button`, and `WheelEvent.deltaY`.  USB HID
+//! `KeyboardEvent.code`, `MouseEvent.button`, and `WheelEvent.deltaY`. USB HID
 //! input, however, is expressed using *usages* (e.g. 0x04 = "Keyboard a and A")
 //! defined by the HID Usage Tables.
 //!
-//! This module provides pure helpers that can be used by future USB controller
-//! integration code to translate browser events into the usage IDs expected by
-//! `UsbHidKeyboard::key_event` and `UsbHidMouse`.
+//! This module provides pure helpers that can be used by platform/input code to translate browser
+//! events into the usage IDs expected by the HID device models in this crate.
 
-/// Maps a `KeyboardEvent.code` string to a USB HID usage ID from the
-/// Keyboard/Keypad usage page (0x07).
+/// Maps a `KeyboardEvent.code` string to a USB HID usage ID from the Keyboard/Keypad usage page
+/// (0x07).
 ///
-/// This uses `code` (physical key position) rather than `key` (layout-dependent
-/// character).
+/// This uses `code` (physical key position) rather than `key` (layout-dependent character).
 pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
     if let Some(rest) = code.strip_prefix("Key") {
         let b = rest.as_bytes();
@@ -112,8 +110,8 @@ pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
     }
 }
 
-/// Converts `MouseEvent.button` (0 = left, 1 = middle, 2 = right) to the HID
-/// button bit used by `UsbHidMouse::button_event`.
+/// Converts `MouseEvent.button` (0 = left, 1 = middle, 2 = right) to the HID button bit used by
+/// `UsbHidMouse::button_event`.
 pub fn mouse_button_index_to_bit(button: i16) -> Option<u8> {
     match button {
         0 => Some(0x01),
@@ -123,8 +121,7 @@ pub fn mouse_button_index_to_bit(button: i16) -> Option<u8> {
     }
 }
 
-/// Converts `MouseEvent.buttons` bitfield to the HID button bitfield used by
-/// `MouseReport.buttons`.
+/// Converts `MouseEvent.buttons` bitfield to the HID button bitfield used by `MouseReport.buttons`.
 pub fn mouse_buttons_bitfield_to_bits(buttons: u16) -> u8 {
     (buttons & 0x07) as u8
 }

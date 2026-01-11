@@ -1,9 +1,16 @@
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::rc::Rc;
+use alloc::collections::VecDeque;
+use alloc::rc::Rc;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
 
-use crate::io::usb::core::UsbInResult;
-use crate::io::usb::{
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
+use crate::device::UsbInResult;
+use crate::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
 
@@ -522,6 +529,286 @@ impl Default for UsbCompositeHidInput {
     }
 }
 
+impl IoSnapshot for UsbCompositeHidInput {
+    const DEVICE_ID: [u8; 4] = *b"UCMP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_REMOTE_WAKEUP_PENDING: u16 = 4;
+        const TAG_SUSPENDED: u16 = 5;
+
+        const TAG_KBD_IDLE_RATE: u16 = 10;
+        const TAG_KBD_PROTOCOL: u16 = 11;
+        const TAG_KBD_LEDS: u16 = 12;
+        const TAG_KBD_MODIFIERS: u16 = 13;
+        const TAG_KBD_PRESSED_KEYS: u16 = 14;
+        const TAG_KBD_LAST_REPORT: u16 = 15;
+        const TAG_KBD_PENDING_REPORTS: u16 = 16;
+
+        const TAG_MOUSE_IDLE_RATE: u16 = 20;
+        const TAG_MOUSE_PROTOCOL: u16 = 21;
+        const TAG_MOUSE_BUTTONS: u16 = 22;
+        const TAG_MOUSE_DX: u16 = 23;
+        const TAG_MOUSE_DY: u16 = 24;
+        const TAG_MOUSE_WHEEL: u16 = 25;
+        const TAG_MOUSE_PENDING_REPORTS: u16 = 26;
+
+        const TAG_GAMEPAD_BUTTONS: u16 = 30;
+        const TAG_GAMEPAD_HAT: u16 = 31;
+        const TAG_GAMEPAD_X: u16 = 32;
+        const TAG_GAMEPAD_Y: u16 = 33;
+        const TAG_GAMEPAD_RX: u16 = 34;
+        const TAG_GAMEPAD_RY: u16 = 35;
+        const TAG_GAMEPAD_LAST_REPORT: u16 = 36;
+        const TAG_GAMEPAD_PENDING_REPORTS: u16 = 37;
+
+        const TAG_KBD_INTERRUPT_HALTED: u16 = 40;
+        const TAG_MOUSE_INTERRUPT_HALTED: u16 = 41;
+        const TAG_GAMEPAD_INTERRUPT_HALTED: u16 = 42;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_REMOTE_WAKEUP_PENDING, self.remote_wakeup_pending);
+        w.field_bool(TAG_SUSPENDED, self.suspended);
+
+        w.field_u8(TAG_KBD_IDLE_RATE, self.keyboard.idle_rate);
+        w.field_u8(TAG_KBD_PROTOCOL, self.keyboard.protocol as u8);
+        w.field_u8(TAG_KBD_LEDS, self.keyboard.leds);
+        w.field_u8(TAG_KBD_MODIFIERS, self.keyboard.modifiers);
+        w.field_bytes(
+            TAG_KBD_PRESSED_KEYS,
+            Encoder::new().vec_u8(&self.keyboard.pressed_keys).finish(),
+        );
+        w.field_bytes(TAG_KBD_LAST_REPORT, self.keyboard.last_report.to_vec());
+        let pending_kbd: Vec<Vec<u8>> = self
+            .keyboard
+            .pending_reports
+            .iter()
+            .map(|r| r.to_vec())
+            .collect();
+        w.field_bytes(
+            TAG_KBD_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending_kbd).finish(),
+        );
+
+        w.field_u8(TAG_MOUSE_IDLE_RATE, self.mouse.idle_rate);
+        w.field_u8(TAG_MOUSE_PROTOCOL, self.mouse.protocol as u8);
+        w.field_u8(TAG_MOUSE_BUTTONS, self.mouse.buttons);
+        w.field_i32(TAG_MOUSE_DX, self.mouse.dx);
+        w.field_i32(TAG_MOUSE_DY, self.mouse.dy);
+        w.field_i32(TAG_MOUSE_WHEEL, self.mouse.wheel);
+        let pending_mouse: Vec<Vec<u8>> = self
+            .mouse
+            .pending_reports
+            .iter()
+            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8])
+            .collect();
+        w.field_bytes(
+            TAG_MOUSE_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending_mouse).finish(),
+        );
+
+        w.field_u16(TAG_GAMEPAD_BUTTONS, self.gamepad.buttons);
+        w.field_u8(TAG_GAMEPAD_HAT, self.gamepad.hat);
+        w.field_u8(TAG_GAMEPAD_X, self.gamepad.x as u8);
+        w.field_u8(TAG_GAMEPAD_Y, self.gamepad.y as u8);
+        w.field_u8(TAG_GAMEPAD_RX, self.gamepad.rx as u8);
+        w.field_u8(TAG_GAMEPAD_RY, self.gamepad.ry as u8);
+        w.field_bytes(TAG_GAMEPAD_LAST_REPORT, self.gamepad.last_report.to_vec());
+        let pending_gp: Vec<Vec<u8>> = self
+            .gamepad
+            .pending_reports
+            .iter()
+            .map(|r| r.to_vec())
+            .collect();
+        w.field_bytes(
+            TAG_GAMEPAD_PENDING_REPORTS,
+            Encoder::new().vec_bytes(&pending_gp).finish(),
+        );
+
+        w.field_bool(TAG_KBD_INTERRUPT_HALTED, self.keyboard_interrupt_in_halted);
+        w.field_bool(TAG_MOUSE_INTERRUPT_HALTED, self.mouse_interrupt_in_halted);
+        w.field_bool(TAG_GAMEPAD_INTERRUPT_HALTED, self.gamepad_interrupt_in_halted);
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_REMOTE_WAKEUP_PENDING: u16 = 4;
+        const TAG_SUSPENDED: u16 = 5;
+
+        const TAG_KBD_IDLE_RATE: u16 = 10;
+        const TAG_KBD_PROTOCOL: u16 = 11;
+        const TAG_KBD_LEDS: u16 = 12;
+        const TAG_KBD_MODIFIERS: u16 = 13;
+        const TAG_KBD_PRESSED_KEYS: u16 = 14;
+        const TAG_KBD_LAST_REPORT: u16 = 15;
+        const TAG_KBD_PENDING_REPORTS: u16 = 16;
+
+        const TAG_MOUSE_IDLE_RATE: u16 = 20;
+        const TAG_MOUSE_PROTOCOL: u16 = 21;
+        const TAG_MOUSE_BUTTONS: u16 = 22;
+        const TAG_MOUSE_DX: u16 = 23;
+        const TAG_MOUSE_DY: u16 = 24;
+        const TAG_MOUSE_WHEEL: u16 = 25;
+        const TAG_MOUSE_PENDING_REPORTS: u16 = 26;
+
+        const TAG_GAMEPAD_BUTTONS: u16 = 30;
+        const TAG_GAMEPAD_HAT: u16 = 31;
+        const TAG_GAMEPAD_X: u16 = 32;
+        const TAG_GAMEPAD_Y: u16 = 33;
+        const TAG_GAMEPAD_RX: u16 = 34;
+        const TAG_GAMEPAD_RY: u16 = 35;
+        const TAG_GAMEPAD_LAST_REPORT: u16 = 36;
+        const TAG_GAMEPAD_PENDING_REPORTS: u16 = 37;
+
+        const TAG_KBD_INTERRUPT_HALTED: u16 = 40;
+        const TAG_MOUSE_INTERRUPT_HALTED: u16 = 41;
+        const TAG_GAMEPAD_INTERRUPT_HALTED: u16 = 42;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.remote_wakeup_pending = r.bool(TAG_REMOTE_WAKEUP_PENDING)?.unwrap_or(false);
+        self.suspended = r.bool(TAG_SUSPENDED)?.unwrap_or(false);
+
+        self.keyboard.idle_rate = r.u8(TAG_KBD_IDLE_RATE)?.unwrap_or(0);
+        if let Some(protocol) = r.u8(TAG_KBD_PROTOCOL)? {
+            self.keyboard.protocol = match protocol {
+                0 => HidProtocol::Boot,
+                1 => HidProtocol::Report,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
+            };
+        }
+        self.keyboard.leds = r.u8(TAG_KBD_LEDS)?.unwrap_or(0);
+        self.keyboard.modifiers = r.u8(TAG_KBD_MODIFIERS)?.unwrap_or(0);
+        if let Some(buf) = r.bytes(TAG_KBD_PRESSED_KEYS) {
+            let mut d = Decoder::new(buf);
+            self.keyboard.pressed_keys = d.vec_u8()?;
+            d.finish()?;
+        }
+        if let Some(buf) = r.bytes(TAG_KBD_LAST_REPORT) {
+            if buf.len() != self.keyboard.last_report.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard last report"));
+            }
+            self.keyboard.last_report.copy_from_slice(buf);
+        }
+        if let Some(buf) = r.bytes(TAG_KBD_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let reports = d.vec_bytes()?;
+            d.finish()?;
+            if reports.len() > MAX_PENDING_KEYBOARD_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard pending reports"));
+            }
+            self.keyboard.pending_reports.clear();
+            for report in reports {
+                if report.len() != self.keyboard.last_report.len() {
+                    return Err(SnapshotError::InvalidFieldEncoding("keyboard report length"));
+                }
+                self.keyboard
+                    .pending_reports
+                    .push_back(report.try_into().expect("len checked"));
+            }
+        }
+
+        self.mouse.idle_rate = r.u8(TAG_MOUSE_IDLE_RATE)?.unwrap_or(0);
+        if let Some(protocol) = r.u8(TAG_MOUSE_PROTOCOL)? {
+            self.mouse.protocol = match protocol {
+                0 => HidProtocol::Boot,
+                1 => HidProtocol::Report,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
+            };
+        }
+        self.mouse.buttons = r.u8(TAG_MOUSE_BUTTONS)?.unwrap_or(0);
+        self.mouse.dx = r.i32(TAG_MOUSE_DX)?.unwrap_or(0);
+        self.mouse.dy = r.i32(TAG_MOUSE_DY)?.unwrap_or(0);
+        self.mouse.wheel = r.i32(TAG_MOUSE_WHEEL)?.unwrap_or(0);
+        if let Some(buf) = r.bytes(TAG_MOUSE_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let reports = d.vec_bytes()?;
+            d.finish()?;
+            if reports.len() > MAX_PENDING_MOUSE_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("mouse pending reports"));
+            }
+            self.mouse.pending_reports.clear();
+            for report in reports {
+                if report.len() != 4 {
+                    return Err(SnapshotError::InvalidFieldEncoding("mouse report length"));
+                }
+                self.mouse.pending_reports.push_back(MouseReport {
+                    buttons: report[0],
+                    x: report[1] as i8,
+                    y: report[2] as i8,
+                    wheel: report[3] as i8,
+                });
+            }
+        }
+
+        self.gamepad.buttons = r.u16(TAG_GAMEPAD_BUTTONS)?.unwrap_or(0);
+        self.gamepad.hat = r.u8(TAG_GAMEPAD_HAT)?.unwrap_or(8);
+        self.gamepad.x = r.u8(TAG_GAMEPAD_X)?.unwrap_or(0) as i8;
+        self.gamepad.y = r.u8(TAG_GAMEPAD_Y)?.unwrap_or(0) as i8;
+        self.gamepad.rx = r.u8(TAG_GAMEPAD_RX)?.unwrap_or(0) as i8;
+        self.gamepad.ry = r.u8(TAG_GAMEPAD_RY)?.unwrap_or(0) as i8;
+        if let Some(buf) = r.bytes(TAG_GAMEPAD_LAST_REPORT) {
+            if buf.len() != self.gamepad.last_report.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("gamepad last report"));
+            }
+            self.gamepad.last_report.copy_from_slice(buf);
+        }
+        if let Some(buf) = r.bytes(TAG_GAMEPAD_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let reports = d.vec_bytes()?;
+            d.finish()?;
+            if reports.len() > MAX_PENDING_GAMEPAD_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("gamepad pending reports"));
+            }
+            self.gamepad.pending_reports.clear();
+            for report in reports {
+                if report.len() != self.gamepad.last_report.len() {
+                    return Err(SnapshotError::InvalidFieldEncoding("gamepad report length"));
+                }
+                self.gamepad
+                    .pending_reports
+                    .push_back(report.try_into().expect("len checked"));
+            }
+        }
+
+        self.keyboard_interrupt_in_halted = r.bool(TAG_KBD_INTERRUPT_HALTED)?.unwrap_or(false);
+        self.mouse_interrupt_in_halted = r.bool(TAG_MOUSE_INTERRUPT_HALTED)?.unwrap_or(false);
+        self.gamepad_interrupt_in_halted = r.bool(TAG_GAMEPAD_INTERRUPT_HALTED)?.unwrap_or(false);
+
+        Ok(())
+    }
+}
+
+impl IoSnapshot for UsbCompositeHidInputHandle {
+    const DEVICE_ID: [u8; 4] = UsbCompositeHidInput::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = UsbCompositeHidInput::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.0.borrow().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.0.borrow_mut().load_state(bytes)
+    }
+}
+
 impl UsbCompositeHidInput {
     pub fn new() -> Self {
         Self {
@@ -626,6 +913,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -643,6 +931,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
                         if setup.request_direction() != RequestDirection::HostToDevice
                             || setup.w_index != 0
+                            || setup.w_length != 0
                         {
                             return ControlResponse::Stall;
                         }
@@ -656,6 +945,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
                         if setup.request_direction() != RequestDirection::HostToDevice
                             || setup.w_index != 0
+                            || setup.w_length != 0
                         {
                             return ControlResponse::Stall;
                         }
@@ -667,6 +957,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                 USB_REQUEST_SET_ADDRESS => {
                     if setup.request_direction() != RequestDirection::HostToDevice
                         || setup.w_index != 0
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -694,6 +985,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                 USB_REQUEST_SET_CONFIGURATION => {
                     if setup.request_direction() != RequestDirection::HostToDevice
                         || setup.w_index != 0
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -710,6 +1002,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                 }
                 USB_REQUEST_GET_CONFIGURATION => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -722,7 +1015,9 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                 let interface = (setup.w_index & 0x00ff) as u8;
                 match setup.b_request {
                     USB_REQUEST_GET_STATUS => {
-                        if setup.request_direction() != RequestDirection::DeviceToHost {
+                        if setup.request_direction() != RequestDirection::DeviceToHost
+                            || setup.w_value != 0
+                        {
                             return ControlResponse::Stall;
                         }
                         if !matches!(
@@ -734,7 +1029,9 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
                     }
                     USB_REQUEST_GET_INTERFACE => {
-                        if setup.request_direction() != RequestDirection::DeviceToHost {
+                        if setup.request_direction() != RequestDirection::DeviceToHost
+                            || setup.w_value != 0
+                        {
                             return ControlResponse::Stall;
                         }
                         if matches!(
@@ -754,6 +1051,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                             interface,
                             KEYBOARD_INTERFACE | MOUSE_INTERFACE | GAMEPAD_INTERFACE
                         ) && setup.w_value == 0
+                            && setup.w_length == 0
                         {
                             ControlResponse::Ack
                         } else {

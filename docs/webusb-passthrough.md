@@ -16,7 +16,7 @@ The goal is to keep three moving parts coherent and spec-aligned:
 Implementation references (current repo):
 
 - Rust wire contract + action/completion queue (`UsbPassthroughDevice`): `crates/aero-usb/src/passthrough.rs`
-- Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci.rs`
+- Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci/mod.rs`
 - WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
 - WASM guest-visible UHCI controller (`UhciControllerBridge`) + WebUSB passthrough device lifecycle (`set_connected`, `drain_actions`, `push_completion`, `reset` on root port 1): `crates/aero-wasm/src/uhci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - (Dev/harness) WASM standalone WebUSB UHCI bridge (`WebUsbUhciBridge`): `crates/aero-wasm/src/webusb_uhci_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
@@ -335,8 +335,8 @@ In this repo:
   (`web/src/usb/usb_broker.ts`). It resolves any in-flight actions and broadcasts
   `{ type: "usb.selected", ok: false, error: ... }` to attached worker ports.
 - Guest-side hot-unplug should detach the emulated device from its UHCI port so the guest observes
-  the connect-status-change bits (e.g. `UhciController::disconnect_device(port)` in
-  `crates/aero-usb/src/uhci.rs`).
+  the connect-status-change bits (e.g. `UhciController::hub_mut().detach(port_index)` in
+  `crates/aero-usb/src/uhci/mod.rs`).
 
 Recommended behavior on a physical disconnect:
 
@@ -383,9 +383,9 @@ UHCI represents the same operation as a TD chain:
 Aero mapping (current `aero-usb` stack):
 
 - **SETUP TD**
-  - Decoded and dispatched by `UhciController` (`crates/aero-usb/src/uhci.rs`): it reads the 8-byte
-    setup packet, parses `aero_usb::usb::SetupPacket`, and calls `UsbDevice::handle_setup` via
-    `UsbBus` (`crates/aero-usb/src/usb.rs`).
+  - Decoded and dispatched by `UhciController` (`crates/aero-usb/src/uhci/mod.rs`): it reads the
+    8-byte setup packet, parses `aero_usb::SetupPacket`, and forwards it to the addressed
+    `device::AttachedUsbDevice::handle_setup` (`crates/aero-usb/src/device.rs`).
   - SETUP TDs always complete with **ACK** once a device is present. NAK is not used for SETUP.
 
 - **DATA + STATUS TDs**
@@ -436,7 +436,7 @@ Why:
 - Collapsing multiple guest TDs into one WebUSB transfer advances the physical endpoint’s
   toggle multiple times while the guest only advances once, desynchronizing the stream.
 
-Note: the current `aero-usb` UHCI implementation (`crates/aero-usb/src/uhci.rs`) does not yet model
+Note: the current `aero-usb` UHCI implementation (`crates/aero-usb/src/uhci/mod.rs`) does not yet model
 the TD token’s data-toggle bit. The “one packet per action” rule is therefore forward-looking, but
 still the recommended shape to avoid subtle bugs once toggle tracking is implemented.
 
@@ -488,7 +488,7 @@ Guest-visible behavior is then derived from the Rust mapping in
 
 Implementation note: in `aero-usb`, `Nak` is a first-class “retry later” outcome:
 
-- `UhciController` sets `TD_CTRL_NAK` and leaves the TD active (`crates/aero-usb/src/uhci.rs`).
+- `UhciController` sets `TD_CTRL_NAK` and leaves the TD active (`crates/aero-usb/src/uhci/mod.rs`).
 - `UsbPassthroughDevice` returns `ControlResponse::Nak` / `UsbInResult::Nak` / `UsbOutResult::Nak`
   while a host action is pending (`crates/aero-usb/src/passthrough.rs`).
 

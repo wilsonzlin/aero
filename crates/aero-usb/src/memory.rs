@@ -1,38 +1,39 @@
-/// Abstraction over the guest's physical memory.
+/// Abstraction for guest physical memory access.
 ///
-/// UHCI descriptors (Frame List, QHs, TDs) live in guest RAM; the host controller must be able to
-/// read and write them.
-pub trait GuestMemory {
-    fn read(&self, addr: u32, buf: &mut [u8]);
-    fn write(&mut self, addr: u32, buf: &[u8]);
+/// UHCI schedule structures (Frame List, QHs, TDs) live in guest RAM; the controller must be able
+/// to read and write them. Reads are defined as `&mut self` to allow implementations with side
+/// effects (e.g. MMIO-backed RAM).
+pub trait MemoryBus {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]);
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]);
 
-    fn read_u8(&self, addr: u32) -> u8 {
-        let mut b = [0u8; 1];
-        self.read(addr, &mut b);
-        b[0]
+    fn read_u8(&mut self, paddr: u64) -> u8 {
+        let mut buf = [0u8; 1];
+        self.read_physical(paddr, &mut buf);
+        buf[0]
     }
 
-    fn read_u16(&self, addr: u32) -> u16 {
-        let mut b = [0u8; 2];
-        self.read(addr, &mut b);
-        u16::from_le_bytes(b)
+    fn read_u16(&mut self, paddr: u64) -> u16 {
+        let mut buf = [0u8; 2];
+        self.read_physical(paddr, &mut buf);
+        u16::from_le_bytes(buf)
     }
 
-    fn read_u32(&self, addr: u32) -> u32 {
-        let mut b = [0u8; 4];
-        self.read(addr, &mut b);
-        u32::from_le_bytes(b)
+    fn read_u32(&mut self, paddr: u64) -> u32 {
+        let mut buf = [0u8; 4];
+        self.read_physical(paddr, &mut buf);
+        u32::from_le_bytes(buf)
     }
 
-    fn write_u8(&mut self, addr: u32, value: u8) {
-        self.write(addr, &[value]);
+    fn write_u8(&mut self, paddr: u64, val: u8) {
+        self.write_physical(paddr, &[val]);
     }
 
-    fn write_u16(&mut self, addr: u32, value: u16) {
-        self.write(addr, &value.to_le_bytes());
+    fn write_u16(&mut self, paddr: u64, val: u16) {
+        self.write_physical(paddr, &val.to_le_bytes());
     }
 
-    fn write_u32(&mut self, addr: u32, value: u32) {
-        self.write(addr, &value.to_le_bytes());
+    fn write_u32(&mut self, paddr: u64, val: u32) {
+        self.write_physical(paddr, &val.to_le_bytes());
     }
 }

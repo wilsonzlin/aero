@@ -73,6 +73,8 @@ pub struct UhciRegs {
 impl UhciRegs {
     pub fn new() -> Self {
         let mut regs = Self {
+            // Default to 64-byte packets (Windows typically sets this bit itself, but pre-setting it
+            // matches common UHCI implementations and avoids subtle guest driver differences).
             usbcmd: USBCMD_MAXP,
             usbsts: 0,
             usbintr: 0,

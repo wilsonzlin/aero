@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::passthrough::UsbHostAction;
-use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use aero_wasm::UhciControllerBridge;
 use aero_wasm::WebUsbUhciPassthroughHarness;
 use aero_wasm::{UsbHidPassthroughBridge, WebUsbUhciBridge};
@@ -10,7 +10,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
 
-// UHCI register offsets / bits (mirrors `crates/aero-usb/src/uhci.rs` tests).
+// UHCI register offsets / bits (mirrors `crates/aero-usb/src/uhci/regs.rs`).
 const REG_USBCMD: u16 = 0x00;
 const REG_USBSTS: u16 = 0x02;
 const REG_USBINTR: u16 = 0x04;
@@ -31,6 +31,7 @@ const TD_CTRL_ACTIVE: u32 = 1 << 23;
 const TD_CTRL_IOC: u32 = 1 << 24;
 const TD_CTRL_ACTLEN_MASK: u32 = 0x7FF;
 
+const TD_TOKEN_ENDPT_SHIFT: u32 = 15;
 const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
 
 fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
@@ -55,31 +56,24 @@ impl SimpleInDevice {
     }
 }
 
-impl UsbDevice for SimpleInDevice {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
+impl UsbDeviceModel for SimpleInDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
-    }
-
-    fn reset(&mut self) {}
-
-    fn address(&self) -> u8 {
-        0
-    }
-
-    fn handle_setup(&mut self, _setup: SetupPacket) {}
-
-    fn handle_out(&mut self, _ep: u8, _data: &[u8]) -> UsbHandshake {
-        UsbHandshake::Ack { bytes: 0 }
-    }
-
-    fn handle_in(&mut self, _ep: u8, buf: &mut [u8]) -> UsbHandshake {
-        let len = buf.len().min(self.payload.len());
-        buf[..len].copy_from_slice(&self.payload[..len]);
-        UsbHandshake::Ack { bytes: len }
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        if ep != 0x81 {
+            return UsbInResult::Nak;
+        }
+        let mut data = self.payload.clone();
+        if data.len() > max_len {
+            data.truncate(max_len);
+        }
+        UsbInResult::Data(data)
     }
 }
 
@@ -147,9 +141,9 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
     write_u32(guest, 0x2000, LINK_PTR_T);
     write_u32(guest, 0x2004, 0x3000);
 
-    // TD: IN to addr0/ep0, 4 bytes.
+    // TD: IN to addr0/ep1, 4 bytes.
     let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
-    let token = 0x69u32 | maxlen_field; // IN, addr0/ep0
+    let token = 0x69u32 | maxlen_field | (1 << TD_TOKEN_ENDPT_SHIFT); // IN, addr0/ep1
     write_u32(guest, 0x3000, LINK_PTR_T);
     write_u32(guest, 0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
     write_u32(guest, 0x3008, token);

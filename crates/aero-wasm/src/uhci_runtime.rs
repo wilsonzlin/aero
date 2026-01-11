@@ -1,22 +1,18 @@
-use std::cell::RefCell;
+#![cfg(target_arch = "wasm32")]
+
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
-use aero_usb::GuestMemory;
-use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
+use aero_usb::hid::passthrough::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::passthrough::{
-    SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
-    UsbHostCompletionOut,
-};
-use aero_usb::uhci::{InterruptController, UhciController};
-use aero_usb::usb::{UsbDevice, UsbSpeed};
+use aero_usb::passthrough::{SetupPacket as PassthroughSetupPacket, UsbHostAction, UsbHostCompletion};
+use aero_usb::uhci::UhciController;
+use aero_usb::{MemoryBus, UsbWebUsbPassthroughDevice};
 
 const DEFAULT_IO_BASE: u16 = 0x5000;
 const DEFAULT_IRQ_LINE: u8 = 11;
@@ -33,21 +29,6 @@ const UHCI_RUNTIME_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
 fn js_error(message: &str) -> JsValue {
     js_sys::Error::new(message).into()
-}
-
-#[derive(Default)]
-struct RuntimeIrq {
-    level: bool,
-}
-
-impl InterruptController for RuntimeIrq {
-    fn raise_irq(&mut self, _irq: u8) {
-        self.level = true;
-    }
-
-    fn lower_irq(&mut self, _irq: u8) {
-        self.level = false;
-    }
 }
 
 struct LinearGuestMemory {
@@ -73,60 +54,40 @@ impl LinearGuestMemory {
         })
     }
 
-    fn translate(&self, addr: u32) -> Option<u32> {
-        if addr >= self.guest_size {
+    fn translate(&self, paddr: u64, len: usize) -> Option<u32> {
+        let paddr_u32 = u32::try_from(paddr).ok()?;
+        if paddr_u32 >= self.guest_size {
             return None;
         }
-        self.guest_base.checked_add(addr)
+        let end = paddr_u32.checked_add(len as u32)?;
+        if end > self.guest_size {
+            return None;
+        }
+        self.guest_base.checked_add(paddr_u32)
     }
 }
 
-impl GuestMemory for LinearGuestMemory {
-    fn read(&self, addr: u32, buf: &mut [u8]) {
-        let guest_size = self.guest_size as u64;
-        let addr_u64 = addr as u64;
-        if addr_u64 >= guest_size {
-            buf.fill(0);
-            return;
-        }
-
-        let max_len = (guest_size - addr_u64)
-            .min(buf.len() as u64)
-            .min(usize::MAX as u64) as usize;
-
-        let Some(linear) = self.translate(addr) else {
+impl MemoryBus for LinearGuestMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let Some(linear) = self.translate(paddr, buf.len()) else {
             buf.fill(0);
             return;
         };
 
         unsafe {
-            let src = core::slice::from_raw_parts(linear as *const u8, max_len);
-            buf[..max_len].copy_from_slice(src);
-        }
-
-        if max_len < buf.len() {
-            buf[max_len..].fill(0);
+            let src = core::slice::from_raw_parts(linear as *const u8, buf.len());
+            buf.copy_from_slice(src);
         }
     }
 
-    fn write(&mut self, addr: u32, buf: &[u8]) {
-        let guest_size = self.guest_size as u64;
-        let addr_u64 = addr as u64;
-        if addr_u64 >= guest_size {
-            return;
-        }
-
-        let max_len = (guest_size - addr_u64)
-            .min(buf.len() as u64)
-            .min(usize::MAX as u64) as usize;
-
-        let Some(linear) = self.translate(addr) else {
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let Some(linear) = self.translate(paddr, buf.len()) else {
             return;
         };
 
         unsafe {
-            let dst = core::slice::from_raw_parts_mut(linear as *mut u8, max_len);
-            dst.copy_from_slice(&buf[..max_len]);
+            let dst = core::slice::from_raw_parts_mut(linear as *mut u8, buf.len());
+            dst.copy_from_slice(buf);
         }
     }
 }
@@ -160,84 +121,9 @@ fn parse_webhid_collections(
     serde_path_to_error::deserialize(&mut deserializer)
         .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
 }
-
-#[derive(Clone)]
-struct RcWebHidDevice(Rc<RefCell<UsbHidPassthrough>>);
-
-impl UsbDevice for RcWebHidDevice {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
-    }
-
-    fn speed(&self) -> UsbSpeed {
-        UsbSpeed::Full
-    }
-
-    fn reset(&mut self) {
-        self.0.borrow_mut().reset();
-    }
-
-    fn address(&self) -> u8 {
-        self.0.borrow().address()
-    }
-
-    fn handle_setup(&mut self, setup: aero_usb::usb::SetupPacket) {
-        self.0.borrow_mut().handle_setup(setup);
-    }
-
-    fn handle_out(&mut self, ep: u8, data: &[u8]) -> aero_usb::usb::UsbHandshake {
-        self.0.borrow_mut().handle_out(ep, data)
-    }
-
-    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> aero_usb::usb::UsbHandshake {
-        self.0.borrow_mut().handle_in(ep, buf)
-    }
-}
-
-#[derive(Clone)]
-struct RcWebUsbDevice(Rc<RefCell<aero_usb::UsbWebUsbPassthroughDevice>>);
-
-impl UsbDevice for RcWebUsbDevice {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
-    }
-
-    fn speed(&self) -> UsbSpeed {
-        UsbSpeed::Full
-    }
-
-    fn reset(&mut self) {
-        self.0.borrow_mut().reset();
-    }
-
-    fn address(&self) -> u8 {
-        self.0.borrow().address()
-    }
-
-    fn handle_setup(&mut self, setup: aero_usb::usb::SetupPacket) {
-        self.0.borrow_mut().handle_setup(setup);
-    }
-
-    fn handle_out(&mut self, ep: u8, data: &[u8]) -> aero_usb::usb::UsbHandshake {
-        self.0.borrow_mut().handle_out(ep, data)
-    }
-
-    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> aero_usb::usb::UsbHandshake {
-        self.0.borrow_mut().handle_in(ep, buf)
-    }
-}
-
 struct WebHidDeviceState {
     location: WebHidDeviceLocation,
-    dev: Rc<RefCell<UsbHidPassthrough>>,
+    dev: UsbHidPassthroughHandle,
     vendor_id: u16,
     product_id: u16,
     product: String,
@@ -247,7 +133,7 @@ struct WebHidDeviceState {
 
 struct WebUsbDeviceState {
     port: usize,
-    dev: Rc<RefCell<aero_usb::UsbWebUsbPassthroughDevice>>,
+    dev: UsbWebUsbPassthroughDevice,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -265,7 +151,8 @@ struct ExternalHubState {
 pub struct UhciRuntime {
     ctrl: UhciController,
     mem: LinearGuestMemory,
-    irq: RuntimeIrq,
+    io_base: u16,
+    irq_line: u8,
 
     webhid_devices: HashMap<u32, WebHidDeviceState>,
     webhid_ports: [Option<u32>; PORT_COUNT],
@@ -321,9 +208,10 @@ impl UhciRuntime {
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
         let mem = LinearGuestMemory::new(guest_base, guest_size)?;
         Ok(Self {
-            ctrl: UhciController::new(DEFAULT_IO_BASE, DEFAULT_IRQ_LINE),
+            ctrl: UhciController::new(),
             mem,
-            irq: RuntimeIrq::default(),
+            io_base: DEFAULT_IO_BASE,
+            irq_line: DEFAULT_IRQ_LINE,
             webhid_devices: HashMap::new(),
             webhid_ports: [None, None],
             webhid_hub_ports: HashMap::new(),
@@ -334,30 +222,31 @@ impl UhciRuntime {
     }
 
     pub fn io_base(&self) -> u16 {
-        self.ctrl.io_base()
+        self.io_base
     }
 
     pub fn irq_line(&self) -> u8 {
-        self.ctrl.irq_line()
+        self.irq_line
     }
 
     pub fn irq_level(&self) -> bool {
-        self.irq.level
+        self.ctrl.irq_level()
     }
 
     pub fn port_read(&mut self, offset: u16, size: u8) -> u32 {
-        let Some(port) = self.ctrl.io_base().checked_add(offset) else {
-            return 0xFFFF_FFFF;
-        };
-        self.ctrl.port_read(port, size as usize)
+        let size = size as usize;
+        match size {
+            1 | 2 | 4 => self.ctrl.io_read(offset, size),
+            _ => 0xFFFF_FFFF,
+        }
     }
 
     pub fn port_write(&mut self, offset: u16, size: u8, value: u32) {
-        let Some(port) = self.ctrl.io_base().checked_add(offset) else {
+        let size = size as usize;
+        if !matches!(size, 1 | 2 | 4) {
             return;
-        };
-        self.ctrl
-            .port_write(port, size as usize, value, &mut self.irq);
+        }
+        self.ctrl.io_write(offset, size, value);
     }
 
     pub fn tick_1ms(&mut self) {
@@ -365,7 +254,7 @@ impl UhciRuntime {
     }
 
     pub fn step_frame(&mut self) {
-        self.ctrl.step_frame(&mut self.mem, &mut self.irq);
+        self.ctrl.tick_1ms(&mut self.mem);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -396,7 +285,7 @@ impl UhciRuntime {
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
 
-        let device = UsbHidPassthrough::new(
+        let dev = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
             "WebHID".to_string(),
@@ -409,9 +298,9 @@ impl UhciRuntime {
             None,
         );
 
-        let dev = Rc::new(RefCell::new(device));
         self.ctrl
-            .connect_device(port, Box::new(RcWebHidDevice(dev.clone())));
+            .hub_mut()
+            .attach(port, Box::new(dev.clone()));
 
         self.webhid_ports[port] = Some(device_id);
         self.webhid_devices.insert(
@@ -472,7 +361,7 @@ impl UhciRuntime {
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
 
-        let device = UsbHidPassthrough::new(
+        let dev = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
             "WebHID".to_string(),
@@ -485,13 +374,12 @@ impl UhciRuntime {
             None,
         );
 
-        let dev = Rc::new(RefCell::new(device));
-        {
-            let hub = self.external_hub_mut().ok_or_else(|| {
-                js_error("External hub is missing (expected to be attached at root port 0)")
-            })?;
-            hub.attach(hub_port, Box::new(RcWebHidDevice(dev.clone())));
-        }
+        let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
+        crate::uhci_controller_bridge::attach_device_at_path(
+            &mut self.ctrl,
+            &path,
+            Box::new(dev.clone()),
+        )?;
 
         self.webhid_hub_ports.insert(hub_port, device_id);
         self.webhid_devices.insert(
@@ -542,16 +430,15 @@ impl UhciRuntime {
 
         match state.location {
             WebHidDeviceLocation::RootPort(port) => {
-                self.ctrl.disconnect_device(port);
+                self.ctrl.hub_mut().detach(port);
                 if self.webhid_ports[port] == Some(device_id) {
                     self.webhid_ports[port] = None;
                 }
             }
             WebHidDeviceLocation::ExternalHubPort(port) => {
                 self.webhid_hub_ports.remove(&port);
-                if let Some(hub) = self.external_hub_mut() {
-                    hub.detach(port);
-                }
+                let path = [EXTERNAL_HUB_ROOT_PORT as u8, port];
+                let _ = self.ctrl.hub_mut().detach_at_path(&path);
             }
         }
     }
@@ -568,7 +455,7 @@ impl UhciRuntime {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
 
-        state.dev.borrow_mut().push_input_report(report_id, data);
+        state.dev.push_input_report(report_id, data);
         Ok(())
     }
 
@@ -576,7 +463,7 @@ impl UhciRuntime {
         let out = Array::new();
         for (&device_id, state) in self.webhid_devices.iter_mut() {
             loop {
-                let report = state.dev.borrow_mut().pop_output_report();
+                let report = state.dev.pop_output_report();
                 let Some(report) = report else { break };
                 out.push(&webhid_output_report_to_js(device_id, report));
             }
@@ -600,11 +487,12 @@ impl UhciRuntime {
                 "UHCI root port {WEBUSB_ROOT_PORT} is not available for WebUSB"
             )));
         }
-        let port = WEBUSB_ROOT_PORT;
 
-        let dev = Rc::new(RefCell::new(aero_usb::UsbWebUsbPassthroughDevice::new()));
+        let port = WEBUSB_ROOT_PORT;
+        let dev = UsbWebUsbPassthroughDevice::new();
         self.ctrl
-            .connect_device(port, Box::new(RcWebUsbDevice(dev.clone())));
+            .hub_mut()
+            .attach(port, Box::new(dev.clone()));
         self.webusb = Some(WebUsbDeviceState { port, dev });
         Ok(port as u32)
     }
@@ -613,12 +501,12 @@ impl UhciRuntime {
         let Some(state) = self.webusb.take() else {
             return;
         };
-        self.ctrl.disconnect_device(state.port);
+        self.ctrl.hub_mut().detach(state.port);
     }
 
     pub fn webusb_drain_actions(&mut self) -> Result<JsValue, JsValue> {
         let actions: Vec<UsbHostAction> = if let Some(state) = self.webusb.as_ref() {
-            state.dev.borrow_mut().drain_actions()
+            state.dev.drain_actions()
         } else {
             Vec::new()
         };
@@ -633,8 +521,9 @@ impl UhciRuntime {
         let Some(state) = self.webusb.as_ref() else {
             return Ok(());
         };
-        let completion = parse_usb_host_completion(completion)?;
-        state.dev.borrow_mut().push_completion(completion);
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
+            .map_err(|e| js_error(&format!("Invalid UsbHostCompletion: {e}")))?;
+        state.dev.push_completion(completion);
         Ok(())
     }
 
@@ -659,7 +548,7 @@ impl UhciRuntime {
 
         let mut w = SnapshotWriter::new(UHCI_RUNTIME_DEVICE_ID, UHCI_RUNTIME_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
-        w.field_bool(TAG_IRQ_LEVEL, self.irq.level);
+        w.field_bool(TAG_IRQ_LEVEL, self.ctrl.irq_level());
 
         if let Some(state) = self.external_hub.as_ref() {
             w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT, state.port_count);
@@ -679,7 +568,7 @@ impl UhciRuntime {
                     WebHidDeviceLocation::RootPort(port) => (0u8, port as u8),
                     WebHidDeviceLocation::ExternalHubPort(port) => (1u8, port),
                 };
-                let dev_state = state.dev.borrow().save_state();
+                let dev_state = state.dev.save_state();
                 let record = Encoder::new()
                     .u32(device_id)
                     .u8(loc_kind)
@@ -706,7 +595,7 @@ impl UhciRuntime {
         );
 
         if let Some(webusb) = self.webusb.as_ref() {
-            w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.borrow().save_state());
+            w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.save_state());
         }
 
         w.finish()
@@ -753,7 +642,7 @@ impl UhciRuntime {
         let ctrl_bytes = r
             .bytes(TAG_CONTROLLER)
             .ok_or_else(|| js_error("UHCI runtime snapshot missing controller state"))?;
-        let irq_level = r
+        let _irq_level = r
             .bool(TAG_IRQ_LEVEL)
             .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot IRQ latch: {e}")))?
             .unwrap_or(false);
@@ -966,36 +855,32 @@ impl UhciRuntime {
         if let Some(port_count) = hub_port_count {
             let hub = UsbHubDevice::new_with_ports(port_count as usize);
             self.ctrl
-                .connect_device(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
+                .hub_mut()
+                .attach(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
             self.external_hub = Some(ExternalHubState { port_count });
         }
 
         // Restore WebUSB passthrough device first so root-port occupancy is correct.
         if let Some(buf) = webusb_state_bytes {
             let port = WEBUSB_ROOT_PORT;
-            let dev = Rc::new(RefCell::new(aero_usb::UsbWebUsbPassthroughDevice::new()));
-            self.ctrl
-                .connect_device(port, Box::new(RcWebUsbDevice(dev.clone())));
-            self.webusb = Some(WebUsbDeviceState {
-                port,
-                dev: dev.clone(),
-            });
-            let mut dev_mut = dev.borrow_mut();
-            if let Err(err) = dev_mut.load_state(buf) {
+            let mut dev = UsbWebUsbPassthroughDevice::new();
+            self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
+            if let Err(err) = dev.load_state(buf) {
                 self.reset_for_snapshot_restore();
                 return Err(js_error(&format!(
                     "Invalid UHCI runtime snapshot WebUSB device state: {err}"
                 )));
             }
-            // WebUSB host actions are backed by JS Promises. After a snapshot restore, any in-flight
-            // Promise/completion pair is unrecoverable, so drop host bookkeeping to allow UHCI TD
-            // retries to re-emit fresh host actions (matching `WebUsbUhciBridge` semantics).
-            dev_mut.reset_host_state_for_restore();
+            // WebUSB host actions are backed by JS Promises and cannot be resumed after a VM
+            // snapshot restore. Drop any inflight/queued host bookkeeping so UHCI TD retries
+            // re-emit fresh actions.
+            dev.reset_host_state_for_restore();
+            self.webusb = Some(WebUsbDeviceState { port, dev });
         }
 
         // Recreate WebHID devices (using stored static config), then apply their dynamic snapshots.
         for entry in webhid_entries {
-            let device = UsbHidPassthrough::new(
+            let mut dev = UsbHidPassthroughHandle::new(
                 entry.vendor_id,
                 entry.product_id,
                 "WebHID".to_string(),
@@ -1007,7 +892,6 @@ impl UhciRuntime {
                 None,
                 None,
             );
-            let dev = Rc::new(RefCell::new(device));
 
             match entry.location {
                 WebHidDeviceLocation::RootPort(port) => {
@@ -1019,27 +903,41 @@ impl UhciRuntime {
                         )));
                     }
                     self.ctrl
-                        .connect_device(port, Box::new(RcWebHidDevice(dev.clone())));
+                        .hub_mut()
+                        .attach(port, Box::new(dev.clone()));
                     self.webhid_ports[port] = Some(entry.device_id);
                 }
                 WebHidDeviceLocation::ExternalHubPort(hub_port) => {
                     self.webhid_hub_ports.insert(hub_port, entry.device_id);
-                    let Some(hub) = self.external_hub_mut() else {
+                    let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
+                    if let Err(err) = crate::uhci_controller_bridge::attach_device_at_path(
+                        &mut self.ctrl,
+                        &path,
+                        Box::new(dev.clone()),
+                    ) {
                         self.reset_for_snapshot_restore();
+                        let msg = err.as_string().unwrap_or_else(|| format!("{err:?}"));
                         return Err(js_error(&format!(
-                            "UHCI runtime snapshot WebHID deviceId {} expects external hub, but hub is missing",
+                            "UHCI runtime snapshot WebHID deviceId {} cannot attach behind external hub port {hub_port}: {msg}",
                             entry.device_id
                         )));
-                    };
-                    hub.attach(hub_port, Box::new(RcWebHidDevice(dev.clone())));
+                    }
                 }
+            }
+
+            if let Err(err) = dev.load_state(&entry.state) {
+                self.reset_for_snapshot_restore();
+                return Err(js_error(&format!(
+                    "Invalid UHCI runtime snapshot WebHID deviceId {} state: {err}",
+                    entry.device_id
+                )));
             }
 
             self.webhid_devices.insert(
                 entry.device_id,
                 WebHidDeviceState {
                     location: entry.location,
-                    dev: dev.clone(),
+                    dev,
                     vendor_id: entry.vendor_id,
                     product_id: entry.product_id,
                     product: entry.product,
@@ -1047,14 +945,6 @@ impl UhciRuntime {
                     has_interrupt_out: entry.has_interrupt_out,
                 },
             );
-
-            if let Err(err) = dev.borrow_mut().load_state(&entry.state) {
-                self.reset_for_snapshot_restore();
-                return Err(js_error(&format!(
-                    "Invalid UHCI runtime snapshot WebHID deviceId {} state: {err}",
-                    entry.device_id
-                )));
-            }
         }
 
         // Restore hub dynamic state after attaching downstream devices.
@@ -1081,8 +971,6 @@ impl UhciRuntime {
                 "Invalid UHCI runtime snapshot controller state: {err}"
             )));
         }
-
-        self.irq.level = irq_level;
 
         Ok(())
     }
@@ -1143,20 +1031,19 @@ impl UhciRuntime {
     }
 
     fn external_hub_mut(&mut self) -> Option<&mut UsbHubDevice> {
-        let port = self.ctrl.bus_mut().port_mut(EXTERNAL_HUB_ROOT_PORT)?;
-        let dev = port.device.as_mut()?;
-        dev.as_any_mut().downcast_mut::<UsbHubDevice>()
+        let dev = self.ctrl.hub_mut().port_device_mut(EXTERNAL_HUB_ROOT_PORT)?;
+        let any = dev.model_mut() as &mut dyn core::any::Any;
+        any.downcast_mut::<UsbHubDevice>()
     }
 
     fn external_hub_ref(&self) -> Option<&UsbHubDevice> {
-        let port = self.ctrl.bus().port(EXTERNAL_HUB_ROOT_PORT)?;
-        let dev = port.device.as_ref()?;
-        dev.as_any().downcast_ref::<UsbHubDevice>()
+        let dev = self.ctrl.hub().port_device(EXTERNAL_HUB_ROOT_PORT)?;
+        let any = dev.model() as &dyn core::any::Any;
+        any.downcast_ref::<UsbHubDevice>()
     }
 
     fn reset_for_snapshot_restore(&mut self) {
-        self.ctrl = UhciController::new(DEFAULT_IO_BASE, DEFAULT_IRQ_LINE);
-        self.irq = RuntimeIrq::default();
+        self.ctrl = UhciController::new();
 
         self.webhid_devices.clear();
         self.webhid_ports = [None; PORT_COUNT];
@@ -1167,7 +1054,6 @@ impl UhciRuntime {
 
         self.webusb = None;
     }
-
     fn ensure_external_hub(&mut self, min_hub_port: u8) -> Result<(), JsValue> {
         if min_hub_port == 0 {
             return Err(js_error(
@@ -1202,7 +1088,8 @@ impl UhciRuntime {
 
         let hub = UsbHubDevice::new_with_ports(desired as usize);
         self.ctrl
-            .connect_device(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
+            .hub_mut()
+            .attach(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
         self.external_hub = Some(ExternalHubState {
             port_count: desired,
         });
@@ -1219,15 +1106,16 @@ impl UhciRuntime {
 
         // Replace the hub device at root port 0 so the guest sees a real hotplug event and can
         // re-read the hub descriptor (port count, etc).
-        self.ctrl.disconnect_device(EXTERNAL_HUB_ROOT_PORT);
+        self.ctrl.hub_mut().detach(EXTERNAL_HUB_ROOT_PORT);
 
         let hub = UsbHubDevice::new_with_ports(new_port_count as usize);
         self.ctrl
-            .connect_device(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
+            .hub_mut()
+            .attach(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
         state.port_count = new_port_count;
 
         // Reattach any existing downstream devices behind the new hub.
-        let to_reattach: Vec<(u8, Rc<RefCell<UsbHidPassthrough>>)> = self
+        let to_reattach: Vec<(u8, UsbHidPassthroughHandle)> = self
             .webhid_hub_ports
             .iter()
             .filter_map(|(&hub_port, &device_id)| {
@@ -1241,11 +1129,13 @@ impl UhciRuntime {
             })
             .collect();
 
-        let hub = self
-            .external_hub_mut()
-            .ok_or_else(|| js_error("External hub missing after grow operation"))?;
         for (hub_port, dev) in to_reattach {
-            hub.attach(hub_port, Box::new(RcWebHidDevice(dev)));
+            let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
+            crate::uhci_controller_bridge::attach_device_at_path(
+                &mut self.ctrl,
+                &path,
+                Box::new(dev),
+            )?;
         }
 
         Ok(())
@@ -1395,106 +1285,6 @@ fn webusb_action_to_js(action: UsbHostAction) -> JsValue {
         }
     };
     obj.into()
-}
-
-fn get_u32_field(obj: &Object, field: &'static str) -> Result<u32, JsValue> {
-    let value = Reflect::get(obj, &JsValue::from_str(field))
-        .map_err(|_| js_error(&format!("UsbHostCompletion.{field} missing")))?;
-    value
-        .as_f64()
-        .and_then(|v| {
-            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= u32::MAX as f64 {
-                Some(v as u32)
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| js_error(&format!("UsbHostCompletion.{field} must be a u32 number")))
-}
-
-fn get_string_field(obj: &Object, field: &'static str) -> Result<String, JsValue> {
-    Reflect::get(obj, &JsValue::from_str(field))
-        .ok()
-        .and_then(|v| v.as_string())
-        .ok_or_else(|| js_error(&format!("UsbHostCompletion.{field} must be a string")))
-}
-
-fn get_bytes_field(obj: &Object, field: &'static str) -> Result<Vec<u8>, JsValue> {
-    let value = Reflect::get(obj, &JsValue::from_str(field))
-        .map_err(|_| js_error(&format!("UsbHostCompletion.{field} missing")))?;
-    if value.is_instance_of::<Uint8Array>() {
-        Ok(Uint8Array::new(&value).to_vec())
-    } else {
-        Err(js_error(&format!(
-            "UsbHostCompletion.{field} must be a Uint8Array"
-        )))
-    }
-}
-
-fn parse_usb_host_completion(value: JsValue) -> Result<UsbHostCompletion, JsValue> {
-    if !value.is_object() {
-        return Err(js_error("UsbHostCompletion must be an object"));
-    }
-    let obj: Object = value.unchecked_into();
-    let kind = get_string_field(&obj, "kind")?;
-    let id = get_u32_field(&obj, "id")?;
-    let status = get_string_field(&obj, "status")?;
-
-    match kind.as_str() {
-        "controlIn" => {
-            let result = parse_completion_in(&obj, &status)?;
-            Ok(UsbHostCompletion::ControlIn { id, result })
-        }
-        "bulkIn" => {
-            let result = parse_completion_in(&obj, &status)?;
-            Ok(UsbHostCompletion::BulkIn { id, result })
-        }
-        "controlOut" => {
-            let result = parse_completion_out(&obj, &status)?;
-            Ok(UsbHostCompletion::ControlOut { id, result })
-        }
-        "bulkOut" => {
-            let result = parse_completion_out(&obj, &status)?;
-            Ok(UsbHostCompletion::BulkOut { id, result })
-        }
-        _ => Err(js_error(&format!(
-            "UsbHostCompletion.kind must be one of controlIn/controlOut/bulkIn/bulkOut (got {kind})"
-        ))),
-    }
-}
-
-fn parse_completion_in(obj: &Object, status: &str) -> Result<UsbHostCompletionIn, JsValue> {
-    match status {
-        "success" => {
-            let data = get_bytes_field(obj, "data")?;
-            Ok(UsbHostCompletionIn::Success { data })
-        }
-        "stall" => Ok(UsbHostCompletionIn::Stall),
-        "error" => {
-            let message = get_string_field(obj, "message")?;
-            Ok(UsbHostCompletionIn::Error { message })
-        }
-        _ => Err(js_error(&format!(
-            "UsbHostCompletion.status must be one of success/stall/error (got {status})"
-        ))),
-    }
-}
-
-fn parse_completion_out(obj: &Object, status: &str) -> Result<UsbHostCompletionOut, JsValue> {
-    match status {
-        "success" => {
-            let bytes_written = get_u32_field(obj, "bytesWritten")?;
-            Ok(UsbHostCompletionOut::Success { bytes_written })
-        }
-        "stall" => Ok(UsbHostCompletionOut::Stall),
-        "error" => {
-            let message = get_string_field(obj, "message")?;
-            Ok(UsbHostCompletionOut::Error { message })
-        }
-        _ => Err(js_error(&format!(
-            "UsbHostCompletion.status must be one of success/stall/error (got {status})"
-        ))),
-    }
 }
 
 fn validate_hub_port_count(value: u32) -> Result<u8, JsValue> {

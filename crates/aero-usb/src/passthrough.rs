@@ -42,9 +42,6 @@ impl SetupPacket {
 ///
 /// This is the canonical wire representation shared with TypeScript:
 /// `web/src/usb/usb_passthrough_types.ts` (re-exported from `web/src/usb/webusb_backend.ts`).
-///
-/// `id` is a Rust-generated u32 used to correlate an action with its completion. Keep it
-/// representable as a JS number without loss (`<= 0xFFFF_FFFF`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum UsbHostAction {
@@ -57,12 +54,8 @@ pub enum UsbHostAction {
         data: Vec<u8>,
     },
     /// Bulk/interrupt transfer, IN direction.
-    ///
-    /// `endpoint` is the USB endpoint **address** (e.g. `0x81`).
     BulkIn { id: u32, endpoint: u8, length: u32 },
     /// Bulk/interrupt transfer, OUT direction.
-    ///
-    /// `endpoint` is the USB endpoint **address** (e.g. `0x02`).
     BulkOut {
         id: u32,
         endpoint: u8,
@@ -641,6 +634,8 @@ impl UsbPassthroughDevice {
             "handle_in_transfer should not be used for control endpoint 0, got {endpoint:#04x}"
         );
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
+            // The guest may retry an IN TD while rewriting its max length field; keep the original
+            // requested length so we don't emit duplicate host actions.
             let inflight_id = inflight.id;
             let inflight_len = inflight.len;
             if let Some(result) = self.take_result(inflight_id) {
@@ -764,7 +759,6 @@ pub use crate::passthrough_device::UsbWebUsbPassthroughDevice;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usb::{SetupPacket as UsbSetupPacket, UsbDevice, UsbHandshake};
 
     #[derive(Debug, Deserialize)]
     struct WireFixture {
@@ -968,8 +962,9 @@ mod tests {
             other => panic!("unexpected action: {other:?}"),
         };
 
-        // UHCI retries an IN TD until it completes; ensure retries do not enqueue duplicates.
-        assert_eq!(dev.handle_in_transfer(0x81, 2), UsbInResult::Nak);
+        // UHCI may retry while providing a different `max_len`; we must still truncate to the
+        // original requested length.
+        assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
         assert!(dev.pop_action().is_none(), "no duplicate action");
 
         dev.push_completion(UsbHostCompletion::BulkIn {
@@ -980,7 +975,7 @@ mod tests {
         });
 
         assert_eq!(
-            dev.handle_in_transfer(0x81, 2),
+            dev.handle_in_transfer(0x81, 8),
             UsbInResult::Data(vec![1, 2])
         );
     }
@@ -1047,80 +1042,5 @@ mod tests {
             dev.handle_control_request(setup2, None),
             ControlResponse::Data(vec![9, 8, 7, 6])
         );
-    }
-
-    #[test]
-    fn webusb_passthrough_device_queues_get_descriptor_action_and_naks_until_completion() {
-        let mut dev = UsbWebUsbPassthroughDevice::new();
-
-        let setup = UsbSetupPacket {
-            request_type: 0x80,
-            request: 0x06, // GET_DESCRIPTOR
-            value: 0x0100, // DEVICE
-            index: 0,
-            length: 8,
-        };
-        dev.handle_setup(setup);
-
-        let actions = dev.drain_actions();
-        assert_eq!(actions.len(), 1);
-        let (id, action_setup) = match &actions[0] {
-            UsbHostAction::ControlIn { id, setup } => (*id, *setup),
-            other => panic!("unexpected action: {other:?}"),
-        };
-        assert_eq!(
-            action_setup,
-            SetupPacket {
-                bm_request_type: 0x80,
-                b_request: 0x06,
-                w_value: 0x0100,
-                w_index: 0,
-                w_length: 8,
-            }
-        );
-
-        let mut buf = [0u8; 8];
-        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Nak);
-
-        dev.push_completion(UsbHostCompletion::ControlIn {
-            id,
-            result: UsbHostCompletionIn::Success {
-                data: vec![1, 2, 3],
-            },
-        });
-
-        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 3 });
-        assert_eq!(&buf[..3], &[1, 2, 3]);
-
-        // Status stage for control-IN is an OUT ZLP.
-        assert_eq!(dev.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
-    }
-
-    #[test]
-    fn webusb_passthrough_device_virtualizes_set_address_until_status_stage() {
-        let mut dev = UsbWebUsbPassthroughDevice::new();
-
-        dev.handle_setup(UsbSetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 1,
-            index: 0,
-            length: 0,
-        });
-
-        assert_eq!(
-            dev.address(),
-            0,
-            "address must not update during SETUP stage"
-        );
-        assert!(
-            dev.drain_actions().is_empty(),
-            "SET_ADDRESS must not be forwarded to the host"
-        );
-
-        // Status stage for SET_ADDRESS is an IN ZLP.
-        let mut zlp: [u8; 0] = [];
-        assert_eq!(dev.handle_in(0, &mut zlp), UsbHandshake::Ack { bytes: 0 });
-        assert_eq!(dev.address(), 1, "address applies after status stage");
     }
 }

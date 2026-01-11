@@ -1,14 +1,25 @@
-use crate::io::usb::{
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
+use crate::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+    UsbSpeed,
 };
 
 const USB_REQUEST_SET_ADDRESS: u8 = 0x05;
+const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsbOutResult {
     Ack,
     Nak,
     Stall,
+    Timeout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +27,7 @@ pub enum UsbInResult {
     Data(Vec<u8>),
     Nak,
     Stall,
+    Timeout,
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +62,8 @@ struct ControlState {
 
 /// A USB device attached behind the UHCI root hub.
 ///
-/// This wrapper tracks the device address and provides an endpoint-0 control pipe
-/// state machine over a [`UsbDeviceModel`] which operates at the SETUP request level.
+/// This wrapper tracks the device address and provides an endpoint-0 control pipe state machine
+/// over a [`UsbDeviceModel`] which operates at the SETUP request level.
 pub struct AttachedUsbDevice {
     address: u8,
     pending_address: Option<u8>,
@@ -73,15 +85,23 @@ impl AttachedUsbDevice {
         self.address
     }
 
+    pub fn speed(&self) -> UsbSpeed {
+        self.model.speed()
+    }
+
     pub fn model_mut(&mut self) -> &mut dyn UsbDeviceModel {
         &mut *self.model
     }
 
-    pub fn as_hub(&self) -> Option<&dyn crate::io::usb::hub::UsbHub> {
+    pub fn model(&self) -> &dyn UsbDeviceModel {
+        &*self.model
+    }
+
+    pub fn as_hub(&self) -> Option<&dyn crate::hub::UsbHub> {
         self.model.as_hub()
     }
 
-    pub fn as_hub_mut(&mut self) -> Option<&mut dyn crate::io::usb::hub::UsbHub> {
+    pub fn as_hub_mut(&mut self) -> Option<&mut dyn crate::hub::UsbHub> {
         self.model.as_hub_mut()
     }
 
@@ -137,6 +157,26 @@ impl AttachedUsbDevice {
             return UsbOutResult::Ack;
         }
 
+        // Defer SET_CONFIGURATION to the STATUS stage.
+        //
+        // Synchronous device models mutate their configuration state when they observe the
+        // `SET_CONFIGURATION` request. If we forwarded it at SETUP time, a subsequent SETUP could
+        // abort the control transfer but still leave the device in the configured state. By
+        // postponing delivery until the STATUS stage we ensure the configuration only takes effect
+        // once the request has completed.
+        if setup.request_type() == RequestType::Standard
+            && setup.recipient() == RequestRecipient::Device
+            && setup.b_request == USB_REQUEST_SET_CONFIGURATION
+            && setup.request_direction() == RequestDirection::HostToDevice
+            && setup.w_length == 0
+        {
+            self.control = Some(ControlState {
+                setup,
+                stage: ControlStage::StatusInPending { data: None },
+            });
+            return UsbOutResult::Ack;
+        }
+
         let stage = match setup.request_direction() {
             RequestDirection::DeviceToHost => {
                 let resp = self.model.handle_control_request(setup, None);
@@ -174,6 +214,7 @@ impl AttachedUsbDevice {
                         }
                     }
                     ControlResponse::Stall => return UsbOutResult::Stall,
+                    ControlResponse::Timeout => return UsbOutResult::Timeout,
                 }
             }
             RequestDirection::HostToDevice => {
@@ -182,6 +223,7 @@ impl AttachedUsbDevice {
                         ControlResponse::Ack => ControlStage::StatusIn,
                         ControlResponse::Nak => ControlStage::StatusInPending { data: None },
                         ControlResponse::Stall => return UsbOutResult::Stall,
+                        ControlResponse::Timeout => return UsbOutResult::Timeout,
                         ControlResponse::Data(_) => return UsbOutResult::Stall,
                     }
                 } else {
@@ -238,6 +280,10 @@ impl AttachedUsbDevice {
                             return UsbOutResult::Ack;
                         }
                         ControlResponse::Stall => return UsbOutResult::Stall,
+                        ControlResponse::Timeout => {
+                            self.control = None;
+                            return UsbOutResult::Timeout;
+                        }
                         ControlResponse::Data(_) => return UsbOutResult::Stall,
                     }
                 }
@@ -258,6 +304,10 @@ impl AttachedUsbDevice {
                 match self.model.handle_control_request(setup, None) {
                     ControlResponse::Nak => UsbOutResult::Nak,
                     ControlResponse::Stall => UsbOutResult::Stall,
+                    ControlResponse::Timeout => {
+                        self.control = None;
+                        UsbOutResult::Timeout
+                    }
                     // Whether the model reports `Ack` or `Data([])`, we treat this as the
                     // completion point for the whole control transfer (status stage).
                     ControlResponse::Ack | ControlResponse::Data(_) => {
@@ -329,6 +379,10 @@ impl AttachedUsbDevice {
                 match self.model.handle_control_request(setup, None) {
                     ControlResponse::Nak => UsbInResult::Nak,
                     ControlResponse::Stall => UsbInResult::Stall,
+                    ControlResponse::Timeout => {
+                        self.control = None;
+                        UsbInResult::Timeout
+                    }
                     ControlResponse::Ack => {
                         state.stage = ControlStage::StatusOut;
                         UsbInResult::Data(Vec::new())
@@ -388,11 +442,154 @@ impl AttachedUsbDevice {
                         self.control = None;
                         UsbInResult::Data(Vec::new())
                     }
+                    ControlResponse::Timeout => {
+                        self.control = None;
+                        UsbInResult::Timeout
+                    }
                     ControlResponse::Stall | ControlResponse::Data(_) => UsbInResult::Stall,
                 }
             }
             _ => UsbInResult::Stall,
         }
+    }
+}
+
+fn encode_setup_packet(enc: Encoder, setup: SetupPacket) -> Encoder {
+    enc.u8(setup.bm_request_type)
+        .u8(setup.b_request)
+        .u16(setup.w_value)
+        .u16(setup.w_index)
+        .u16(setup.w_length)
+}
+
+fn decode_setup_packet(d: &mut Decoder<'_>) -> SnapshotResult<SetupPacket> {
+    Ok(SetupPacket {
+        bm_request_type: d.u8()?,
+        b_request: d.u8()?,
+        w_value: d.u16()?,
+        w_index: d.u16()?,
+        w_length: d.u16()?,
+    })
+}
+
+fn encode_control_state(state: &ControlState) -> Vec<u8> {
+    let mut enc = encode_setup_packet(Encoder::new(), state.setup);
+
+    let stage_tag: u8 = match &state.stage {
+        ControlStage::InData { .. } => 0,
+        ControlStage::InDataZlp => 1,
+        ControlStage::InDataPending => 2,
+        ControlStage::OutData { .. } => 3,
+        ControlStage::StatusIn => 4,
+        ControlStage::StatusInPending { .. } => 5,
+        ControlStage::StatusOut => 6,
+        ControlStage::StatusOutPending => 7,
+    };
+
+    enc = enc.u8(stage_tag);
+    match &state.stage {
+        ControlStage::InData { data, offset } => {
+            enc = enc.vec_u8(data).u32(*offset as u32);
+        }
+        ControlStage::InDataZlp | ControlStage::InDataPending | ControlStage::StatusIn => {}
+        ControlStage::OutData { expected, received } => {
+            enc = enc.u32(*expected as u32).vec_u8(received);
+        }
+        ControlStage::StatusInPending { data } => {
+            if let Some(buf) = data {
+                enc = enc.bool(true).vec_u8(buf);
+            } else {
+                enc = enc.bool(false);
+            }
+        }
+        ControlStage::StatusOut | ControlStage::StatusOutPending => {}
+    }
+
+    enc.finish()
+}
+
+fn decode_control_state(buf: &[u8]) -> SnapshotResult<ControlState> {
+    let mut d = Decoder::new(buf);
+    let setup = decode_setup_packet(&mut d)?;
+    let stage_tag = d.u8()?;
+
+    let stage = match stage_tag {
+        0 => {
+            let data = d.vec_u8()?;
+            let offset = d.u32()? as usize;
+            if offset > data.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("control in_data offset"));
+            }
+            ControlStage::InData { data, offset }
+        }
+        1 => ControlStage::InDataZlp,
+        2 => ControlStage::InDataPending,
+        3 => {
+            let expected = d.u32()? as usize;
+            let received = d.vec_u8()?;
+            if received.len() > expected {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "control out_data exceeds expected length",
+                ));
+            }
+            ControlStage::OutData { expected, received }
+        }
+        4 => ControlStage::StatusIn,
+        5 => {
+            let has_data = d.bool()?;
+            let data = if has_data { Some(d.vec_u8()?) } else { None };
+            ControlStage::StatusInPending { data }
+        }
+        6 => ControlStage::StatusOut,
+        7 => ControlStage::StatusOutPending,
+        _ => return Err(SnapshotError::InvalidFieldEncoding("control stage")),
+    };
+
+    d.finish()?;
+
+    Ok(ControlState { setup, stage })
+}
+
+impl IoSnapshot for AttachedUsbDevice {
+    const DEVICE_ID: [u8; 4] = *b"ADEV";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONTROL: u16 = 3;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u8(TAG_ADDRESS, self.address);
+        if let Some(addr) = self.pending_address {
+            w.field_u8(TAG_PENDING_ADDRESS, addr);
+        }
+        if let Some(control) = self.control.as_ref() {
+            w.field_bytes(TAG_CONTROL, encode_control_state(control));
+        }
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_PENDING_ADDRESS: u16 = 2;
+        const TAG_CONTROL: u16 = 3;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset endpoint-0 / addressing state while preserving the underlying device model.
+        self.address = 0;
+        self.pending_address = None;
+        self.control = None;
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
+        if let Some(buf) = r.bytes(TAG_CONTROL) {
+            self.control = Some(decode_control_state(buf)?);
+        }
+
+        Ok(())
     }
 }
 

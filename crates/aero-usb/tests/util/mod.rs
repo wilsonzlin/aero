@@ -1,22 +1,27 @@
-use aero_usb::uhci::InterruptController;
-use aero_usb::GuestMemory;
+use aero_usb::uhci::regs;
+use aero_usb::MemoryBus;
 
-pub const REG_USBCMD: u16 = 0x00;
-pub const REG_USBINTR: u16 = 0x04;
-pub const REG_FRBASEADD: u16 = 0x08;
-pub const REG_PORTSC1: u16 = 0x10;
+pub const REG_USBCMD: u16 = regs::REG_USBCMD;
+pub const REG_USBINTR: u16 = regs::REG_USBINTR;
+pub const REG_FRBASEADD: u16 = regs::REG_FLBASEADD;
+pub const REG_PORTSC1: u16 = regs::REG_PORTSC1;
 
-pub const USBCMD_RUN: u16 = 1 << 0;
-pub const USBINTR_IOC: u16 = 1 << 2;
+pub const USBCMD_RUN: u16 = regs::USBCMD_RS;
+pub const USBINTR_IOC: u16 = regs::USBINTR_IOC;
 
+// Root hub PORTSC bits (UHCI spec).
 pub const PORTSC_PR: u16 = 1 << 9;
 
+// UHCI link pointer bits.
 pub const LINK_PTR_T: u32 = 1 << 0;
 pub const LINK_PTR_Q: u32 = 1 << 1;
 
+// UHCI TD control/status bits.
 pub const TD_CTRL_ACTIVE: u32 = 1 << 23;
 pub const TD_CTRL_IOC: u32 = 1 << 24;
+#[allow(dead_code)]
 pub const TD_CTRL_NAK: u32 = 1 << 19;
+#[allow(dead_code)]
 pub const TD_CTRL_STALLED: u32 = 1 << 22;
 pub const TD_CTRL_ACTLEN_MASK: u32 = 0x7FF;
 
@@ -24,21 +29,6 @@ const TD_TOKEN_DEVADDR_SHIFT: u32 = 8;
 const TD_TOKEN_ENDPT_SHIFT: u32 = 15;
 const TD_TOKEN_D: u32 = 1 << 19;
 const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
-
-#[derive(Default)]
-pub struct TestIrq {
-    pub raised: bool,
-}
-
-impl InterruptController for TestIrq {
-    fn raise_irq(&mut self, _irq: u8) {
-        self.raised = true;
-    }
-
-    fn lower_irq(&mut self, _irq: u8) {
-        self.raised = false;
-    }
-}
 
 pub struct TestMemory {
     pub data: Vec<u8>,
@@ -51,25 +41,34 @@ impl TestMemory {
         }
     }
 
+    pub fn read(&self, addr: u32, buf: &mut [u8]) {
+        let addr = addr as usize;
+        buf.copy_from_slice(&self.data[addr..addr + buf.len()]);
+    }
+
+    pub fn write(&mut self, addr: u32, buf: &[u8]) {
+        let addr = addr as usize;
+        self.data[addr..addr + buf.len()].copy_from_slice(buf);
+    }
+
     pub fn read_u32(&self, addr: u32) -> u32 {
         let addr = addr as usize;
         u32::from_le_bytes(self.data[addr..addr + 4].try_into().unwrap())
     }
 
     pub fn write_u32(&mut self, addr: u32, value: u32) {
-        let addr = addr as usize;
-        self.data[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
+        self.write(addr, &value.to_le_bytes());
     }
 }
 
-impl GuestMemory for TestMemory {
-    fn read(&self, addr: u32, buf: &mut [u8]) {
-        let addr = addr as usize;
+impl MemoryBus for TestMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let addr = paddr as usize;
         buf.copy_from_slice(&self.data[addr..addr + buf.len()]);
     }
 
-    fn write(&mut self, addr: u32, buf: &[u8]) {
-        let addr = addr as usize;
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let addr = paddr as usize;
         self.data[addr..addr + buf.len()].copy_from_slice(buf);
     }
 }
@@ -85,7 +84,9 @@ impl Alloc {
     }
 
     pub fn alloc(&mut self, size: u32, align: u32) -> u32 {
-        let aligned = (self.next + (align - 1)) & !(align - 1);
+        let align = align.max(1);
+        let mask = align - 1;
+        let aligned = (self.next + mask) & !mask;
         self.next = aligned + size;
         aligned
     }
@@ -95,7 +96,7 @@ pub fn td_token(pid: u8, addr: u8, ep: u8, toggle: bool, max_len: usize) -> u32 
     let max_len_field = if max_len == 0 {
         0x7FFu32
     } else {
-        (max_len as u32) - 1
+        (max_len as u32).saturating_sub(1)
     };
     (pid as u32)
         | ((addr as u32) << TD_TOKEN_DEVADDR_SHIFT)

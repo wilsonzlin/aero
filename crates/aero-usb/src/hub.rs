@@ -1,9 +1,545 @@
-use crate::io::usb::core::{AttachedUsbDevice, UsbInResult};
-use crate::io::usb::{
-    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
-use super::UsbHub;
+use crate::device::{AttachedUsbDevice, UsbInResult};
+use crate::{
+    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+    UsbHubAttachError, UsbSpeed,
+};
+
+/// Object-safe traversal interface for USB hubs.
+///
+/// External hub device models implement this trait and expose it via
+/// [`UsbDeviceModel::as_hub`] / [`UsbDeviceModel::as_hub_mut`]. The UHCI schedule walker then
+/// resolves device addresses by recursively walking through hub topology.
+pub trait UsbHub {
+    /// Advances hub internal time by 1ms.
+    ///
+    /// Hub implementations should update any pending port reset timers and recurse into nested hubs
+    /// so time-based events propagate down the topology.
+    fn tick_1ms(&mut self);
+
+    /// Returns a mutable reference to a reachable downstream device with the given USB address.
+    ///
+    /// Implementations should only consider devices behind ports that are connected and enabled
+    /// (and powered, if modelled).
+    fn downstream_device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice>;
+
+    /// Returns the device currently attached to `port`, if any.
+    ///
+    /// This accessor is used by topology configuration helpers (e.g. attaching devices behind
+    /// nested hubs) and does not need to apply reachability rules.
+    fn downstream_device_mut(&mut self, port: usize) -> Option<&mut AttachedUsbDevice>;
+
+    /// Attaches a new device model to the given downstream port.
+    fn attach_downstream(&mut self, port: usize, model: Box<dyn UsbDeviceModel>);
+
+    /// Detaches the device (if any) from the given downstream port.
+    fn detach_downstream(&mut self, port: usize);
+
+    /// Number of downstream ports on this hub.
+    fn num_ports(&self) -> usize;
+}
+
+const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+#[cfg(test)]
+mod reset_tests;
+
+struct Port {
+    device: Option<AttachedUsbDevice>,
+    connected: bool,
+    connect_change: bool,
+    enabled: bool,
+    enable_change: bool,
+    resume_detect: bool,
+    reset: bool,
+    reset_countdown_ms: u8,
+    suspended: bool,
+    resuming: bool,
+    resume_countdown_ms: u8,
+}
+
+impl Port {
+    fn new() -> Self {
+        Self {
+            device: None,
+            connected: false,
+            connect_change: false,
+            enabled: false,
+            enable_change: false,
+            resume_detect: false,
+            reset: false,
+            reset_countdown_ms: 0,
+            suspended: false,
+            resuming: false,
+            resume_countdown_ms: 0,
+        }
+    }
+
+    fn set_suspended(&mut self, suspended: bool) {
+        if self.suspended == suspended {
+            return;
+        }
+        self.suspended = suspended;
+        if let Some(dev) = self.device.as_mut() {
+            dev.model_mut().set_suspended(suspended);
+        }
+    }
+
+    fn read_portsc(&self) -> u16 {
+        const CCS: u16 = 1 << 0;
+        const CSC: u16 = 1 << 1;
+        const PED: u16 = 1 << 2;
+        const PEDC: u16 = 1 << 3;
+        const LS_J_FS: u16 = 0b01 << 4;
+        const LS_K_FS: u16 = 0b10 << 4;
+        const RD: u16 = 1 << 6;
+        const LSDA: u16 = 1 << 8;
+        const PR: u16 = 1 << 9;
+        const SUSP: u16 = 1 << 12;
+        const RESUME: u16 = 1 << 13;
+
+        let mut v = 0u16;
+        if self.connected {
+            v |= CCS;
+            if !self.reset {
+                if self.resuming {
+                    v |= LS_K_FS;
+                } else {
+                    v |= LS_J_FS;
+                }
+            }
+        }
+        if self.connect_change {
+            v |= CSC;
+        }
+        if self.enabled {
+            v |= PED;
+        }
+        if self.enable_change {
+            v |= PEDC;
+        }
+        if self.resume_detect {
+            v |= RD;
+        }
+        if let Some(dev) = self.device.as_ref() {
+            if dev.speed() == UsbSpeed::Low {
+                v |= LSDA;
+            }
+        }
+        if self.reset {
+            v |= PR;
+        }
+        if self.suspended {
+            v |= SUSP;
+        }
+        if self.resuming {
+            v |= RESUME;
+        }
+        v
+    }
+
+    fn write_portsc(&mut self, value: u16, write_mask: u16) {
+        const CSC: u16 = 1 << 1;
+        const PED: u16 = 1 << 2;
+        const PEDC: u16 = 1 << 3;
+        const RD: u16 = 1 << 6;
+        const PR: u16 = 1 << 9;
+        const SUSP: u16 = 1 << 12;
+        const RESUME: u16 = 1 << 13;
+
+        // Write-1-to-clear status change bits.
+        if write_mask & CSC != 0 && value & CSC != 0 {
+            self.connect_change = false;
+        }
+        if write_mask & PEDC != 0 && value & PEDC != 0 {
+            self.enable_change = false;
+        }
+        // Resume Detect is a latched status bit (remote wake). Model it as W1C so tests can
+        // manipulate it without needing a full remote-wakeup implementation.
+        if write_mask & RD != 0 && value & RD != 0 {
+            self.resume_detect = false;
+        }
+
+        // Port reset: model a 50ms reset and reset attached device state.
+        if write_mask & PR != 0 && value & PR != 0 && !self.reset {
+            self.reset = true;
+            self.reset_countdown_ms = 50;
+            self.resume_detect = false;
+            self.set_suspended(false);
+            self.resuming = false;
+            self.resume_countdown_ms = 0;
+            if let Some(dev) = self.device.as_mut() {
+                dev.reset();
+            }
+            if self.enabled {
+                self.enabled = false;
+                self.enable_change = true;
+            }
+        }
+
+        if self.reset {
+            // While the port reset signal is active, suspend/resume/enable writes are ignored.
+            return;
+        }
+
+        // Port enable (read/write).
+        if write_mask & PED != 0 {
+            let want_enabled = value & PED != 0;
+            // Hardware only allows enabling a port when a device is actually present.
+            if want_enabled {
+                if self.connected && !self.enabled {
+                    self.enabled = true;
+                    self.enable_change = true;
+                }
+            } else if self.enabled {
+                self.enabled = false;
+                self.enable_change = true;
+                self.set_suspended(false);
+                self.resuming = false;
+                self.resume_countdown_ms = 0;
+            }
+        }
+
+        if !self.connected {
+            self.set_suspended(false);
+            self.resuming = false;
+            self.resume_countdown_ms = 0;
+            return;
+        }
+
+        if write_mask & SUSP != 0 {
+            let want_suspended = value & SUSP != 0;
+            // Latch the suspend bit. While a port is enabled, we treat this as "suspended" for
+            // reachability and ticking purposes.
+            if want_suspended {
+                if !self.resuming {
+                    self.set_suspended(true);
+                }
+            } else {
+                self.set_suspended(false);
+            }
+        }
+
+        if write_mask & RESUME != 0 {
+            let want_resuming = value & RESUME != 0;
+            if want_resuming {
+                self.resuming = true;
+                self.resume_countdown_ms = 20;
+            } else {
+                self.resuming = false;
+                self.resume_countdown_ms = 0;
+            }
+        }
+    }
+
+    fn tick_1ms(&mut self) {
+        if self.reset {
+            self.reset_countdown_ms = self.reset_countdown_ms.saturating_sub(1);
+            if self.reset_countdown_ms == 0 {
+                self.reset = false;
+                if self.connected && !self.enabled {
+                    self.enabled = true;
+                    self.enable_change = true;
+                }
+            }
+        }
+
+        if self.resuming {
+            self.resume_countdown_ms = self.resume_countdown_ms.saturating_sub(1);
+            if self.resume_countdown_ms == 0 {
+                self.resuming = false;
+                self.set_suspended(false);
+            }
+        }
+    }
+}
+
+/// UHCI "root hub" exposed via PORTSC registers.
+pub struct RootHub {
+    ports: [Port; 2],
+}
+
+impl RootHub {
+    pub fn new() -> Self {
+        Self {
+            ports: [Port::new(), Port::new()],
+        }
+    }
+
+    pub fn bus_reset(&mut self) {
+        for p in &mut self.ports {
+            p.resume_detect = false;
+            p.set_suspended(false);
+            p.resuming = false;
+            p.resume_countdown_ms = 0;
+            if let Some(dev) = p.device.as_mut() {
+                dev.reset();
+            }
+        }
+    }
+
+    pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
+        let p = &mut self.ports[port];
+        p.device = Some(AttachedUsbDevice::new(model));
+        p.resume_detect = false;
+        p.set_suspended(false);
+        p.resuming = false;
+        p.resume_countdown_ms = 0;
+        if !p.connected {
+            p.connected = true;
+        }
+        p.connect_change = true;
+        // Connecting a new device effectively disables the port until the host performs
+        // the reset/enable sequence.
+        if p.enabled {
+            p.enabled = false;
+            p.enable_change = true;
+        }
+    }
+
+    pub fn detach(&mut self, port: usize) {
+        let p = &mut self.ports[port];
+        p.device = None;
+        p.resume_detect = false;
+        p.set_suspended(false);
+        p.resuming = false;
+        p.resume_countdown_ms = 0;
+        if p.connected {
+            p.connected = false;
+            p.connect_change = true;
+        }
+        if p.enabled {
+            p.enabled = false;
+            p.enable_change = true;
+        }
+    }
+
+    pub fn attach_at_path(
+        &mut self,
+        path: &[u8],
+        model: Box<dyn UsbDeviceModel>,
+    ) -> Result<(), UsbHubAttachError> {
+        let Some((&root_port, rest)) = path.split_first() else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+
+        // If only a root port is provided, attach directly to the root hub.
+        if rest.is_empty() {
+            if self.ports[root_port].device.is_some() {
+                return Err(UsbHubAttachError::PortOccupied);
+            }
+            self.attach(root_port, model);
+            return Ok(());
+        }
+
+        let p = &mut self.ports[root_port];
+        let Some(root_dev) = p.device.as_mut() else {
+            return Err(UsbHubAttachError::NoDevice);
+        };
+
+        let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
+        let mut hub_dev = root_dev;
+        for &hop in hub_path {
+            hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
+        }
+        hub_dev.model_mut().hub_attach_device(leaf_port, model)
+    }
+
+    pub fn detach_at_path(&mut self, path: &[u8]) -> Result<(), UsbHubAttachError> {
+        let Some((&root_port, rest)) = path.split_first() else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+
+        // If only a root port is provided, detach directly from the root hub.
+        if rest.is_empty() {
+            if self.ports[root_port].device.is_none() {
+                return Err(UsbHubAttachError::NoDevice);
+            }
+            self.detach(root_port);
+            return Ok(());
+        }
+
+        let p = &mut self.ports[root_port];
+        let Some(root_dev) = p.device.as_mut() else {
+            return Err(UsbHubAttachError::NoDevice);
+        };
+
+        let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
+        let mut hub_dev = root_dev;
+        for &hop in hub_path {
+            hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
+        }
+        hub_dev.model_mut().hub_detach_device(leaf_port)
+    }
+
+    /// Returns the device currently attached to the specified root port, regardless of whether the
+    /// port is enabled/suspended.
+    ///
+    /// This is intended for host-side introspection (snapshotting, action draining, etc). Guest
+    /// reachability is handled by [`RootHub::device_mut_for_address`].
+    pub fn port_device(&self, port: usize) -> Option<&AttachedUsbDevice> {
+        self.ports.get(port)?.device.as_ref()
+    }
+
+    /// Mutable variant of [`RootHub::port_device`].
+    pub fn port_device_mut(&mut self, port: usize) -> Option<&mut AttachedUsbDevice> {
+        self.ports.get_mut(port)?.device.as_mut()
+    }
+
+    pub fn read_portsc(&self, port: usize) -> u16 {
+        self.ports[port].read_portsc()
+    }
+
+    pub fn write_portsc(&mut self, port: usize, value: u16) {
+        self.write_portsc_masked(port, value, 0xffff);
+    }
+
+    pub(crate) fn write_portsc_masked(&mut self, port: usize, value: u16, write_mask: u16) {
+        self.ports[port].write_portsc(value, write_mask);
+    }
+
+    pub fn tick_1ms(&mut self) {
+        for p in &mut self.ports {
+            p.tick_1ms();
+            if p.enabled && p.suspended && !p.resuming {
+                if let Some(dev) = p.device.as_mut() {
+                    if dev.model_mut().poll_remote_wakeup() {
+                        p.resume_detect = true;
+                    }
+                }
+            }
+
+            if !p.enabled || p.suspended || p.resuming {
+                continue;
+            }
+            if let Some(dev) = p.device.as_mut() {
+                dev.tick_1ms();
+            }
+        }
+    }
+
+    pub fn force_enable_for_tests(&mut self, port: usize) {
+        let p = &mut self.ports[port];
+        p.enabled = true;
+        p.enable_change = true;
+        p.set_suspended(false);
+        p.resuming = false;
+        p.resume_countdown_ms = 0;
+    }
+
+    pub fn force_resume_detect_for_tests(&mut self, port: usize) {
+        let p = &mut self.ports[port];
+        p.resume_detect = true;
+    }
+
+    pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
+        for p in &mut self.ports {
+            if !p.enabled || p.suspended || p.resuming {
+                continue;
+            }
+            if let Some(dev) = p.device.as_mut() {
+                if let Some(found) = dev.device_mut_for_address(address) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+}
+
+impl Default for RootHub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RootHub {
+    pub(crate) fn save_snapshot_ports(&self) -> Vec<u8> {
+        let mut port_records = Vec::with_capacity(self.ports.len());
+        for port in &self.ports {
+            let mut rec = Encoder::new()
+                .bool(port.connected)
+                .bool(port.connect_change)
+                .bool(port.enabled)
+                .bool(port.enable_change)
+                .bool(port.resume_detect)
+                .bool(port.reset)
+                .u8(port.reset_countdown_ms)
+                .bool(port.suspended)
+                .bool(port.resuming)
+                .u8(port.resume_countdown_ms)
+                .bool(port.device.is_some());
+
+            if let Some(dev) = port.device.as_ref() {
+                let dev_state = dev.save_state();
+                rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
+            }
+
+            port_records.push(rec.finish());
+        }
+
+        Encoder::new().vec_bytes(&port_records).finish()
+    }
+
+    pub(crate) fn load_snapshot_ports(&mut self, buf: &[u8]) -> SnapshotResult<()> {
+        let mut d = Decoder::new(buf);
+        let port_records = d.vec_bytes()?;
+        d.finish()?;
+
+        if port_records.len() != self.ports.len() {
+            return Err(SnapshotError::InvalidFieldEncoding("root hub ports"));
+        }
+
+        for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
+            let mut pd = Decoder::new(&rec);
+            port.connected = pd.bool()?;
+            port.connect_change = pd.bool()?;
+            port.enabled = pd.bool()?;
+            port.enable_change = pd.bool()?;
+            port.resume_detect = pd.bool()?;
+            port.reset = pd.bool()?;
+            port.reset_countdown_ms = pd.u8()?;
+            port.suspended = pd.bool()?;
+            port.resuming = pd.bool()?;
+            port.resume_countdown_ms = pd.u8()?;
+            let has_device_state = pd.bool()?;
+            let device_state = if has_device_state {
+                let len = pd.u32()? as usize;
+                if len > MAX_USB_DEVICE_SNAPSHOT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "usb device snapshot too large",
+                    ));
+                }
+                Some(pd.bytes(len)?.to_vec())
+            } else {
+                None
+            };
+            pd.finish()?;
+
+            if let (Some(state), Some(dev)) = (device_state, port.device.as_mut()) {
+                dev.load_state(&state)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;
 const USB_DESCRIPTOR_TYPE_STRING: u8 = 0x03;
@@ -320,6 +856,125 @@ impl UsbHubDevice {
 impl Default for UsbHubDevice {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IoSnapshot for UsbHubDevice {
+    const DEVICE_ID: [u8; 4] = *b"UHUB";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_CONFIGURATION: u16 = 1;
+        const TAG_REMOTE_WAKEUP: u16 = 2;
+        const TAG_UPSTREAM_SUSPENDED: u16 = 3;
+        const TAG_INTERRUPT_HALTED: u16 = 4;
+        const TAG_NUM_PORTS: u16 = 5;
+        const TAG_PORTS: u16 = 6;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_UPSTREAM_SUSPENDED, self.upstream_suspended);
+        w.field_bool(TAG_INTERRUPT_HALTED, self.interrupt_ep_halted);
+        w.field_u32(TAG_NUM_PORTS, self.ports.len() as u32);
+
+        let mut port_records = Vec::with_capacity(self.ports.len());
+        for port in &self.ports {
+            let mut rec = Encoder::new()
+                .bool(port.connected)
+                .bool(port.connect_change)
+                .bool(port.enabled)
+                .bool(port.enable_change)
+                .bool(port.suspended)
+                .bool(port.suspend_change)
+                .bool(port.powered)
+                .bool(port.reset)
+                .u8(port.reset_countdown_ms)
+                .bool(port.reset_change)
+                .bool(port.device.is_some());
+
+            if let Some(dev) = port.device.as_ref() {
+                let dev_state = dev.save_state();
+                rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
+            }
+
+            port_records.push(rec.finish());
+        }
+        w.field_bytes(TAG_PORTS, Encoder::new().vec_bytes(&port_records).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_CONFIGURATION: u16 = 1;
+        const TAG_REMOTE_WAKEUP: u16 = 2;
+        const TAG_UPSTREAM_SUSPENDED: u16 = 3;
+        const TAG_INTERRUPT_HALTED: u16 = 4;
+        const TAG_NUM_PORTS: u16 = 5;
+        const TAG_PORTS: u16 = 6;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset hub-local control state, but preserve any attached downstream devices.
+        self.configuration = 0;
+        self.remote_wakeup_enabled = false;
+        self.upstream_suspended = false;
+        self.interrupt_ep_halted = false;
+
+        if let Some(num_ports) = r.u32(TAG_NUM_PORTS)? {
+            if num_ports as usize != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("hub port count"));
+            }
+        }
+
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.upstream_suspended = r.bool(TAG_UPSTREAM_SUSPENDED)?.unwrap_or(false);
+        self.interrupt_ep_halted = r.bool(TAG_INTERRUPT_HALTED)?.unwrap_or(false);
+
+        if let Some(buf) = r.bytes(TAG_PORTS) {
+            let mut d = Decoder::new(buf);
+            let port_records = d.vec_bytes()?;
+            d.finish()?;
+
+            if port_records.len() != self.ports.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("hub ports"));
+            }
+
+            for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
+                let mut pd = Decoder::new(&rec);
+                port.connected = pd.bool()?;
+                port.connect_change = pd.bool()?;
+                port.enabled = pd.bool()?;
+                port.enable_change = pd.bool()?;
+                port.suspended = pd.bool()?;
+                port.suspend_change = pd.bool()?;
+                port.powered = pd.bool()?;
+                port.reset = pd.bool()?;
+                port.reset_countdown_ms = pd.u8()?;
+                port.reset_change = pd.bool()?;
+                let has_device_state = pd.bool()?;
+                let device_state = if has_device_state {
+                    let len = pd.u32()? as usize;
+                    if len > MAX_USB_DEVICE_SNAPSHOT_BYTES {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "usb device snapshot too large",
+                        ));
+                    }
+                    Some(pd.bytes(len)?.to_vec())
+                } else {
+                    None
+                };
+                pd.finish()?;
+
+                if let (Some(state), Some(dev)) = (device_state, port.device.as_mut()) {
+                    dev.load_state(&state)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

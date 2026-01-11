@@ -21,6 +21,7 @@ aerogpu-trace = ["dep:aero-gpu-trace"]
 aerogpu-legacy = []
 
 [dependencies]
+aero-usb = { path = "../aero-usb" }
 aero-devices = { path = "../devices" }
 aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }

@@ -1,50 +1,53 @@
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::rc::Rc;
+use alloc::collections::VecDeque;
+use alloc::rc::Rc;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
 
-use crate::io::usb::core::UsbInResult;
-use crate::io::usb::{
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
+
+use crate::device::UsbInResult;
+use crate::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
 
 use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
     HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
-    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION,
-    USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT,
-    USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT,
-    USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR,
-    USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
-    USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
+    HID_REQUEST_SET_PROTOCOL, USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE,
+    USB_DESCRIPTOR_TYPE_ENDPOINT, USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT,
+    USB_DESCRIPTOR_TYPE_INTERFACE, USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+    USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION,
+    USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS,
+    USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE,
+    USB_REQUEST_SET_INTERFACE,
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
-const MAX_PENDING_REPORTS: usize = 64;
+const MAX_PENDING_REPORTS: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KeyboardReport {
-    pub modifiers: u8,
-    pub reserved: u8,
-    pub keys: [u8; 6],
+pub struct MouseReport {
+    pub buttons: u8,
+    pub x: i8,
+    pub y: i8,
+    pub wheel: i8,
 }
 
-impl KeyboardReport {
-    pub fn to_bytes(self) -> [u8; 8] {
-        [
-            self.modifiers,
-            self.reserved,
-            self.keys[0],
-            self.keys[1],
-            self.keys[2],
-            self.keys[3],
-            self.keys[4],
-            self.keys[5],
-        ]
+impl MouseReport {
+    pub fn to_bytes(self, protocol: HidProtocol) -> Vec<u8> {
+        match protocol {
+            HidProtocol::Boot => vec![self.buttons, self.x as u8, self.y as u8],
+            HidProtocol::Report => vec![self.buttons, self.x as u8, self.y as u8, self.wheel as u8],
+        }
     }
 }
 
 #[derive(Debug)]
-pub struct UsbHidKeyboard {
+pub struct UsbHidMouse {
     address: u8,
     configuration: u8,
     remote_wakeup_enabled: bool,
@@ -53,43 +56,48 @@ pub struct UsbHidKeyboard {
     interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
-    leds: u8,
 
-    modifiers: u8,
-    pressed_keys: Vec<u8>,
+    buttons: u8,
+    dx: i32,
+    dy: i32,
+    wheel: i32,
 
-    last_report: [u8; 8],
-    pending_reports: VecDeque<[u8; 8]>,
+    pending_reports: VecDeque<MouseReport>,
 }
 
-/// Shareable handle for a USB HID keyboard model.
-///
-/// The UHCI root hub stores devices behind `Box<dyn UsbDeviceModel>`; by cloning this handle
-/// before attaching, the platform/input layer can continue to inject key events.
+/// Shareable handle for a USB HID mouse model.
 #[derive(Clone, Debug)]
-pub struct UsbHidKeyboardHandle(Rc<RefCell<UsbHidKeyboard>>);
+pub struct UsbHidMouseHandle(Rc<RefCell<UsbHidMouse>>);
 
-impl UsbHidKeyboardHandle {
+impl UsbHidMouseHandle {
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(UsbHidKeyboard::new())))
+        Self(Rc::new(RefCell::new(UsbHidMouse::new())))
     }
 
     pub fn configured(&self) -> bool {
         self.0.borrow().configuration != 0
     }
 
-    pub fn key_event(&self, usage: u8, pressed: bool) {
-        self.0.borrow_mut().key_event(usage, pressed);
+    pub fn button_event(&self, button_bit: u8, pressed: bool) {
+        self.0.borrow_mut().button_event(button_bit, pressed);
+    }
+
+    pub fn movement(&self, dx: i32, dy: i32) {
+        self.0.borrow_mut().movement(dx, dy);
+    }
+
+    pub fn wheel(&self, delta: i32) {
+        self.0.borrow_mut().wheel(delta);
     }
 }
 
-impl Default for UsbHidKeyboardHandle {
+impl Default for UsbHidMouseHandle {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UsbDeviceModel for UsbHidKeyboardHandle {
+impl UsbDeviceModel for UsbHidMouseHandle {
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }
@@ -117,13 +125,136 @@ impl UsbDeviceModel for UsbHidKeyboardHandle {
     }
 }
 
-impl Default for UsbHidKeyboard {
+impl Default for UsbHidMouse {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UsbHidKeyboard {
+impl IoSnapshot for UsbHidMouse {
+    const DEVICE_ID: [u8; 4] = *b"UMSE";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_REMOTE_WAKEUP_PENDING: u16 = 4;
+        const TAG_SUSPENDED: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_IDLE_RATE: u16 = 7;
+        const TAG_PROTOCOL: u16 = 8;
+        const TAG_BUTTONS: u16 = 9;
+        const TAG_DX: u16 = 10;
+        const TAG_DY: u16 = 11;
+        const TAG_WHEEL: u16 = 12;
+        const TAG_PENDING_REPORTS: u16 = 13;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_REMOTE_WAKEUP_PENDING, self.remote_wakeup_pending);
+        w.field_bool(TAG_SUSPENDED, self.suspended);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+        w.field_u8(TAG_PROTOCOL, self.protocol as u8);
+        w.field_u8(TAG_BUTTONS, self.buttons);
+        w.field_i32(TAG_DX, self.dx);
+        w.field_i32(TAG_DY, self.dy);
+        w.field_i32(TAG_WHEEL, self.wheel);
+
+        let pending: Vec<Vec<u8>> = self
+            .pending_reports
+            .iter()
+            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8])
+            .collect();
+        w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_REMOTE_WAKEUP_PENDING: u16 = 4;
+        const TAG_SUSPENDED: u16 = 5;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
+        const TAG_IDLE_RATE: u16 = 7;
+        const TAG_PROTOCOL: u16 = 8;
+        const TAG_BUTTONS: u16 = 9;
+        const TAG_DX: u16 = 10;
+        const TAG_DY: u16 = 11;
+        const TAG_WHEEL: u16 = 12;
+        const TAG_PENDING_REPORTS: u16 = 13;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        *self = Self::new();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.remote_wakeup_pending = r.bool(TAG_REMOTE_WAKEUP_PENDING)?.unwrap_or(false);
+        self.suspended = r.bool(TAG_SUSPENDED)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if let Some(protocol) = r.u8(TAG_PROTOCOL)? {
+            self.protocol = match protocol {
+                0 => HidProtocol::Boot,
+                1 => HidProtocol::Report,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
+            };
+        }
+
+        self.buttons = r.u8(TAG_BUTTONS)?.unwrap_or(0);
+        self.dx = r.i32(TAG_DX)?.unwrap_or(0);
+        self.dy = r.i32(TAG_DY)?.unwrap_or(0);
+        self.wheel = r.i32(TAG_WHEEL)?.unwrap_or(0);
+
+        if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let reports = d.vec_bytes()?;
+            d.finish()?;
+            if reports.len() > MAX_PENDING_REPORTS {
+                return Err(SnapshotError::InvalidFieldEncoding("mouse pending reports"));
+            }
+            self.pending_reports.clear();
+            for report in reports {
+                if report.len() != 4 {
+                    return Err(SnapshotError::InvalidFieldEncoding("mouse report length"));
+                }
+                self.pending_reports.push_back(MouseReport {
+                    buttons: report[0],
+                    x: report[1] as i8,
+                    y: report[2] as i8,
+                    wheel: report[3] as i8,
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl IoSnapshot for UsbHidMouseHandle {
+    const DEVICE_ID: [u8; 4] = UsbHidMouse::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = UsbHidMouse::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.0.borrow().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.0.borrow_mut().load_state(bytes)
+    }
+}
+
+impl UsbHidMouse {
     pub fn new() -> Self {
         Self {
             address: 0,
@@ -134,71 +265,72 @@ impl UsbHidKeyboard {
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
-            leds: 0,
-            modifiers: 0,
-            pressed_keys: Vec::new(),
-            last_report: [0; 8],
+            buttons: 0,
+            dx: 0,
+            dy: 0,
+            wheel: 0,
             pending_reports: VecDeque::new(),
         }
     }
 
-    pub fn key_event(&mut self, usage: u8, pressed: bool) {
-        if usage == 0 {
-            return;
+    fn push_report(&mut self, report: MouseReport) {
+        if self.pending_reports.len() >= MAX_PENDING_REPORTS {
+            self.pending_reports.pop_front();
         }
-
-        let mut changed = false;
-        if let Some(bit) = modifier_bit(usage) {
-            let before = self.modifiers;
-            if pressed {
-                self.modifiers |= bit;
-            } else {
-                self.modifiers &= !bit;
-            }
-            changed = before != self.modifiers;
-        } else if pressed {
-            if !self.pressed_keys.contains(&usage) {
-                self.pressed_keys.push(usage);
-                changed = true;
-            }
-        } else {
-            let before_len = self.pressed_keys.len();
-            self.pressed_keys.retain(|&k| k != usage);
-            changed = before_len != self.pressed_keys.len();
-        }
-
-        if changed {
-            self.enqueue_current_report();
-            if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
-                self.remote_wakeup_pending = true;
-            }
+        self.pending_reports.push_back(report);
+        if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
+            self.remote_wakeup_pending = true;
         }
     }
 
-    pub fn current_input_report(&self) -> KeyboardReport {
-        let mut keys = [0u8; 6];
-        if self.pressed_keys.len() > 6 {
-            keys.fill(0x01); // ErrorRollOver
+    /// Sets or clears a mouse button bit.
+    ///
+    /// Bit 0 = left, bit 1 = right, bit 2 = middle.
+    pub fn button_event(&mut self, button_bit: u8, pressed: bool) {
+        self.flush_motion();
+        let before = self.buttons;
+        if pressed {
+            self.buttons |= button_bit;
         } else {
-            for (idx, &usage) in self.pressed_keys.iter().take(6).enumerate() {
-                keys[idx] = usage;
-            }
+            self.buttons &= !button_bit;
         }
-        KeyboardReport {
-            modifiers: self.modifiers,
-            reserved: 0,
-            keys,
+        if self.buttons != before {
+            self.push_report(MouseReport {
+                buttons: self.buttons,
+                x: 0,
+                y: 0,
+                wheel: 0,
+            });
         }
     }
 
-    fn enqueue_current_report(&mut self) {
-        let report = self.current_input_report().to_bytes();
-        if report != self.last_report {
-            self.last_report = report;
-            if self.pending_reports.len() >= MAX_PENDING_REPORTS {
-                self.pending_reports.pop_front();
-            }
-            self.pending_reports.push_back(report);
+    pub fn movement(&mut self, dx: i32, dy: i32) {
+        self.dx += dx;
+        self.dy += dy;
+        self.flush_motion();
+    }
+
+    pub fn wheel(&mut self, delta: i32) {
+        self.wheel += delta;
+        self.flush_motion();
+    }
+
+    fn flush_motion(&mut self) {
+        while self.dx != 0 || self.dy != 0 || self.wheel != 0 {
+            let step_x = self.dx.clamp(-127, 127) as i8;
+            let step_y = self.dy.clamp(-127, 127) as i8;
+            let step_wheel = self.wheel.clamp(-127, 127) as i8;
+
+            self.dx -= step_x as i32;
+            self.dy -= step_y as i32;
+            self.wheel -= step_wheel as i32;
+
+            self.push_report(MouseReport {
+                buttons: self.buttons,
+                x: step_x,
+                y: step_y,
+                wheel: step_wheel,
+            });
         }
     }
 
@@ -206,7 +338,7 @@ impl UsbHidKeyboard {
         match index {
             0 => Some(vec![0x04, USB_DESCRIPTOR_TYPE_STRING, 0x09, 0x04]), // en-US
             1 => Some(build_string_descriptor_utf16le("Aero")),
-            2 => Some(build_string_descriptor_utf16le("Aero USB HID Keyboard")),
+            2 => Some(build_string_descriptor_utf16le("Aero USB HID Mouse")),
             _ => None,
         }
     }
@@ -227,7 +359,7 @@ impl UsbHidKeyboard {
     }
 }
 
-impl UsbDeviceModel for UsbHidKeyboard {
+impl UsbDeviceModel for UsbHidMouse {
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -235,12 +367,13 @@ impl UsbDeviceModel for UsbHidKeyboard {
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
-        data_stage: Option<&[u8]>,
+        _data_stage: Option<&[u8]>,
     ) -> ControlResponse {
         match (setup.request_type(), setup.recipient()) {
             (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -258,6 +391,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
                         if setup.request_direction() != RequestDirection::HostToDevice
                             || setup.w_index != 0
+                            || setup.w_length != 0
                         {
                             return ControlResponse::Stall;
                         }
@@ -271,6 +405,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
                         if setup.request_direction() != RequestDirection::HostToDevice
                             || setup.w_index != 0
+                            || setup.w_length != 0
                         {
                             return ControlResponse::Stall;
                         }
@@ -282,6 +417,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                 USB_REQUEST_SET_ADDRESS => {
                     if setup.request_direction() != RequestDirection::HostToDevice
                         || setup.w_index != 0
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -309,6 +445,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                 USB_REQUEST_SET_CONFIGURATION => {
                     if setup.request_direction() != RequestDirection::HostToDevice
                         || setup.w_index != 0
+                        || setup.w_length != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -325,6 +462,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                 }
                 USB_REQUEST_GET_CONFIGURATION => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -336,6 +474,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
             (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                         || setup.w_index != 0
                     {
                         return ControlResponse::Stall;
@@ -343,7 +482,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
                 }
                 USB_REQUEST_GET_INTERFACE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_index == 0 {
@@ -356,7 +497,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     if setup.request_direction() != RequestDirection::HostToDevice {
                         return ControlResponse::Stall;
                     }
-                    if setup.w_index == 0 && setup.w_value == 0 {
+                    if setup.w_index == 0 && setup.w_value == 0 && setup.w_length == 0 {
                         ControlResponse::Ack
                     } else {
                         ControlResponse::Stall
@@ -434,31 +575,14 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     {
                         return ControlResponse::Stall;
                     }
-                    // wValue high byte: Report Type (1=input, 2=output, 3=feature)
-                    let report_type = (setup.w_value >> 8) as u8;
-                    match report_type {
-                        1 => ControlResponse::Data(clamp_response(
-                            self.current_input_report().to_bytes().to_vec(),
-                            setup.w_length,
-                        )),
-                        2 => ControlResponse::Data(clamp_response(vec![self.leds], setup.w_length)),
-                        _ => ControlResponse::Stall,
+                    let report = MouseReport {
+                        buttons: self.buttons,
+                        x: 0,
+                        y: 0,
+                        wheel: 0,
                     }
-                }
-                HID_REQUEST_SET_REPORT => {
-                    if setup.request_direction() != RequestDirection::HostToDevice
-                        || setup.w_index != 0
-                    {
-                        return ControlResponse::Stall;
-                    }
-                    let report_type = (setup.w_value >> 8) as u8;
-                    match (report_type, data_stage) {
-                        (2, Some(data)) if !data.is_empty() => {
-                            self.leds = data[0];
-                            ControlResponse::Ack
-                        }
-                        _ => ControlResponse::Stall,
-                    }
+                    .to_bytes(self.protocol);
+                    ControlResponse::Data(clamp_response(report, setup.w_length))
                 }
                 HID_REQUEST_GET_IDLE => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
@@ -515,15 +639,13 @@ impl UsbDeviceModel for UsbHidKeyboard {
             return UsbInResult::Stall;
         }
         match self.pending_reports.pop_front() {
-            Some(r) => UsbInResult::Data(r.to_vec()),
+            Some(r) => UsbInResult::Data(r.to_bytes(self.protocol)),
             None => UsbInResult::Nak,
         }
     }
 
     fn set_suspended(&mut self, suspended: bool) {
         self.suspended = suspended;
-        // Only wake events that occur *during* suspend should trigger remote wake; drop any stale
-        // pending flag when the suspend state changes.
         self.remote_wakeup_pending = false;
     }
 
@@ -541,13 +663,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
     }
 }
 
-fn modifier_bit(usage: u8) -> Option<u8> {
-    (0xe0..=0xe7)
-        .contains(&usage)
-        .then(|| 1u8 << (usage - 0xe0))
-}
-
-// USB device descriptor (Keyboard)
+// USB device descriptor (Mouse)
 static DEVICE_DESCRIPTOR: [u8; 18] = [
     0x12, // bLength
     USB_DESCRIPTOR_TYPE_DEVICE,
@@ -559,8 +675,8 @@ static DEVICE_DESCRIPTOR: [u8; 18] = [
     0x40, // bMaxPacketSize0 (64)
     0x34,
     0x12, // idVendor (0x1234)
-    0x01,
-    0x00, // idProduct (0x0001)
+    0x02,
+    0x00, // idProduct (0x0002)
     0x00,
     0x01, // bcdDevice (1.00)
     0x01, // iManufacturer
@@ -584,13 +700,13 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     50,   // bMaxPower (100mA)
     // Interface descriptor
     0x09, // bLength
-    super::USB_DESCRIPTOR_TYPE_INTERFACE,
+    USB_DESCRIPTOR_TYPE_INTERFACE,
     0x00, // bInterfaceNumber
     0x00, // bAlternateSetting
     0x01, // bNumEndpoints
     0x03, // bInterfaceClass (HID)
     0x01, // bInterfaceSubClass (Boot)
-    0x01, // bInterfaceProtocol (Keyboard)
+    0x02, // bInterfaceProtocol (Mouse)
     0x00, // iInterface
     // HID descriptor
     0x09, // bLength
@@ -604,68 +720,65 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     0x00, // wDescriptorLength
     // Endpoint descriptor (Interrupt IN)
     0x07, // bLength
-    super::USB_DESCRIPTOR_TYPE_ENDPOINT,
+    USB_DESCRIPTOR_TYPE_ENDPOINT,
     INTERRUPT_IN_EP, // bEndpointAddress
     0x03,            // bmAttributes (Interrupt)
-    0x08,
-    0x00, // wMaxPacketSize (8)
+    0x04,
+    0x00, // wMaxPacketSize (4)
     0x0a, // bInterval (10ms)
 ];
 
-pub(super) static HID_REPORT_DESCRIPTOR: [u8; 63] = [
+pub(super) static HID_REPORT_DESCRIPTOR: [u8; 52] = [
     0x05, 0x01, // Usage Page (Generic Desktop)
-    0x09, 0x06, // Usage (Keyboard)
+    0x09, 0x02, // Usage (Mouse)
     0xa1, 0x01, // Collection (Application)
-    0x05, 0x07, // Usage Page (Keyboard/Keypad)
-    0x19, 0xe0, // Usage Minimum (Left Control)
-    0x29, 0xe7, // Usage Maximum (Right GUI)
+    0x09, 0x01, // Usage (Pointer)
+    0xa1, 0x00, // Collection (Physical)
+    0x05, 0x09, // Usage Page (Buttons)
+    0x19, 0x01, // Usage Minimum (Button 1)
+    0x29, 0x03, // Usage Maximum (Button 3)
     0x15, 0x00, // Logical Minimum (0)
     0x25, 0x01, // Logical Maximum (1)
+    0x95, 0x03, // Report Count (3)
     0x75, 0x01, // Report Size (1)
-    0x95, 0x08, // Report Count (8)
-    0x81, 0x02, // Input (Data,Var,Abs) Modifier byte
+    0x81, 0x02, // Input (Data,Var,Abs) Button bits
     0x95, 0x01, // Report Count (1)
+    0x75, 0x05, // Report Size (5)
+    0x81, 0x01, // Input (Const,Array,Abs) Padding
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x30, // Usage (X)
+    0x09, 0x31, // Usage (Y)
+    0x09, 0x38, // Usage (Wheel)
+    0x15, 0x81, // Logical Minimum (-127)
+    0x25, 0x7f, // Logical Maximum (127)
     0x75, 0x08, // Report Size (8)
-    0x81, 0x01, // Input (Const,Array,Abs) Reserved byte
-    0x95, 0x05, // Report Count (5)
-    0x75, 0x01, // Report Size (1)
-    0x05, 0x08, // Usage Page (LEDs)
-    0x19, 0x01, // Usage Minimum (Num Lock)
-    0x29, 0x05, // Usage Maximum (Kana)
-    0x91, 0x02, // Output (Data,Var,Abs) LED report
-    0x95, 0x01, // Report Count (1)
-    0x75, 0x03, // Report Size (3)
-    0x91, 0x01, // Output (Const,Array,Abs) LED padding
-    0x95, 0x06, // Report Count (6)
-    0x75, 0x08, // Report Size (8)
-    0x15, 0x00, // Logical Minimum (0)
-    0x25, 0x65, // Logical Maximum (101)
-    0x05, 0x07, // Usage Page (Keyboard/Keypad)
-    0x19, 0x00, // Usage Minimum (0)
-    0x29, 0x65, // Usage Maximum (101)
-    0x81, 0x00, // Input (Data,Array,Abs) Key arrays (6 bytes)
+    0x95, 0x03, // Report Count (3)
+    0x81, 0x06, // Input (Data,Var,Rel) X,Y,Wheel
+    0xc0, // End Collection
     0xc0, // End Collection
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn w_le(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
     }
 
-    fn poll_interrupt_in(dev: &mut UsbHidKeyboard) -> Option<Vec<u8>> {
-        match dev.handle_in_transfer(INTERRUPT_IN_EP, 8) {
+    fn poll_interrupt_in(dev: &mut UsbHidMouse) -> Option<Vec<u8>> {
+        match dev.handle_in_transfer(INTERRUPT_IN_EP, 4) {
             UsbInResult::Data(data) => Some(data),
             UsbInResult::Nak => None,
             UsbInResult::Stall => panic!("unexpected STALL on interrupt IN"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT on interrupt IN"),
         }
     }
 
-    fn configure_keyboard(kb: &mut UsbHidKeyboard) {
+    fn configure_mouse(mouse: &mut UsbHidMouse) {
         assert_eq!(
-            kb.handle_control_request(
+            mouse.handle_control_request(
                 SetupPacket {
                     bm_request_type: 0x00,
                     b_request: USB_REQUEST_SET_CONFIGURATION,
@@ -680,30 +793,9 @@ mod tests {
     }
 
     #[test]
-    fn device_descriptor_is_well_formed() {
-        let mut kb = UsbHidKeyboard::new();
-        let dev = match kb.handle_control_request(
-            SetupPacket {
-                bm_request_type: 0x80,
-                b_request: USB_REQUEST_GET_DESCRIPTOR,
-                w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
-                w_index: 0,
-                w_length: 18,
-            },
-            None,
-        ) {
-            ControlResponse::Data(data) => data,
-            other => panic!("expected Data response, got {other:?}"),
-        };
-        assert_eq!(dev.len(), 18);
-        assert_eq!(dev[0] as usize, dev.len());
-        assert_eq!(dev[1], USB_DESCRIPTOR_TYPE_DEVICE);
-    }
-
-    #[test]
-    fn config_descriptor_has_expected_layout() {
-        let mut kb = UsbHidKeyboard::new();
-        let cfg = match kb.handle_control_request(
+    fn mouse_descriptors_reference_report_length() {
+        let mut mouse = UsbHidMouse::new();
+        let cfg = match mouse.handle_control_request(
             SetupPacket {
                 bm_request_type: 0x80,
                 b_request: USB_REQUEST_GET_DESCRIPTOR,
@@ -716,116 +808,57 @@ mod tests {
             ControlResponse::Data(data) => data,
             other => panic!("expected Data response, got {other:?}"),
         };
-        assert_eq!(cfg[0], 0x09);
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
         assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
-        assert_eq!(cfg.len(), 34);
 
-        // HID descriptor starts at offset 18 (9 config + 9 interface).
         let hid = &cfg[18..27];
-        assert_eq!(hid[0], 0x09);
         assert_eq!(hid[1], USB_DESCRIPTOR_TYPE_HID);
-        assert_eq!(hid[6], USB_DESCRIPTOR_TYPE_HID_REPORT);
         assert_eq!(w_le(hid, 7) as usize, HID_REPORT_DESCRIPTOR.len());
-
-        let ep = &cfg[27..34];
-        assert_eq!(ep[1], super::super::USB_DESCRIPTOR_TYPE_ENDPOINT);
-        assert_eq!(ep[2], INTERRUPT_IN_EP);
     }
 
     #[test]
-    fn keyboard_report_generation_and_rollover() {
-        let mut kb = UsbHidKeyboard::new();
-        configure_keyboard(&mut kb);
+    fn mouse_motion_splits_large_deltas() {
+        let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
+        mouse.movement(200, 0);
 
-        kb.key_event(0x04, true); // 'a'
-        let report = poll_interrupt_in(&mut kb).unwrap();
-        assert_eq!(report, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
+        let r1 = poll_interrupt_in(&mut mouse).unwrap();
+        assert_eq!(r1, vec![0x00, 127u8, 0u8, 0u8]);
 
-        kb.key_event(0xe1, true); // LeftShift
-        let report = poll_interrupt_in(&mut kb).unwrap();
-        assert_eq!(report[0], 0x02);
-        assert_eq!(report[2], 0x04);
-
-        // Press 6 additional keys to trigger rollover (>6 non-modifiers).
-        for usage in 0x05..=0x0a {
-            kb.key_event(usage, true);
-        }
-        let mut rollover = None;
-        while let Some(report) = poll_interrupt_in(&mut kb) {
-            rollover = Some(report);
-        }
-        let rollover = rollover.unwrap();
-        assert_eq!(&rollover[2..], &[0x01; 6]);
-
-        // Release one key; should go back to explicit list.
-        kb.key_event(0x0a, false);
-        let report = poll_interrupt_in(&mut kb).unwrap();
-        assert_ne!(&report[2..], &[0x01; 6]);
-        assert_eq!(report[0], 0x02);
+        let r2 = poll_interrupt_in(&mut mouse).unwrap();
+        assert_eq!(r2, vec![0x00, 73u8, 0u8, 0u8]);
     }
 
     #[test]
-    fn keyboard_report_compacts_on_release_property() {
-        let mut kb = UsbHidKeyboard::new();
-        let keys: [u8; 6] = [0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
-
-        // Simple deterministic PRNG (LCG) to avoid external dependencies.
-        let mut seed = 0x1234_5678u32;
-        let mut expected: Vec<u8> = Vec::new();
-
-        for _ in 0..10_000 {
-            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-            let idx = (seed as usize) % keys.len();
-            let usage = keys[idx];
-            let pressed = (seed & 0x8000_0000) != 0;
-
-            kb.key_event(usage, pressed);
-
-            // Maintain the expected insertion-ordered, compacted set.
-            if pressed {
-                if !expected.contains(&usage) {
-                    expected.push(usage);
-                }
-            } else {
-                expected.retain(|&k| k != usage);
-            }
-
-            let report = kb.current_input_report().to_bytes();
-            let report_keys = &report[2..];
-
-            // Verify: no gaps (all zeros are at the end) and ordering matches expectation.
-            let first_zero = report_keys.iter().position(|&k| k == 0).unwrap_or(6);
-            // If there are zeros, everything after the first zero must be zero.
-            for &k in &report_keys[first_zero..] {
-                assert_eq!(k, 0);
-            }
-            // The non-zero prefix matches the expected pressed key list.
-            let non_zero_len = first_zero;
-            assert_eq!(&report_keys[..non_zero_len], &expected[..non_zero_len]);
-        }
+    fn mouse_button_event_generates_report() {
+        let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
+        mouse.button_event(0x01, true);
+        let r = poll_interrupt_in(&mut mouse).unwrap();
+        assert_eq!(r, vec![0x01, 0, 0, 0]);
     }
 
     #[test]
-    fn keyboard_standard_requests_track_status_bits() {
-        let mut kb = UsbHidKeyboard::new();
+    fn mouse_standard_requests_accept_set_address_and_remote_wakeup() {
+        let mut mouse = UsbHidMouse::new();
 
-        // Default: remote wakeup disabled.
-        let resp = kb.handle_control_request(
-            SetupPacket {
-                bm_request_type: 0x80,
-                b_request: USB_REQUEST_GET_STATUS,
-                w_value: 0,
-                w_index: 0,
-                w_length: 2,
-            },
-            None,
-        );
-        assert_eq!(resp, ControlResponse::Data(vec![0x00, 0x00]));
-
-        // Enable remote wakeup.
         assert_eq!(
-            kb.handle_control_request(
+            mouse.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_ADDRESS,
+                    w_value: 9,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        assert_eq!(mouse.address, 9);
+
+        assert_eq!(
+            mouse.handle_control_request(
                 SetupPacket {
                     bm_request_type: 0x00,
                     b_request: USB_REQUEST_SET_FEATURE,
@@ -838,7 +871,7 @@ mod tests {
             ControlResponse::Ack
         );
 
-        let resp = kb.handle_control_request(
+        let resp = mouse.handle_control_request(
             SetupPacket {
                 bm_request_type: 0x80,
                 b_request: USB_REQUEST_GET_STATUS,
@@ -849,57 +882,14 @@ mod tests {
             None,
         );
         assert_eq!(resp, ControlResponse::Data(vec![0x02, 0x00]));
-
-        // Halt endpoint and verify status.
-        assert_eq!(
-            kb.handle_control_request(
-                SetupPacket {
-                    bm_request_type: 0x02,
-                    b_request: USB_REQUEST_SET_FEATURE,
-                    w_value: USB_FEATURE_ENDPOINT_HALT,
-                    w_index: INTERRUPT_IN_EP as u16,
-                    w_length: 0,
-                },
-                None,
-            ),
-            ControlResponse::Ack
-        );
-
-        let resp = kb.handle_control_request(
-            SetupPacket {
-                bm_request_type: 0x82,
-                b_request: USB_REQUEST_GET_STATUS,
-                w_value: 0,
-                w_index: INTERRUPT_IN_EP as u16,
-                w_length: 2,
-            },
-            None,
-        );
-        assert_eq!(resp, ControlResponse::Data(vec![0x01, 0x00]));
-
-        // SET_ADDRESS should be accepted and stored.
-        assert_eq!(
-            kb.handle_control_request(
-                SetupPacket {
-                    bm_request_type: 0x00,
-                    b_request: USB_REQUEST_SET_ADDRESS,
-                    w_value: 7,
-                    w_index: 0,
-                    w_length: 0,
-                },
-                None,
-            ),
-            ControlResponse::Ack
-        );
-        assert_eq!(kb.address, 7);
     }
 
     #[test]
     fn stalls_on_wrong_direction() {
-        let mut kb = UsbHidKeyboard::new();
-        let resp = kb.handle_control_request(
+        let mut mouse = UsbHidMouse::new();
+        let resp = mouse.handle_control_request(
             SetupPacket {
-                bm_request_type: 0x00, // HostToDevice but GET_DESCRIPTOR expects DeviceToHost.
+                bm_request_type: 0x00,
                 b_request: USB_REQUEST_GET_DESCRIPTOR,
                 w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
                 w_index: 0,
@@ -912,25 +902,23 @@ mod tests {
 
     #[test]
     fn does_not_send_interrupt_reports_until_configured() {
-        let mut kb = UsbHidKeyboard::new();
+        let mut mouse = UsbHidMouse::new();
+        mouse.movement(10, 0);
+        assert!(poll_interrupt_in(&mut mouse).is_none());
 
-        kb.key_event(0x04, true);
-        assert!(poll_interrupt_in(&mut kb).is_none());
-
-        configure_keyboard(&mut kb);
-        assert!(poll_interrupt_in(&mut kb).is_some());
+        configure_mouse(&mut mouse);
+        assert!(poll_interrupt_in(&mut mouse).is_some());
     }
 
     #[test]
     fn report_queue_is_bounded() {
-        let mut kb = UsbHidKeyboard::new();
-        configure_keyboard(&mut kb);
+        let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
 
-        for _ in 0..(MAX_PENDING_REPORTS + 32) {
-            kb.key_event(0x04, true);
-            kb.key_event(0x04, false);
+        for _ in 0..(MAX_PENDING_REPORTS + 64) {
+            mouse.movement(1, 0);
         }
 
-        assert!(kb.pending_reports.len() <= MAX_PENDING_REPORTS);
+        assert!(mouse.pending_reports.len() <= MAX_PENDING_REPORTS);
     }
 }

@@ -266,7 +266,7 @@ fn uhci_runtime_snapshot_restore_rejects_too_many_webhid_devices() {
     let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
 
     // Build a minimal snapshot with a valid controller payload but an invalid WebHID list count.
-    let ctrl = UhciController::new(0x5000, 11);
+    let ctrl = UhciController::new();
     let ctrl_snapshot = ctrl.save_state();
 
     let mut webhid_list = Vec::new();

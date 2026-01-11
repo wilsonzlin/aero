@@ -1,64 +1,49 @@
+use aero_usb::device::{AttachedUsbDevice, UsbOutResult};
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 
 #[derive(Default)]
 struct DummyUsbDevice;
 
-impl UsbDevice for DummyUsbDevice {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
-    }
-
-    fn reset(&mut self) {}
-
-    fn address(&self) -> u8 {
-        0
-    }
-
-    fn handle_setup(&mut self, _setup: SetupPacket) {}
-
-    fn handle_out(&mut self, _ep: u8, _data: &[u8]) -> UsbHandshake {
-        UsbHandshake::Ack { bytes: 0 }
-    }
-
-    fn handle_in(&mut self, _ep: u8, _buf: &mut [u8]) -> UsbHandshake {
-        UsbHandshake::Ack { bytes: 0 }
+impl UsbDeviceModel for DummyUsbDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
     }
 }
 
-fn control_no_data(dev: &mut dyn UsbDevice, setup: SetupPacket) {
-    dev.handle_setup(setup);
-    let mut buf = [0u8; 0];
+fn control_out_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(matches!(
-        dev.handle_in(0, &mut buf),
-        UsbHandshake::Ack { .. }
+        dev.handle_in(0, 0),
+        UsbInResult::Data(data) if data.is_empty()
     ));
 }
 
-fn control_in(dev: &mut dyn UsbDevice, setup: SetupPacket, max_packet: usize) -> Vec<u8> {
-    dev.handle_setup(setup);
+fn control_in(dev: &mut AttachedUsbDevice, setup: SetupPacket, max_packet: usize) -> Vec<u8> {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
 
     let mut out = Vec::new();
-    let mut buf = vec![0u8; max_packet];
     loop {
-        match dev.handle_in(0, &mut buf) {
-            UsbHandshake::Ack { bytes } => {
-                out.extend_from_slice(&buf[..bytes]);
-                if bytes < max_packet {
+        match dev.handle_in(0, max_packet) {
+            UsbInResult::Data(chunk) => {
+                let n = chunk.len();
+                out.extend_from_slice(&chunk);
+                if n < max_packet {
                     break;
                 }
             }
-            UsbHandshake::Nak => break,
-            UsbHandshake::Stall | UsbHandshake::Timeout => panic!("expected control IN data"),
+            UsbInResult::Nak => break,
+            UsbInResult::Stall => panic!("expected control IN data"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control IN transfer"),
         }
     }
 
     // Status stage (OUT ZLP).
-    assert!(matches!(dev.handle_out(0, &[]), UsbHandshake::Ack { .. }));
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
     out
 }
 
@@ -67,35 +52,36 @@ fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
     let mut hub = UsbHubDevice::with_port_count(8);
     hub.attach(8, Box::new(DummyUsbDevice));
 
+    let mut dev = AttachedUsbDevice::new(Box::new(hub));
+
     // SET_CONFIGURATION(1).
-    control_no_data(
-        &mut hub,
+    control_out_no_data(
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09,
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
 
     // Interrupt endpoint bitmap should be 2 bytes for 8 ports (9 bits).
-    let mut bitmap = [0u8; 2];
-    let UsbHandshake::Ack { bytes } = hub.handle_in(1, &mut bitmap) else {
-        panic!("expected Ack for hub interrupt endpoint");
+    let UsbInResult::Data(bitmap) = dev.handle_in(1, 2) else {
+        panic!("expected Data for hub interrupt endpoint");
     };
-    assert_eq!(bytes, 2);
+    assert_eq!(bitmap.len(), 2);
     assert_ne!(bitmap[1] & 0x01, 0, "bit8 (port8) should be set");
 
     // GET_DESCRIPTOR(Hub, type=0x29) via class request.
     let hub_desc = control_in(
-        &mut hub,
+        &mut dev,
         SetupPacket {
-            request_type: 0xa0,
-            request: 0x06,
-            value: 0x2900,
-            index: 0,
-            length: 64,
+            bm_request_type: 0xa0,
+            b_request: 0x06,
+            w_value: 0x2900,
+            w_index: 0,
+            w_length: 64,
         },
         64,
     );
@@ -109,13 +95,13 @@ fn usb_hub_interrupt_bitmap_and_descriptor_scale_with_port_count() {
 
     // Interrupt endpoint wMaxPacketSize should match the bitmap length.
     let cfg_desc = control_in(
-        &mut hub,
+        &mut dev,
         SetupPacket {
-            request_type: 0x80,
-            request: 0x06,
-            value: 0x0200,
-            index: 0,
-            length: 255,
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0200,
+            w_index: 0,
+            w_length: 255,
         },
         64,
     );

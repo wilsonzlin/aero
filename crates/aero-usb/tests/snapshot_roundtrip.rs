@@ -1,67 +1,75 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError};
-use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
+use aero_usb::device::AttachedUsbDevice;
+use aero_usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
     UsbPassthroughDevice, UsbWebUsbPassthroughDevice,
 };
+use aero_usb::uhci::regs::{REG_FRNUM, REG_SOFMOD, USBCMD_CF, USBCMD_MAXP};
 use aero_usb::uhci::UhciController;
-use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
 #[allow(dead_code)]
 mod util;
 
-use util::{TestIrq, TestMemory, LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC1, REG_USBCMD};
+use util::{TestMemory, LINK_PTR_T, PORTSC_PR, REG_FRBASEADD, REG_PORTSC1, REG_USBCMD, USBCMD_RUN};
 
-const REG_FRNUM: u16 = 0x06;
-const REG_SOFMOD: u16 = 0x0C;
-
-const USBCMD_CF: u16 = 1 << 6;
-const USBCMD_MAXP: u16 = 1 << 7;
 const PORTSC_PED: u16 = 1 << 2;
 
-fn control_no_data<D: UsbDevice>(dev: &mut D, setup: SetupPacket) {
-    dev.handle_setup(setup);
-    let mut zlp: [u8; 0] = [];
+fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(
-        matches!(dev.handle_in(0, &mut zlp), UsbHandshake::Ack { .. }),
+        matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
         "expected ACK for status stage"
     );
 }
 
-fn control_in<D: UsbDevice>(dev: &mut D, setup: SetupPacket, expected_len: usize) -> Vec<u8> {
-    dev.handle_setup(setup);
-    let mut buf = vec![0u8; expected_len];
-    let got = match dev.handle_in(0, &mut buf) {
-        UsbHandshake::Ack { bytes } => bytes,
-        other => panic!("expected ACK for control IN data stage, got {other:?}"),
-    };
-    buf.truncate(got);
+fn control_in(dev: &mut AttachedUsbDevice, setup: SetupPacket, expected_len: usize) -> Vec<u8> {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+
+    let mut out = Vec::new();
+    loop {
+        match dev.handle_in(0, 64) {
+            UsbInResult::Data(chunk) => {
+                out.extend_from_slice(&chunk);
+                if chunk.len() < 64 {
+                    break;
+                }
+            }
+            UsbInResult::Nak => continue,
+            UsbInResult::Stall => panic!("unexpected STALL during control IN transfer"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control IN transfer"),
+        }
+    }
 
     // Status stage for control-IN is an OUT ZLP.
-    assert!(
-        matches!(dev.handle_out(0, &[]), UsbHandshake::Ack { .. }),
-        "expected ACK for control-IN status stage"
-    );
-    buf
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+
+    out.truncate(expected_len);
+    out
 }
 
-fn control_out_data<D: UsbDevice>(dev: &mut D, setup: SetupPacket, data: &[u8]) {
-    dev.handle_setup(setup);
-    assert!(
-        matches!(
-            dev.handle_out(0, data),
-            UsbHandshake::Ack { bytes } if bytes == data.len()
-        ),
-        "expected ACK for control OUT data stage"
-    );
+fn control_out_data(dev: &mut AttachedUsbDevice, setup: SetupPacket, data: &[u8]) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    assert_eq!(dev.handle_out(0, data), UsbOutResult::Ack);
 
-    // Status stage for control-OUT is an IN ZLP.
-    let mut zlp: [u8; 0] = [];
-    assert!(
-        matches!(dev.handle_in(0, &mut zlp), UsbHandshake::Ack { bytes: 0 }),
-        "expected ACK for control-OUT status stage"
-    );
+    // Status stage for control-OUT is an IN ZLP. Asynchronous models may NAK the status stage
+    // until they have completed host-side work, so poll until we get the ZLP.
+    loop {
+        match dev.handle_in(0, 0) {
+            UsbInResult::Data(resp) => {
+                assert!(resp.is_empty(), "expected ZLP for status stage");
+                break;
+            }
+            UsbInResult::Nak => continue,
+            UsbInResult::Stall => panic!("unexpected STALL during control OUT status stage"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control OUT status stage"),
+        }
+    }
 }
 
 fn sample_report_descriptor_output_with_id() -> Vec<u8> {
@@ -80,10 +88,45 @@ fn sample_report_descriptor_output_with_id() -> Vec<u8> {
     ]
 }
 
+fn sample_report_descriptor_input_2_bytes() -> Vec<u8> {
+    vec![
+        0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
+        0x09, 0x01, // Usage (0x01)
+        0xa1, 0x01, // Collection (Application)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x02, // Report Count (2)
+        0x81, 0x02, // Input (Data,Var,Abs)
+        0xc0, // End Collection
+    ]
+}
+
+#[derive(Default)]
+struct DummyUsbDevice;
+
+impl UsbDeviceModel for DummyUsbDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_out_transfer(&mut self, _ep: u8, _data: &[u8]) -> UsbOutResult {
+        UsbOutResult::Ack
+    }
+
+    fn handle_in_transfer(&mut self, _ep: u8, _max_len: usize) -> UsbInResult {
+        UsbInResult::Nak
+    }
+}
+
 #[test]
 fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
     let report_desc = sample_report_descriptor_output_with_id();
-    let mut dev = UsbHidPassthrough::new(
+    let dev_handle = UsbHidPassthroughHandle::new(
         0x1234,
         0x5678,
         "Vendor".to_string(),
@@ -95,87 +138,89 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
         None,
         None,
     );
+    let mut dev = AttachedUsbDevice::new(Box::new(dev_handle.clone()));
 
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x05, // SET_ADDRESS
-            value: 5,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 5,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09, // SET_CONFIGURATION
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x03, // SET_FEATURE
-            value: 1,      // DEVICE_REMOTE_WAKEUP
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 1,      // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x0b, // SET_PROTOCOL
-            value: 0,      // boot protocol
-            index: 0,
-            length: 0,
+            bm_request_type: 0x21,
+            b_request: 0x0b, // SET_PROTOCOL
+            w_value: 0,      // boot protocol
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x0a, // SET_IDLE
-            value: 7u16 << 8,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x21,
+            b_request: 0x0a, // SET_IDLE
+            w_value: 7u16 << 8,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x02,
-            request: 0x03, // SET_FEATURE
-            value: 0,      // ENDPOINT_HALT
-            index: 0x01,   // interrupt OUT endpoint address
-            length: 0,
+            bm_request_type: 0x02,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0,      // ENDPOINT_HALT
+            w_index: 0x01,   // interrupt OUT endpoint address
+            w_length: 0,
         },
     );
 
-    dev.push_input_report(0, &[0x11, 0x22]);
-    dev.push_input_report(0, &[0x33, 0x44]);
+    dev_handle.push_input_report(0, &[0x11, 0x22]);
+    dev_handle.push_input_report(0, &[0x33, 0x44]);
 
     // Queue an output report but do not drain it before snapshotting.
     control_out_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x09,             // SET_REPORT
-            value: (2u16 << 8) | 2u16, // Output report, ID 2
-            index: 0,
-            length: 3, // report ID + 2 bytes
+            bm_request_type: 0x21,
+            b_request: 0x09,             // SET_REPORT
+            w_value: (2u16 << 8) | 2u16, // Output report, ID 2
+            w_index: 0,
+            w_length: 3, // report ID + 2 bytes
         },
         &[2, 0xAA, 0xBB],
     );
 
-    let snapshot = dev.save_state();
+    let model_snapshot = dev_handle.save_state();
+    let dev_snapshot = dev.save_state();
 
-    let mut restored = UsbHidPassthrough::new(
+    let mut restored_handle = UsbHidPassthroughHandle::new(
         0x1234,
         0x5678,
         "Vendor".to_string(),
@@ -187,22 +232,27 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
         None,
         None,
     );
+    restored_handle
+        .load_state(&model_snapshot)
+        .expect("snapshot restore should succeed");
+
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_handle.clone()));
     restored
-        .load_state(&snapshot)
+        .load_state(&dev_snapshot)
         .expect("snapshot restore should succeed");
 
     assert_eq!(restored.address(), 5);
-    assert!(restored.configured());
+    assert!(restored_handle.configured());
 
     // Remote wakeup should be restored (device GET_STATUS bit1).
     let status = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0x80,
-            request: 0x00, // GET_STATUS
-            value: 0,
-            index: 0,
-            length: 2,
+            bm_request_type: 0x80,
+            b_request: 0x00, // GET_STATUS
+            w_value: 0,
+            w_index: 0,
+            w_length: 2,
         },
         2,
     );
@@ -211,11 +261,11 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
     let protocol = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x03, // GET_PROTOCOL
-            value: 0,
-            index: 0,
-            length: 1,
+            bm_request_type: 0xA1,
+            b_request: 0x03, // GET_PROTOCOL
+            w_value: 0,
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
@@ -224,156 +274,173 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
     let idle = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x02, // GET_IDLE
-            value: 0,
-            index: 0,
-            length: 1,
+            bm_request_type: 0xA1,
+            b_request: 0x02, // GET_IDLE
+            w_value: 0,
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
     assert_eq!(idle, [7]);
 
     // Interrupt OUT endpoint should remain halted.
-    assert!(matches!(
-        restored.handle_out(1, &[0x99]),
-        UsbHandshake::Stall
-    ));
+    assert_eq!(restored.handle_out(1, &[0x99]), UsbOutResult::Stall);
 
     // Pending input reports should survive snapshot/restore and be served in order.
-    let mut buf = [0u8; 8];
-    assert!(matches!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 2 }
-    ));
-    assert_eq!(&buf[..2], [0x11, 0x22]);
-    assert!(matches!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 2 }
-    ));
-    assert_eq!(&buf[..2], [0x33, 0x44]);
-    assert!(matches!(restored.handle_in(1, &mut buf), UsbHandshake::Nak));
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0x11, 0x22])
+    );
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0x33, 0x44])
+    );
+    assert!(matches!(restored.handle_in(1, 8), UsbInResult::Nak));
 
     // Pending output reports should survive snapshot/restore so host integrations can drain them.
     assert_eq!(
-        restored.pop_output_report(),
+        restored_handle.pop_output_report(),
         Some(UsbHidPassthroughOutputReport {
             report_type: 2,
             report_id: 2,
             data: vec![0xAA, 0xBB],
         })
     );
-    assert!(restored.pop_output_report().is_none());
+    assert!(restored_handle.pop_output_report().is_none());
 
     // The guest-visible "last output report" state should still be preserved for GET_REPORT.
     let out_report = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x01,             // GET_REPORT
-            value: (2u16 << 8) | 2u16, // Output report, ID 2
-            index: 0,
-            length: 3,
+            bm_request_type: 0xA1,
+            b_request: 0x01,             // GET_REPORT
+            w_value: (2u16 << 8) | 2u16, // Output report, ID 2
+            w_index: 0,
+            w_length: 3,
         },
         3,
     );
     assert_eq!(out_report, [2, 0xAA, 0xBB]);
 }
 
-struct DummyUsbDevice;
+#[derive(Clone)]
+struct HubHandle(Rc<RefCell<UsbHubDevice>>);
 
-impl UsbDevice for DummyUsbDevice {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
+impl HubHandle {
+    fn new(hub: UsbHubDevice) -> Self {
+        Self(Rc::new(RefCell::new(hub)))
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
+    fn inner(&self) -> Rc<RefCell<UsbHubDevice>> {
+        self.0.clone()
+    }
+}
+
+impl UsbDeviceModel for HubHandle {
+    fn reset(&mut self) {
+        self.0.borrow_mut().reset();
     }
 
-    fn reset(&mut self) {}
-
-    fn address(&self) -> u8 {
-        0
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        self.0.borrow_mut().handle_control_request(setup, data_stage)
     }
 
-    fn handle_setup(&mut self, _setup: SetupPacket) {}
-
-    fn handle_out(&mut self, _ep: u8, data: &[u8]) -> UsbHandshake {
-        UsbHandshake::Ack { bytes: data.len() }
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        self.0.borrow_mut().handle_in_transfer(ep, max_len)
     }
 
-    fn handle_in(&mut self, _ep: u8, _buf: &mut [u8]) -> UsbHandshake {
-        UsbHandshake::Nak
+    fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        self.0.borrow_mut().handle_out_transfer(ep, data)
+    }
+
+    fn tick_1ms(&mut self) {
+        self.0.borrow_mut().tick_1ms();
+    }
+
+    fn set_suspended(&mut self, suspended: bool) {
+        self.0.borrow_mut().set_suspended(suspended);
+    }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        self.0.borrow_mut().poll_remote_wakeup()
     }
 }
 
 #[test]
 fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
-    let mut hub = UsbHubDevice::new();
-
-    control_no_data(
-        &mut hub,
-        SetupPacket {
-            request_type: 0x00,
-            request: 0x05, // SET_ADDRESS
-            value: 3,
-            index: 0,
-            length: 0,
-        },
-    );
-    control_no_data(
-        &mut hub,
-        SetupPacket {
-            request_type: 0x00,
-            request: 0x09, // SET_CONFIGURATION
-            value: 1,
-            index: 0,
-            length: 0,
-        },
-    );
-    control_no_data(
-        &mut hub,
-        SetupPacket {
-            request_type: 0x00,
-            request: 0x03, // SET_FEATURE
-            value: 1,      // DEVICE_REMOTE_WAKEUP
-            index: 0,
-            length: 0,
-        },
-    );
-    control_no_data(
-        &mut hub,
-        SetupPacket {
-            request_type: 0x02,
-            request: 0x03, // SET_FEATURE
-            value: 0,      // ENDPOINT_HALT
-            index: 0x81,   // interrupt IN endpoint address
-            length: 0,
-        },
-    );
+    let hub_handle = HubHandle::new(UsbHubDevice::new());
+    let hub_rc = hub_handle.inner();
 
     // Attach something so the port reports a connection.
-    hub.attach(1, Box::new(DummyUsbDevice));
+    hub_rc
+        .borrow_mut()
+        .attach(1, Box::new(DummyUsbDevice::default()));
+
+    let mut hub = AttachedUsbDevice::new(Box::new(hub_handle.clone()));
+
+    control_no_data(
+        &mut hub,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 3,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut hub,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut hub,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 1,      // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut hub,
+        SetupPacket {
+            bm_request_type: 0x02,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0,      // ENDPOINT_HALT
+            w_index: 0x81,   // interrupt IN endpoint address
+            w_length: 0,
+        },
+    );
+
     // Power and reset port 1.
     control_no_data(
         &mut hub,
         SetupPacket {
-            request_type: 0x23,
-            request: 0x03, // SET_FEATURE
-            value: 8,      // PORT_POWER
-            index: 1,
-            length: 0,
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 8,      // PORT_POWER
+            w_index: 1,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut hub,
         SetupPacket {
-            request_type: 0x23,
-            request: 0x03, // SET_FEATURE
-            value: 4,      // PORT_RESET
-            index: 1,
-            length: 0,
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 4,      // PORT_RESET
+            w_index: 1,
+            w_length: 0,
         },
     );
 
@@ -384,33 +451,42 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
     let port_status = control_in(
         &mut hub,
         SetupPacket {
-            request_type: 0xA3,
-            request: 0x00, // GET_STATUS
-            value: 0,
-            index: 1,
-            length: 4,
+            bm_request_type: 0xA3,
+            b_request: 0x00, // GET_STATUS
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
         },
         4,
     );
     let st = u16::from_le_bytes([port_status[0], port_status[1]]);
     assert_ne!(st & (1 << 4), 0, "port reset should be active");
 
-    let snapshot = hub.save_state();
+    let model_snapshot = hub_rc.borrow().save_state();
+    let hub_snapshot = hub.save_state();
 
-    let mut restored = UsbHubDevice::new();
+    let restored_handle = HubHandle::new(UsbHubDevice::new());
+    let restored_rc = restored_handle.inner();
+    restored_rc
+        .borrow_mut()
+        .load_state(&model_snapshot)
+        .expect("hub snapshot restore should succeed");
+
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_handle));
     restored
-        .load_state(&snapshot)
+        .load_state(&hub_snapshot)
         .expect("hub snapshot restore should succeed");
 
     assert_eq!(restored.address(), 3);
+
     let cfg = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0x80,
-            request: 0x08, // GET_CONFIGURATION
-            value: 0,
-            index: 0,
-            length: 1,
+            bm_request_type: 0x80,
+            b_request: 0x08, // GET_CONFIGURATION
+            w_value: 0,
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
@@ -419,18 +495,17 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
     let status = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0x80,
-            request: 0x00, // GET_STATUS
-            value: 0,
-            index: 0,
-            length: 2,
+            bm_request_type: 0x80,
+            b_request: 0x00, // GET_STATUS
+            w_value: 0,
+            w_index: 0,
+            w_length: 2,
         },
         2,
     );
     assert_eq!(status, [0x02, 0x00]);
 
-    let mut intr_buf = [0u8; 8];
-    assert_eq!(restored.handle_in(1, &mut intr_buf), UsbHandshake::Stall);
+    assert_eq!(restored.handle_in(1, 8), UsbInResult::Stall);
 
     // The reset countdown should survive restore: 40ms remaining.
     for _ in 0..39 {
@@ -439,11 +514,11 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
     let port_status = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA3,
-            request: 0x00,
-            value: 0,
-            index: 1,
-            length: 4,
+            bm_request_type: 0xA3,
+            b_request: 0x00,
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
         },
         4,
     );
@@ -454,11 +529,11 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
     let port_status = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA3,
-            request: 0x00,
-            value: 0,
-            index: 1,
-            length: 4,
+            bm_request_type: 0xA3,
+            b_request: 0x00,
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
         },
         4,
     );
@@ -471,118 +546,137 @@ fn hub_snapshot_roundtrip_preserves_port_reset_timer() {
 
 #[test]
 fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
-    let io_base = 0x2000;
-    let irq_line = 11;
-    let mut ctrl = UhciController::new(io_base, irq_line);
-    ctrl.connect_device(0, Box::new(DummyUsbDevice));
+    let mut ctrl = UhciController::new();
+    ctrl.hub_mut().attach(0, Box::new(DummyUsbDevice::default()));
 
     let mut mem = TestMemory::new(0x4000);
-    let mut irq = TestIrq::default();
 
     let fl_base = 0x1000;
-    ctrl.port_write(io_base + REG_FRBASEADD, 4, fl_base, &mut irq);
+    ctrl.io_write(REG_FRBASEADD, 4, fl_base);
     for i in 0..1024u32 {
         mem.write_u32(fl_base + i * 4, LINK_PTR_T);
     }
 
     // Start a port reset sequence (50ms).
-    ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PR as u32, &mut irq);
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
 
     // Run the controller against an empty schedule so FRNUM advances deterministically.
-    let usbcmd = util::USBCMD_RUN | USBCMD_CF | USBCMD_MAXP;
-    ctrl.port_write(io_base + REG_USBCMD, 2, usbcmd as u32, &mut irq);
+    let usbcmd = USBCMD_RUN | USBCMD_CF | USBCMD_MAXP;
+    ctrl.io_write(REG_USBCMD, 2, usbcmd as u32);
 
-    ctrl.port_write(io_base + REG_FRNUM, 2, 0x0123, &mut irq);
-    ctrl.port_write(io_base + REG_SOFMOD, 1, 0x55, &mut irq);
+    ctrl.io_write(REG_FRNUM, 2, 0x0123);
+    ctrl.io_write(REG_SOFMOD, 1, 0x55);
 
     for _ in 0..10 {
-        ctrl.step_frame(&mut mem, &mut irq);
+        ctrl.tick_1ms(&mut mem);
     }
 
-    let expected_frnum = ctrl.port_read(io_base + REG_FRNUM, 2);
-    let expected_portsc1 = ctrl.port_read(io_base + REG_PORTSC1, 2) as u16;
-    assert_ne!(
-        expected_portsc1 & PORTSC_PR,
-        0,
-        "reset should still be active"
-    );
+    let expected_frnum = ctrl.io_read(REG_FRNUM, 2);
+    let expected_portsc1 = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert_ne!(expected_portsc1 & PORTSC_PR, 0, "reset should still be active");
 
     let snapshot = ctrl.save_state();
 
-    let mut restored = UhciController::new(0x3000, 5);
+    let mut restored = UhciController::new();
     restored
         .load_state(&snapshot)
         .expect("uhci snapshot restore should succeed");
 
-    assert_eq!(restored.io_base(), io_base);
-    assert_eq!(restored.irq_line(), irq_line);
-    assert_eq!(restored.port_read(io_base + REG_FRBASEADD, 4), fl_base);
-    assert_eq!(restored.port_read(io_base + REG_FRNUM, 2), expected_frnum);
-    assert_eq!(restored.port_read(io_base + REG_SOFMOD, 1), 0x55);
-    assert_eq!(
-        restored.port_read(io_base + REG_PORTSC1, 2) as u16,
-        expected_portsc1
-    );
+    assert_eq!(restored.io_read(REG_FRBASEADD, 4), fl_base);
+    assert_eq!(restored.io_read(REG_FRNUM, 2), expected_frnum);
+    assert_eq!(restored.io_read(REG_SOFMOD, 1), 0x55);
+    assert_eq!(restored.io_read(REG_PORTSC1, 2) as u16, expected_portsc1);
 
-    let root0 = restored.bus().port(0).unwrap();
-    assert!(root0.connected, "root port connection must be preserved");
-    assert!(
-        !root0.enabled,
+    // Root port connection must be preserved (CCS bit).
+    let portsc1 = restored.io_read(REG_PORTSC1, 2) as u16;
+    assert_ne!(portsc1 & 0x0001, 0, "root port connection must be preserved");
+    assert_eq!(
+        portsc1 & PORTSC_PED,
+        0,
         "root port should remain disabled during reset"
     );
 
     // Continue the reset timer: 40ms remaining.
     for _ in 0..39 {
-        restored.step_frame(&mut mem, &mut irq);
+        restored.tick_1ms(&mut mem);
     }
-    let portsc1 = restored.port_read(io_base + REG_PORTSC1, 2) as u16;
+    let portsc1 = restored.io_read(REG_PORTSC1, 2) as u16;
     assert_ne!(
         portsc1 & PORTSC_PR,
         0,
         "reset should still be active after 39ms"
     );
 
-    restored.step_frame(&mut mem, &mut irq);
-    let portsc1 = restored.port_read(io_base + REG_PORTSC1, 2) as u16;
+    restored.tick_1ms(&mut mem);
+    let portsc1 = restored.io_read(REG_PORTSC1, 2) as u16;
     assert_eq!(portsc1 & PORTSC_PR, 0, "reset bit clears after 40ms");
-    assert_ne!(
-        portsc1 & PORTSC_PED,
-        0,
-        "port should be enabled after reset completes"
-    );
-    assert!(restored.bus().port(0).unwrap().enabled);
-
-    // Snapshots that omit a full `UsbBus` topology (e.g. because some devices aren't snapshotable)
-    // can restore with `connected=true` but without a concrete `UsbDevice` attached. Saving again
-    // must not switch to a full bus snapshot in that case, otherwise the resulting snapshot would
-    // be invalid (connected port but missing device entries).
-    let snapshot2 = restored.save_state();
-    let mut restored2 = UhciController::new(0, 0);
-    restored2
-        .load_state(&snapshot2)
-        .expect("re-saved UHCI snapshot should still be loadable");
+    assert_ne!(portsc1 & PORTSC_PED, 0, "port should be enabled after reset");
 }
 
 #[test]
 fn snapshot_device_id_mismatch_returns_error() {
-    let dev = UsbHidPassthrough::default();
+    let dev = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_report_descriptor_output_with_id(),
+        true,
+        None,
+        None,
+        None,
+    );
     let snapshot = dev.save_state();
     let mut corrupted = snapshot.clone();
     corrupted[8..12].copy_from_slice(b"NOPE");
 
-    let mut restored = UsbHidPassthrough::default();
+    let mut restored = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_report_descriptor_output_with_id(),
+        true,
+        None,
+        None,
+        None,
+    );
     let err = restored.load_state(&corrupted).unwrap_err();
     assert!(matches!(err, SnapshotError::DeviceIdMismatch { .. }));
 }
 
 #[test]
 fn snapshot_major_version_mismatch_returns_error() {
-    let dev = UsbHidPassthrough::default();
+    let dev = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_report_descriptor_output_with_id(),
+        true,
+        None,
+        None,
+        None,
+    );
     let snapshot = dev.save_state();
     let mut corrupted = snapshot.clone();
     corrupted[12..14].copy_from_slice(&2u16.to_le_bytes());
 
-    let mut restored = UsbHidPassthrough::default();
+    let mut restored = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_report_descriptor_output_with_id(),
+        true,
+        None,
+        None,
+        None,
+    );
     let err = restored.load_state(&corrupted).unwrap_err();
     assert!(matches!(
         err,
@@ -595,12 +689,35 @@ fn snapshot_major_version_mismatch_returns_error() {
 
 #[test]
 fn snapshot_minor_version_mismatch_is_accepted() {
-    let dev = UsbHidPassthrough::default();
+    let report_desc = sample_report_descriptor_input_2_bytes();
+    let dev = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report_desc.clone(),
+        false,
+        None,
+        None,
+        None,
+    );
     let snapshot = dev.save_state();
     let mut corrupted = snapshot.clone();
     corrupted[14..16].copy_from_slice(&42u16.to_le_bytes());
 
-    let mut restored = UsbHidPassthrough::default();
+    let mut restored = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report_desc,
+        false,
+        None,
+        None,
+        None,
+    );
     restored
         .load_state(&corrupted)
         .expect("minor version mismatch should be accepted");
@@ -608,22 +725,35 @@ fn snapshot_minor_version_mismatch_is_accepted() {
 
 #[test]
 fn snapshot_unknown_fields_are_ignored() {
-    let mut dev = UsbHidPassthrough::default();
+    let report_desc = sample_report_descriptor_input_2_bytes();
+    let dev_handle = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report_desc.clone(),
+        false,
+        None,
+        None,
+        None,
+    );
+    let mut dev = AttachedUsbDevice::new(Box::new(dev_handle.clone()));
 
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09, // SET_CONFIGURATION
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
-    dev.push_input_report(0, &[0x11, 0x22]);
-    dev.push_input_report(0, &[0x33, 0x44]);
+    dev_handle.push_input_report(0, &[0x11, 0x22]);
+    dev_handle.push_input_report(0, &[0x33, 0x44]);
 
-    let snapshot = dev.save_state();
+    let snapshot = dev_handle.save_state();
     let mut extended = snapshot.clone();
 
     let tag = 999u16;
@@ -632,23 +762,31 @@ fn snapshot_unknown_fields_are_ignored() {
     extended.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     extended.extend_from_slice(&payload);
 
-    let mut restored = UsbHidPassthrough::default();
+    let mut restored = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report_desc,
+        false,
+        None,
+        None,
+        None,
+    );
     restored
         .load_state(&extended)
         .expect("unknown TLV tags should be ignored");
     assert!(restored.configured());
 
-    let mut buf = [0u8; 8];
-    assert!(matches!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 2 }
-    ));
-    assert_eq!(&buf[..2], [0x11, 0x22]);
-    assert!(matches!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 2 }
-    ));
-    assert_eq!(&buf[..2], [0x33, 0x44]);
+    match restored.handle_in_transfer(0x81, 8) {
+        UsbInResult::Data(data) => assert_eq!(data, vec![0x11, 0x22]),
+        other => panic!("expected first report data, got {other:?}"),
+    }
+    match restored.handle_in_transfer(0x81, 8) {
+        UsbInResult::Data(data) => assert_eq!(data, vec![0x33, 0x44]),
+        other => panic!("expected second report data, got {other:?}"),
+    }
 }
 
 #[test]
@@ -700,49 +838,58 @@ fn usb_passthrough_device_snapshot_preserves_next_id_and_drops_pending_io() {
 
 #[test]
 fn webusb_passthrough_device_snapshot_preserves_pending_set_address() {
-    let mut dev = UsbWebUsbPassthroughDevice::new();
+    let model = UsbWebUsbPassthroughDevice::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(model.clone()));
 
-    dev.handle_setup(SetupPacket {
-        request_type: 0x00,
-        request: 0x05, // SET_ADDRESS
-        value: 12,
-        index: 0,
-        length: 0,
-    });
+    assert_eq!(
+        dev.handle_setup(SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 12,
+            w_index: 0,
+            w_length: 0,
+        }),
+        UsbOutResult::Ack
+    );
     assert_eq!(dev.address(), 0);
 
-    let snapshot = dev.save_state();
+    let model_snapshot = model.save_state();
+    let dev_snapshot = dev.save_state();
 
-    let mut restored = UsbWebUsbPassthroughDevice::new();
+    let mut restored_model = UsbWebUsbPassthroughDevice::new();
+    restored_model
+        .load_state(&model_snapshot)
+        .expect("webusb snapshot restore should succeed");
+
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_model.clone()));
     restored
-        .load_state(&snapshot)
+        .load_state(&dev_snapshot)
         .expect("webusb snapshot restore should succeed");
 
     assert_eq!(restored.address(), 0);
 
     // Status stage for SET_ADDRESS is an IN ZLP.
-    let mut zlp: [u8; 0] = [];
-    assert_eq!(
-        restored.handle_in(0, &mut zlp),
-        UsbHandshake::Ack { bytes: 0 }
+    assert!(
+        matches!(restored.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty())
     );
     assert_eq!(restored.address(), 12);
 }
 
 #[test]
 fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
-    let mut dev = UsbWebUsbPassthroughDevice::new();
+    let model = UsbWebUsbPassthroughDevice::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(model.clone()));
 
     let setup = SetupPacket {
-        request_type: 0x80,
-        request: 0x06, // GET_DESCRIPTOR
-        value: 0x0100,
-        index: 0,
-        length: 4,
+        bm_request_type: 0x80,
+        b_request: 0x06, // GET_DESCRIPTOR
+        w_value: 0x0100,
+        w_index: 0,
+        w_length: 4,
     };
-    dev.handle_setup(setup);
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
 
-    let actions = dev.drain_actions();
+    let actions = model.drain_actions();
     assert_eq!(actions.len(), 1);
     let id1 = match actions[0] {
         UsbHostAction::ControlIn {
@@ -752,11 +899,11 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
             assert_eq!(
                 host_setup,
                 HostSetupPacket {
-                    bm_request_type: setup.request_type,
-                    b_request: setup.request,
-                    w_value: setup.value,
-                    w_index: setup.index,
-                    w_length: setup.length,
+                    bm_request_type: setup.bm_request_type,
+                    b_request: setup.b_request,
+                    w_value: setup.w_value,
+                    w_index: setup.w_index,
+                    w_length: setup.w_length,
                 }
             );
             id
@@ -765,19 +912,28 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
     };
     assert_eq!(id1, 1);
 
-    let snapshot = dev.save_state();
+    let model_snapshot = model.save_state();
+    let dev_snapshot = dev.save_state();
 
-    let mut restored = UsbWebUsbPassthroughDevice::new();
-    restored
-        .load_state(&snapshot)
+    let mut restored_model = UsbWebUsbPassthroughDevice::new();
+    restored_model
+        .load_state(&model_snapshot)
         .expect("webusb snapshot restore should succeed");
-    restored.reset_host_state_for_restore();
+
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_model.clone()));
+    restored
+        .load_state(&dev_snapshot)
+        .expect("webusb snapshot restore should succeed");
+
+    // Host actions are backed by JS Promises in the browser runtime; after restoring a VM snapshot
+    // they cannot be resumed. Host integrations should clear host-side inflight state so the guest
+    // TD retries can re-emit new host actions.
+    restored_model.reset_host_state_for_restore();
 
     // First poll should NAK and re-queue a fresh host action.
-    let mut buf = [0u8; 4];
-    assert_eq!(restored.handle_in(0, &mut buf), UsbHandshake::Nak);
+    assert_eq!(restored.handle_in(0, 4), UsbInResult::Nak);
 
-    let actions = restored.drain_actions();
+    let actions = restored_model.drain_actions();
     assert_eq!(actions.len(), 1);
     let id2 = match actions[0] {
         UsbHostAction::ControlIn {
@@ -787,11 +943,11 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
             assert_eq!(
                 host_setup,
                 HostSetupPacket {
-                    bm_request_type: setup.request_type,
-                    b_request: setup.request,
-                    w_value: setup.value,
-                    w_index: setup.index,
-                    w_length: setup.length,
+                    bm_request_type: setup.bm_request_type,
+                    b_request: setup.b_request,
+                    w_value: setup.w_value,
+                    w_index: setup.w_index,
+                    w_length: setup.w_length,
                 }
             );
             id
@@ -800,19 +956,17 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
     };
     assert_eq!(id2, 2);
 
-    restored.push_completion(UsbHostCompletion::ControlIn {
+    restored_model.push_completion(UsbHostCompletion::ControlIn {
         id: id2,
         result: UsbHostCompletionIn::Success {
             data: vec![9, 8, 7, 6],
         },
     });
 
-    assert_eq!(
-        restored.handle_in(0, &mut buf),
-        UsbHandshake::Ack { bytes: 4 }
+    assert!(
+        matches!(restored.handle_in(0, 4), UsbInResult::Data(data) if data == vec![9, 8, 7, 6])
     );
-    assert_eq!(buf, [9, 8, 7, 6]);
 
     // Status stage for control-IN is an OUT ZLP.
-    assert_eq!(restored.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
+    assert_eq!(restored.handle_out(0, &[]), UsbOutResult::Ack);
 }

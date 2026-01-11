@@ -93,10 +93,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
-    hid::passthrough::{SharedUsbHidPassthroughDevice, UsbHidPassthrough},
+    hid::passthrough::UsbHidPassthroughHandle,
     hid::webhid,
     hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
-    usb::{SetupPacket as UsbSetupPacket, UsbDevice, UsbHandshake},
+    SetupPacket,
+    UsbInResult,
+    UsbDeviceModel,
 };
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -389,22 +391,23 @@ pub struct UsbHidBridge {
 impl UsbHidBridge {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        fn configure(dev: &mut impl UsbDevice) {
+        fn configure(dev: &mut impl UsbDeviceModel) {
             // Our HID device models behave like real USB devices and only produce
             // interrupt IN data after the host sets a non-zero configuration.
             //
             // The web runtime uses `UsbHidBridge` as a lightweight "report
             // generator" in tests and in the I/O worker, so configure the devices
             // eagerly to make `drain_next_*_report()` immediately usable.
-            dev.handle_setup(UsbSetupPacket {
-                request_type: 0x00,
-                request: 0x09, // SET_CONFIGURATION
-                value: 1,
-                index: 0,
-                length: 0,
-            });
-            let mut empty = [];
-            let _ = dev.handle_in(0, &mut empty);
+            let _ = dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: 0x09, // SET_CONFIGURATION
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            );
         }
 
         let mut keyboard = UsbHidKeyboard::new();
@@ -482,9 +485,8 @@ impl UsbHidBridge {
 
     /// Drain the next 8-byte boot keyboard report (or return `null` if none).
     pub fn drain_next_keyboard_report(&mut self) -> JsValue {
-        let mut buf = [0u8; 8];
-        match self.keyboard.handle_in(1, &mut buf) {
-            UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
+        match self.keyboard.handle_in_transfer(0x81, 8) {
+            UsbInResult::Data(data) if !data.is_empty() => Uint8Array::from(data.as_slice()).into(),
             _ => JsValue::NULL,
         }
     }
@@ -493,18 +495,16 @@ impl UsbHidBridge {
     ///
     /// In report protocol this is 4 bytes: buttons, dx, dy, wheel.
     pub fn drain_next_mouse_report(&mut self) -> JsValue {
-        let mut buf = [0u8; 4];
-        match self.mouse.handle_in(1, &mut buf) {
-            UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
+        match self.mouse.handle_in_transfer(0x81, 4) {
+            UsbInResult::Data(data) if !data.is_empty() => Uint8Array::from(data.as_slice()).into(),
             _ => JsValue::NULL,
         }
     }
 
     /// Drain the next 8-byte gamepad report (or return `null` if none).
     pub fn drain_next_gamepad_report(&mut self) -> JsValue {
-        let mut buf = [0u8; 8];
-        match self.gamepad.handle_in(1, &mut buf) {
-            UsbHandshake::Ack { bytes } if bytes > 0 => Uint8Array::from(&buf[..bytes]).into(),
+        match self.gamepad.handle_in_transfer(0x81, 8) {
+            UsbInResult::Data(data) if !data.is_empty() => Uint8Array::from(data.as_slice()).into(),
             _ => JsValue::NULL,
         }
     }
@@ -525,7 +525,7 @@ impl UsbHidBridge {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct UsbHidPassthroughBridge {
-    device: std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>,
+    device: UsbHidPassthroughHandle,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -544,7 +544,7 @@ impl UsbHidPassthroughBridge {
         interface_subclass: Option<u8>,
         interface_protocol: Option<u8>,
     ) -> Self {
-        let device = UsbHidPassthrough::new(
+        let device = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
             manufacturer.unwrap_or_else(|| "WebHID".to_string()),
@@ -556,15 +556,13 @@ impl UsbHidPassthroughBridge {
             interface_subclass,
             interface_protocol,
         );
-        Self {
-            device: std::rc::Rc::new(std::cell::RefCell::new(device)),
-        }
+        Self { device }
     }
 
     pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
-        self.device.borrow_mut().push_input_report(report_id, data);
+        self.device.push_input_report(report_id, data);
         Ok(())
     }
 
@@ -572,7 +570,7 @@ impl UsbHidPassthroughBridge {
     ///
     /// Returns `null` when no report is pending.
     pub fn drain_next_output_report(&mut self) -> JsValue {
-        let Some(report) = self.device.borrow_mut().pop_output_report() else {
+        let Some(report) = self.device.pop_output_report() else {
             return JsValue::NULL;
         };
 
@@ -601,14 +599,14 @@ impl UsbHidPassthroughBridge {
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
     pub fn configured(&self) -> bool {
-        self.device.borrow().configured()
+        self.device.configured()
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct WebHidPassthroughBridge {
-    device: std::rc::Rc<std::cell::RefCell<UsbHidPassthrough>>,
+    device: UsbHidPassthroughHandle,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -632,7 +630,7 @@ impl WebHidPassthroughBridge {
 
         let has_interrupt_out = collections_have_output_reports(&collections);
 
-        let device = UsbHidPassthrough::new(
+        let device = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
             manufacturer.unwrap_or_else(|| "WebHID".to_string()),
@@ -645,15 +643,13 @@ impl WebHidPassthroughBridge {
             None,
         );
 
-        Ok(Self {
-            device: std::rc::Rc::new(std::cell::RefCell::new(device)),
-        })
+        Ok(Self { device })
     }
 
     pub fn push_input_report(&mut self, report_id: u32, data: &[u8]) -> Result<(), JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
-        self.device.borrow_mut().push_input_report(report_id, data);
+        self.device.push_input_report(report_id, data);
         Ok(())
     }
 
@@ -661,7 +657,7 @@ impl WebHidPassthroughBridge {
     ///
     /// Returns `null` when no report is pending.
     pub fn drain_next_output_report(&mut self) -> JsValue {
-        let Some(report) = self.device.borrow_mut().pop_output_report() else {
+        let Some(report) = self.device.pop_output_report() else {
             return JsValue::NULL;
         };
 
@@ -690,21 +686,21 @@ impl WebHidPassthroughBridge {
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
     pub fn configured(&self) -> bool {
-        self.device.borrow().configured()
+        self.device.configured()
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl WebHidPassthroughBridge {
-    pub(crate) fn as_usb_device(&self) -> SharedUsbHidPassthroughDevice {
-        SharedUsbHidPassthroughDevice(self.device.clone())
+    pub(crate) fn as_usb_device(&self) -> UsbHidPassthroughHandle {
+        self.device.clone()
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl UsbHidPassthroughBridge {
-    pub(crate) fn as_usb_device(&self) -> SharedUsbHidPassthroughDevice {
-        SharedUsbHidPassthroughDevice(self.device.clone())
+    pub(crate) fn as_usb_device(&self) -> UsbHidPassthroughHandle {
+        self.device.clone()
     }
 }
 

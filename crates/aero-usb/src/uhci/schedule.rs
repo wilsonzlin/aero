@@ -1,8 +1,9 @@
-use memory::MemoryBus;
+use alloc::vec;
 
-use crate::io::usb::core::{UsbInResult, UsbOutResult};
-use crate::io::usb::hub::RootHub;
-use crate::io::usb::SetupPacket;
+use crate::device::{UsbInResult, UsbOutResult};
+use crate::hub::RootHub;
+use crate::memory::MemoryBus;
+use crate::SetupPacket;
 
 use super::regs::{USBINT_CAUSE_IOC, USBINT_CAUSE_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
 
@@ -236,6 +237,18 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                         stop: true,
                     }
                 }
+                UsbOutResult::Timeout => {
+                    status |= TD_STATUS_CRC_TIMEOUT;
+                    complete_td(ctx, td_addr, status, 0, true);
+                    if status & TD_CTRL_IOC != 0 {
+                        *ctx.usbsts |= USBSTS_USBINT;
+                        *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                    }
+                    TdProgress::Advanced {
+                        next_link,
+                        stop: true,
+                    }
+                }
             }
         }
         PID_OUT => {
@@ -263,6 +276,18 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Stall => {
                     status |= TD_STATUS_STALLED;
+                    complete_td(ctx, td_addr, status, 0, true);
+                    if status & TD_CTRL_IOC != 0 {
+                        *ctx.usbsts |= USBSTS_USBINT;
+                        *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                    }
+                    TdProgress::Advanced {
+                        next_link,
+                        stop: true,
+                    }
+                }
+                UsbOutResult::Timeout => {
+                    status |= TD_STATUS_CRC_TIMEOUT;
                     complete_td(ctx, td_addr, status, 0, true);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
@@ -304,6 +329,18 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             }
             UsbInResult::Stall => {
                 status |= TD_STATUS_STALLED;
+                complete_td(ctx, td_addr, status, 0, true);
+                if status & TD_CTRL_IOC != 0 {
+                    *ctx.usbsts |= USBSTS_USBINT;
+                    *ctx.usbint_causes |= USBINT_CAUSE_IOC;
+                }
+                TdProgress::Advanced {
+                    next_link,
+                    stop: true,
+                }
+            }
+            UsbInResult::Timeout => {
+                status |= TD_STATUS_CRC_TIMEOUT;
                 complete_td(ctx, td_addr, status, 0, true);
                 if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;

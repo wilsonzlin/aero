@@ -1,117 +1,120 @@
 use aero_io_snapshot::io::state::IoSnapshot;
+use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::{
-    GamepadReport, UsbHidCompositeInput, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse,
+    GamepadReport, UsbCompositeHidInputHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle,
+    UsbHidMouseHandle,
 };
-use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
+use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
-fn control_no_data<D: UsbDevice>(dev: &mut D, setup: SetupPacket) {
-    dev.handle_setup(setup);
-    let mut zlp: [u8; 0] = [];
+fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(
-        matches!(dev.handle_in(0, &mut zlp), UsbHandshake::Ack { .. }),
+        matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
         "expected ACK for status stage"
     );
 }
 
-fn control_in<D: UsbDevice>(dev: &mut D, setup: SetupPacket, expected_len: usize) -> Vec<u8> {
-    dev.handle_setup(setup);
-    let mut buf = vec![0u8; expected_len];
-    let got = match dev.handle_in(0, &mut buf) {
-        UsbHandshake::Ack { bytes } => bytes,
-        other => panic!("expected ACK for control IN data stage, got {other:?}"),
-    };
-    buf.truncate(got);
+fn control_in(dev: &mut AttachedUsbDevice, setup: SetupPacket, expected_len: usize) -> Vec<u8> {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+
+    let mut out = Vec::new();
+    loop {
+        match dev.handle_in(0, 64) {
+            UsbInResult::Data(chunk) => {
+                out.extend_from_slice(&chunk);
+                if chunk.len() < 64 {
+                    break;
+                }
+            }
+            UsbInResult::Nak => continue,
+            UsbInResult::Stall => panic!("unexpected STALL during control IN transfer"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control IN transfer"),
+        }
+    }
 
     // Status stage for control-IN is an OUT ZLP.
-    assert!(
-        matches!(dev.handle_out(0, &[]), UsbHandshake::Ack { .. }),
-        "expected ACK for control-IN status stage"
-    );
-    buf
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+
+    out.truncate(expected_len);
+    out
 }
 
-fn control_out_data<D: UsbDevice>(dev: &mut D, setup: SetupPacket, data: &[u8]) {
-    dev.handle_setup(setup);
-    assert!(
-        matches!(
-            dev.handle_out(0, data),
-            UsbHandshake::Ack { bytes } if bytes == data.len()
-        ),
-        "expected ACK for control OUT data stage"
-    );
+fn control_out_data(dev: &mut AttachedUsbDevice, setup: SetupPacket, data: &[u8]) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    assert_eq!(dev.handle_out(0, data), UsbOutResult::Ack);
 
     // Status stage for control-OUT is an IN ZLP.
-    let mut zlp: [u8; 0] = [];
     assert!(
-        matches!(dev.handle_in(0, &mut zlp), UsbHandshake::Ack { bytes: 0 }),
+        matches!(dev.handle_in(0, 0), UsbInResult::Data(resp) if resp.is_empty()),
         "expected ACK for control-OUT status stage"
     );
 }
 
 #[test]
 fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
-    let mut kb = UsbHidKeyboard::new();
+    let kb = UsbHidKeyboardHandle::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(kb.clone()));
 
     control_no_data(
-        &mut kb,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x05, // SET_ADDRESS
-            value: 5,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 5,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut kb,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09, // SET_CONFIGURATION
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut kb,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x03, // SET_FEATURE
-            value: 1,      // DEVICE_REMOTE_WAKEUP
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 1,      // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut kb,
+        &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x0b, // SET_PROTOCOL
-            value: 0,      // boot protocol
-            index: 0,
-            length: 0,
+            bm_request_type: 0x21,
+            b_request: 0x0b, // SET_PROTOCOL
+            w_value: 0,      // boot protocol
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut kb,
+        &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x0a, // SET_IDLE
-            value: 5u16 << 8,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x21,
+            b_request: 0x0a, // SET_IDLE
+            w_value: 5u16 << 8,
+            w_index: 0,
+            w_length: 0,
         },
     );
 
     // SET_REPORT(Output) to set keyboard LEDs.
     control_out_data(
-        &mut kb,
+        &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x09,
-            value: 2u16 << 8, // Output report, ID 0
-            index: 0,
-            length: 1,
+            bm_request_type: 0x21,
+            b_request: 0x09,
+            w_value: 2u16 << 8, // Output report, ID 0
+            w_index: 0,
+            w_length: 1,
         },
         &[0x05],
     );
@@ -120,21 +123,24 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
     kb.key_event(0x04, true); // 'a'
     kb.key_event(0x04, false);
 
-    let snap = kb.save_state();
+    let dev_snap = dev.save_state();
+    let model_snap = kb.save_state();
 
-    let mut restored = UsbHidKeyboard::new();
-    restored.load_state(&snap).unwrap();
+    let mut restored_model = UsbHidKeyboardHandle::new();
+    restored_model.load_state(&model_snap).unwrap();
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_model.clone()));
+    restored.load_state(&dev_snap).unwrap();
 
     assert_eq!(restored.address(), 5);
 
     let status = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0x80,
-            request: 0x00, // GET_STATUS
-            value: 0,
-            index: 0,
-            length: 2,
+            bm_request_type: 0x80,
+            b_request: 0x00, // GET_STATUS
+            w_value: 0,
+            w_index: 0,
+            w_length: 2,
         },
         2,
     );
@@ -143,11 +149,11 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
     let protocol = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x03, // GET_PROTOCOL
-            value: 0,
-            index: 0,
-            length: 1,
+            bm_request_type: 0xA1,
+            b_request: 0x03, // GET_PROTOCOL
+            w_value: 0,
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
@@ -156,11 +162,11 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
     let idle = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x02, // GET_IDLE
-            value: 0,
-            index: 0,
-            length: 1,
+            bm_request_type: 0xA1,
+            b_request: 0x02, // GET_IDLE
+            w_value: 0,
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
@@ -169,104 +175,101 @@ fn hid_keyboard_snapshot_roundtrip_preserves_leds_and_pending_reports() {
     let leds = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x01,    // GET_REPORT
-            value: 2u16 << 8, // Output report
-            index: 0,
-            length: 1,
+            bm_request_type: 0xA1,
+            b_request: 0x01, // GET_REPORT
+            w_value: 2u16 << 8, // Output report
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
     assert_eq!(leds, [0x05]);
 
-    let mut buf = [0u8; 8];
-    assert_eq!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 8 }
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0, 0, 0x04, 0, 0, 0, 0, 0])
     );
-    assert_eq!(buf, [0, 0, 0x04, 0, 0, 0, 0, 0]);
-    assert_eq!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 8 }
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0; 8])
     );
-    assert_eq!(buf, [0; 8]);
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Nak);
+    assert!(matches!(restored.handle_in(1, 8), UsbInResult::Nak));
 }
 
 #[test]
 fn hid_mouse_snapshot_roundtrip_preserves_boot_protocol_and_reports() {
-    let mut mouse = UsbHidMouse::new();
+    let mouse = UsbHidMouseHandle::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(mouse.clone()));
 
     control_no_data(
-        &mut mouse,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 6,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 6,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut mouse,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09,
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut mouse,
+        &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x0b, // SET_PROTOCOL
-            value: 0,      // boot protocol
-            index: 0,
-            length: 0,
+            bm_request_type: 0x21,
+            b_request: 0x0b, // SET_PROTOCOL
+            w_value: 0,      // boot protocol
+            w_index: 0,
+            w_length: 0,
         },
     );
 
     mouse.movement(10, -5);
 
-    let snap = mouse.save_state();
+    let dev_snap = dev.save_state();
+    let model_snap = mouse.save_state();
 
-    let mut restored = UsbHidMouse::new();
-    restored.load_state(&snap).unwrap();
+    let mut restored_model = UsbHidMouseHandle::new();
+    restored_model.load_state(&model_snap).unwrap();
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_model.clone()));
+    restored.load_state(&dev_snap).unwrap();
     assert_eq!(restored.address(), 6);
 
-    let mut buf = [0u8; 4];
-    assert_eq!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 3 }
+    assert!(
+        matches!(restored.handle_in(1, 4), UsbInResult::Data(data) if data == vec![0x00, 10, 251])
     );
-    assert_eq!(&buf[..3], [0x00, 10, 251]);
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Nak);
+    assert!(matches!(restored.handle_in(1, 4), UsbInResult::Nak));
 }
 
 #[test]
 fn hid_gamepad_snapshot_roundtrip_preserves_report_queue() {
-    let mut gp = UsbHidGamepad::new();
+    let gp = UsbHidGamepadHandle::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(gp.clone()));
 
     control_no_data(
-        &mut gp,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 7,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 7,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
-        &mut gp,
+        &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09,
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
 
@@ -280,129 +283,122 @@ fn hid_gamepad_snapshot_roundtrip_preserves_report_queue() {
     });
     gp.button_event(1, true);
 
-    let snap = gp.save_state();
+    let dev_snap = dev.save_state();
+    let model_snap = gp.save_state();
 
-    let mut restored = UsbHidGamepad::new();
-    restored.load_state(&snap).unwrap();
+    let mut restored_model = UsbHidGamepadHandle::new();
+    restored_model.load_state(&model_snap).unwrap();
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_model.clone()));
+    restored.load_state(&dev_snap).unwrap();
     assert_eq!(restored.address(), 7);
 
     // GET_REPORT(Input) returns current report (after button_event).
     let report = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x01,
-            value: 1u16 << 8, // Input report, ID 0
-            index: 0,
-            length: 8,
+            bm_request_type: 0xA1,
+            b_request: 0x01,
+            w_value: 1u16 << 8, // Input report, ID 0
+            w_index: 0,
+            w_length: 8,
         },
         8,
     );
     assert_eq!(report, [0x35, 0x12, 0x03, 10, 246, 5, 251, 0]);
 
-    let mut buf = [0u8; 8];
-    assert_eq!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 8 }
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0x34, 0x12, 0x03, 10, 246, 5, 251, 0])
     );
-    assert_eq!(buf, [0x34, 0x12, 0x03, 10, 246, 5, 251, 0]);
-    assert_eq!(
-        restored.handle_in(1, &mut buf),
-        UsbHandshake::Ack { bytes: 8 }
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0x35, 0x12, 0x03, 10, 246, 5, 251, 0])
     );
-    assert_eq!(buf, [0x35, 0x12, 0x03, 10, 246, 5, 251, 0]);
-    assert_eq!(restored.handle_in(1, &mut buf), UsbHandshake::Nak);
+    assert!(matches!(restored.handle_in(1, 8), UsbInResult::Nak));
 }
 
 #[test]
 fn hid_composite_snapshot_roundtrip_preserves_multiple_queues() {
-    let mut dev = UsbHidCompositeInput::new();
+    let composite = UsbCompositeHidInputHandle::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(composite.clone()));
 
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x05,
-            value: 8,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x05,
+            w_value: 8,
+            w_index: 0,
+            w_length: 0,
         },
     );
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x00,
-            request: 0x09,
-            value: 1,
-            index: 0,
-            length: 0,
+            bm_request_type: 0x00,
+            b_request: 0x09,
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
         },
     );
     // Set mouse interface protocol to boot so the interrupt report is 3 bytes.
     control_no_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x0b,
-            value: 0,
-            index: 1,
-            length: 0,
+            bm_request_type: 0x21,
+            b_request: 0x0b,
+            w_value: 0,
+            w_index: 1,
+            w_length: 0,
         },
     );
     // Set keyboard LEDs (interface 0).
     control_out_data(
         &mut dev,
         SetupPacket {
-            request_type: 0x21,
-            request: 0x09,
-            value: 2u16 << 8,
-            index: 0,
-            length: 1,
+            bm_request_type: 0x21,
+            b_request: 0x09,
+            w_value: 2u16 << 8,
+            w_index: 0,
+            w_length: 1,
         },
         &[0x0A],
     );
 
-    dev.key_event(0x04, true);
-    dev.mouse_movement(10, -5);
-    dev.gamepad_button_event(1, true);
+    composite.key_event(0x04, true);
+    composite.mouse_movement(10, -5);
+    composite.gamepad_button_event(1, true);
 
-    let snap = dev.save_state();
+    let dev_snap = dev.save_state();
+    let model_snap = composite.save_state();
 
-    let mut restored = UsbHidCompositeInput::new();
-    restored.load_state(&snap).unwrap();
+    let mut restored_model = UsbCompositeHidInputHandle::new();
+    restored_model.load_state(&model_snap).unwrap();
+    let mut restored = AttachedUsbDevice::new(Box::new(restored_model.clone()));
+    restored.load_state(&dev_snap).unwrap();
     assert_eq!(restored.address(), 8);
 
     let leds = control_in(
         &mut restored,
         SetupPacket {
-            request_type: 0xA1,
-            request: 0x01,
-            value: 2u16 << 8,
-            index: 0,
-            length: 1,
+            bm_request_type: 0xA1,
+            b_request: 0x01,
+            w_value: 2u16 << 8,
+            w_index: 0,
+            w_length: 1,
         },
         1,
     );
     assert_eq!(leds, [0x0A]);
 
-    let mut kb = [0u8; 8];
-    assert_eq!(
-        restored.handle_in(1, &mut kb),
-        UsbHandshake::Ack { bytes: 8 }
+    assert!(
+        matches!(restored.handle_in(1, 8), UsbInResult::Data(data) if data == vec![0, 0, 0x04, 0, 0, 0, 0, 0])
     );
-    assert_eq!(kb, [0, 0, 0x04, 0, 0, 0, 0, 0]);
 
-    let mut mouse_buf = [0u8; 4];
-    assert_eq!(
-        restored.handle_in(2, &mut mouse_buf),
-        UsbHandshake::Ack { bytes: 3 }
+    assert!(
+        matches!(restored.handle_in(2, 4), UsbInResult::Data(data) if data == vec![0x00, 10, 251])
     );
-    assert_eq!(&mouse_buf[..3], [0x00, 10, 251]);
 
-    let mut gp = [0u8; 8];
-    assert_eq!(
-        restored.handle_in(3, &mut gp),
-        UsbHandshake::Ack { bytes: 8 }
+    assert!(
+        matches!(restored.handle_in(3, 8), UsbInResult::Data(data) if data == vec![1, 0, 8, 0, 0, 0, 0, 0])
     );
-    assert_eq!(gp, [1, 0, 8, 0, 0, 0, 0, 0]);
 }

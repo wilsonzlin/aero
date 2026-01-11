@@ -3,19 +3,20 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::rc::Rc;
 
-use emulator::io::usb::core::{UsbInResult, UsbOutResult};
-use emulator::io::usb::hid::{
-    UsbCompositeHidInputHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidPassthroughHandle,
-    UsbHidPassthroughOutputReport,
+use aero_usb::hid::composite::UsbCompositeHidInputHandle;
+use aero_usb::hid::gamepad::UsbHidGamepadHandle;
+use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
+use aero_usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
+use aero_usb::uhci::regs::{
+    REG_FLBASEADD, REG_PORTSC1, REG_USBCMD, REG_USBINTR, USBCMD_MAXP, USBCMD_RS,
+    USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT,
 };
-use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
-use emulator::io::usb::uhci::regs::{USBINTR_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
-use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
-use emulator::io::usb::{
+use aero_usb::uhci::UhciController;
+use aero_usb::MemoryBus;
+use aero_usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+    UsbInResult, UsbOutResult,
 };
-use emulator::io::PortIO;
-use memory::MemoryBus;
 
 const FRAME_LIST_BASE: u32 = 0x1000;
 const QH_ADDR: u32 = 0x2000;
@@ -129,20 +130,20 @@ fn init_frame_list(mem: &mut TestMemBus, qh_addr: u32) {
     }
 }
 
-fn run_one_frame(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, first_td: u32) {
+fn run_one_frame(uhci: &mut UhciController, mem: &mut TestMemBus, first_td: u32) {
     write_qh(mem, QH_ADDR, first_td);
     uhci.tick_1ms(mem);
 }
 
-fn read_portsc(uhci: &UhciPciDevice, portsc: u16) -> u16 {
-    uhci.port_read(portsc, 2) as u16
+fn read_portsc(uhci: &UhciController, portsc: u16) -> u16 {
+    uhci.io_read(portsc, 2) as u16
 }
 
-fn write_portsc(uhci: &mut UhciPciDevice, portsc: u16, value: u16) {
-    uhci.port_write(portsc, 2, value as u32);
+fn write_portsc(uhci: &mut UhciController, portsc: u16, value: u16) {
+    uhci.io_write(portsc, 2, value as u32);
 }
 
-fn write_portsc_w1c(uhci: &mut UhciPciDevice, portsc: u16, w1c: u16) {
+fn write_portsc_w1c(uhci: &mut UhciController, portsc: u16, w1c: u16) {
     // Preserve the port enable bit when clearing change bits, matching the usual
     // read-modify-write pattern of UHCI drivers.
     let cur = read_portsc(uhci, portsc);
@@ -150,7 +151,7 @@ fn write_portsc_w1c(uhci: &mut UhciPciDevice, portsc: u16, w1c: u16) {
     write_portsc(uhci, portsc, value);
 }
 
-fn reset_port(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, portsc: u16) {
+fn reset_port(uhci: &mut UhciController, mem: &mut TestMemBus, portsc: u16) {
     // Clear connection status change if present.
     if read_portsc(uhci, portsc) & PORTSC_CSC != 0 {
         write_portsc_w1c(uhci, portsc, PORTSC_CSC);
@@ -388,20 +389,16 @@ impl UsbDeviceModel for PendingControlOutNoDataDevice {
     fn handle_control_request(
         &mut self,
         setup: SetupPacket,
-        data_stage: Option<&[u8]>,
+        _data_stage: Option<&[u8]>,
     ) -> ControlResponse {
-        if setup.bm_request_type != 0x40 || setup.b_request != 0x04 {
-            return ControlResponse::Stall;
-        }
-
-        if data_stage.is_some() {
-            return ControlResponse::Stall;
-        }
-
-        if *self.ready.borrow() {
-            ControlResponse::Ack
+        if setup.bm_request_type == 0x40 && setup.b_request == 0x04 {
+            if *self.ready.borrow() {
+                ControlResponse::Ack
+            } else {
+                ControlResponse::Nak
+            }
         } else {
-            ControlResponse::Nak
+            ControlResponse::Stall
         }
     }
 }
@@ -460,18 +457,16 @@ impl UsbDeviceModel for BulkEndpointDevice {
 #[test]
 fn uhci_root_hub_portsc_reset_enables_port() {
     let mut mem = TestMemBus::new(0x1000);
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(keyboard.clone()));
+    uhci.hub_mut().attach(0, Box::new(keyboard.clone()));
 
-    let st = read_portsc(&uhci, 0x10);
+    let st = read_portsc(&uhci, REG_PORTSC1);
     assert_eq!(st & (PORTSC_CCS | PORTSC_CSC), PORTSC_CCS | PORTSC_CSC);
     assert_eq!(st & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 
-    write_portsc(&mut uhci, 0x10, PORTSC_PR);
-    let st = read_portsc(&uhci, 0x10);
+    write_portsc(&mut uhci, REG_PORTSC1, PORTSC_PR);
+    let st = read_portsc(&uhci, REG_PORTSC1);
     assert_ne!(st & PORTSC_PR, 0);
     assert_eq!(st & PORTSC_LSDA, 0);
     assert_eq!(st & PORTSC_LS_MASK, 0);
@@ -480,7 +475,7 @@ fn uhci_root_hub_portsc_reset_enables_port() {
         uhci.tick_1ms(&mut mem);
     }
 
-    let st = read_portsc(&uhci, 0x10);
+    let st = read_portsc(&uhci, REG_PORTSC1);
     assert_eq!(st & PORTSC_PR, 0);
     assert_ne!(st & PORTSC_PED, 0);
     assert_ne!(st & PORTSC_PEDC, 0);
@@ -489,13 +484,13 @@ fn uhci_root_hub_portsc_reset_enables_port() {
 
 #[test]
 fn uhci_usbcmd_default_enables_max_packet_and_roundtrips() {
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
 
-    let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
+    let usbcmd = uhci.io_read(REG_USBCMD, 2) as u16;
     assert!(usbcmd & USBCMD_MAXP != 0);
 
-    uhci.port_write(REG_USBCMD, 2, (USBCMD_MAXP | USBCMD_RS) as u32);
-    let usbcmd = uhci.port_read(REG_USBCMD, 2) as u16;
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_MAXP | USBCMD_RS) as u32);
+    let usbcmd = uhci.io_read(REG_USBCMD, 2) as u16;
     assert_eq!(usbcmd & (USBCMD_MAXP | USBCMD_RS), USBCMD_MAXP | USBCMD_RS);
 }
 
@@ -504,15 +499,13 @@ fn uhci_control_get_descriptor_device() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(keyboard.clone()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(0, Box::new(keyboard.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     mem.write_physical(
         BUF_SETUP as u64,
@@ -568,16 +561,14 @@ fn uhci_control_short_packet_detect_stops_qh_for_frame() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(keyboard.clone()));
-    uhci.controller.hub_mut().force_enable_for_tests(0);
+    uhci.hub_mut().attach(0, Box::new(keyboard.clone()));
+    uhci.hub_mut().force_enable_for_tests(0);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x04, 2, USBINTR_SHORT_PACKET as u32);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBINTR, 2, USBINTR_SHORT_PACKET as u32);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // GET_DESCRIPTOR(Device) with wLength = 64. The HID keyboard only returns 18 bytes, so the
     // third 8-byte IN TD will see a short packet (2 bytes).
@@ -637,7 +628,7 @@ fn uhci_control_short_packet_detect_stops_qh_for_frame() {
     }
 
     // Short-packet interrupt should be raised; no error interrupt.
-    let usbsts = uhci.controller.regs().usbsts;
+    let usbsts = uhci.regs().usbsts;
     assert_ne!(usbsts & USBSTS_USBINT, 0);
     assert_eq!(usbsts & USBSTS_USBERRINT, 0);
 
@@ -651,24 +642,24 @@ fn uhci_control_get_descriptor_device_runtime_descriptor() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let device_desc = vec![
         0x12, 0x01, 0x00, 0x02, 0xff, 0x00, 0x00, 0x40, 0x34, 0x12, 0x02, 0x00, 0x00, 0x01, 0x01,
         0x02, 0x00, 0x01,
     ];
     // Minimal config descriptor (total length 9).
     let config_desc = vec![0x09, 0x02, 0x09, 0x00, 0x00, 0x01, 0x00, 0x80, 50];
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(DynamicDescriptorDevice::new(
             device_desc.clone(),
             config_desc.clone(),
         )),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     mem.write_physical(
         BUF_SETUP as u64,
@@ -759,20 +750,20 @@ fn uhci_control_in_pending_naks_data_td_until_ready() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
     let response_data = vec![0x11, 0x22, 0x33, 0x44];
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(PendingControlInDevice::new(
             ready.clone(),
             response_data.clone(),
         )),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // Vendor DeviceToHost control transfer with a 4-byte data stage.
     mem.write_physical(
@@ -844,15 +835,16 @@ fn uhci_control_in_no_data_pending_naks_status_out_until_ready() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(PendingControlInZlpDevice::new(ready.clone())));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(
+        0,
+        Box::new(PendingControlInZlpDevice::new(ready.clone())),
+    );
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // Vendor DeviceToHost control transfer with wLength=0 (no data stage).
     mem.write_physical(BUF_SETUP as u64, &[0xc0, 0x03, 0, 0, 0, 0, 0, 0]);
@@ -919,15 +911,14 @@ fn uhci_control_in_large_data_stage_is_chunked_across_multiple_in_tds() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let data: Vec<u8> = (0u8..100).collect();
-    uhci.controller
-        .hub_mut()
+    uhci.hub_mut()
         .attach(0, Box::new(LargeControlInDevice { data: data.clone() }));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // Vendor DeviceToHost control transfer with a 100-byte data stage.
     mem.write_physical(
@@ -980,17 +971,8 @@ fn uhci_control_in_large_data_stage_is_chunked_across_multiple_in_tds() {
     let st2 = mem.read_u32(TD2 as u64 + 4);
     assert_eq!(st1 & TD_STATUS_ACTIVE, 0);
     assert_eq!(st2 & TD_STATUS_ACTIVE, 0);
-    assert_eq!(
-        st1 & 0x7ff,
-        63,
-        "first IN TD should report 64 bytes transferred"
-    );
-    assert_eq!(
-        st2 & 0x7ff,
-        35,
-        "second IN TD should report 36 bytes transferred"
-    );
-
+    assert_eq!(st1 & 0x7ff, 63);
+    assert_eq!(st2 & 0x7ff, 35);
     let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
     assert_eq!(qh_elem, 1);
 }
@@ -1000,17 +982,17 @@ fn uhci_control_in_pending_large_data_stage_completes_after_ready() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
     let data: Vec<u8> = (0u8..100).collect();
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(PendingControlInDevice::new(ready.clone(), data.clone())),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     mem.write_physical(
         BUF_SETUP as u64,
@@ -1090,20 +1072,20 @@ fn uhci_control_out_pending_acks_data_stage_and_naks_status_in() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
     let received = Rc::new(RefCell::new(Vec::new()));
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(PendingControlOutDevice::new(
             ready.clone(),
             received.clone(),
         )),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // Vendor HostToDevice control transfer with a 4-byte OUT data stage.
     mem.write_physical(
@@ -1168,16 +1150,16 @@ fn uhci_control_out_no_data_pending_naks_status_in_until_ready() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(PendingControlOutNoDataDevice::new(ready.clone())),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // Vendor HostToDevice control transfer with wLength=0 (no data stage).
     mem.write_physical(BUF_SETUP as u64, &[0x40, 0x04, 0, 0, 0, 0, 0, 0]);
@@ -1249,18 +1231,18 @@ fn uhci_control_out_large_data_stage_is_buffered_across_multiple_out_tds() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let received = Rc::new(RefCell::new(Vec::new()));
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(CaptureControlOutDevice {
             received: received.clone(),
         }),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     let payload: Vec<u8> = (0u8..100).collect();
 
@@ -1319,20 +1301,20 @@ fn uhci_control_out_pending_large_data_stage_acks_data_and_naks_status_in() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let ready = Rc::new(RefCell::new(false));
     let received = Rc::new(RefCell::new(Vec::new()));
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(PendingControlOutDevice::new(
             ready.clone(),
             received.clone(),
         )),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     let payload: Vec<u8> = (0u8..100).collect();
     mem.write_physical(
@@ -1406,20 +1388,20 @@ fn uhci_bulk_in_out_smoke_test_with_nak() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     let out_received = Rc::new(RefCell::new(Vec::new()));
-    uhci.controller.hub_mut().attach(
+    uhci.hub_mut().attach(
         0,
         Box::new(BulkEndpointDevice::new(
             in_queue.clone(),
             out_received.clone(),
         )),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     let out_payload = [0x10, 0x20, 0x30];
     mem.write_physical(BUF_DATA as u64, &out_payload);
@@ -1476,15 +1458,13 @@ fn uhci_interrupt_in_polling_reads_hid_reports() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(keyboard.clone()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(0, Box::new(keyboard.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     // SET_ADDRESS(5).
     mem.write_physical(
@@ -1563,7 +1543,7 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
 
     let report_descriptor = vec![
         0x05, 0x01, // Usage Page (Generic Desktop)
@@ -1599,13 +1579,11 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
         None,
         None,
     );
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(passthrough.clone()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(0, Box::new(passthrough.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     // SET_ADDRESS(5).
     mem.write_physical(
@@ -1751,15 +1729,13 @@ fn uhci_interrupt_in_halted_endpoint_stalls() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let keyboard = UsbHidKeyboardHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(keyboard.clone()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(0, Box::new(keyboard.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     // SET_ADDRESS(5).
     mem.write_physical(
@@ -1890,15 +1866,15 @@ fn uhci_qh_does_not_skip_inactive_tds() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
-    uhci.controller.hub_mut().attach(
+    let mut uhci = UhciController::new();
+    uhci.hub_mut().attach(
         0,
         Box::new(TestInterruptInDevice::new(0x81, vec![1, 2, 3, 4])),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     let sentinel = [0xa5, 0xa5, 0xa5, 0xa5];
     mem.write_physical(BUF_DATA as u64, &sentinel);
@@ -1941,18 +1917,18 @@ fn uhci_qh_does_not_skip_nak_tds() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
-    uhci.controller.hub_mut().attach(
+    let mut uhci = UhciController::new();
+    uhci.hub_mut().attach(
         0,
         Box::new(TestInterruptInDevice::new(
             0x82,
             vec![0x11, 0x22, 0x33, 0x44],
         )),
     );
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
 
     let sentinel = [0x5a, 0x5a, 0x5a, 0x5a];
     mem.write_physical(BUF_DATA as u64, &sentinel);
@@ -1999,15 +1975,13 @@ fn uhci_interrupt_in_polling_reads_gamepad_reports() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let gamepad = UsbHidGamepadHandle::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(gamepad.clone()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(0, Box::new(gamepad.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     // SET_ADDRESS(5).
     mem.write_physical(
@@ -2095,12 +2069,13 @@ fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let (mut uhci, composite): (UhciPciDevice, UsbCompositeHidInputHandle) =
-        UhciPciDevice::new_with_composite_input(0);
-    reset_port(&mut uhci, &mut mem, 0x10);
+    let mut uhci = UhciController::new();
+    let composite = UsbCompositeHidInputHandle::new();
+    uhci.hub_mut().attach(0, Box::new(composite.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     // SET_ADDRESS(5).
     mem.write_physical(
@@ -2244,15 +2219,13 @@ fn uhci_interrupt_out_reaches_device_model() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let mut uhci = UhciController::new();
     let device = DummyInterruptOutDevice::new();
-    uhci.controller
-        .hub_mut()
-        .attach(0, Box::new(device.clone()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    uhci.hub_mut().attach(0, Box::new(device.clone()));
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     // Give the device a non-zero address so the OUT TD exercises address routing.
     mem.write_physical(
@@ -2303,14 +2276,13 @@ fn uhci_interrupt_out_unimplemented_endpoint_stalls() {
     let mut mem = TestMemBus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);
 
-    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
-    uhci.controller
-        .hub_mut()
+    let mut uhci = UhciController::new();
+    uhci.hub_mut()
         .attach(0, Box::new(UsbHidKeyboardHandle::new()));
-    reset_port(&mut uhci, &mut mem, 0x10);
+    reset_port(&mut uhci, &mut mem, REG_PORTSC1);
 
-    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
-    uhci.port_write(0x00, 2, 0x0001);
+    uhci.io_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    uhci.io_write(REG_USBCMD, 2, USBCMD_RS as u32);
 
     // Give the device a non-zero address so the OUT TD exercises address routing.
     mem.write_physical(

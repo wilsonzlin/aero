@@ -1,3 +1,7 @@
+//! USB HID device models (keyboard/mouse/gamepad) and browser input mapping helpers.
+
+use alloc::vec::Vec;
+
 pub mod composite;
 pub mod gamepad;
 pub mod keyboard;
@@ -8,15 +12,14 @@ pub mod usage;
 pub mod webhid;
 
 pub use composite::UsbCompositeHidInputHandle;
-pub use gamepad::UsbHidGamepadHandle;
-pub use keyboard::UsbHidKeyboardHandle;
-pub use mouse::UsbHidMouseHandle;
+pub use gamepad::{GamepadReport, UsbHidGamepad, UsbHidGamepadHandle};
+pub use keyboard::{UsbHidKeyboard, UsbHidKeyboardHandle};
+pub use mouse::{UsbHidMouse, UsbHidMouseHandle};
 
 pub use report_descriptor::{
-    has_report_ids, max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes,
-    parse_report_descriptor, report_bits, report_bytes, synthesize_report_descriptor,
-    validate_collections, HidCollectionInfo, HidDescriptorError, HidReportDescriptorParseResult,
-    HidReportInfo, HidReportItem, ValidationSummary,
+    max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes, parse_report_descriptor,
+    report_bits_for_id, report_bytes_for_id, synthesize_report_descriptor, validate_collections,
+    HidCollectionInfo, HidDescriptorError, HidReportInfo, HidReportItem, ValidationSummary,
 };
 
 pub use passthrough::{UsbHidPassthrough, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};

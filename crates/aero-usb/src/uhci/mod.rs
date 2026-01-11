@@ -10,14 +10,12 @@ mod schedule;
 
 pub mod regs;
 
-use memory::MemoryBus;
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
-use crate::io::pci::{PciConfigSpace, PciDevice};
-use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
-use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
-use crate::io::usb::hid::mouse::UsbHidMouseHandle;
-use crate::io::usb::hub::RootHub;
-use crate::io::PortIO;
+use crate::hub::RootHub;
+use crate::memory::MemoryBus;
 
 use regs::*;
 use schedule::{process_frame, ScheduleContext};
@@ -47,14 +45,18 @@ impl UhciController {
         &mut self.hub
     }
 
+    pub fn hub(&self) -> &RootHub {
+        &self.hub
+    }
+
     pub fn regs(&self) -> &UhciRegs {
         &self.regs
     }
 
     /// Forces status bits in USBSTS for tests and diagnostics.
     ///
-    /// Reserved bits are masked out; the HCHALTED bit is driven by `USBCMD.RS` and
-    /// should not be set manually.
+    /// Reserved bits are masked out; the HCHALTED bit is driven by `USBCMD.RS` and should not be
+    /// set manually.
     pub fn set_usbsts_bits(&mut self, bits: u16) {
         let bits = bits & (USBSTS_READ_MASK & !USBSTS_HCHALTED);
         if bits & USBSTS_USBINT != 0 {
@@ -255,7 +257,7 @@ impl UhciController {
         }
     }
 
-    fn io_read(&self, offset: u16, size: usize) -> u32 {
+    pub fn io_read(&self, offset: u16, size: usize) -> u32 {
         let mut out = 0u32;
         for i in 0..size.min(4) {
             out |= (self.io_read_u8(offset.wrapping_add(i as u16)) as u32) << (i * 8);
@@ -263,7 +265,7 @@ impl UhciController {
         out
     }
 
-    fn io_write(&mut self, offset: u16, size: usize, value: u32) {
+    pub fn io_write(&mut self, offset: u16, size: usize, value: u32) {
         match (offset, size) {
             (REG_USBCMD, 2) => self.write_usbcmd(value as u16),
             (REG_USBSTS, 2) => self.write_usbsts(value as u16),
@@ -326,121 +328,86 @@ impl Default for UhciController {
     }
 }
 
-/// A PCI wrapper that exposes a UHCI controller as an Intel PIIX3-style device.
-pub struct UhciPciDevice {
-    config: PciConfigSpace,
-    pub io_base: u16,
-    io_base_probe: bool,
-    pub controller: UhciController,
-}
+impl IoSnapshot for UhciController {
+    const DEVICE_ID: [u8; 4] = *b"UHCI";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
-impl UhciPciDevice {
-    const IO_BAR_SIZE: u32 = 0x20;
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_USBCMD: u16 = 1;
+        const TAG_USBSTS: u16 = 2;
+        const TAG_USBINTR: u16 = 3;
+        const TAG_USBINT_CAUSES: u16 = 4;
+        const TAG_FRNUM: u16 = 5;
+        const TAG_FLBASEADD: u16 = 6;
+        const TAG_SOFMOD: u16 = 7;
+        const TAG_ROOT_HUB_PORTS: u16 = 8;
+        const TAG_PREV_PORT_RD: u16 = 9;
 
-    pub fn new(controller: UhciController, io_base: u16) -> Self {
-        let mut config = PciConfigSpace::new();
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u16(TAG_USBCMD, self.regs.usbcmd);
+        w.field_u16(TAG_USBSTS, self.regs.usbsts);
+        w.field_u16(TAG_USBINTR, self.regs.usbintr);
+        w.field_u16(TAG_USBINT_CAUSES, self.regs.usbint_causes);
+        w.field_u16(TAG_FRNUM, self.regs.frnum);
+        w.field_u32(TAG_FLBASEADD, self.regs.flbaseadd);
+        w.field_u8(TAG_SOFMOD, self.regs.sofmod);
+        w.field_bytes(TAG_ROOT_HUB_PORTS, self.hub.save_snapshot_ports());
+        w.field_bool(TAG_PREV_PORT_RD, self.prev_port_resume_detect);
+        w.finish()
+    }
 
-        // Vendor/device: Intel PIIX3 UHCI.
-        config.set_u16(0x00, 0x8086);
-        config.set_u16(0x02, 0x7020);
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_USBCMD: u16 = 1;
+        const TAG_USBSTS: u16 = 2;
+        const TAG_USBINTR: u16 = 3;
+        const TAG_USBINT_CAUSES: u16 = 4;
+        const TAG_FRNUM: u16 = 5;
+        const TAG_FLBASEADD: u16 = 6;
+        const TAG_SOFMOD: u16 = 7;
+        const TAG_ROOT_HUB_PORTS: u16 = 8;
+        const TAG_PREV_PORT_RD: u16 = 9;
 
-        // Class code: serial bus / USB / UHCI.
-        config.write(0x09, 1, 0x00); // prog IF
-        config.write(0x0a, 1, 0x03); // subclass
-        config.write(0x0b, 1, 0x0c); // class
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
-        // BAR4 (I/O) at 0x20.
-        config.set_u32(0x20, (io_base as u32) | 0x1);
+        // Reset controller-local state without disturbing attached device models.
+        self.regs = UhciRegs::new();
+        self.irq_level = false;
+        self.prev_port_resume_detect = false;
 
-        // Interrupt line: canonical profile routes 00:01.2 INTA# to IRQ 11.
-        config.write(0x3c, 1, 0x0b);
-
-        // Interrupt pin INTA#.
-        config.write(0x3d, 1, 1);
-
-        Self {
-            config,
-            io_base,
-            io_base_probe: false,
-            controller,
+        if let Some(usbcmd) = r.u16(TAG_USBCMD)? {
+            self.regs.usbcmd = usbcmd & USBCMD_WRITE_MASK;
         }
-    }
-
-    pub fn irq_level(&self) -> bool {
-        self.controller.irq_level()
-    }
-
-    pub fn new_with_hid(io_base: u16) -> (Self, UsbHidKeyboardHandle, UsbHidMouseHandle) {
-        let mut controller = UhciController::new();
-        let keyboard = UsbHidKeyboardHandle::new();
-        let mouse = UsbHidMouseHandle::new();
-        controller.hub_mut().attach(0, Box::new(keyboard.clone()));
-        controller.hub_mut().attach(1, Box::new(mouse.clone()));
-        (Self::new(controller, io_base), keyboard, mouse)
-    }
-
-    pub fn new_with_composite_hid(io_base: u16) -> (Self, UsbCompositeHidInputHandle) {
-        let mut controller = UhciController::new();
-        let composite = UsbCompositeHidInputHandle::new();
-        controller.hub_mut().attach(0, Box::new(composite.clone()));
-        (Self::new(controller, io_base), composite)
-    }
-
-    pub fn new_with_composite_input(io_base: u16) -> (Self, UsbCompositeHidInputHandle) {
-        Self::new_with_composite_hid(io_base)
-    }
-
-    pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
-        self.controller.tick_1ms(mem);
-    }
-}
-
-impl PciDevice for UhciPciDevice {
-    fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if offset == 0x20 && size == 4 {
-            return if self.io_base_probe {
-                // BAR4: 32-byte I/O window.
-                (!(Self::IO_BAR_SIZE - 1) & 0xffff_fffc) | 0x1
-            } else {
-                u32::from(self.io_base) | 0x1
-            };
+        if let Some(usbsts) = r.u16(TAG_USBSTS)? {
+            self.regs.usbsts = usbsts & USBSTS_READ_MASK;
         }
-        self.config.read(offset, size)
-    }
-
-    fn config_write(&mut self, offset: u16, size: usize, value: u32) {
-        if offset == 0x20 && size == 4 {
-            if value == 0xffff_ffff {
-                self.io_base_probe = true;
-                self.io_base = 0;
-                self.config.write(offset, size, 0);
-                return;
-            }
-
-            self.io_base_probe = false;
-            let value = value as u16;
-            let io_base = value & !0x3 & !((Self::IO_BAR_SIZE as u16) - 1);
-            self.io_base = io_base;
-            let encoded = u32::from(self.io_base) | 0x1;
-            self.config.write(offset, size, encoded);
-            return;
+        if let Some(usbintr) = r.u16(TAG_USBINTR)? {
+            self.regs.usbintr = usbintr & USBINTR_MASK;
         }
-        self.config.write(offset, size, value);
-    }
-}
+        if let Some(causes) = r.u16(TAG_USBINT_CAUSES)? {
+            self.regs.usbint_causes = causes & (USBINT_CAUSE_IOC | USBINT_CAUSE_SHORT_PACKET);
+        }
+        if let Some(frnum) = r.u16(TAG_FRNUM)? {
+            self.regs.frnum = frnum & 0x07ff;
+        }
+        if let Some(flbaseadd) = r.u32(TAG_FLBASEADD)? {
+            self.regs.flbaseadd = flbaseadd & 0xffff_f000;
+        }
+        if let Some(sofmod) = r.u8(TAG_SOFMOD)? {
+            self.regs.sofmod = sofmod;
+        }
 
-impl PortIO for UhciPciDevice {
-    fn port_read(&self, port: u16, size: usize) -> u32 {
-        let Some(offset) = port.checked_sub(self.io_base) else {
-            return u32::MAX;
-        };
-        self.controller.io_read(offset, size)
-    }
+        if let Some(buf) = r.bytes(TAG_ROOT_HUB_PORTS) {
+            self.hub.load_snapshot_ports(buf)?;
+        }
 
-    fn port_write(&mut self, port: u16, size: usize, val: u32) {
-        let Some(offset) = port.checked_sub(self.io_base) else {
-            return;
-        };
-        self.controller.io_write(offset, size, val);
+        if let Some(prev) = r.bool(TAG_PREV_PORT_RD)? {
+            self.prev_port_resume_detect = prev;
+        }
+
+        self.regs.update_halted();
+        self.update_irq();
+
+        Ok(())
     }
 }

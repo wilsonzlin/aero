@@ -1,142 +1,39 @@
-use core::any::Any;
-use std::cell::RefCell;
-use std::collections::{BTreeMap, VecDeque};
-use std::rc::Rc;
+use core::cell::RefCell;
 
-use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
+use crate::device::{UsbInResult, UsbOutResult};
+use crate::{
+    ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
+};
+
 use super::report_descriptor;
+use super::{
+    build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
+    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
+    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT, USB_DESCRIPTOR_TYPE_CONFIGURATION,
+    USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT,
+    USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT,
+    USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR,
+    USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
+    USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
+};
 
-const REQ_GET_STATUS: u8 = 0x00;
-const REQ_CLEAR_FEATURE: u8 = 0x01;
-const REQ_SET_FEATURE: u8 = 0x03;
-const REQ_SET_ADDRESS: u8 = 0x05;
-const REQ_GET_DESCRIPTOR: u8 = 0x06;
-const REQ_GET_CONFIGURATION: u8 = 0x08;
-const REQ_SET_CONFIGURATION: u8 = 0x09;
-const REQ_GET_INTERFACE: u8 = 0x0A;
-const REQ_SET_INTERFACE: u8 = 0x0B;
+const INTERRUPT_IN_EP: u8 = 0x81;
+const INTERRUPT_OUT_EP: u8 = 0x01;
 
-const FEATURE_ENDPOINT_HALT: u16 = 0x0000;
-const FEATURE_DEVICE_REMOTE_WAKEUP: u16 = 0x0001;
-
-const REQ_HID_GET_REPORT: u8 = 0x01;
-const REQ_HID_GET_IDLE: u8 = 0x02;
-const REQ_HID_GET_PROTOCOL: u8 = 0x03;
-const REQ_HID_SET_REPORT: u8 = 0x09;
-const REQ_HID_SET_IDLE: u8 = 0x0A;
-const REQ_HID_SET_PROTOCOL: u8 = 0x0B;
-
-const DESC_DEVICE: u8 = 0x01;
-const DESC_CONFIGURATION: u8 = 0x02;
-const DESC_STRING: u8 = 0x03;
-const DESC_INTERFACE: u8 = 0x04;
-const DESC_ENDPOINT: u8 = 0x05;
-const DESC_HID: u8 = 0x21;
-const DESC_REPORT: u8 = 0x22;
-
-const INTERRUPT_IN_EP_ADDR: u8 = 0x81;
-const INTERRUPT_OUT_EP_ADDR: u8 = 0x01;
-const INTERRUPT_EP_NUM: u8 = 1;
-
-const DEFAULT_MAX_PACKET_SIZE0: u8 = 64;
 const DEFAULT_MAX_PACKET_SIZE: u16 = 64;
 const DEFAULT_MAX_PENDING_INPUT_REPORTS: usize = 256;
 const DEFAULT_MAX_PENDING_OUTPUT_REPORTS: usize = 256;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Ep0Stage {
-    Idle,
-    DataIn,
-    DataOut,
-    StatusIn,
-    StatusOut,
-}
-
-#[derive(Debug)]
-struct Ep0Control {
-    stage: Ep0Stage,
-    setup: Option<SetupPacket>,
-    in_data: Vec<u8>,
-    in_offset: usize,
-    out_expected: usize,
-    out_data: Vec<u8>,
-    stalled: bool,
-}
-
-impl Ep0Control {
-    fn new() -> Self {
-        Self {
-            stage: Ep0Stage::Idle,
-            setup: None,
-            in_data: Vec::new(),
-            in_offset: 0,
-            out_expected: 0,
-            out_data: Vec::new(),
-            stalled: false,
-        }
-    }
-
-    fn begin(&mut self, setup: SetupPacket) {
-        self.setup = Some(setup);
-        self.in_data.clear();
-        self.in_offset = 0;
-        self.out_expected = 0;
-        self.out_data.clear();
-        self.stalled = false;
-
-        if setup.length == 0 {
-            self.stage = Ep0Stage::StatusIn;
-            return;
-        }
-
-        if setup.request_type & 0x80 != 0 {
-            self.stage = Ep0Stage::DataIn;
-        } else {
-            self.stage = Ep0Stage::DataOut;
-            self.out_expected = setup.length as usize;
-        }
-    }
-
-    fn setup(&self) -> SetupPacket {
-        self.setup.expect("control transfer missing SETUP")
-    }
-}
-
-fn string_descriptor_utf16le(s: &str) -> Vec<u8> {
-    // USB string descriptors encode `bLength` as a u8, and strings are UTF-16LE. This caps the
-    // total descriptor size to 254 bytes (2-byte header + up to 126 UTF-16 code units) and avoids
-    // truncating surrogate pairs mid-character.
-    const MAX_LEN: usize = 254;
-
-    let mut out = Vec::with_capacity(MAX_LEN);
-    out.push(0); // bLength placeholder
-    out.push(DESC_STRING);
-
-    for ch in s.chars() {
-        let mut buf = [0u16; 2];
-        let units = ch.encode_utf16(&mut buf);
-        let needed = units.len() * 2;
-        if out.len() + needed > MAX_LEN {
-            break;
-        }
-        for unit in units {
-            out.extend_from_slice(&unit.to_le_bytes());
-        }
-    }
-
-    out[0] = out.len() as u8;
-    out
-}
-
-fn string_descriptor_langid(langid: u16) -> [u8; 4] {
-    let [l0, l1] = langid.to_le_bytes();
-    [4, DESC_STRING, l0, l1]
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsbHidPassthroughOutputReport {
@@ -148,31 +45,23 @@ pub struct UsbHidPassthroughOutputReport {
     pub data: Vec<u8>,
 }
 
-/// Generic USB HID device model with bounded report queues.
-///
-/// This is designed for "real device" passthrough via WebHID: the browser main thread forwards
-/// `inputreport` events into [`UsbHidPassthrough::push_input_report`], and the guest can send
-/// Output/Feature reports via either `SET_REPORT` control requests or interrupt OUT transfers.
 #[derive(Debug)]
 pub struct UsbHidPassthrough {
     address: u8,
-    pending_address: Option<u8>,
     configuration: u8,
-    pending_configuration: Option<u8>,
     remote_wakeup_enabled: bool,
     interrupt_in_halted: bool,
     interrupt_out_halted: bool,
-    protocol: u8,
     idle_rate: u8,
-    ep0: Ep0Control,
+    protocol: HidProtocol,
 
-    device_descriptor: Vec<u8>,
-    config_descriptor: Vec<u8>,
-    hid_descriptor: Vec<u8>,
-    hid_report_descriptor: Vec<u8>,
-    manufacturer_string_descriptor: Vec<u8>,
-    product_string_descriptor: Vec<u8>,
-    serial_string_descriptor: Option<Vec<u8>>,
+    device_descriptor: Rc<[u8]>,
+    config_descriptor: Rc<[u8]>,
+    hid_descriptor: Rc<[u8]>,
+    hid_report_descriptor: Rc<[u8]>,
+    manufacturer_string_descriptor: Rc<[u8]>,
+    product_string_descriptor: Rc<[u8]>,
+    serial_string_descriptor: Option<Rc<[u8]>>,
 
     has_interrupt_out: bool,
     report_ids_in_use: bool,
@@ -189,7 +78,13 @@ pub struct UsbHidPassthrough {
     pending_output_reports: VecDeque<UsbHidPassthroughOutputReport>,
 }
 
-impl UsbHidPassthrough {
+/// Shareable handle for a USB HID passthrough device model.
+#[derive(Clone, Debug)]
+pub struct UsbHidPassthroughHandle {
+    inner: Rc<RefCell<UsbHidPassthrough>>,
+}
+
+impl UsbHidPassthroughHandle {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         vendor_id: u16,
@@ -203,19 +98,102 @@ impl UsbHidPassthrough {
         interface_subclass: Option<u8>,
         interface_protocol: Option<u8>,
     ) -> Self {
-        let max_packet_size =
-            sanitize_max_packet_size(max_packet_size.unwrap_or(DEFAULT_MAX_PACKET_SIZE));
+        let model = UsbHidPassthrough::new(
+            vendor_id,
+            product_id,
+            manufacturer,
+            product,
+            serial,
+            hid_report_descriptor,
+            has_interrupt_out,
+            max_packet_size.unwrap_or(DEFAULT_MAX_PACKET_SIZE),
+            interface_subclass.unwrap_or(0),
+            interface_protocol.unwrap_or(0),
+        );
+
+        Self {
+            inner: Rc::new(RefCell::new(model)),
+        }
+    }
+
+    pub fn configured(&self) -> bool {
+        self.inner.borrow().configuration != 0
+    }
+
+    pub fn push_input_report(&self, report_id: u8, data: &[u8]) {
+        self.inner.borrow_mut().push_input_report(report_id, data);
+    }
+
+    pub fn pop_output_report(&self) -> Option<UsbHidPassthroughOutputReport> {
+        self.inner.borrow_mut().pending_output_reports.pop_front()
+    }
+
+    pub fn set_max_pending_input_reports(&self, max: usize) {
+        self.inner.borrow_mut().set_max_pending_input_reports(max);
+    }
+
+    pub fn set_max_pending_output_reports(&self, max: usize) {
+        self.inner.borrow_mut().set_max_pending_output_reports(max);
+    }
+}
+
+impl UsbDeviceModel for UsbHidPassthroughHandle {
+    fn reset(&mut self) {
+        self.inner.borrow_mut().reset();
+    }
+
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        self.inner
+            .borrow_mut()
+            .handle_control_request(setup, data_stage)
+    }
+
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        self.inner.borrow_mut().handle_interrupt_in(ep_addr)
+    }
+
+    fn handle_interrupt_out(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        self.inner.borrow_mut().handle_interrupt_out(ep, data)
+    }
+}
+
+impl UsbHidPassthrough {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        vendor_id: u16,
+        product_id: u16,
+        manufacturer: String,
+        product: String,
+        serial: Option<String>,
+        mut hid_report_descriptor: Vec<u8>,
+        has_interrupt_out: bool,
+        max_packet_size: u16,
+        interface_subclass: u8,
+        interface_protocol: u8,
+    ) -> Self {
+        let max_packet_size = sanitize_max_packet_size(max_packet_size);
 
         // USB HID encodes the report descriptor length as a u16 (wDescriptorLength). Truncate
         // oversized descriptors so the device's own descriptors remain self-consistent.
-        let mut hid_report_descriptor = hid_report_descriptor;
         if hid_report_descriptor.len() > u16::MAX as usize {
             hid_report_descriptor.truncate(u16::MAX as usize);
+            hid_report_descriptor.shrink_to_fit();
         }
 
-        let manufacturer_string_descriptor = string_descriptor_utf16le(&manufacturer);
-        let product_string_descriptor = string_descriptor_utf16le(&product);
-        let serial_string_descriptor = serial.as_deref().map(string_descriptor_utf16le);
+        let manufacturer_string_descriptor: Rc<[u8]> =
+            Rc::from(build_string_descriptor_utf16le(&manufacturer).into_boxed_slice());
+        let product_string_descriptor: Rc<[u8]> =
+            Rc::from(build_string_descriptor_utf16le(&product).into_boxed_slice());
+        let serial_string_descriptor = serial
+            .as_deref()
+            .map(build_string_descriptor_utf16le)
+            .map(|v| Rc::<[u8]>::from(v.into_boxed_slice()));
+
+        let hid_report_descriptor: Rc<[u8]> = Rc::from(hid_report_descriptor.into_boxed_slice());
 
         let i_serial = if serial_string_descriptor.is_some() {
             3
@@ -223,22 +201,22 @@ impl UsbHidPassthrough {
             0
         };
 
-        let device_descriptor = build_device_descriptor(
-            vendor_id,
-            product_id,
-            DEFAULT_MAX_PACKET_SIZE0,
-            1,
-            2,
-            i_serial,
+        let device_descriptor: Rc<[u8]> = Rc::from(
+            build_device_descriptor(vendor_id, product_id, max_packet_size as u8, 1, 2, i_serial)
+                .into_boxed_slice(),
         );
 
-        let hid_descriptor = build_hid_descriptor(&hid_report_descriptor);
-        let config_descriptor = build_config_descriptor(
-            &hid_descriptor,
-            has_interrupt_out,
-            max_packet_size,
-            interface_subclass.unwrap_or(0),
-            interface_protocol.unwrap_or(0),
+        let hid_descriptor: Rc<[u8]> =
+            Rc::from(build_hid_descriptor(hid_report_descriptor.as_ref()).into_boxed_slice());
+        let config_descriptor: Rc<[u8]> = Rc::from(
+            build_config_descriptor(
+                hid_descriptor.as_ref(),
+                has_interrupt_out,
+                max_packet_size,
+                interface_subclass,
+                interface_protocol,
+            )
+            .into_boxed_slice(),
         );
 
         let (
@@ -246,19 +224,16 @@ impl UsbHidPassthrough {
             input_report_lengths,
             output_report_lengths,
             feature_report_lengths,
-        ) = report_descriptor_report_lengths(&hid_report_descriptor);
+        ) = report_descriptor_report_lengths(hid_report_descriptor.as_ref());
 
         Self {
             address: 0,
-            pending_address: None,
             configuration: 0,
-            pending_configuration: None,
             remote_wakeup_enabled: false,
             interrupt_in_halted: false,
             interrupt_out_halted: false,
-            protocol: 1, // report protocol
             idle_rate: 0,
-            ep0: Ep0Control::new(),
+            protocol: HidProtocol::Report,
             device_descriptor,
             config_descriptor,
             hid_descriptor,
@@ -281,12 +256,9 @@ impl UsbHidPassthrough {
         }
     }
 
-    pub fn configured(&self) -> bool {
-        self.configuration != 0
-    }
-
     pub fn push_input_report(&mut self, report_id: u8, data: &[u8]) {
-        let mut out = Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
+        let mut out =
+            Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
         if report_id != 0 {
             out.push(report_id);
         }
@@ -298,10 +270,6 @@ impl UsbHidPassthrough {
             self.pending_input_reports.pop_front();
         }
         self.pending_input_reports.push_back(out);
-    }
-
-    pub fn pop_output_report(&mut self) -> Option<UsbHidPassthroughOutputReport> {
-        self.pending_output_reports.pop_front()
     }
 
     fn push_output_report(&mut self, report: UsbHidPassthroughOutputReport) {
@@ -326,6 +294,20 @@ impl UsbHidPassthrough {
         self.pending_output_reports.push_back(report);
     }
 
+    fn set_max_pending_input_reports(&mut self, max: usize) {
+        self.max_pending_input_reports = max.max(1);
+        while self.pending_input_reports.len() > self.max_pending_input_reports {
+            self.pending_input_reports.pop_front();
+        }
+    }
+
+    fn set_max_pending_output_reports(&mut self, max: usize) {
+        self.max_pending_output_reports = max.max(1);
+        while self.pending_output_reports.len() > self.max_pending_output_reports {
+            self.pending_output_reports.pop_front();
+        }
+    }
+
     fn report_length(&self, report_type: u8, report_id: u8) -> Option<usize> {
         match report_type {
             1 => self.input_report_lengths.get(&report_id).copied(),
@@ -346,270 +328,35 @@ impl UsbHidPassthrough {
         }
 
         let mut data = vec![0u8; len];
-        if report_id != 0 && !data.is_empty() {
+        if report_id != 0 {
             data[0] = report_id;
         }
         data
     }
 
-    fn finalize_control(&mut self) {
-        if let Some(addr) = self.pending_address.take() {
-            self.address = addr;
-        }
-        if let Some(cfg) = self.pending_configuration.take() {
-            self.configuration = cfg;
-            if self.configuration == 0 {
-                self.pending_input_reports.clear();
-                self.pending_output_reports.clear();
-                self.last_input_reports.clear();
-                self.last_output_reports.clear();
-                self.last_feature_reports.clear();
-            }
-        }
-    }
-
     fn string_descriptor(&self, index: u8) -> Option<Vec<u8>> {
         match index {
-            0 => Some(string_descriptor_langid(0x0409).to_vec()), // en-US
-            1 => Some(self.manufacturer_string_descriptor.clone()),
-            2 => Some(self.product_string_descriptor.clone()),
-            3 => self.serial_string_descriptor.clone(),
+            0 => Some(vec![0x04, USB_DESCRIPTOR_TYPE_STRING, 0x09, 0x04]), // en-US
+            1 => Some(self.manufacturer_string_descriptor.as_ref().to_vec()),
+            2 => Some(self.product_string_descriptor.as_ref().to_vec()),
+            3 => self
+                .serial_string_descriptor
+                .as_ref()
+                .map(|d| d.as_ref().to_vec()),
             _ => None,
-        }
-    }
-
-    fn get_descriptor(&self, desc_type: u8, index: u8) -> Option<Vec<u8>> {
-        match desc_type {
-            DESC_DEVICE => Some(self.device_descriptor.clone()),
-            DESC_CONFIGURATION => Some(self.config_descriptor.clone()),
-            DESC_STRING => self
-                .string_descriptor(index)
-                .or_else(|| Some(vec![0, DESC_STRING])),
-            DESC_HID => Some(self.hid_descriptor.clone()),
-            DESC_REPORT => Some(self.hid_report_descriptor.clone()),
-            _ => None,
-        }
-    }
-
-    fn handle_setup_inner(&mut self, setup: SetupPacket) -> Option<Vec<u8>> {
-        match (setup.request_type, setup.request) {
-            (0x80, REQ_GET_DESCRIPTOR) => {
-                let desc_type = (setup.value >> 8) as u8;
-                let index = (setup.value & 0xFF) as u8;
-                self.get_descriptor(desc_type, index)
-            }
-            (0x81, REQ_GET_DESCRIPTOR) => {
-                if setup.index != 0 {
-                    return None;
-                }
-                let desc_type = (setup.value >> 8) as u8;
-                let index = (setup.value & 0xFF) as u8;
-                self.get_descriptor(desc_type, index)
-            }
-            (0x80, REQ_GET_CONFIGURATION) => {
-                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
-            }
-            (0x80, REQ_GET_STATUS) => {
-                if setup.value != 0 || setup.index != 0 {
-                    return None;
-                }
-                let mut status = 0u16;
-                if self.remote_wakeup_enabled {
-                    status |= 1 << 1;
-                }
-                Some(status.to_le_bytes().to_vec())
-            }
-            (0x81, REQ_GET_STATUS) => (setup.value == 0 && setup.index == 0).then_some(vec![0, 0]),
-            (0x82, REQ_GET_STATUS) => {
-                if setup.value != 0 {
-                    return None;
-                }
-                let halted = if setup.index == u16::from(INTERRUPT_IN_EP_ADDR) {
-                    Some(self.interrupt_in_halted)
-                } else if setup.index == u16::from(INTERRUPT_OUT_EP_ADDR) && self.has_interrupt_out
-                {
-                    Some(self.interrupt_out_halted)
-                } else {
-                    None
-                }?;
-
-                let status: u16 = if halted { 1 } else { 0 };
-                Some(status.to_le_bytes().to_vec())
-            }
-            (0x81, REQ_GET_INTERFACE) => {
-                (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
-            }
-            (0xA1, REQ_HID_GET_REPORT) => {
-                if setup.index != 0 {
-                    return None;
-                }
-                let report_type = (setup.value >> 8) as u8;
-                let report_id = (setup.value & 0xFF) as u8;
-                let data = match report_type {
-                    1 => self
-                        .last_input_reports
-                        .get(&report_id)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            self.default_report(report_type, report_id, setup.length)
-                        }),
-                    2 => self
-                        .last_output_reports
-                        .get(&report_id)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            self.default_report(report_type, report_id, setup.length)
-                        }),
-                    3 => self
-                        .last_feature_reports
-                        .get(&report_id)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            self.default_report(report_type, report_id, setup.length)
-                        }),
-                    _ => return None,
-                };
-                Some(data)
-            }
-            (0xA1, REQ_HID_GET_PROTOCOL) => {
-                (setup.value == 0 && setup.index == 0).then_some(vec![self.protocol])
-            }
-            (0xA1, REQ_HID_GET_IDLE) => {
-                (setup.value == 0 && setup.index == 0).then_some(vec![self.idle_rate])
-            }
-            _ => None,
-        }
-    }
-
-    fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
-        match (setup.request_type, setup.request) {
-            (0x00, REQ_SET_ADDRESS) => {
-                if setup.index != 0 || setup.length != 0 || setup.value > 127 {
-                    return false;
-                }
-                self.pending_address = Some(setup.value as u8);
-                true
-            }
-            (0x00, REQ_SET_CONFIGURATION) => {
-                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
-                    return false;
-                }
-                let cfg = (setup.value & 0xFF) as u8;
-                if cfg > 1 {
-                    return false;
-                }
-                self.pending_configuration = Some(cfg);
-                true
-            }
-            (0x00, REQ_CLEAR_FEATURE) => {
-                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
-                    self.remote_wakeup_enabled = false;
-                    true
-                } else {
-                    false
-                }
-            }
-            (0x00, REQ_SET_FEATURE) => {
-                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
-                    self.remote_wakeup_enabled = true;
-                    true
-                } else {
-                    false
-                }
-            }
-            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && setup.index == 0,
-            (0x02, REQ_CLEAR_FEATURE) => {
-                if setup.value != FEATURE_ENDPOINT_HALT {
-                    return false;
-                }
-                if setup.index == u16::from(INTERRUPT_IN_EP_ADDR) {
-                    self.interrupt_in_halted = false;
-                    return true;
-                }
-                if setup.index == u16::from(INTERRUPT_OUT_EP_ADDR) && self.has_interrupt_out {
-                    self.interrupt_out_halted = false;
-                    return true;
-                }
-                false
-            }
-            (0x02, REQ_SET_FEATURE) => {
-                if setup.value != FEATURE_ENDPOINT_HALT {
-                    return false;
-                }
-                if setup.index == u16::from(INTERRUPT_IN_EP_ADDR) {
-                    self.interrupt_in_halted = true;
-                    return true;
-                }
-                if setup.index == u16::from(INTERRUPT_OUT_EP_ADDR) && self.has_interrupt_out {
-                    self.interrupt_out_halted = true;
-                    return true;
-                }
-                false
-            }
-            (0x21, REQ_HID_SET_IDLE) => {
-                if setup.index != 0 {
-                    return false;
-                }
-                self.idle_rate = (setup.value >> 8) as u8;
-                true
-            }
-            (0x21, REQ_HID_SET_PROTOCOL) => {
-                if setup.index != 0 || (setup.value & 0xFF00) != 0 {
-                    return false;
-                }
-                let protocol = (setup.value & 0xFF) as u8;
-                if protocol > 1 {
-                    return false;
-                }
-                self.protocol = protocol;
-                true
-            }
-            _ => false,
         }
     }
 }
 
-impl Default for UsbHidPassthrough {
-    fn default() -> Self {
-        Self::new(
-            0x1234,
-            0x5678,
-            "Aero".to_string(),
-            "Aero USB HID Passthrough".to_string(),
-            None,
-            Vec::new(),
-            false,
-            None,
-            None,
-            None,
-        )
-    }
-}
-
-impl UsbDevice for UsbHidPassthrough {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn speed(&self) -> UsbSpeed {
-        UsbSpeed::Full
-    }
-
+impl UsbDeviceModel for UsbHidPassthrough {
     fn reset(&mut self) {
         self.address = 0;
-        self.pending_address = None;
         self.configuration = 0;
-        self.pending_configuration = None;
         self.remote_wakeup_enabled = false;
         self.interrupt_in_halted = false;
         self.interrupt_out_halted = false;
-        self.protocol = 1;
         self.idle_rate = 0;
-        self.ep0 = Ep0Control::new();
+        self.protocol = HidProtocol::Report;
         self.pending_input_reports.clear();
         self.pending_output_reports.clear();
         self.last_input_reports.clear();
@@ -617,585 +364,379 @@ impl UsbDevice for UsbHidPassthrough {
         self.last_feature_reports.clear();
     }
 
-    fn address(&self) -> u8 {
-        self.address
-    }
-
-    fn handle_setup(&mut self, setup: SetupPacket) {
-        // A new SETUP packet aborts any in-flight control transfer, so discard side effects that
-        // should only apply if the previous transfer reaches the status stage.
-        self.pending_address = None;
-        self.pending_configuration = None;
-
-        self.ep0.begin(setup);
-
-        let supported = if setup.length == 0 {
-            self.handle_no_data_request(setup)
-        } else if setup.request_type & 0x80 != 0 {
-            if let Some(mut data) = self.handle_setup_inner(setup) {
-                data.truncate(setup.length as usize);
-                self.ep0.in_data = data;
-                true
-            } else {
-                false
-            }
-        } else {
-            // OUT requests with data stage: support SET_REPORT for Output/Feature reports.
-            matches!(
-                (setup.request_type, setup.request),
-                (0x21, REQ_HID_SET_REPORT)
-            ) && setup.index == 0
-        };
-
-        if !supported {
-            self.ep0.stalled = true;
-        }
-    }
-
-    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
-        if ep == INTERRUPT_EP_NUM {
-            if !self.has_interrupt_out {
-                return UsbHandshake::Stall;
-            }
-            if self.configuration == 0 || self.interrupt_out_halted {
-                return UsbHandshake::Stall;
-            }
-
-            let (report_id, payload) = if self.report_ids_in_use {
-                if data.is_empty() {
-                    (0, Vec::new())
-                } else {
-                    (data[0], data[1..].to_vec())
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        match (setup.request_type(), setup.recipient()) {
+            (RequestType::Standard, RequestRecipient::Device) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let mut status: u16 = 0;
+                    if self.remote_wakeup_enabled {
+                        status |= 1 << 1;
+                    }
+                    ControlResponse::Data(clamp_response(
+                        status.to_le_bytes().to_vec(),
+                        setup.w_length,
+                    ))
                 }
-            } else {
-                (0, data.to_vec())
-            };
-
-            self.push_output_report(UsbHidPassthroughOutputReport {
-                report_type: 2, // Output
-                report_id,
-                data: payload,
-            });
-
-            return UsbHandshake::Ack { bytes: data.len() };
-        }
-
-        if ep != 0 {
-            return UsbHandshake::Stall;
-        }
-        if self.ep0.stalled {
-            return UsbHandshake::Stall;
-        }
-
-        match self.ep0.stage {
-            Ep0Stage::DataOut => {
-                self.ep0.out_data.extend_from_slice(data);
-                if self.ep0.out_data.len() >= self.ep0.out_expected {
-                    let setup = self.ep0.setup();
-                    if let (0x21, REQ_HID_SET_REPORT) = (setup.request_type, setup.request) {
-                        let report_type = (setup.value >> 8) as u8;
-                        let report_id = (setup.value & 0xFF) as u8;
-                        if report_type == 2 || report_type == 3 {
+                USB_REQUEST_CLEAR_FEATURE => match setup.w_value {
+                    USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        if setup.request_direction() != RequestDirection::HostToDevice
+                            || setup.w_index != 0
+                            || setup.w_length != 0
+                        {
+                            return ControlResponse::Stall;
+                        }
+                        self.remote_wakeup_enabled = false;
+                        ControlResponse::Ack
+                    }
+                    _ => ControlResponse::Stall,
+                },
+                USB_REQUEST_SET_FEATURE => match setup.w_value {
+                    USB_FEATURE_DEVICE_REMOTE_WAKEUP => {
+                        if setup.request_direction() != RequestDirection::HostToDevice
+                            || setup.w_index != 0
+                            || setup.w_length != 0
+                        {
+                            return ControlResponse::Stall;
+                        }
+                        self.remote_wakeup_enabled = true;
+                        ControlResponse::Ack
+                    }
+                    _ => ControlResponse::Stall,
+                },
+                USB_REQUEST_SET_ADDRESS => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                        || setup.w_length != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value > 127 {
+                        return ControlResponse::Stall;
+                    }
+                    self.address = (setup.w_value & 0x00ff) as u8;
+                    ControlResponse::Ack
+                }
+                USB_REQUEST_GET_DESCRIPTOR => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                        return ControlResponse::Stall;
+                    }
+                    let desc_type = setup.descriptor_type();
+                    let desc_index = setup.descriptor_index();
+                    let data = match desc_type {
+                        USB_DESCRIPTOR_TYPE_DEVICE => {
+                            Some(self.device_descriptor.as_ref().to_vec())
+                        }
+                        USB_DESCRIPTOR_TYPE_CONFIGURATION => {
+                            Some(self.config_descriptor.as_ref().to_vec())
+                        }
+                        USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
+                        _ => None,
+                    };
+                    data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
+                        .unwrap_or(ControlResponse::Stall)
+                }
+                USB_REQUEST_SET_CONFIGURATION => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                        || setup.w_length != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let config = (setup.w_value & 0x00ff) as u8;
+                    if config > 1 {
+                        return ControlResponse::Stall;
+                    }
+                    self.configuration = config;
+                    if self.configuration == 0 {
+                        self.pending_input_reports.clear();
+                        self.pending_output_reports.clear();
+                        self.last_input_reports.clear();
+                        self.last_output_reports.clear();
+                        self.last_feature_reports.clear();
+                    }
+                    ControlResponse::Ack
+                }
+                USB_REQUEST_GET_CONFIGURATION => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![self.configuration], setup.w_length))
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
+                }
+                USB_REQUEST_GET_INTERFACE => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value == 0 && setup.w_index == 0 {
+                        ControlResponse::Data(clamp_response(vec![0], setup.w_length))
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                USB_REQUEST_SET_INTERFACE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_index == 0 && setup.w_value == 0 && setup.w_length == 0 {
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                USB_REQUEST_GET_DESCRIPTOR => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let desc_type = setup.descriptor_type();
+                    let data = match desc_type {
+                        USB_DESCRIPTOR_TYPE_HID_REPORT => {
+                            Some(self.hid_report_descriptor.as_ref().to_vec())
+                        }
+                        USB_DESCRIPTOR_TYPE_HID => Some(self.hid_descriptor.as_ref().to_vec()),
+                        _ => None,
+                    };
+                    data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))
+                        .unwrap_or(ControlResponse::Stall)
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let halted = match setup.w_index as u8 {
+                        INTERRUPT_IN_EP => self.interrupt_in_halted,
+                        INTERRUPT_OUT_EP if self.has_interrupt_out => self.interrupt_out_halted,
+                        _ => return ControlResponse::Stall,
+                    };
+                    let status: u16 = if halted { 1 } else { 0 };
+                    ControlResponse::Data(clamp_response(
+                        status.to_le_bytes().to_vec(),
+                        setup.w_length,
+                    ))
+                }
+                USB_REQUEST_CLEAR_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value != USB_FEATURE_ENDPOINT_HALT {
+                        return ControlResponse::Stall;
+                    }
+                    match setup.w_index as u8 {
+                        INTERRUPT_IN_EP => {
+                            self.interrupt_in_halted = false;
+                            ControlResponse::Ack
+                        }
+                        INTERRUPT_OUT_EP if self.has_interrupt_out => {
+                            self.interrupt_out_halted = false;
+                            ControlResponse::Ack
+                        }
+                        _ => ControlResponse::Stall,
+                    }
+                }
+                USB_REQUEST_SET_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value != USB_FEATURE_ENDPOINT_HALT {
+                        return ControlResponse::Stall;
+                    }
+                    match setup.w_index as u8 {
+                        INTERRUPT_IN_EP => {
+                            self.interrupt_in_halted = true;
+                            ControlResponse::Ack
+                        }
+                        INTERRUPT_OUT_EP if self.has_interrupt_out => {
+                            self.interrupt_out_halted = true;
+                            ControlResponse::Ack
+                        }
+                        _ => ControlResponse::Stall,
+                    }
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Class, RequestRecipient::Interface) => match setup.b_request {
+                HID_REQUEST_GET_REPORT => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let report_type = (setup.w_value >> 8) as u8;
+                    let report_id = (setup.w_value & 0x00ff) as u8;
+                    let data = match report_type {
+                        1 => self
+                            .last_input_reports
+                            .get(&report_id)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                self.default_report(report_type, report_id, setup.w_length)
+                            }),
+                        2 => self
+                            .last_output_reports
+                            .get(&report_id)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                self.default_report(report_type, report_id, setup.w_length)
+                            }),
+                        3 => self
+                            .last_feature_reports
+                            .get(&report_id)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                self.default_report(report_type, report_id, setup.w_length)
+                            }),
+                        _ => return ControlResponse::Stall,
+                    };
+                    ControlResponse::Data(clamp_response(data, setup.w_length))
+                }
+                HID_REQUEST_SET_REPORT => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let report_type = (setup.w_value >> 8) as u8;
+                    let report_id = (setup.w_value & 0x00ff) as u8;
+                    match (report_type, data_stage) {
+                        (2 | 3, Some(data)) => {
                             let payload = if report_id != 0 {
                                 self.report_length(report_type, report_id)
-                                    .filter(|&expected_len| expected_len == self.ep0.out_data.len())
-                                    .and_then(|_| self.ep0.out_data.first().copied())
+                                    .filter(|&expected_len| expected_len == data.len())
+                                    .and_then(|_| data.first().copied())
                                     .filter(|&first| first == report_id)
-                                    .map(|_| self.ep0.out_data[1..].to_vec())
-                                    .unwrap_or_else(|| self.ep0.out_data.clone())
+                                    .map(|_| data[1..].to_vec())
+                                    .unwrap_or_else(|| data.to_vec())
                             } else {
-                                self.ep0.out_data.clone()
+                                data.to_vec()
                             };
                             self.push_output_report(UsbHidPassthroughOutputReport {
                                 report_type,
                                 report_id,
                                 data: payload,
                             });
+                            ControlResponse::Ack
                         }
+                        _ => ControlResponse::Stall,
                     }
-                    self.ep0.stage = Ep0Stage::StatusIn;
                 }
-                UsbHandshake::Ack { bytes: data.len() }
-            }
-            Ep0Stage::StatusOut => {
-                self.ep0.stage = Ep0Stage::Idle;
-                self.ep0.setup = None;
-                self.finalize_control();
-                UsbHandshake::Ack { bytes: 0 }
-            }
-            _ => UsbHandshake::Nak,
+                HID_REQUEST_GET_IDLE => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![self.idle_rate], setup.w_length))
+                }
+                HID_REQUEST_SET_IDLE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    self.idle_rate = (setup.w_value >> 8) as u8;
+                    ControlResponse::Ack
+                }
+                HID_REQUEST_GET_PROTOCOL => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![self.protocol as u8], setup.w_length))
+                }
+                HID_REQUEST_SET_PROTOCOL => {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    if let Some(proto) = HidProtocol::from_u16(setup.w_value) {
+                        self.protocol = proto;
+                        ControlResponse::Ack
+                    } else {
+                        ControlResponse::Stall
+                    }
+                }
+                _ => ControlResponse::Stall,
+            },
+            _ => ControlResponse::Stall,
         }
     }
 
-    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
-        if ep == INTERRUPT_EP_NUM {
-            if self.configuration == 0 {
-                return UsbHandshake::Nak;
-            }
-            if self.interrupt_in_halted {
-                return UsbHandshake::Stall;
-            }
-            let Some(report) = self.pending_input_reports.pop_front() else {
-                return UsbHandshake::Nak;
-            };
-            let len = buf.len().min(report.len());
-            buf[..len].copy_from_slice(&report[..len]);
-            return UsbHandshake::Ack { bytes: len };
+    fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
+        if ep_addr != INTERRUPT_IN_EP {
+            return UsbInResult::Stall;
         }
-
-        if ep != 0 {
-            return UsbHandshake::Stall;
+        if self.configuration == 0 {
+            return UsbInResult::Nak;
         }
-        if self.ep0.stalled {
-            return UsbHandshake::Stall;
+        if self.interrupt_in_halted {
+            return UsbInResult::Stall;
         }
-
-        match self.ep0.stage {
-            Ep0Stage::DataIn => {
-                let remaining = self.ep0.in_data.len().saturating_sub(self.ep0.in_offset);
-                let len = buf.len().min(remaining);
-                buf[..len].copy_from_slice(
-                    &self.ep0.in_data[self.ep0.in_offset..self.ep0.in_offset + len],
-                );
-                self.ep0.in_offset += len;
-                if self.ep0.in_offset >= self.ep0.in_data.len() {
-                    self.ep0.stage = Ep0Stage::StatusOut;
-                }
-                UsbHandshake::Ack { bytes: len }
-            }
-            Ep0Stage::StatusIn => {
-                self.ep0.stage = Ep0Stage::Idle;
-                self.ep0.setup = None;
-                self.finalize_control();
-                UsbHandshake::Ack { bytes: 0 }
-            }
-            _ => UsbHandshake::Nak,
+        match self.pending_input_reports.pop_front() {
+            Some(data) => UsbInResult::Data(data),
+            None => UsbInResult::Nak,
         }
     }
-}
 
-impl IoSnapshot for UsbHidPassthrough {
-    const DEVICE_ID: [u8; 4] = *b"HIDP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
-
-    fn save_state(&self) -> Vec<u8> {
-        const TAG_ADDRESS: u16 = 1;
-        const TAG_PENDING_ADDRESS: u16 = 2;
-        const TAG_CONFIGURATION: u16 = 3;
-        const TAG_PENDING_CONFIGURATION: u16 = 4;
-        const TAG_REMOTE_WAKEUP: u16 = 5;
-        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
-        const TAG_INTERRUPT_OUT_HALTED: u16 = 7;
-        const TAG_PROTOCOL: u16 = 8;
-        const TAG_IDLE_RATE: u16 = 9;
-        const TAG_EP0: u16 = 10;
-        const TAG_PENDING_INPUT_REPORTS: u16 = 11;
-        const TAG_LAST_INPUT_REPORTS: u16 = 12;
-        const TAG_LAST_OUTPUT_REPORTS: u16 = 13;
-        const TAG_LAST_FEATURE_REPORTS: u16 = 14;
-        const TAG_HAS_INTERRUPT_OUT: u16 = 15;
-        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 16;
-        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 17;
-        const TAG_DESCRIPTORS: u16 = 18;
-        const TAG_PENDING_OUTPUT_REPORTS: u16 = 19;
-
-        fn encode_report_map(map: &BTreeMap<u8, Vec<u8>>) -> Vec<u8> {
-            let mut enc = Encoder::new().u32(map.len() as u32);
-            for (&report_id, data) in map {
-                enc = enc.u8(report_id).u32(data.len() as u32).bytes(data);
-            }
-            enc.finish()
+    fn handle_interrupt_out(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        if ep != INTERRUPT_OUT_EP || !self.has_interrupt_out {
+            return UsbOutResult::Stall;
+        }
+        if self.configuration == 0 || self.interrupt_out_halted {
+            return UsbOutResult::Stall;
         }
 
-        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-
-        w.field_u8(TAG_ADDRESS, self.address);
-        if let Some(addr) = self.pending_address {
-            w.field_u8(TAG_PENDING_ADDRESS, addr);
-        }
-        w.field_u8(TAG_CONFIGURATION, self.configuration);
-        if let Some(cfg) = self.pending_configuration {
-            w.field_u8(TAG_PENDING_CONFIGURATION, cfg);
-        }
-        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
-        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
-        w.field_bool(TAG_INTERRUPT_OUT_HALTED, self.interrupt_out_halted);
-        w.field_u8(TAG_PROTOCOL, self.protocol);
-        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
-
-        let stage = match self.ep0.stage {
-            Ep0Stage::Idle => 0u8,
-            Ep0Stage::DataIn => 1,
-            Ep0Stage::DataOut => 2,
-            Ep0Stage::StatusIn => 3,
-            Ep0Stage::StatusOut => 4,
-        };
-        let mut ep0 = Encoder::new().u8(stage).bool(self.ep0.setup.is_some());
-        if let Some(setup) = self.ep0.setup {
-            ep0 = ep0
-                .u8(setup.request_type)
-                .u8(setup.request)
-                .u16(setup.value)
-                .u16(setup.index)
-                .u16(setup.length);
-        }
-        ep0 = ep0
-            .vec_u8(&self.ep0.in_data)
-            .u32(self.ep0.in_offset as u32)
-            .u32(self.ep0.out_expected as u32)
-            .vec_u8(&self.ep0.out_data)
-            .bool(self.ep0.stalled);
-        w.field_bytes(TAG_EP0, ep0.finish());
-
-        let pending: Vec<Vec<u8>> = self.pending_input_reports.iter().cloned().collect();
-        w.field_bytes(
-            TAG_PENDING_INPUT_REPORTS,
-            Encoder::new().vec_bytes(&pending).finish(),
-        );
-
-        w.field_bytes(
-            TAG_LAST_INPUT_REPORTS,
-            encode_report_map(&self.last_input_reports),
-        );
-        w.field_bytes(
-            TAG_LAST_OUTPUT_REPORTS,
-            encode_report_map(&self.last_output_reports),
-        );
-        w.field_bytes(
-            TAG_LAST_FEATURE_REPORTS,
-            encode_report_map(&self.last_feature_reports),
-        );
-
-        w.field_bool(TAG_HAS_INTERRUPT_OUT, self.has_interrupt_out);
-        w.field_u32(
-            TAG_MAX_PENDING_INPUT_REPORTS,
-            self.max_pending_input_reports as u32,
-        );
-        w.field_u32(
-            TAG_MAX_PENDING_OUTPUT_REPORTS,
-            self.max_pending_output_reports as u32,
-        );
-
-        w.field_bytes(
-            TAG_DESCRIPTORS,
-            Encoder::new()
-                .u32(self.device_descriptor.len() as u32)
-                .bytes(&self.device_descriptor)
-                .u32(self.config_descriptor.len() as u32)
-                .bytes(&self.config_descriptor)
-                .u32(self.hid_descriptor.len() as u32)
-                .bytes(&self.hid_descriptor)
-                .u32(self.hid_report_descriptor.len() as u32)
-                .bytes(&self.hid_report_descriptor)
-                .u32(self.manufacturer_string_descriptor.len() as u32)
-                .bytes(&self.manufacturer_string_descriptor)
-                .u32(self.product_string_descriptor.len() as u32)
-                .bytes(&self.product_string_descriptor)
-                .bool(self.serial_string_descriptor.is_some())
-                .u32(
-                    self.serial_string_descriptor
-                        .as_deref()
-                        .map_or(0, |v| v.len()) as u32,
-                )
-                .bytes(self.serial_string_descriptor.as_deref().unwrap_or_default())
-                .finish(),
-        );
-
-        let mut pending_out = Encoder::new().u32(self.pending_output_reports.len() as u32);
-        for report in &self.pending_output_reports {
-            pending_out = pending_out
-                .u8(report.report_type)
-                .u8(report.report_id)
-                .u32(report.data.len() as u32)
-                .bytes(&report.data);
-        }
-        w.field_bytes(TAG_PENDING_OUTPUT_REPORTS, pending_out.finish());
-
-        w.finish()
-    }
-
-    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        const TAG_ADDRESS: u16 = 1;
-        const TAG_PENDING_ADDRESS: u16 = 2;
-        const TAG_CONFIGURATION: u16 = 3;
-        const TAG_PENDING_CONFIGURATION: u16 = 4;
-        const TAG_REMOTE_WAKEUP: u16 = 5;
-        const TAG_INTERRUPT_IN_HALTED: u16 = 6;
-        const TAG_INTERRUPT_OUT_HALTED: u16 = 7;
-        const TAG_PROTOCOL: u16 = 8;
-        const TAG_IDLE_RATE: u16 = 9;
-        const TAG_EP0: u16 = 10;
-        const TAG_PENDING_INPUT_REPORTS: u16 = 11;
-        const TAG_LAST_INPUT_REPORTS: u16 = 12;
-        const TAG_LAST_OUTPUT_REPORTS: u16 = 13;
-        const TAG_LAST_FEATURE_REPORTS: u16 = 14;
-        const TAG_HAS_INTERRUPT_OUT: u16 = 15;
-        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 16;
-        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 17;
-        const TAG_DESCRIPTORS: u16 = 18;
-        const TAG_PENDING_OUTPUT_REPORTS: u16 = 19;
-
-        const MAX_DESCRIPTOR_BYTES: usize = 256 * 1024;
-        const MAX_REPORT_DESCRIPTOR_BYTES: usize = 128 * 1024;
-        const MAX_STRING_DESCRIPTOR_BYTES: usize = 16 * 1024;
-        const MAX_EP0_DATA_BYTES: usize = 128 * 1024;
-        const MAX_REPORT_QUEUE_BYTES: usize = 256 * 1024;
-        const MAX_PENDING_REPORTS: usize = 4096;
-
-        fn decode_report_map(map: &mut BTreeMap<u8, Vec<u8>>, buf: &[u8]) -> SnapshotResult<()> {
-            const MAX_ENTRIES: usize = 256;
-            const MAX_REPORT_BYTES: usize = 128 * 1024;
-
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            if count > MAX_ENTRIES {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "too many report entries",
-                ));
-            }
-            map.clear();
-            for _ in 0..count {
-                let report_id = d.u8()?;
-                let len = d.u32()? as usize;
-                if len > MAX_REPORT_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding("report too large"));
-                }
-                let data = d.bytes(len)?.to_vec();
-                map.insert(report_id, data);
-            }
-            d.finish()?;
-            Ok(())
-        }
-
-        fn dec_blob(d: &mut Decoder<'_>, max: usize) -> SnapshotResult<Vec<u8>> {
-            let len = d.u32()? as usize;
-            if len > max {
-                return Err(SnapshotError::InvalidFieldEncoding("descriptor too large"));
-            }
-            Ok(d.bytes(len)?.to_vec())
-        }
-
-        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
-        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
-
-        // Start from a clean runtime state; descriptor/static configuration is left intact.
-        <Self as UsbDevice>::reset(self);
-
-        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
-        self.pending_address = r.u8(TAG_PENDING_ADDRESS)?;
-        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
-        self.pending_configuration = r.u8(TAG_PENDING_CONFIGURATION)?;
-        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
-        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
-        self.interrupt_out_halted = r.bool(TAG_INTERRUPT_OUT_HALTED)?.unwrap_or(false);
-        self.protocol = r.u8(TAG_PROTOCOL)?.unwrap_or(1);
-        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
-
-        if self.address > 127 {
-            return Err(SnapshotError::InvalidFieldEncoding("invalid usb address"));
-        }
-        if self.pending_address.is_some_and(|v| v > 127) {
-            return Err(SnapshotError::InvalidFieldEncoding(
-                "invalid pending usb address",
-            ));
-        }
-        if self.configuration > 1 {
-            return Err(SnapshotError::InvalidFieldEncoding("invalid configuration"));
-        }
-        if self.pending_configuration.is_some_and(|v| v > 1) {
-            return Err(SnapshotError::InvalidFieldEncoding(
-                "invalid pending usb configuration",
-            ));
-        }
-        if self.protocol > 1 {
-            return Err(SnapshotError::InvalidFieldEncoding("invalid protocol"));
-        }
-
-        if let Some(v) = r.bool(TAG_HAS_INTERRUPT_OUT)? {
-            self.has_interrupt_out = v;
-        }
-        if let Some(v) = r.u32(TAG_MAX_PENDING_INPUT_REPORTS)? {
-            self.max_pending_input_reports = (v as usize).clamp(1, MAX_PENDING_REPORTS);
-        }
-        if let Some(v) = r.u32(TAG_MAX_PENDING_OUTPUT_REPORTS)? {
-            self.max_pending_output_reports = (v as usize).clamp(1, MAX_PENDING_REPORTS);
-        }
-
-        if let Some(buf) = r.bytes(TAG_DESCRIPTORS) {
-            let mut d = Decoder::new(buf);
-            self.device_descriptor = dec_blob(&mut d, MAX_DESCRIPTOR_BYTES.min(1024))?;
-            self.config_descriptor = dec_blob(&mut d, MAX_DESCRIPTOR_BYTES)?;
-            self.hid_descriptor = dec_blob(&mut d, MAX_DESCRIPTOR_BYTES.min(1024))?;
-            self.hid_report_descriptor = dec_blob(&mut d, MAX_REPORT_DESCRIPTOR_BYTES)?;
-            self.manufacturer_string_descriptor = dec_blob(&mut d, MAX_STRING_DESCRIPTOR_BYTES)?;
-            self.product_string_descriptor = dec_blob(&mut d, MAX_STRING_DESCRIPTOR_BYTES)?;
-            let has_serial = d.bool()?;
-            let serial = dec_blob(&mut d, MAX_STRING_DESCRIPTOR_BYTES)?;
-            self.serial_string_descriptor = has_serial.then_some(serial);
-            d.finish()?;
-
-            let (
-                report_ids_in_use,
-                input_report_lengths,
-                output_report_lengths,
-                feature_report_lengths,
-            ) = report_descriptor_report_lengths(&self.hid_report_descriptor);
-            self.report_ids_in_use = report_ids_in_use;
-            self.input_report_lengths = input_report_lengths;
-            self.output_report_lengths = output_report_lengths;
-            self.feature_report_lengths = feature_report_lengths;
-        }
-
-        if let Some(buf) = r.bytes(TAG_EP0) {
-            let mut d = Decoder::new(buf);
-            let stage = match d.u8()? {
-                0 => Ep0Stage::Idle,
-                1 => Ep0Stage::DataIn,
-                2 => Ep0Stage::DataOut,
-                3 => Ep0Stage::StatusIn,
-                4 => Ep0Stage::StatusOut,
-                _ => return Err(SnapshotError::InvalidFieldEncoding("ep0 stage")),
-            };
-            let has_setup = d.bool()?;
-            let setup = if has_setup {
-                Some(SetupPacket {
-                    request_type: d.u8()?,
-                    request: d.u8()?,
-                    value: d.u16()?,
-                    index: d.u16()?,
-                    length: d.u16()?,
-                })
+        let (report_id, payload) = if self.report_ids_in_use {
+            if data.is_empty() {
+                (0, Vec::new())
             } else {
-                None
-            };
-            let in_len = d.u32()? as usize;
-            if in_len > MAX_EP0_DATA_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 in_data too large"));
+                (data[0], data[1..].to_vec())
             }
-            let in_data = d.bytes(in_len)?.to_vec();
-            let in_offset = d.u32()? as usize;
-            if in_offset > in_data.len() {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 in_offset"));
-            }
-            if stage != Ep0Stage::Idle && setup.is_none() {
-                return Err(SnapshotError::InvalidFieldEncoding("ep0 setup"));
-            }
-            let out_expected = d.u32()? as usize;
-            if out_expected > MAX_EP0_DATA_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "ep0 out_expected too large",
-                ));
-            }
-            let out_len = d.u32()? as usize;
-            if out_len > MAX_EP0_DATA_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "ep0 out_data too large",
-                ));
-            }
-            let out_data = d.bytes(out_len)?.to_vec();
-            if out_data.len() > out_expected {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "ep0 out_data too large",
-                ));
-            }
-            let stalled = d.bool()?;
-            d.finish()?;
+        } else {
+            (0, data.to_vec())
+        };
 
-            self.ep0.stage = stage;
-            self.ep0.setup = setup;
-            self.ep0.in_data = in_data;
-            self.ep0.in_offset = in_offset;
-            self.ep0.out_expected = out_expected;
-            self.ep0.out_data = out_data;
-            self.ep0.stalled = stalled;
-        }
-
-        self.pending_input_reports.clear();
-        if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            if count > MAX_PENDING_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "too many input reports",
-                ));
-            }
-
-            let drop = count.saturating_sub(self.max_pending_input_reports);
-            let mut total_bytes = 0usize;
-            for idx in 0..count {
-                let len = d.u32()? as usize;
-                if len > MAX_EP0_DATA_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding(
-                        "input report too large",
-                    ));
-                }
-                let bytes = d.bytes(len)?;
-                if idx < drop {
-                    continue;
-                }
-                total_bytes = total_bytes.saturating_add(len);
-                if total_bytes > MAX_REPORT_QUEUE_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding(
-                        "input report queue too large",
-                    ));
-                }
-                self.pending_input_reports.push_back(bytes.to_vec());
-            }
-            d.finish()?;
-        }
-
-        self.pending_output_reports.clear();
-        if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT_REPORTS) {
-            let mut d = Decoder::new(buf);
-            let count = d.u32()? as usize;
-            if count > MAX_PENDING_REPORTS {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "too many output reports",
-                ));
-            }
-
-            let drop = count.saturating_sub(self.max_pending_output_reports);
-            let mut total_bytes = 0usize;
-            for idx in 0..count {
-                let report_type = d.u8()?;
-                let report_id = d.u8()?;
-                let len = d.u32()? as usize;
-                if len > MAX_EP0_DATA_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding(
-                        "output report too large",
-                    ));
-                }
-                let data = d.bytes(len)?;
-                if idx < drop {
-                    continue;
-                }
-                total_bytes = total_bytes.saturating_add(len);
-                if total_bytes > MAX_REPORT_QUEUE_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding(
-                        "output report queue too large",
-                    ));
-                }
-                self.pending_output_reports
-                    .push_back(UsbHidPassthroughOutputReport {
-                        report_type,
-                        report_id,
-                        data: data.to_vec(),
-                    });
-            }
-            d.finish()?;
-        }
-
-        if let Some(buf) = r.bytes(TAG_LAST_INPUT_REPORTS) {
-            decode_report_map(&mut self.last_input_reports, buf)?;
-        }
-        if let Some(buf) = r.bytes(TAG_LAST_OUTPUT_REPORTS) {
-            decode_report_map(&mut self.last_output_reports, buf)?;
-        }
-        if let Some(buf) = r.bytes(TAG_LAST_FEATURE_REPORTS) {
-            decode_report_map(&mut self.last_feature_reports, buf)?;
-        }
-
-        Ok(())
+        self.push_output_report(UsbHidPassthroughOutputReport {
+            report_type: 2, // Output
+            report_id,
+            data: payload,
+        });
+        UsbOutResult::Ack
     }
 }
 
@@ -1227,7 +768,7 @@ fn build_device_descriptor(
     let mut out = Vec::with_capacity(18);
     out.extend_from_slice(&[
         0x12, // bLength
-        DESC_DEVICE,
+        USB_DESCRIPTOR_TYPE_DEVICE,
         0x00,
         0x02,             // bcdUSB (2.00)
         0x00,             // bDeviceClass (per interface)
@@ -1247,16 +788,16 @@ fn build_device_descriptor(
 }
 
 fn build_hid_descriptor(report_descriptor: &[u8]) -> Vec<u8> {
-    let report_len = u16::try_from(report_descriptor.len()).unwrap_or(u16::MAX);
+    let report_len = report_descriptor.len() as u16;
     let mut out = Vec::with_capacity(9);
     out.extend_from_slice(&[
-        0x09, // bLength
-        DESC_HID,
+        0x09,                    // bLength
+        USB_DESCRIPTOR_TYPE_HID, // bDescriptorType
         0x11,
-        0x01, // bcdHID (1.11)
-        0x00, // bCountryCode
-        0x01, // bNumDescriptors
-        DESC_REPORT,
+        0x01,                           // bcdHID (1.11)
+        0x00,                           // bCountryCode
+        0x01,                           // bNumDescriptors
+        USB_DESCRIPTOR_TYPE_HID_REPORT, // bDescriptorType (Report)
     ]);
     out.extend_from_slice(&report_len.to_le_bytes());
     debug_assert_eq!(out.len(), 9);
@@ -1278,7 +819,7 @@ fn build_config_descriptor(
     let mut out = Vec::with_capacity(total_len as usize);
     out.extend_from_slice(&[
         0x09, // bLength
-        DESC_CONFIGURATION,
+        USB_DESCRIPTOR_TYPE_CONFIGURATION,
     ]);
     out.extend_from_slice(&total_len.to_le_bytes()); // wTotalLength
     out.extend_from_slice(&[
@@ -1289,7 +830,7 @@ fn build_config_descriptor(
         50,   // bMaxPower (100mA)
         // Interface descriptor
         0x09, // bLength
-        DESC_INTERFACE,
+        super::USB_DESCRIPTOR_TYPE_INTERFACE,
         0x00,          // bInterfaceNumber
         0x00,          // bAlternateSetting
         num_endpoints, // bNumEndpoints
@@ -1301,9 +842,9 @@ fn build_config_descriptor(
     out.extend_from_slice(hid_descriptor);
     out.extend_from_slice(&[
         0x07, // bLength
-        DESC_ENDPOINT,
-        INTERRUPT_IN_EP_ADDR, // bEndpointAddress
-        0x03,                 // bmAttributes (Interrupt)
+        super::USB_DESCRIPTOR_TYPE_ENDPOINT,
+        INTERRUPT_IN_EP, // bEndpointAddress
+        0x03,            // bmAttributes (Interrupt)
     ]);
     out.extend_from_slice(&max_packet_size.to_le_bytes()); // wMaxPacketSize
     out.push(0x0a); // bInterval (10ms)
@@ -1311,9 +852,9 @@ fn build_config_descriptor(
     if has_interrupt_out {
         out.extend_from_slice(&[
             0x07, // bLength
-            DESC_ENDPOINT,
-            INTERRUPT_OUT_EP_ADDR, // bEndpointAddress
-            0x03,                  // bmAttributes (Interrupt)
+            super::USB_DESCRIPTOR_TYPE_ENDPOINT,
+            INTERRUPT_OUT_EP, // bEndpointAddress
+            0x03,             // bmAttributes (Interrupt)
         ]);
         out.extend_from_slice(&max_packet_size.to_le_bytes()); // wMaxPacketSize
         out.push(0x0a); // bInterval (10ms)
@@ -1326,13 +867,14 @@ fn build_config_descriptor(
 fn report_descriptor_report_lengths(
     report_descriptor_bytes: &[u8],
 ) -> ReportDescriptorReportLengths {
-    let Ok(collections) = report_descriptor::parse_report_descriptor(report_descriptor_bytes)
-    else {
+    let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
+        let (report_ids_in_use, input_bits, output_bits, feature_bits) =
+            scan_report_descriptor_bits(report_descriptor_bytes);
         return (
-            report_descriptor_uses_report_ids(report_descriptor_bytes),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
+            report_ids_in_use,
+            bits_to_report_lengths(&input_bits),
+            bits_to_report_lengths(&output_bits),
+            bits_to_report_lengths(&feature_bits),
         );
     };
 
@@ -1341,7 +883,7 @@ fn report_descriptor_report_lengths(
     let mut output_bits: BTreeMap<u8, u64> = BTreeMap::new();
     let mut feature_bits: BTreeMap<u8, u64> = BTreeMap::new();
 
-    for collection in &collections {
+    for collection in &parsed {
         accumulate_report_bits(
             collection,
             &mut report_ids_in_use,
@@ -1365,7 +907,6 @@ type ReportDescriptorReportLengths = (
     BTreeMap<u8, usize>,
     BTreeMap<u8, usize>,
 );
-
 fn bits_to_report_lengths(bits: &BTreeMap<u8, u64>) -> BTreeMap<u8, usize> {
     let mut out = BTreeMap::new();
     for (&report_id, &total_bits) in bits {
@@ -1428,24 +969,68 @@ fn accumulate_report_bits(
 }
 
 fn add_bits(map: &mut BTreeMap<u8, u64>, report_id: u8, bits: u64) {
-    let entry = map.entry(report_id).or_insert(0);
-    *entry = entry.saturating_add(bits);
+    map.entry(report_id)
+        .and_modify(|v| *v = v.saturating_add(bits))
+        .or_insert(bits);
 }
 
 fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
     report
         .items
         .iter()
-        .map(|item| u64::from(item.bit_len()))
+        .map(|item| u64::from(item.report_size).saturating_mul(u64::from(item.report_count)))
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
-fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
+#[derive(Debug, Clone, Copy)]
+struct ScanGlobalState {
+    report_id: u32,
+    report_size: u32,
+    report_count: u32,
+}
+
+impl Default for ScanGlobalState {
+    fn default() -> Self {
+        Self {
+            report_id: 0,
+            report_size: 0,
+            report_count: 0,
+        }
+    }
+}
+
+fn scan_parse_unsigned(data: &[u8]) -> u32 {
+    match data.len() {
+        0 => 0,
+        1 => data[0] as u32,
+        2 => u16::from_le_bytes([data[0], data[1]]) as u32,
+        4 => u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
+        _ => 0,
+    }
+}
+
+fn scan_report_descriptor_bits(
+    report_descriptor: &[u8],
+) -> (
+    bool,
+    BTreeMap<u8, u64>,
+    BTreeMap<u8, u64>,
+    BTreeMap<u8, u64>,
+) {
+    let mut global = ScanGlobalState::default();
+    let mut global_stack: Vec<ScanGlobalState> = Vec::new();
+
+    let mut report_ids_in_use = false;
+    let mut input_bits: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut output_bits: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut feature_bits: BTreeMap<u8, u64> = BTreeMap::new();
+
     let mut i = 0usize;
     while i < report_descriptor.len() {
-        let b = report_descriptor[i];
+        let prefix = report_descriptor[i];
         i += 1;
-        if b == 0xFE {
+
+        if prefix == 0xFE {
             // Long item: bSize, bTag, data...
             if i + 2 > report_descriptor.len() {
                 break;
@@ -1456,7 +1041,7 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
             continue;
         }
 
-        let size = match b & 0x03 {
+        let size = match prefix & 0x03 {
             0 => 0usize,
             1 => 1usize,
             2 => 2usize,
@@ -1464,80 +1049,815 @@ fn report_descriptor_uses_report_ids(report_descriptor: &[u8]) -> bool {
             _ => 0usize,
         };
 
-        // Global item, tag 8 = Report ID.
-        if b & 0xFC == 0x84 {
-            if size == 0 {
-                return true;
-            }
-            if i + size > report_descriptor.len() {
-                break;
-            }
-            let mut value: u32 = 0;
-            for (shift, byte) in report_descriptor[i..i + size].iter().enumerate() {
-                value |= (*byte as u32) << (shift * 8);
-            }
-            if value != 0 {
-                return true;
-            }
+        if i + size > report_descriptor.len() {
+            break;
         }
 
-        i = i.saturating_add(size);
+        let item_type = (prefix >> 2) & 0x03;
+        let tag = (prefix >> 4) & 0x0F;
+
+        let data = &report_descriptor[i..i + size];
+        i += size;
+
+        match (item_type, tag) {
+            // Global items.
+            (1, 7) => global.report_size = scan_parse_unsigned(data),
+            (1, 9) => global.report_count = scan_parse_unsigned(data),
+            (1, 8) => {
+                global.report_id = scan_parse_unsigned(data);
+                if global.report_id != 0 {
+                    report_ids_in_use = true;
+                }
+            }
+            (1, 10) => {
+                // Push
+                if data.is_empty() {
+                    global_stack.push(global);
+                }
+            }
+            (1, 11) => {
+                // Pop
+                if data.is_empty() {
+                    if let Some(prev) = global_stack.pop() {
+                        global = prev;
+                    }
+                }
+            }
+            // Main items: Input / Output / Feature.
+            (0, 8) | (0, 9) | (0, 11) => {
+                let Ok(report_id) = u8::try_from(global.report_id) else {
+                    report_ids_in_use = true;
+                    continue;
+                };
+                let bits =
+                    u64::from(global.report_size).saturating_mul(u64::from(global.report_count));
+                match tag {
+                    8 => add_bits(&mut input_bits, report_id, bits),
+                    9 => add_bits(&mut output_bits, report_id, bits),
+                    11 => add_bits(&mut feature_bits, report_id, bits),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
-    false
+
+    (report_ids_in_use, input_bits, output_bits, feature_bits)
 }
 
-/// Shared `Rc<RefCell<_>>` wrapper for attaching [`UsbHidPassthrough`] devices to a [`UsbBus`]
-/// while keeping a separate host-side handle.
-#[derive(Clone)]
-pub struct SharedUsbHidPassthroughDevice(pub Rc<RefCell<UsbHidPassthrough>>);
-
-impl UsbDevice for SharedUsbHidPassthroughDevice {
-    fn as_any(&self) -> &dyn Any {
-        self
+fn encode_report_map(map: &BTreeMap<u8, Vec<u8>>) -> Vec<u8> {
+    let mut enc = Encoder::new().u32(map.len() as u32);
+    for (&report_id, data) in map {
+        enc = enc.u8(report_id).u32(data.len() as u32).bytes(data);
     }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn speed(&self) -> UsbSpeed {
-        self.0.borrow().speed()
-    }
-
-    fn tick_1ms(&mut self) {
-        self.0.borrow_mut().tick_1ms();
-    }
-
-    fn reset(&mut self) {
-        self.0.borrow_mut().reset();
-    }
-
-    fn address(&self) -> u8 {
-        self.0.borrow().address()
-    }
-
-    fn handle_setup(&mut self, setup: SetupPacket) {
-        self.0.borrow_mut().handle_setup(setup);
-    }
-
-    fn handle_out(&mut self, ep: u8, data: &[u8]) -> UsbHandshake {
-        self.0.borrow_mut().handle_out(ep, data)
-    }
-
-    fn handle_in(&mut self, ep: u8, buf: &mut [u8]) -> UsbHandshake {
-        self.0.borrow_mut().handle_in(ep, buf)
-    }
+    enc.finish()
 }
 
-impl IoSnapshot for SharedUsbHidPassthroughDevice {
-    const DEVICE_ID: [u8; 4] = <UsbHidPassthrough as IoSnapshot>::DEVICE_ID;
-    const DEVICE_VERSION: SnapshotVersion = <UsbHidPassthrough as IoSnapshot>::DEVICE_VERSION;
+fn decode_report_map(
+    map: &mut BTreeMap<u8, Vec<u8>>,
+    buf: &[u8],
+    what: &'static str,
+) -> SnapshotResult<()> {
+    const MAX_REPORTS: usize = 1024;
+    const MAX_REPORT_BYTES: usize = 1024 * 1024;
+
+    let mut d = Decoder::new(buf);
+    let count = d.u32()? as usize;
+    if count > MAX_REPORTS {
+        return Err(SnapshotError::InvalidFieldEncoding(what));
+    }
+
+    map.clear();
+    for _ in 0..count {
+        let report_id = d.u8()?;
+        let len = d.u32()? as usize;
+        if len > MAX_REPORT_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding(what));
+        }
+        let data = d.bytes(len)?.to_vec();
+        map.insert(report_id, data);
+    }
+    d.finish()?;
+    Ok(())
+}
+
+impl IoSnapshot for UsbHidPassthrough {
+    const DEVICE_ID: [u8; 4] = *b"HIDP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
-        self.0.borrow().save_state()
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 4;
+        const TAG_INTERRUPT_OUT_HALTED: u16 = 5;
+        const TAG_PROTOCOL: u16 = 6;
+        const TAG_IDLE_RATE: u16 = 7;
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 8;
+        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 9;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 10;
+        const TAG_LAST_INPUT_REPORTS: u16 = 11;
+        const TAG_LAST_OUTPUT_REPORTS: u16 = 12;
+        const TAG_LAST_FEATURE_REPORTS: u16 = 13;
+        const TAG_PENDING_OUTPUT_REPORTS: u16 = 14;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        w.field_u8(TAG_ADDRESS, self.address);
+        w.field_u8(TAG_CONFIGURATION, self.configuration);
+        w.field_bool(TAG_REMOTE_WAKEUP, self.remote_wakeup_enabled);
+        w.field_bool(TAG_INTERRUPT_IN_HALTED, self.interrupt_in_halted);
+        w.field_bool(TAG_INTERRUPT_OUT_HALTED, self.interrupt_out_halted);
+        w.field_u8(TAG_PROTOCOL, self.protocol as u8);
+        w.field_u8(TAG_IDLE_RATE, self.idle_rate);
+        w.field_u32(
+            TAG_MAX_PENDING_INPUT_REPORTS,
+            self.max_pending_input_reports as u32,
+        );
+        w.field_u32(
+            TAG_MAX_PENDING_OUTPUT_REPORTS,
+            self.max_pending_output_reports as u32,
+        );
+
+        let pending: Vec<Vec<u8>> = self.pending_input_reports.iter().cloned().collect();
+        w.field_bytes(TAG_PENDING_INPUT_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+        w.field_bytes(TAG_LAST_INPUT_REPORTS, encode_report_map(&self.last_input_reports));
+        w.field_bytes(TAG_LAST_OUTPUT_REPORTS, encode_report_map(&self.last_output_reports));
+        w.field_bytes(TAG_LAST_FEATURE_REPORTS, encode_report_map(&self.last_feature_reports));
+
+        let mut pending_out =
+            Encoder::new().u32(self.pending_output_reports.len() as u32);
+        for report in &self.pending_output_reports {
+            pending_out = pending_out
+                .u8(report.report_type)
+                .u8(report.report_id)
+                .u32(report.data.len() as u32)
+                .bytes(&report.data);
+        }
+        w.field_bytes(TAG_PENDING_OUTPUT_REPORTS, pending_out.finish());
+
+        w.finish()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
-        self.0.borrow_mut().load_state(bytes)
+        const TAG_ADDRESS: u16 = 1;
+        const TAG_CONFIGURATION: u16 = 2;
+        const TAG_REMOTE_WAKEUP: u16 = 3;
+        const TAG_INTERRUPT_IN_HALTED: u16 = 4;
+        const TAG_INTERRUPT_OUT_HALTED: u16 = 5;
+        const TAG_PROTOCOL: u16 = 6;
+        const TAG_IDLE_RATE: u16 = 7;
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 8;
+        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 9;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 10;
+        const TAG_LAST_INPUT_REPORTS: u16 = 11;
+        const TAG_LAST_OUTPUT_REPORTS: u16 = 12;
+        const TAG_LAST_FEATURE_REPORTS: u16 = 13;
+        const TAG_PENDING_OUTPUT_REPORTS: u16 = 14;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Reset guest-visible state while preserving static descriptor/report metadata.
+        self.address = 0;
+        self.configuration = 0;
+        self.remote_wakeup_enabled = false;
+        self.interrupt_in_halted = false;
+        self.interrupt_out_halted = false;
+        self.idle_rate = 0;
+        self.protocol = HidProtocol::Report;
+        self.pending_input_reports.clear();
+        self.pending_output_reports.clear();
+        self.last_input_reports.clear();
+        self.last_output_reports.clear();
+        self.last_feature_reports.clear();
+
+        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
+        self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
+        self.interrupt_out_halted = r.bool(TAG_INTERRUPT_OUT_HALTED)?.unwrap_or(false);
+
+        if let Some(protocol) = r.u8(TAG_PROTOCOL)? {
+            self.protocol = match protocol {
+                0 => HidProtocol::Boot,
+                1 => HidProtocol::Report,
+                _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
+            };
+        }
+
+        self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
+
+        if let Some(max) = r.u32(TAG_MAX_PENDING_INPUT_REPORTS)? {
+            self.max_pending_input_reports = (max as usize).max(1);
+        }
+        if let Some(max) = r.u32(TAG_MAX_PENDING_OUTPUT_REPORTS)? {
+            self.max_pending_output_reports = (max as usize).max(1);
+        }
+
+        if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
+            let mut d = Decoder::new(buf);
+            let reports = d.vec_bytes()?;
+            d.finish()?;
+            if reports.len() > self.max_pending_input_reports {
+                return Err(SnapshotError::InvalidFieldEncoding("pending input reports"));
+            }
+            self.pending_input_reports = reports.into_iter().collect();
+        }
+
+        if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT_REPORTS) {
+            const MAX_REPORT_BYTES: usize = 128 * 1024;
+
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            if count > self.max_pending_output_reports {
+                return Err(SnapshotError::InvalidFieldEncoding("pending output reports"));
+            }
+            for _ in 0..count {
+                let report_type = d.u8()?;
+                let report_id = d.u8()?;
+                let len = d.u32()? as usize;
+                if len > MAX_REPORT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("pending output reports"));
+                }
+                let data = d.bytes(len)?.to_vec();
+                self.pending_output_reports
+                    .push_back(UsbHidPassthroughOutputReport {
+                        report_type,
+                        report_id,
+                        data,
+                    });
+            }
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_LAST_INPUT_REPORTS) {
+            decode_report_map(&mut self.last_input_reports, buf, "last input reports")?;
+        }
+        if let Some(buf) = r.bytes(TAG_LAST_OUTPUT_REPORTS) {
+            decode_report_map(&mut self.last_output_reports, buf, "last output reports")?;
+        }
+        if let Some(buf) = r.bytes(TAG_LAST_FEATURE_REPORTS) {
+            decode_report_map(&mut self.last_feature_reports, buf, "last feature reports")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl IoSnapshot for UsbHidPassthroughHandle {
+    const DEVICE_ID: [u8; 4] = UsbHidPassthrough::DEVICE_ID;
+    const DEVICE_VERSION: SnapshotVersion = UsbHidPassthrough::DEVICE_VERSION;
+
+    fn save_state(&self) -> Vec<u8> {
+        self.inner.borrow().save_state()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        self.inner.borrow_mut().load_state(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn w_le(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+    }
+
+    fn configure_device(dev: &mut UsbHidPassthroughHandle) {
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_CONFIGURATION,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+    }
+
+    fn sample_report_descriptor_with_ids() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x01, // Report ID (1)
+            0x09, 0x00, // Usage (Undefined)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xff, 0x00, // Logical Maximum (255)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x04, // Report Count (4)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
+    fn sample_report_descriptor_with_unsupported_item() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x01, // Report ID (1)
+            0x09, 0x00, // Usage (Undefined)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xff, 0x00, // Logical Maximum (255)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x04, // Report Count (4)
+            0x79, 0x01, // String Index (unsupported by parser)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
+    fn sample_report_descriptor_output_with_id() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x02, // Report ID (2)
+            0x09, 0x00, // Usage (Undefined)
+            0x15, 0x00, // Logical Minimum (0)
+            0x26, 0xff, 0x00, // Logical Maximum (255)
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x02, // Report Count (2)
+            0x91, 0x02, // Output (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
+    #[test]
+    fn descriptors_are_well_formed() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            Some("Serial".into()),
+            report.clone(),
+            true,
+            None,
+            Some(1),
+            Some(1),
+        );
+
+        let device_desc = match dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: (USB_DESCRIPTOR_TYPE_DEVICE as u16) << 8,
+                w_index: 0,
+                w_length: 18,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
+        assert_eq!(device_desc.len(), 18);
+        assert_eq!(device_desc[0] as usize, device_desc.len());
+        assert_eq!(device_desc[1], USB_DESCRIPTOR_TYPE_DEVICE);
+
+        let cfg = match dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: USB_REQUEST_GET_DESCRIPTOR,
+                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_index: 0,
+                w_length: 255,
+            },
+            None,
+        ) {
+            ControlResponse::Data(data) => data,
+            other => panic!("expected Data response, got {other:?}"),
+        };
+        assert_eq!(cfg[0], 0x09);
+        assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
+        assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
+
+        // HID descriptor starts at offset 18 (9 config + 9 interface).
+        let hid = &cfg[18..27];
+        assert_eq!(hid[0], 0x09);
+        assert_eq!(hid[1], USB_DESCRIPTOR_TYPE_HID);
+        assert_eq!(hid[6], USB_DESCRIPTOR_TYPE_HID_REPORT);
+        assert_eq!(w_le(hid, 7) as usize, report.len());
+
+        // Endpoint IN is always present; OUT is present when requested.
+        let ep_in = &cfg[27..34];
+        assert_eq!(ep_in[1], super::super::USB_DESCRIPTOR_TYPE_ENDPOINT);
+        assert_eq!(ep_in[2], INTERRUPT_IN_EP);
+
+        let ep_out = &cfg[34..41];
+        assert_eq!(ep_out[2], INTERRUPT_OUT_EP);
+    }
+
+    #[test]
+    fn push_input_report_and_poll_interrupt_in_prefixes_report_id() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        dev.push_input_report(1, &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
+        );
+
+        configure_device(&mut dev);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc])
+        );
+
+        dev.push_input_report(0, &[0x11, 0x22]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![0x11, 0x22])
+        );
+    }
+
+    #[test]
+    fn get_report_returns_zero_filled_report_of_descriptor_length() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Descriptor defines report ID 1 with 4 bytes of payload.
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (1u16 << 8) | 1u16, // Input, report ID 1
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![1, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn get_report_uses_scanner_when_report_descriptor_parser_rejects_descriptor() {
+        let report = sample_report_descriptor_with_unsupported_item();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Descriptor defines report ID 1 with 4 bytes of payload.
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (1u16 << 8) | 1u16, // Input, report ID 1
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![1, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn set_report_and_interrupt_out_are_queued() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // SET_REPORT (Feature)
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (3u16 << 8) | 7u16, // Feature, report ID 7
+                    w_index: 0,
+                    w_length: 3,
+                },
+                Some(&[0xde, 0xad, 0xbe]),
+            ),
+            ControlResponse::Ack
+        );
+
+        // Interrupt OUT report: report ID prefix should be parsed when report IDs are in use.
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[9, 0x01, 0x02]),
+            UsbOutResult::Ack
+        );
+
+        let r1 = dev.pop_output_report().unwrap();
+        assert_eq!(
+            r1,
+            UsbHidPassthroughOutputReport {
+                report_type: 3,
+                report_id: 7,
+                data: vec![0xde, 0xad, 0xbe]
+            }
+        );
+
+        let r2 = dev.pop_output_report().unwrap();
+        assert_eq!(
+            r2,
+            UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 9,
+                data: vec![0x01, 0x02]
+            }
+        );
+    }
+
+    #[test]
+    fn set_report_strips_report_id_prefix_when_present() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                    w_index: 0,
+                    w_length: 3,
+                },
+                Some(&[2, 0x11, 0x22]),
+            ),
+            ControlResponse::Ack
+        );
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 2,
+                data: vec![0x11, 0x22],
+            })
+        );
+    }
+
+    #[test]
+    fn get_report_output_returns_last_received_report() {
+        let report = sample_report_descriptor_output_with_id();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        // Deliver an Output report via SET_REPORT.
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                    w_index: 0,
+                    w_length: 3,
+                },
+                Some(&[2, 0x11, 0x22]),
+            ),
+            ControlResponse::Ack
+        );
+
+        // GET_REPORT should include the report ID prefix for non-zero IDs.
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (2u16 << 8) | 2u16, // Output, report ID 2
+                w_index: 0,
+                w_length: 64,
+            },
+            None,
+        );
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data, vec![2, 0x11, 0x22]);
+    }
+
+    #[test]
+    fn set_max_pending_report_limits_drop_oldest_entries() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        dev.set_max_pending_input_reports(2);
+        dev.push_input_report(1, &[0x00]);
+        dev.push_input_report(1, &[0x01]);
+        dev.push_input_report(1, &[0x02]);
+
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0x01])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0x02])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Nak
+        );
+
+        dev.set_max_pending_output_reports(1);
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[1, 0x10]),
+            UsbOutResult::Ack
+        );
+        assert_eq!(
+            dev.handle_interrupt_out(0x01, &[1, 0x20]),
+            UsbOutResult::Ack
+        );
+
+        assert_eq!(
+            dev.pop_output_report(),
+            Some(UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 1,
+                data: vec![0x20]
+            })
+        );
+        assert_eq!(dev.pop_output_report(), None);
+    }
+
+    #[test]
+    fn input_and_output_queues_are_bounded() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            true,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Overflow input queue.
+        for i in 0..(DEFAULT_MAX_PENDING_INPUT_REPORTS + 50) {
+            dev.push_input_report(1, &[i as u8]);
+        }
+        assert!(
+            dev.inner.borrow().pending_input_reports.len() <= DEFAULT_MAX_PENDING_INPUT_REPORTS
+        );
+
+        // Drain and ensure the oldest entries were dropped.
+        let mut last = None;
+        loop {
+            match dev.handle_in_transfer(INTERRUPT_IN_EP, 64) {
+                UsbInResult::Data(r) => last = Some(r),
+                UsbInResult::Nak => break,
+                UsbInResult::Stall => panic!("unexpected stall draining input reports"),
+                UsbInResult::Timeout => panic!("unexpected timeout draining input reports"),
+            }
+        }
+        assert_eq!(
+            last.unwrap(),
+            vec![1, (DEFAULT_MAX_PENDING_INPUT_REPORTS + 49) as u8]
+        );
+
+        // Overflow output queue.
+        for i in 0..(DEFAULT_MAX_PENDING_OUTPUT_REPORTS + 17) {
+            assert_eq!(
+                dev.handle_interrupt_out(0x01, &[1, i as u8]),
+                UsbOutResult::Ack
+            );
+        }
+        assert!(
+            dev.inner.borrow().pending_output_reports.len() <= DEFAULT_MAX_PENDING_OUTPUT_REPORTS
+        );
+
+        let mut last_out = None;
+        while let Some(r) = dev.pop_output_report() {
+            last_out = Some(r);
+        }
+        assert_eq!(
+            last_out.unwrap(),
+            UsbHidPassthroughOutputReport {
+                report_type: 2,
+                report_id: 1,
+                data: vec![(DEFAULT_MAX_PENDING_OUTPUT_REPORTS + 16) as u8]
+            }
+        );
+    }
+
+    #[test]
+    fn get_report_feature_returns_full_w_length() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        let w_length = 200;
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+                b_request: HID_REQUEST_GET_REPORT,
+                w_value: (3u16 << 8) | 1u16, // Feature, report ID 1
+                w_index: 0,
+                w_length,
+            },
+            None,
+        );
+        let ControlResponse::Data(data) = resp else {
+            panic!("expected data response, got {resp:?}");
+        };
+        assert_eq!(data.len(), w_length as usize);
     }
 }
