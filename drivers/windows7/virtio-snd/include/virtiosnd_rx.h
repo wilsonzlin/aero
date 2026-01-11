@@ -47,6 +47,15 @@ typedef struct _VIRTIOSND_RX_SEGMENT {
     UINT32 len;
 } VIRTIOSND_RX_SEGMENT, *PVIRTIOSND_RX_SEGMENT;
 
+/*
+ * RX completion callback.
+ *
+ * PayloadBytes is the number of PCM bytes written into the caller-provided
+ * payload buffers (i.e. excludes the trailing VIRTIO_SND_PCM_STATUS bytes).
+ *
+ * UsedLen is the raw virtqueue used length (sum of all device-writable
+ * descriptors in the chain, including the status descriptor).
+ */
 typedef VOID EVT_VIRTIOSND_RX_COMPLETION(
     _In_opt_ void* Cookie,
     _In_ NTSTATUS CompletionStatus,

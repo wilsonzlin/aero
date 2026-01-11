@@ -10,6 +10,15 @@ static __forceinline ULONG VirtioSndRxHdrBytes(VOID) { return (ULONG)sizeof(VIRT
 static __forceinline ULONG VirtioSndRxStatusBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_PCM_STATUS); }
 static __forceinline ULONG VirtioSndRxFrameSizeBytes(VOID) { return 2u; }
 
+typedef struct _VIRTIOSND_RX_COMPLETION_ENTRY {
+    void* UserCookie;
+    NTSTATUS CompletionStatus;
+    ULONG VirtioStatus;
+    ULONG LatencyBytes;
+    ULONG PayloadBytes;
+    UINT32 UsedLen;
+} VIRTIOSND_RX_COMPLETION_ENTRY;
+
 static VOID VirtIoSndRxFreeRequests(_Inout_ VIRTIOSND_RX_ENGINE* Rx)
 {
     ULONG i;
@@ -186,6 +195,11 @@ VirtIoSndRxSubmitSg(VIRTIOSND_RX_ENGINE* Rx, const VIRTIOSND_RX_SEGMENT* Segment
 
     KeAcquireSpinLock(&Rx->Lock, &oldIrql);
 
+    if (Rx->FatalError) {
+        KeReleaseSpinLock(&Rx->Lock, oldIrql);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
     if (Rx->FreeCount == 0 || IsListEmpty(&Rx->FreeList)) {
         Rx->DroppedDueToNoRequests++;
         KeReleaseSpinLock(&Rx->Lock, oldIrql);
@@ -221,6 +235,10 @@ VirtIoSndRxSubmitSg(VIRTIOSND_RX_ENGINE* Rx, const VIRTIOSND_RX_SEGMENT* Segment
     KeAcquireSpinLock(&Rx->Lock, &oldIrql);
 
     req->Sequence = Rx->NextSequence++;
+
+    /* Ensure the header/status writes are visible before publishing descriptors. */
+    KeMemoryBarrier();
+
     status = VirtioSndQueueSubmit(Rx->Queue, sg, sgCount, req);
 
     if (!NT_SUCCESS(status)) {
@@ -242,19 +260,24 @@ VirtIoSndRxSubmitSg(VIRTIOSND_RX_ENGINE* Rx, const VIRTIOSND_RX_SEGMENT* Segment
     return STATUS_SUCCESS;
 }
 
-static VOID VirtIoSndRxHandleUsed(_Inout_ VIRTIOSND_RX_ENGINE* Rx,
-                                  _Inout_ VIRTIOSND_RX_REQUEST* Req,
-                                  _In_ UINT32 UsedLen,
-                                  _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
-                                  _In_opt_ void* Context);
+static VOID VirtIoSndRxHandleUsedLocked(
+    _Inout_ VIRTIOSND_RX_ENGINE* Rx,
+    _Inout_ VIRTIOSND_RX_REQUEST* Req,
+    _In_ UINT32 UsedLen,
+    _Out_ VIRTIOSND_RX_COMPLETION_ENTRY* Completion);
 
 _Use_decl_annotations_
 ULONG
 VirtIoSndRxDrainCompletions(VIRTIOSND_RX_ENGINE* Rx, EVT_VIRTIOSND_RX_COMPLETION* Callback, void* Context)
 {
+    KIRQL oldIrql;
     ULONG drained;
     VOID* ctx;
     UINT32 usedLen;
+    EVT_VIRTIOSND_RX_COMPLETION* cb;
+    void* cbCtx;
+    VIRTIOSND_RX_COMPLETION_ENTRY completions[VIRTIOSND_QUEUE_SIZE_RXQ];
+    ULONG completionCount;
 
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
@@ -263,12 +286,39 @@ VirtIoSndRxDrainCompletions(VIRTIOSND_RX_ENGINE* Rx, EVT_VIRTIOSND_RX_COMPLETION
     }
 
     drained = 0;
+    completionCount = 0;
+
+    KeAcquireSpinLock(&Rx->Lock, &oldIrql);
+
+    if (Callback != NULL) {
+        cb = Callback;
+        cbCtx = Context;
+    } else {
+        cb = Rx->CompletionCallback;
+        cbCtx = Rx->CompletionCallbackContext;
+    }
 
     while (VirtioSndQueuePopUsed(Rx->Queue, &ctx, &usedLen)) {
-        if (ctx != NULL) {
-            VirtIoSndRxHandleUsed(Rx, (VIRTIOSND_RX_REQUEST*)ctx, usedLen, Callback, Context);
+        if (ctx != NULL && completionCount < RTL_NUMBER_OF(completions)) {
+            VirtIoSndRxHandleUsedLocked(Rx, (VIRTIOSND_RX_REQUEST*)ctx, usedLen, &completions[completionCount]);
+            completionCount++;
         }
         drained++;
+    }
+
+    KeReleaseSpinLock(&Rx->Lock, oldIrql);
+
+    if (cb != NULL) {
+        ULONG i;
+        for (i = 0; i < completionCount; i++) {
+            cb(completions[i].UserCookie,
+               completions[i].CompletionStatus,
+               completions[i].VirtioStatus,
+               completions[i].LatencyBytes,
+               completions[i].PayloadBytes,
+               completions[i].UsedLen,
+               cbCtx);
+        }
     }
 
     return drained;
@@ -286,31 +336,41 @@ static VOID VirtIoSndRxReturnToFreeListLocked(_Inout_ VIRTIOSND_RX_ENGINE* Rx, _
     Rx->FreeCount++;
 }
 
-static VOID VirtIoSndRxHandleUsed(_Inout_ VIRTIOSND_RX_ENGINE* Rx,
-                                  _Inout_ VIRTIOSND_RX_REQUEST* Req,
-                                  _In_ UINT32 UsedLen,
-                                  _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
-                                  _In_opt_ void* Context)
+static VOID VirtIoSndRxHandleUsedLocked(
+    _Inout_ VIRTIOSND_RX_ENGINE* Rx,
+    _Inout_ VIRTIOSND_RX_REQUEST* Req,
+    _In_ UINT32 UsedLen,
+    _Out_ VIRTIOSND_RX_COMPLETION_ENTRY* Completion)
 {
-    KIRQL oldIrql;
     ULONG st;
     ULONG latency;
-    EVT_VIRTIOSND_RX_COMPLETION* cb;
-    void* cbCtx;
     void* userCookie;
-    ULONG payloadBytes;
-    NTSTATUS completionStatus;
+    ULONG payloadBytesRequested;
+    ULONG payloadBytesCaptured;
 
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
-    if (Rx == NULL || Req == NULL) {
+    if (Rx == NULL || Req == NULL || Completion == NULL) {
         return;
     }
 
-    KeAcquireSpinLock(&Rx->Lock, &oldIrql);
+    /*
+     * Ensure device writes are visible before reading response bytes.
+     *
+     * Note: VirtqSplitGetUsed issues a VIRTIO_RMB after observing used->idx, so
+     * this is largely redundant, but keeps the RX path consistent with TX and
+     * protects against alternate queue implementations.
+     */
+    KeMemoryBarrier();
 
-    st = Req->StatusVa->status;
-    latency = Req->StatusVa->latency_bytes;
+    st = VIRTIO_SND_S_BAD_MSG;
+    latency = 0;
+    payloadBytesCaptured = 0;
+    if (UsedLen >= VirtioSndRxStatusBytes() && Req->StatusVa != NULL) {
+        st = Req->StatusVa->status;
+        latency = Req->StatusVa->latency_bytes;
+        payloadBytesCaptured = (ULONG)(UsedLen - VirtioSndRxStatusBytes());
+    }
 
     Rx->LastVirtioStatus = st;
     Rx->LastLatencyBytes = latency;
@@ -326,16 +386,11 @@ static VOID VirtIoSndRxHandleUsed(_Inout_ VIRTIOSND_RX_ENGINE* Rx,
         Rx->CompletedUnknownStatus++;
     }
 
-    if (Callback != NULL) {
-        cb = Callback;
-        cbCtx = Context;
-    } else {
-        cb = Rx->CompletionCallback;
-        cbCtx = Rx->CompletionCallbackContext;
-    }
-
     userCookie = Req->Cookie;
-    payloadBytes = Req->PayloadBytes;
+    payloadBytesRequested = Req->PayloadBytes;
+    if (payloadBytesCaptured > payloadBytesRequested) {
+        payloadBytesCaptured = payloadBytesRequested;
+    }
 
     Req->Cookie = NULL;
     Req->PayloadBytes = 0;
@@ -343,27 +398,51 @@ static VOID VirtIoSndRxHandleUsed(_Inout_ VIRTIOSND_RX_ENGINE* Rx,
 
     VirtIoSndRxReturnToFreeListLocked(Rx, Req);
 
-    KeReleaseSpinLock(&Rx->Lock, oldIrql);
-
-    completionStatus = VirtioSndStatusToNtStatus(st);
-
-    if (cb != NULL) {
-        cb(userCookie, completionStatus, st, latency, payloadBytes, UsedLen, cbCtx);
-    }
+    Completion->UserCookie = userCookie;
+    Completion->CompletionStatus = VirtioSndStatusToNtStatus(st);
+    Completion->VirtioStatus = st;
+    Completion->LatencyBytes = latency;
+    Completion->PayloadBytes = payloadBytesCaptured;
+    Completion->UsedLen = UsedLen;
 }
 
 _Use_decl_annotations_
 VOID
 VirtIoSndRxOnUsed(VIRTIOSND_RX_ENGINE* Rx, void* Cookie, UINT32 UsedLen)
 {
+    KIRQL oldIrql;
     VIRTIOSND_RX_REQUEST* req;
+    EVT_VIRTIOSND_RX_COMPLETION* cb;
+    void* cbCtx;
+    VIRTIOSND_RX_COMPLETION_ENTRY completion;
 
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
     if (Rx == NULL || Cookie == NULL) {
         return;
     }
+    if (Rx->Queue == NULL) {
+        return;
+    }
 
     req = (VIRTIOSND_RX_REQUEST*)Cookie;
-    VirtIoSndRxHandleUsed(Rx, req, UsedLen, NULL, NULL);
+
+    KeAcquireSpinLock(&Rx->Lock, &oldIrql);
+
+    cb = Rx->CompletionCallback;
+    cbCtx = Rx->CompletionCallbackContext;
+
+    VirtIoSndRxHandleUsedLocked(Rx, req, UsedLen, &completion);
+
+    KeReleaseSpinLock(&Rx->Lock, oldIrql);
+
+    if (cb != NULL) {
+        cb(completion.UserCookie,
+           completion.CompletionStatus,
+           completion.VirtioStatus,
+           completion.LatencyBytes,
+           completion.PayloadBytes,
+           completion.UsedLen,
+           cbCtx);
+    }
 }
