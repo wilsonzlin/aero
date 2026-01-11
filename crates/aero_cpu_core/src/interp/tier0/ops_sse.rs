@@ -85,10 +85,32 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
         // SSE3
         | Mnemonic::Lddqu
             | Mnemonic::Haddps
+            | Mnemonic::Haddpd
+            | Mnemonic::Hsubps
+            | Mnemonic::Hsubpd
+            | Mnemonic::Movddup
+            | Mnemonic::Movsldup
+            | Mnemonic::Movshdup
         // SSSE3
         | Mnemonic::Pshufb
+            | Mnemonic::Phaddw
+            | Mnemonic::Phaddd
+            | Mnemonic::Phaddsw
+            | Mnemonic::Pmaddubsw
+            | Mnemonic::Pabsb
+            | Mnemonic::Pabsw
+            | Mnemonic::Pabsd
+            | Mnemonic::Palignr
         // SSE4.1
         | Mnemonic::Insertps
+            | Mnemonic::Pblendw
+            | Mnemonic::Ptest
+            | Mnemonic::Pmovsxbw
+            | Mnemonic::Pmovsxbd
+            | Mnemonic::Pmovsxbq
+            | Mnemonic::Pmovzxbw
+            | Mnemonic::Pmovzxbd
+            | Mnemonic::Pmovzxbq
             | Mnemonic::Pmulld
         // SSE4.2
         | Mnemonic::Crc32
@@ -273,16 +295,84 @@ pub fn exec<B: CpuBus>(
             exec_haddps(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
+        Mnemonic::Haddpd => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE3)?;
+            exec_haddpd(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Hsubps | Mnemonic::Hsubpd => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE3)?;
+            exec_hsub(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Movddup => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE3)?;
+            exec_movddup(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Movsldup | Mnemonic::Movshdup => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE3)?;
+            exec_movdup_ps(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Pshufb => {
             check_xmm_available(state)?;
             require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSSE3)?;
             exec_pshufb(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
+        Mnemonic::Phaddw
+        | Mnemonic::Phaddd
+        | Mnemonic::Phaddsw
+        | Mnemonic::Pmaddubsw => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSSE3)?;
+            exec_ssse3_binop(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Pabsb | Mnemonic::Pabsw | Mnemonic::Pabsd => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSSE3)?;
+            exec_ssse3_abs(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Palignr => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSSE3)?;
+            exec_palignr(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Insertps => {
             check_xmm_available(state)?;
             require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE41)?;
             exec_insertps(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Pblendw => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE41)?;
+            exec_pblendw(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Ptest => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE41)?;
+            exec_ptest(state, bus, instr, next_ip)?;
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Pmovsxbw
+        | Mnemonic::Pmovsxbd
+        | Mnemonic::Pmovsxbq
+        | Mnemonic::Pmovzxbw
+        | Mnemonic::Pmovzxbd
+        | Mnemonic::Pmovzxbq => {
+            check_xmm_available(state)?;
+            require_feature_ecx(cfg, cpuid_bits::LEAF1_ECX_SSE41)?;
+            exec_pmovx(state, bus, instr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Pmulld => {
@@ -1133,6 +1223,223 @@ fn exec_haddps<B: CpuBus>(
     let dst_val = read_xmm_reg(state, dst)?;
     write_xmm_reg(state, dst, sse3::haddps(dst_val, src))?;
     Ok(())
+}
+
+fn exec_haddpd<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let dst_val = read_xmm_reg(state, dst)?;
+    write_xmm_reg(state, dst, sse3::haddpd(dst_val, src))?;
+    Ok(())
+}
+
+fn exec_hsub<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let dst_val = read_xmm_reg(state, dst)?;
+    let res = match instr.mnemonic() {
+        Mnemonic::Hsubps => sse3::hsubps(dst_val, src),
+        Mnemonic::Hsubpd => sse3::hsubpd(dst_val, src),
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, res)?;
+    Ok(())
+}
+
+fn exec_movddup<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = match instr.op_kind(1) {
+        OpKind::Register => read_xmm_reg(state, instr.op1_register())?,
+        OpKind::Memory => {
+            let addr = calc_ea(state, instr, next_ip, true)?;
+            bus.read_u64(addr)? as u128
+        }
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, sse3::movddup(src))?;
+    Ok(())
+}
+
+fn exec_movdup_ps<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let res = match instr.mnemonic() {
+        Mnemonic::Movsldup => sse3::movsldup(src),
+        Mnemonic::Movshdup => sse3::movshdup(src),
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, res)?;
+    Ok(())
+}
+
+fn exec_ssse3_binop<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let dst_val = read_xmm_reg(state, dst)?;
+    let res = match instr.mnemonic() {
+        Mnemonic::Phaddw => ssse3::phaddw(dst_val, src),
+        Mnemonic::Phaddd => ssse3::phaddd(dst_val, src),
+        Mnemonic::Phaddsw => ssse3::phaddsw(dst_val, src),
+        Mnemonic::Pmaddubsw => ssse3::pmaddubsw(dst_val, src),
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, res)?;
+    Ok(())
+}
+
+fn exec_ssse3_abs<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let res = match instr.mnemonic() {
+        Mnemonic::Pabsb => ssse3::pabsb(src),
+        Mnemonic::Pabsw => ssse3::pabsw(src),
+        Mnemonic::Pabsd => ssse3::pabsd(src),
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    write_xmm_reg(state, dst, res)?;
+    Ok(())
+}
+
+fn exec_palignr<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let imm8 = instr.immediate8();
+    let dst_val = read_xmm_reg(state, dst)?;
+    write_xmm_reg(state, dst, ssse3::palignr(dst_val, src, imm8))?;
+    Ok(())
+}
+
+fn exec_pblendw<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+    let src = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let imm8 = instr.immediate8();
+    let dst_val = read_xmm_reg(state, dst)?;
+    write_xmm_reg(state, dst, sse41::pblendw(dst_val, src, imm8))?;
+    Ok(())
+}
+
+fn exec_ptest<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let a = instr.op0_register();
+    let b = read_xmm_operand_u128(state, bus, instr, 1, next_ip, None)?;
+    let a_val = read_xmm_reg(state, a)?;
+    let (zf, cf) = sse41::ptest(a_val, b);
+    state.set_flag(FLAG_ZF, zf);
+    state.set_flag(FLAG_CF, cf);
+    state.set_flag(FLAG_OF, false);
+    state.set_flag(FLAG_SF, false);
+    Ok(())
+}
+
+fn exec_pmovx<B: CpuBus>(
+    state: &mut CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+) -> Result<(), Exception> {
+    let dst = instr.op0_register();
+
+    let out = match instr.mnemonic() {
+        Mnemonic::Pmovsxbw => {
+            let mut buf = [0u8; 8];
+            read_pmov_src(state, bus, instr, next_ip, &mut buf)?;
+            sse41::pmovsxbw(&buf)
+        }
+        Mnemonic::Pmovsxbd => {
+            let mut buf = [0u8; 4];
+            read_pmov_src(state, bus, instr, next_ip, &mut buf)?;
+            sse41::pmovsxbd(&buf)
+        }
+        Mnemonic::Pmovsxbq => {
+            let mut buf = [0u8; 2];
+            read_pmov_src(state, bus, instr, next_ip, &mut buf)?;
+            sse41::pmovsxbq(&buf)
+        }
+        Mnemonic::Pmovzxbw => {
+            let mut buf = [0u8; 8];
+            read_pmov_src(state, bus, instr, next_ip, &mut buf)?;
+            sse41::pmovzxbw(&buf)
+        }
+        Mnemonic::Pmovzxbd => {
+            let mut buf = [0u8; 4];
+            read_pmov_src(state, bus, instr, next_ip, &mut buf)?;
+            sse41::pmovzxbd(&buf)
+        }
+        Mnemonic::Pmovzxbq => {
+            let mut buf = [0u8; 2];
+            read_pmov_src(state, bus, instr, next_ip, &mut buf)?;
+            sse41::pmovzxbq(&buf)
+        }
+        _ => return Err(Exception::InvalidOpcode),
+    };
+
+    write_xmm_reg(state, dst, out)?;
+    Ok(())
+}
+
+fn read_pmov_src<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    instr: &Instruction,
+    next_ip: u64,
+    dst: &mut [u8],
+) -> Result<(), Exception> {
+    match instr.op_kind(1) {
+        OpKind::Register => {
+            let src = read_xmm_reg(state, instr.op1_register())?.to_le_bytes();
+            dst.copy_from_slice(&src[..dst.len()]);
+            Ok(())
+        }
+        OpKind::Memory => {
+            let addr = calc_ea(state, instr, next_ip, true)?;
+            bus.read_bytes(addr, dst)
+        }
+        _ => Err(Exception::InvalidOpcode),
+    }
 }
 
 fn exec_insertps<B: CpuBus>(
