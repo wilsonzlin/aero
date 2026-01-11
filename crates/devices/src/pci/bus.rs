@@ -233,6 +233,18 @@ impl PciBusSnapshot {
             let Some(dev) = bus.devices.get_mut(&entry.bdf) else {
                 continue;
             };
+
+            // Snapshot restore is only valid when the bus topology matches (same BDFs and same
+            // device types). To stay forward-compatible with machine profiles that may repurpose
+            // a BDF for a different device, validate the PCI identity before applying the saved
+            // config-space image.
+            let current_id = dev.config().vendor_device_id();
+            let snapshot_vendor_id = u16::from_le_bytes([entry.config.bytes[0], entry.config.bytes[1]]);
+            let snapshot_device_id = u16::from_le_bytes([entry.config.bytes[2], entry.config.bytes[3]]);
+            if current_id.vendor_id != snapshot_vendor_id || current_id.device_id != snapshot_device_id {
+                continue;
+            }
+
             dev.config_mut().restore_state(&entry.config);
         }
 
