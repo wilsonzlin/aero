@@ -42,12 +42,16 @@ Build files:
   - `aerogpu_d3d9_x86.def` (exports `OpenAdapter`, `OpenAdapter2` from stdcall-decorated x86 symbols)
   - `aerogpu_d3d9_x64.def` (exports `OpenAdapter`, `OpenAdapter2`)
 
-Recommended build entrypoint (builds KMD + UMDs and stages outputs under `drivers/aerogpu/build/out/`):
+Recommended build entrypoint (MSBuild/WDK10):
 
 ```cmd
 cd \path\to\repo
-drivers\aerogpu\build\build_all.cmd fre
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=Win32
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
 ```
+
+CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) via `ci/build-drivers.ps1`.
+If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it as a convenience wrapper around the MSBuild-based build/staging workflow (not a WDK 7.1 BUILD entrypoint).
 
 ### Notes
 

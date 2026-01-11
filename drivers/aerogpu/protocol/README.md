@@ -5,7 +5,7 @@ This directory defines the **stable, versioned ABI contract** between:
 - the Windows 7 AeroGPU WDDM driver stack (KMD + UMD), and
 - the Aero emulator’s virtual GPU device model.
 
-The contract is expressed as C/C++ headers suitable for **WDK** builds and for host-side parsing.
+The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK builds** (WDK10+ supported) and for host-side parsing.
 
 > Note: This directory contains both the **new versioned ABI** (the long-term contract) and a
 > **legacy bring-up ABI** (`aerogpu_protocol.h`). The legacy header is kept for compatibility with

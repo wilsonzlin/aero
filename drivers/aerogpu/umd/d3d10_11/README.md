@@ -82,11 +82,15 @@ exports the undecorated names expected by the runtimes:
 - `aerogpu_d3d10_11_x86.def`
 - `aerogpu_d3d10_11_x64.def`
 
-Recommended build entrypoint (builds KMD + required D3D9 UMD + optional D3D10/11 UMD and stages outputs under `drivers/aerogpu/build/out/`):
+Recommended build entrypoint (MSBuild/WDK10):
 
 ```cmd
 cd \path\to\repo
-drivers\aerogpu\build\build_all.cmd fre
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=Win32
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
 ```
+
+CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) via `ci/build-drivers.ps1`.
+If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it as a convenience wrapper around the MSBuild-based build/staging workflow (not a WDK 7.1 BUILD entrypoint).
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  

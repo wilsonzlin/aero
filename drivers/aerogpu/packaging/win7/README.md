@@ -13,7 +13,7 @@ It also includes scripts for **test-signing** and **install/uninstall** in a Win
 
 Copy the built driver binaries into this directory (same folder as the `.inf` files):
 
-> Tip: if you built via `drivers\aerogpu\build\build_all.cmd`, you can stage this folder automatically:
+> Tip: after building (via `drivers\aerogpu\aerogpu.sln` or the CI scripts), you can stage this folder automatically:
 >
 > ```bat
 > :: For a Win7 x64 VM (copies x64 aerogpu.sys + x86/x64 UMDs)
@@ -22,6 +22,9 @@ Copy the built driver binaries into this directory (same folder as the `.inf` fi
 > :: For a Win7 x86 VM (copies x86 aerogpu.sys + x86 UMDs)
 > drivers\aerogpu\build\stage_packaging_win7.cmd fre x86
 > ```
+>
+> CI note: the end-to-end driver pipeline can also produce a ready-to-install package under `out/packages/aerogpu/<arch>/`
+> (INF + SYS + UMD DLLs + CAT). If you just want something installable in a VM, you can copy that folder instead of staging this one.
 
 ### Required (D3D9)
 
@@ -87,6 +90,9 @@ To run `sign_test.cmd` inside the Windows 7 VM, you need tooling from a Windows 
 - `makecert.exe`
 - `signtool.exe`
 - `inf2cat.exe` (recommended; required if the INF declares `CatalogFile=...`)
+
+The **Windows 7 WDK (7600)** includes all of these tools and is often the most straightforward option for Win7 VMs.
+Newer Windows SDK/WDK releases (Windows Kits 10+) also include them (CI uses a pinned Windows Kits 10 toolchain).
 
 ## 4) Install (Windows 7 SP1 VM)
 
