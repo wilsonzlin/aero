@@ -274,7 +274,10 @@ int main() {
   PRINT_OFF_OPT(D3DDDICB_RENDER, DmaBufferPrivateDataSize);
 #if defined(_MSC_VER)
   __if_exists(D3DDDICB_RENDER::SubmissionFenceId) { PRINT_OFF(D3DDDICB_RENDER, SubmissionFenceId); }
+  __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) { PRINT_OFF(D3DDDICB_RENDER, pSubmissionFenceId); }
   __if_exists(D3DDDICB_RENDER::NewFenceValue) { PRINT_OFF(D3DDDICB_RENDER, NewFenceValue); }
+  __if_exists(D3DDDICB_RENDER::FenceValue) { PRINT_OFF(D3DDDICB_RENDER, FenceValue); }
+  __if_exists(D3DDDICB_RENDER::pFenceValue) { PRINT_OFF(D3DDDICB_RENDER, pFenceValue); }
   __if_exists(D3DDDICB_RENDER::NewCommandBufferSize) { PRINT_OFF(D3DDDICB_RENDER, NewCommandBufferSize); }
   __if_exists(D3DDDICB_RENDER::NewAllocationListSize) { PRINT_OFF(D3DDDICB_RENDER, NewAllocationListSize); }
   __if_exists(D3DDDICB_RENDER::NewPatchLocationListSize) { PRINT_OFF(D3DDDICB_RENDER, NewPatchLocationListSize); }
@@ -296,7 +299,10 @@ int main() {
   PRINT_OFF_OPT(D3DDDICB_PRESENT, DmaBufferPrivateDataSize);
 #if defined(_MSC_VER)
   __if_exists(D3DDDICB_PRESENT::SubmissionFenceId) { PRINT_OFF(D3DDDICB_PRESENT, SubmissionFenceId); }
+  __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) { PRINT_OFF(D3DDDICB_PRESENT, pSubmissionFenceId); }
   __if_exists(D3DDDICB_PRESENT::NewFenceValue) { PRINT_OFF(D3DDDICB_PRESENT, NewFenceValue); }
+  __if_exists(D3DDDICB_PRESENT::FenceValue) { PRINT_OFF(D3DDDICB_PRESENT, FenceValue); }
+  __if_exists(D3DDDICB_PRESENT::pFenceValue) { PRINT_OFF(D3DDDICB_PRESENT, pFenceValue); }
 #endif
   PrintSeparator();
 
