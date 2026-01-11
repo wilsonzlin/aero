@@ -80,6 +80,21 @@ if not "%PNP_ERR%"=="0" (
 )
 
 echo [OK] Driver package installed.
+echo [INFO] Verifying UMD file placement + registry values...
+
+for %%I in ("%INF_PATH%") do set "INF_BASENAME=%%~nxI"
+if /i "%INF_BASENAME%"=="aerogpu_dx11.inf" (
+  call verify_umd_registration.cmd dx11
+) else (
+  call verify_umd_registration.cmd
+)
+set "VERIFY_ERR=%ERRORLEVEL%"
+if not "%VERIFY_ERR%"=="0" (
+  echo [ERROR] verify_umd_registration.cmd failed (errorlevel %VERIFY_ERR%).
+  popd >nul
+  exit /b %VERIFY_ERR%
+)
+
 echo [NOTE] A reboot is usually required after first install/update of a display driver.
 popd >nul
 exit /b 0

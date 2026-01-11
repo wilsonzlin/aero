@@ -174,6 +174,7 @@ cd C:\path\to\out\packages\aerogpu\x64
 pnputil -i -a aerogpu.inf
 :: or (use the helper script shipped in the package):
 packaging\win7\install.cmd
+:: install.cmd also runs packaging\win7\verify_umd_registration.cmd to sanity-check UMD placement + registry values.
 ```
 
 If installing the optional D3D10/11 UMD variant, install `aerogpu_dx11.inf` from the copied package directory instead.
@@ -204,6 +205,7 @@ install.cmd
 Notes:
 
 - `install.cmd` uses `pnputil` by default.
+- `install.cmd` runs `verify_umd_registration.cmd` after install and returns non-zero if required UMD files/registry values are missing.
 - If you have `devcon.exe` available, you can place it in this directory (next to `install.cmd`) and the script will use it as a fallback for device update if `pnputil` fails.
 
 To install with the optional D3D10/11 UMDs:
