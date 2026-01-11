@@ -1375,10 +1375,13 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
   // interface version it will use. If we accept a version, we must fill device
   // and context function tables matching that version's struct layout.
   if (pOpenData->Interface != D3D11DDI_INTERFACE) {
+    return E_INVALIDARG;
+  }
+  if (pOpenData->Version < kAeroGpuWin7D3D11DdiInterfaceVersion) {
     return E_NOINTERFACE;
   }
-  if (pOpenData->Version != kAeroGpuWin7D3D11DdiInterfaceVersion) {
-    return E_NOINTERFACE;
+  if (pOpenData->Version > kAeroGpuWin7D3D11DdiInterfaceVersion) {
+    pOpenData->Version = kAeroGpuWin7D3D11DdiInterfaceVersion;
   }
 
   auto* adapter = new AeroGpuAdapter();

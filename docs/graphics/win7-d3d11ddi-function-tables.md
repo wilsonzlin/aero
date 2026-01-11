@@ -243,7 +243,9 @@ If you accept an unsupported `Version`, the runtime may interpret your filled
 
 In AeroGPU we currently accept only `D3D11DDI_INTERFACE_VERSION`:
 
-* `OpenAdapter11` validates the incoming interface/version and stores it in adapter-private state.
+* `OpenAdapter11` validates the incoming interface/version. If the runtime requests a
+  newer version than we support, we clamp `pOpenData->Version` down to
+  `D3D11DDI_INTERFACE_VERSION` (matching the D3D10.x DDI pattern).
 * `CreateDevice11` verifies the negotiated version before filling function tables.
 
 ---
