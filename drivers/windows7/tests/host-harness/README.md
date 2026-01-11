@@ -367,7 +367,7 @@ To run the virtio-snd **capture** smoke test when a capture endpoint exists, pro
   (intended for debugging/backcompat outside the strict harness setup).
 
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
-`"win7\\virtio-net\\x64\\aerovnet.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
+`"windows7\\virtio\\net\\x64\\aerovnet.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
 
 ### Enabling test-signing mode (unsigned / test-signed drivers)
 
