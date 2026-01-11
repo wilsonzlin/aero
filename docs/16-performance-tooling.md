@@ -54,7 +54,7 @@ The exact fields may evolve, but contributors should expect the HUD to include:
 | --- | --- | --- |
 | **FPS (avg / 1% low)** | Average FPS plus “1% low” FPS (tail latency) | Tail drops are often more important than averages for “jank” |
 | **Frame time (avg / p95)** | Mean and p95 frame time | Compare to 16.7ms (60Hz) / 33.3ms (30Hz); p95 captures stutters |
-| **MIPS (avg)** | Estimated guest throughput (million instructions/s) | Useful for CPU/JIT regressions independent of rendering |
+| **MIPS (avg / p95)** | Estimated guest throughput (million instructions/s), reported as avg / p95 | Useful for CPU/JIT regressions independent of rendering; p95 captures stutters |
 | **CPU / GPU / IO / JIT (avg)** | Accounted time buckets (ms) | Use to attribute slow frames; buckets may not sum to frame time if work overlaps |
 | **Draw calls (avg/frame)** | Approximate rendering work submitted | Spikes often correlate with state churn or missed batching |
 | **IO throughput** | Bytes/sec of emulated I/O | Correlate stutters with disk/network activity |

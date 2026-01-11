@@ -160,6 +160,7 @@ function isContiguousUsageRange(usages: readonly number[]): boolean {
 
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   const rawUsages = item.usages;
+
   // WebHID's isRange flag can be set even for a degenerate range where `usageMinimum === usageMaximum`.
   // In that case the normalized representation uses a single-element `usages: [usageMinimum]` list.
   //
@@ -185,7 +186,7 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   let usageMinimum = item.usageMinimum;
   let usageMaximum = item.usageMaximum;
 
-  if (isRange && rawUsages.length > 0 && rawUsages.length <= MAX_RANGE_CONTIGUITY_CHECK_LEN) {
+  if (isRange && rawUsages.length >= 2 && rawUsages.length <= MAX_RANGE_CONTIGUITY_CHECK_LEN) {
     // Derive min/max from the explicit usage list so we don't depend on the browser's bookkeeping
     // (or on hand-authored metadata) for small ranges.
     let min = rawUsages[0]!;

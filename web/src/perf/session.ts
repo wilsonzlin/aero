@@ -28,6 +28,7 @@ export type InstallPerfSessionOptions = {
 };
 
 const MIPS_SCALE = 1000;
+const P95 = 0.95;
 
 const bigintDivToNumberScaled = (numerator: bigint, denominator: bigint, scale: number): number => {
   if (denominator === 0n) return 0;
@@ -96,6 +97,8 @@ export class PerfSession implements PerfApi {
   private responsiveness = new ResponsivenessTracker();
   private responsivenessSnapshot: ResponsivenessHudSnapshot = {};
 
+  private tmpMips: Float32Array;
+
   private readonly aggregatorOptions = {
     windowSize: 120,
     captureSize: 12_000,
@@ -158,6 +161,7 @@ export class PerfSession implements PerfApi {
     };
 
     this.aggregator = new PerfAggregatorImpl(this.channel, this.aggregatorOptions);
+    this.tmpMips = new Float32Array(this.aggregator.windowSize);
   }
 
   getChannel(): PerfChannel {
@@ -288,6 +292,7 @@ export class PerfSession implements PerfApi {
     const windowAgg = this.computeWindowAggregates();
     out.lastFrameTimeMs = windowAgg.lastFrameTimeMs;
     out.lastMips = windowAgg.lastMips;
+    out.mipsP95 = windowAgg.mipsP95;
     out.breakdownAvgMs = windowAgg.breakdownAvgMs;
     out.drawCallsPerFrame = windowAgg.drawCallsPerFrame;
     out.pipelineSwitchesPerFrame = hasGraphicsSamples ? stats.pipelineSwitchesPerFrame : undefined;
@@ -531,6 +536,7 @@ export class PerfSession implements PerfApi {
   private computeWindowAggregates(): {
     lastFrameTimeMs?: number;
     lastMips?: number;
+    mipsP95?: number;
     breakdownAvgMs?: PerfTimeBreakdownMs;
     drawCallsPerFrame?: number;
     ioBytesPerSec?: number;
@@ -547,6 +553,7 @@ export class PerfSession implements PerfApi {
     let sumJitUs = 0n;
     let sumDrawCalls = 0;
     let sumIoBytes = 0n;
+    let mipsCount = 0;
 
     let lastFrame: AggregatedFrame | undefined;
 
@@ -563,6 +570,15 @@ export class PerfSession implements PerfApi {
       sumDrawCalls += frame.drawCalls >>> 0;
       sumIoBytes += BigInt((frame.ioReadBytes + frame.ioWriteBytes) >>> 0);
       lastFrame = frame;
+
+      if (frame.frameUs > 0 && frame.instructions > 0n) {
+        if (mipsCount >= this.tmpMips.length) {
+          // In case the aggregator window size changes.
+          this.tmpMips = new Float32Array(Math.max(this.tmpMips.length * 2, mipsCount + 1));
+        }
+        this.tmpMips[mipsCount] = bigintDivToNumberScaled(frame.instructions, BigInt(frame.frameUs >>> 0), MIPS_SCALE);
+        mipsCount += 1;
+      }
     }
 
     if (count === 0) {
@@ -590,6 +606,14 @@ export class PerfSession implements PerfApi {
         ? bigintDivToNumberScaled(lastFrame.instructions, BigInt(lastFrame.frameUs >>> 0), MIPS_SCALE)
         : undefined;
 
-    return { lastFrameTimeMs, lastMips, breakdownAvgMs, drawCallsPerFrame, ioBytesPerSec };
+    let mipsP95: number | undefined;
+    if (mipsCount > 0) {
+      this.tmpMips.subarray(0, mipsCount).sort();
+      const p95Idx = Math.floor((mipsCount - 1) * P95);
+      const sample = this.tmpMips[p95Idx];
+      mipsP95 = Number.isFinite(sample) ? sample : undefined;
+    }
+
+    return { lastFrameTimeMs, lastMips, mipsP95, breakdownAvgMs, drawCallsPerFrame, ioBytesPerSec };
   }
 }

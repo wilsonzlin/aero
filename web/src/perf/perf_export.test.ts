@@ -4,6 +4,7 @@ import { PerfSession } from "./session";
 import { FallbackPerf } from "./fallback";
 import { PerfWriter } from "./writer.js";
 import { WorkerKind } from "./record.js";
+import type { PerfHudSnapshot } from "./types";
 
 function assertJsonSerializable(value: unknown): void {
   expect(() => JSON.stringify(value)).not.toThrow();
@@ -118,5 +119,61 @@ describe("perf export schema", () => {
     expect((exported.records as unknown[]).length).toBe(3);
     expect((exported.capture_control as any).records).toBe(3);
   });
-});
 
+  it("computes MIPS p95 for PerfSession HUD snapshots", () => {
+    const session = new PerfSession();
+
+    const runStartEpochMs = session.channel.runStartEpochMs;
+    const mainWriter = new PerfWriter(session.channel.buffers[WorkerKind.Main], {
+      workerKind: WorkerKind.Main,
+      runStartEpochMs,
+    });
+    const cpuWriter = new PerfWriter(session.channel.buffers[WorkerKind.CPU], {
+      workerKind: WorkerKind.CPU,
+      runStartEpochMs,
+    });
+
+    const windowSize = (session as any).aggregator.windowSize as number;
+    // Ensure we're testing a rolling window rather than "all recorded frames".
+    const outlierFrames = 8;
+    const totalFrames = windowSize + outlierFrames;
+    const frameMs = 16;
+    const frameUs = BigInt(frameMs * 1000);
+
+    const baseEpochMs = runStartEpochMs + 100;
+    for (let i = 0; i < totalFrames; i += 1) {
+      const frameId = 1 + i;
+      const now_epoch_ms = baseEpochMs + i * frameMs;
+
+      expect(mainWriter.frameSample(frameId, { now_epoch_ms, durations: { frame_ms: frameMs } })).toBe(true);
+
+      // First `outlierFrames` samples are outside of the HUD window and should
+      // not affect the reported percentile.
+      const mips = i < outlierFrames ? 1000 : i - outlierFrames + 1; // 1..windowSize
+      const instructions = BigInt(mips) * frameUs;
+
+      expect(cpuWriter.frameSample(frameId, { now_epoch_ms, counters: { instructions } })).toBe(true);
+    }
+
+    const snapshot: PerfHudSnapshot = {
+      nowMs: 0,
+      capture: {
+        active: false,
+        durationMs: 0,
+        droppedRecords: 0,
+        records: 0,
+      },
+    };
+
+    session.getHudSnapshot(snapshot);
+
+    const mipsP95 = snapshot.mipsP95;
+    expect(mipsP95).toBeDefined();
+    expect(Number.isFinite(mipsP95!)).toBe(true);
+
+    // Values inside the HUD window are 1..windowSize, so p95 is deterministic.
+    const p95Idx = Math.floor((windowSize - 1) * 0.95);
+    const expected = p95Idx + 1;
+    expect(mipsP95).toBeCloseTo(expected, 6);
+  });
+});
