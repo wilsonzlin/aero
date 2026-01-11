@@ -179,10 +179,18 @@ For an emulator, a simple implementation is:
 * compute `(now - last_vblank_timestamp) mod period`
 * map that into a scanline number `[0, total_lines)` and an `InVBlank` flag
 
+**Note on phase:** most virtual devices naturally timestamp the vblank tick at the **start of the vblank interval** (end-of-frame). If you want `InVBlank=TRUE` immediately after that tick, rotate the synthetic scanline range so that vblank occupies `[height, total_lines)`:
+
+* `t = (pos_ns * total_lines) / period_ns`
+* `scanline = (t + height) % total_lines`
+* `InVBlank = (scanline >= height)`
+
 Even an approximate scanline is usually sufficient as long as:
 * it is monotonic within a frame
 * it resets near vblank
 * `InVBlank` is consistent with the scanline range you define
+
+If the device does not expose vblank timing registers, a pure software fallback (e.g. fixed 60 Hz cadence from a monotonic guest clock) is usually preferable to returning `STATUS_NOT_SUPPORTED`, because many D3D9-era apps poll raster status in tight loops and can hang if scanline queries fail.
 
 ---
 
