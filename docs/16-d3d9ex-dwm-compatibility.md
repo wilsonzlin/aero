@@ -122,7 +122,7 @@ In practice, DWM and other Ex clients frequently touch a wider surface area than
 
 **AeroGPU Win7 UMD DDI coverage (DWM-critical Ex calls):**
 
-- `pfnCheckDeviceState` returns `S_OK` for visible windows and `S_PRESENT_OCCLUDED` when the destination window is minimized/hidden (best-effort).
+- `pfnCheckDeviceState` returns `S_OK` for normal operation and `S_PRESENT_OCCLUDED` when the destination window is minimized (best-effort).
 - `pfnPresent`/`pfnPresentEx` implement max-frame-latency throttling with bounded waits; `D3DPRESENT_DONOTWAIT` returns `D3DERR_WASSTILLDRAWING`.
 - `pfnWaitForVBlank` prefers a real KMD vblank wait (scanline polling) when available, but is always bounded (no multi-second sleeps).
 - `pfnSetGPUThreadPriority` / `pfnGetGPUThreadPriority` always succeed and clamp the stored priority to `[-7, 7]`.
