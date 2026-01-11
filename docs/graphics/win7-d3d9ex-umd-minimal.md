@@ -129,7 +129,7 @@ Decode the returned `aerogpu_umd_private_v1` from:
 
 * `drivers/aerogpu/protocol/aerogpu_umd_private.h`
 
-This allows the UMD to gate optional paths (vblank pacing, fence pages, etc.) on reported feature bits, and to determine whether it is running against the legacy `"ARGP"` device or the versioned `"AGPU"` ABI.
+This allows the UMD to gate optional paths (vblank pacing, fence pages, etc.) on reported feature bits, and to determine whether it is running against the legacy `"ARGP"` device (optional; feature-gated behind `emulator/aerogpu-legacy`) or the versioned `"AGPU"` ABI.
 
 ### 2.2 Adapter function table: minimum `D3DDDI_ADAPTERFUNCS`
 
