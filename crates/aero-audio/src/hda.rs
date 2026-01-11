@@ -2004,11 +2004,18 @@ impl HdaController {
     }
 
     pub fn restore_state(&mut self, state: &HdaControllerState) {
+        fn clamp_snapshot_rate_hz(rate_hz: u32) -> u32 {
+            // Snapshot files may come from untrusted sources; clamp to a reasonable upper bound so
+            // restore cannot allocate multi-gigabyte host buffers.
+            const MAX_HOST_SAMPLE_RATE_HZ: u32 = 384_000;
+            rate_hz.min(MAX_HOST_SAMPLE_RATE_HZ).max(1)
+        }
+
         if state.output_rate_hz != 0 {
-            self.set_output_rate_hz(state.output_rate_hz);
+            self.set_output_rate_hz(clamp_snapshot_rate_hz(state.output_rate_hz));
         }
         if state.capture_sample_rate_hz != 0 {
-            self.set_capture_sample_rate_hz(state.capture_sample_rate_hz);
+            self.set_capture_sample_rate_hz(clamp_snapshot_rate_hz(state.capture_sample_rate_hz));
         }
 
         self.gctl = state.gctl;

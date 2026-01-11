@@ -565,3 +565,24 @@ fn hda_snapshot_restore_clamps_corrupt_resampler_state_to_avoid_oom() {
         0.0f64.to_bits()
     );
 }
+
+#[test]
+fn hda_snapshot_restore_clamps_snapshot_sample_rates_to_avoid_oom() {
+    let hda = HdaController::new();
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let mut snap = hda.snapshot_state(worklet_ring);
+
+    snap.output_rate_hz = u32::MAX;
+    snap.capture_sample_rate_hz = u32::MAX;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+
+    assert_eq!(restored.output_rate_hz(), 384_000);
+    assert_eq!(restored.capture_sample_rate_hz(), 384_000);
+    assert_eq!(restored.audio_out.capacity_frames(), 38_400);
+}
