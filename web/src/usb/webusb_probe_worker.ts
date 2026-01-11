@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+import { formatWebUsbError } from "../platform/webusb_troubleshooting";
+
 type ProbeRequest =
   | { type: "probe" }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,7 +50,7 @@ async function probe(): Promise<unknown> {
     } catch (err) {
       report.getDevices = {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: formatWebUsbError(err),
       };
     }
   }
@@ -69,7 +71,7 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
           ctx.postMessage(resp);
         })
         .catch((err) => {
-          const resp: ProbeResponse = { type: "error", error: err instanceof Error ? err.message : String(err) };
+          const resp: ProbeResponse = { type: "error", error: formatWebUsbError(err) };
           ctx.postMessage(resp);
         });
       break;
@@ -85,7 +87,7 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
         const resp: ProbeResponse = { type: "clone-result", report };
         ctx.postMessage(resp);
       } catch (err) {
-        const resp: ProbeResponse = { type: "error", error: err instanceof Error ? err.message : String(err) };
+        const resp: ProbeResponse = { type: "error", error: formatWebUsbError(err) };
         ctx.postMessage(resp);
       }
       break;
@@ -98,4 +100,3 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
     }
   }
 };
-
