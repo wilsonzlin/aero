@@ -20,5 +20,5 @@ The archived prototype sources and its old install guide live under:
 
 Important limitations of the archived prototype:
 
-- Targets the deprecated AeroGPU bring-up PCI device ID (not the supported ABIs).
+- Targets the deprecated AeroGPU bring-up PCI identity (not the supported ABIs).
 - On Windows 7 x64 it is **not WOW64-complete** (no x86 UMD), so **32-bit D3D9 apps will fail**.
