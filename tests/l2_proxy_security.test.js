@@ -311,12 +311,12 @@ test("cookie auth requires a valid aero_session cookie", { timeout: L2_PROXY_TES
   }
 });
 
-test("api_key auth mode accepts ?apiKey= and subprotocol credentials", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+test("token auth mode accepts ?apiKey= and subprotocol credentials", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
     AERO_L2_TOKEN: "",
-    AERO_L2_AUTH_MODE: "api_key",
+    AERO_L2_AUTH_MODE: "token",
     AERO_L2_API_KEY: "sekrit",
     AERO_L2_MAX_CONNECTIONS: "0",
   });

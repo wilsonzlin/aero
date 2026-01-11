@@ -278,11 +278,11 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
 `aero-l2-proxy` supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 
 - `none`: no auth (dev only; do not expose publicly).
-- `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
-  by the gateway `POST /session`.
+- `session` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
+  by the gateway `POST /session` (legacy alias: `cookie`).
   - Configure the cookie signing secret via `AERO_GATEWAY_SESSION_SECRET` (preferred), or
     `SESSION_SECRET`, or `AERO_L2_SESSION_SECRET` (legacy).
-- `api_key`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
+- `token`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`) (legacy alias: `api_key`).
   - Clients can provide credentials via `?apiKey=<value>` (or `?token=<value>` for compatibility), or
     an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
     `aero-l2-tunnel-v1`).
@@ -295,13 +295,15 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
 - `cookie_or_jwt`: accepts either a valid gateway session cookie or a valid JWT.
   - Requires both the cookie signing secret (`AERO_GATEWAY_SESSION_SECRET` or `SESSION_SECRET` /
     `AERO_L2_SESSION_SECRET`) and `AERO_L2_JWT_SECRET`.
-- `cookie_or_api_key`: accepts either a valid gateway session cookie or a valid API key.
+- `session_or_token`: accepts either a valid gateway session cookie or a token.
   - Requires the cookie signing secret (`AERO_GATEWAY_SESSION_SECRET` or `SESSION_SECRET` /
     `AERO_L2_SESSION_SECRET`). If `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`) is configured,
-    the proxy also accepts API-key credentials.
-- `cookie_and_api_key`: requires both a valid gateway session cookie and a valid API key.
+    the proxy also accepts token credentials.
+  - Legacy alias: `cookie_or_api_key`.
+- `session_and_token`: requires both a valid gateway session cookie and a token.
   - Requires the cookie signing secret (`AERO_GATEWAY_SESSION_SECRET` or `SESSION_SECRET` /
     `AERO_L2_SESSION_SECRET`) and `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
+  - Legacy alias: `cookie_and_api_key`.
 
 Notes:
 
@@ -312,14 +314,14 @@ Notes:
   query params remain supported for compatibility and for credentials that cannot be represented as
   WebSocket subprotocol tokens (HTTP token / RFC 7230 `tchar`).
 - Aliases (accepted for backwards compatibility with older configs):
-  - `session` → `cookie`
-  - `token` → `api_key`
-  - `session_or_token` → `cookie_or_api_key`
-  - `session_and_token` → `cookie_and_api_key`
+  - `cookie` → `session`
+  - `api_key` → `token`
+  - `cookie_or_api_key` → `session_or_token`
+  - `cookie_and_api_key` → `session_and_token`
 - Defaults: if `AERO_L2_AUTH_MODE` is unset/empty, `aero-l2-proxy` selects a safe default:
   - If a session secret is configured (`AERO_GATEWAY_SESSION_SECRET` / `SESSION_SECRET` / `AERO_L2_SESSION_SECRET`),
-    default to `cookie_or_api_key` (so browser cookie auth works, and internal bridge tokens can be added without breaking it).
-  - Else if a token is configured (`AERO_L2_API_KEY` / `AERO_L2_TOKEN`), default to `api_key`.
+    default to `session_or_token` (so browser cookie auth works, and internal bridge tokens can be added without breaking it).
+  - Else if a token is configured (`AERO_L2_API_KEY` / `AERO_L2_TOKEN`), default to `token`.
   - Else refuse to start unless `AERO_L2_OPEN=1` and `AERO_L2_INSECURE_ALLOW_NO_AUTH=1`.
 - `AERO_L2_TOKEN` is a legacy alias for API-key auth when `AERO_L2_AUTH_MODE` is unset (and is also
   accepted as a fallback value for `AERO_L2_API_KEY`).

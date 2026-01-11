@@ -180,10 +180,10 @@ should enable **Origin allowlisting + authentication**. The Rust L2 proxy (`crat
 enforces an Origin allowlist by default and
 supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 
-- `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
+- `session` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
   by `POST /session`. The proxy must share the gateway session signing secret (`SESSION_SECRET`) via
   `AERO_GATEWAY_SESSION_SECRET` (preferred), or `SESSION_SECRET`, or `AERO_L2_SESSION_SECRET` (legacy), so it can verify the cookie.
-- `api_key` / `jwt` / `cookie_or_jwt` / `cookie_or_api_key` / `cookie_and_api_key`: useful for cross-origin deployments and non-browser/internal
+- `token` / `jwt` / `cookie_or_jwt` / `session_or_token` / `session_and_token`: useful for cross-origin deployments and non-browser/internal
   clients. Credentials can be delivered via:
   - query param: `?token=...` (or `?apiKey=...` for API-key auth),
   - `Authorization: Bearer <token>` (JWT), or
@@ -191,10 +191,10 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
     `aero-l2-tunnel-v1`; requires the credential be valid for the WebSocket subprotocol token grammar;
     prefer this form when possible to avoid putting secrets in URLs/logs).
   - Optional JWT validation: set `AERO_L2_JWT_AUDIENCE` and/or `AERO_L2_JWT_ISSUER` (when set, claims must match).
-- Compatibility aliases: `session`→`cookie`, `token`→`api_key`, `session_or_token`→`cookie_or_api_key`,
-  `session_and_token`→`cookie_and_api_key`.
+- Compatibility aliases: `cookie`→`session`, `api_key`→`token`, `cookie_or_api_key`→`session_or_token`,
+  `cookie_and_api_key`→`session_and_token`.
 - `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset and also
-  accepted as a fallback value for `AERO_L2_API_KEY` in `api_key` mode).
+  accepted as a fallback value for `AERO_L2_API_KEY` in `token` mode; legacy alias `api_key`).
 
 When using the gateway session bootstrap, prefer `endpoints.l2` from `POST /session` instead of
 hardcoding `/l2`.

@@ -35,13 +35,15 @@ cargo run --locked -p aero-l2-proxy
 # - Trusted local dev escape hatch (disables Origin enforcement):
 #   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
 # - Authentication (recommended for any internet-exposed deployment):
-#   - Cookie session (same-origin browser sessions; requires `aero_session` cookie from `POST /session`):
-#     AERO_L2_AUTH_MODE=cookie AERO_L2_SESSION_SECRET=sekrit cargo run --locked -p aero-l2-proxy
+#   - Session cookie (same-origin browser sessions; requires `aero_session` cookie from `POST /session`):
+#     AERO_L2_AUTH_MODE=session AERO_L2_SESSION_SECRET=sekrit cargo run --locked -p aero-l2-proxy
 #     (The proxy must share the gateway session signing secret: `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`.)
-#   - API key (simple cross-origin / server-to-server; dev-only if long-lived):
-#     AERO_L2_AUTH_MODE=api_key AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
+#     (Legacy alias: `AERO_L2_AUTH_MODE=cookie`.)
+#   - Token (simple cross-origin / server-to-server; dev-only if long-lived):
+#     AERO_L2_AUTH_MODE=token AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
 #     (Deprecated compatibility: legacy `AERO_L2_TOKEN=sekrit` is treated as an API key when
 #     `AERO_L2_AUTH_MODE` is unset, and is also accepted as a fallback value for `AERO_L2_API_KEY`.)
+#     (Legacy alias: `AERO_L2_AUTH_MODE=api_key`.)
 #   - JWT (recommended for cross-origin / short-lived tokens):
 #     AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
 #     # Optional claim enforcement:
@@ -49,9 +51,9 @@ cargo run --locked -p aero-l2-proxy
 #   - Mixed/hybrid modes:
 #     - Cookie + JWT:
 #       AERO_L2_AUTH_MODE=cookie_or_jwt AERO_L2_SESSION_SECRET=sekrit AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
-#     - Cookie + API key:
-#       AERO_L2_AUTH_MODE=cookie_or_api_key AERO_L2_SESSION_SECRET=sekrit AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
-#       # (If AERO_L2_API_KEY is omitted, the proxy still accepts cookie auth; the API-key path is simply disabled.)
+#     - Session cookie + token:
+#       AERO_L2_AUTH_MODE=session_or_token AERO_L2_SESSION_SECRET=sekrit AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
+#       # (If AERO_L2_API_KEY is omitted, the proxy still accepts session-cookie auth; the token path is simply disabled.)
 #   - Credential delivery:
 #     - query params: `?token=...` (or `?apiKey=...` for API-key auth)
 #     - subprotocol token: additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>`
@@ -99,7 +101,7 @@ nicTx = (frame) => {
 };
 ```
 
-If the proxy requires token-based auth (`AERO_L2_AUTH_MODE=api_key|jwt`, or the legacy
+If the proxy requires token-based auth (`AERO_L2_AUTH_MODE=token|jwt`, or the legacy
 `AERO_L2_TOKEN` alias), pass a credential and choose how it is transported:
 
 ```ts
@@ -151,11 +153,11 @@ cd proxy/webrtc-udp-relay
  export L2_BACKEND_WS_URL=ws://127.0.0.1:8090/l2
   
  # Optional knobs:
- # If the backend uses session-cookie auth (`AERO_L2_AUTH_MODE=cookie` on `crates/aero-l2-proxy`):
+ # If the backend uses session-cookie auth (`AERO_L2_AUTH_MODE=session` on `crates/aero-l2-proxy`):
  # export L2_BACKEND_FORWARD_AERO_SESSION=1   # forwards Cookie: aero_session=... captured from signaling
  # export L2_BACKEND_AUTH_FORWARD_MODE=query        # default
  # export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # offer Sec-WebSocket-Protocol entry aero-l2-token.<credential> alongside aero-l2-tunnel-v1 (credential must be a valid HTTP token / RFC 7230 tchar)
- # If your backend requires a static token (e.g. `AERO_L2_AUTH_MODE=api_key|jwt` on `crates/aero-l2-proxy`):
+ # If your backend requires a static token (e.g. `AERO_L2_AUTH_MODE=token|jwt` on `crates/aero-l2-proxy`):
  # export L2_BACKEND_TOKEN=sekrit                   # offer Sec-WebSocket-Protocol entry aero-l2-token.<token> alongside aero-l2-tunnel-v1 (token must be a valid HTTP token / RFC 7230 tchar)
  # export L2_BACKEND_AUTH_FORWARD_MODE=none         # don't also forward client creds in ?token=/?apiKey=
  # export L2_BACKEND_ORIGIN_OVERRIDE=https://example.com
@@ -244,9 +246,9 @@ clients can omit or forge `Origin`.
 
 `crates/aero-l2-proxy` supports multiple auth modes via `AERO_L2_AUTH_MODE`:
 
-#### a) Same-origin browser clients (recommended): cookie session auth
+#### a) Same-origin browser clients (recommended): session-cookie auth
 
-- Set `AERO_L2_AUTH_MODE=cookie`.
+- Set `AERO_L2_AUTH_MODE=session` (legacy alias: `cookie`).
 - Ensure the proxy shares the gateway session signing secret:
   - `SESSION_SECRET` (gateway), and
   - `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`) on the L2 proxy must match.
@@ -256,18 +258,18 @@ Single-origin flow:
 1) Browser calls `POST /session` on the gateway (same origin) to receive the `aero_session` cookie
 2) Browser opens `wss://<origin>/l2` (subprotocol `aero-l2-tunnel-v1`) and relies on the cookie
 
-#### b) Cross-origin / non-browser clients: API key or JWT
+#### b) Cross-origin / non-browser clients: token or JWT
 
 - **JWT** (recommended):
   - Configure: `AERO_L2_AUTH_MODE=jwt` and `AERO_L2_JWT_SECRET=...`
   - Optional claim validation: `AERO_L2_JWT_AUDIENCE` and/or `AERO_L2_JWT_ISSUER`
-- **API key** (simpler, but avoid long-lived keys for public deployments):
-  - Configure: `AERO_L2_AUTH_MODE=api_key` and `AERO_L2_API_KEY=...`
+- **Token** (simpler, but avoid long-lived keys for public deployments):
+  - Configure: `AERO_L2_AUTH_MODE=token` and `AERO_L2_API_KEY=...` (legacy alias: `api_key`)
     - Legacy alias: `AERO_L2_TOKEN=...` (used when `AERO_L2_AUTH_MODE` is unset; also accepted as a
       fallback value for `AERO_L2_API_KEY`).
 - Optional mixed modes:
-  - `AERO_L2_AUTH_MODE=cookie_or_jwt` accepts either a cookie session or a JWT.
-  - `AERO_L2_AUTH_MODE=cookie_or_api_key` accepts either a cookie session or an API key.
+  - `AERO_L2_AUTH_MODE=cookie_or_jwt` accepts either a session cookie or a JWT.
+  - `AERO_L2_AUTH_MODE=session_or_token` accepts either a session cookie or a token.
 
 Credentials offered via `Sec-WebSocket-Protocol` must be valid WebSocket subprotocol tokens (HTTP token / RFC 7230 `tchar`).
 Prefer subprotocol delivery when possible to avoid putting secrets in URLs/logs; use query-string delivery when the credential
@@ -294,14 +296,14 @@ In the canonical compose stack, enable the backend wiring in `deploy/.env`:
 L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
 L2_BACKEND_AUTH_FORWARD_MODE=query
 L2_BACKEND_FORWARD_ORIGIN=1
-L2_BACKEND_FORWARD_AERO_SESSION=1  # recommended when `aero-l2-proxy` uses AERO_L2_AUTH_MODE=cookie
+L2_BACKEND_FORWARD_AERO_SESSION=1  # recommended when `aero-l2-proxy` uses AERO_L2_AUTH_MODE=session
 ```
 
 Then ensure auth is compatible end-to-end:
 
-- If using cookie auth (`AERO_L2_AUTH_MODE=cookie`), ensure `aero-l2-proxy` shares the gateway `SESSION_SECRET`
+- If using session-cookie auth (`AERO_L2_AUTH_MODE=session`), ensure `aero-l2-proxy` shares the gateway `SESSION_SECRET`
   and the relay has `L2_BACKEND_FORWARD_AERO_SESSION=1` enabled.
-- If using API-key auth, configure `aero-l2-proxy` with `AERO_L2_AUTH_MODE=api_key` and `AERO_L2_API_KEY=...`
+- If using token auth, configure `aero-l2-proxy` with `AERO_L2_AUTH_MODE=token` and `AERO_L2_API_KEY=...`
   (or the legacy `AERO_L2_TOKEN=...` alias).
 - Configure the relay auth mode (`AUTH_MODE=jwt` or `AUTH_MODE=api_key`) so the browser presents a
   credential that the relay can forward to the backend as `?token=...` (or via `aero-l2-token.*` when
