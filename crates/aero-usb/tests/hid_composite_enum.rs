@@ -445,7 +445,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
 
     let buf_kbd = alloc.alloc(8, 0x10);
     let buf_mouse = alloc.alloc(3, 0x10);
-    let buf_gamepad = alloc.alloc(3, 0x10);
+    let buf_gamepad = alloc.alloc(8, 0x10);
 
     write_td(
         &mut mem,
@@ -468,7 +468,7 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
         td_gamepad,
         LINK_PTR_T,
         td_ctrl(true, true),
-        td_token(0x69, 1, 3, false, 3),
+        td_token(0x69, 1, 3, false, 8),
         buf_gamepad,
     );
 
@@ -554,9 +554,14 @@ fn enumerate_composite_hid_device_and_receive_interrupt_reports() {
 
     ctrl.step_frame(&mut mem, &mut irq);
     assert_eq!(mem.read_u32(td_gamepad + 4) & TD_CTRL_ACTIVE, 0);
-    let report = &mem.data[buf_gamepad as usize..buf_gamepad as usize + 3];
-    assert_eq!(report[0], 0);
-    assert_eq!(report[1], 16);
-    assert_eq!(report[2], (-16i8) as u8);
+    let report = &mem.data[buf_gamepad as usize..buf_gamepad as usize + 8];
+    assert_eq!(report[0], 0); // buttons lo
+    assert_eq!(report[1], 0); // buttons hi
+    assert_eq!(report[2], 8); // hat switch (center)
+    assert_eq!(report[3], 16); // x axis
+    assert_eq!(report[4], (-16i8) as u8); // y axis
+    assert_eq!(report[5], 0); // rx axis
+    assert_eq!(report[6], 0); // ry axis
+    assert_eq!(report[7], 0); // padding
     assert!(irq.raised);
 }

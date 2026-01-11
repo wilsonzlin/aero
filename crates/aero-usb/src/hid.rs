@@ -24,7 +24,7 @@ const DESC_REPORT: u8 = 0x22;
 
 const KEYBOARD_REPORT_DESCRIPTOR_LEN: u16 = 45;
 const MOUSE_REPORT_DESCRIPTOR_LEN: u16 = 50;
-const GAMEPAD_REPORT_DESCRIPTOR_LEN: u16 = 39;
+const GAMEPAD_REPORT_DESCRIPTOR_LEN: u16 = 76;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Ep0Stage {
@@ -848,22 +848,39 @@ impl UsbDevice for UsbHidMouse {
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 pub struct GamepadReport {
-    pub buttons: u8,
+    pub buttons: u16,
+    /// Hat switch value (low 4 bits). `8` is used as the null/centered state.
+    pub hat: u8,
     pub x: i8,
     pub y: i8,
+    pub rx: i8,
+    pub ry: i8,
 }
 
 impl GamepadReport {
     pub fn empty() -> Self {
         Self {
             buttons: 0,
+            hat: 8,
             x: 0,
             y: 0,
+            rx: 0,
+            ry: 0,
         }
     }
 
-    fn to_bytes(self) -> [u8; 3] {
-        [self.buttons, self.x as u8, self.y as u8]
+    fn to_bytes(self) -> [u8; 8] {
+        let [b0, b1] = self.buttons.to_le_bytes();
+        [
+            b0,
+            b1,
+            self.hat & 0x0F,
+            self.x as u8,
+            self.y as u8,
+            self.rx as u8,
+            self.ry as u8,
+            0x00,
+        ]
     }
 }
 
@@ -877,7 +894,7 @@ pub struct UsbHidGamepad {
     ep0: Ep0Control,
 
     report: GamepadReport,
-    pending_reports: VecDeque<[u8; 3]>,
+    pending_reports: VecDeque<[u8; 8]>,
 }
 
 impl UsbHidGamepad {
@@ -895,18 +912,50 @@ impl UsbHidGamepad {
         }
     }
 
-    pub fn button_event(&mut self, button_mask: u8, pressed: bool) {
-        if pressed {
-            self.report.buttons |= button_mask;
-        } else {
-            self.report.buttons &= !button_mask;
+    /// Set or clear a gamepad button.
+    ///
+    /// `button_idx` is 1-based and maps directly to HID usages Button 1..16.
+    pub fn button_event(&mut self, button_idx: u8, pressed: bool) {
+        if !(1..=16).contains(&button_idx) {
+            return;
         }
+        let bit = 1u16 << (button_idx - 1);
+        if pressed {
+            self.report.buttons |= bit;
+        } else {
+            self.report.buttons &= !bit;
+        }
+        self.enqueue_report();
+    }
+
+    pub fn set_buttons(&mut self, buttons: u16) {
+        self.report.buttons = buttons;
+        self.enqueue_report();
+    }
+
+    /// Sets the hat switch direction.
+    ///
+    /// - `None` means centered (null state).
+    /// - `Some(0..=7)` corresponds to N, NE, E, SE, S, SW, W, NW.
+    pub fn set_hat(&mut self, hat: Option<u8>) {
+        self.report.hat = match hat {
+            Some(v) if v <= 7 => v,
+            _ => 8,
+        };
         self.enqueue_report();
     }
 
     pub fn set_axes(&mut self, x: i32, y: i32) {
         self.report.x = x.clamp(-127, 127) as i8;
         self.report.y = y.clamp(-127, 127) as i8;
+        self.enqueue_report();
+    }
+
+    pub fn set_axes_full(&mut self, x: i32, y: i32, rx: i32, ry: i32) {
+        self.report.x = x.clamp(-127, 127) as i8;
+        self.report.y = y.clamp(-127, 127) as i8;
+        self.report.rx = rx.clamp(-127, 127) as i8;
+        self.report.ry = ry.clamp(-127, 127) as i8;
         self.enqueue_report();
     }
 
@@ -954,20 +1003,38 @@ impl UsbHidGamepad {
             0xA1, 0x01, // Collection (Application)
             0x05, 0x09, // Usage Page (Button)
             0x19, 0x01, // Usage Minimum (Button 1)
-            0x29, 0x08, // Usage Maximum (Button 8)
+            0x29, 0x10, // Usage Maximum (Button 16)
             0x15, 0x00, // Logical Minimum (0)
             0x25, 0x01, // Logical Maximum (1)
             0x75, 0x01, // Report Size (1)
-            0x95, 0x08, // Report Count (8)
-            0x81, 0x02, // Input (Data, Variable, Absolute)
+            0x95, 0x10, // Report Count (16)
+            0x81, 0x02, // Input (Data,Var,Abs) Buttons
             0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x39, // Usage (Hat switch)
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x07, // Logical Maximum (7)
+            0x35, 0x00, // Physical Minimum (0)
+            0x46, 0x3B, 0x01, // Physical Maximum (315)
+            0x65, 0x14, // Unit (Eng Rot: Degrees)
+            0x75, 0x04, // Report Size (4)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x42, // Input (Data,Var,Abs,Null) Hat
+            0x65, 0x00, // Unit (None)
+            0x75, 0x04, // Report Size (4)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x01, // Input (Const,Array,Abs) Padding
             0x09, 0x30, // Usage (X)
             0x09, 0x31, // Usage (Y)
+            0x09, 0x33, // Usage (Rx)
+            0x09, 0x34, // Usage (Ry)
             0x15, 0x81, // Logical Minimum (-127)
             0x25, 0x7F, // Logical Maximum (127)
             0x75, 0x08, // Report Size (8)
-            0x95, 0x02, // Report Count (2)
-            0x81, 0x02, // Input (Data, Variable, Absolute)
+            0x95, 0x04, // Report Count (4)
+            0x81, 0x02, // Input (Data,Var,Abs) Axes
+            0x75, 0x08, // Report Size (8)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x01, // Input (Const,Array,Abs) Padding
             0xC0, // End Collection
         ];
         DESC
@@ -1009,7 +1076,7 @@ impl UsbHidGamepad {
                 0x05,
                 0x81,
                 0x03,
-                3,
+                8,
                 0,
                 10,
             ]
@@ -1224,7 +1291,7 @@ pub struct UsbHidCompositeInput {
     pending_mouse_reports: VecDeque<[u8; 3]>,
 
     gamepad_report: GamepadReport,
-    pending_gamepad_reports: VecDeque<[u8; 3]>,
+    pending_gamepad_reports: VecDeque<[u8; 8]>,
 }
 
 impl UsbHidCompositeInput {
@@ -1302,11 +1369,15 @@ impl UsbHidCompositeInput {
             .push_back([self.mouse_buttons & 0x07, 0, 0]);
     }
 
-    pub fn gamepad_button_event(&mut self, button_mask: u8, pressed: bool) {
+    pub fn gamepad_button_event(&mut self, button_idx: u8, pressed: bool) {
+        if !(1..=16).contains(&button_idx) {
+            return;
+        }
+        let bit = 1u16 << (button_idx - 1);
         if pressed {
-            self.gamepad_report.buttons |= button_mask;
+            self.gamepad_report.buttons |= bit;
         } else {
-            self.gamepad_report.buttons &= !button_mask;
+            self.gamepad_report.buttons &= !bit;
         }
         self.pending_gamepad_reports
             .push_back(self.gamepad_report.to_bytes());
@@ -1315,6 +1386,15 @@ impl UsbHidCompositeInput {
     pub fn gamepad_axes(&mut self, x: i32, y: i32) {
         self.gamepad_report.x = x.clamp(-127, 127) as i8;
         self.gamepad_report.y = y.clamp(-127, 127) as i8;
+        self.pending_gamepad_reports
+            .push_back(self.gamepad_report.to_bytes());
+    }
+
+    pub fn gamepad_axes_full(&mut self, x: i32, y: i32, rx: i32, ry: i32) {
+        self.gamepad_report.x = x.clamp(-127, 127) as i8;
+        self.gamepad_report.y = y.clamp(-127, 127) as i8;
+        self.gamepad_report.rx = rx.clamp(-127, 127) as i8;
+        self.gamepad_report.ry = ry.clamp(-127, 127) as i8;
         self.pending_gamepad_reports
             .push_back(self.gamepad_report.to_bytes());
     }
@@ -1452,7 +1532,7 @@ impl UsbHidCompositeInput {
                 0x05,
                 0x83,
                 0x03,
-                3,
+                8,
                 0,
                 10,
             ]
