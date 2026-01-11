@@ -10,10 +10,9 @@
     "CARGO_BUILD_JOBS": "4",
     "CARGO_INCREMENTAL": "1",
     "NODE_OPTIONS": "--max-old-space-size=4096",
-    "PW_TEST_WORKERS": "1",
-    "AERO_NODE_DIR": "web"
+    "PW_TEST_WORKERS": "1"
   },
-  "postCreateCommand": "bash -lc 'just setup'",
+  "postCreateCommand": "bash -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && just setup'",
   "customizations": {
     "vscode": {
       "extensions": [

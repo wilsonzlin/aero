@@ -38,12 +38,12 @@ just setup
 ./scripts/test-all.sh --skip-e2e
 ```
 
-> Note: the dev container sets `AERO_NODE_DIR=web` so the Node test step runs the `web/` unit tests by default.
-> Override it if you want a different Node workspace:
->
-> ```bash
-> AERO_NODE_DIR=. ./scripts/test-all.sh --skip-e2e
-> ```
+By default, `./scripts/test-all.sh` uses the **repo root** Node workspace (`package.json` in the root) which matches CI.
+If you want to run tests against a different Node workspace (e.g. `web/`), override it:
+
+```bash
+AERO_NODE_DIR=web ./scripts/test-all.sh --skip-e2e
+```
 
 ### Running Playwright E2E tests (optional)
 
@@ -64,4 +64,3 @@ Then run:
 ## Option B: Nix (optional)
 
 This repo currently does not ship a Nix flake. If you’d like to contribute one, it should provide a `devShell` with the same toolchain as the dev container and document the equivalent validation steps (`just setup` + `./scripts/test-all.sh --skip-e2e`).
-
