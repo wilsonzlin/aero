@@ -139,6 +139,18 @@ if /I "%NAME%"=="d3d9ex_shared_surface_wow64" if not defined PROCESSOR_ARCHITEW6
   echo SKIP: %NAME% ^(requires x64 OS^)
   exit /b 0
 )
+if /I "%NAME%"=="d3d9ex_shared_surface_wow64" (
+  set "CONSUMER_EXE=%BIN%\\d3d9ex_shared_surface_wow64_consumer_x64.exe"
+  if not exist "!CONSUMER_EXE!" (
+    if exist "%ROOT%%NAME%\" (
+      echo FAIL: %NAME% ^(missing binary: !CONSUMER_EXE!^)
+      set /a FAILURES+=1
+    ) else (
+      echo INFO: skipping %NAME% ^(not present in this checkout^)
+    )
+    exit /b 0
+  )
+)
 if not exist "%EXE%" (
   if exist "%ROOT%%NAME%\" (
     echo FAIL: %NAME% ^(missing binary: %EXE%^) 
