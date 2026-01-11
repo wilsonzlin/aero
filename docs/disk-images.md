@@ -86,7 +86,7 @@ It also provides buttons to **flush metadata**, **clear cache**, and **close** t
 Additional tuning knobs:
 
 - **Credentials mode** (`same-origin` / `include` / `omit`) for cookie-auth / credentialed CORS setups.
-- **Range cache key override** (`cacheImageId`, `cacheVersion`) so you can pin cache identity separately from the URL
+- **Cache key override** (`cacheImageId`, `cacheVersion`) so you can pin cache identity separately from the URL
   (useful when URLs include ephemeral auth query params or when you want to force a cache bust by bumping a version).
 - **Reset stats**: records a baseline snapshot and shows deltas for cumulative counters without clearing the cache.
 - **Settings persistence**: the panel stores its last-used options in `localStorage` (URLs are stored without query/hash).

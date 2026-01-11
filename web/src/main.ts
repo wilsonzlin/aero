@@ -1482,8 +1482,6 @@ function renderRemoteDiskPanel(): HTMLElement {
     const chunked = modeSelect.value === "chunked";
     blockSizeInput.disabled = chunked;
     maxConcurrentFetchesInput.disabled = !chunked;
-    cacheImageIdInput.disabled = chunked;
-    cacheVersionInput.disabled = chunked;
     urlInput.placeholder = chunked
       ? "http://localhost:9000/disk-images/manifest.json"
       : "http://localhost:9000/disk-images/large.bin";
@@ -1580,6 +1578,8 @@ function renderRemoteDiskPanel(): HTMLElement {
         prefetchSequentialChunks: prefetchSequential,
         maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
         cacheBackend,
+        ...(cacheImageId ? { cacheImageId } : {}),
+        ...(cacheVersion ? { cacheVersion } : {}),
       });
       handle = opened.handle;
       updateButtons();
@@ -1845,7 +1845,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     el(
       "div",
       { class: "row" },
-      el("label", { text: "Cache key (range):" }),
+      el("label", { text: "Cache key override:" }),
       cacheImageIdInput,
       cacheVersionInput,
     ),
