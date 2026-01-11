@@ -19,6 +19,17 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 )
 
+func decodeHTTPErrorResponse(t *testing.T, resp *http.Response) httpErrorResponse {
+	t.Helper()
+
+	defer resp.Body.Close()
+	var out httpErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return out
+}
+
 func TestServer_EnforcesMaxSessions(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
 	m := metrics.New()
@@ -148,6 +159,58 @@ func TestServer_RejectsCrossOriginHTTPRequests(t *testing.T) {
 	}
 }
 
+func TestServer_WebSocketUpgradeFailuresReturnJSON(t *testing.T) {
+	srv := NewServer(Config{
+		WebRTC:         webrtc.NewAPI(),
+		RelayConfig:    relay.DefaultConfig(),
+		Policy:         policy.NewDevDestinationPolicy(),
+		Authorizer:     AllowAllAuthorizer{},
+		AllowedOrigins: []string{"https://good.example.com"},
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	t.Run("non_websocket_request", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/webrtc/signal")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if resp.StatusCode != http.StatusBadRequest {
+			resp.Body.Close()
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusBadRequest)
+		}
+		got := decodeHTTPErrorResponse(t, resp)
+		if got.Code != "bad_message" {
+			t.Fatalf("code=%q, want %q", got.Code, "bad_message")
+		}
+	})
+
+	t.Run("forbidden_origin", func(t *testing.T) {
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+		headers := http.Header{}
+		headers.Set("Origin", "https://evil.example.com")
+
+		_, resp, err := websocket.DefaultDialer.Dial(wsURL, headers)
+		if err == nil {
+			t.Fatalf("expected dial to fail")
+		}
+		if resp == nil {
+			t.Fatalf("expected an HTTP response on handshake failure")
+		}
+		if resp.StatusCode != http.StatusForbidden {
+			resp.Body.Close()
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusForbidden)
+		}
+		got := decodeHTTPErrorResponse(t, resp)
+		if got.Code != "forbidden" {
+			t.Fatalf("code=%q, want %q", got.Code, "forbidden")
+		}
+	})
+}
+
 type failingAuthorizer struct{}
 
 func (failingAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
@@ -220,17 +283,6 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	decodeErr := func(t *testing.T, resp *http.Response) httpErrorResponse {
-		t.Helper()
-
-		defer resp.Body.Close()
-		var out httpErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return out
-	}
-
 	t.Run("session", func(t *testing.T) {
 		resp, err := http.Post(ts.URL+"/session", "application/json", nil)
 		if err != nil {
@@ -239,7 +291,7 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 		if resp.StatusCode != http.StatusInternalServerError {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
 		}
-		got := decodeErr(t, resp)
+		got := decodeHTTPErrorResponse(t, resp)
 		if got.Code != "internal_error" {
 			t.Fatalf("code=%q, want %q", got.Code, "internal_error")
 		}
@@ -263,7 +315,7 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 		if resp.StatusCode != http.StatusInternalServerError {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
 		}
-		got := decodeErr(t, resp)
+		got := decodeHTTPErrorResponse(t, resp)
 		if got.Code != "internal_error" {
 			t.Fatalf("code=%q, want %q", got.Code, "internal_error")
 		}
@@ -283,7 +335,7 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 		if resp.StatusCode != http.StatusInternalServerError {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
 		}
-		got := decodeErr(t, resp)
+		got := decodeHTTPErrorResponse(t, resp)
 		if got.Code != "internal_error" {
 			t.Fatalf("code=%q, want %q", got.Code, "internal_error")
 		}

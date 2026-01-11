@@ -530,6 +530,14 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Gorilla websocket defaults to writing plain-text `http.Error` bodies on
+	// upgrade failures. Preflight the request so callers always receive a JSON
+	// response when they accidentally hit the WebSocket endpoint over HTTP.
+	if !websocket.IsWebSocketUpgrade(r) {
+		writeJSONError(w, http.StatusBadRequest, "bad_message", "websocket upgrade required")
+		return
+	}
+
 	if s.WebRTC == nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "webrtc api not configured")
 		return
@@ -540,6 +548,21 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		// production, but we also enforce them here as defense-in-depth and to
 		// protect standalone usage.
 		CheckOrigin: s.checkOrigin,
+		Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
+			code := "bad_message"
+			message := "websocket upgrade failed"
+			if reason != nil {
+				message = reason.Error()
+			}
+			if status == http.StatusForbidden {
+				code = "forbidden"
+				message = "forbidden"
+			} else if status >= 500 {
+				code = "internal_error"
+				message = "internal error"
+			}
+			writeJSONError(w, status, code, message)
+		},
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
