@@ -1905,6 +1905,32 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  if (res->mapped) {
+    if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
+      const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
+      if (cb && cb->pfnUnlockCb) {
+        D3DDDICB_UNLOCK unlock_cb = {};
+        unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(res->mapped_wddm_allocation);
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_cb.SubresourceIndex = res->mapped_subresource;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_cb.SubResourceIndex = res->mapped_subresource;
+        }
+        (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+      }
+    }
+    res->mapped = false;
+    res->mapped_write = false;
+    res->mapped_subresource = 0;
+    res->mapped_offset = 0;
+    res->mapped_size = 0;
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+  }
+
   if (res->handle != kInvalidHandle) {
     UnbindResourceFromOutputsLocked(dev, res->handle);
     UnbindResourceFromSrvsLocked(dev, res->handle);
@@ -2084,7 +2110,8 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
       return E_INVALIDARG;
   }
 
-  if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
+  const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
+  if (want_read) {
     if (!dev->cmd.empty()) {
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
@@ -2127,8 +2154,29 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     return E_OUTOFMEMORY;
   }
 
+  const bool allow_storage_map = (res->backing_alloc_id == 0) && !(want_read && res->bind_flags == 0);
+  const auto map_storage = [&]() -> HRESULT {
+    res->mapped = true;
+    res->mapped_write = want_write;
+    res->mapped_subresource = subresource;
+    res->mapped_offset = 0;
+    res->mapped_size = size;
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+
+    pMap->pData = res->storage.empty() ? nullptr : res->storage.data();
+    pMap->RowPitch = (res->kind == ResourceKind::Texture2D) ? res->row_pitch_bytes : 0;
+    pMap->DepthPitch = 0;
+    return S_OK;
+  };
+
   const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
   if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb || res->wddm_allocation_handle == 0) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return E_FAIL;
   }
 
@@ -2153,6 +2201,9 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(hr)) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return hr;
   }
   if (!lock_cb.pData) {
@@ -2160,6 +2211,9 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
     InitUnlockArgsForMap(&unlock_cb, subresource);
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return E_FAIL;
   }
 

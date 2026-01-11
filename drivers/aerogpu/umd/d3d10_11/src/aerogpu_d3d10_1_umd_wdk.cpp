@@ -359,7 +359,6 @@ struct AeroGpuResource {
   // This is intentionally NOT the same identity as the KMD-visible
   // `DXGK_ALLOCATIONLIST::hAllocation` and must not be used as a stable alloc_id.
   uint32_t wddm_allocation_handle = 0;
-
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
 
@@ -973,6 +972,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 }
 
 void set_error(AeroGpuDevice* dev, HRESULT hr);
+void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t subresource);
 
 void flush_locked(AeroGpuDevice* dev) {
   if (dev) {
@@ -2311,6 +2311,9 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (res->mapped) {
+    unmap_resource_locked(dev, res, res->mapped_subresource);
+  }
 
   if (dev->current_rtv_res == res) {
     dev->current_rtv_res = nullptr;
@@ -2585,6 +2588,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     default:
       return E_INVALIDARG;
   }
+  const bool want_read = (map_type == kD3DMapRead || map_type == kD3DMapReadWrite);
 
   const uint64_t total = resource_total_bytes(res);
   if (!total) {
@@ -2608,8 +2612,35 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     }
   }
 
+  const bool allow_storage_map = (res->backing_alloc_id == 0) && !(want_read && res->bind_flags == 0);
+  const auto map_storage = [&]() -> HRESULT {
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+
+    pMapped->pData = res->storage.empty() ? nullptr : res->storage.data();
+    if (res->kind == ResourceKind::Texture2D) {
+      pMapped->RowPitch = res->row_pitch_bytes;
+      pMapped->DepthPitch = res->row_pitch_bytes * res->height;
+    } else {
+      pMapped->RowPitch = 0;
+      pMapped->DepthPitch = 0;
+    }
+
+    res->mapped = true;
+    res->mapped_write = want_write;
+    res->mapped_subresource = subresource;
+    res->mapped_offset = 0;
+    res->mapped_size = total;
+    return S_OK;
+  };
+
   const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
   if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb || res->wddm_allocation_handle == 0) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return E_FAIL;
   }
 
@@ -2634,6 +2665,9 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(hr)) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return hr;
   }
   if (!lock_cb.pData) {
@@ -2641,6 +2675,9 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
     InitUnlockArgsForMap(&unlock_cb, subresource);
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return E_FAIL;
   }
 
@@ -2829,8 +2866,27 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
     }
   }
 
+  const bool allow_storage_map = (res->backing_alloc_id == 0);
+  const auto map_storage = [&]() -> HRESULT {
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+
+    res->mapped = true;
+    res->mapped_write = true;
+    res->mapped_subresource = 0;
+    res->mapped_offset = 0;
+    res->mapped_size = total;
+    *ppData = res->storage.empty() ? nullptr : res->storage.data();
+    return S_OK;
+  };
+
   const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
   if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb || res->wddm_allocation_handle == 0) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return E_FAIL;
   }
 
@@ -2868,7 +2924,13 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   }
 
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
+  if (hr == kDxgiErrorWasStillDrawing) {
+    return hr;
+  }
   if (FAILED(hr)) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return hr;
   }
   if (!lock_cb.pData) {
@@ -2876,6 +2938,9 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
     unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
     InitUnlockArgsForMap(&unlock_cb, /*subresource=*/0);
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    if (allow_storage_map) {
+      return map_storage();
+    }
     return E_FAIL;
   }
 

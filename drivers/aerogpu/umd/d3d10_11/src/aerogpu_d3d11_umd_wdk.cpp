@@ -2792,6 +2792,9 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (res->mapped) {
+    (void)UnmapLocked(dev, res);
+  }
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
   if (callbacks && callbacks->pfnDeallocateCb && dev->runtime_device &&
       (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty())) {
@@ -5956,8 +5959,35 @@ static HRESULT MapLocked11(Device* dev,
     }
   }
 
+  const bool allow_storage_map = (res->backing_alloc_id == 0) && !(want_read && res->usage == kD3D11UsageStaging);
+  const auto map_storage = [&]() -> HRESULT {
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+
+    pMapped->pData = res->storage.empty() ? nullptr : res->storage.data();
+    if (res->kind == ResourceKind::Texture2D) {
+      pMapped->RowPitch = res->row_pitch_bytes;
+      pMapped->DepthPitch = res->row_pitch_bytes * res->height;
+    } else {
+      pMapped->RowPitch = static_cast<UINT>(res->storage.size());
+      pMapped->DepthPitch = static_cast<UINT>(res->storage.size());
+    }
+
+    res->mapped = true;
+    res->mapped_map_type = map_u32;
+    res->mapped_map_flags = map_flags;
+    res->mapped_offset = 0;
+    res->mapped_size = res->storage.size();
+    return S_OK;
+  };
+
   const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
   if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     SetError(dev, E_FAIL);
     return E_FAIL;
   }
@@ -5970,6 +6000,9 @@ static HRESULT MapLocked11(Device* dev,
   }
 
   if (!alloc_handle) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     SetError(dev, E_FAIL);
     return E_FAIL;
   }
@@ -6034,6 +6067,9 @@ static HRESULT MapLocked11(Device* dev,
     return kDxgiErrorWasStillDrawing;
   }
   if (FAILED(lock_hr)) {
+    if (allow_storage_map) {
+      return map_storage();
+    }
     SetError(dev, lock_hr);
     return lock_hr;
   }
@@ -6047,6 +6083,9 @@ static HRESULT MapLocked11(Device* dev,
       unlock.SubResourceIndex = subresource;
     }
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
+    if (allow_storage_map) {
+      return map_storage();
+    }
     SetError(dev, E_FAIL);
     return E_FAIL;
   }
