@@ -247,8 +247,8 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
-  * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token`:
-    * `alloc_id` is preserved cross-process via the WDDM allocation private-driver-data blob (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+    * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token`:
+      * `alloc_id` is preserved cross-process via the WDDM allocation private-driver-data blob (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
     * `share_token` is the protocol token used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE` and must be stable across processes. For shared allocations it is preserved cross-process via the same allocation private-driver-data blob (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
     The miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
   * If the shared handle is a real NT handle, the parent also (when supported) confirms `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` maps both process-local handles to the same stable **debug token**.
