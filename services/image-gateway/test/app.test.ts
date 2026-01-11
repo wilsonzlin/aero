@@ -179,6 +179,56 @@ describe("app", () => {
     expect(res.headers["access-control-expose-headers"]).toContain("etag");
   });
 
+  it("appends no-transform when S3 Cache-Control metadata is missing it", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      size: 123,
+      etag: '"etag"',
+      lastModified: new Date("2020-01-01T00:00:00.000Z").toISOString(),
+    });
+
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadBucketCommand) return {};
+        if (command instanceof HeadObjectCommand) {
+          return {
+            ContentLength: 123,
+            ETag: '"etag"',
+            LastModified: lastModified,
+            ContentType: "application/octet-stream",
+            CacheControl: "private, no-store",
+            ContentEncoding: "identity",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "HEAD",
+      url: `/v1/images/${imageId}/range`,
+      headers: { "x-user-id": ownerId },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("private, no-store, no-transform");
+  });
+
   it("passes through cache-control + content-encoding on ranged GET responses", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
@@ -231,6 +281,53 @@ describe("app", () => {
     expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
     expect(res.headers["content-encoding"]).toBe("identity");
     expect(res.payload).toBe("0123");
+  });
+
+  it("rejects non-identity Content-Encoding from S3", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          return {
+            Body: Readable.from([Buffer.from("0123")]),
+            ContentRange: "bytes 0-3/4",
+            ContentLength: 4,
+            ContentType: "application/octet-stream",
+            ContentEncoding: "gzip",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-3",
+      },
+    });
+
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({ error: { code: "S3_ERROR" } });
   });
 
   it("rejects multi-range requests", async () => {

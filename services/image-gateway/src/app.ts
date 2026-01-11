@@ -53,6 +53,25 @@ function normalizeEtag(etag: string): string {
   return `"${trimmed.replace(/"/g, "")}"`;
 }
 
+function ensureNoTransformCacheControl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "no-transform";
+  const directives = trimmed.split(",").map((directive) => directive.trim().toLowerCase());
+  if (directives.includes("no-transform")) return trimmed;
+  return `${trimmed}, no-transform`;
+}
+
+function assertIdentityContentEncoding(value: string | undefined): void {
+  if (!value) return;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "identity") return;
+  throw new ApiError(
+    502,
+    `S3 returned Content-Encoding (${value}), but disk streaming requires identity`,
+    "S3_ERROR"
+  );
+}
+
 function sendIfRangePreconditionFailed(
   reply: FastifyReply,
   params: { etag: string; crossOriginResourcePolicy: Config["crossOriginResourcePolicy"] }
@@ -1052,11 +1071,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
     });
     if (s3Res.CacheControl) {
-      proxy.headers["cache-control"] = s3Res.CacheControl;
+      proxy.headers["cache-control"] = ensureNoTransformCacheControl(s3Res.CacheControl);
     }
-    if (s3Res.ContentEncoding) {
-      proxy.headers["content-encoding"] = s3Res.ContentEncoding;
-    }
+    assertIdentityContentEncoding(s3Res.ContentEncoding);
 
     reply
       .status(proxy.statusCode)
@@ -1104,11 +1121,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
     });
     if (head.CacheControl) {
-      proxy.headers["cache-control"] = head.CacheControl;
+      proxy.headers["cache-control"] = ensureNoTransformCacheControl(head.CacheControl);
     }
-    if (head.ContentEncoding) {
-      proxy.headers["content-encoding"] = head.ContentEncoding;
-    }
+    assertIdentityContentEncoding(head.ContentEncoding);
 
     reply.status(proxy.statusCode).headers(proxy.headers).send();
   });
