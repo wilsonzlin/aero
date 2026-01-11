@@ -314,8 +314,12 @@ fn cmd_buffer_can_exceed_cmd_stream_header_size_bytes() {
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
 
     let alloc_table_gpa = 0x5000u64;
-    let alloc_table_size_bytes =
-        write_alloc_table(&mut mem, alloc_table_gpa, regs.abi_version, AEROGPU_ALLOC_TABLE_MAGIC);
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
 
     // Forward-compat: `cmd_size_bytes` is the backing buffer size, while the stream header's
     // `size_bytes` is the number of bytes used.
@@ -360,7 +364,10 @@ fn cmd_buffer_can_exceed_cmd_stream_header_size_bytes() {
         .cmd_stream_header
         .as_ref()
         .expect("missing cmd stream header");
-    assert_eq!(header.size_bytes, ProtocolCmdStreamHeader::SIZE_BYTES as u32);
+    assert_eq!(
+        header.size_bytes,
+        ProtocolCmdStreamHeader::SIZE_BYTES as u32
+    );
     assert_eq!(
         record.submission.cmd_stream.len(),
         ProtocolCmdStreamHeader::SIZE_BYTES
