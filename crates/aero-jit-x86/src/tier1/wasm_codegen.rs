@@ -837,15 +837,14 @@ impl Emitter<'_> {
                 self.func
                     .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
             }
-            IrInst::CallHelper { helper, .. } => {
+            IrInst::CallHelper { .. } => {
                 // Tier-1 blocks currently do not have deopt metadata for resuming mid-block. Treat
                 // helper calls as a runtime bailout and request a one-shot interpreter fallback.
                 //
                 // Higher-level compilation helpers may reject helper calls up-front, but keep the
                 // codegen itself defensive so direct users of `Tier1WasmCodegen` don't hit a hard
                 // panic at compile time.
-                let _ = helper;
-
+                //
                 // Mark this as a runtime exit so the backend can roll back state if needed.
                 // `kind` is currently unused by the host stub helpers, so use 0.
                 self.func.instruction(&Instruction::I32Const(0));
@@ -853,12 +852,8 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalGet(self.layout.rip_local()));
                 self.func
                     .instruction(&Instruction::Call(self.imported._jit_exit));
-                // Ignore the suggested resume RIP (some test harnesses return the sentinel).
-                self.func.instruction(&Instruction::Drop);
-
-                // Conservatively request the interpreter to resume at the current RIP.
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.rip_local()));
+                // `jit_exit` returns the RIP to resume at while we use the sentinel return value to
+                // request an interpreter step.
                 self.func
                     .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
                 self.func

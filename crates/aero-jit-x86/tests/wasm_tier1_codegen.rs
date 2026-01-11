@@ -61,7 +61,7 @@ fn instantiate(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) 
             IMPORT_JIT_EXIT,
             Func::wrap(
                 &mut store,
-                |_caller: Caller<'_, ()>, _kind: i32, _rip: i64| -> i64 { JIT_EXIT_SENTINEL_I64 },
+                |_caller: Caller<'_, ()>, _kind: i32, rip: i64| -> i64 { rip },
             ),
         )
         .unwrap();
