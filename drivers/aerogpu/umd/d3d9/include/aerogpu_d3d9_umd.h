@@ -140,6 +140,7 @@ typedef struct AEROGPU_D3D9DDIARG_CREATERESOURCE {
   uint32_t mip_levels;
   uint32_t usage;    // driver-defined (e.g. render target, dynamic)
   uint32_t size;     // for buffers (bytes)
+  HANDLE* pSharedHandle; // optional in/out: non-NULL requests a shared resource
   AEROGPU_D3D9DDI_HRESOURCE hResource; // out
 
   // Optional shared handle pointer.

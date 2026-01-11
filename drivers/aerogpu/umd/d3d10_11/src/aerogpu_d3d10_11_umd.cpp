@@ -43,6 +43,9 @@ constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
 
+// D3D11_RESOURCE_MISC_SHARED (numeric value from d3d11.h).
+constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
+
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
@@ -347,6 +350,13 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   }
 
   if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D) {
+    const uint32_t mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1;
+    const bool is_shared = (pDesc->MiscFlags & kD3D11ResourceMiscShared) != 0;
+    if (is_shared && mip_levels != 1) {
+      // MVP: shared surfaces are single-allocation only.
+      return E_NOTIMPL;
+    }
+
     if (pDesc->ArraySize != 1) {
       return E_NOTIMPL;
     }
@@ -363,7 +373,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->misc_flags = pDesc->MiscFlags;
     res->width = pDesc->Width;
     res->height = pDesc->Height;
-    res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1;
+    res->mip_levels = mip_levels;
     res->array_size = pDesc->ArraySize;
     res->dxgi_format = pDesc->Format;
     res->row_pitch_bytes = res->width * bytes_per_pixel_aerogpu(aer_fmt);

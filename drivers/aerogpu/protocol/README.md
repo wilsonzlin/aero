@@ -187,10 +187,16 @@ The initial protocol defines an IR sufficient for D3D9-style rendering and can b
 - Draw, draw indexed.
 - Clear.
 - Present / PresentEx (D3D9Ex flags).
-- Shared surface export/import (cross-process DWM redirected surfaces).
+- Shared surface export/import (cross-process DWM redirected surfaces; MVP: single-allocation only).
 - Flush (explicit scheduling point).
 
 See `aerogpu_cmd.h` for the full opcode list and packet layouts.
+
+### Shared-surface MVP limitation (single allocation)
+
+The shared-surface ABI (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`) currently assumes that a shared surface is backed by a **single** WDDM allocation (one contiguous guest memory range). Many WDDM resources can be split across multiple allocations (mips/arrays/planes).
+
+To keep the contract simple and to match Win7 DWM redirected surfaces, the AeroGPU driver stack rejects shared resources that would require multiple allocations (MVP policy: `mip_levels=1`, `array_layers=1`).
 
 ## End-to-end flow (Windows → emulator)
 

@@ -1253,14 +1253,63 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
      * the driver tracks all live wrappers in adapter->Allocations and only frees
      * handles that are still tracked.
      */
-    BOOLEAN isShared = FALSE;
     /*
      * WDK 7.1 exposes DXGKARG_CREATEALLOCATION::Flags.CreateShared for shared
      * handle creation (DWM redirected surfaces).
      */
-    isShared = pCreate->Flags.CreateShared ? TRUE : FALSE;
+    const BOOLEAN isShared = pCreate->Flags.CreateShared ? TRUE : FALSE;
 
     static LONG g_CreateAllocPrivWarned = 0;
+#if DBG
+    BOOLEAN logCall = FALSE;
+    /*
+     * WDDM resources may be represented as multiple allocations (mips/arrays/planes).
+     *
+     * AeroGPU's MVP shared-surface interop assumes a single backing allocation, so
+     * we log shared/multi-allocation creation requests to characterize real-world
+     * behavior (notably DWM redirected surfaces) and to aid bring-up debugging.
+     *
+     * Guard + rate-limit to avoid excessive DbgPrint spam in hot paths.
+     */
+    {
+        const BOOLEAN interesting = isShared || (pCreate->NumAllocations != 1);
+        if (interesting) {
+            enum { kLogLimit = 64 };
+            static LONG s_logCount = 0;
+            const LONG n = InterlockedIncrement(&s_logCount);
+            if (n <= kLogLimit) {
+                logCall = TRUE;
+                AEROGPU_LOG("CreateAllocation: NumAllocations=%u CreateShared=%u Flags=0x%08X",
+                            (unsigned)pCreate->NumAllocations,
+                            (unsigned)isShared,
+                            (unsigned)pCreate->Flags.Value);
+
+                for (UINT i = 0; i < pCreate->NumAllocations; ++i) {
+                    const DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
+                    AEROGPU_LOG("  alloc[%u]: Size=%Iu", (unsigned)i, info->Size);
+                }
+            } else if (n == (kLogLimit + 1)) {
+                AEROGPU_LOG0("CreateAllocation: log limit reached; suppressing further messages");
+            }
+        }
+    }
+#endif
+
+    /*
+     * MVP restriction: shared resources must be represented as a single allocation.
+     *
+     * The guest↔host shared-surface protocol currently only supports one backing
+     * allocation per share token. Enforce this invariant in KMD to ensure we fail
+     * predictably (rather than corrupting host-side shared-surface tables) if an
+     * API attempts to share a resource that would require multiple allocations.
+     */
+    if (isShared && pCreate->NumAllocations != 1) {
+#if DBG
+        AEROGPU_LOG("CreateAllocation: rejecting shared resource with NumAllocations=%u (MVP supports only single-allocation shared surfaces)",
+                    (unsigned)pCreate->NumAllocations);
+#endif
+        return STATUS_NOT_SUPPORTED;
+    }
 
     for (UINT i = 0; i < pCreate->NumAllocations; ++i) {
         DXGK_ALLOCATIONINFO* info = &pCreate->pAllocationInfo[i];
@@ -1334,11 +1383,15 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
         AeroGpuTrackAllocation(adapter, alloc);
 
-        AEROGPU_LOG("CreateAllocation: alloc_id=%lu shared=%lu share_token=0x%I64x size=%Iu",
-                   alloc->AllocationId,
-                   isShared ? 1ul : 0ul,
-                   alloc->ShareToken,
-                   alloc->SizeBytes);
+#if DBG
+        if (logCall) {
+            AEROGPU_LOG("CreateAllocation: alloc_id=%lu shared=%lu share_token=0x%I64x size=%Iu",
+                        alloc->AllocationId,
+                        isShared ? 1ul : 0ul,
+                        alloc->ShareToken,
+                        alloc->SizeBytes);
+        }
+#endif
     }
 
     return STATUS_SUCCESS;

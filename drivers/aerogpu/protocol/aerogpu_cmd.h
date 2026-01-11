@@ -739,6 +739,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  *   driver data (see `aerogpu_wddm_alloc.h`). The recommended scheme is
  *   `share_token = (uint64_t)alloc_id`.
  * - The host stores a mapping of (share_token -> resource).
+ * - MVP limitation: the shared resource must be backed by a single guest
+ *   allocation (i.e. one contiguous guest memory range).
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_export_shared_surface {

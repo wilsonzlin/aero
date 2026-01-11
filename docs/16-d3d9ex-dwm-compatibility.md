@@ -193,6 +193,16 @@ See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-dat
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
+##### MVP limitation: shared surfaces must be single-allocation
+
+Many WDDM resources *can* be represented as multiple allocations (for example: per-mip allocations, texture arrays, or multi-plane formats). AeroGPU’s MVP shared-surface protocol (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`) currently associates a share token with a **single** backing resource/allocation.
+
+To avoid creating share tokens that cannot be imported safely, the driver stack enforces an MVP restriction:
+
+- **Only shared resources that map to exactly one WDDM allocation are supported.**
+- The KMD validates `NumAllocations == 1` for shared allocation creates and fails deterministically otherwise.
+- The UMD should reject shared creations that would require multiple allocations (practically: keep shared surfaces to `mip_levels=1` and `array_layers=1`, which matches typical DWM redirected surfaces).
+
 #### `D3DPOOL_DEFAULT` semantics for Ex
 
 Ex clients expect `D3DPOOL_DEFAULT` resources to behave like true GPU resources:

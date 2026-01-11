@@ -25,6 +25,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_triangle/
   d3d9ex_query_latency/
   d3d9ex_shared_surface/
+  d3d9ex_shared_allocations/
   d3d9ex_dwm_probe/
   wait_vblank_pacing/
   vblank_wait_sanity/
@@ -135,6 +136,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and verifies the child can open it and submit GPU work (pass `--validate-sharing` / `--dump` to also validate pixels)
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
+* `d3d9ex_shared_allocations` creates shared D3D9Ex resources (render target + mipmapped texture) to exercise shared-surface allocation behavior
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 

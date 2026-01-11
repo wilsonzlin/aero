@@ -14,6 +14,9 @@
 namespace aerogpu {
 namespace {
 
+// D3DERR_INVALIDCALL from d3d9.h (returned by UMD for invalid arguments).
+constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
+
 // -----------------------------------------------------------------------------
 // Minimal caps structure (compat only)
 // -----------------------------------------------------------------------------
@@ -754,6 +757,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  const bool is_shared = (pCreateResource->pSharedHandle != NULL);
+  const uint32_t mip_levels = std::max(1u, pCreateResource->mip_levels);
+  if (is_shared && mip_levels != 1) {
+    // MVP: shared surfaces must be single-allocation (no mip chains/arrays).
+    return kD3DErrInvalidCall;
+  }
+
   auto res = std::make_unique<Resource>();
   res->handle = dev->adapter->next_handle.fetch_add(1);
   res->type = pCreateResource->type;
@@ -761,7 +771,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->width = pCreateResource->width;
   res->height = pCreateResource->height;
   res->depth = std::max(1u, pCreateResource->depth);
-  res->mip_levels = std::max(1u, pCreateResource->mip_levels);
+  res->mip_levels = mip_levels;
   res->usage = pCreateResource->usage;
 
   const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
