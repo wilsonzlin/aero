@@ -266,17 +266,24 @@ impl AerogpuResourceManager {
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
         let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC container")?;
-        let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse SM4/SM5 program")?;
         let parsed_stage = match program.stage {
             ShaderStage::Vertex => AerogpuShaderStage::Vertex,
             ShaderStage::Pixel => AerogpuShaderStage::Pixel,
             ShaderStage::Compute => AerogpuShaderStage::Compute,
+            // AeroGPU's shader stage ABI matches WebGPU, which has no geometry/hull/domain stage.
+            // Some Win7-era D3D11 apps still create these shaders (or buggy guests may forward them
+            // with a placeholder stage). Accept the create to keep the runtime robust, but ignore
+            // the shader since there is no way to bind it in the command stream.
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                return Ok(());
+            }
             other => bail!("CreateShaderDxbc: unsupported DXBC shader stage {other:?}"),
         };
         if parsed_stage != stage {
             bail!("CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
+        let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let wgsl = if signatures.isgn.is_some() && signatures.osgn.is_some() {
             try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
         } else {
