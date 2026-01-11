@@ -409,7 +409,7 @@ fn push<B: CpuBus>(
     let mut sp = state.stack_ptr();
     sp = sp.wrapping_sub(size as u64) & mask_bits(sp_bits);
     state.set_stack_ptr(sp);
-    let addr = state.seg_base_reg(Register::SS).wrapping_add(sp);
+    let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
     match size {
         2 => bus.write_u16(addr, val as u16),
         4 => bus.write_u32(addr, val as u32),
@@ -421,7 +421,7 @@ fn push<B: CpuBus>(
 fn pop<B: CpuBus>(state: &mut CpuState, bus: &mut B, size: u32) -> Result<u64, Exception> {
     let sp_bits = state.stack_ptr_bits();
     let sp = state.stack_ptr();
-    let addr = state.seg_base_reg(Register::SS).wrapping_add(sp);
+    let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
     let v = match size {
         2 => bus.read_u16(addr)? as u64,
         4 => bus.read_u32(addr)? as u64,

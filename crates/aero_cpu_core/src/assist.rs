@@ -326,9 +326,11 @@ fn calc_ea(state: &CpuState, instr: &Instruction, next_ip: u64, include_seg: boo
 
     let addr = (offset as u64) & mask_bits(addr_bits);
     if include_seg {
-        Ok(state
-            .seg_base_reg(instr.memory_segment())
-            .wrapping_add(addr))
+        Ok(state.apply_a20(
+            state
+                .seg_base_reg(instr.memory_segment())
+                .wrapping_add(addr),
+        ))
     } else {
         Ok(addr)
     }
@@ -647,7 +649,7 @@ fn instr_ins<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction) 
 
     while count != 0 {
         let val = bus.io_read(port, size)?;
-        let addr = state.seg_base_reg(Register::ES).wrapping_add(di & addr_mask);
+        let addr = state.apply_a20(state.seg_base_reg(Register::ES).wrapping_add(di & addr_mask));
         match size {
             1 => bus.write_u8(addr, val as u8)?,
             2 => bus.write_u16(addr, val as u16)?,
@@ -689,7 +691,7 @@ fn instr_outs<B: CpuBus>(state: &mut CpuState, bus: &mut B, instr: &Instruction)
     let addr_mask = mask_bits(state.bitness());
 
     while count != 0 {
-        let addr = state.seg_base_reg(Register::DS).wrapping_add(si & addr_mask);
+        let addr = state.apply_a20(state.seg_base_reg(Register::DS).wrapping_add(si & addr_mask));
         let val: u64 = match size {
             1 => bus.read_u8(addr)? as u64,
             2 => bus.read_u16(addr)? as u64,
@@ -1443,14 +1445,14 @@ fn push_sized<B: CpuBus>(state: &mut CpuState, bus: &mut B, val: u64, size: u32)
     let mut sp = state.stack_ptr();
     sp = sp.wrapping_sub(size as u64) & mask_bits(sp_bits);
     state.set_stack_ptr(sp);
-    let addr = state.seg_base_reg(Register::SS).wrapping_add(sp);
+    let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
     write_mem(bus, addr, size * 8, val)
 }
 
 fn pop_sized<B: CpuBus>(state: &mut CpuState, bus: &mut B, size: u32) -> Result<u64, Exception> {
     let sp_bits = state.stack_ptr_bits();
     let sp = state.stack_ptr();
-    let addr = state.seg_base_reg(Register::SS).wrapping_add(sp);
+    let addr = state.apply_a20(state.seg_base_reg(Register::SS).wrapping_add(sp));
     let v = read_mem(bus, addr, size * 8)?;
     let next = sp.wrapping_add(size as u64) & mask_bits(sp_bits);
     state.set_stack_ptr(next);

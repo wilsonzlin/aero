@@ -2,6 +2,7 @@ use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_ZF};
 use aero_cpu_core::AssistReason;
+use aero_x86::Register;
 
 fn run_to_halt(state: &mut CpuState, bus: &mut FlatTestBus, max: u64) {
     let mut steps = 0;
@@ -74,6 +75,24 @@ fn real_mode_segment_mov_updates_base() {
     state.set_rip(0);
     run_to_halt(&mut state, &mut bus, 100);
     assert_eq!(bus.read_u8(0x10000 + 0x20).unwrap(), 0xAA);
+}
+
+#[test]
+fn real_mode_stack_push_wraps_with_a20_disabled() {
+    // push ax; hlt
+    let code = [0x50, 0xF4];
+    let mut bus = FlatTestBus::new(0x10000);
+    bus.load(0x200, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0x200);
+    state.a20_enabled = false;
+    state.write_reg(Register::SS, 0xFFFF);
+    state.write_reg(Register::SP, 0x0012);
+    state.write_reg(Register::AX, 0xBEEF);
+
+    run_to_halt(&mut state, &mut bus, 20);
+    assert_eq!(bus.read_u16(0).unwrap(), 0xBEEF);
 }
 
 #[test]
