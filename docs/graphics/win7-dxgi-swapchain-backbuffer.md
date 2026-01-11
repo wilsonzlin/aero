@@ -53,6 +53,12 @@ bin\dxgi_swapchain_probe.exe --api=d3d10 --require-vid=0xA3A0 --require-did=0x00
 bin\dxgi_swapchain_probe.exe --api=d3d10_1 --require-vid=0xA3A0 --require-did=0x0001
 ```
 
+The probe defaults to a 256x256 swapchain, but you can override the size with:
+* `--width=N`
+* `--height=N`
+
+Using an “odd” size can make it easier to correlate `--dump-createalloc` entries by allocation size.
+
 ### 3) Capture the UMD output
 
 Use Sysinternals **DebugView** (or any debugger) to capture `OutputDebugStringA` output while the probe runs.

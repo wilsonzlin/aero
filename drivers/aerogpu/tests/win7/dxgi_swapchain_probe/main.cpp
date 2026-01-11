@@ -295,7 +295,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   const char* kTestName = "dxgi_swapchain_probe";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--hidden] [--frames=N] [--json[=PATH]] [--require-vid=0x####] "
+        "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--width=N] [--height=N] [--hidden] [--frames=N] [--json[=PATH]] "
+        "[--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
@@ -349,13 +350,21 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     has_require_did = true;
   }
 
-  const int kWidth = 256;
-  const int kHeight = 256;
+  uint32_t width = 256;
+  uint32_t height = 256;
+  aerogpu_test::GetArgUint32(argc, argv, "--width", &width);
+  aerogpu_test::GetArgUint32(argc, argv, "--height", &height);
+  if (width == 0) {
+    width = 1;
+  }
+  if (height == 0) {
+    height = 1;
+  }
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_DXGISwapchainProbe",
                                               L"AeroGPU DXGI Swapchain Probe",
-                                              kWidth,
-                                              kHeight,
+                                              (int)width,
+                                              (int)height,
                                               !hidden);
   if (!hwnd) {
     return reporter.Fail("CreateBasicWindow failed");
@@ -363,8 +372,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
 
   DXGI_SWAP_CHAIN_DESC scd;
   ZeroMemory(&scd, sizeof(scd));
-  scd.BufferDesc.Width = kWidth;
-  scd.BufferDesc.Height = kHeight;
+  scd.BufferDesc.Width = width;
+  scd.BufferDesc.Height = height;
   scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
   scd.BufferDesc.RefreshRate.Numerator = 60;
   scd.BufferDesc.RefreshRate.Denominator = 1;
@@ -377,7 +386,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
   scd.Flags = 0;
 
-  aerogpu_test::PrintfStdout("INFO: %s: api=%s", kTestName, ProbeApiName(api));
+  aerogpu_test::PrintfStdout("INFO: %s: api=%s size=%ux%u",
+                             kTestName,
+                             ProbeApiName(api),
+                             (unsigned)width,
+                             (unsigned)height);
 
   if (api == kProbeApiD3D10) {
     ComPtr<ID3D10Device> device;
@@ -454,8 +467,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     D3D10_VIEWPORT vp;
     vp.TopLeftX = 0;
     vp.TopLeftY = 0;
-    vp.Width = (UINT)kWidth;
-    vp.Height = (UINT)kHeight;
+    vp.Width = (UINT)width;
+    vp.Height = (UINT)height;
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
     device->RSSetViewports(1, &vp);
@@ -563,8 +576,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     D3D10_VIEWPORT vp;
     vp.TopLeftX = 0;
     vp.TopLeftY = 0;
-    vp.Width = (UINT)kWidth;
-    vp.Height = (UINT)kHeight;
+    vp.Width = (UINT)width;
+    vp.Height = (UINT)height;
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
     device->RSSetViewports(1, &vp);
@@ -678,8 +691,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     D3D11_VIEWPORT vp;
     vp.TopLeftX = 0;
     vp.TopLeftY = 0;
-    vp.Width = (FLOAT)kWidth;
-    vp.Height = (FLOAT)kHeight;
+    vp.Width = (FLOAT)width;
+    vp.Height = (FLOAT)height;
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
     context->RSSetViewports(1, &vp);
