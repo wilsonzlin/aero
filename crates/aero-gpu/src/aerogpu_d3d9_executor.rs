@@ -779,10 +779,15 @@ impl AerogpuD3d9Executor {
                         .ok_or(AerogpuD3d9Error::MissingAllocTable(backing_alloc_id))?;
                     let bpp = bytes_per_pixel(format);
                     let expected_row_pitch = width.checked_mul(bpp).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("texture row pitch overflow".into())
+                        AerogpuD3d9Error::Validation("CREATE_TEXTURE2D: row pitch overflow".into())
                     })?;
+                    if row_pitch_bytes != 0 && row_pitch_bytes < expected_row_pitch {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "CREATE_TEXTURE2D: row_pitch_bytes {row_pitch_bytes} is smaller than required {expected_row_pitch}"
+                        )));
+                    }
                     let row_pitch = if row_pitch_bytes != 0 {
-                        row_pitch_bytes.max(expected_row_pitch)
+                        row_pitch_bytes
                     } else {
                         expected_row_pitch
                     };
@@ -790,11 +795,15 @@ impl AerogpuD3d9Executor {
                         (row_pitch as u64)
                             .checked_mul(height as u64)
                             .ok_or_else(|| {
-                                AerogpuD3d9Error::Validation("texture backing overflow".into())
+                                AerogpuD3d9Error::Validation(
+                                    "CREATE_TEXTURE2D: texture backing overflow".into(),
+                                )
                             })?;
                     let backing_offset = backing_offset_bytes as u64;
                     let required_end = backing_offset.checked_add(required).ok_or_else(|| {
-                        AerogpuD3d9Error::Validation("texture backing overflow".into())
+                        AerogpuD3d9Error::Validation(
+                            "CREATE_TEXTURE2D: texture backing overflow".into(),
+                        )
                     })?;
                     if required_end > entry.size_bytes {
                         return Err(AerogpuD3d9Error::Validation(format!(
