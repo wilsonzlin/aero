@@ -42,6 +42,7 @@ CatalogFile = aerogpu.cat
 [AeroGPU_Install.NTx86.6.1]
 CopyFiles = AeroGPU_KMD.CopyFiles, AeroGPU_UMD_x86.CopyFiles
 AddReg    = AeroGPU_Device_AddReg_x86
+DelReg    = AeroGPU_Device_DelReg
 
 [AeroGPU_Install.NTx86.6.1.Services]
 AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
@@ -52,6 +53,7 @@ AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
 [AeroGPU_Install.NTamd64.6.1]
 CopyFiles = AeroGPU_KMD.CopyFiles, AeroGPU_UMD_x64.CopyFiles, AeroGPU_UMD_Wow64.CopyFiles
 AddReg    = AeroGPU_Device_AddReg_amd64
+DelReg    = AeroGPU_Device_DelReg
 
 [AeroGPU_Install.NTamd64.6.1.Services]
 AddService = AeroGPU,0x00000002,AeroGPU_Service_Install
@@ -96,6 +98,12 @@ HKR,,FeatureScore,%REG_DWORD%,0x000000F8
 ; D3D9 UMD registration (64-bit + WoW32).
 HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9_x64"
 HKR,,InstalledDisplayDriversWow,%REG_MULTI_SZ%,"aerogpu_d3d9"
+
+[AeroGPU_Device_DelReg]
+; Ensure the D3D9-only package doesn't leave stale D3D10/11 UMD registration if
+; a DX11-capable package was installed previously.
+HKR,,UserModeDriverName
+HKR,,UserModeDriverNameWow
 
 ; -------------------------------
 ; Service installation
