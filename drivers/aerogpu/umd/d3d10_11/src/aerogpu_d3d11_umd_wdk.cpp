@@ -1406,6 +1406,25 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       dma_priv_size_dealloc = expected_dma_priv_bytes;
     }
 
+    bool require_dma_priv = false;
+    __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
+      require_dma_priv = true;
+    }
+    __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
+      require_dma_priv = true;
+    }
+    if (require_dma_priv && !dma_priv_ptr) {
+      AEROGPU_D3D10_11_LOG("wddm_submit: D3D11 submit missing dma private data ptr (need %u bytes)",
+                           static_cast<unsigned>(expected_dma_priv_bytes));
+      deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
+      if (out_hr) {
+        *out_hr = E_FAIL;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+
     if (dma_priv_ptr_present) {
       if (dma_priv_ptr == nullptr) {
         deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
