@@ -111,10 +111,20 @@ function resetFakeWebSocket(): void {
 }
 
 describe("net/l2Tunnel", () => {
-  it("accepts unordered RTCDataChannels", () => {
+  it("accepts unordered RTCDataChannels (ordering is optional)", () => {
     const channel = new FakeRtcDataChannel();
     channel.ordered = false;
-    expect(() => new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {})).not.toThrow();
+    const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {}, {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+    client.close();
+  });
+
+  it("rejects partially reliable RTCDataChannels", () => {
+    const channel = new FakeRtcDataChannel();
+    channel.maxRetransmits = 0;
+    expect(() => new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {})).toThrow(/maxRetransmits/);
   });
 
   it("forwards FRAME messages and responds to PING", async () => {
