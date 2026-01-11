@@ -2720,7 +2720,8 @@ fn aerogpu_cmd_enables_scissor_between_draws_without_restarting_render_pass() {
         assert_eq!(stats.bind_group_layouts.entries, 2);
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
-        assert_eq!(pixels.len(), 2 * 1 * 4);
+        // 2x1 RGBA8 (2 pixels, 4 bytes per pixel).
+        assert_eq!(pixels.len(), 2 * 4);
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
         assert_eq!(&pixels[4..8], &[0, 255, 0, 255]);
     });
@@ -3042,7 +3043,8 @@ fn aerogpu_cmd_rebinds_depth_stencil_state_noops_between_draws_without_restartin
         assert_eq!(stats.bind_group_layouts.entries, 2);
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
-        assert_eq!(pixels.len(), 2 * 1 * 4);
+        // 2x1 RGBA8 (2 pixels, 4 bytes per pixel).
+        assert_eq!(pixels.len(), 2 * 4);
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
         assert_eq!(&pixels[4..8], &[0, 255, 0, 255]);
     });
