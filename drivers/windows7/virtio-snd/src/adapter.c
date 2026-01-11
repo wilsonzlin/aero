@@ -480,7 +480,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_SUBDEVICE_WAVE,
         VIRTIOSND_WAVE_PIN_BRIDGE);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcRegisterPhysicalConnection failed: 0x%08X\n", (UINT)status);
+        VIRTIOSND_TRACE_ERROR("PcRegisterPhysicalConnection(render) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 

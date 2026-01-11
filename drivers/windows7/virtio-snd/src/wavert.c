@@ -1437,7 +1437,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                 }
 
                 if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
-                    status = VirtIoSndInitRxEngine(dx, 0);
+                    status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
                     if (!NT_SUCCESS(status)) {
 #ifdef STATUS_ALREADY_INITIALIZED
                         if (status != STATUS_ALREADY_INITIALIZED) {

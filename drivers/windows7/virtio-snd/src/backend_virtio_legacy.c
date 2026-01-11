@@ -239,6 +239,13 @@ static const VIRTIOSND_BACKEND_OPS g_VirtIoSndBackendLegacyOps = {
     VirtIoSndBackendLegacy_Stop,
     VirtIoSndBackendLegacy_Release,
     VirtIoSndBackendLegacy_WritePeriod,
+    NULL, /* SetParamsCapture */
+    NULL, /* PrepareCapture */
+    NULL, /* StartCapture */
+    NULL, /* StopCapture */
+    NULL, /* ReleaseCapture */
+    NULL, /* SubmitCapturePeriodSg */
+    NULL, /* DrainCaptureCompletions */
     VirtIoSndBackendLegacy_Destroy,
 };
 

@@ -247,6 +247,48 @@ static void test_rx_on_used_uses_registered_callback(void)
     VirtIoSndRxUninit(&rx);
 }
 
+static void test_rx_ok_with_no_payload_is_success_and_payload_zero(void)
+{
+    VIRTIOSND_RX_ENGINE rx;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    NTSTATUS status;
+    VIRTIOSND_RX_SEGMENT seg;
+    RX_COMPLETION_CAPTURE cap;
+    VIRTIOSND_RX_REQUEST* req;
+    ULONG drained;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    seg.addr = 0x1000;
+    seg.len = 4;
+    RtlZeroMemory(&cap, sizeof(cap));
+    status = VirtIoSndRxSubmitSg(&rx, &seg, 1, (void*)0xABCDu);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    req = (VIRTIOSND_RX_REQUEST*)q.LastCookie;
+    TEST_ASSERT(req != NULL);
+
+    req->StatusVa->status = VIRTIO_SND_S_OK;
+    req->StatusVa->latency_bytes = 0u;
+    VirtioSndHostQueuePushUsed(&q, req, (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+
+    drained = VirtIoSndRxDrainCompletions(&rx, RxCompletionCb, &cap);
+    TEST_ASSERT(drained == 1u);
+    TEST_ASSERT(cap.Called == 1);
+    TEST_ASSERT(cap.Cookie == (void*)0xABCDu);
+    TEST_ASSERT(cap.CompletionStatus == STATUS_SUCCESS);
+    TEST_ASSERT(cap.VirtioStatus == VIRTIO_SND_S_OK);
+    TEST_ASSERT(cap.PayloadBytes == 0u);
+    TEST_ASSERT(cap.UsedLen == (UINT32)sizeof(VIRTIO_SND_PCM_STATUS));
+    TEST_ASSERT(rx.FatalError == FALSE);
+
+    VirtIoSndRxUninit(&rx);
+}
+
 static void test_rx_no_free_requests_drops_submission(void)
 {
     VIRTIOSND_RX_ENGINE rx;
@@ -480,6 +522,7 @@ int main(void)
     test_rx_submit_sg_rejects_payload_overflow();
     test_rx_submit_sg_builds_descriptor_chain();
     test_rx_on_used_uses_registered_callback();
+    test_rx_ok_with_no_payload_is_success_and_payload_zero();
     test_rx_no_free_requests_drops_submission();
     test_rx_not_supp_sets_fatal();
     test_rx_used_len_clamps_payload_and_io_err_is_not_fatal();
