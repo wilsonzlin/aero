@@ -1875,12 +1875,35 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
     }
 
     if (bytes) {
+      const uint64_t end = dst_off + bytes;
+      if (end < dst_off) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      const uint64_t upload_offset = dst_off & ~3ull;
+      const uint64_t upload_end = AlignUpU64(end, 4);
+      const uint64_t upload_size = upload_end - upload_offset;
+      if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      if (upload_offset > res->storage.size()) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+      if (upload_size > remaining) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+
+      const uint8_t* payload = res->storage.data() + static_cast<size_t>(upload_offset);
       auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, pUpdate->pSysMemUP, static_cast<size_t>(bytes));
+          AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(upload_size));
       upload->resource_handle = res->handle;
       upload->reserved0 = 0;
-      upload->offset_bytes = dst_off;
-      upload->size_bytes = bytes;
+      upload->offset_bytes = upload_offset;
+      upload->size_bytes = upload_size;
     }
   } else if (res->kind == ResourceKind::Texture2D) {
     if (!res->storage.empty()) {

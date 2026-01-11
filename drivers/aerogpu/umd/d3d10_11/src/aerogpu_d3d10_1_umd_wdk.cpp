@@ -1470,32 +1470,46 @@ void emit_upload_resource_locked(AeroGpuDevice* dev,
     return;
   }
 
-  if (offset_bytes > res->storage.size()) {
+  uint64_t upload_offset = offset_bytes;
+  uint64_t upload_size = size_bytes;
+  if (res->kind == ResourceKind::Buffer) {
+    const uint64_t end = offset_bytes + size_bytes;
+    if (end < offset_bytes) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+    const uint64_t aligned_start = offset_bytes & ~3ull;
+    const uint64_t aligned_end = (end + 3ull) & ~3ull;
+    upload_offset = aligned_start;
+    upload_size = aligned_end - aligned_start;
+  }
+
+  if (upload_offset > res->storage.size()) {
     set_error(dev, E_INVALIDARG);
     return;
   }
 
-  const size_t remaining = res->storage.size() - static_cast<size_t>(offset_bytes);
-  if (size_bytes > remaining) {
+  const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+  if (upload_size > remaining) {
     set_error(dev, E_INVALIDARG);
     return;
   }
-  if (size_bytes > std::numeric_limits<size_t>::max()) {
+  if (upload_size > std::numeric_limits<size_t>::max()) {
     set_error(dev, E_OUTOFMEMORY);
     return;
   }
 
-  const uint8_t* payload = res->storage.data() + static_cast<size_t>(offset_bytes);
+  const uint8_t* payload = res->storage.data() + static_cast<size_t>(upload_offset);
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-      AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(size_bytes));
+      AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(upload_size));
   if (!cmd) {
     set_error(dev, E_FAIL);
     return;
   }
   cmd->resource_handle = res->handle;
   cmd->reserved0 = 0;
-  cmd->offset_bytes = offset_bytes;
-  cmd->size_bytes = size_bytes;
+  cmd->offset_bytes = upload_offset;
+  cmd->size_bytes = upload_size;
 }
 
 template <typename TFnPtr>

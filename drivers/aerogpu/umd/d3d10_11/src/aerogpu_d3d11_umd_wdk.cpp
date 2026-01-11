@@ -1372,8 +1372,26 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
     SetError(dev, E_OUTOFMEMORY);
     return;
   }
-  const size_t off = static_cast<size_t>(offset_bytes);
-  const size_t sz = static_cast<size_t>(size_bytes);
+
+  uint64_t upload_offset = offset_bytes;
+  uint64_t upload_size = size_bytes;
+  if (res->kind == ResourceKind::Buffer) {
+    const uint64_t end = offset_bytes + size_bytes;
+    if (end < offset_bytes) {
+      return;
+    }
+    const uint64_t aligned_start = offset_bytes & ~3ull;
+    const uint64_t aligned_end = AlignUpU64(end, 4);
+    upload_offset = aligned_start;
+    upload_size = aligned_end - aligned_start;
+  }
+
+  if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  const size_t off = static_cast<size_t>(upload_offset);
+  const size_t sz = static_cast<size_t>(upload_size);
   if (off > res->storage.size() || sz > res->storage.size() - off) {
     return;
   }
@@ -1382,8 +1400,8 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
       AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + off, sz);
   cmd->resource_handle = res->handle;
   cmd->reserved0 = 0;
-  cmd->offset_bytes = offset_bytes;
-  cmd->size_bytes = size_bytes;
+  cmd->offset_bytes = upload_offset;
+  cmd->size_bytes = upload_size;
 }
 
 static Device* DeviceFromHandle(D3D11DDI_HDEVICE hDevice);
