@@ -6,11 +6,19 @@ import {
   SHARED_FRAMEBUFFER_MAGIC,
   SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
+import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../shared/frameProtocol";
 
 export type CpuWorkerMockInitMessage = {
   type: "init";
   shared: SharedArrayBuffer;
   framebufferOffsetBytes: number;
+  /**
+   * Optional SharedArrayBuffer used for main-thread ↔ GPU-worker pacing state.
+   *
+   * When provided, the mock will bump the shared sequence and mark the frame as
+   * DIRTY when publishing a new framebuffer slot.
+   */
+  sharedFrameState?: SharedArrayBuffer;
   width: number;
   height: number;
   tileSize: number;
@@ -30,6 +38,7 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
   const { shared, framebufferOffsetBytes, width, height, tileSize } = ev.data;
   const pattern = ev.data.pattern ?? "solid";
   const strideBytes = width * 4;
+  const frameState = ev.data.sharedFrameState ? new Int32Array(ev.data.sharedFrameState) : null;
 
   const layout = computeSharedFramebufferLayout(width, height, strideBytes, FramebufferFormat.RGBA8, tileSize);
 
@@ -120,6 +129,11 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
     Atomics.store(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX, back);
     Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_SEQ, newSeq);
     Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
+
+    if (frameState) {
+      Atomics.store(frameState, FRAME_SEQ_INDEX, newSeq);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+    }
 
     // Wake the GPU worker (which waits on FRAME_SEQ).
     Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);

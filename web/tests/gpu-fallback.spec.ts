@@ -9,40 +9,72 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
 
     const offscreen = canvas.transferControlToOffscreen();
 
-    const worker = new Worker("/src/workers/aero-gpu-worker.ts", {
-      type: "module",
-    });
+    // Simple framebuffer_protocol (AERO) layout: 8 i32 header + RGBA bytes.
+    const width = 64;
+    const height = 64;
+    const strideBytes = width * 4;
+    const headerBytes = 8 * 4;
+
+    const sharedFramebuffer = new SharedArrayBuffer(headerBytes + strideBytes * height);
+    const header = new Int32Array(sharedFramebuffer, 0, 8);
+    const pixels = new Uint8Array(sharedFramebuffer, headerBytes, strideBytes * height);
+
+    // Header fields from `src/display/framebuffer_protocol.ts` (inlined for a
+    // self-contained smoke test).
+    header[0] = 0x4f524541; // FRAMEBUFFER_MAGIC ("AERO")
+    header[1] = 1; // FRAMEBUFFER_VERSION
+    header[2] = width;
+    header[3] = height;
+    header[4] = strideBytes;
+    header[5] = 1; // FRAMEBUFFER_FORMAT_RGBA8888
+    header[6] = 0; // frame counter
+    header[7] = 1; // config counter
+
+    const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+    const frameState = new Int32Array(sharedFrameState);
+    frameState[0] = 0; // FRAME_PRESENTED
+    frameState[1] = 0; // seq
+
+    const worker = new Worker("/src/workers/gpu.worker.ts", { type: "module" });
 
     const readyMsg = await new Promise<any>((resolve, reject) => {
       worker.addEventListener("message", (ev: MessageEvent) => {
         if (ev.data?.type === "ready") resolve(ev.data);
-        if (ev.data?.type === "gpu_error" && ev.data?.fatal) reject(new Error(ev.data?.error?.message));
+        if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
       });
 
       worker.postMessage(
         {
           type: "init",
           canvas: offscreen,
-          width: 64,
-          height: 64,
-          devicePixelRatio: 1,
-          gpuOptions: {
+          sharedFrameState,
+          sharedFramebuffer,
+          sharedFramebufferOffsetBytes: 0,
+          options: {
             preferWebGpu: true,
             disableWebGpu: true,
+            outputWidth: width,
+            outputHeight: height,
+            dpr: 1,
           },
         },
         [offscreen],
       );
     });
 
-    worker.postMessage({ type: "present_test_pattern" });
+    // Publish a frame and tick once so screenshot has content.
+    pixels.fill(0xff); // solid white
+    Atomics.add(header, 6, 1);
+    Atomics.add(frameState, 1, 1);
+    Atomics.store(frameState, 0, 1); // FRAME_DIRTY
+    worker.postMessage({ type: "tick", frameTimeMs: performance.now() });
 
     const screenshot = await new Promise<any>((resolve, reject) => {
       worker.addEventListener("message", (ev: MessageEvent) => {
         if (ev.data?.type === "screenshot" && ev.data?.requestId === 1) resolve(ev.data);
-        if (ev.data?.type === "gpu_error" && ev.data?.fatal) reject(new Error(ev.data?.error?.message));
+        if (ev.data?.type === "error") reject(new Error(ev.data?.message ?? "gpu worker error"));
       });
-      worker.postMessage({ type: "request_screenshot", requestId: 1 });
+      worker.postMessage({ type: "screenshot", requestId: 1 });
     });
 
     worker.postMessage({ type: "shutdown" });
@@ -51,9 +83,9 @@ test("gpu worker falls back to WebGL2 when WebGPU is disabled", async ({ page })
     return { readyMsg, screenshot };
   });
 
-  expect(result.readyMsg.backendKind).toBe("webgl2");
+  expect(result.readyMsg.backendKind).toBe("webgl2_raw");
   expect(result.readyMsg.fallback?.from).toBe("webgpu");
-  expect(result.readyMsg.fallback?.to).toBe("webgl2");
+  expect(result.readyMsg.fallback?.to).toBe("webgl2_raw");
   expect(result.screenshot.width).toBeGreaterThan(0);
   expect(result.screenshot.height).toBeGreaterThan(0);
   expect(result.screenshot.rgba8.byteLength).toBe(result.screenshot.width * result.screenshot.height * 4);

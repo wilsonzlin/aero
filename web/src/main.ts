@@ -596,21 +596,8 @@ function renderGpuWorkerPanel(): HTMLElement {
           await runtime.init(canvas, cssWidth, cssHeight, devicePixelRatio, {
             mode: "auto",
             gpuOptions: { preferWebGpu: true },
-            onGpuError: (msg) => {
-              appendLog(`gpu_error fatal=${msg.fatal} kind=${msg.error.kind} msg=${msg.error.message}`);
-              if (msg.error.hints?.length) {
-                for (const hint of msg.error.hints) appendLog(`  hint: ${hint}`);
-              }
-            },
-            onGpuErrorEvent: (msg) => {
-              appendLog(
-                `gpu_event severity=${msg.event.severity} category=${msg.event.category} msg=${msg.event.message}`,
-              );
-            },
-            onGpuStats: (msg) => {
-              appendLog(
-                `gpu_stats presents=${msg.stats.presents_succeeded}/${msg.stats.presents_attempted} recoveries=${msg.stats.recoveries_succeeded}/${msg.stats.recoveries_attempted} surface_reconfigures=${msg.stats.surface_reconfigures}`,
-              );
+            onError: (msg) => {
+              appendLog(`gpu error: ${msg.message}${msg.code ? ` (code=${msg.code})` : ""}`);
             },
           });
           if (runtime.workerReady) {
@@ -618,11 +605,6 @@ function renderGpuWorkerPanel(): HTMLElement {
             appendLog(`ready backend=${ready.backendKind}`);
             if (ready.fallback) {
               appendLog(`fallback ${ready.fallback.from} -> ${ready.fallback.to}: ${ready.fallback.reason}`);
-            }
-            if (ready.adapterInfo?.vendor || ready.adapterInfo?.renderer) {
-              appendLog(
-                `adapter vendor=${ready.adapterInfo.vendor ?? "n/a"} renderer=${ready.adapterInfo.renderer ?? "n/a"}`,
-              );
             }
           } else {
             appendLog(`ready backend=${runtime.backendKind ?? "webgl2"} (main-thread)`);
@@ -2038,11 +2020,47 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         workerCoordinator.start(config, { platformFeatures });
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
-        if (gpuWorker && frameStateSab) {
+        const sharedFramebuffer = workerCoordinator.getVgaFramebuffer();
+        if (gpuWorker && frameStateSab && sharedFramebuffer) {
+          // Reset any previously transferred canvas before re-attaching it to a
+          // new worker.
+          if (canvasTransferred) resetVgaCanvas();
+
+          let offscreen: OffscreenCanvas | undefined;
+          useWorkerPresentation = false;
+          if (
+            report.offscreenCanvas &&
+            "transferControlToOffscreen" in vgaCanvas &&
+            typeof (vgaCanvas as unknown as { transferControlToOffscreen?: unknown }).transferControlToOffscreen ===
+              "function"
+          ) {
+            try {
+              offscreen = (vgaCanvas as unknown as HTMLCanvasElement & { transferControlToOffscreen: () => OffscreenCanvas })
+                .transferControlToOffscreen();
+              canvasTransferred = true;
+              useWorkerPresentation = true;
+            } catch {
+              // Ignore and fall back to main-thread presentation.
+              offscreen = undefined;
+              canvasTransferred = false;
+              useWorkerPresentation = false;
+            }
+          }
+
           frameScheduler?.stop();
           frameScheduler = startFrameScheduler({
             gpuWorker,
             sharedFrameState: frameStateSab,
+            sharedFramebuffer,
+            sharedFramebufferOffsetBytes: 0,
+            canvas: offscreen,
+            initOptions: offscreen
+              ? {
+                  outputWidth: 640,
+                  outputHeight: 480,
+                  dpr: window.devicePixelRatio || 1,
+                }
+              : undefined,
             showDebugOverlay: true,
           });
         }
@@ -2059,6 +2077,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       frameScheduler?.stop();
       frameScheduler = null;
       workerCoordinator.stop();
+      useWorkerPresentation = false;
+      teardownVgaPresenter();
+      if (canvasTransferred) resetVgaCanvas();
       update();
     },
   }) as HTMLButtonElement;
@@ -2070,11 +2091,29 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       : support.reason ?? "SharedArrayBuffer unavailable.",
   });
 
-  const vgaCanvas = el("canvas") as HTMLCanvasElement;
-  vgaCanvas.style.width = "640px";
-  vgaCanvas.style.height = "480px";
-  vgaCanvas.style.border = "1px solid #333";
-  vgaCanvas.style.background = "#000";
+  const createVgaCanvas = (): HTMLCanvasElement => {
+    const canvas = el("canvas") as HTMLCanvasElement;
+    canvas.style.width = "640px";
+    canvas.style.height = "480px";
+    canvas.style.border = "1px solid #333";
+    canvas.style.background = "#000";
+    canvas.style.imageRendering = "pixelated";
+    return canvas;
+  };
+
+  let vgaCanvas = createVgaCanvas();
+  const vgaCanvasRow = el("div", { class: "row" }, vgaCanvas);
+  let canvasTransferred = false;
+  let useWorkerPresentation = false;
+
+  function resetVgaCanvas(): void {
+    // `transferControlToOffscreen()` is one-shot per HTMLCanvasElement. When the
+    // worker presentation path is used, recreate the canvas so stop/start cycles
+    // continue to work.
+    vgaCanvas = createVgaCanvas();
+    vgaCanvasRow.replaceChildren(vgaCanvas);
+    canvasTransferred = false;
+  }
 
   const vgaInfoLine = el("div", { class: "mono", text: "" });
 
@@ -2092,6 +2131,15 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       if (vgaPresenter) {
         vgaPresenter.setSharedFramebuffer(vgaShared);
       }
+    }
+
+    if (useWorkerPresentation) {
+      // Worker owns the canvas; main-thread presenter must be disabled.
+      if (vgaPresenter) {
+        vgaPresenter.destroy();
+        vgaPresenter = null;
+      }
+      return;
     }
 
     if (!vgaPresenter && vgaShared) {
@@ -2185,7 +2233,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       forceJitCspBlock,
       forceJitCspLabel,
     ),
-    el("div", { class: "row" }, vgaCanvas),
+    vgaCanvasRow,
     vgaInfoLine,
     heartbeatLine,
     frameLine,

@@ -3,9 +3,9 @@ import {
   FRAME_PRESENTED,
   FRAME_PRESENTING,
   FRAME_STATUS_INDEX,
-  type GpuWorkerMessageToMain,
 } from '../shared/frameProtocol';
 import { perf } from '../perf/perf';
+import type { GpuRuntimeInitOptions, GpuRuntimeOutMessage } from "../workers/gpu_runtime_protocol";
 
 import { DebugOverlay } from '../../ui/debug_overlay.ts';
 
@@ -17,9 +17,11 @@ export type FrameSchedulerMetrics = {
 
 export type FrameSchedulerOptions = {
   gpuWorker: Worker;
-  sharedFrameState?: SharedArrayBuffer;
-  sharedFramebuffer?: SharedArrayBuffer;
+  sharedFrameState: SharedArrayBuffer;
+  sharedFramebuffer: SharedArrayBuffer;
   sharedFramebufferOffsetBytes?: number;
+  canvas?: OffscreenCanvas;
+  initOptions?: GpuRuntimeInitOptions;
   showDebugOverlay?: boolean;
   overlayParent?: HTMLElement;
   debugOverlayToggleKey?: string;
@@ -35,6 +37,8 @@ export const startFrameScheduler = ({
   sharedFrameState,
   sharedFramebuffer,
   sharedFramebufferOffsetBytes,
+  canvas,
+  initOptions,
   showDebugOverlay = true,
   overlayParent,
   debugOverlayToggleKey = 'F3',
@@ -50,9 +54,19 @@ export const startFrameScheduler = ({
 
   let lastTelemetry: unknown = null;
 
-  const frameState = sharedFrameState ? new Int32Array(sharedFrameState) : null;
+  const frameState = new Int32Array(sharedFrameState);
   perf.registerWorker(gpuWorker, { threadName: 'gpu-presenter' });
-  gpuWorker.postMessage({ type: 'init', sharedFrameState, sharedFramebuffer, sharedFramebufferOffsetBytes });
+  gpuWorker.postMessage(
+    {
+      type: "init",
+      canvas,
+      sharedFrameState,
+      sharedFramebuffer,
+      sharedFramebufferOffsetBytes: sharedFramebufferOffsetBytes ?? 0,
+      options: initOptions,
+    },
+    canvas ? [canvas] : [],
+  );
 
   let overlay: DebugOverlay | null = null;
   if (showDebugOverlay) {
@@ -72,7 +86,7 @@ export const startFrameScheduler = ({
     }
   };
 
-  const onWorkerMessage = (event: MessageEvent<GpuWorkerMessageToMain>) => {
+  const onWorkerMessage = (event: MessageEvent<GpuRuntimeOutMessage>) => {
     const msg = event.data;
     if (msg.type === 'metrics') {
       metrics.framesReceived = msg.framesReceived;
@@ -90,7 +104,6 @@ export const startFrameScheduler = ({
   gpuWorker.addEventListener('message', onWorkerMessage);
 
   const shouldSendTick = () => {
-    if (!frameState) return true;
     const status = Atomics.load(frameState, FRAME_STATUS_INDEX);
     if (status === FRAME_DIRTY) return true;
     if (status === FRAME_PRESENTING || status === FRAME_PRESENTED) return false;

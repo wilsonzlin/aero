@@ -1,12 +1,5 @@
-import type {
-  BackendKind,
-  GpuWorkerGpuErrorMessage,
-  GpuWorkerErrorEventMessage,
-  GpuWorkerInitOptions,
-  GpuWorkerReadyMessage,
-  GpuWorkerStatsMessage,
-} from '../ipc/gpu-messages';
-import { createGpuWorker, type GpuWorkerHandle } from '../main/createGpuWorker';
+import type { GpuRuntimeInitOptions as WorkerGpuInitOptions, GpuRuntimeReadyMessage, GpuRuntimeOutMessage } from "../workers/gpu_runtime_protocol";
+import { createGpuWorker, type GpuWorkerHandle } from "../main/createGpuWorker";
 import { RawWebGL2Presenter } from './raw-webgl2-presenter';
 
 export type GpuRuntimeMode = 'worker' | 'main';
@@ -28,22 +21,12 @@ export interface GpuRuntimeInitOptions {
    * These are forwarded to the worker init message in worker mode. Main-thread mode
    * currently uses the raw WebGL2 presenter for maximum browser compatibility.
    */
-  gpuOptions?: GpuWorkerInitOptions;
+  gpuOptions?: WorkerGpuInitOptions;
 
   /**
-   * Worker-side GPU error stream (used for surfacing device loss, fatal init errors, etc).
+   * Worker-side errors (presenter init failures, WebGL context loss, etc).
    */
-  onGpuError?: (msg: GpuWorkerGpuErrorMessage) => void;
-
-  /**
-   * Worker-side structured error events (non-fatal telemetry; can include device loss).
-   */
-  onGpuErrorEvent?: (msg: GpuWorkerErrorEventMessage) => void;
-
-  /**
-   * Worker-side periodic stats.
-   */
-  onGpuStats?: (msg: GpuWorkerStatsMessage) => void;
+  onError?: (msg: Extract<GpuRuntimeOutMessage, { type: "error" }>) => void;
 }
 
 export function supportsWorkerOffscreenCanvas(canvas: HTMLCanvasElement): boolean {
@@ -135,7 +118,7 @@ function measureCanvasCssSize(
 
 interface GpuRuntimeImpl {
   readonly mode: GpuRuntimeMode;
-  readonly backendKind: BackendKind;
+  readonly backendKind: string;
   resize(w: number, h: number, dpr: number): Promise<void>;
   present(): Promise<void>;
   screenshot(): Promise<ImageData>;
@@ -143,7 +126,7 @@ interface GpuRuntimeImpl {
 
 class MainThreadGpuRuntimeImpl implements GpuRuntimeImpl {
   readonly mode: GpuRuntimeMode = 'main';
-  readonly backendKind: BackendKind = 'webgl2';
+  readonly backendKind = "webgl2";
 
   private presenter: RawWebGL2Presenter;
   private pixelWidth = 1;
@@ -183,11 +166,11 @@ class MainThreadGpuRuntimeImpl implements GpuRuntimeImpl {
 
 class WorkerGpuRuntimeImpl implements GpuRuntimeImpl {
   readonly mode: GpuRuntimeMode = 'worker';
-  readonly backendKind: BackendKind;
+  readonly backendKind: string;
 
   constructor(
     private readonly handle: GpuWorkerHandle,
-    ready: GpuWorkerReadyMessage,
+    ready: GpuRuntimeReadyMessage,
   ) {
     this.backendKind = ready.backendKind;
   }
@@ -208,8 +191,8 @@ class WorkerGpuRuntimeImpl implements GpuRuntimeImpl {
 
 export class GpuRuntime {
   mode: GpuRuntimeMode | null = null;
-  backendKind: BackendKind | null = null;
-  workerReady: GpuWorkerReadyMessage | null = null;
+  backendKind: string | null = null;
+  workerReady: GpuRuntimeReadyMessage | null = null;
 
   private impl: GpuRuntimeImpl | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -241,9 +224,7 @@ export class GpuRuntime {
         height: h,
         devicePixelRatio: dpr,
         gpuOptions: opts.gpuOptions,
-        onGpuError: opts.onGpuError,
-        onGpuErrorEvent: opts.onGpuErrorEvent,
-        onGpuStats: opts.onGpuStats,
+        onError: opts.onError,
       });
 
       const ready = await handle.ready;

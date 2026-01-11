@@ -5,6 +5,7 @@ import {
   SharedFramebufferHeaderIndex,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
 } from "./src/ipc/shared-layout";
+import { FRAME_DIRTY, FRAME_STATUS_INDEX } from "./src/shared/frameProtocol";
 
 declare global {
   interface Window {
@@ -99,21 +100,22 @@ async function main() {
   const layout = computeSharedFramebufferLayout(width, height, strideBytes, FramebufferFormat.RGBA8, tileSize);
   const shared = new SharedArrayBuffer(layout.totalBytes);
   const header = new Int32Array(shared, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+  const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+  const frameState = new Int32Array(sharedFrameState);
 
   const cpu = new Worker(new URL("./src/workers/cpu-worker-mock.ts", import.meta.url), { type: "module" });
   cpu.postMessage({
     type: "init",
     shared,
     framebufferOffsetBytes: 0,
+    sharedFrameState,
     width,
     height,
     tileSize,
     pattern: "tile_toggle",
   });
 
-  const gpu = new Worker(new URL("./src/workers/shared-framebuffer-presenter.worker.ts", import.meta.url), {
-    type: "module",
-  });
+  const gpu = new Worker(new URL("./src/workers/gpu.worker.ts", import.meta.url), { type: "module" });
 
   const offscreen = canvas.transferControlToOffscreen();
 
@@ -160,15 +162,16 @@ async function main() {
     {
       type: "init",
       canvas: offscreen,
-      shared,
-      framebufferOffsetBytes: 0,
+      sharedFrameState,
+      sharedFramebuffer: shared,
+      sharedFramebufferOffsetBytes: 0,
     },
     [offscreen],
   );
 
   const requestScreenshot = (): Promise<{ width: number; height: number; rgba8: ArrayBuffer; frameSeq: number }> => {
     const requestId = nextRequestId++;
-    gpu.postMessage({ type: "request_screenshot", requestId });
+    gpu.postMessage({ type: "screenshot", requestId });
     return new Promise((resolve, reject) => {
       pendingScreenshots.set(requestId, { resolve, reject });
       setTimeout(() => {
@@ -202,6 +205,15 @@ async function main() {
 
   try {
     await ready;
+
+    // Tick loop: drive the worker presenter while the CPU mock publishes frames.
+    const tick = () => {
+      if (Atomics.load(frameState, FRAME_STATUS_INDEX) === FRAME_DIRTY) {
+        gpu.postMessage({ type: "tick", frameTimeMs: performance.now() });
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
 
     // Wait for at least one frame and capture an odd-seq frame (all green).
     await waitForSeqAtLeast(1);
@@ -248,4 +260,3 @@ async function main() {
 }
 
 void main();
-

@@ -27,7 +27,7 @@ test("gpu worker smoke: renders pattern and returns screenshot hash", async ({ p
     };
   });
 
-  expect(result.backend === "webgpu" || result.backend === "webgl2").toBe(true);
+  expect(result.backend === "webgpu" || result.backend === "webgl2_raw").toBe(true);
   expect(result.hash).toBe(result.expectedHash);
 
   expect(result.samples).not.toBeNull();
@@ -57,9 +57,9 @@ test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, br
     };
   });
 
-  expect(result.backend).toBe("webgl2");
+  expect(result.backend).toBe("webgl2_raw");
   expect(result.fallback).not.toBeNull();
   expect(result.fallback.from).toBe("webgpu");
-  expect(result.fallback.to).toBe("webgl2");
+  expect(result.fallback.to).toBe("webgl2_raw");
   expect(result.pass).toBe(true);
 });

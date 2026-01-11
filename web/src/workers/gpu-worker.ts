@@ -1,13 +1,14 @@
 /// <reference lib="webworker" />
 
-// This worker serves two roles:
-// 1) A frame-protocol driven scheduler that calls an externally-provided `present()` function
-//    (typically from a wasm module) and reports presentation metrics.
-// 2) A lightweight "presenter worker" harness used by Playwright to validate
-//    WebGPU/WebGL2 presenter backends (including the raw WebGL2 fallback).
+// Canonical GPU worker used by:
+// - the runtime WorkerCoordinator (via `gpu.worker.ts`)
+// - smoke tests (shared framebuffer presentation + screenshot readback)
 //
-// Both protocols use `type: "init"`; we disambiguate by checking for an OffscreenCanvas
-// `canvas` field.
+// It consumes a SharedArrayBuffer-backed framebuffer and optionally presents it to an
+// OffscreenCanvas using one of the presenter backends in `web/src/gpu/*`.
+//
+// NOTE: This worker also participates in the WorkerCoordinator control-plane protocol
+// (`kind: "init"`, READY/ERROR messages) so it can be managed like other runtime workers.
 
 import { perf } from '../perf/perf';
 import { installWorkerPerfHandlers } from '../perf/worker';
@@ -24,10 +25,7 @@ import {
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
   type DirtyRect,
-  type FrameTimingsReport,
-  type GpuWorkerMessageFromMain,
-  type GpuWorkerMessageToMain,
-} from '../shared/frameProtocol';
+} from "../shared/frameProtocol";
 
 import {
   layoutFromHeader,
@@ -36,38 +34,52 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
   SharedFramebufferHeaderIndex,
   type SharedFramebufferLayout,
-} from '../ipc/shared-layout';
+} from "../ipc/shared-layout";
 
-import { GpuTelemetry } from '../../gpu/telemetry.ts';
-import type { AeroConfig } from '../config/aero_config';
-import type { WorkerRole } from '../runtime/shared_layout';
-import { createSharedMemoryViews, setReadyFlag } from '../runtime/shared_layout';
+import {
+  FRAMEBUFFER_FORMAT_RGBA8888,
+  FRAMEBUFFER_MAGIC,
+  FRAMEBUFFER_VERSION,
+  HEADER_BYTE_LENGTH,
+  HEADER_I32_COUNT,
+  HEADER_INDEX_FRAME_COUNTER,
+  HEADER_INDEX_FORMAT,
+  HEADER_INDEX_HEIGHT,
+  HEADER_INDEX_STRIDE_BYTES,
+  HEADER_INDEX_WIDTH,
+} from "../display/framebuffer_protocol";
+
+import { GpuTelemetry } from "../../gpu/telemetry.ts";
+import type { AeroConfig } from "../config/aero_config";
+import type { WorkerRole } from "../runtime/shared_layout";
+import { createSharedMemoryViews, setReadyFlag } from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
   type WorkerInitMessage,
-} from '../runtime/protocol';
+} from "../runtime/protocol";
 
-import type { Presenter, PresenterBackendKind, PresenterInitOptions } from '../gpu/presenter';
-import { PresenterError } from '../gpu/presenter';
-import { RawWebGl2Presenter } from '../gpu/raw-webgl2-presenter-backend';
+import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../gpu/presenter";
+import { PresenterError } from "../gpu/presenter";
+import { RawWebGl2Presenter } from "../gpu/raw-webgl2-presenter-backend";
 import type {
-  GpuWorkerInMessage as PresenterWorkerInMessage,
-  GpuWorkerOutMessage as PresenterWorkerOutMessage,
-} from './gpu-worker-protocol';
+  GpuRuntimeInMessage,
+  GpuRuntimeFallbackInfo,
+  GpuRuntimeInitMessage,
+  GpuRuntimeInitOptions,
+  GpuRuntimeOutMessage,
+  GpuRuntimeScreenshotRequestMessage,
+} from "./gpu_runtime_protocol";
 
 type PresentFn = (dirtyRects?: DirtyRect[] | null) => void | boolean | Promise<void | boolean>;
-type GetTimingsFn = () => FrameTimingsReport | null | Promise<FrameTimingsReport | null>;
-
-type AnyInboundMessage = GpuWorkerMessageFromMain | PresenterWorkerInMessage;
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 void installWorkerPerfHandlers();
 
-const postToMain = (msg: GpuWorkerMessageToMain) => {
-  ctx.postMessage(msg);
+const postToMain = (msg: GpuRuntimeOutMessage, transfer?: Transferable[]) => {
+  ctx.postMessage(msg, transfer ?? []);
 };
 
 const postRuntimeError = (message: string) => {
@@ -75,7 +87,7 @@ const postRuntimeError = (message: string) => {
   ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
 };
 
-let role: WorkerRole = 'gpu';
+let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
 
 let frameState: Int32Array | null = null;
@@ -86,15 +98,27 @@ let perfCurrentFrameId = 0;
 let perfGpuMs = 0;
 let perfUploadBytes = 0;
 
-// NOTE: `present()` is expected to be provided by the GPU wasm module once the rendering stack
-// is fully wired up. Until then, we keep a tiny no-op implementation so the frame pacing demo
-// can run end-to-end without keeping the main thread stuck in DIRTY→tick spam.
-let presentFn: PresentFn | null = () => true;
-let getTimingsFn: GetTimingsFn | null = null;
+// Optional `present()` entrypoint supplied by a dynamically imported module.
+// When unset, the worker uses the built-in presenter backends.
+let presentFn: PresentFn | null = null;
 let presenting = false;
 
-let pendingDirtyRects: DirtyRect[] | null = null;
-let pendingFrames = 0;
+let runtimeInit: GpuRuntimeInitMessage | null = null;
+let runtimeCanvas: OffscreenCanvas | null = null;
+let runtimeOptions: GpuRuntimeInitOptions | null = null;
+let runtimeReadySent = false;
+
+let outputWidthCss: number | null = null;
+let outputHeightCss: number | null = null;
+let outputDpr = 1;
+
+let presenter: Presenter | null = null;
+let presenterInitOptions: PresenterInitOptions | null = null;
+let presenterUserOnError: ((error: PresenterError) => void) | undefined = undefined;
+let presenterFallback: GpuRuntimeFallbackInfo | undefined = undefined;
+let presenterInitPromise: Promise<void> | null = null;
+let presenterSrcWidth = 0;
+let presenterSrcHeight = 0;
 
 let framesReceived = 0;
 let framesPresented = 0;
@@ -106,8 +130,6 @@ let lastPresentedSeq = 0;
 let lastMetricsPostAtMs = 0;
 const METRICS_POST_INTERVAL_MS = 250;
 
-let latestTimings: FrameTimingsReport | null = null;
-
 type SharedFramebufferViews = {
   header: Int32Array;
   layout: SharedFramebufferLayout;
@@ -117,8 +139,19 @@ type SharedFramebufferViews = {
   dirty1: Uint32Array | null;
 };
 
-let framebufferViews: SharedFramebufferViews | null = null;
-let lastInitMessage: Extract<GpuWorkerMessageFromMain, { type: 'init' }> | null = null;
+let sharedFramebufferViews: SharedFramebufferViews | null = null;
+let sharedFramebufferLayoutKey: string | null = null;
+
+type FramebufferProtocolViews = {
+  header: Int32Array;
+  width: number;
+  height: number;
+  strideBytes: number;
+  pixels: Uint8Array;
+};
+
+let framebufferProtocolViews: FramebufferProtocolViews | null = null;
+let framebufferProtocolLayoutKey: string | null = null;
 
 const telemetry = new GpuTelemetry({ frameBudgetMs: Number.POSITIVE_INFINITY });
 let lastFrameStartMs: number | null = null;
@@ -159,51 +192,99 @@ const syncPerfFrame = () => {
   }
 };
 
-const tryInitSharedFramebufferViews = () => {
-  if (framebufferViews) return;
-
-  const initMsg = lastInitMessage;
-  if (!initMsg?.sharedFramebuffer) return;
-
-  const offsetBytes = initMsg.sharedFramebufferOffsetBytes ?? 0;
-  const header = new Int32Array(initMsg.sharedFramebuffer, offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
-
+const refreshSharedFramebufferViews = (shared: SharedArrayBuffer, offsetBytes: number): void => {
+  const header = new Int32Array(shared, offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC);
   const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION);
-  if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) {
-    return;
-  }
+  if (magic !== SHARED_FRAMEBUFFER_MAGIC || version !== SHARED_FRAMEBUFFER_VERSION) return;
 
   try {
     const layout = layoutFromHeader(header);
-    const slot0 = new Uint8Array(
-      initMsg.sharedFramebuffer,
-      offsetBytes + layout.framebufferOffsets[0],
-      layout.strideBytes * layout.height,
-    );
-    const slot1 = new Uint8Array(
-      initMsg.sharedFramebuffer,
-      offsetBytes + layout.framebufferOffsets[1],
-      layout.strideBytes * layout.height,
-    );
+    const layoutKey = `${layout.width},${layout.height},${layout.strideBytes},${layout.tileSize},${layout.dirtyWordsPerBuffer}`;
+    if (sharedFramebufferViews && sharedFramebufferLayoutKey === layoutKey) return;
+
+    const slot0 = new Uint8Array(shared, offsetBytes + layout.framebufferOffsets[0], layout.strideBytes * layout.height);
+    const slot1 = new Uint8Array(shared, offsetBytes + layout.framebufferOffsets[1], layout.strideBytes * layout.height);
 
     const dirty0 =
       layout.dirtyWordsPerBuffer === 0
         ? null
-        : new Uint32Array(initMsg.sharedFramebuffer, offsetBytes + layout.dirtyOffsets[0], layout.dirtyWordsPerBuffer);
+        : new Uint32Array(shared, offsetBytes + layout.dirtyOffsets[0], layout.dirtyWordsPerBuffer);
     const dirty1 =
       layout.dirtyWordsPerBuffer === 0
         ? null
-        : new Uint32Array(initMsg.sharedFramebuffer, offsetBytes + layout.dirtyOffsets[1], layout.dirtyWordsPerBuffer);
+        : new Uint32Array(shared, offsetBytes + layout.dirtyOffsets[1], layout.dirtyWordsPerBuffer);
 
-    framebufferViews = { header, layout, slot0, slot1, dirty0, dirty1 };
+    sharedFramebufferViews = { header, layout, slot0, slot1, dirty0, dirty1 };
+    sharedFramebufferLayoutKey = layoutKey;
 
-    // Expose on the worker global so the dynamically-imported presenter module can read the
-    // framebuffer without plumbing arguments through `present()`.
+    framebufferProtocolViews = null;
+    framebufferProtocolLayoutKey = null;
+
+    // Expose on the worker global so a dynamically imported present() module can
+    // read the framebuffer without plumbing arguments through postMessage.
     (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer =
-      framebufferViews;
+      sharedFramebufferViews;
   } catch {
     // Header likely not initialized yet; caller should retry later.
+  }
+};
+
+const refreshFramebufferProtocolViews = (shared: SharedArrayBuffer, offsetBytes: number): void => {
+  const header = new Int32Array(shared, offsetBytes, HEADER_I32_COUNT);
+  const magic = Atomics.load(header, 0);
+  const version = Atomics.load(header, 1);
+  if (magic !== FRAMEBUFFER_MAGIC || version !== FRAMEBUFFER_VERSION) return;
+
+  const width = Atomics.load(header, HEADER_INDEX_WIDTH);
+  const height = Atomics.load(header, HEADER_INDEX_HEIGHT);
+  const strideBytes = Atomics.load(header, HEADER_INDEX_STRIDE_BYTES);
+  const format = Atomics.load(header, HEADER_INDEX_FORMAT);
+
+  // Not yet initialized (or unsupported mode).
+  if (width <= 0 || height <= 0 || strideBytes <= 0) return;
+  if (format !== FRAMEBUFFER_FORMAT_RGBA8888) return;
+
+  const requiredBytes = HEADER_BYTE_LENGTH + strideBytes * height;
+  if (offsetBytes + requiredBytes > shared.byteLength) return;
+
+  const layoutKey = `${width},${height},${strideBytes}`;
+  if (framebufferProtocolViews && framebufferProtocolLayoutKey === layoutKey) return;
+
+  framebufferProtocolViews = {
+    header,
+    width,
+    height,
+    strideBytes,
+    pixels: new Uint8Array(shared, offsetBytes + HEADER_BYTE_LENGTH, strideBytes * height),
+  };
+  framebufferProtocolLayoutKey = layoutKey;
+
+  sharedFramebufferViews = null;
+  sharedFramebufferLayoutKey = null;
+  (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = undefined;
+};
+
+const refreshFramebufferViews = (): void => {
+  const init = runtimeInit;
+  if (!init) return;
+
+  const shared = init.sharedFramebuffer;
+  const offsetBytes = init.sharedFramebufferOffsetBytes ?? 0;
+  if (offsetBytes < 0 || offsetBytes + 8 > shared.byteLength) return;
+
+  // Detect the framebuffer protocol based on (magic, version).
+  const header2 = new Int32Array(shared, offsetBytes, 2);
+  const magic = Atomics.load(header2, 0);
+  const version = Atomics.load(header2, 1);
+
+  if (magic === SHARED_FRAMEBUFFER_MAGIC && version === SHARED_FRAMEBUFFER_VERSION) {
+    refreshSharedFramebufferViews(shared, offsetBytes);
+    return;
+  }
+
+  if (magic === FRAMEBUFFER_MAGIC && version === FRAMEBUFFER_VERSION) {
+    refreshFramebufferProtocolViews(shared, offsetBytes);
   }
 };
 
@@ -283,8 +364,14 @@ const maybePostMetrics = () => {
 };
 
 const sendError = (err: unknown) => {
+  if (err instanceof PresenterError) {
+    postToMain({ type: "error", message: err.message, code: err.code, backend: presenter?.backend });
+    postRuntimeError(err.message);
+    return;
+  }
+
   const message = err instanceof Error ? err.message : String(err);
-  postToMain({ type: 'error', message });
+  postToMain({ type: "error", message, backend: presenter?.backend });
   postRuntimeError(message);
 };
 
@@ -296,11 +383,6 @@ const loadPresentFnFromModuleUrl = async (wasmModuleUrl: string) => {
     throw new Error(`Module ${wasmModuleUrl} did not export a present() function`);
   }
   presentFn = maybePresent as PresentFn;
-
-  const maybeGetTimings =
-    (mod as { get_frame_timings?: unknown }).get_frame_timings ??
-    (mod as { getFrameTimings?: unknown }).getFrameTimings;
-  getTimingsFn = typeof maybeGetTimings === 'function' ? (maybeGetTimings as GetTimingsFn) : null;
 };
 
 const maybeUpdateFramesReceivedFromSeq = () => {
@@ -343,23 +425,88 @@ const computeDroppedFromSeqForPresent = () => {
   lastPresentedSeq = seq;
 };
 
-const presentOnce = async (dirtyRects: DirtyRect[] | null) => {
-  if (!presentFn) return false;
+type CurrentFrameInfo = {
+  width: number;
+  height: number;
+  strideBytes: number;
+  pixels: Uint8Array;
+  frameSeq: number;
+  sharedLayout?: SharedFramebufferLayout;
+};
+
+const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
+  refreshFramebufferViews();
+
+  if (sharedFramebufferViews) {
+    const active = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
+    const pixels = active === 0 ? sharedFramebufferViews.slot0 : sharedFramebufferViews.slot1;
+    const frameSeq = Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+    return {
+      width: sharedFramebufferViews.layout.width,
+      height: sharedFramebufferViews.layout.height,
+      strideBytes: sharedFramebufferViews.layout.strideBytes,
+      pixels,
+      frameSeq,
+      sharedLayout: sharedFramebufferViews.layout,
+    };
+  }
+
+  if (framebufferProtocolViews) {
+    const frameSeq = Atomics.load(framebufferProtocolViews.header, HEADER_INDEX_FRAME_COUNTER);
+    return {
+      width: framebufferProtocolViews.width,
+      height: framebufferProtocolViews.height,
+      strideBytes: framebufferProtocolViews.strideBytes,
+      pixels: framebufferProtocolViews.pixels,
+      frameSeq,
+    };
+  }
+
+  return null;
+};
+
+const estimateFullFrameUploadBytes = (width: number, height: number): number => {
+  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+  const bytesPerRow = bytesPerRowForUpload(rowBytes, height);
+  return requiredDataLen(bytesPerRow, rowBytes, height);
+};
+
+const presentOnce = async (): Promise<boolean> => {
   const t0 = performance.now();
-  const result = await presentFn(dirtyRects);
-  telemetry.recordPresentLatencyMs(performance.now() - t0);
-  return typeof result === 'boolean' ? result : true;
+
+  try {
+    if (presentFn) {
+      const result = await presentFn(null);
+      return typeof result === "boolean" ? result : true;
+    }
+
+    if (presenter) {
+      const frame = getCurrentFrameInfo();
+      if (!frame) return false;
+
+      if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
+        presenterSrcWidth = frame.width;
+        presenterSrcHeight = frame.height;
+        presenter.resize(frame.width, frame.height, outputDpr);
+      }
+
+      presenter.present(frame.pixels, frame.strideBytes);
+      return true;
+    }
+
+    // Headless: treat as successfully presented so the shared frame state can
+    // transition back to PRESENTED and avoid DIRTY→tick spam.
+    return true;
+  } finally {
+    telemetry.recordPresentLatencyMs(performance.now() - t0);
+  }
 };
 
 const handleTick = async () => {
   syncPerfFrame();
-  tryInitSharedFramebufferViews();
+  refreshFramebufferViews();
   maybeUpdateFramesReceivedFromSeq();
-
-  if (!presentFn) {
-    maybePostMetrics();
-    return;
-  }
+  await maybeSendReady();
 
   if (presenting) {
     maybePostMetrics();
@@ -378,23 +525,12 @@ const handleTick = async () => {
     }
 
     computeDroppedFromSeqForPresent();
-  } else {
-    if (pendingFrames === 0) {
-      maybePostMetrics();
-      return;
-    }
-
-    if (pendingFrames > 1) framesDropped += pendingFrames - 1;
-    pendingFrames = 0;
   }
-
-  const dirtyRects = pendingDirtyRects;
-  pendingDirtyRects = null;
 
   presenting = true;
   try {
     const presentStartMs = performance.now();
-    const didPresent = await presentOnce(dirtyRects);
+    const didPresent = await presentOnce();
     perfGpuMs += performance.now() - presentStartMs;
     if (didPresent) {
       framesPresented += 1;
@@ -402,9 +538,16 @@ const handleTick = async () => {
       const now = performance.now();
       if (lastFrameStartMs !== null) {
         telemetry.beginFrame(lastFrameStartMs);
-        const textureUploadBytes = estimateTextureUploadBytes(framebufferViews?.layout ?? null, dirtyRects);
+
+        const frame = getCurrentFrameInfo();
+        const textureUploadBytes = frame?.sharedLayout
+          ? estimateTextureUploadBytes(frame.sharedLayout, null)
+          : frame
+            ? estimateFullFrameUploadBytes(frame.width, frame.height)
+            : 0;
         telemetry.recordTextureUploadBytes(textureUploadBytes);
         perf.counter("textureUploadBytes", textureUploadBytes);
+        perfUploadBytes += textureUploadBytes;
         perfUploadBytes += textureUploadBytes;
         telemetry.endFrame(now);
       }
@@ -420,22 +563,19 @@ const handleTick = async () => {
 };
 
 // -----------------------------------------------------------------------------
-// Presenter-worker protocol (init/resize/present/screenshot)
+// Presenter backend init (OffscreenCanvas path)
 // -----------------------------------------------------------------------------
 
-let presenter: Presenter | null = null;
-
-function postPresenterMessage(msg: PresenterWorkerOutMessage, transfer?: Transferable[]) {
-  ctx.postMessage(msg, transfer ?? []);
-}
-
-function postPresenterError(err: unknown, backend?: PresenterBackendKind) {
+function postPresenterError(err: unknown, backend?: PresenterBackendKind): void {
   if (err instanceof PresenterError) {
-    postPresenterMessage({ type: 'error', message: err.message, code: err.code, backend });
+    postToMain({ type: "error", message: err.message, code: err.code, backend: backend ?? presenter?.backend });
+    postRuntimeError(err.message);
     return;
   }
-  const msg = err instanceof Error ? err.message : String(err);
-  postPresenterMessage({ type: 'error', message: msg, backend });
+
+  const message = err instanceof Error ? err.message : String(err);
+  postToMain({ type: "error", message, backend: backend ?? presenter?.backend });
+  postRuntimeError(message);
 }
 
 async function tryInitBackend(
@@ -444,67 +584,136 @@ async function tryInitBackend(
   width: number,
   height: number,
   dpr: number,
-  opts?: PresenterInitOptions,
+  opts: PresenterInitOptions,
 ): Promise<Presenter> {
-  const mergedOpts: PresenterInitOptions = {
-    ...opts,
-    onError: (e) => {
-      postPresenterError(e, backend);
-      opts?.onError?.(e);
-    },
+  if (backend === "webgpu" && runtimeOptions?.disableWebGpu === true) {
+    throw new PresenterError("webgpu_disabled", "WebGPU backend was disabled by init options");
+  }
+
+  // Ensure backend errors are surfaced even if the caller didn't pass an onError.
+  opts.onError = (e) => {
+    postPresenterError(e, backend);
+    presenterUserOnError?.(e);
   };
 
   switch (backend) {
-    case 'webgpu': {
-      const mod = await import('../gpu/webgpu-presenter-backend');
+    case "webgpu": {
+      const mod = await import("../gpu/webgpu-presenter-backend");
       const p = new mod.WebGpuPresenterBackend();
-      await p.init(canvas, width, height, dpr, mergedOpts);
+      await p.init(canvas, width, height, dpr, opts);
       return p;
     }
-    case 'webgl2_wgpu': {
-      const mod = await import('../gpu/wgpu-webgl2-presenter');
+    case "webgl2_wgpu": {
+      const mod = await import("../gpu/wgpu-webgl2-presenter");
       const p = new mod.WgpuWebGl2Presenter();
-      await p.init(canvas, width, height, dpr, mergedOpts);
+      await p.init(canvas, width, height, dpr, opts);
       return p;
     }
-    case 'webgl2_raw': {
+    case "webgl2_raw": {
       const p = new RawWebGl2Presenter();
-      p.init(canvas, width, height, dpr, mergedOpts);
+      p.init(canvas, width, height, dpr, opts);
       return p;
     }
     default: {
       const unreachable: never = backend;
-      throw new PresenterError('unknown_backend', `Unknown backend ${unreachable}`);
+      throw new PresenterError("unknown_backend", `Unknown backend ${unreachable}`);
     }
   }
 }
 
-async function initPresenter(
-  canvas: OffscreenCanvas,
-  width: number,
-  height: number,
-  dpr: number,
-  opts?: PresenterInitOptions,
-  forceBackend?: PresenterBackendKind,
-): Promise<void> {
+async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, height: number): Promise<void> {
   presenter?.destroy?.();
   presenter = null;
+  presenterFallback = undefined;
 
-  const backends: PresenterBackendKind[] = forceBackend ? [forceBackend] : ['webgpu', 'webgl2_wgpu', 'webgl2_raw'];
+  const dpr = outputDpr || 1;
 
-  let lastError: unknown = null;
+  const opts = presenterInitOptions ?? {};
+  presenterInitOptions = opts;
+
+  if (outputWidthCss != null) opts.outputWidth = outputWidthCss;
+  if (outputHeightCss != null) opts.outputHeight = outputHeightCss;
+
+  const forceBackend = runtimeOptions?.forceBackend;
+  const disableWebGpu = runtimeOptions?.disableWebGpu === true;
+  const preferWebGpu = runtimeOptions?.preferWebGpu !== false;
+
+  let backends: PresenterBackendKind[];
+  if (forceBackend) {
+    backends = [forceBackend];
+  } else {
+    backends = preferWebGpu ? ["webgpu", "webgl2_raw"] : ["webgl2_raw", "webgpu"];
+    if (disableWebGpu && !preferWebGpu) {
+      // When WebGPU is disabled and WebGL2 is preferred, never attempt WebGPU.
+      backends = ["webgl2_raw"];
+    }
+  }
+
+  const firstBackend = backends[0];
+  let firstError: unknown | null = null;
+  let lastError: unknown | null = null;
 
   for (const backend of backends) {
     try {
       presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts);
-      postPresenterMessage({ type: 'inited', backend: presenter.backend });
+      presenterSrcWidth = width;
+      presenterSrcHeight = height;
+
+      if (backend !== firstBackend && firstError) {
+        const reason = firstError instanceof Error ? firstError.message : String(firstError);
+        presenterFallback = {
+          from: firstBackend,
+          to: backend,
+          reason,
+          originalErrorMessage: reason,
+        };
+      }
+
       return;
     } catch (err) {
+      if (!firstError) firstError = err;
       lastError = err;
     }
   }
 
-  postPresenterError(lastError ?? new PresenterError('no_backend', 'No GPU presenter backend could be initialized'));
+  throw lastError ?? new PresenterError("no_backend", "No GPU presenter backend could be initialized");
+}
+
+async function maybeSendReady(): Promise<void> {
+  if (runtimeReadySent) return;
+  if (!runtimeInit) return;
+
+  // Headless mode: still run frame pacing/metrics.
+  if (!runtimeCanvas) {
+    runtimeReadySent = true;
+    postToMain({ type: "ready", backendKind: "headless" });
+    return;
+  }
+
+  if (presenter) {
+    runtimeReadySent = true;
+    postToMain({ type: "ready", backendKind: presenter.backend, fallback: presenterFallback });
+    return;
+  }
+
+  const frame = getCurrentFrameInfo();
+  if (!frame) return;
+
+  if (!presenterInitPromise) {
+    presenterInitPromise = initPresenterForRuntime(runtimeCanvas, frame.width, frame.height)
+      .catch((err) => {
+        postPresenterError(err);
+      })
+      .finally(() => {
+        presenterInitPromise = null;
+      });
+  }
+
+  await presenterInitPromise;
+  if (!presenter) return;
+
+  runtimeReadySent = true;
+  postToMain({ type: "ready", backendKind: presenter.backend, fallback: presenterFallback });
 }
 
 const handleRuntimeInit = (init: WorkerInitMessage) => {
@@ -548,86 +757,144 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     return;
   }
 
-  const msg = data as Partial<AnyInboundMessage>;
-  if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+  const msg = data as Partial<GpuRuntimeInMessage>;
+  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
 
   switch (msg.type) {
-    case 'init': {
-      // Presenter-worker init includes an OffscreenCanvas.
-      if (typeof (msg as { canvas?: unknown }).canvas !== 'undefined') {
-        const presenterMsg = msg as PresenterWorkerInMessage;
-        void initPresenter(
-          presenterMsg.canvas,
-          presenterMsg.width,
-          presenterMsg.height,
-          presenterMsg.dpr,
-          presenterMsg.opts,
-          presenterMsg.forceBackend,
-        ).catch((err) => {
-          postPresenterError(err, presenter?.backend);
-        });
-        return;
-      }
+    case "init": {
+      const init = msg as GpuRuntimeInitMessage;
 
-      perf.spanBegin('worker:init');
+      perf.spanBegin("worker:init");
       try {
-        const frameMsg = msg as Extract<GpuWorkerMessageFromMain, { type: 'init' }>;
-        lastInitMessage = frameMsg;
-        if (frameMsg.sharedFrameState) {
-          frameState = new Int32Array(frameMsg.sharedFrameState);
-        }
+        runtimeInit = init;
+        runtimeCanvas = init.canvas ?? null;
+        runtimeOptions = init.options ?? null;
+        runtimeReadySent = false;
 
-        tryInitSharedFramebufferViews();
+        outputWidthCss = runtimeOptions?.outputWidth ?? null;
+        outputHeightCss = runtimeOptions?.outputHeight ?? null;
+        outputDpr = runtimeOptions?.dpr ?? 1;
 
-        if (frameMsg.wasmModuleUrl) {
-          void perf.spanAsync('wasm:init', () => loadPresentFnFromModuleUrl(frameMsg.wasmModuleUrl)).catch(sendError);
-        }
+        frameState = new Int32Array(init.sharedFrameState);
+
+        framesReceived = 0;
+        framesPresented = 0;
+        framesDropped = 0;
+        lastSeenSeq = Atomics.load(frameState, FRAME_SEQ_INDEX);
+        lastPresentedSeq = lastSeenSeq;
 
         telemetry.reset();
         lastFrameStartMs = null;
+
+        sharedFramebufferViews = null;
+        sharedFramebufferLayoutKey = null;
+        framebufferProtocolViews = null;
+        framebufferProtocolLayoutKey = null;
+        (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = undefined;
+
+        presenter?.destroy?.();
+        presenter = null;
+        presenterFallback = undefined;
+        presenterInitPromise = null;
+        presenterSrcWidth = 0;
+        presenterSrcHeight = 0;
+
+        presenterUserOnError = runtimeOptions?.presenter?.onError;
+        presenterInitOptions = { ...(runtimeOptions?.presenter ?? {}) };
+        // Backend init installs its own error handler wrapper.
+        presenterInitOptions.onError = undefined;
+
+        presentFn = null;
+        if (runtimeOptions?.wasmModuleUrl) {
+          void perf.spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(runtimeOptions.wasmModuleUrl!)).catch(sendError);
+        }
+
+        refreshFramebufferViews();
+        void maybeSendReady();
+      } catch (err) {
+        sendError(err);
       } finally {
-        perf.spanEnd('worker:init');
+        perf.spanEnd("worker:init");
       }
       break;
     }
 
-    case 'resize': {
-      const presenterMsg = msg as PresenterWorkerInMessage;
-      try {
-        if (!presenter) throw new PresenterError('not_initialized', 'resize before init');
-        presenter.resize(presenterMsg.width, presenterMsg.height, presenterMsg.dpr);
-      } catch (err) {
-        postPresenterError(err, presenter?.backend);
+    case "resize": {
+      const resize = msg as { width: number; height: number; dpr: number };
+      outputWidthCss = resize.width;
+      outputHeightCss = resize.height;
+      outputDpr = resize.dpr || 1;
+
+      if (presenterInitOptions) {
+        presenterInitOptions.outputWidth = outputWidthCss;
+        presenterInitOptions.outputHeight = outputHeightCss;
       }
+
+      void (async () => {
+        await maybeSendReady();
+        if (!presenter) return;
+        try {
+          presenter.resize(presenterSrcWidth, presenterSrcHeight, outputDpr);
+        } catch (err) {
+          postPresenterError(err, presenter.backend);
+        }
+      })();
       break;
     }
 
-    case 'present': {
-      const presenterMsg = msg as PresenterWorkerInMessage;
-      try {
-        if (!presenter) throw new PresenterError('not_initialized', 'present before init');
-        presenter.present(presenterMsg.frame, presenterMsg.stride);
-      } catch (err) {
-        postPresenterError(err, presenter?.backend);
-      }
+    case "tick": {
+      void (msg as { frameTimeMs?: unknown }).frameTimeMs;
+      void handleTick();
       break;
     }
 
-    case 'screenshot': {
-      const presenterMsg = msg as PresenterWorkerInMessage;
+    case "screenshot": {
+      const req = msg as GpuRuntimeScreenshotRequestMessage;
       void (async () => {
         try {
-          if (!presenter) throw new PresenterError('not_initialized', 'screenshot before init');
-          const shot = await presenter.screenshot();
-          postPresenterMessage(
+          await maybeSendReady();
+
+          const seq = getCurrentFrameInfo()?.frameSeq;
+
+          if (presenter) {
+            const shot = await presenter.screenshot();
+            postToMain(
+              {
+                type: "screenshot",
+                requestId: req.requestId,
+                width: shot.width,
+                height: shot.height,
+                rgba8: shot.pixels,
+                origin: "top-left",
+                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+              },
+              [shot.pixels],
+            );
+            return;
+          }
+
+          // Headless fallback: copy the source buffer directly.
+          const frame = getCurrentFrameInfo();
+          if (!frame) throw new PresenterError("not_initialized", "screenshot before framebuffer init");
+          const rowBytes = frame.width * BYTES_PER_PIXEL_RGBA8;
+          const out = new Uint8Array(rowBytes * frame.height);
+          for (let y = 0; y < frame.height; y += 1) {
+            const srcStart = y * frame.strideBytes;
+            const dstStart = y * rowBytes;
+            out.set(frame.pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
+          }
+
+          postToMain(
             {
-              type: 'screenshot',
-              requestId: presenterMsg.requestId,
-              width: shot.width,
-              height: shot.height,
-              pixels: shot.pixels,
+              type: "screenshot",
+              requestId: req.requestId,
+              width: frame.width,
+              height: frame.height,
+              rgba8: out.buffer,
+              origin: "top-left",
+              frameSeq: frame.frameSeq,
             },
-            [shot.pixels],
+            [out.buffer],
           );
         } catch (err) {
           postPresenterError(err, presenter?.backend);
@@ -636,32 +903,14 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       break;
     }
 
-    case 'frame_dirty': {
-      const frameMsg = msg as Extract<GpuWorkerMessageFromMain, { type: 'frame_dirty' }>;
-      pendingDirtyRects = frameMsg.dirtyRects ?? null;
-      if (!frameState) {
-        pendingFrames += 1;
-        framesReceived += 1;
-      }
-      break;
-    }
-
-    case 'request_timings': {
-      void (async () => {
-        try {
-          const timings = getTimingsFn ? await getTimingsFn() : latestTimings;
-          latestTimings = timings;
-          postToMain({ type: 'timings', timings });
-        } catch (err) {
-          sendError(err);
-        }
-      })();
-      break;
-    }
-
-    case 'tick': {
-      void (msg as Extract<GpuWorkerMessageFromMain, { type: 'tick' }>).frameTimeMs;
-      void handleTick();
+    case "shutdown": {
+      presenter?.destroy?.();
+      presenter = null;
+      runtimeInit = null;
+      runtimeCanvas = null;
+      runtimeOptions = null;
+      runtimeReadySent = false;
+      ctx.close();
       break;
     }
   }

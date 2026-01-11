@@ -125,13 +125,9 @@ async function main() {
       height: cssHeight,
       devicePixelRatio,
       gpuOptions: { preferWebGpu, disableWebGpu },
-      onGpuError: (msg) => {
+      onError: (msg) => {
         if (!status) return;
-        status.textContent += `gpu_error fatal=${msg.fatal} kind=${msg.error.kind} msg=${msg.error.message}\n`;
-      },
-      onGpuErrorEvent: (msg) => {
-        if (!status) return;
-        status.textContent += `gpu_error_event severity=${msg.event.severity} category=${msg.event.category} msg=${msg.event.message}\n`;
+        status.textContent += `gpu_error msg=${msg.message}${msg.code ? ` code=${msg.code}` : ""}\n`;
       },
     });
 
