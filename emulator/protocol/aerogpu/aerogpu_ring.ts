@@ -93,6 +93,45 @@ export const AEROGPU_ALLOC_ENTRY_OFF_ALLOC_ID = 0;
 export const AEROGPU_ALLOC_ENTRY_OFF_FLAGS = 4;
 export const AEROGPU_ALLOC_ENTRY_OFF_GPA = 8;
 export const AEROGPU_ALLOC_ENTRY_OFF_SIZE_BYTES = 16;
+export const AEROGPU_ALLOC_ENTRY_OFF_RESERVED0 = 24;
+
+export interface AerogpuAllocEntry {
+  allocId: number;
+  flags: number;
+  gpa: bigint;
+  sizeBytes: bigint;
+  reserved0: bigint;
+}
+
+export function decodeAllocTable(
+  view: DataView,
+  byteOffset = 0,
+): { header: AerogpuAllocTableHeader; entries: AerogpuAllocEntry[] } {
+  const header = decodeAllocTableHeader(view, byteOffset);
+  if (view.byteLength < byteOffset + header.sizeBytes) {
+    throw new AerogpuRingError(
+      `Buffer too small for aerogpu_alloc_table: need ${header.sizeBytes} bytes, have ${view.byteLength - byteOffset}`,
+    );
+  }
+  if (header.entryStrideBytes !== AEROGPU_ALLOC_ENTRY_SIZE) {
+    throw new AerogpuRingError(`alloc_table.entry_stride_bytes mismatch: ${header.entryStrideBytes}`);
+  }
+
+  const entries: AerogpuAllocEntry[] = [];
+  const entriesStart = byteOffset + AEROGPU_ALLOC_TABLE_HEADER_SIZE;
+  for (let i = 0; i < header.entryCount; i++) {
+    const base = entriesStart + i * header.entryStrideBytes;
+    entries.push({
+      allocId: view.getUint32(base + AEROGPU_ALLOC_ENTRY_OFF_ALLOC_ID, true),
+      flags: view.getUint32(base + AEROGPU_ALLOC_ENTRY_OFF_FLAGS, true),
+      gpa: view.getBigUint64(base + AEROGPU_ALLOC_ENTRY_OFF_GPA, true),
+      sizeBytes: view.getBigUint64(base + AEROGPU_ALLOC_ENTRY_OFF_SIZE_BYTES, true),
+      reserved0: view.getBigUint64(base + AEROGPU_ALLOC_ENTRY_OFF_RESERVED0, true),
+    });
+  }
+
+  return { header, entries };
+}
 
 /* ------------------------------- Ring header ------------------------------ */
 
