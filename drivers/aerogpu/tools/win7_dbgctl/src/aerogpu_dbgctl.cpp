@@ -602,7 +602,11 @@ static void PrintVblankSnapshot(const aerogpu_escape_query_vblank_out *q, bool s
   PrintIrqMask(L"IRQ_ACTIVE", q->irq_enable & q->irq_status);
 
   if (!supported) {
-    wprintf(L"  vblank: not supported (AEROGPU_FEATURE_VBLANK not set)\n");
+    if ((q->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
+      wprintf(L"  vblank: not supported (flags=0x%08lx)\n", (unsigned long)q->flags);
+    } else {
+      wprintf(L"  vblank: not supported\n");
+    }
     return;
   }
 
