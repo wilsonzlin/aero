@@ -120,15 +120,22 @@ def main() -> int:
     underscored = [p for p in pkgs if "_" in p.name]
     non_lowercase = [p for p in pkgs if p.name != p.name.lower()]
     underscored_crates_dirs = []
-    for p in pkgs:
-        parts = PurePath(p.path).parts
-        if len(parts) >= 2 and parts[0] == "crates" and "_" in parts[1]:
-            underscored_crates_dirs.append(p)
     non_lowercase_crates_dirs = []
     for p in pkgs:
         parts = PurePath(p.path).parts
-        if len(parts) >= 2 and parts[0] == "crates" and parts[1] != parts[1].lower():
-            non_lowercase_crates_dirs.append(p)
+        if not parts or parts[0] != "crates":
+            continue
+
+        # Workspace members may be grouped (e.g. `crates/legacy/<name>`). Enforce naming
+        # on *all* path segments under `crates/`, not just the first directory.
+        for seg in parts[1:]:
+            if "_" in seg:
+                underscored_crates_dirs.append(p)
+                break
+        for seg in parts[1:]:
+            if seg != seg.lower():
+                non_lowercase_crates_dirs.append(p)
+                break
 
     lib_name_mismatches = [p for p in pkgs if p.lib_crate and p.lib_crate != p.normalized]
 
