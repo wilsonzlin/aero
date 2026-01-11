@@ -1,41 +1,51 @@
-// Minimal implementation of the Aero L2 tunnel framing used by the
-// networking-architecture RFC prototype.
+// Compatibility wrapper for the networking-architecture RFC prototype.
 //
-// Keep in sync with:
-// - docs/l2-tunnel-protocol.md
-// - web/src/shared/l2TunnelProtocol.ts
+// The prototype originally shipped its own handwritten encoder/decoder; we now
+// delegate to the canonical TypeScript codec to avoid drift.
+
+import {
+  L2_TUNNEL_HEADER_LEN,
+  L2_TUNNEL_MAGIC,
+  L2_TUNNEL_TYPE_ERROR,
+  L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PING,
+  L2_TUNNEL_TYPE_PONG,
+  L2_TUNNEL_VERSION,
+  decodeL2Message,
+  encodeError,
+  encodeL2Frame,
+  encodePing,
+  encodePong,
+} from "../../web/src/shared/l2TunnelProtocol.ts";
 
 const L2_TUNNEL_SUBPROTOCOL = "aero-l2-tunnel-v1";
 
-const L2_TUNNEL_MAGIC = 0xa2;
-const L2_TUNNEL_VERSION = 0x03;
-const L2_TUNNEL_HEADER_LEN = 4;
-
-const L2_TUNNEL_TYPE_FRAME = 0x00;
-const L2_TUNNEL_TYPE_PING = 0x01;
-const L2_TUNNEL_TYPE_PONG = 0x02;
-const L2_TUNNEL_TYPE_ERROR = 0x7f;
-
-function encodeL2Message(type, payload) {
-  const body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
-  const out = Buffer.allocUnsafe(L2_TUNNEL_HEADER_LEN + body.length);
-  out[0] = L2_TUNNEL_MAGIC;
-  out[1] = L2_TUNNEL_VERSION;
-  out[2] = type & 0xff;
-  out[3] = 0;
-  body.copy(out, L2_TUNNEL_HEADER_LEN);
-  return out;
+function normalizePayload(payload) {
+  if (payload === undefined) return new Uint8Array();
+  if (payload instanceof Uint8Array) return payload;
+  return Buffer.from(payload);
 }
 
-function decodeL2Message(buf) {
-  if (buf.length < L2_TUNNEL_HEADER_LEN) throw new Error("l2 message too short");
-  if (buf[0] !== L2_TUNNEL_MAGIC) throw new Error("l2 invalid magic");
-  if (buf[1] !== L2_TUNNEL_VERSION) throw new Error("l2 unsupported version");
-  return {
-    type: buf[2],
-    flags: buf[3],
-    payload: buf.subarray(L2_TUNNEL_HEADER_LEN),
-  };
+function toBuffer(view) {
+  // `ws` accepts Uint8Array, but the prototype historically returned `Buffer`.
+  return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+}
+
+function encodeL2Message(type, payload) {
+  const body = normalizePayload(payload);
+
+  switch (type) {
+    case L2_TUNNEL_TYPE_FRAME:
+      return toBuffer(encodeL2Frame(body));
+    case L2_TUNNEL_TYPE_PING:
+      return toBuffer(encodePing(body));
+    case L2_TUNNEL_TYPE_PONG:
+      return toBuffer(encodePong(body));
+    case L2_TUNNEL_TYPE_ERROR:
+      return toBuffer(encodeError(body));
+    default:
+      throw new RangeError(`unknown L2 tunnel message type: ${type}`);
+  }
 }
 
 export {
@@ -50,4 +60,3 @@ export {
   decodeL2Message,
   encodeL2Message,
 };
-
