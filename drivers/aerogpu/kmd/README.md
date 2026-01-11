@@ -100,16 +100,37 @@ Use the in-tree Win7 packaging folder (INF + signing + install helpers):
 
 * `drivers/aerogpu/packaging/win7/`
 
-Typical dev install flow:
+Typical dev install flows:
 
-1. Stage the packaging folder with built binaries (from repo root, on the build machine):
+- **Recommended (host build + sign via CI scripts):**
+  1. On the build host:
+     ```powershell
+     pwsh ci/install-wdk.ps1
+     pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
+     pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+     pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
+     ```
+  2. Copy `out/packages/aerogpu/<x86|x64>/` and `out/certs/aero-test.cer` into the Win7 VM.
+  3. In the Win7 VM (Admin), trust the certificate and enable test signing:
+     ```bat
+     cd drivers\aerogpu\packaging\win7
+     trust_test_cert.cmd aero-test.cer
+     shutdown /r /t 0
+     ```
+  4. After reboot, install the signed INF from the copied package directory:
+     ```bat
+     pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
+     ```
+
+- **Legacy (stage packaging folder + sign inside VM):**
+  1. Stage the packaging folder with built binaries (from repo root, on the build machine):
 
 ```bat
 drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
 ```
 
-2. Copy `drivers\aerogpu\packaging\win7\` into the Win7 VM (or share the repo).
-3. In the Win7 VM, run as Administrator:
+  2. Copy `drivers\aerogpu\packaging\win7\` into the Win7 VM (or share the repo).
+  3. In the Win7 VM, run as Administrator:
 
 ```bat
 cd drivers\aerogpu\packaging\win7
