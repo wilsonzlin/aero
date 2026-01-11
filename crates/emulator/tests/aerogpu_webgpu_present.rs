@@ -24,7 +24,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -64,8 +66,10 @@ fn webgpu_backend_copies_present_to_guest_scanout() {
     let ring_gpa = 0x1000u64;
     let entry_count = 8u32;
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
-    let ring_size_bytes =
-        u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(entry_stride)).unwrap();
+    let ring_size_bytes = u32::try_from(
+        AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(entry_stride),
+    )
+    .unwrap();
 
     // Ring header.
     mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);

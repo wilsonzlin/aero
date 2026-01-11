@@ -119,7 +119,7 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut expected_cb_bindings, 16); // offset_bytes
     push_u32(&mut expected_cb_bindings, 64); // size_bytes
     push_u32(&mut expected_cb_bindings, 0); // reserved0
-    // binding[1]
+                                            // binding[1]
     push_u32(&mut expected_cb_bindings, 0); // buffer
     push_u32(&mut expected_cb_bindings, 0); // offset_bytes
     push_u32(&mut expected_cb_bindings, 0); // size_bytes
