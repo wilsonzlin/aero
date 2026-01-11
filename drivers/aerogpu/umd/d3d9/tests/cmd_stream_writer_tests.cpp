@@ -1924,6 +1924,9 @@ bool TestPresentExSubmitsOnceWhenNoPendingRenderWork() {
   if (!Check(hr == S_OK, "OpenAdapter2")) {
     return false;
   }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
   cleanup.hAdapter = open.hAdapter;
   cleanup.has_adapter = true;
 
@@ -2295,6 +2298,9 @@ bool TestConcurrentPresentExReturnsDistinctFences() {
   cleanup.has_device2 = true;
  
   if (!Check(cleanup.device_funcs1.pfnPresentEx != nullptr, "PresentEx must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs2.pfnPresentEx != nullptr, "PresentEx must be available (device2)")) {
     return false;
   }
  
