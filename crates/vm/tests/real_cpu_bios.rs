@@ -798,6 +798,27 @@ fn aero_cpu_core_int13_out_of_range_read_sets_status_and_int13_status_reports_it
 }
 
 #[test]
+fn aero_cpu_core_int15_a20_query_reports_enabled_after_post() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 15h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x15, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x2402;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x15)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u8, 1);
+}
+
+#[test]
 fn aero_cpu_core_int15_a20_toggle_is_observable_in_memory_bus() {
     let bios = Bios::new(test_bios_config());
     let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
