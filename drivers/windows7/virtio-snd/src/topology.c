@@ -109,6 +109,24 @@ VirtIoSndProperty_ChannelConfig(_In_ PPCPROPERTY_REQUEST PropertyRequest)
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION *desc;
+        ULONG required = sizeof(*desc);
+        ULONG access = KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET;
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION *)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = access;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_GET) {
         if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(ULONG)) {
             PropertyRequest->ValueSize = sizeof(ULONG);
@@ -149,6 +167,23 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION *desc;
+        required = sizeof(*desc);
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION *)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = KSPROPERTY_TYPE_GET;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
     if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_GET)) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -183,6 +218,23 @@ VirtIoSndProperty_JackDescription2(_In_ PPCPROPERTY_REQUEST PropertyRequest)
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION *desc;
+        required = sizeof(*desc);
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION *)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = KSPROPERTY_TYPE_GET;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
     if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_GET)) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -215,6 +267,23 @@ VirtIoSndProperty_JackContainerId(_In_ PPCPROPERTY_REQUEST PropertyRequest)
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION *desc;
+        ULONG required = sizeof(*desc);
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION *)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = KSPROPERTY_TYPE_GET;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
     if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_GET)) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -230,13 +299,13 @@ VirtIoSndProperty_JackContainerId(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 }
 
 static const PCPROPERTY_ITEM g_VirtIoSndTopoAudioProperties[] = {
-    {KSPROPERTY_AUDIO_CHANNEL_CONFIG, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET, VirtIoSndProperty_ChannelConfig},
+    {KSPROPERTY_AUDIO_CHANNEL_CONFIG, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_ChannelConfig},
 };
 
 static const PCPROPERTY_ITEM g_VirtIoSndTopoJackProperties[] = {
-    {KSPROPERTY_JACK_DESCRIPTION, KSPROPERTY_TYPE_GET, VirtIoSndProperty_JackDescription},
-    {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET, VirtIoSndProperty_JackDescription2},
-    {KSPROPERTY_JACK_CONTAINERID, KSPROPERTY_TYPE_GET, VirtIoSndProperty_JackContainerId},
+    {KSPROPERTY_JACK_DESCRIPTION, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription},
+    {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription2},
+    {KSPROPERTY_JACK_CONTAINERID, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackContainerId},
 };
 
 static const PCPROPERTY_SET g_VirtIoSndTopoPropertySets[] = {
