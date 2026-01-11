@@ -185,7 +185,9 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(DEFAULT)", hr);
   }
 
-  const int upload_row_pitch = kWidth * 4;
+  // Use a padded row pitch (not tightly packed) to catch bugs where the driver incorrectly assumes
+  // RowPitch == Width*BytesPerPixel for UpdateSubresource uploads.
+  const int upload_row_pitch = kWidth * 4 + 16;
   std::vector<uint8_t> upload((size_t)upload_row_pitch * (size_t)kHeight, 0);
   FillBGRA8Pattern(&upload[0], kWidth, kHeight, upload_row_pitch);
 
@@ -217,12 +219,13 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
     context->Unmap(staging.get(), 0);
     return aerogpu_test::Fail(kTestName, "Map(staging, READ) returned NULL pData");
   }
-  if (map.RowPitch < (UINT)upload_row_pitch) {
+  const int kTightRowPitch = kWidth * 4;
+  if (map.RowPitch < (UINT)kTightRowPitch) {
     context->Unmap(staging.get(), 0);
     return aerogpu_test::Fail(kTestName,
                               "unexpected RowPitch: got %lu expected >= %d",
                               (unsigned long)map.RowPitch,
-                              upload_row_pitch);
+                              kTightRowPitch);
   }
 
   for (int y = 0; y < kHeight; ++y) {
