@@ -217,6 +217,28 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
+On Linux/macOS, you can run the same PowerShell wrapper under PowerShell 7 (`pwsh`):
+it will automatically fall back to the cross-platform extractor when `Mount-DiskImage`
+is unavailable.
+
+```bash
+pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
+  -VirtioWinIso virtio-win.iso \
+  -Profile full \
+  -OutDir ./dist/guest-tools \
+  -Version 0.0.0 \
+  -BuildId local
+```
+
+Alternatively, you can extract first and pass `-VirtioWinRoot`:
+
+```bash
+python3 tools/virtio-win/extract.py --virtio-win-iso virtio-win.iso --out-root /tmp/virtio-win-root
+pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 -VirtioWinRoot /tmp/virtio-win-root -OutDir ./dist/guest-tools
+```
+
+Convenience wrapper (Linux/macOS): `drivers/scripts/make-guest-tools-from-virtio-win.sh`.
+
 Profiles:
 
 - `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (required: `viostor` + `netkvm`, optional: `vioinput` + `viosnd`)
