@@ -77,7 +77,7 @@ export interface HidReportInfo {
 export interface HidCollectionInfo {
   usagePage: number;
   usage: number;
-  type: HidCollectionType;
+  type: HidCollectionType | HidCollectionTypeCode;
   children: readonly HidCollectionInfo[];
   inputReports: readonly HidReportInfo[];
   outputReports: readonly HidReportInfo[];
@@ -103,7 +103,16 @@ export type NormalizedHidReportInfo = Omit<HidReportInfo, "items"> & {
 
 export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
 
-function normalizeCollectionType(type: HidCollectionType): HidCollectionTypeCode {
+function normalizeCollectionType(type: HidCollectionType | HidCollectionTypeCode): HidCollectionTypeCode {
+  // Some environments surface numeric HID collection type codes directly, while others use the
+  // WebHID string enum. Support both to keep the normalizer resilient to typing/library changes.
+  if (typeof type === "number") {
+    if (!Number.isInteger(type) || type < 0 || type > 6) {
+      throw new Error(`unknown HID collection type: ${String(type)}`);
+    }
+    return type;
+  }
+
   switch (type) {
     case "physical":
       return 0;
