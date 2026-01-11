@@ -183,19 +183,16 @@ def load_windows_device_contract(path: Path) -> WindowsDeviceContract:
         pci_vendor_id = _parse_hex_u16(pci_vendor_id_raw, ctx=f"{path} device {name!r} pci_vendor_id")
         pci_device_id = _parse_hex_u16(pci_device_id_raw, ctx=f"{path} device {name!r} pci_device_id")
         expected_substr = f"VEN_{pci_vendor_id:04X}&DEV_{pci_device_id:04X}"
-        has_canonical = False
         for hwid in hwids:
             if not pci_ven_dev_re.search(hwid):
                 raise ValidationError(
                     f"Windows device contract {path} device {name!r} has invalid hardware_id_patterns entry: {hwid!r}"
                 )
-            if expected_substr in hwid.upper():
-                has_canonical = True
-        if not has_canonical:
-            raise ValidationError(
-                f"Windows device contract {path} device {name!r} has no hardware_id_patterns entries matching "
-                f"pci_vendor_id/pci_device_id ({expected_substr})."
-            )
+            if expected_substr not in hwid.upper():
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} hardware_id_patterns entry does not match "
+                    f"pci_vendor_id/pci_device_id ({expected_substr}): {hwid!r}"
+                )
 
         # Enforce AERO-W7-VIRTIO v1 invariants for virtio devices (modern-only + REV_01).
         if name.lower().startswith("virtio-"):

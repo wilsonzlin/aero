@@ -155,7 +155,6 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
         if device.hardware_id_patterns.is_empty() {
             anyhow::bail!("windows-device-contract device {name} has no hardware_id_patterns");
         }
-        let mut has_canonical_vendor_device = false;
         for hwid in &device.hardware_id_patterns {
             let hwid = hwid.trim();
             if hwid.is_empty() {
@@ -168,14 +167,11 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
                     "windows-device-contract device {name} has invalid PCI hardware_id_patterns entry: {hwid}"
                 );
             }
-            if hwid.to_ascii_uppercase().contains(&expected_substr) {
-                has_canonical_vendor_device = true;
+            if !hwid.to_ascii_uppercase().contains(&expected_substr) {
+                anyhow::bail!(
+                    "windows-device-contract device {name} hardware_id_patterns entry does not match pci_vendor_id/pci_device_id (expected to contain {expected_substr}): {hwid}"
+                );
             }
-        }
-        if !has_canonical_vendor_device {
-            anyhow::bail!(
-                "windows-device-contract device {name} hardware_id_patterns is missing canonical pci_vendor_id/pci_device_id pattern (expected to contain {expected_substr})"
-            );
         }
     }
 

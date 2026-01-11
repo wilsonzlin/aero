@@ -318,6 +318,42 @@ class ValidateConfigTests(unittest.TestCase):
                     windows_device_contract=virtio_contract_path,
                 )
 
+    def test_windows_device_contract_rejects_hardware_id_mismatches(self) -> None:
+        # Contract HWID patterns must all match the declared pci_vendor_id/pci_device_id pair.
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            contract_path = tmp_path / "contract.json"
+            contract_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "contract_name": "test",
+                        "contract_version": "0.0.0",
+                        "devices": [
+                            {
+                                "device": "virtio-blk",
+                                "pci_vendor_id": "0x1AF4",
+                                "pci_device_id": "0x1042",
+                                "hardware_id_patterns": [
+                                    "PCI\\VEN_1AF4&DEV_1042&REV_01",
+                                    # Mismatched device ID (should be rejected even if a correct entry exists).
+                                    "PCI\\VEN_1AF4&DEV_1041&REV_01",
+                                ],
+                                "driver_service_name": "svc",
+                                "inf_name": "x.inf",
+                                "virtio_device_type": 2,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(validate_config.ValidationError) as ctx:
+                validate_config.load_windows_device_contract(contract_path)
+
+            self.assertIn("VEN_1AF4&DEV_1042", str(ctx.exception))
+
     def test_windows_device_contract_rejects_transitional_virtio_device_ids(self) -> None:
         # The machine-readable device contract is expected to track AERO-W7-VIRTIO v1, which is
         # modern-only (0x1040+ device IDs) and revision-gated (REV_01).
