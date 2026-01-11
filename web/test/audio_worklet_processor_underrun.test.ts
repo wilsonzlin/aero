@@ -44,8 +44,9 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
   const outputs: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
   proc.process([], outputs);
 
-  assert.deepEqual(Array.from(outputs[0][0]), [0.1, 1.1, 0, 0]);
-  assert.deepEqual(Array.from(outputs[0][1]), [0.2, 1.2, 0, 0]);
+  // Compare as Float32Arrays so the expected values are rounded the same way.
+  assert.deepEqual(outputs[0][0], Float32Array.from([0.1, 1.1, 0, 0]));
+  assert.deepEqual(outputs[0][1], Float32Array.from([0.2, 1.2, 0, 0]));
   assert.equal(Atomics.load(header, 0) >>> 0, 2);
   assert.equal(Atomics.load(header, 2) >>> 0, 2);
   assert.deepEqual(lastMessage, {
@@ -78,4 +79,3 @@ test("addUnderrunFrames wraps as u32", () => {
   assert.equal(total, 2);
   assert.equal(Atomics.load(header, 2) >>> 0, 2);
 });
-
