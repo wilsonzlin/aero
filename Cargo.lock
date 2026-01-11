@@ -383,6 +383,7 @@ dependencies = [
  "base64 0.22.1",
  "emulator",
  "futures-util",
+ "nt-packetlib",
  "rand 0.8.5",
  "tokio",
  "tokio-tungstenite 0.26.2",

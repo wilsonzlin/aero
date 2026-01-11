@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 anyhow = "1"
 base64 = "0.22"
 futures-util = "0.3"
+nt-packetlib = { path = "../nt-packetlib" }
 rand = "0.8"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = "0.26"

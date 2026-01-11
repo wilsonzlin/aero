@@ -61,15 +61,10 @@ pub fn qname_to_string(qname: &[u8]) -> Result<alloc::string::String, PacketErro
     Err(PacketError::Malformed("DNS QNAME missing terminator"))
 }
 
-/// Parse a DNS query containing exactly one question.
-pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
+fn parse_single_question_inner(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
     super::ensure_len(packet, 12)?;
     let id = u16::from_be_bytes([packet[0], packet[1]]);
     let flags = u16::from_be_bytes([packet[2], packet[3]]);
-    // Must be a query (QR=0).
-    if (flags & 0x8000) != 0 {
-        return Err(PacketError::Malformed("DNS packet is not a query"));
-    }
     let qdcount = u16::from_be_bytes([packet[4], packet[5]]);
     if qdcount != 1 {
         return Err(PacketError::Unsupported("DNS queries with qdcount != 1"));
@@ -116,6 +111,24 @@ pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
         qtype,
         qclass,
     })
+}
+
+/// Parse the question section of a DNS packet containing exactly one question.
+///
+/// Unlike [`parse_single_query`], this does not require the packet to have `QR=0` and is therefore
+/// suitable for extracting the echoed question from DNS responses.
+pub fn parse_single_question(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
+    parse_single_question_inner(packet)
+}
+
+/// Parse a DNS query containing exactly one question.
+pub fn parse_single_query(packet: &[u8]) -> Result<DnsQuery<'_>, PacketError> {
+    let q = parse_single_question_inner(packet)?;
+    // Must be a query (QR=0).
+    if (q.flags & 0x8000) != 0 {
+        return Err(PacketError::Malformed("DNS packet is not a query"));
+    }
+    Ok(q)
 }
 
 #[repr(u8)]
