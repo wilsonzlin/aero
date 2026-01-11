@@ -554,13 +554,7 @@ fn enforce_security(
     }
 
     if !state.cfg.security.open {
-        let mut origin_values = headers
-            .get_all(axum::http::header::ORIGIN)
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-
+        let mut origin_values = headers.get_all(axum::http::header::ORIGIN).iter();
         let Some(origin_header) = origin_values.next() else {
             state.metrics.upgrade_reject_origin_missing();
             tracing::warn!(
@@ -595,6 +589,27 @@ fn enforce_security(
                     .into_response(),
             ));
         }
+
+        let origin_header = origin_header
+            .to_str()
+            .ok()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let Some(origin_header) = origin_header else {
+            state.metrics.upgrade_reject_origin_missing();
+            tracing::warn!(
+                reason = "origin_missing",
+                origin = "<missing>",
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                "rejected l2 websocket upgrade",
+            );
+            return Err(Box::new(
+                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
+            ));
+        };
 
         let origin = match crate::origin::normalize_origin(origin_header) {
             Some(origin) => origin,

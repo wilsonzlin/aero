@@ -908,6 +908,26 @@ func TestUDPWebSocketServer_OriginChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects multiple Origin headers", func(t *testing.T) {
+		h := http.Header{}
+		h.Add("Origin", ts.URL)
+		h.Add("Origin", "https://evil.example.com")
+		_, resp, err := websocket.DefaultDialer.Dial(wsURL, h)
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		if err == nil {
+			t.Fatalf("expected dial error")
+		}
+		if resp == nil || resp.StatusCode != http.StatusForbidden {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			t.Fatalf("status=%d, want %d (err=%v)", status, http.StatusForbidden, err)
+		}
+	})
+
 	t.Run("allows same-origin", func(t *testing.T) {
 		h := http.Header{}
 		h.Set("Origin", ts.URL)

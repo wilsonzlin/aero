@@ -44,7 +44,14 @@ export function validateWsUpgradePolicy(
   }
 
   const originHeader = req.headers.origin;
-  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+  let origin: string | undefined;
+  if (Array.isArray(originHeader)) {
+    if (originHeader.length === 0) origin = undefined;
+    else if (originHeader.length === 1) origin = originHeader[0];
+    else return { ok: false, status: 403, message: "Origin not allowed" };
+  } else {
+    origin = originHeader;
+  }
   if (origin) {
     const allowedOrigins = policy.allowedOrigins;
     if (!allowedOrigins || allowedOrigins.length === 0) {

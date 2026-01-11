@@ -589,11 +589,18 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkOrigin(r *http.Request) bool {
-	originHeader := strings.TrimSpace(r.Header.Get("Origin"))
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
+		return true
+	}
+	if len(origins) > 1 {
+		return false
+	}
+
+	originHeader := strings.TrimSpace(origins[0])
 	if originHeader == "" {
 		return true
 	}
-
 	normalizedOrigin, originHost, ok := origin.NormalizeHeader(originHeader)
 	if !ok {
 		return false

@@ -19,7 +19,17 @@ func (s *Server) originMiddleware() Middleware {
 
 func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		originHeader := strings.TrimSpace(r.Header.Get("Origin"))
+		origins := r.Header.Values("Origin")
+		if len(origins) == 0 {
+			next(w, r)
+			return
+		}
+		if len(origins) > 1 {
+			WriteJSON(w, http.StatusForbidden, map[string]any{"code": "forbidden", "message": "forbidden"})
+			return
+		}
+
+		originHeader := strings.TrimSpace(origins[0])
 		if originHeader == "" {
 			next(w, r)
 			return
@@ -66,6 +76,10 @@ func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 // can provide a deterministic Origin to a backend that enforces Origin checks.
 func NormalizedOriginFromRequest(r *http.Request) string {
 	if r == nil {
+		return ""
+	}
+
+	if len(r.Header.Values("Origin")) > 1 {
 		return ""
 	}
 
