@@ -45,6 +45,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.DataChannelSendQueueBytes != DefaultDataChannelSendQueueBytes {
 		t.Fatalf("DataChannelSendQueueBytes=%d, want %d", cfg.DataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
 	}
+	if cfg.MaxDatagramPayloadBytes != DefaultMaxDatagramPayloadBytes {
+		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
+	}
 	if cfg.PreferV2 {
 		t.Fatalf("PreferV2=true, want false")
 	}
@@ -56,6 +59,18 @@ func TestDefaultsDev(t *testing.T) {
 	}
 	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
+	}
+}
+
+func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvMaxDatagramPayloadBytes: "1400",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxDatagramPayloadBytes != 1400 {
+		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, 1400)
 	}
 }
 

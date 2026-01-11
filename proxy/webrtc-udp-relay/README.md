@@ -238,6 +238,7 @@ The service supports configuration via environment variables and equivalent flag
 - `UDP_BINDING_IDLE_TIMEOUT` / `--udp-binding-idle-timeout` (default `60s`)
 - `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default `65535`)
 - `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
+- `MAX_DATAGRAM_PAYLOAD_BYTES` / `--max-datagram-payload-bytes` (default `1200`) — max UDP payload bytes per relay frame (applies to WebRTC `udp` DataChannel and `/udp` WebSocket fallback)
 - `PREFER_V2` / `--prefer-v2` (default `false`) — prefer v2 framing for relay→client packets once the client demonstrates v2 support
 
 ### Quota + rate limiting (env + flags)

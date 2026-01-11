@@ -254,6 +254,12 @@ byte** range:
   (1500 - 20 byte IP header - 8 byte UDP header), but WebRTC adds additional
   overhead (DTLS/SCTP), so real-world safe sizes are often smaller.
 
+### Configuration knob
+
+On the Go relay, the max payload is configured via:
+
+- `MAX_DATAGRAM_PAYLOAD_BYTES` / `--max-datagram-payload-bytes` (default `1200`)
+
 ---
 
 ## Error handling

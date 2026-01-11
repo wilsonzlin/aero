@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
 const (
@@ -28,6 +30,7 @@ const (
 	EnvUDPBindingIdleTimeout     = "UDP_BINDING_IDLE_TIMEOUT"
 	EnvUDPReadBufferBytes        = "UDP_READ_BUFFER_BYTES"
 	EnvDataChannelSendQueueBytes = "DATACHANNEL_SEND_QUEUE_BYTES"
+	EnvMaxDatagramPayloadBytes   = "MAX_DATAGRAM_PAYLOAD_BYTES"
 	EnvPreferV2                  = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
@@ -69,6 +72,7 @@ const (
 	DefaultUDPReadBufferBytes        = 65535
 	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
 	DefaultMaxUDPBindingsPerSession  = 128
+	DefaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
 	DefaultL2MaxMessageBytes         = 4096
 
 	DefaultAuthMode AuthMode = AuthModeAPIKey
@@ -177,6 +181,7 @@ type Config struct {
 	UDPBindingIdleTimeout     time.Duration
 	UDPReadBufferBytes        int
 	DataChannelSendQueueBytes int
+	MaxDatagramPayloadBytes   int
 	PreferV2                  bool
 
 	// L2 tunnel bridging.
@@ -318,6 +323,10 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, EnvDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, EnvMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
 	if err != nil {
 		return Config{}, err
 	}
@@ -498,6 +507,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+EnvUDPBindingIdleTimeout+")")
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
+	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
 	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
 	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+EnvL2MaxMessageBytes+")")
 
@@ -559,6 +569,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if dataChannelSendQueueBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--datachannel-send-queue-bytes must be > 0", EnvDataChannelSendQueueBytes)
+	}
+	if maxDatagramPayloadBytes <= 0 {
+		return Config{}, fmt.Errorf("%s/--max-datagram-payload-bytes must be > 0", EnvMaxDatagramPayloadBytes)
 	}
 	if l2MaxMessageBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", EnvL2MaxMessageBytes)
@@ -684,6 +697,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		UDPBindingIdleTimeout:     udpBindingIdleTimeout,
 		UDPReadBufferBytes:        udpReadBufferBytes,
 		DataChannelSendQueueBytes: dataChannelSendQueueBytes,
+		MaxDatagramPayloadBytes:   maxDatagramPayloadBytes,
 		PreferV2:                  preferV2,
 
 		L2BackendWSURL:    l2BackendWSURL,

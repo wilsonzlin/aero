@@ -83,6 +83,7 @@ func main() {
 		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
 		UDPReadBufferBytes:        cfg.UDPReadBufferBytes,
 		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
+		MaxDatagramPayloadBytes:   cfg.MaxDatagramPayloadBytes,
 		L2BackendWSURL:            cfg.L2BackendWSURL,
 		L2MaxMessageBytes:         cfg.L2MaxMessageBytes,
 		PreferV2:                  cfg.PreferV2,
