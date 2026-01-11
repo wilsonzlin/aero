@@ -447,6 +447,17 @@ fn uhci_register_block_supports_dword_accesses() {
 }
 
 #[test]
+fn uhci_reserved_register_bytes_read_as_zero() {
+    let uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // SOFMOD is an 8-bit register at 0x0C. Real drivers may use 16/32-bit I/O; reserved bytes in
+    // the decoded 0x20-byte UHCI register window should read back as 0 so wide reads don't return
+    // spurious 0xFF in the upper bytes.
+    assert_eq!(uhci.port_read(REG_SOFMOD, 2) as u16, 0x0040);
+    assert_eq!(uhci.port_read(REG_SOFMOD, 4), 0x0000_0040);
+}
+
+#[test]
 fn uhci_fgr_latches_resume_detect_and_can_irq() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
 

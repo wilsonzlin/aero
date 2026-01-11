@@ -175,7 +175,16 @@ impl UhciController {
             REG_PORTSC1_HI => (self.hub.read_portsc(0) >> 8) as u8,
             REG_PORTSC2 => (self.hub.read_portsc(1) & 0x00ff) as u8,
             REG_PORTSC2_HI => (self.hub.read_portsc(1) >> 8) as u8,
-            _ => 0xff,
+            // The UHCI register block is 0x20 bytes wide; bytes that are within that range but
+            // not implemented are reserved and should read back as 0. Out-of-range accesses are
+            // treated as open bus.
+            _ => {
+                if offset < 0x20 {
+                    0
+                } else {
+                    0xff
+                }
+            }
         }
     }
 
