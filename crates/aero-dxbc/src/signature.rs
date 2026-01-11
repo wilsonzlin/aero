@@ -54,6 +54,16 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
     let param_count_usize = param_count as usize;
     let param_offset_usize = param_offset as usize;
 
+    if param_count_usize == 0 {
+        if param_offset_usize > bytes.len() {
+            return Err(DxbcError::invalid_chunk(format!(
+                "param_offset {param_offset} is outside chunk length {}",
+                bytes.len()
+            )));
+        }
+        return Ok(SignatureChunk { entries: Vec::new() });
+    }
+
     if param_offset_usize < SIGNATURE_HEADER_LEN {
         return Err(DxbcError::invalid_chunk(format!(
             "param_offset {param_offset} points into signature header (need >= {SIGNATURE_HEADER_LEN})"

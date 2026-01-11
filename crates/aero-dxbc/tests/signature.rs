@@ -114,6 +114,15 @@ fn parse_signature_chunk_two_entries() {
 }
 
 #[test]
+fn parse_signature_chunk_empty_is_ok() {
+    // Some shaders may legitimately have empty signatures (e.g. no patch
+    // constants); accept count==0 with any in-bounds offset.
+    let bytes = [0u8; 8]; // param_count=0, param_offset=0
+    let sig = parse_signature_chunk(&bytes).expect("empty signature parse should succeed");
+    assert!(sig.entries.is_empty());
+}
+
+#[test]
 fn dxbc_get_signature_parses_chunk() {
     let sig_bytes = build_signature_chunk();
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"ISGN"), &sig_bytes)]);
