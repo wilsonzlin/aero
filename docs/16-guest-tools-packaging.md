@@ -78,6 +78,8 @@ It applies a small exclusion policy:
 - **Refused (hard error)** to avoid leaking secrets:
   - private key material: `*.pfx`, `*.pvk`, `*.snk`, `*.key`, `*.pem` (case-insensitive)
 
+The same private-key refusal applies to the `guest-tools/` input tree (e.g. `config/`, `certs/`, `licenses/`) as an extra safety net.
+
 Per-driver overrides can be configured in the packaging spec via `allow_extensions` and `allow_path_regexes`.
 
 ### Guest Tools scripts / certs

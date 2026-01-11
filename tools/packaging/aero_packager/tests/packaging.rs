@@ -578,6 +578,80 @@ fn package_rejects_private_key_materials_in_licenses_dir() -> anyhow::Result<()>
 }
 
 #[test]
+fn package_rejects_private_key_materials_in_config_dir() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_dir, guest_tools_tmp.path())?;
+    fs::write(
+        guest_tools_tmp.path().join("config").join("secret.pfx"),
+        b"dummy pfx",
+    )?;
+
+    let out_dir = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        out_dir: out_dir.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("private key material in config directory"),
+        "unexpected error: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn package_rejects_private_key_materials_in_certs_dir() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_dir, guest_tools_tmp.path())?;
+    fs::write(
+        guest_tools_tmp.path().join("certs").join("secret.pfx"),
+        b"dummy pfx",
+    )?;
+
+    let out_dir = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        out_dir: out_dir.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("private key material in certs directory"),
+        "unexpected error: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
 fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

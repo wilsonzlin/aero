@@ -180,6 +180,19 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
             continue;
         }
 
+        let ext = entry
+            .path()
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !ext.is_empty() && is_private_key_extension(&ext) {
+            bail!(
+                "refusing to package private key material in config directory: {}",
+                entry.path().display()
+            );
+        }
+
         // Skip hidden files such as `.DS_Store` to keep outputs stable across hosts.
         let file_name = entry.file_name().to_string_lossy();
         if file_name.starts_with('.') {
@@ -259,6 +272,19 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
             let entry = entry?;
             if !entry.file_type().is_file() {
                 continue;
+            }
+
+            let ext = entry
+                .path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !ext.is_empty() && is_private_key_extension(&ext) {
+                bail!(
+                    "refusing to package private key material in certs directory: {}",
+                    entry.path().display()
+                );
             }
             let rel = entry
                 .path()
