@@ -48,7 +48,7 @@ export enum StatusIndex {
   IoHidAttachCounter = 12,
   IoHidDetachCounter = 13,
   IoHidInputReportCounter = 14,
-  IoHidInputReportDropCounter = 15,
+  IoHidInputReportDropCounter = 19,
 
   // Device-bus state observed by the CPU worker.
   // These are primarily for debugging/observability until the real CPU core is wired up.

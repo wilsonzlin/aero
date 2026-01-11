@@ -179,6 +179,7 @@ describe("runtime/shared_layout", () => {
     expect(StatusIndex.IoReady).toBe(10);
     expect(StatusIndex.JitReady).toBe(11);
     expect(StatusIndex.NetReady).toBe(15);
+    expect(StatusIndex.IoHidInputReportDropCounter).not.toBe(StatusIndex.NetReady);
 
     const status = new Int32Array(new SharedArrayBuffer(STATUS_BYTES));
     for (const role of WORKER_ROLES) {
