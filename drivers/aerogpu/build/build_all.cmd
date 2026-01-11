@@ -28,37 +28,39 @@ set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
 set "OUT_ROOT=%SCRIPT_DIR%\out"
 
-rem Optional Win7-era WinDDK root (7600-era layout; used for D3D9 + D3D10/11 UMD DDI headers).
+rem Optional Win7-era WinDDK root (7600-era layout; inc\{api,ddk}) used for UMD DDI headers.
 rem If not found, the UMD builds rely on the toolchain's default include paths (typically Windows Kits 10+).
 rem
 rem Note: do not clobber the standard WDKROOT environment variable; it may be set by modern
 rem Windows Kits installations.
-set "AEROGPU_WDKROOT="
-if defined WINDDK (
-  if exist "%WINDDK%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WINDDK%"
-  if not defined AEROGPU_WDKROOT if exist "%WINDDK%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WINDDK%"
+set "AEROGPU_WDKROOT_D3D9="
+set "AEROGPU_WDKROOT_D3D10_11="
+
+call :detect_wdkroot_d3d9 "%WINDDK%"
+call :detect_wdkroot_d3d9 "%WDK_ROOT%"
+call :detect_wdkroot_d3d9 "%WDKROOT%"
+call :detect_wdkroot_d3d9 "C:\WinDDK\7600.16385.1"
+
+call :detect_wdkroot_d3d10_11 "%WINDDK%"
+call :detect_wdkroot_d3d10_11 "%WDK_ROOT%"
+call :detect_wdkroot_d3d10_11 "%WDKROOT%"
+call :detect_wdkroot_d3d10_11 "C:\WinDDK\7600.16385.1"
+
+if defined AEROGPU_WDKROOT_D3D9 (
+  echo NOTE: Using WinDDK headers for D3D9 UMD: "%AEROGPU_WDKROOT_D3D9%"
 )
-if not defined AEROGPU_WDKROOT if defined WDK_ROOT (
-  if exist "%WDK_ROOT%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDK_ROOT%"
-  if not defined AEROGPU_WDKROOT if exist "%WDK_ROOT%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDK_ROOT%"
-)
-if not defined AEROGPU_WDKROOT if defined WDKROOT (
-  if exist "%WDKROOT%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
-  if not defined AEROGPU_WDKROOT if exist "%WDKROOT%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
-)
-if not defined AEROGPU_WDKROOT (
-  if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
-  if not defined AEROGPU_WDKROOT if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
+if defined AEROGPU_WDKROOT_D3D10_11 (
+  echo NOTE: Using WinDDK headers for D3D10/11 UMD: "%AEROGPU_WDKROOT_D3D10_11%"
 )
 
 rem Ensure the D3D10/11 UMD is compiled against the official WDK UMDDI headers.
 set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1"
-if defined AEROGPU_WDKROOT (
-  set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT%"""
+if defined AEROGPU_WDKROOT_D3D10_11 (
+  set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT_D3D10_11%"""
 )
 set "D3D9_WDK_MSBUILD_ARGS="
-if defined AEROGPU_WDKROOT (
-  set "D3D9_WDK_MSBUILD_ARGS=/p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT%"""
+if defined AEROGPU_WDKROOT_D3D9 (
+  set "D3D9_WDK_MSBUILD_ARGS=/p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT_D3D9%"""
 )
 
 set "VARIANTS=fre chk"
@@ -225,3 +227,37 @@ if /i "%ARCH%"=="x64" set "D3D9_DLL=aerogpu_d3d9_x64.dll"
   )
 
 endlocal & exit /b 0
+
+rem -----------------------------------------------------------------------------
+:detect_wdkroot_d3d9
+rem -----------------------------------------------------------------------------
+if defined AEROGPU_WDKROOT_D3D9 exit /b 0
+set "CAND=%~1"
+if "%CAND%"=="" exit /b 0
+if not exist "%CAND%" exit /b 0
+
+set "HAS_D3D9="
+if exist "%CAND%\inc\api\d3d9umddi.h" set "HAS_D3D9=1"
+if exist "%CAND%\inc\ddk\d3d9umddi.h" set "HAS_D3D9=1"
+set "HAS_D3DUM="
+if exist "%CAND%\inc\api\d3dumddi.h" set "HAS_D3DUM=1"
+if exist "%CAND%\inc\ddk\d3dumddi.h" set "HAS_D3DUM=1"
+if defined HAS_D3D9 if defined HAS_D3DUM set "AEROGPU_WDKROOT_D3D9=%CAND%"
+exit /b 0
+
+rem -----------------------------------------------------------------------------
+:detect_wdkroot_d3d10_11
+rem -----------------------------------------------------------------------------
+if defined AEROGPU_WDKROOT_D3D10_11 exit /b 0
+set "CAND=%~1"
+if "%CAND%"=="" exit /b 0
+if not exist "%CAND%" exit /b 0
+
+set "HAS_D3D10="
+if exist "%CAND%\inc\api\d3d10umddi.h" set "HAS_D3D10=1"
+if exist "%CAND%\inc\ddk\d3d10umddi.h" set "HAS_D3D10=1"
+set "HAS_D3D11="
+if exist "%CAND%\inc\api\d3d11umddi.h" set "HAS_D3D11=1"
+if exist "%CAND%\inc\ddk\d3d11umddi.h" set "HAS_D3D11=1"
+if defined HAS_D3D10 if defined HAS_D3D11 set "AEROGPU_WDKROOT_D3D10_11=%CAND%"
+exit /b 0
