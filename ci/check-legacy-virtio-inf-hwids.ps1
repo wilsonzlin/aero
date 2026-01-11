@@ -21,7 +21,8 @@ The check ignores comment lines (starting with ';') so documentation inside INFs
 still mention these IDs.
 
 Additionally, enforce that there is only one MSBuild driver project under `drivers/`
-that produces `aerovblk.sys` (TargetName = aerovblk).
+that produces `aerovblk.sys` (TargetName = aerovblk) and only one that produces
+`aerovnet.sys` (TargetName = aerovnet).
 #>
 
 [CmdletBinding()]
@@ -118,9 +119,10 @@ if ($conflicts.Count -gt 0) {
 
 Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042/DEV_1052/DEV_1059)."
 
-# Enforce that there is only one MSBuild project that produces aerovblk.sys.
+# Enforce that there is only one MSBuild project that produces aerovblk.sys / aerovnet.sys.
 $projFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
 $aerovblkProjects = New-Object System.Collections.Generic.List[string]
+$aerovnetProjects = New-Object System.Collections.Generic.List[string]
 foreach ($proj in $projFiles) {
   $content = $null
   try {
@@ -131,6 +133,9 @@ foreach ($proj in $projFiles) {
   if ([string]::IsNullOrWhiteSpace($content)) { continue }
   if ($content -match '(?i)<TargetName>\s*aerovblk\s*</TargetName>') {
     $aerovblkProjects.Add($proj.FullName) | Out-Null
+  }
+  if ($content -match '(?i)<TargetName>\s*aerovnet\s*</TargetName>') {
+    $aerovnetProjects.Add($proj.FullName) | Out-Null
   }
 }
 
@@ -145,5 +150,16 @@ if ($uniqueProjPaths.Count -gt 1) {
   exit 1
 }
 
-Write-Host "OK: aerovblk MSBuild output is unique."
+$uniqueNetProjPaths = @($aerovnetProjects | Sort-Object -Unique)
+if ($uniqueNetProjPaths.Count -gt 1) {
+  Write-Host ""
+  Write-Host "ERROR: Found multiple MSBuild projects that produce aerovnet.sys (TargetName=aerovnet)."
+  foreach ($p in $uniqueNetProjPaths) {
+    Write-Host ("- {0}" -f $p)
+  }
+  Write-Host ""
+  exit 1
+}
+
+Write-Host "OK: aerovblk/aerovnet MSBuild outputs are unique."
 exit 0
