@@ -207,7 +207,15 @@ parentPort.on('message', (msg) => {
         post({ type: 'started', mode });
 
         if (mode === 'nonYieldingLoop') {
-          while (true) {}
+          // Simulate a hung CPU worker that never yields back to the event loop.
+          //
+          // A plain `while (true) {}` loop pegs a CPU core, which can make the Node test suite
+          // flaky under high concurrency (the watchdog + test timeouts rely on timers firing).
+          // `Atomics.wait` blocks without burning CPU while still being interruptible by
+          // `worker.terminate()`.
+          const buf = new SharedArrayBuffer(4);
+          const int32 = new Int32Array(buf);
+          Atomics.wait(int32, 0, 0);
         }
 
         if (mode === 'crash') {
