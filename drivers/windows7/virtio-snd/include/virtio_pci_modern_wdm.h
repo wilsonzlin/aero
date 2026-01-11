@@ -153,6 +153,27 @@ VirtIoSndTransportNotifyQueue(_In_ const VIRTIOSND_TRANSPORT *Transport,
                               _In_ USHORT QueueIndex,
                               _In_ USHORT QueueNotifyOff);
 
+/*
+ * Device-specific config access helpers (DEVICE_CFG capability).
+ *
+ * For stable devices (static config), config_generation may remain 0 forever, but
+ * the virtio spec requires drivers to use config_generation to avoid tearing if
+ * the device updates config concurrently.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtIoSndTransportReadDeviceConfig(_Inout_ PVIRTIOSND_TRANSPORT Transport,
+                                   _In_ ULONG Offset,
+                                   _Out_writes_bytes_(Length) PVOID Buffer,
+                                   _In_ ULONG Length);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtIoSndTransportWriteDeviceConfig(_Inout_ PVIRTIOSND_TRANSPORT Transport,
+                                    _In_ ULONG Offset,
+                                    _In_reads_bytes_(Length) const VOID *Buffer,
+                                    _In_ ULONG Length);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

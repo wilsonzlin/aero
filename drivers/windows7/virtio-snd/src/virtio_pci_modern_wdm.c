@@ -26,6 +26,12 @@
 #define VIRTIO_PCI_RESET_TIMEOUT_US    1000000u
 #define VIRTIO_PCI_RESET_POLL_DELAY_US 1000u
 
+/*
+ * DEVICE_CFG reads should use config_generation to detect concurrent config
+ * updates. Retry a small bounded number of times.
+ */
+#define VIRTIO_PCI_CONFIG_MAX_READ_RETRIES 10u
+
 static ULONG
 VirtIoSndReadLe32FromCfg(_In_reads_bytes_(256) const UCHAR *Cfg, _In_ ULONG Offset)
 {
@@ -799,4 +805,125 @@ VirtIoSndTransportNotifyQueue(_In_ const VIRTIOSND_TRANSPORT *Transport,
 
     WRITE_REGISTER_USHORT((volatile USHORT *)addr, QueueIndex);
     KeMemoryBarrier();
+}
+
+static __forceinline UCHAR
+VirtIoSndReadDeviceConfig8(_In_ volatile const UCHAR *Base, _In_ ULONG Offset)
+{
+    return READ_REGISTER_UCHAR((volatile UCHAR *)((ULONG_PTR)Base + Offset));
+}
+
+static __forceinline VOID
+VirtIoSndWriteDeviceConfig8(_In_ volatile UCHAR *Base, _In_ ULONG Offset, _In_ UCHAR Value)
+{
+    WRITE_REGISTER_UCHAR((volatile UCHAR *)((ULONG_PTR)Base + Offset), Value);
+}
+
+static VOID
+VirtIoSndCopyFromDeviceCfg(_In_ volatile const UCHAR *Base,
+                           _In_ ULONG Offset,
+                           _Out_writes_bytes_(Length) UCHAR *OutBytes,
+                           _In_ ULONG Length)
+{
+    ULONG i;
+
+    for (i = 0; i < Length; i++) {
+        OutBytes[i] = VirtIoSndReadDeviceConfig8(Base, Offset + i);
+    }
+}
+
+static VOID
+VirtIoSndCopyToDeviceCfg(_In_ volatile UCHAR *Base,
+                         _In_ ULONG Offset,
+                         _In_reads_bytes_(Length) const UCHAR *InBytes,
+                         _In_ ULONG Length)
+{
+    ULONG i;
+
+    for (i = 0; i < Length; i++) {
+        VirtIoSndWriteDeviceConfig8(Base, Offset + i, InBytes[i]);
+    }
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtIoSndTransportReadDeviceConfig(_Inout_ PVIRTIOSND_TRANSPORT Transport,
+                                   _In_ ULONG Offset,
+                                   _Out_writes_bytes_(Length) PVOID Buffer,
+                                   _In_ ULONG Length)
+{
+    ULONG attempt;
+    UCHAR gen0;
+    UCHAR gen1;
+    PUCHAR outBytes;
+    ULONGLONG end;
+
+    if (Length == 0) {
+        return STATUS_SUCCESS;
+    }
+
+    if (Transport == NULL || Transport->CommonCfg == NULL || Transport->DeviceCfg == NULL || Buffer == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    end = (ULONGLONG)Offset + (ULONGLONG)Length;
+    if (end < Offset) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Transport->Caps.device_cfg.length != 0 && end > (ULONGLONG)Transport->Caps.device_cfg.length) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    outBytes = (PUCHAR)Buffer;
+
+    for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; attempt++) {
+        gen0 = READ_REGISTER_UCHAR((volatile UCHAR *)&Transport->CommonCfg->config_generation);
+        KeMemoryBarrier();
+
+        VirtIoSndCopyFromDeviceCfg(Transport->DeviceCfg, Offset, outBytes, Length);
+
+        KeMemoryBarrier();
+        gen1 = READ_REGISTER_UCHAR((volatile UCHAR *)&Transport->CommonCfg->config_generation);
+        KeMemoryBarrier();
+
+        if (gen0 == gen1) {
+            return STATUS_SUCCESS;
+        }
+    }
+
+    return STATUS_IO_TIMEOUT;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+NTSTATUS
+VirtIoSndTransportWriteDeviceConfig(_Inout_ PVIRTIOSND_TRANSPORT Transport,
+                                    _In_ ULONG Offset,
+                                    _In_reads_bytes_(Length) const VOID *Buffer,
+                                    _In_ ULONG Length)
+{
+    const UCHAR *inBytes;
+    ULONGLONG end;
+
+    if (Length == 0) {
+        return STATUS_SUCCESS;
+    }
+
+    if (Transport == NULL || Transport->DeviceCfg == NULL || Buffer == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    end = (ULONGLONG)Offset + (ULONGLONG)Length;
+    if (end < Offset) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Transport->Caps.device_cfg.length != 0 && end > (ULONGLONG)Transport->Caps.device_cfg.length) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    inBytes = (const UCHAR *)Buffer;
+    VirtIoSndCopyToDeviceCfg(Transport->DeviceCfg, Offset, inBytes, Length);
+    KeMemoryBarrier();
+    return STATUS_SUCCESS;
 }
