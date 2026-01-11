@@ -144,8 +144,11 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
             let has_ignored_seg_prefix = prefix_bytes
                 .iter()
                 .any(|b| matches!(b, 0x26 | 0x2E | 0x36 | 0x3E));
+            let needs_rex_r_mask = opcode.map == OpcodeMap::Primary
+                && matches!(opcode.opcode, 0x8C | 0x8E)
+                && prefixes.rex.map_or(false, |r| r.r);
 
-            if rex_count > 1 || has_ignored_seg_prefix {
+            if rex_count > 1 || has_ignored_seg_prefix || needs_rex_r_mask {
                 // In 64-bit mode, CS/DS/ES/SS segment override prefixes are accepted but ignored.
                 // Multiple REX prefixes are also accepted, with the last one taking effect.
                 //
@@ -170,6 +173,13 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
                             removed += 1;
                             continue;
                         }
+                    }
+                    let mut b = b;
+                    if needs_rex_r_mask
+                        && (0x40..=0x4F).contains(&b)
+                        && last_rex_pos == Some(i)
+                    {
+                        b &= !0b0100;
                     }
                     patched[out_len] = b;
                     out_len += 1;

@@ -128,16 +128,34 @@ async fn handle_ws_client(stream: TcpStream) -> anyhow::Result<()> {
                     .expect("builder"));
             }
             let query = uri.query().unwrap_or("");
+
+            let mut host: Option<String> = None;
+            let mut port: Option<u16> = None;
             for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
-                if k == "target" {
-                    if let Some((host, port)) = v.split_once(':') {
-                        if let Ok(port) = port.parse::<u16>() {
-                            target = Some((host.to_string(), port));
-                            break;
+                match k.as_ref() {
+                    "target" => {
+                        if let Some(parsed) = parse_target(&v) {
+                            target = Some(parsed);
                         }
                     }
+                    "host" => {
+                        host = Some(v.into_owned());
+                    }
+                    "port" => {
+                        if let Ok(p) = v.parse::<u16>() {
+                            port = Some(p);
+                        }
+                    }
+                    _ => {}
                 }
             }
+
+            if target.is_none() {
+                if let (Some(host), Some(port)) = (host, port) {
+                    target = Some((normalize_host(&host), port));
+                }
+            }
+
             if target.is_none() {
                 return Err(tokio_tungstenite::tungstenite::http::Response::builder()
                     .status(400)
@@ -153,6 +171,29 @@ async fn handle_ws_client(stream: TcpStream) -> anyhow::Result<()> {
     let tcp = TcpStream::connect((host.as_str(), port)).await?;
     proxy(ws_stream, tcp).await?;
     Ok(())
+}
+
+fn normalize_host(host: &str) -> String {
+    host.strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host)
+        .to_string()
+}
+
+fn parse_target(target: &str) -> Option<(String, u16)> {
+    let target = target.trim();
+    if let Some(rest) = target.strip_prefix('[') {
+        let (host, rest) = rest.split_once(']')?;
+        let port = rest.strip_prefix(':')?.parse::<u16>().ok()?;
+        return Some((host.to_string(), port));
+    }
+
+    let (host, port) = target.rsplit_once(':')?;
+    if host.contains(':') {
+        return None;
+    }
+    let port = port.parse::<u16>().ok()?;
+    Some((host.to_string(), port))
 }
 
 async fn proxy(ws: WebSocketStream<TcpStream>, mut tcp: TcpStream) -> anyhow::Result<()> {

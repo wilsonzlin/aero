@@ -253,6 +253,22 @@ fn regression_cases_are_stable() {
         })
         .unwrap();
     assert_eq!(mem.segment, None);
+
+    let inst = decode(&[0x44, 0x8C, 0xC0], DecodeMode::Bits64, 0).unwrap();
+    assert_eq!(inst.length, 3);
+    assert!(inst.prefixes.rex.is_some());
+    assert!(inst
+        .operands
+        .iter()
+        .any(|op| matches!(op, Operand::Segment { reg: SegmentReg::ES })));
+    assert!(inst.operands.iter().any(|op| matches!(
+        op,
+        Operand::Gpr {
+            reg,
+            size: OperandSize::Bits16,
+            ..
+        } if reg.index == 0
+    )));
 }
 
 #[test]
