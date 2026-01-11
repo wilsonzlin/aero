@@ -109,13 +109,26 @@ impl AttachedUsbDevice {
                         if data.len() > requested {
                             data.truncate(requested);
                         }
-                        if requested == 0 || data.is_empty() {
+                        if requested == 0 {
                             ControlStage::StatusOut
                         } else {
+                            // Even a zero-length data stage (ZLP) is a valid completion for
+                            // control-IN requests where `wLength > 0`. The guest will still issue
+                            // an IN TD for the DATA stage, so model this as a one-shot IN DATA
+                            // stage that can return an empty packet.
                             ControlStage::InData { data, offset: 0 }
                         }
                     }
-                    ControlResponse::Ack => ControlStage::StatusOut,
+                    ControlResponse::Ack => {
+                        if setup.w_length == 0 {
+                            ControlStage::StatusOut
+                        } else {
+                            ControlStage::InData {
+                                data: Vec::new(),
+                                offset: 0,
+                            }
+                        }
+                    }
                     ControlResponse::Nak => {
                         if setup.w_length == 0 {
                             ControlStage::StatusOutPending
@@ -459,5 +472,63 @@ mod tests {
         assert_eq!(dev.handle_setup(setup2), UsbOutResult::Ack);
 
         assert_eq!(counter.0.get(), 1);
+    }
+
+    #[test]
+    fn control_in_zero_length_data_stage_is_delivered() {
+        struct ZeroLenModel;
+
+        impl UsbDeviceModel for ZeroLenModel {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Data(Vec::new())
+            }
+        }
+
+        let mut dev = AttachedUsbDevice::new(Box::new(ZeroLenModel));
+        let setup = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0xff,
+            w_value: 0,
+            w_index: 0,
+            w_length: 8,
+        };
+
+        assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        // IN DATA stage should complete with a ZLP, not STALL.
+        assert_eq!(dev.handle_in(0, 8), UsbInResult::Data(Vec::new()));
+        // Status OUT stage.
+        assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+    }
+
+    #[test]
+    fn control_in_ack_with_wlength_produces_zlp_data_stage() {
+        struct AckInModel;
+
+        impl UsbDeviceModel for AckInModel {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+        }
+
+        let mut dev = AttachedUsbDevice::new(Box::new(AckInModel));
+        let setup = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0xff,
+            w_value: 0,
+            w_index: 0,
+            w_length: 8,
+        };
+
+        assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        assert_eq!(dev.handle_in(0, 8), UsbInResult::Data(Vec::new()));
+        assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
     }
 }
