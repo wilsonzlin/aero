@@ -1318,6 +1318,21 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
       return E_OUTOFMEMORY;
     }
 
+    // Uploads write into the destination buffer. Track its backing allocation
+    // so the KMD alloc table contains the mapping for guest-backed resources.
+    // (For internal host-only buffers backing_alloc_id==0, this is a no-op.)
+    HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/true);
+    if (FAILED(track_hr)) {
+      return track_hr;
+    }
+
+    // Allocation tracking may have split/flushed the submission; ensure we
+    // still have room for at least a minimal upload packet before sizing the
+    // next chunk.
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return E_OUTOFMEMORY;
+    }
+
     const size_t avail = dev->cmd.bytes_remaining();
     size_t chunk = 0;
     if (avail > sizeof(aerogpu_cmd_upload_resource)) {
