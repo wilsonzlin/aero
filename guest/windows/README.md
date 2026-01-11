@@ -1,10 +1,12 @@
 # Legacy / prototype AeroGPU Windows 7 driver stack (`guest/windows/`)
 
-This directory is a historical pointer to an early AeroGPU Windows 7 (WDDM 1.1) prototype driver stack.
-It is **not** the supported/canonical AeroGPU implementation.
+This directory is a historical **tombstone** for an early AeroGPU Windows 7 (WDDM 1.1) prototype driver stack.
 
-The original prototype sources/INF were removed to avoid accidental use; this directory remains only as
-this pointer.
+The prototype sources/INF were removed from the repo to avoid accidental use. If you need them for archaeology, use:
+
+```bash
+git log -- guest/windows
+```
 
 Notable differences from the supported stack:
 
@@ -14,9 +16,13 @@ Notable differences from the supported stack:
 
 ## Canonical AeroGPU driver stack (supported)
 
-The supported AeroGPU stack lives under `drivers/aerogpu/` and uses the current PCI IDs
-(`PCI\VEN_A3A0&DEV_0001` and `PCI\VEN_1AED&DEV_0001`) plus the protocol headers under
-`drivers/aerogpu/protocol/`.
+The in-tree, supported AeroGPU stack lives under `drivers/aerogpu/` and uses the current PCI IDs
+(`PCI\VEN_A3A0&DEV_0001` and `PCI\VEN_1AED&DEV_0001`).
+
+The canonical source of truth for **Windows driver binding** (PCI IDs, service names, INF names) is:
+
+- [`docs/windows-device-contract.md`](../../docs/windows-device-contract.md)
+- [`docs/windows-device-contract.json`](../../docs/windows-device-contract.json)
 
 Start with:
 
