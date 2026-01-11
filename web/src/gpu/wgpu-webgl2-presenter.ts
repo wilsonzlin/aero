@@ -100,7 +100,17 @@ export class WgpuWebGl2Presenter implements Presenter {
 
     try {
       const bytes = await request_screenshot();
-      return { width: this.srcWidth, height: this.srcHeight, pixels: bytes.buffer };
+      // wasm-bindgen models typed array buffers as `ArrayBufferLike`, but the
+      // screenshot contract expects an ArrayBuffer. Copy if needed.
+      const pixels: ArrayBuffer =
+        bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+          ? bytes.buffer
+          : (() => {
+              const out = new Uint8Array(bytes.byteLength);
+              out.set(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+              return out.buffer;
+            })();
+      return { width: this.srcWidth, height: this.srcHeight, pixels };
     } catch (err) {
       throw new PresenterError('wgpu_screenshot_failed', 'Failed to capture screenshot from wgpu WebGL2 presenter', err);
     }

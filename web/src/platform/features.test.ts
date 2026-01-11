@@ -2,12 +2,20 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./features";
 
+const GLOBALS = globalThis as unknown as {
+  crossOriginIsolated?: boolean;
+  isSecureContext?: boolean;
+  AudioWorkletNode?: unknown;
+  AudioContext?: unknown;
+  OffscreenCanvas?: unknown;
+};
+
 const originalValidate = WebAssembly.validate;
 
 afterEach(() => {
   WebAssembly.validate = originalValidate;
-  delete (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated;
-  delete (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext;
+  delete GLOBALS.crossOriginIsolated;
+  delete GLOBALS.isSecureContext;
 
   // Node.js provides a `navigator` getter; it is extensible, so we can delete any
   // stubbed properties after each test.
@@ -17,9 +25,9 @@ afterEach(() => {
     delete (navigator as unknown as { usb?: unknown }).usb;
   }
 
-  delete (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode;
-  delete (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
-  delete (globalThis as typeof globalThis & { OffscreenCanvas?: unknown }).OffscreenCanvas;
+  delete GLOBALS.AudioWorkletNode;
+  delete GLOBALS.AudioContext;
+  delete GLOBALS.OffscreenCanvas;
 });
 
 function report(overrides: Partial<PlatformFeatureReport> = {}): PlatformFeatureReport {
@@ -55,7 +63,7 @@ describe("detectPlatformFeatures", () => {
     expect(baseline.wasmSimd).toBe(true);
     expect(baseline.wasmThreads).toBe(false);
 
-    (globalThis as typeof globalThis & { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
+    GLOBALS.crossOriginIsolated = true;
 
     const isolated = detectPlatformFeatures();
     expect(isolated.crossOriginIsolated).toBe(true);
@@ -77,9 +85,9 @@ describe("detectPlatformFeatures", () => {
       getDirectory: () => Promise.resolve(null),
     };
 
-    (globalThis as typeof globalThis & { AudioWorkletNode?: unknown }).AudioWorkletNode = class AudioWorkletNode {};
-    (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = class AudioContext {};
-    (globalThis as typeof globalThis & { OffscreenCanvas?: unknown }).OffscreenCanvas = class OffscreenCanvas {};
+    GLOBALS.AudioWorkletNode = class AudioWorkletNode {};
+    GLOBALS.AudioContext = class AudioContext {};
+    GLOBALS.OffscreenCanvas = class OffscreenCanvas {};
 
     const report = detectPlatformFeatures();
     expect(report.webgpu).toBe(true);
@@ -102,7 +110,7 @@ describe("detectPlatformFeatures", () => {
     expect(insecure.webusb).toBe(false);
 
     // Secure context + navigator.usb => WebUSB available.
-    (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = true;
+    GLOBALS.isSecureContext = true;
     const secure = detectPlatformFeatures();
     expect(secure.webusb).toBe(true);
   });

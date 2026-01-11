@@ -417,7 +417,7 @@ describe("RemoteChunkedDisk", () => {
       prefetchSequentialChunks: 0,
       retryBaseDelayMs: 0,
       maxConcurrentFetches: 1,
-      cacheLimitBytes: null as const,
+      cacheLimitBytes: null,
     };
 
     const disk1 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, common);

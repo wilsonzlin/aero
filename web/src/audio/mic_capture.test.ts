@@ -2,14 +2,16 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { MicCapture } from "./mic_capture";
 
-const ORIGINAL_AUDIO_CONTEXT = (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
+const GLOBALS = globalThis as unknown as { AudioContext?: unknown };
+
+const ORIGINAL_AUDIO_CONTEXT = GLOBALS.AudioContext;
 const ORIGINAL_MEDIA_DEVICES = (navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
 
 afterEach(() => {
   if (ORIGINAL_AUDIO_CONTEXT) {
-    (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = ORIGINAL_AUDIO_CONTEXT;
+    GLOBALS.AudioContext = ORIGINAL_AUDIO_CONTEXT;
   } else {
-    delete (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
+    delete GLOBALS.AudioContext;
   }
 
   if (ORIGINAL_MEDIA_DEVICES) {
@@ -62,7 +64,7 @@ test("MicCapture exposes AudioContext.sampleRate as actualSampleRate (even if re
     close = vi.fn(async () => undefined);
   }
 
-  (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = FakeAudioContext;
+  GLOBALS.AudioContext = FakeAudioContext;
 
   const track = { addEventListener: vi.fn(), stop: vi.fn() };
   const stream = {

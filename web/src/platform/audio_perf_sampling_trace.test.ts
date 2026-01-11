@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AeroPerf } from "../perf/perf";
+import type { ChromeTraceExport } from "../perf/trace";
 import { startAudioPerfSampling } from "./audio";
 
 describe("startAudioPerfSampling trace integration", () => {
@@ -40,8 +41,10 @@ describe("startAudioPerfSampling trace integration", () => {
     perf.traceStop();
 
     const trace = await perf.exportTrace();
+    const traceExport: ChromeTraceExport =
+      typeof trace === "string" ? (JSON.parse(trace) as ChromeTraceExport) : (trace as ChromeTraceExport);
     const keys = new Set<string>();
-    for (const ev of trace.traceEvents) {
+    for (const ev of traceExport.traceEvents) {
       if (ev.ph !== "C" || !ev.args) continue;
       for (const key of Object.keys(ev.args)) keys.add(key);
     }

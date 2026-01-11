@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { installHud } from "./hud";
-import type { PerfApi } from "./types";
+import type { PerfApi, PerfHudSnapshot } from "./types";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -58,7 +58,10 @@ describe("Perf HUD Trace JSON export", () => {
       strokeStyle: "",
       lineWidth: 0,
     };
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ctx as unknown as CanvasRenderingContext2D);
+    vi.spyOn(
+      HTMLCanvasElement.prototype as unknown as { getContext: (contextId: string, options?: unknown) => unknown },
+      "getContext",
+    ).mockImplementation((contextId) => (contextId === "2d" ? ctx : null));
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 
     const createdUrls: Blob[] = [];
@@ -74,7 +77,7 @@ describe("Perf HUD Trace JSON export", () => {
     const exportTrace = vi.fn(() => deferred.promise);
 
     const perf = {
-      getHudSnapshot: (out) => out,
+      getHudSnapshot: (out: PerfHudSnapshot) => out,
       setHudActive: () => {},
       captureStart: () => {},
       captureStop: () => {},
