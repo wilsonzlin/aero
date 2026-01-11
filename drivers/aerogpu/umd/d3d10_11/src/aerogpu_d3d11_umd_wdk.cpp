@@ -2951,6 +2951,52 @@ static bool AnyNonNullHandles(const THandle* handles, UINT count) {
   return false;
 }
 
+template <typename FnPtr>
+struct SoSetTargetsThunk;
+
+template <typename... Args>
+struct SoSetTargetsThunk<void(AEROGPU_APIENTRY*)(Args...)> {
+  static void AEROGPU_APIENTRY Impl(Args... args) {
+    ((void)args, ...);
+  }
+};
+
+// Stream-output is unsupported for bring-up. Treat unbind (all-null handles) as
+// a no-op but report E_NOTIMPL if an app attempts to bind real targets.
+template <typename TargetsPtr, typename... Tail>
+struct SoSetTargetsThunk<void(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT, UINT, TargetsPtr, Tail...)> {
+  static void AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumTargets, TargetsPtr phTargets, Tail... tail) {
+    ((void)tail, ...);
+    if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phTargets, NumTargets)) {
+      return;
+    }
+    SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+  }
+};
+
+template <typename FnPtr>
+struct SetPredicationThunk;
+
+template <typename... Args>
+struct SetPredicationThunk<void(AEROGPU_APIENTRY*)(Args...)> {
+  static void AEROGPU_APIENTRY Impl(Args... args) {
+    ((void)args, ...);
+  }
+};
+
+// Predication is optional. Treat clearing/unbinding as a no-op but report
+// E_NOTIMPL when a non-null predicate is set.
+template <typename PredicateHandle, typename... Tail>
+struct SetPredicationThunk<void(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT, PredicateHandle, Tail...)> {
+  static void AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx, PredicateHandle hPredicate, Tail... tail) {
+    ((void)tail, ...);
+    if (!hCtx.pDrvPrivate || !hPredicate.pDrvPrivate) {
+      return;
+    }
+    SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+  }
+};
+
 // Tessellation and compute stages are unsupported in the current FL10_0 bring-up
 // implementation. These entrypoints must behave like no-ops when
 // clearing/unbinding (runtime ClearState), but should still report E_NOTIMPL when
@@ -4934,6 +4980,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs->pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
   ctx_funcs->pfnIaSetIndexBuffer = &IaSetIndexBuffer11;
   ctx_funcs->pfnIaSetTopology = &IaSetTopology11;
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSoSetTargets) {
+    using Fn = decltype(ctx_funcs->pfnSoSetTargets);
+    ctx_funcs->pfnSoSetTargets = &SoSetTargetsThunk<Fn>::Impl;
+  }
 
   ctx_funcs->pfnVsSetShader = &VsSetShader11;
   ctx_funcs->pfnVsSetConstantBuffers = &VsSetConstantBuffers11;
@@ -4978,6 +5028,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetSamplers) { ctx_funcs->pfnCsSetSamplers = &CsSetSamplers11; }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetUnorderedAccessViews) {
     ctx_funcs->pfnCsSetUnorderedAccessViews = &CsSetUnorderedAccessViews11;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetPredication) {
+    using Fn = decltype(ctx_funcs->pfnSetPredication);
+    ctx_funcs->pfnSetPredication = &SetPredicationThunk<Fn>::Impl;
   }
 
   ctx_funcs->pfnSetViewports = &SetViewports11;
