@@ -22,16 +22,16 @@ function isSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
 }
 
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return isSafeInteger(value) && value >= 0;
-}
-
 function isUint8(value: unknown): value is number {
   return isSafeInteger(value) && value >= 0 && value <= 0xff;
 }
 
 function isUint16(value: unknown): value is number {
   return isSafeInteger(value) && value >= 0 && value <= 0xffff;
+}
+
+function isUint32(value: unknown): value is number {
+  return isSafeInteger(value) && value >= 0 && value <= 0xffff_ffff;
 }
 
 export function isUsbSetupPacket(value: unknown): value is SetupPacket {
@@ -47,7 +47,7 @@ export function isUsbSetupPacket(value: unknown): value is SetupPacket {
 
 export function isUsbHostAction(value: unknown): value is UsbHostAction {
   if (!isRecord(value)) return false;
-  if (!isNonNegativeSafeInteger(value.id) || typeof value.kind !== "string") return false;
+  if (!isUint32(value.id) || typeof value.kind !== "string") return false;
 
   switch (value.kind) {
     case "controlIn":
@@ -55,7 +55,7 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
     case "controlOut":
       return isUsbSetupPacket(value.setup) && value.data instanceof Uint8Array;
     case "bulkIn":
-      return isUint8(value.endpoint) && isNonNegativeSafeInteger(value.length);
+      return isUint8(value.endpoint) && isUint32(value.length);
     case "bulkOut":
       return isUint8(value.endpoint) && value.data instanceof Uint8Array;
     default:
@@ -65,7 +65,7 @@ export function isUsbHostAction(value: unknown): value is UsbHostAction {
 
 export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion {
   if (!isRecord(value)) return false;
-  if (!isNonNegativeSafeInteger(value.id) || typeof value.kind !== "string" || typeof value.status !== "string") return false;
+  if (!isUint32(value.id) || typeof value.kind !== "string" || typeof value.status !== "string") return false;
 
   switch (value.kind) {
     case "controlIn":
@@ -76,7 +76,7 @@ export function isUsbHostCompletion(value: unknown): value is UsbHostCompletion 
       return false;
     case "controlOut":
     case "bulkOut":
-      if (value.status === "success") return isNonNegativeSafeInteger(value.bytesWritten);
+      if (value.status === "success") return isUint32(value.bytesWritten);
       if (value.status === "stall") return true;
       if (value.status === "error") return typeof value.message === "string";
       return false;

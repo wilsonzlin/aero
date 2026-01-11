@@ -39,6 +39,7 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbHostAction({ kind: "controlIn", id: 1.5, setup })).toBe(false);
     expect(isUsbHostAction({ kind: "controlIn", id: Number.NaN, setup })).toBe(false);
     expect(isUsbHostAction({ kind: "controlIn", id: -1, setup })).toBe(false);
+    expect(isUsbHostAction({ kind: "controlIn", id: 0xffff_ffff + 1, setup })).toBe(false);
 
     // Setup packet fields are u8/u16.
     expect(isUsbHostAction({ kind: "controlIn", id: 1, setup: { ...setup, wLength: 0x1_0000 } })).toBe(false);
@@ -47,10 +48,12 @@ describe("usb/usb_proxy_protocol", () => {
     // Endpoint is u8, length is non-negative.
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x1_00, length: 8 })).toBe(false);
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: -1 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: 0xffff_ffff + 1 })).toBe(false);
 
     // bytesWritten must be a non-negative safe integer.
     expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: 1.5 })).toBe(false);
     expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: -1 })).toBe(false);
+    expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: 0xffff_ffff + 1 })).toBe(false);
 
     // usb.selected vendor/product IDs are u16.
     expect(
