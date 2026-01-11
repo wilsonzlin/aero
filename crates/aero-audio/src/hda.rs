@@ -2068,8 +2068,16 @@ impl HdaController {
             .zip(&state.stream_runtime)
             .enumerate()
         {
-            rt.bdl_index = s.bdl_index;
-            rt.bdl_offset = s.bdl_offset;
+            let lvi = self.streams.get(idx).map(|sd| sd.lvi).unwrap_or(0);
+            if s.bdl_index <= lvi {
+                rt.bdl_index = s.bdl_index;
+                rt.bdl_offset = s.bdl_offset;
+            } else {
+                // Snapshot may be corrupted/untrusted; clamp invalid BDL indices to avoid reading
+                // descriptor entries outside the guest's programmed list.
+                rt.bdl_index = 0;
+                rt.bdl_offset = 0;
+            }
             rt.last_fmt_raw = s.last_fmt_raw;
 
             let fmt_raw = if s.last_fmt_raw != 0 {

@@ -586,3 +586,67 @@ fn hda_snapshot_restore_clamps_snapshot_sample_rates_to_avoid_oom() {
     assert_eq!(restored.capture_sample_rate_hz(), 384_000);
     assert_eq!(restored.audio_out.capacity_frames(), 38_400);
 }
+
+#[test]
+fn hda_snapshot_restore_clamps_bdl_index_to_lvi() {
+    let hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x4000);
+
+    let bdl_base = 0x3f80u64;
+    let buf = 0x1000u64;
+    let buf_len = 512u32;
+
+    // One BDL entry at index 0. (If restore doesn't clamp the snapshot-provided
+    // bdl_index, the device would attempt to read an out-of-bounds entry and
+    // panic in this unit test harness.)
+    mem.write_u64(bdl_base + 0, buf);
+    mem.write_u32(bdl_base + 8, buf_len);
+    mem.write_u32(bdl_base + 12, 0);
+
+    for i in 0..buf_len {
+        mem.write_u8(buf + i as u64, (i & 0xff) as u8);
+    }
+
+    let worklet_ring = AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    };
+    let mut snap = hda.snapshot_state(worklet_ring);
+
+    snap.gctl = 0x1; // out of reset
+    snap.codec.output_stream_id = 1;
+    snap.codec.output_channel = 0;
+
+    // Guest stream format: 48kHz, 16-bit, stereo.
+    let fmt_raw: u16 = (1 << 4) | 0x1;
+    snap.codec.output_format = fmt_raw;
+
+    snap.streams[0].bdpl = bdl_base as u32;
+    snap.streams[0].bdpu = 0;
+    snap.streams[0].cbl = buf_len;
+    snap.streams[0].lvi = 0;
+    snap.streams[0].fmt = fmt_raw;
+    // SRST | RUN | stream number 1.
+    snap.streams[0].ctl = (1 << 0) | (1 << 1) | (1 << 20);
+
+    // Corrupt runtime state: bdl_index is out of range for lvi=0.
+    snap.stream_runtime[0].bdl_index = 10;
+    snap.stream_runtime[0].bdl_offset = 0;
+    snap.stream_runtime[0].last_fmt_raw = fmt_raw;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+
+    // Must be clamped immediately on restore.
+    let post = restored.snapshot_state(AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    });
+    assert_eq!(post.stream_runtime[0].bdl_index, 0);
+    assert_eq!(post.stream_runtime[0].bdl_offset, 0);
+
+    // Processing should not panic or read out of bounds.
+    restored.process(&mut mem, 128);
+}
