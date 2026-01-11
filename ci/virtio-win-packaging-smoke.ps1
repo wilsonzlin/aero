@@ -365,9 +365,13 @@ function Assert-GuestToolsDevicesCmdServices {
 
   # Ensure devices.cmd service names actually match the packaged INF AddService values.
   Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_BLK_SERVICE" -InfEntryPath "drivers/x86/viostor/viostor.inf"
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_BLK_SERVICE" -InfEntryPath "drivers/amd64/viostor/viostor.inf"
   Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_NET_SERVICE" -InfEntryPath "drivers/x86/netkvm/netkvm.inf"
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_NET_SERVICE" -InfEntryPath "drivers/amd64/netkvm/netkvm.inf"
   Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_INPUT_SERVICE" -InfEntryPath "drivers/x86/vioinput/vioinput.inf" -Optional
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_INPUT_SERVICE" -InfEntryPath "drivers/amd64/vioinput/vioinput.inf" -Optional
   Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_SND_SERVICE" -InfEntryPath "drivers/x86/viosnd/viosnd.inf" -Optional
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_SND_SERVICE" -InfEntryPath "drivers/amd64/viosnd/viosnd.inf" -Optional
 }
 
 $repoRoot = Resolve-RepoRoot
@@ -748,8 +752,10 @@ foreach ($want in @(
   "licenses/virtio-win/notice.txt",
   "licenses/virtio-win/driver-pack-manifest.json",
   "drivers/x86/viostor/viostor.inf",
-  "drivers/x86/netkvm/netkvm.inf"
- )) {
+  "drivers/amd64/viostor/viostor.inf",
+  "drivers/x86/netkvm/netkvm.inf",
+  "drivers/amd64/netkvm/netkvm.inf"
+)) {
   if (-not ($manifestPaths -contains $want)) {
     throw "Guest Tools manifest missing expected packaged file path: $want"
   }
