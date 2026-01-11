@@ -636,7 +636,12 @@ To implement correct Win7 submission + `Map(READ)` synchronization in a D3D10/11
 
 1. Store runtime callbacks from:
    - `D3D10DDIARG_OPENADAPTER::pAdapterCallbacks`
-   - `D3D10DDIARG_CREATEDEVICE::pCallbacks` / `D3D11DDIARG_CREATEDEVICE::pCallbacks`
+   - D3D10 CreateDevice:
+     - `D3D10DDIARG_CREATEDEVICE::pCallbacks` (D3D10 wrapper callbacks; includes `pfnSetErrorCb`)
+     - if present: `D3D10DDIARG_CREATEDEVICE::pUMCallbacks` (shared `D3DDDI_DEVICECALLBACKS` submission table)
+   - D3D11 CreateDevice:
+     - `D3D11DDIARG_CREATEDEVICE::{pCallbacks|pDeviceCallbacks}` (D3D11 wrapper callbacks; includes `pfnSetErrorCb`)
+     - if present: `D3D11DDIARG_CREATEDEVICE::pUMCallbacks` (shared `D3DDDI_DEVICECALLBACKS` submission table)
 2. Implement `pfnSetErrorCb` usage for all failing `void` DDIs.
 3. Create and store kernel submission state via `d3dumddi.h` callbacks:
    - `pfnCreateDeviceCb` + `D3DDDICB_CREATEDEVICE` → `hDevice`
