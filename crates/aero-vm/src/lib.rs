@@ -389,4 +389,21 @@ mod tests {
         assert_eq!(baseline_out, resumed.serial_output());
         assert_eq!(baseline_mem, hash_bytes(resumed.memory()));
     }
-}
+
+    #[test]
+    fn dirty_snapshot_is_rejected_without_matching_parent() {
+        let mut vm = Vm::new(256 * 1024);
+        vm.run_steps(100);
+        let _base = vm.take_snapshot_full().unwrap();
+        vm.run_steps(50);
+        let diff = vm.take_snapshot_dirty().unwrap();
+
+        // Applying a dirty snapshot without first applying its parent snapshot should be rejected.
+        let mut resumed = Vm::new(256 * 1024);
+        let err = resumed.restore_snapshot_bytes(&diff).unwrap_err();
+        assert!(
+            err.to_string().contains("snapshot parent mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+} 
