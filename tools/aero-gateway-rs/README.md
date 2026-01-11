@@ -12,6 +12,12 @@ and the public contract is documented in:
 - `docs/backend/01-aero-gateway-api.md`
 - `docs/backend/openapi.yaml`
 
+## Security warning
+
+This prototype is **not production-hardened** (no session cookie/auth contract, no origin/CORS
+enforcement, no destination allow/deny policy, etc.). Treat it as an **unsafe open proxy** and do
+not expose it to untrusted networks.
+
 ## Run
 
 ```bash
