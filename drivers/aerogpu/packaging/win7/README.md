@@ -49,7 +49,7 @@ PCI\VEN_A3A0&DEV_0001
 PCI\VEN_1AED&DEV_0001
 ```
 
-These correspond to the new (versioned) and legacy (bring-up) ABIs; see `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. See `drivers/aerogpu/kmd/README.md` for which transport ABI the current in-tree Win7 KMD expects.
+These correspond to the new (versioned) and legacy (bring-up) ABIs; see `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD supports both ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
 Before installing, confirm your VM's device model reports the same Hardware ID:
 
