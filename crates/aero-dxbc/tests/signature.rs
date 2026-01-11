@@ -186,6 +186,35 @@ fn signature_chunk_bad_semantic_offset_is_rejected() {
 }
 
 #[test]
+fn signature_chunk_missing_null_terminator_is_rejected() {
+    let mut bytes = build_signature_chunk();
+    // Overwrite the last byte (null terminator of the final string) so there's
+    // no terminating `\0` in the remaining data.
+    *bytes.last_mut().expect("signature bytes should be non-empty") = b'X';
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("null terminator"));
+}
+
+#[test]
+fn signature_chunk_invalid_utf8_is_rejected() {
+    let mut bytes = build_signature_chunk();
+    let needle = b"POSITION\0";
+    let pos = bytes
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("expected POSITION string in test chunk");
+
+    // 0xFF is not valid UTF-8.
+    bytes[pos] = 0xFF;
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("valid UTF-8"));
+}
+
+#[test]
 fn signature_chunk_from_real_dxbc_fixture_parses() {
     let dxbc = DxbcFile::parse(VS_2_0_SIMPLE_DXBC).expect("DXBC fixture should parse");
 
