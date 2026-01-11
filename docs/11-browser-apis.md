@@ -110,7 +110,11 @@ Because Aero prefers worker-side I/O, there are two viable integration patterns:
   - In the production web runtime (`web/`), this is implemented by `UsbBroker` (main thread) + `WebUsbPassthroughRuntime` (worker) using a `MessagePort` protocol (`web/src/usb/{usb_broker,webusb_passthrough_runtime,usb_proxy_protocol}.ts`).
   - The repo-root Vite harness also contains a **generic WebUSB demo RPC** under `src/platform/webusb_{broker,client,protocol}.ts` (direct `navigator.usb` operations). It is not the canonical passthrough `UsbHostAction` contract.
 
-> `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime via the production WebUSB smoke-test panel (`web/src/usb/webusb_panel.ts`) or the dedicated diagnostics page (`/webusb_diagnostics.html`). The repo-root dev harness also has a WebUSB probe panel (`src/main.ts`).
+> `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime via the production WebUSB smoke-test panel (`web/src/usb/webusb_panel.ts`) or the dedicated diagnostics page:
+> - Production `web/` app build: `/webusb_diagnostics.html`
+> - Repo-root Vite harness (served under `/web/`): `/web/webusb_diagnostics.html`
+>
+> The repo-root dev harness also has a WebUSB probe panel (`src/main.ts`).
 
 > If you see `DataCloneError` when trying to `postMessage()` a `USBDevice` to a worker, your browser does not support structured-cloning the device handle. In that case, keep WebUSB on the main thread and proxy I/O to workers, or have the worker call `navigator.usb.getDevices()` after permission is granted.
 

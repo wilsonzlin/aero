@@ -151,5 +151,7 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
 
 **Web (manual smoke panels):**
 
-- WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts` (`/webusb_diagnostics.html`)
+- WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts`
+  - Production `web/` app build: `/webusb_diagnostics.html`
+  - Repo-root Vite harness (served under `/web/`): `/web/webusb_diagnostics.html`
 - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
