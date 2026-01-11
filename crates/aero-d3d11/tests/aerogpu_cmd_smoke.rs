@@ -452,5 +452,69 @@ fn aerogpu_cmd_copy_texture2d_validates_bounds() {
             msg.contains("out of bounds"),
             "unexpected error (missing bounds context): {msg}"
         );
+
+        // Also validate that the executor rejects invalid subresource indices.
+        exec.reset();
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        for handle in [SRC, DST] {
+            let start = begin_cmd(&mut stream, OPCODE_CREATE_TEXTURE2D);
+            stream.extend_from_slice(&handle.to_le_bytes());
+            stream.extend_from_slice(&(AEROGPU_RESOURCE_USAGE_RENDER_TARGET).to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+            stream.extend_from_slice(&2u32.to_le_bytes()); // width
+            stream.extend_from_slice(&2u32.to_le_bytes()); // height
+            stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(&mut stream, start);
+        }
+
+        // COPY_TEXTURE2D (invalid mip level: src_mip_level=1 but mip_levels=1).
+        let start = begin_cmd(&mut stream, OPCODE_COPY_TEXTURE2D);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&1u32.to_le_bytes()); // src_mip_level (out of range)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_y
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_x
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_y
+        stream.extend_from_slice(&2u32.to_le_bytes()); // width
+        stream.extend_from_slice(&2u32.to_le_bytes()); // height
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let err = exec
+            .execute_cmd_stream(&stream, None, &guest_mem)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("COPY_TEXTURE2D"),
+            "unexpected error (missing COPY_TEXTURE2D): {msg}"
+        );
+        assert!(
+            msg.contains("src_mip_level") && msg.contains("out of range"),
+            "unexpected error (missing mip validation): {msg}"
+        );
     });
 }
