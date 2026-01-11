@@ -793,3 +793,40 @@ fn backing_alloc_id_is_resolved_by_alloc_id_not_entry_index() {
         .process_submission_with_allocations(&dirty_stream, Some(&allocs_submit2), 2)
         .expect("dirty range should resolve alloc_id=2 even with reordered table");
 }
+
+#[test]
+fn dirty_range_for_host_owned_resource_is_ignored() {
+    // `RESOURCE_DIRTY_RANGE` is only meaningful for guest-backed resources. The command processor
+    // should ignore dirty notifications for host-owned resources instead of failing validation.
+
+    let stream = build_stream(|out| {
+        // Host-owned texture with tight row pitch (row_pitch_bytes = 0).
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 0x10); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format (AEROGPU_FORMAT_R8G8B8A8_UNORM)
+            push_u32(out, 64); // width
+            push_u32(out, 64); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes (tight packing)
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        // Deliberately oversized range: previously would fail due to the conservative size estimate
+        // for tight-packed host-owned textures.
+        emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, 4096); // size_bytes
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&stream, 1)
+        .expect("host-owned dirty ranges should be ignored");
+}

@@ -525,6 +525,13 @@ impl AeroGpuCommandProcessor {
                         ));
                     };
 
+                    // Dirty ranges are only meaningful for guest-backed resources. Some command
+                    // streams may conservatively emit dirty notifications for host-owned resources;
+                    // ignore them rather than failing validation.
+                    if entry.backing_alloc_id == 0 {
+                        continue;
+                    }
+
                     let resource_size_bytes = entry.desc.size_bytes()?;
                     Self::validate_range_in_resource(
                         underlying,
@@ -533,13 +540,11 @@ impl AeroGpuCommandProcessor {
                         size_bytes,
                     )?;
 
-                    if entry.backing_alloc_id != 0 {
-                        let alloc = Self::lookup_allocation(allocations, entry.backing_alloc_id)?;
-                        let alloc_offset = u64::from(entry.backing_offset_bytes)
-                            .checked_add(offset_bytes)
-                            .ok_or(CommandProcessorError::SizeOverflow)?;
-                        Self::validate_range_in_allocation(alloc, alloc_offset, size_bytes)?;
-                    }
+                    let alloc = Self::lookup_allocation(allocations, entry.backing_alloc_id)?;
+                    let alloc_offset = u64::from(entry.backing_offset_bytes)
+                        .checked_add(offset_bytes)
+                        .ok_or(CommandProcessorError::SizeOverflow)?;
+                    Self::validate_range_in_allocation(alloc, alloc_offset, size_bytes)?;
                 }
                 AeroGpuCmd::Present { scanout_id, .. }
                 | AeroGpuCmd::PresentEx { scanout_id, .. } => {
