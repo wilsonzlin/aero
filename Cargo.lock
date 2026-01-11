@@ -607,6 +607,7 @@ dependencies = [
  "linked_list_allocator",
  "serde-wasm-bindgen",
  "serde_json",
+ "serde_path_to_error",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

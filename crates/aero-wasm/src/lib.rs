@@ -231,8 +231,11 @@ fn js_error(message: &str) -> JsValue {
 pub fn synthesize_webhid_report_descriptor(
     collections_json: JsValue,
 ) -> Result<Uint8Array, JsValue> {
+    // `serde_wasm_bindgen::from_value` errors are often missing the exact path to the failing
+    // field. Wrap the deserializer with `serde_path_to_error` so callers get actionable errors
+    // like `at [0].inputReports[0].items[0].reportSize: invalid type ...`.
     let collections: Vec<aero_usb::hid::webhid::HidCollectionInfo> =
-        serde_wasm_bindgen::from_value(collections_json)
+        serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections_json))
             .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
     let bytes = synthesize_webhid_report_descriptor_bytes(&collections).map_err(|err| {
