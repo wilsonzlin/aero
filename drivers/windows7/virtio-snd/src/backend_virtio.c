@@ -61,6 +61,13 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
         }
     }
 
+    /*
+     * Allow the INTx DPC to drain and dispatch txq used entries to the TX engine.
+     * Without this, completions will never be processed and the buffer pool will
+     * eventually exhaust.
+     */
+    InterlockedExchange(&ctx->Dx->TxEngineInitialized, 1);
+
     ctx->BufferBytes = BufferBytes;
     ctx->PeriodBytes = PeriodBytes;
 
@@ -127,7 +134,6 @@ static NTSTATUS VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
     }
 
     status = VirtioSndCtrlRelease(&ctx->Dx->Control);
-    VirtioSndTxUninit(&ctx->Dx->Tx);
 
     ctx->BufferBytes = 0;
     ctx->PeriodBytes = 0;
