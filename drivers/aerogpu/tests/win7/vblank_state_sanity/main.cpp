@@ -130,6 +130,24 @@ static int RunVblankStateSanity(int argc, char** argv) {
     return reporter.Fail("no vblank samples collected");
   }
 
+  std::vector<double> vblank_period_samples_ms;
+  if (snaps.size() > 1) {
+    vblank_period_samples_ms.reserve(snaps.size() - 1);
+    for (size_t i = 1; i < snaps.size(); ++i) {
+      const unsigned long long dseq =
+          (unsigned long long)snaps[i].vblank_seq - (unsigned long long)snaps[i - 1].vblank_seq;
+      const unsigned long long dt_ns =
+          (unsigned long long)snaps[i].last_vblank_time_ns - (unsigned long long)snaps[i - 1].last_vblank_time_ns;
+      if (dseq == 0 || dt_ns == 0) {
+        continue;
+      }
+      vblank_period_samples_ms.push_back(((double)dt_ns / (double)dseq) / 1000000.0);
+    }
+  }
+  if (!vblank_period_samples_ms.empty()) {
+    reporter.SetTimingSamplesMs(vblank_period_samples_ms);
+  }
+
   const aerogpu_escape_query_vblank_out& first = snaps.front();
   const aerogpu_escape_query_vblank_out& last = snaps.back();
 
