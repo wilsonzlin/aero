@@ -18,6 +18,14 @@ on:
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
       - ".github/workflows/guest-tools-packager.yml"
+  merge_group:
+    paths:
+      - "tools/packaging/**"
+      - "tools/packaging/specs/**"
+      - "tools/guest-tools/**"
+      - "guest-tools/**"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - ".github/workflows/guest-tools-packager.yml"
   workflow_dispatch:
 
 concurrency:
