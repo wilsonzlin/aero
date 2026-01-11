@@ -8,6 +8,10 @@ This directory contains the tooling used to produce the distributable **Aero Dri
 
 The packager is implemented as a small, self-contained Rust CLI under `tools/packaging/aero_packager/`.
 
+Redistribution note: the packaged ISO/zip includes `THIRD_PARTY_NOTICES.md` at the
+media root, and may include additional third-party license texts under `licenses/`
+when present in the input directory.
+
 ## Quickstart
 
 ```bash
@@ -24,8 +28,10 @@ cd tools/packaging/aero_packager
 #     verify.cmd (optional, but included if present)
 #     verify.ps1 (optional, but required if verify.cmd is present)
 #     README.md
+#     THIRD_PARTY_NOTICES.md
 #     config/devices.cmd
 #     certs/*.{cer,crt,p7b}
+#     licenses/** (optional; third-party license texts / attribution files)
 #
 # spec.json declares which drivers are required + expected HWIDs.
 
@@ -53,6 +59,11 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 This uses the validation spec at:
 
 - `tools/packaging/specs/win7-virtio-win.json`
+
+When built from a virtio-win ISO/root, the wrapper script also attempts to
+propagate upstream license/notice files into the packaged outputs under:
+
+- `licenses/virtio-win/` (including `driver-pack-manifest.json` for provenance)
 
 ## Determinism / reproducible builds
 
