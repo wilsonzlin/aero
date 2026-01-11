@@ -84,6 +84,14 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidAttachMessage(v1)).toBe(true);
     expect(isHidPassthroughMessage(v1)).toBe(true);
 
+    const withNumeric: HidAttachMessage = { ...v1, numericDeviceId: 123 };
+    expect(isHidAttachMessage(withNumeric)).toBe(true);
+    expect(isHidPassthroughMessage(withNumeric)).toBe(true);
+
+    expect(isHidAttachMessage({ ...v1, numericDeviceId: -1 })).toBe(false);
+    expect(isHidAttachMessage({ ...v1, numericDeviceId: 1.5 })).toBe(false);
+    expect(isHidAttachMessage({ ...v1, numericDeviceId: 0x1_0000_0000 })).toBe(false);
+
     expect(isHidAttachMessage({ ...base })).toBe(false);
     expect(isHidAttachMessage({ ...v1, guestPort: 1 })).toBe(false);
     expect(isHidAttachMessage({ ...v1, guestPath: [] })).toBe(false);

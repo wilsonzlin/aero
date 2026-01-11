@@ -140,6 +140,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isUint32(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff;
+}
+
 function isArrayBuffer(value: unknown): value is ArrayBuffer {
   return value instanceof ArrayBuffer;
 }
@@ -225,7 +229,7 @@ export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isRecord(value) || value.type !== "hid:attach") return false;
   if (typeof value.deviceId !== "string") return false;
   if (value.numericDeviceId !== undefined) {
-    if (!isFiniteNumber(value.numericDeviceId) || !Number.isInteger(value.numericDeviceId)) return false;
+    if (!isUint32(value.numericDeviceId)) return false;
   }
   const guestPort = value.guestPort;
   const guestPath = value.guestPath;
