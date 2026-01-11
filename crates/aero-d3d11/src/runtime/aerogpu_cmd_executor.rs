@@ -555,10 +555,14 @@ impl AerogpuD3d11Executor {
         let height = texture.desc.height;
 
         let bytes_per_pixel = 4u32;
-        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let unpadded_bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow!("read_texture_rgba8: bytes_per_row overflow"))?;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
-        let buffer_size = padded_bytes_per_row as u64 * height as u64;
+        let buffer_size = (padded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer size overflow"))?;
 
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu_cmd read_texture staging"),
@@ -610,10 +614,32 @@ impl AerogpuD3d11Executor {
             .context("wgpu: map_async failed")?;
 
         let mapped = slice.get_mapped_range();
-        let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+        let out_len = (unpadded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| anyhow!("read_texture_rgba8: output size overflow"))?;
+        let out_len_usize: usize = out_len
+            .try_into()
+            .map_err(|_| anyhow!("read_texture_rgba8: output size out of range"))?;
+        let unpadded_bpr_usize: usize = unpadded_bytes_per_row
+            .try_into()
+            .map_err(|_| anyhow!("read_texture_rgba8: bytes_per_row out of range"))?;
+        let padded_bpr_usize: usize = padded_bytes_per_row
+            .try_into()
+            .map_err(|_| anyhow!("read_texture_rgba8: padded bytes_per_row out of range"))?;
+
+        let mut out = Vec::with_capacity(out_len_usize);
         for row in 0..height as usize {
-            let start = row * padded_bytes_per_row as usize;
-            out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
+            let start = row
+                .checked_mul(padded_bpr_usize)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: row offset overflow"))?;
+            let end = start
+                .checked_add(unpadded_bpr_usize)
+                .ok_or_else(|| anyhow!("read_texture_rgba8: row end overflow"))?;
+            out.extend_from_slice(
+                mapped
+                    .get(start..end)
+                    .ok_or_else(|| anyhow!("read_texture_rgba8: staging buffer too small"))?,
+            );
         }
         drop(mapped);
         staging.unmap();
