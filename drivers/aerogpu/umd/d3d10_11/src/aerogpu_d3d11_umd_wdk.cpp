@@ -1174,6 +1174,10 @@ static void EmitBindShadersLocked(Device* dev) {
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   // NOTE: The current AeroGPU protocol does not include a dedicated geometry
@@ -1217,6 +1221,10 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
   if (res->backing_alloc_id == 0) {
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + off, sz);
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      return;
+    }
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
     cmd->offset_bytes = upload_offset;
@@ -1300,6 +1308,10 @@ Unlock:
   }
 
   auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!dirty) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   dirty->resource_handle = res->handle;
   dirty->reserved0 = 0;
   dirty->offset_bytes = upload_offset;
@@ -1312,6 +1324,10 @@ static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_byt
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->resource_handle = res->handle;
   cmd->reserved0 = 0;
   cmd->offset_bytes = offset_bytes;
@@ -1330,19 +1346,20 @@ inline void ReportNotImpl(Handle0 handle0, Rest...) {
   SetError(DeviceFromHandle(handle0), E_NOTIMPL);
 }
 
-static void SetTextureLocked(Device* dev, uint32_t shader_stage, uint32_t slot, aerogpu_handle_t texture) {
+static bool SetTextureLocked(Device* dev, uint32_t shader_stage, uint32_t slot, aerogpu_handle_t texture) {
   if (!dev) {
-    return;
+    return false;
   }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return false;
   }
   cmd->shader_stage = shader_stage;
   cmd->slot = slot;
   cmd->texture = texture;
   cmd->reserved0 = 0;
+  return true;
 }
 
 static aerogpu_handle_t* ShaderResourceTableForStage(Device* dev, uint32_t shader_stage) {
@@ -1398,8 +1415,10 @@ static void SetShaderResourceSlotLocked(Device* dev, uint32_t shader_stage, uint
   if (table[slot] == texture) {
     return;
   }
+  if (!SetTextureLocked(dev, shader_stage, slot, texture)) {
+    return;
+  }
   table[slot] = texture;
-  SetTextureLocked(dev, shader_stage, slot, texture);
 }
 
 static void UnbindResourceFromSrvsLocked(Device* dev, aerogpu_handle_t resource) {
@@ -1421,6 +1440,10 @@ static void EmitSetRenderTargetsLocked(Device* dev) {
     return;
   }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->color_count = dev->current_rtv ? 1u : 0u;
   cmd->depth_stencil = dev->current_dsv;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
