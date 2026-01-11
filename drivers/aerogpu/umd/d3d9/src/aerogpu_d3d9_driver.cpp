@@ -40,6 +40,7 @@
 #include "aerogpu_alloc.h"
 #include "aerogpu_trace.h"
 #include "aerogpu_wddm_alloc.h"
+#include "../../common/aerogpu_win32_security.h"
 
 namespace {
 
@@ -1996,19 +1997,9 @@ uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
       //
       // Use a permissive DACL so the mapping can be opened by other processes in
       // the session (e.g. DWM, sandboxed apps, different integrity levels).
-      SECURITY_ATTRIBUTES sa{};
-      sa.nLength = sizeof(sa);
-      sa.bInheritHandle = FALSE; // avoid leaking the handle across CreateProcess
-
-      SECURITY_DESCRIPTOR sd{};
-      if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
-          SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
-        sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
-      } else {
-        sa.lpSecurityDescriptor = nullptr; // best-effort; fallback handles failures
-      }
-
-      HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+      HANDLE mapping =
+          win32::CreateFileMappingWBestEffortLowIntegrity(
+              INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
       if (mapping) {
         void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
         if (view) {
@@ -9557,19 +9548,9 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
 
     // Use a permissive DACL so other processes in the session can open and
     // update the counter (e.g. DWM, sandboxed apps, different integrity levels).
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = FALSE;
-
-    SECURITY_DESCRIPTOR sd{};
-    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
-        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
-      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
-    } else {
-      sa.lpSecurityDescriptor = nullptr;
-    }
-
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    HANDLE mapping =
+        win32::CreateFileMappingWBestEffortLowIntegrity(
+            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {

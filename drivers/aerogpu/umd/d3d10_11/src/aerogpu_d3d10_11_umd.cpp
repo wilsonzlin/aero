@@ -35,6 +35,7 @@
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_trace.h"
+#include "../../common/aerogpu_win32_security.h"
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   #include <d3dkmthk.h>
@@ -553,19 +554,9 @@ static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
   if (!g_view) {
     const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
 
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = FALSE;
-
-    SECURITY_DESCRIPTOR sd{};
-    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
-        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
-      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
-    } else {
-      sa.lpSecurityDescriptor = nullptr;
-    }
-
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    HANDLE mapping =
+        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
+            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {

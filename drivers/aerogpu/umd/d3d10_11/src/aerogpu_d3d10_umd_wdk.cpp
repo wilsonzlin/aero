@@ -37,6 +37,7 @@
 #include "aerogpu_cmd_writer.h"
 #include "aerogpu_d3d10_11_wddm_submit.h"
 #include "aerogpu_d3d10_11_log.h"
+#include "../../common/aerogpu_win32_security.h"
 #include "../../../protocol/aerogpu_wddm_alloc.h"
 #include "../../../protocol/aerogpu_umd_private.h"
 #include "../../../protocol/aerogpu_win7_abi.h"
@@ -189,19 +190,9 @@ static uint64_t AllocateGlobalToken() {
 
     // Use a permissive DACL so other processes in the session can open and
     // update the counter (e.g. DWM, sandboxed apps, different integrity levels).
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = FALSE;
-
-    SECURITY_DESCRIPTOR sd{};
-    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
-        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
-      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
-    } else {
-      sa.lpSecurityDescriptor = nullptr;
-    }
-
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    HANDLE mapping =
+        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
+            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {
@@ -426,19 +417,9 @@ static aerogpu_handle_t allocate_global_handle(AeroGpuAdapter* adapter) {
   if (!g_view) {
     const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
 
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = FALSE;
-
-    SECURITY_DESCRIPTOR sd{};
-    if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) != FALSE &&
-        SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE) != FALSE) {
-      sa.lpSecurityDescriptor = &sd; // NULL DACL => allow all access
-    } else {
-      sa.lpSecurityDescriptor = nullptr;
-    }
-
-    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+    HANDLE mapping =
+        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
+            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
     if (mapping) {
       void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
       if (view) {
