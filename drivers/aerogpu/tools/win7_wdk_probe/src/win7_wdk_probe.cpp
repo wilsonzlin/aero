@@ -7,6 +7,7 @@
 
 // Win7-era D3D UMD DDI headers (Win7 / WDDM 1.1).
 #include <d3d10umddi.h>
+#include <d3d11.h>
 #include <d3d11umddi.h>
 #include <d3dumddi.h>
 #include <d3dkmthk.h>
@@ -67,6 +68,39 @@ int main() {
   PRINT_OFF_OPT(D3D11DDI_DEVICECALLBACKS, pfnLockCb);
   PRINT_OFF_OPT(D3D11DDI_DEVICECALLBACKS, pfnUnlockCb);
   PRINT_OFF_OPT(D3D11DDI_DEVICECALLBACKS, pfnSetErrorCb);
+  PrintSeparator();
+
+  // D3D11 adapter GetCaps / CheckFeatureSupport surfaces (helps keep pfnGetCaps implementations correct).
+  PRINT_SIZE(D3D11DDIARG_GETCAPS);
+  PRINT_OFF_OPT(D3D11DDIARG_GETCAPS, Type);
+  PRINT_OFF_OPT(D3D11DDIARG_GETCAPS, pData);
+  PRINT_OFF_OPT(D3D11DDIARG_GETCAPS, DataSize);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_THREADING", (unsigned)D3D11DDICAPS_TYPE_THREADING);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_DOUBLES", (unsigned)D3D11DDICAPS_TYPE_DOUBLES);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_FORMAT", (unsigned)D3D11DDICAPS_TYPE_FORMAT);
+  printf("  %-46s value=%u\n", "D3D11_FEATURE_FORMAT_SUPPORT2", (unsigned)D3D11_FEATURE_FORMAT_SUPPORT2);
+  printf("  %-46s value=%u\n",
+         "D3D11DDICAPS_TYPE_D3D10_X_HARDWARE_OPTIONS",
+         (unsigned)D3D11DDICAPS_TYPE_D3D10_X_HARDWARE_OPTIONS);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_D3D11_OPTIONS", (unsigned)D3D11DDICAPS_TYPE_D3D11_OPTIONS);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_ARCHITECTURE_INFO", (unsigned)D3D11DDICAPS_TYPE_ARCHITECTURE_INFO);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_D3D9_OPTIONS", (unsigned)D3D11DDICAPS_TYPE_D3D9_OPTIONS);
+  printf("  %-46s value=%u\n", "D3D11DDICAPS_TYPE_FEATURE_LEVELS", (unsigned)D3D11DDICAPS_TYPE_FEATURE_LEVELS);
+  printf("  %-46s value=%u\n",
+         "D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS",
+         (unsigned)D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS);
+  PrintSeparator();
+
+  // API-facing CheckFeatureSupport structs (runtime forwards these to the UMD via GetCaps).
+  PRINT_SIZE(D3D11_FEATURE_DATA_THREADING);
+  PRINT_SIZE(D3D11_FEATURE_DATA_DOUBLES);
+  PRINT_SIZE(D3D11_FEATURE_DATA_FORMAT_SUPPORT);
+  PRINT_SIZE(D3D11_FEATURE_DATA_FORMAT_SUPPORT2);
+  PRINT_SIZE(D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS);
+  PRINT_SIZE(D3D11_FEATURE_DATA_D3D11_OPTIONS);
+  PRINT_SIZE(D3D11_FEATURE_DATA_ARCHITECTURE_INFO);
+  PRINT_SIZE(D3D11_FEATURE_DATA_D3D9_OPTIONS);
+  PRINT_SIZE(D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS);
   PrintSeparator();
 
   // Device/context creation structs (hContext + hSyncObject + initial DMA buffers).
