@@ -53,7 +53,7 @@ import {
   type UsbPassthroughDemoResult,
   type UsbPassthroughDemoRunMessage,
 } from "./usb/usb_passthrough_demo_runtime";
-import type { UsbHostAction, UsbHostCompletion } from "./usb/usb_proxy_protocol";
+import { isUsbSelectedMessage, type UsbHostAction, type UsbHostCompletion } from "./usb/usb_proxy_protocol";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -2832,6 +2832,8 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
 
   let attachedIoWorker: Worker | null = null;
   let lastResult: UsbPassthroughDemoResult | null = null;
+  let selectedInfo: { vendorId: number; productId: number; productName?: string } | null = null;
+  let selectedError: string | null = null;
 
   const runDeviceButton = el("button", {
     text: "Run GET_DESCRIPTOR(Device)",
@@ -2857,10 +2859,17 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
 
   const refreshUi = (): void => {
     const workerReady = !!attachedIoWorker;
-    runDeviceButton.disabled = !workerReady;
-    runConfigButton.disabled = !workerReady;
+    const selected = !!selectedInfo;
+    runDeviceButton.disabled = !workerReady || !selected;
+    runConfigButton.disabled = !workerReady || !selected;
 
-    status.textContent = `ioWorker=${workerReady ? "ready" : "stopped"}\n` + `lastResult=${lastResult?.status ?? "(none)"}`;
+    const selectedLine = selectedInfo
+      ? `selected=vid=0x${selectedInfo.vendorId.toString(16).padStart(4, "0")} pid=0x${selectedInfo.productId.toString(16).padStart(4, "0")}`
+      : selectedError
+        ? `selected=(none) error=${selectedError}`
+        : "selected=(none)";
+    status.textContent =
+      `ioWorker=${workerReady ? "ready" : "stopped"}\n` + `${selectedLine}\n` + `lastResult=${lastResult?.status ?? "(none)"}`;
 
     if (!lastResult) {
       resultLine.textContent = "Result: (none yet)";
@@ -2908,6 +2917,38 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     lastResult = ev.data.result;
     refreshUi();
   };
+
+  if (typeof MessageChannel !== "undefined") {
+    // Listen for `usb.selected` broadcasts so the demo panel can disable Run buttons when no
+    // device is selected and clear stale results when the selected device changes.
+    const channel = new MessageChannel();
+    usbBroker.attachWorkerPort(channel.port1, { attachRings: false });
+    channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
+      if (!isUsbSelectedMessage(ev.data)) return;
+      const msg = ev.data;
+      if (msg.ok && msg.info) {
+        const next = msg.info;
+        if (!selectedInfo || selectedInfo.vendorId !== next.vendorId || selectedInfo.productId !== next.productId) {
+          lastResult = null;
+        }
+        selectedInfo = next;
+        selectedError = null;
+      } else {
+        selectedInfo = null;
+        selectedError = typeof msg.error === "string" ? msg.error : null;
+        lastResult = null;
+      }
+      refreshUi();
+    });
+    channel.port2.start();
+    // Unit tests run in the node environment; unref to avoid leaking handles.
+    try {
+      (channel.port1 as unknown as { unref?: () => void }).unref?.();
+      (channel.port2 as unknown as { unref?: () => void }).unref?.();
+    } catch {
+      // ignore
+    }
+  }
 
   const ensureAttached = (): void => {
     const ioWorker = workerCoordinator.getIoWorker();
