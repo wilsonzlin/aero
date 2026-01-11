@@ -257,10 +257,9 @@ Recommended guardrails:
 
 ### Browser-side (TypeScript)
 
-- Unit tests with a mocked `navigator.hid` + fake `HIDDevice` objects:
-  - verify the forwarding protocol (input reports → worker messages/queue)
-  - verify output requests are executed as WebHID `sendReport` calls
-  - ensure attach/detach calls `open()`/`close()` and handles disconnect events
+- Tests should use a mocked `navigator.hid` + fake `HIDDevice` objects to cover:
+  - attach/detach lifecycle (`open()`/`close()`) and disconnect handling
+  - (when implemented) report forwarding semantics and output report execution
 - Implementation reference: `web/src/platform/webhid_passthrough.test.ts`
 
 ### Device model (Rust)
@@ -286,3 +285,4 @@ Recommended guardrails:
 - [`docs/usb-hid.md`](./usb-hid.md) — HID usages and report formats
 - [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md) — WebHID metadata → HID report descriptor bytes
 - [`docs/webusb.md`](./webusb.md) — WebUSB constraints and troubleshooting
+- [`docs/webusb-passthrough.md`](./webusb-passthrough.md) — WebUSB async passthrough design (UHCI + host actions/completions)

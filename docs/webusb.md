@@ -12,6 +12,9 @@ In practice, WebUSB failures are dominated by two constraints:
 See also: [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) for the end-to-end passthrough
 architecture and security model (WebHID MVP + future WebUSB).
 
+For the detailed UHCI ↔ WebUSB transfer/TD mapping and the host action/completion bridge,
+see [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
+
 ---
 
 ## Troubleshooting (common reasons WebUSB fails)
