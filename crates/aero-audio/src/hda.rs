@@ -7,7 +7,8 @@ use crate::sink::AudioSink;
 
 #[cfg(feature = "io-snapshot")]
 use aero_io_snapshot::io::audio::state::{
-    AudioWorkletRingState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState, HdaStreamState,
+    AudioWorkletRingState, HdaCodecCaptureState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState,
+    HdaStreamState,
 };
 
 /// Size of the HDA MMIO region.
@@ -1644,6 +1645,11 @@ impl HdaController {
                     resampler_queued_frames: rt.resampler.queued_source_frames() as u32,
                 })
                 .collect(),
+            stream_capture_frame_accum: self
+                .stream_rt
+                .iter()
+                .map(|rt| rt.capture_frame_accum)
+                .collect(),
             codec: HdaCodecState {
                 output_stream_id: self.codec.output.stream_id,
                 output_channel: self.codec.output.channel,
@@ -1652,9 +1658,16 @@ impl HdaController {
                 amp_gain_right: self.codec.output.amp_gain_right,
                 amp_mute_left: self.codec.output.amp_mute_left,
                 amp_mute_right: self.codec.output.amp_mute_right,
-                pin_conn_select: self.codec.pin.conn_select,
-                pin_ctl: self.codec.pin.pin_ctl,
+                pin_conn_select: self.codec.output_pin.conn_select,
+                pin_ctl: self.codec.output_pin.pin_ctl,
                 afg_power_state: self.codec.afg_power_state,
+            },
+            codec_capture: HdaCodecCaptureState {
+                input_stream_id: self.codec.input.stream_id,
+                input_channel: self.codec.input.channel,
+                input_format: self.codec.input.format,
+                mic_pin_conn_select: self.codec.mic_pin.conn_select,
+                mic_pin_ctl: self.codec.mic_pin.pin_ctl,
             },
             worklet_ring,
         }
@@ -1685,14 +1698,6 @@ impl HdaController {
         self.rirbsts = state.rirbsts;
         self.rirbsize = state.rirbsize;
 
-        if self.streams.len() != state.streams.len() {
-            self.streams = vec![StreamDescriptor::default(); state.streams.len()];
-            self.stream_rt = (0..state.streams.len())
-                .map(|_| StreamRuntime::new(self.output_rate_hz))
-                .collect();
-            self.gcap = (state.streams.len() as u16) & 0x0f;
-        }
-
         for (sd, s) in self.streams.iter_mut().zip(&state.streams) {
             sd.ctl = s.ctl;
             sd.lpib = s.lpib;
@@ -1704,12 +1709,10 @@ impl HdaController {
             sd.bdpu = s.bdpu;
         }
 
-        for (idx, (rt, s)) in self
-            .stream_rt
-            .iter_mut()
-            .zip(&state.stream_runtime)
-            .enumerate()
-        {
+        let num_output_streams = (self.gcap & 0x0f) as usize;
+        let num_input_streams = ((self.gcap >> 4) & 0x0f) as usize;
+
+        for (idx, (rt, s)) in self.stream_rt.iter_mut().zip(&state.stream_runtime).enumerate() {
             rt.bdl_index = s.bdl_index;
             rt.bdl_offset = s.bdl_offset;
             rt.last_fmt_raw = s.last_fmt_raw;
@@ -1725,9 +1728,16 @@ impl HdaController {
                 self.output_rate_hz
             };
 
+            let is_capture_stream = idx >= num_output_streams && idx < num_output_streams + num_input_streams;
+            let (resampler_src_rate, resampler_dst_rate) = if is_capture_stream {
+                (self.output_rate_hz, src_rate_hz)
+            } else {
+                (src_rate_hz, self.output_rate_hz)
+            };
+
             rt.resampler.restore_snapshot_state(
-                src_rate_hz,
-                self.output_rate_hz,
+                resampler_src_rate,
+                resampler_dst_rate,
                 s.resampler_src_pos_bits,
                 s.resampler_queued_frames,
             );
@@ -1740,9 +1750,22 @@ impl HdaController {
         self.codec.output.amp_gain_right = state.codec.amp_gain_right;
         self.codec.output.amp_mute_left = state.codec.amp_mute_left;
         self.codec.output.amp_mute_right = state.codec.amp_mute_right;
-        self.codec.pin.conn_select = state.codec.pin_conn_select;
-        self.codec.pin.pin_ctl = state.codec.pin_ctl;
+        self.codec.output_pin.conn_select = state.codec.pin_conn_select;
+        self.codec.output_pin.pin_ctl = state.codec.pin_ctl;
         self.codec.afg_power_state = state.codec.afg_power_state;
+        self.codec.input.stream_id = state.codec_capture.input_stream_id;
+        self.codec.input.channel = state.codec_capture.input_channel;
+        self.codec.input.format = state.codec_capture.input_format;
+        self.codec.mic_pin.conn_select = state.codec_capture.mic_pin_conn_select;
+        self.codec.mic_pin.pin_ctl = state.codec_capture.mic_pin_ctl;
+
+        for (rt, v) in self
+            .stream_rt
+            .iter_mut()
+            .zip(&state.stream_capture_frame_accum)
+        {
+            rt.capture_frame_accum = *v;
+        }
 
         // Host-side output buffering is recreated on restore.
         self.audio_out.clear();

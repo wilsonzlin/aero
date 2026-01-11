@@ -120,8 +120,8 @@ fn hda_snapshot_restore_preserves_guest_visible_state_and_dma_progress() {
         sd.lvi = 1;
         sd.fifos = 0x40;
         sd.fmt = fmt_raw;
-        // RUN | IOCE | stream number 1.
-        sd.ctl = (1 << 1) | (1 << 2) | (1 << 20);
+        // SRST | RUN | IOCE | stream number 1.
+        sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 20);
     }
 
     // Process some host time to advance DMA and trigger IOC on entry 0.

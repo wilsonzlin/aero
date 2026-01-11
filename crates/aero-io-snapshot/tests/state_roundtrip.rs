@@ -1,5 +1,6 @@
 use aero_io_snapshot::io::audio::state::{
-    AudioWorkletRingState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState, HdaStreamState,
+    AudioWorkletRingState, HdaCodecCaptureState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState,
+    HdaStreamState,
 };
 use aero_io_snapshot::io::network::state::{
     DhcpLease, Ipv4Addr, NatKey, NatProtocol, NatValue, NetworkStackState, TcpRestorePolicy,
@@ -239,6 +240,7 @@ fn hda_state_roundtrip() {
             resampler_src_pos_bits: (0.5f64).to_bits(),
             resampler_queued_frames: 64,
         }],
+        stream_capture_frame_accum: vec![3],
         codec: HdaCodecState {
             output_stream_id: 1,
             output_channel: 0,
@@ -250,6 +252,13 @@ fn hda_state_roundtrip() {
             pin_conn_select: 0,
             pin_ctl: 0x40,
             afg_power_state: 0,
+        },
+        codec_capture: HdaCodecCaptureState {
+            input_stream_id: 2,
+            input_channel: 0,
+            input_format: 0x0010,
+            mic_pin_conn_select: 0,
+            mic_pin_ctl: 0,
         },
         worklet_ring: AudioWorkletRingState {
             capacity_frames: 48000,

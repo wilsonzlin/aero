@@ -39,6 +39,15 @@ pub struct HdaCodecState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HdaCodecCaptureState {
+    pub input_stream_id: u8,
+    pub input_channel: u8,
+    pub input_format: u16,
+    pub mic_pin_conn_select: u8,
+    pub mic_pin_ctl: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioWorkletRingState {
     pub capacity_frames: u32,
     pub write_pos: u32,
@@ -73,7 +82,9 @@ pub struct HdaControllerState {
 
     pub streams: Vec<HdaStreamState>,
     pub stream_runtime: Vec<HdaStreamRuntimeState>,
+    pub stream_capture_frame_accum: Vec<u64>,
     pub codec: HdaCodecState,
+    pub codec_capture: HdaCodecCaptureState,
     pub worklet_ring: AudioWorkletRingState,
 }
 
@@ -102,17 +113,25 @@ impl Default for HdaControllerState {
             rintcnt: 0,
             streams: Vec::new(),
             stream_runtime: Vec::new(),
+            stream_capture_frame_accum: Vec::new(),
             codec: HdaCodecState {
                 output_stream_id: 0,
                 output_channel: 0,
-                output_format: 0,
-                amp_gain_left: 0,
-                amp_gain_right: 0,
+                output_format: 0x0011,
+                amp_gain_left: 0x7f,
+                amp_gain_right: 0x7f,
                 amp_mute_left: false,
                 amp_mute_right: false,
                 pin_conn_select: 0,
-                pin_ctl: 0,
+                pin_ctl: 0x40,
                 afg_power_state: 0,
+            },
+            codec_capture: HdaCodecCaptureState {
+                input_stream_id: 0,
+                input_channel: 0,
+                input_format: 0x0010,
+                mic_pin_conn_select: 0,
+                mic_pin_ctl: 0,
             },
             worklet_ring: AudioWorkletRingState {
                 capacity_frames: 0,
@@ -125,7 +144,7 @@ impl Default for HdaControllerState {
 
 impl IoSnapshot for HdaControllerState {
     const DEVICE_ID: [u8; 4] = *b"HDA0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_GCTL: u16 = 1;
@@ -153,8 +172,10 @@ impl IoSnapshot for HdaControllerState {
 
         const TAG_STREAMS: u16 = 30;
         const TAG_STREAM_RUNTIME: u16 = 31;
+        const TAG_STREAM_CAPTURE_FRAME_ACCUM: u16 = 32;
 
         const TAG_CODEC: u16 = 40;
+        const TAG_CODEC_CAPTURE: u16 = 41;
         const TAG_WORKLET_RING: u16 = 50;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -206,6 +227,12 @@ impl IoSnapshot for HdaControllerState {
         }
         w.field_bytes(TAG_STREAM_RUNTIME, rt.finish());
 
+        let mut capture_accum = Encoder::new().u32(self.stream_capture_frame_accum.len() as u32);
+        for v in &self.stream_capture_frame_accum {
+            capture_accum = capture_accum.u64(*v);
+        }
+        w.field_bytes(TAG_STREAM_CAPTURE_FRAME_ACCUM, capture_accum.finish());
+
         let codec = Encoder::new()
             .u8(self.codec.output_stream_id)
             .u8(self.codec.output_channel)
@@ -219,6 +246,15 @@ impl IoSnapshot for HdaControllerState {
             .u8(self.codec.afg_power_state)
             .finish();
         w.field_bytes(TAG_CODEC, codec);
+
+        let codec_capture = Encoder::new()
+            .u8(self.codec_capture.input_stream_id)
+            .u8(self.codec_capture.input_channel)
+            .u16(self.codec_capture.input_format)
+            .u8(self.codec_capture.mic_pin_conn_select)
+            .u8(self.codec_capture.mic_pin_ctl)
+            .finish();
+        w.field_bytes(TAG_CODEC_CAPTURE, codec_capture);
 
         let ring = Encoder::new()
             .u32(self.worklet_ring.capacity_frames)
@@ -256,8 +292,10 @@ impl IoSnapshot for HdaControllerState {
 
         const TAG_STREAMS: u16 = 30;
         const TAG_STREAM_RUNTIME: u16 = 31;
+        const TAG_STREAM_CAPTURE_FRAME_ACCUM: u16 = 32;
 
         const TAG_CODEC: u16 = 40;
+        const TAG_CODEC_CAPTURE: u16 = 41;
         const TAG_WORKLET_RING: u16 = 50;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
@@ -363,6 +401,17 @@ impl IoSnapshot for HdaControllerState {
             d.finish()?;
         }
 
+        self.stream_capture_frame_accum.clear();
+        if let Some(buf) = r.bytes(TAG_STREAM_CAPTURE_FRAME_ACCUM) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            self.stream_capture_frame_accum.reserve(count);
+            for _ in 0..count {
+                self.stream_capture_frame_accum.push(d.u64()?);
+            }
+            d.finish()?;
+        }
+
         if let Some(buf) = r.bytes(TAG_CODEC) {
             let mut d = Decoder::new(buf);
             self.codec.output_stream_id = d.u8()?;
@@ -375,6 +424,16 @@ impl IoSnapshot for HdaControllerState {
             self.codec.pin_conn_select = d.u8()?;
             self.codec.pin_ctl = d.u8()?;
             self.codec.afg_power_state = d.u8()?;
+            d.finish()?;
+        }
+
+        if let Some(buf) = r.bytes(TAG_CODEC_CAPTURE) {
+            let mut d = Decoder::new(buf);
+            self.codec_capture.input_stream_id = d.u8()?;
+            self.codec_capture.input_channel = d.u8()?;
+            self.codec_capture.input_format = d.u16()?;
+            self.codec_capture.mic_pin_conn_select = d.u8()?;
+            self.codec_capture.mic_pin_ctl = d.u8()?;
             d.finish()?;
         }
 
