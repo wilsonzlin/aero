@@ -41,6 +41,7 @@ NTSTATUS
 VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VIRTIOSND_QUEUE* Queue, ULONG RequestCount)
 {
     NTSTATUS status;
+    ULONG count;
     ULONG i;
     ULONG totalBytes;
     PUCHAR baseVa;
@@ -60,8 +61,13 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
     if (DmaCtx == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
-    if (RequestCount == 0) {
-        return STATUS_INVALID_PARAMETER;
+
+    count = RequestCount;
+    if (count == 0) {
+        count = 16u;
+    }
+    if (count > VIRTIOSND_QUEUE_SIZE_RXQ) {
+        count = VIRTIOSND_QUEUE_SIZE_RXQ;
     }
 
     RtlZeroMemory(Rx, sizeof(*Rx));
@@ -74,13 +80,13 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
     Rx->DmaCtx = DmaCtx;
     Rx->NextSequence = 1;
 
-    Rx->Requests = (VIRTIOSND_RX_REQUEST*)ExAllocatePoolWithTag(NonPagedPool, sizeof(VIRTIOSND_RX_REQUEST) * RequestCount, VIRTIOSND_POOL_TAG);
+    Rx->Requests = (VIRTIOSND_RX_REQUEST*)ExAllocatePoolWithTag(NonPagedPool, sizeof(VIRTIOSND_RX_REQUEST) * (SIZE_T)count, VIRTIOSND_POOL_TAG);
     if (Rx->Requests == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    RtlZeroMemory(Rx->Requests, sizeof(VIRTIOSND_RX_REQUEST) * RequestCount);
-    Rx->RequestCount = RequestCount;
+    RtlZeroMemory(Rx->Requests, sizeof(VIRTIOSND_RX_REQUEST) * (SIZE_T)count);
+    Rx->RequestCount = count;
 
     totalBytes = VirtioSndRxHdrBytes() + VirtioSndRxStatusBytes();
     if (totalBytes < VirtioSndRxHdrBytes()) {
@@ -88,7 +94,7 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
         return STATUS_INVALID_PARAMETER;
     }
 
-    for (i = 0; i < RequestCount; ++i) {
+    for (i = 0; i < count; ++i) {
         status = VirtIoSndAllocCommonBuffer(Rx->DmaCtx, totalBytes, FALSE, &Rx->Requests[i].Allocation);
         if (!NT_SUCCESS(status)) {
             goto Fail;

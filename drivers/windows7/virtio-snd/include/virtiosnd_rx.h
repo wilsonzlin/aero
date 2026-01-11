@@ -128,6 +128,12 @@ _Must_inspect_result_ NTSTATUS VirtIoSndRxInit(
     _Out_ VIRTIOSND_RX_ENGINE* Rx,
     _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
     _In_ const VIRTIOSND_QUEUE* Queue,
+    /*
+     * Number of pre-allocated request contexts.
+     *
+     * If 0, a default is selected. Values larger than the contract RX queue size
+     * are clamped.
+     */
     _In_ ULONG RequestCount);
 
 _IRQL_requires_(PASSIVE_LEVEL)
