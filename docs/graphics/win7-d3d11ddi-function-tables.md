@@ -23,6 +23,9 @@ This doc is intentionally biased toward a **safe skeleton**:
 > * UMD code: `drivers/aerogpu/umd/d3d10_11/`
 > * Win7 D3D11 guest tests referenced below:
 >   * `drivers/aerogpu/tests/win7/d3d11_triangle`
+>   * `drivers/aerogpu/tests/win7/d3d11_texture_sampling_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity`
+>   * `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity`
 >   * `drivers/aerogpu/tests/win7/readback_sanity`
 
 ---
@@ -34,6 +37,9 @@ this is the smallest practical set to treat as **must be non-null and must succe
 
 > Tests referenced:
 > * `drivers/aerogpu/tests/win7/d3d11_triangle`
+> * `drivers/aerogpu/tests/win7/d3d11_texture_sampling_sanity`
+> * `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity`
+> * `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity`
 > * `drivers/aerogpu/tests/win7/readback_sanity`
 
 ### Adapter (`D3D11DDI_ADAPTERFUNCS`)
@@ -59,6 +65,12 @@ Must be non-null and must succeed for the tests:
     * `D3D11_USAGE_STAGING` `Texture2D` with `CPU_ACCESS_READ` (staging readback)
 * RTV:
   * `pfnCalcPrivateRenderTargetViewSize`, `pfnCreateRenderTargetView`, `pfnDestroyRenderTargetView`
+* SRV + sampler:
+  * `pfnCalcPrivateShaderResourceViewSize`, `pfnCreateShaderResourceView`, `pfnDestroyShaderResourceView`
+  * `pfnCalcPrivateSamplerSize`, `pfnCreateSampler`, `pfnDestroySampler`
+* Depth/stencil:
+  * `pfnCalcPrivateDepthStencilViewSize`, `pfnCreateDepthStencilView`, `pfnDestroyDepthStencilView`
+  * `pfnCalcPrivateDepthStencilStateSize`, `pfnCreateDepthStencilState`, `pfnDestroyDepthStencilState`
 * Shaders:
   * `pfnCalcPrivateVertexShaderSize`, `pfnCreateVertexShader`, `pfnDestroyVertexShader`
   * `pfnCalcPrivatePixelShaderSize`, `pfnCreatePixelShader`, `pfnDestroyPixelShader`
@@ -77,11 +89,17 @@ Must be non-null and must succeed for the tests:
 * Binding/state:
   * `pfnSetRenderTargets`
   * `pfnSetViewports`
-  * `pfnIaSetInputLayout`, `pfnIaSetTopology`, `pfnIaSetVertexBuffers`
+  * `pfnIaSetInputLayout`, `pfnIaSetTopology`, `pfnIaSetVertexBuffers`, `pfnIaSetIndexBuffer`
   * `pfnVsSetShader`, `pfnPsSetShader`
+  * `pfnPsSetShaderResources`, `pfnPsSetSamplers`
+  * `pfnPsSetConstantBuffers` (dynamic constant buffer binding)
+  * `pfnSetDepthStencilState`
 * Clears/draws:
   * `pfnClearRenderTargetView`
-  * `pfnDraw`
+  * `pfnClearDepthStencilView`
+  * `pfnDraw`, `pfnDrawIndexed`
+* Resource updates:
+  * `pfnUpdateSubresourceUP`
 * Readback path:
   * `pfnCopyResource`
   * `pfnFlush`
@@ -327,7 +345,7 @@ For the current guest tests, the runtime needs at least:
 |---|---|---|
 | `DXGI_FORMAT_B8G8R8A8_UNORM` | `RENDER_TARGET`, `TEXTURE2D` | swapchain backbuffer in `d3d11_triangle` and render-target texture in `readback_sanity`. |
 | `DXGI_FORMAT_R8G8B8A8_UNORM` | `RENDER_TARGET`, `TEXTURE2D` | common app fallback; good to support early even if tests use BGRA. |
-| Depth formats (`DXGI_FORMAT_D24_UNORM_S8_UINT` or `DXGI_FORMAT_D32_FLOAT`) | `DEPTH_STENCIL`, `TEXTURE2D` | not required by current tests, but common for real apps (recommended). |
+| Depth formats (`DXGI_FORMAT_D24_UNORM_S8_UINT` or `DXGI_FORMAT_D32_FLOAT`) | `DEPTH_STENCIL`, `TEXTURE2D` | required by `d3d11_depth_test_sanity`; common for real apps. |
 
 BGRA device flag note:
 
@@ -391,15 +409,15 @@ Optional but common for real apps:
 
 | Field | Status | Stub failure mode |
 |---|---|---|
-| `pfnCalcPrivateShaderResourceViewSize` | REQUIRED-BUT-STUBBABLE | Return `sizeof(SRV)`. |
-| `pfnCreateShaderResourceView` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` (but many apps will require SRVs quickly). |
-| `pfnDestroyShaderResourceView` | REQUIRED-BUT-STUBBABLE | `void` no-op is OK. |
+| `pfnCalcPrivateShaderResourceViewSize` | REQUIRED | Return `sizeof(SRV)`. |
+| `pfnCreateShaderResourceView` | REQUIRED | `HRESULT`: must succeed for Texture2D SRVs (used by `d3d11_texture_sampling_sanity`). |
+| `pfnDestroyShaderResourceView` | REQUIRED | `void` no-op is OK. |
 | `pfnCalcPrivateRenderTargetViewSize` | REQUIRED | Return `sizeof(RTV)`. |
 | `pfnCreateRenderTargetView` | REQUIRED | `HRESULT`: must work for swapchain RTs and Texture2D RTs. |
 | `pfnDestroyRenderTargetView` | REQUIRED | `void`. |
-| `pfnCalcPrivateDepthStencilViewSize` | REQUIRED-BUT-STUBBABLE | Return `sizeof(DSV)`. |
-| `pfnCreateDepthStencilView` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` until depth is implemented. |
-| `pfnDestroyDepthStencilView` | REQUIRED-BUT-STUBBABLE | `void`. |
+| `pfnCalcPrivateDepthStencilViewSize` | REQUIRED | Return `sizeof(DSV)`. |
+| `pfnCreateDepthStencilView` | REQUIRED | `HRESULT`: must succeed for the depth formats you report (used by `d3d11_depth_test_sanity`). |
+| `pfnDestroyDepthStencilView` | REQUIRED | `void`. |
 | `pfnCalcPrivateUnorderedAccessViewSize` | OPTIONAL | Return `sizeof(UAV)`; `Create*` may return `E_NOTIMPL` for FL10_0. |
 | `pfnCreateUnorderedAccessView` | OPTIONAL | `HRESULT`: `E_NOTIMPL` for FL10_0. |
 | `pfnDestroyUnorderedAccessView` | OPTIONAL | `void`. |
@@ -435,10 +453,10 @@ SM5/tessellation/compute (not required for FL10_0 bring-up):
 | `pfnCalcPrivateElementLayoutSize` | REQUIRED | Return `sizeof(InputLayout)`; must support layouts used by tests. |
 | `pfnCreateElementLayout` | REQUIRED | `HRESULT`: must work (D3D11 input layouts are required for most apps). |
 | `pfnDestroyElementLayout` | REQUIRED | `void`. |
-| `pfnCalcPrivateSamplerSize` / `pfnCreateSampler` / `pfnDestroySampler` | REQUIRED-BUT-STUBBABLE | Can be stubbed until texture sampling tests exist, but must be non-null. |
+| `pfnCalcPrivateSamplerSize` / `pfnCreateSampler` / `pfnDestroySampler` | REQUIRED | Must succeed for point/clamp samplers (`d3d11_texture_sampling_sanity`). |
 | `pfnCalcPrivateRasterizerStateSize` / `pfnCreateRasterizerState` / `pfnDestroyRasterizerState` | REQUIRED-BUT-STUBBABLE | Accept + store; can be conservative. |
 | `pfnCalcPrivateBlendStateSize` / `pfnCreateBlendState` / `pfnDestroyBlendState` | REQUIRED-BUT-STUBBABLE | Accept + store; can be conservative. |
-| `pfnCalcPrivateDepthStencilStateSize` / `pfnCreateDepthStencilState` / `pfnDestroyDepthStencilState` | REQUIRED-BUT-STUBBABLE | Accept + store; depth can be stubbed initially. |
+| `pfnCalcPrivateDepthStencilStateSize` / `pfnCreateDepthStencilState` / `pfnDestroyDepthStencilState` | REQUIRED | Must succeed for depth test state (`d3d11_depth_test_sanity`). |
 
 #### 4.2.6 Queries / predication / counters
 
@@ -491,7 +509,7 @@ If a field exists in your `d3d11umddi.h` but is not explicitly mentioned in this
 |---|---|---|
 | `pfnIaSetInputLayout` | REQUIRED | Must accept valid layouts; accept NULL to unbind. |
 | `pfnIaSetVertexBuffers` | REQUIRED | Must accept NULL buffers to unbind. |
-| `pfnIaSetIndexBuffer` | REQUIRED-BUT-STUBBABLE | Many samples use indexed draws; safe to stub only if you don’t run indexed tests yet. |
+| `pfnIaSetIndexBuffer` | REQUIRED | Used by `d3d11_texture_sampling_sanity`. |
 | `pfnIaSetTopology` | REQUIRED | Required for `IASetPrimitiveTopology`. |
 | `pfnVsSetShader` | REQUIRED | Must accept NULL to unbind. |
 | `pfnPsSetShader` | REQUIRED | Must accept NULL to unbind. |
@@ -501,9 +519,12 @@ Resource/CB/sampler binding for FL10_0 pipeline:
 
 | Field | Status | Notes / stub guidance |
 |---|---|---|
-| `pfnVsSetConstantBuffers` / `pfnPsSetConstantBuffers` / `pfnGsSetConstantBuffers` | REQUIRED-BUT-STUBBABLE | Runtime may call with NULL to clear; handle that without error. |
-| `pfnVsSetShaderResources` / `pfnPsSetShaderResources` / `pfnGsSetShaderResources` | REQUIRED-BUT-STUBBABLE | Required once texture sampling exists; handle NULL to unbind. |
-| `pfnVsSetSamplers` / `pfnPsSetSamplers` / `pfnGsSetSamplers` | REQUIRED-BUT-STUBBABLE | Same. |
+| `pfnPsSetConstantBuffers` | REQUIRED | Used by `d3d11_dynamic_constant_buffer_sanity`. Runtime may call with NULL to clear; handle that without error. |
+| `pfnVsSetConstantBuffers` / `pfnGsSetConstantBuffers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
+| `pfnPsSetShaderResources` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; handle NULL to unbind. |
+| `pfnVsSetShaderResources` / `pfnGsSetShaderResources` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
+| `pfnPsSetSamplers` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; handle NULL to unbind. |
+| `pfnVsSetSamplers` / `pfnGsSetSamplers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
 
 #### 5.2.1 HS/DS/CS stages (optional for FL10_0 bring-up)
 
@@ -526,7 +547,7 @@ Recommended stub behavior:
 | `pfnSetScissorRects` | REQUIRED-BUT-STUBBABLE | Many apps use scissor; safe to clamp to viewport initially. |
 | `pfnSetRasterizerState` | REQUIRED-BUT-STUBBABLE | Accept + store; conservative defaults OK. |
 | `pfnSetBlendState` | REQUIRED-BUT-STUBBABLE | Accept + store; conservative defaults OK. |
-| `pfnSetDepthStencilState` | REQUIRED-BUT-STUBBABLE | Accept + store; if depth unsupported, keep it effectively disabled. |
+| `pfnSetDepthStencilState` | REQUIRED | Must accept/store state for `d3d11_depth_test_sanity`. |
 | `pfnSetRenderTargets` | REQUIRED | Must bind RTVs/DSV for draws and clears. |
 
 ### 5.3.1 State reset / convenience
@@ -540,9 +561,9 @@ Recommended stub behavior:
 | Field | Status | Notes / stub guidance |
 |---|---|---|
 | `pfnClearRenderTargetView` | REQUIRED | Must work for swapchain backbuffer RTV and texture RTVs. |
-| `pfnClearDepthStencilView` | REQUIRED-BUT-STUBBABLE | Can be `SetErrorCb(E_NOTIMPL)` until depth is implemented. |
-| `pfnDraw` | REQUIRED | Used by both Win7 tests. |
-| `pfnDrawIndexed` | REQUIRED-BUT-STUBBABLE | Implement once you run indexed content; many samples use it. |
+| `pfnClearDepthStencilView` | REQUIRED | Used by `d3d11_depth_test_sanity`. |
+| `pfnDraw` | REQUIRED | Used by multiple Win7 tests. |
+| `pfnDrawIndexed` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; many samples use it. |
 | `pfnDrawInstanced` / `pfnDrawIndexedInstanced` / `pfnDrawAuto` | OPTIONAL | Stub with `SetErrorCb(E_NOTIMPL)` if called with non-zero counts. |
 | `pfnDrawInstancedIndirect` / `pfnDrawIndexedInstancedIndirect` | OPTIONAL | Stub. |
 
@@ -550,8 +571,8 @@ Recommended stub behavior:
 
 | Field | Status | Notes / stub guidance |
 |---|---|---|
-| `pfnUpdateSubresourceUP` | REQUIRED | Must accept user-memory uploads (used by some apps even for buffers). |
-| `pfnCopyResource` | REQUIRED | Used by both Win7 tests for staging readback. |
+| `pfnUpdateSubresourceUP` | REQUIRED | Must accept user-memory uploads (required by `d3d11_texture_sampling_sanity` and `d3d11_update_subresource_texture_sanity`). |
+| `pfnCopyResource` | REQUIRED | Used by multiple Win7 tests for staging readback. |
 | `pfnCopySubresourceRegion` | REQUIRED-BUT-STUBBABLE | Many real apps use subresource copies; implement soon. |
 | `pfnResolveSubresource` | OPTIONAL | Stub until MSAA is implemented. |
 | `pfnGenerateMips` | OPTIONAL | Stub until autogen mips are implemented. |
@@ -601,6 +622,9 @@ The repo’s Win7 tests are good coverage targets because they exercise device c
 Tests:
 
 * `drivers/aerogpu/tests/win7/d3d11_triangle`
+* `drivers/aerogpu/tests/win7/d3d11_texture_sampling_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity`
+* `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity`
 * `drivers/aerogpu/tests/win7/readback_sanity`
 
 ### 6.1 `d3d11_triangle` (D3D11CreateDeviceAndSwapChain + Present)
@@ -632,23 +656,56 @@ Same as above except:
 * No swapchain creation / `pfnPresent` required.
 * Render target is a regular `Texture2D` created via `pfnCreateResource` + `pfnCreateRenderTargetView` (BGRA, `D3D11_BIND_RENDER_TARGET`).
 
+### 6.3 `d3d11_texture_sampling_sanity` (SRV + sampler + indexed draw + readback)
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CreateTexture2D` (src texture) | device `pfnCalcPrivateResourceSize` → `pfnCreateResource`. |
+| `UpdateSubresource` | context `pfnUpdateSubresourceUP`. |
+| `CreateShaderResourceView` | device `pfnCalcPrivateShaderResourceViewSize` → `pfnCreateShaderResourceView`. |
+| `CreateSamplerState` | device `pfnCalcPrivateSamplerSize` → `pfnCreateSampler`. |
+| `IASetIndexBuffer` | context `pfnIaSetIndexBuffer`. |
+| `PSSetShaderResources` / `PSSetSamplers` | context `pfnPsSetShaderResources` / `pfnPsSetSamplers`. |
+| `DrawIndexed` | context `pfnDrawIndexed`. |
+| `CopyResource` + staging `Map(READ)` | context `pfnCopyResource` + `pfnMap` / `pfnUnmap`. |
+
+### 6.4 `d3d11_dynamic_constant_buffer_sanity` (dynamic CB bind + draw + readback)
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CreateBuffer` (dynamic constant buffer) | device `pfnCalcPrivateResourceSize` → `pfnCreateResource`. |
+| `Map(WRITE_DISCARD)` | context `pfnMap` / `pfnUnmap` (the runtime may route dynamic CB discard through specialized DDIs depending on interface version). |
+| `PSSetConstantBuffers` | context `pfnPsSetConstantBuffers`. |
+| `Draw` | context `pfnDraw`. |
+
+### 6.5 `d3d11_depth_test_sanity` (DSV + depth state + clear + draw + readback)
+
+| API call in test | DDI entrypoints you should expect |
+|---|---|
+| `CreateTexture2D` (depth) | device `pfnCalcPrivateResourceSize` → `pfnCreateResource`. |
+| `CreateDepthStencilView` | device `pfnCalcPrivateDepthStencilViewSize` → `pfnCreateDepthStencilView`. |
+| `CreateDepthStencilState` | device `pfnCalcPrivateDepthStencilStateSize` → `pfnCreateDepthStencilState`. |
+| `OMSetDepthStencilState` | context `pfnSetDepthStencilState`. |
+| `ClearDepthStencilView` | context `pfnClearDepthStencilView`. |
+| `Draw` | context `pfnDraw`. |
+
 ---
 
 ## 7) Practical bring-up ordering (what to implement first)
 
-If your goal is “device creates and the two repo tests pass”:
+If your goal is “device creates and the basic Win7 guest tests pass”:
 
 1. **Adapter bring-up**
    * `OpenAdapter11` export
    * `D3D11DDI_ADAPTERFUNCS::{pfnGetCaps,pfnCalcPrivateDeviceSize,pfnCreateDevice,pfnCloseAdapter}`
 2. **Device funcs (creation)**
-   * Resource + RTV + shader + input layout creation (triads)
+   * Resource + RTV/SRV/DSV + sampler + depth-stencil state + shader + input layout creation (triads)
 3. **Immediate context**
-   * `pfnSetRenderTargets`, `pfnSetViewports`, IA bindings, VS/PS binds
-   * `pfnClearRenderTargetView`, `pfnDraw`
-4. **Readback path**
-   * `pfnCopyResource`, `pfnFlush`, `pfnMap`/`pfnUnmap` for STAGING read
-5. **DXGI present**
+   * `pfnSetRenderTargets`, `pfnSetViewports`, IA bindings (incl. index buffer), VS/PS binds
+   * PS resource/sampler/CB binding, depth-stencil state, clears, `pfnDraw`/`pfnDrawIndexed`
+4. **Upload + readback path**
+   * `pfnUpdateSubresourceUP`, `pfnCopyResource`, `pfnFlush`, `pfnMap`/`pfnUnmap` for STAGING read
+5. **DXGI present** (swapchain tests)
    * device `pfnPresent` + `pfnRotateResourceIdentities`
 
 Everything else can initially be “present-but-stubbed”, as long as it fails cleanly and never dereferences invalid handles.
