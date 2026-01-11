@@ -175,6 +175,20 @@ contract JSON during packaging (default: `docs/windows-device-contract.json`). U
 `ci/package-guest-tools.ps1 -WindowsDeviceContractPath` to override the contract when packaging
 Guest Tools from a different driver stack (for example, upstream virtio-win service names).
 
+### Spec selection (CI vs local)
+
+`ci/package-guest-tools.ps1` uses `-SpecPath` to control which driver directories are required/allowed
+and how strictly hardware IDs are validated.
+
+- Local default (when `-SpecPath` is omitted): `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
+- CI/release workflows: `tools/packaging/specs/win7-signed.json` (HWID regex lists intentionally empty; expected HWIDs are derived from `guest-tools/config/devices.cmd`)
+
+To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/package-guest-tools.ps1 -SpecPath tools/packaging/specs/win7-signed.json
+```
+
 ## `ci/make-fat-image.ps1`
 
 Creates a **mountable FAT32 VHD** containing a prepared driver package directory:
