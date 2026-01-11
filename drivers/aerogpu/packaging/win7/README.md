@@ -427,8 +427,8 @@ build_all_vs2010.cmd
 :: Choose the VID/DID that matches your VM's Hardware Ids:
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
 :: If using the deprecated legacy device model, pass the matching VID/DID (see docs/abi/aerogpu-pci-identity.md).
-:: Note: legacy bring-up requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ (repo-only; not shipped
-:: in CI packages by default) and enabling the emulator legacy device model (feature emulator/aerogpu-legacy).
+:: Note: legacy bring-up requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ and enabling the
+:: emulator legacy device model (feature emulator/aerogpu-legacy).
 ```
 
 Use the VID/DID shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids** (or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF).
