@@ -273,7 +273,7 @@ For quick guest-side sanity checks:
   * Scanline/raster status plumbing (`D3DKMTGetScanLine` → `DxgkDdiGetScanLine`): `drivers/aerogpu/tests/win7/get_scanline_sanity`
   * D3D9 raster status (`IDirect3DDevice9::GetRasterStatus`): `drivers/aerogpu/tests/win7/d3d9_raster_status_sanity` and `drivers/aerogpu/tests/win7/d3d9_raster_status_pacing`
   * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal; window hidden by default): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
-  * D3D9Ex per-submit fence stress (validates monotonic submit fences + EVENT query completion + PresentEx throttling): `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress`
+  * D3D9Ex per-submit fence stress (validates monotonic submit fences + EVENT query completion + PresentEx throttling; on AGPU also validates ring descriptor `AEROGPU_SUBMIT_FLAG_PRESENT` + non-zero `alloc_table_gpa` for presents): `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress`
   * D3D9Ex DWM-critical device probes (must be non-blocking; checks `CheckDeviceState`, `PresentEx` throttling, `WaitForVBlank`, `GetPresentStats`, residency, GPU thread priority, etc.): `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity`
   * Cross-process shared surface open (validates `DxgkDdiOpenAllocation` path): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface`
     * Validates cross-process pixel sharing via readback by default; pass `--no-validate-sharing` to focus on open + submit only (`--dump` always validates).
