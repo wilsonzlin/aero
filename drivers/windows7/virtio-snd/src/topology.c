@@ -102,6 +102,50 @@ static const GUID* g_VirtIoSndTopoCategories[] = {
     &KSCATEGORY_TOPOLOGY,
 };
 
+#define VIRTIOSND_TOPO_NODE_VOLUME 0
+#define VIRTIOSND_TOPO_NODE_MUTE 1
+#define VIRTIOSND_TOPO_NODE_SPEAKER 2
+
+/*
+ * Minimal software-backed endpoint volume/mute state.
+ *
+ * These values are not applied to the WaveRT render stream yet; they exist so
+ * common Win7 audio stack components (WDMAudio/KSProxy/MMDevice UI) can discover
+ * a reasonable topology and round-trip volume/mute properties without error.
+ */
+static volatile LONG g_VirtIoSndTopoVolumeDb[2] = {0, 0}; // per-channel dB value (driver-defined units)
+static volatile LONG g_VirtIoSndTopoMute[2] = {0, 0};     // per-channel mute flag (0/1)
+
+static BOOLEAN
+VirtIoSndTopoTryGetChannel(_In_ PPCPROPERTY_REQUEST PropertyRequest, _Out_ ULONG* OutChannel)
+{
+    const KSNODEPROPERTY_AUDIO_CHANNEL *inst;
+
+    if (OutChannel == NULL) {
+        return FALSE;
+    }
+
+    *OutChannel = 0;
+
+    if (PropertyRequest == NULL || PropertyRequest->Instance == NULL) {
+        return FALSE;
+    }
+
+    /*
+     * Volume/mute properties are typically node-targeted and pass a
+     * KSNODEPROPERTY_AUDIO_CHANNEL instance with a Channel field. If the
+     * caller provides some other instance format, treat the request as master
+     * volume/mute (channel 0).
+     */
+    if (PropertyRequest->InstanceSize < sizeof(*inst)) {
+        return FALSE;
+    }
+
+    inst = (const KSNODEPROPERTY_AUDIO_CHANNEL *)PropertyRequest->Instance;
+    *OutChannel = inst->Channel;
+    return TRUE;
+}
+
 static NTSTATUS
 VirtIoSndProperty_ChannelConfig(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 {
@@ -148,6 +192,144 @@ VirtIoSndProperty_ChannelConfig(_In_ PPCPROPERTY_REQUEST PropertyRequest)
         mask = *(const ULONG *)PropertyRequest->Value;
         if (mask != KSAUDIO_SPEAKER_STEREO) {
             return STATUS_INVALID_PARAMETER;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    return STATUS_INVALID_PARAMETER;
+}
+
+static NTSTATUS
+VirtIoSndProperty_VolumeLevel(_In_ PPCPROPERTY_REQUEST PropertyRequest)
+{
+    ULONG channel;
+    LONG level;
+
+    if (PropertyRequest == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION *desc;
+        ULONG required = sizeof(*desc);
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION *)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_GET) {
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(LONG)) {
+            PropertyRequest->ValueSize = sizeof(LONG);
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        channel = 0;
+        if (VirtIoSndTopoTryGetChannel(PropertyRequest, &channel) && channel < RTL_NUMBER_OF(g_VirtIoSndTopoVolumeDb)) {
+            level = InterlockedCompareExchange(&g_VirtIoSndTopoVolumeDb[channel], 0, 0);
+        } else {
+            level = InterlockedCompareExchange(&g_VirtIoSndTopoVolumeDb[0], 0, 0);
+        }
+
+        *(PLONG)PropertyRequest->Value = level;
+        PropertyRequest->ValueSize = sizeof(LONG);
+        return STATUS_SUCCESS;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_SET) {
+        ULONG i;
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(LONG)) {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        level = *(const LONG *)PropertyRequest->Value;
+
+        channel = 0;
+        if (VirtIoSndTopoTryGetChannel(PropertyRequest, &channel) && channel < RTL_NUMBER_OF(g_VirtIoSndTopoVolumeDb)) {
+            (VOID)InterlockedExchange(&g_VirtIoSndTopoVolumeDb[channel], level);
+        } else {
+            for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoVolumeDb); ++i) {
+                (VOID)InterlockedExchange(&g_VirtIoSndTopoVolumeDb[i], level);
+            }
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    return STATUS_INVALID_PARAMETER;
+}
+
+static NTSTATUS
+VirtIoSndProperty_Mute(_In_ PPCPROPERTY_REQUEST PropertyRequest)
+{
+    ULONG channel;
+    ULONG mute;
+
+    if (PropertyRequest == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
+        KSPROPERTY_DESCRIPTION *desc;
+        ULONG required = sizeof(*desc);
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < required) {
+            PropertyRequest->ValueSize = required;
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        desc = (KSPROPERTY_DESCRIPTION *)PropertyRequest->Value;
+        RtlZeroMemory(desc, sizeof(*desc));
+        desc->AccessFlags = KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET;
+        desc->DescriptionSize = required;
+        PropertyRequest->ValueSize = required;
+        return STATUS_SUCCESS;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_GET) {
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(ULONG)) {
+            PropertyRequest->ValueSize = sizeof(ULONG);
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        channel = 0;
+        if (VirtIoSndTopoTryGetChannel(PropertyRequest, &channel) && channel < RTL_NUMBER_OF(g_VirtIoSndTopoMute)) {
+            mute = (ULONG)InterlockedCompareExchange(&g_VirtIoSndTopoMute[channel], 0, 0);
+        } else {
+            mute = (ULONG)InterlockedCompareExchange(&g_VirtIoSndTopoMute[0], 0, 0);
+        }
+
+        *(PULONG)PropertyRequest->Value = (mute != 0) ? 1u : 0u;
+        PropertyRequest->ValueSize = sizeof(ULONG);
+        return STATUS_SUCCESS;
+    }
+
+    if (PropertyRequest->Verb & KSPROPERTY_TYPE_SET) {
+        ULONG i;
+
+        if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(ULONG)) {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        mute = (*(const ULONG *)PropertyRequest->Value != 0) ? 1u : 0u;
+
+        channel = 0;
+        if (VirtIoSndTopoTryGetChannel(PropertyRequest, &channel) && channel < RTL_NUMBER_OF(g_VirtIoSndTopoMute)) {
+            (VOID)InterlockedExchange(&g_VirtIoSndTopoMute[channel], (LONG)mute);
+        } else {
+            for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoMute); ++i) {
+                (VOID)InterlockedExchange(&g_VirtIoSndTopoMute[i], (LONG)mute);
+            }
         }
 
         return STATUS_SUCCESS;
@@ -302,6 +484,14 @@ static const PCPROPERTY_ITEM g_VirtIoSndTopoAudioProperties[] = {
     {KSPROPERTY_AUDIO_CHANNEL_CONFIG, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_ChannelConfig},
 };
 
+static const PCPROPERTY_ITEM g_VirtIoSndTopoVolumeProperties[] = {
+    {KSPROPERTY_AUDIO_VOLUMELEVEL, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_VolumeLevel},
+};
+
+static const PCPROPERTY_ITEM g_VirtIoSndTopoMuteProperties[] = {
+    {KSPROPERTY_AUDIO_MUTE, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_Mute},
+};
+
 static const PCPROPERTY_ITEM g_VirtIoSndTopoJackProperties[] = {
     {KSPROPERTY_JACK_DESCRIPTION, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription},
     {KSPROPERTY_JACK_DESCRIPTION2, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_JackDescription2},
@@ -322,6 +512,32 @@ static const PCAUTOMATION_TABLE g_VirtIoSndTopoAutomation = {
     NULL,
 };
 
+static const PCPROPERTY_SET g_VirtIoSndTopoVolumePropertySets[] = {
+    {&KSPROPSETID_Audio, RTL_NUMBER_OF(g_VirtIoSndTopoVolumeProperties), g_VirtIoSndTopoVolumeProperties},
+};
+
+static const PCAUTOMATION_TABLE g_VirtIoSndTopoVolumeAutomation = {
+    RTL_NUMBER_OF(g_VirtIoSndTopoVolumePropertySets),
+    g_VirtIoSndTopoVolumePropertySets,
+    0,
+    NULL,
+    0,
+    NULL,
+};
+
+static const PCPROPERTY_SET g_VirtIoSndTopoMutePropertySets[] = {
+    {&KSPROPSETID_Audio, RTL_NUMBER_OF(g_VirtIoSndTopoMuteProperties), g_VirtIoSndTopoMuteProperties},
+};
+
+static const PCAUTOMATION_TABLE g_VirtIoSndTopoMuteAutomation = {
+    RTL_NUMBER_OF(g_VirtIoSndTopoMutePropertySets),
+    g_VirtIoSndTopoMutePropertySets,
+    0,
+    NULL,
+    0,
+    NULL,
+};
+
 static const KSPIN_DESCRIPTOR g_VirtIoSndTopoPinDescriptors[] = {
     // VIRTIOSND_TOPO_PIN_BRIDGE
     {0, NULL, 0, NULL, 0, NULL, KSPIN_DATAFLOW_IN, KSPIN_COMMUNICATION_BRIDGE, &KSNODETYPE_WAVE_OUT, &KSPINNAME_WAVE_OUT},
@@ -335,13 +551,19 @@ static const PCPIN_DESCRIPTOR g_VirtIoSndTopoPins[] = {
 };
 
 static const PCNODE_DESCRIPTOR g_VirtIoSndTopoNodes[] = {
-    // Node 0: speaker endpoint.
+    // Node 0: volume (software-backed).
+    {0, &g_VirtIoSndTopoVolumeAutomation, &KSNODETYPE_VOLUME, NULL},
+    // Node 1: mute (software-backed).
+    {0, &g_VirtIoSndTopoMuteAutomation, &KSNODETYPE_MUTE, NULL},
+    // Node 2: speaker connector.
     {0, &g_VirtIoSndTopoAutomation, &KSNODETYPE_SPEAKER, NULL},
 };
 
 static const PCCONNECTION_DESCRIPTOR g_VirtIoSndTopoConnections[] = {
-    {KSFILTER_NODE, VIRTIOSND_TOPO_PIN_BRIDGE, 0, 0},
-    {0, 0, KSFILTER_NODE, VIRTIOSND_TOPO_PIN_SPEAKER},
+    {KSFILTER_NODE, VIRTIOSND_TOPO_PIN_BRIDGE, VIRTIOSND_TOPO_NODE_VOLUME, 0},
+    {VIRTIOSND_TOPO_NODE_VOLUME, 1, VIRTIOSND_TOPO_NODE_MUTE, 0},
+    {VIRTIOSND_TOPO_NODE_MUTE, 1, VIRTIOSND_TOPO_NODE_SPEAKER, 0},
+    {VIRTIOSND_TOPO_NODE_SPEAKER, 0, KSFILTER_NODE, VIRTIOSND_TOPO_PIN_SPEAKER},
 };
 
 static const PCFILTER_DESCRIPTOR g_VirtIoSndTopoFilterDescriptor = {
