@@ -88,6 +88,15 @@ WaveRT stream’s `SetState` to request those transitions.
 
 The `virtio-snd` device provides:
 
+- This design assumes the Aero Windows 7 virtio device contract v1 (`AERO-W7-VIRTIO`); if anything in this document
+  disagrees with the contract, the contract wins:
+  - `docs/windows7-virtio-driver-contract.md` (§3.4 virtio-snd)
+- Contract v1 summary (virtio-snd):
+  - Transport: virtio-pci modern-only (PCI vendor-specific caps + BAR0 MMIO) with PCI Revision ID `0x01` (`REV_01`)
+  - Features: `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only
+  - Queues: `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`
+  - Streams: stream 0 output stereo S16_LE 48 kHz; stream 1 input mono S16_LE 48 kHz
+
 - A **control queue** for PCM control commands (`PCM_SET_PARAMS`, `PREPARE`,
   `START`, `STOP`, `RELEASE`, ...).
 - One or more **PCM data queues**. For this design, we assume:
