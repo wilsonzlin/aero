@@ -2362,13 +2362,29 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         const ULONG status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
-        const ULONG handled = status & (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
+        const ULONG known = (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
+        const ULONG handled = status & known;
         if (handled == 0) {
+            if (status != 0) {
+                /*
+                 * Defensive: if the device reports an IRQ_STATUS bit we don't understand,
+                 * still ACK it to avoid interrupt storms from a stuck level-triggered line.
+                 */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
+                static LONG g_UnexpectedIrqWarned = 0;
+                if (InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
+                    DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                               DPFLTR_ERROR_LEVEL,
+                               "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx)\n",
+                               status);
+                }
+                return TRUE;
+            }
             return FALSE;
         }
 
         /* Ack in the ISR to deassert the (level-triggered) interrupt line. */
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, handled);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
 
         if ((handled & AEROGPU_IRQ_ERROR) != 0) {
             static LONG g_IrqErrorLogged = 0;
@@ -2457,11 +2473,22 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         /* Legacy ABI: only fence interrupts are supported. */
         const ULONG status = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_INT_STATUS);
         if ((status & AEROGPU_LEGACY_INT_FENCE) == 0) {
+            if (status != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, status);
+                static LONG g_UnexpectedLegacyIrqWarned = 0;
+                if (InterlockedExchange(&g_UnexpectedLegacyIrqWarned, 1) == 0) {
+                    DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                               DPFLTR_ERROR_LEVEL,
+                               "aerogpu-kmd: unexpected legacy INT_STATUS bits (status=0x%08lx)\n",
+                               status);
+                }
+                return TRUE;
+            }
             return FALSE;
         }
 
         const ULONGLONG completedFence64 = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
-        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, AEROGPU_LEGACY_INT_FENCE);
+        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, status);
 
         ULONG completedFence32 = (ULONG)completedFence64;
         const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
