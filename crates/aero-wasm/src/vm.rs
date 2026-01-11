@@ -15,7 +15,7 @@ use wasm_bindgen::prelude::*;
 use aero_cpu_core::{
     assist::AssistContext,
     exception::Exception,
-    interp::tier0::exec::{run_batch_with_assists, BatchExit},
+    interp::tier0::exec::{BatchExit, run_batch_with_assists},
     mem::CpuBus,
     state::{CpuMode, CpuState, Segment},
 };
@@ -311,7 +311,8 @@ impl WasmVm {
         let mut executed = 0u64;
         while executed < max_insts_u64 {
             let remaining = max_insts_u64 - executed;
-            let batch = run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut bus, remaining);
+            let batch =
+                run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut bus, remaining);
             executed = executed.saturating_add(batch.executed);
 
             match batch.exit {
@@ -359,4 +360,3 @@ impl WasmVm {
         }
     }
 }
-
