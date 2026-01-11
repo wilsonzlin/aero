@@ -9251,10 +9251,10 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   // If the adapter wasn't opened through a path that initialized our KMD query
   // helper (e.g. missing HDC at OpenAdapter time), opportunistically initialize
   // it here. This enables fence polling when hSyncObject is absent/zero.
-          if (!adapter->kmd_query_available.load(std::memory_order_acquire)) {
-            bool kmd_ok = false;
-            if (adapter->luid.LowPart != 0 || adapter->luid.HighPart != 0) {
-              kmd_ok = adapter->kmd_query.InitFromLuid(adapter->luid);
+  if (!adapter->kmd_query_available.load(std::memory_order_acquire)) {
+    bool kmd_ok = false;
+    if (adapter->luid.LowPart != 0 || adapter->luid.HighPart != 0) {
+      kmd_ok = adapter->kmd_query.InitFromLuid(adapter->luid);
     }
     if (!kmd_ok) {
       HDC hdc = GetDC(nullptr);
@@ -9349,15 +9349,15 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
     const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
     const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
-     AerogpuNtStatus sync_probe = kStatusNotSupported;
-     if (has_sync_object) {
-       sync_probe = static_cast<AerogpuNtStatus>(
-           adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
-                                                /*fence_value=*/1,
-                                                /*timeout_ms=*/0));
-     }
-     const bool sync_object_wait_available =
-         has_sync_object && (sync_probe == kStatusSuccess || sync_probe == kStatusTimeout);
+    AerogpuNtStatus sync_probe = kStatusNotSupported;
+    if (has_sync_object) {
+      sync_probe = static_cast<AerogpuNtStatus>(
+          adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
+                                               /*fence_value=*/1,
+                                               /*timeout_ms=*/0));
+    }
+    const bool sync_object_wait_available =
+        has_sync_object && (sync_probe == kStatusSuccess || sync_probe == kStatusTimeout);
 
     // `wait_for_fence()` uses different mechanisms depending on whether the caller
     // is doing a bounded wait (PresentEx throttling) or a non-blocking poll (EVENT
@@ -9917,57 +9917,57 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
               kmd_ok = adapter->kmd_query.InitFromHdc(hdc);
               ReleaseDC(nullptr, hdc);
             }
+          }
+          adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+        }
+
+        if (adapter->kmd_query_available.load(std::memory_order_acquire)) {
+          if (!adapter->vid_pn_source_id_valid) {
+            uint32_t vid_pn_source_id = 0;
+            if (adapter->kmd_query.GetVidPnSourceId(&vid_pn_source_id)) {
+              adapter->vid_pn_source_id = vid_pn_source_id;
+              adapter->vid_pn_source_id_valid = true;
             }
-            adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
           }
 
-          if (adapter->kmd_query_available.load(std::memory_order_acquire)) {
-            if (!adapter->vid_pn_source_id_valid) {
-              uint32_t vid_pn_source_id = 0;
-              if (adapter->kmd_query.GetVidPnSourceId(&vid_pn_source_id)) {
-                adapter->vid_pn_source_id = vid_pn_source_id;
-                adapter->vid_pn_source_id_valid = true;
-              }
-            }
-
-            if (!adapter->max_allocation_list_slot_id_logged.load(std::memory_order_acquire)) {
-              uint32_t max_slot_id = 0;
-              if (adapter->kmd_query.QueryMaxAllocationListSlotId(&max_slot_id)) {
-                adapter->max_allocation_list_slot_id = max_slot_id;
-                if (!adapter->max_allocation_list_slot_id_logged.exchange(true)) {
-                  aerogpu::logf("aerogpu-d3d9: KMD MaxAllocationListSlotId=%u\n",
-                                static_cast<unsigned>(max_slot_id));
-                }
-              }
-            }
-
-            if (!adapter->umd_private_valid) {
-              aerogpu_umd_private_v1 priv;
-              std::memset(&priv, 0, sizeof(priv));
-              if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
-                adapter->umd_private = priv;
-                adapter->umd_private_valid = true;
-
-                char magicStr[5] = {0, 0, 0, 0, 0};
-                magicStr[0] = static_cast<char>((priv.device_mmio_magic >> 0) & 0xFF);
-                magicStr[1] = static_cast<char>((priv.device_mmio_magic >> 8) & 0xFF);
-                magicStr[2] = static_cast<char>((priv.device_mmio_magic >> 16) & 0xFF);
-                magicStr[3] = static_cast<char>((priv.device_mmio_magic >> 24) & 0xFF);
-
-                aerogpu::logf("aerogpu-d3d9: UMDRIVERPRIVATE magic=0x%08x (%s) abi=0x%08x features=0x%llx flags=0x%08x\n",
-                              priv.device_mmio_magic,
-                              magicStr,
-                              priv.device_abi_version_u32,
-                              static_cast<unsigned long long>(priv.device_features),
-                              priv.flags);
+          if (!adapter->max_allocation_list_slot_id_logged.load(std::memory_order_acquire)) {
+            uint32_t max_slot_id = 0;
+            if (adapter->kmd_query.QueryMaxAllocationListSlotId(&max_slot_id)) {
+              adapter->max_allocation_list_slot_id = max_slot_id;
+              if (!adapter->max_allocation_list_slot_id_logged.exchange(true)) {
+                aerogpu::logf("aerogpu-d3d9: KMD MaxAllocationListSlotId=%u\n",
+                              static_cast<unsigned>(max_slot_id));
               }
             }
           }
 
-          // Validate the runtime-provided submission buffers. These must be present for
-          // DMA buffer construction.
-          const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
-              sizeof(aerogpu_cmd_stream_header) + align_up(sizeof(aerogpu_cmd_set_render_targets), 4));
+          if (!adapter->umd_private_valid) {
+            aerogpu_umd_private_v1 priv;
+            std::memset(&priv, 0, sizeof(priv));
+            if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+              adapter->umd_private = priv;
+              adapter->umd_private_valid = true;
+
+              char magicStr[5] = {0, 0, 0, 0, 0};
+              magicStr[0] = static_cast<char>((priv.device_mmio_magic >> 0) & 0xFF);
+              magicStr[1] = static_cast<char>((priv.device_mmio_magic >> 8) & 0xFF);
+              magicStr[2] = static_cast<char>((priv.device_mmio_magic >> 16) & 0xFF);
+              magicStr[3] = static_cast<char>((priv.device_mmio_magic >> 24) & 0xFF);
+
+              aerogpu::logf("aerogpu-d3d9: UMDRIVERPRIVATE magic=0x%08x (%s) abi=0x%08x features=0x%llx flags=0x%08x\n",
+                            priv.device_mmio_magic,
+                            magicStr,
+                            priv.device_abi_version_u32,
+                            static_cast<unsigned long long>(priv.device_features),
+                            priv.flags);
+            }
+          }
+        }
+
+        // Validate the runtime-provided submission buffers. These must be present for
+        // DMA buffer construction.
+        const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
+            sizeof(aerogpu_cmd_stream_header) + align_up(sizeof(aerogpu_cmd_set_render_targets), 4));
         if (!dev->wddm_context.pCommandBuffer ||
             dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
             !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
@@ -9993,45 +9993,45 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
         } else {
           {
             static std::once_flag wddm_diag_once;
-             const bool patch_list_present =
-                 dev->wddm_context.pPatchLocationList && dev->wddm_context.PatchLocationListSize != 0;
- 
-             const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
-             const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
-             AerogpuNtStatus sync_probe = kStatusNotSupported;
-             if (has_sync_object) {
-               sync_probe = static_cast<AerogpuNtStatus>(
-                   adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
-                                                        /*fence_value=*/1,
-                                                        /*timeout_ms=*/0));
-             }
-             const bool sync_object_wait_available =
-                 has_sync_object && (sync_probe == kStatusSuccess || sync_probe == kStatusTimeout);
- 
-             // `wait_for_fence()` prefers different mechanisms depending on whether
-             // the caller is doing a bounded wait (PresentEx throttling) or a poll
-             // (EVENT queries / GetData). Log both so bring-up can quickly confirm
-             // which fallback is active on a given runtime/configuration.
-             const char* bounded_wait_mode = "polling";
-             if (sync_object_wait_available) {
-               bounded_wait_mode = "sync_object";
-             } else if (kmd_query_available) {
-               bounded_wait_mode = "kmd_query";
-             }
- 
-             const char* poll_wait_mode = "polling";
-             if (kmd_query_available) {
-               poll_wait_mode = "kmd_query";
-             } else if (sync_object_wait_available) {
-               poll_wait_mode = "sync_object";
-             }
- 
-             std::call_once(wddm_diag_once,
-                            [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
-               aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
-                             patch_list_present ? "present" : "absent");
-               aerogpu::logf("aerogpu-d3d9: fence_wait bounded=%s poll=%s (hSyncObject=%s kmd_query=%s)\n",
-                             bounded_wait_mode,
+            const bool patch_list_present =
+                dev->wddm_context.pPatchLocationList && dev->wddm_context.PatchLocationListSize != 0;
+
+            const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
+            const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
+            AerogpuNtStatus sync_probe = kStatusNotSupported;
+            if (has_sync_object) {
+              sync_probe = static_cast<AerogpuNtStatus>(
+                  adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
+                                                       /*fence_value=*/1,
+                                                       /*timeout_ms=*/0));
+            }
+            const bool sync_object_wait_available =
+                has_sync_object && (sync_probe == kStatusSuccess || sync_probe == kStatusTimeout);
+
+            // `wait_for_fence()` prefers different mechanisms depending on whether
+            // the caller is doing a bounded wait (PresentEx throttling) or a poll
+            // (EVENT queries / GetData). Log both so bring-up can quickly confirm
+            // which fallback is active on a given runtime/configuration.
+            const char* bounded_wait_mode = "polling";
+            if (sync_object_wait_available) {
+              bounded_wait_mode = "sync_object";
+            } else if (kmd_query_available) {
+              bounded_wait_mode = "kmd_query";
+            }
+
+            const char* poll_wait_mode = "polling";
+            if (kmd_query_available) {
+              poll_wait_mode = "kmd_query";
+            } else if (sync_object_wait_available) {
+              poll_wait_mode = "sync_object";
+            }
+
+            std::call_once(wddm_diag_once,
+                           [patch_list_present, bounded_wait_mode, poll_wait_mode, has_sync_object, kmd_query_available] {
+              aerogpu::logf("aerogpu-d3d9: WDDM patch_list=%s (AeroGPU submits with NumPatchLocations=0)\n",
+                            patch_list_present ? "present" : "absent");
+              aerogpu::logf("aerogpu-d3d9: fence_wait bounded=%s poll=%s (hSyncObject=%s kmd_query=%s)\n",
+                            bounded_wait_mode,
                             poll_wait_mode,
                             has_sync_object ? "present" : "absent",
                             kmd_query_available ? "available" : "unavailable");
