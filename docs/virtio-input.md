@@ -106,6 +106,14 @@ Contract note:
    - A new HID keyboard and HID mouse appear
    - The emulator can detect `DRIVER_OK` and switch input routing to virtio-input
 
+### In-tree driver source (this repo)
+
+The canonical Windows 7 virtio-input driver source lives at:
+
+- `drivers/windows7/virtio-input/` (INF: `inf/aero_virtio_input.inf`, service: `aero_virtio_input`)
+
+The repo also carries an optional legacy filename alias (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable) for compatibility with older workflows/tools.
+
 ### Notes
 
 - If you want the absolute smallest driver surface area for Windows 7, a KMDF driver that exposes a HID interface is typically the pragmatic choice.

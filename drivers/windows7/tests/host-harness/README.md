@@ -342,6 +342,8 @@ Use `-InstallAllInfs` to install every `*.inf` found under `AERO\\drivers` inste
 If you are provisioning an image with **upstream virtio-win** driver packages (e.g. `viostor.inf` / `netkvm.inf`),
 use `-InstallAllInfs` or provide a custom `-InfAllowList`.
 
+For fully repeatable provisioning, pass `-InfAllowList` explicitly:
+
 `New-AeroWin7TestImage.ps1` also supports baking `--blk-root` into the installed scheduled task (useful if the VM boots
 from a non-virtio disk but has a separate virtio data volume):
 
@@ -414,7 +416,7 @@ provision the scheduled task with
     in `-InfAllowList`.
 
 If your `-DriversDir` contains duplicate INF basenames, disambiguate by passing a relative path (e.g.
-`"windows7\\virtio-net\\x64\\aero_virtio_net.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
+`"windows7\\virtio-net\\x64\\aero_virtio_net.inf"` or `"windows7\\virtio-input\\x64\\aero_virtio_input.inf"` when using `out/packages`). To restore the legacy "install everything" behavior for debugging, pass `-InstallAllInfs`.
 
 ### Enabling test-signing mode (unsigned / test-signed drivers)
 
