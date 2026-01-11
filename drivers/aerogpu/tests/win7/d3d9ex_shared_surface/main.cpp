@@ -796,7 +796,7 @@ static int RunChild(int argc,
     if (!MapSharedHandleToken(hwnd, shared_handle, &token, &map_err)) {
       return aerogpu_test::Fail(kTestName, "MAP_SHARED_HANDLE failed: %s", map_err.c_str());
     }
-    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE share_token=%lu (expected=%lu)",
+    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE debug_token=%lu (expected=%lu)",
                                kTestName,
                                (unsigned long)token,
                                (unsigned long)expected_token);
@@ -1073,14 +1073,14 @@ static int RunParent(int argc,
     SetHandleInformation(shared_handle, HANDLE_FLAG_INHERIT, 0);
   }
 
-  uint32_t share_token = 0;
+  uint32_t debug_token = 0;
   bool have_share_token = false;
   std::string map_err;
   if (shared_handle_is_nt) {
-    have_share_token = MapSharedHandleToken(hwnd, shared_handle, &share_token, &map_err);
+    have_share_token = MapSharedHandleToken(hwnd, shared_handle, &debug_token, &map_err);
     if (have_share_token) {
       aerogpu_test::PrintfStdout(
-          "INFO: %s: MAP_SHARED_HANDLE share_token=%lu", kTestName, (unsigned long)share_token);
+          "INFO: %s: MAP_SHARED_HANDLE debug_token=%lu", kTestName, (unsigned long)debug_token);
     } else {
       aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE unavailable (%s); skipping token validation",
                                  kTestName,
@@ -1159,7 +1159,7 @@ static int RunParent(int argc,
   cmdline += std::wstring(placeholder_hex.begin(), placeholder_hex.end());
   if (have_share_token) {
     wchar_t token_buf[32];
-    _snwprintf(token_buf, ARRAYSIZE(token_buf), L"0x%08lX", (unsigned long)share_token);
+    _snwprintf(token_buf, ARRAYSIZE(token_buf), L"0x%08lX", (unsigned long)debug_token);
     token_buf[ARRAYSIZE(token_buf) - 1] = 0;
     cmdline += L" --expected-share-token=";
     cmdline += token_buf;

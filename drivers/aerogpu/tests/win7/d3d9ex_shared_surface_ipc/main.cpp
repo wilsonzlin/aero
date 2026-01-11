@@ -522,7 +522,7 @@ static int RunConsumer(int argc, char** argv) {
     if (!MapSharedHandleToken(hwnd, shared_handle, &token, &map_err)) {
       return aerogpu_test::Fail(kTestName, "MAP_SHARED_HANDLE failed: %s", map_err.c_str());
     }
-    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE share_token=%lu (expected=%lu)",
+    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE debug_token=%lu (expected=%lu)",
                                kTestName,
                                (unsigned long)token,
                                (unsigned long)expected_token);
@@ -812,11 +812,11 @@ static int RunProducer(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
   }
 
-  uint32_t share_token = 0;
+  uint32_t debug_token = 0;
   std::string map_err;
-  const bool have_share_token = MapSharedHandleToken(hwnd, shared, &share_token, &map_err);
+  const bool have_share_token = MapSharedHandleToken(hwnd, shared, &debug_token, &map_err);
   if (have_share_token) {
-    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE share_token=%lu", kTestName, (unsigned long)share_token);
+    aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE debug_token=%lu", kTestName, (unsigned long)debug_token);
   } else {
     aerogpu_test::PrintfStdout("INFO: %s: MAP_SHARED_HANDLE unavailable (%s); skipping token validation",
                                kTestName,
@@ -829,7 +829,7 @@ static int RunProducer(int argc, char** argv) {
                          L"\" --consumer --shared-handle=0x0000000000000000";
   if (have_share_token) {
     wchar_t token_buf[32];
-    _snwprintf(token_buf, ARRAYSIZE(token_buf), L"0x%08lX", (unsigned long)share_token);
+    _snwprintf(token_buf, ARRAYSIZE(token_buf), L"0x%08lX", (unsigned long)debug_token);
     token_buf[ARRAYSIZE(token_buf) - 1] = 0;
     cmdline += L" --expected-share-token=";
     cmdline += token_buf;

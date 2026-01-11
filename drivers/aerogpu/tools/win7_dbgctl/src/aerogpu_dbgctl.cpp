@@ -480,7 +480,7 @@ static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint
     return 2;
   }
 
-  wprintf(L"share_token: 0x%08lx (%lu)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
+  wprintf(L"debug_token: 0x%08lx (%lu)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
   return 0;
 }
 
