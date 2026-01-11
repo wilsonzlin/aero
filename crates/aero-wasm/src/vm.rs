@@ -13,12 +13,12 @@
 use wasm_bindgen::prelude::*;
 
 use aero_cpu_core::{
+    Exception,
     assist::AssistContext,
     interp::tier0::exec::{BatchExit, run_batch_with_assists},
     interrupts::CpuCore,
     mem::CpuBus,
     state::{CpuMode, Segment},
-    Exception,
 };
 
 use crate::{RunExit, RunExitKind};

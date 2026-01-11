@@ -141,7 +141,10 @@ fn l2_tunnel_vectors_match_golden_bytes() {
         let msg_type = json_u8(json_get(v, "type", &ctx), &format!("{ctx}.type"));
         let msg_flags = json_u8(json_get(v, "flags", &ctx), &format!("{ctx}.flags"));
 
-        let payload_b64 = json_str(json_get(v, "payload_b64", &ctx), &format!("{ctx}.payload_b64"));
+        let payload_b64 = json_str(
+            json_get(v, "payload_b64", &ctx),
+            &format!("{ctx}.payload_b64"),
+        );
         let frame_b64 = json_str(json_get(v, "frame_b64", &ctx), &format!("{ctx}.frame_b64"));
 
         let payload = b64_to_bytes(payload_b64);
@@ -177,23 +180,41 @@ fn l2_tunnel_vectors_match_golden_bytes() {
             L2_TUNNEL_TYPE_FRAME => {
                 saw_frame = true;
                 let encoded = encode_frame(&payload).unwrap();
-                assert_eq!(encoded, frame, "{name}: encode_frame must match golden bytes");
+                assert_eq!(
+                    encoded, frame,
+                    "{name}: encode_frame must match golden bytes"
+                );
                 let reencoded = encode_frame(decoded.payload).unwrap();
-                assert_eq!(reencoded, frame, "{name}: decode -> encode_frame must preserve bytes");
+                assert_eq!(
+                    reencoded, frame,
+                    "{name}: decode -> encode_frame must preserve bytes"
+                );
             }
             L2_TUNNEL_TYPE_PING => {
                 saw_ping = true;
                 let encoded = encode_ping(Some(&payload)).unwrap();
-                assert_eq!(encoded, frame, "{name}: encode_ping must match golden bytes");
+                assert_eq!(
+                    encoded, frame,
+                    "{name}: encode_ping must match golden bytes"
+                );
                 let reencoded = encode_ping(Some(decoded.payload)).unwrap();
-                assert_eq!(reencoded, frame, "{name}: decode -> encode_ping must preserve bytes");
+                assert_eq!(
+                    reencoded, frame,
+                    "{name}: decode -> encode_ping must preserve bytes"
+                );
             }
             L2_TUNNEL_TYPE_PONG => {
                 saw_pong = true;
                 let encoded = encode_pong(Some(&payload)).unwrap();
-                assert_eq!(encoded, frame, "{name}: encode_pong must match golden bytes");
+                assert_eq!(
+                    encoded, frame,
+                    "{name}: encode_pong must match golden bytes"
+                );
                 let reencoded = encode_pong(Some(decoded.payload)).unwrap();
-                assert_eq!(reencoded, frame, "{name}: decode -> encode_pong must preserve bytes");
+                assert_eq!(
+                    reencoded, frame,
+                    "{name}: decode -> encode_pong must preserve bytes"
+                );
             }
             L2_TUNNEL_TYPE_ERROR => {
                 saw_error = true;
@@ -205,16 +226,21 @@ fn l2_tunnel_vectors_match_golden_bytes() {
                 // code (u16 BE) | msg_len (u16 BE) | msg (UTF-8)
                 let mut expected_payload = Vec::new();
                 expected_payload.extend_from_slice(&code.to_be_bytes());
-                expected_payload.extend_from_slice(&(message.as_bytes().len() as u16).to_be_bytes());
+                expected_payload
+                    .extend_from_slice(&(message.as_bytes().len() as u16).to_be_bytes());
                 expected_payload.extend_from_slice(message.as_bytes());
                 assert_eq!(
                     expected_payload, payload,
                     "{name}: ERROR payload must match structured encoding"
                 );
 
-                let encoded =
-                    encode_with_limits(L2_TUNNEL_TYPE_ERROR, msg_flags, &payload, &Limits::default())
-                        .unwrap();
+                let encoded = encode_with_limits(
+                    L2_TUNNEL_TYPE_ERROR,
+                    msg_flags,
+                    &payload,
+                    &Limits::default(),
+                )
+                .unwrap();
                 assert_eq!(
                     encoded, frame,
                     "{name}: encode_with_limits(ERROR, ...) must match golden bytes"
