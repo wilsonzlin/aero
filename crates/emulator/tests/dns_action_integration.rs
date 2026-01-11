@@ -6,7 +6,9 @@ use aero_net_stack::packet::{
     EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
     MacAddr, UdpDatagram, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{Action, DnsResolved, IpCidr, NetStackBackend, StackConfig};
+use emulator::io::net::stack::{
+    Action, DnsResolved, HostPolicy, IpCidr, NetStackBackend, StackConfig,
+};
 
 fn wrap_udp_ipv4_eth(
     src_mac: MacAddr,
@@ -105,8 +107,13 @@ fn assert_dns_response_has_rcode(frame: &[u8], id: u16, rcode: u16) {
 
 #[test]
 fn dns_action_roundtrip_emits_response_frame() {
-    let mut cfg = StackConfig::default();
-    cfg.host_policy.enabled = true;
+    let cfg = StackConfig {
+        host_policy: HostPolicy {
+            enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let guest_mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x02]);
     let mut backend = NetStackBackend::new(cfg.clone());
 
@@ -147,11 +154,14 @@ fn dns_action_roundtrip_emits_response_frame() {
 
 #[test]
 fn dns_denied_ip_returns_nxdomain_and_is_not_cached() {
-    let mut cfg = StackConfig::default();
-    cfg.host_policy.enabled = true;
-    cfg.host_policy
-        .deny_ips
-        .push(IpCidr::new(Ipv4Addr::new(93, 184, 216, 0), 24));
+    let cfg = StackConfig {
+        host_policy: HostPolicy {
+            enabled: true,
+            deny_ips: vec![IpCidr::new(Ipv4Addr::new(93, 184, 216, 0), 24)],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let guest_mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x03]);
     let mut backend = NetStackBackend::new(cfg.clone());
 

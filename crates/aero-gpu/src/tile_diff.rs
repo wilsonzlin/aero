@@ -70,8 +70,8 @@ impl TileDiff {
         w: u32,
         h: u32,
     ) -> bool {
-        let packed_row_bytes = self.width as usize * self.bytes_per_pixel;
         let bpp = self.bytes_per_pixel;
+        let packed_row_bytes = self.width as usize * bpp;
         let row_len = w as usize * bpp;
 
         for row in 0..h as usize {

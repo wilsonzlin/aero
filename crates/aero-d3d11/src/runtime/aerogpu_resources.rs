@@ -534,7 +534,7 @@ impl AerogpuResourceManager {
         }
 
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-        if buf.size % alignment != 0 {
+        if !buf.size.is_multiple_of(alignment) {
             bail!(
                 "buffer {handle} size_bytes must be a multiple of {alignment} (got {})",
                 buf.size
