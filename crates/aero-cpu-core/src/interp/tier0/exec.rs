@@ -206,11 +206,14 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
 /// This keeps the core Tier-0 interpreter minimal while still allowing it to
 /// execute privileged/IO/time instructions required by OS boot code.
 ///
-/// Note: this helper operates on [`crate::state::CpuState`] only and therefore
-/// cannot emulate interrupt-related assists (`CLI`/`STI`/`INT*`/`IRET*`) which
-/// require access to [`crate::interrupts::PendingEventState`]. When it
-/// encounters one, it returns [`BatchExit::Assist`] with
-/// [`AssistReason::Interrupt`].
+/// Note: this helper intentionally does not execute interrupt-related assists
+/// (`CLI`/`STI`/`INT*`/`IRET*`). Those instructions require the architectural
+/// interrupt engine in [`crate::interrupts`] (including interrupt shadow and
+/// IRET bookkeeping). When an interrupt assist is encountered, this helper
+/// returns [`BatchExit::Assist`] with [`AssistReason::Interrupt`].
+///
+/// Use [`run_batch_cpu_core_with_assists`] if you need Tier-0 to resolve
+/// interrupt assists.
 pub fn run_batch_with_assists<B: CpuBus>(
     ctx: &mut AssistContext,
     cpu: &mut CpuCore,
