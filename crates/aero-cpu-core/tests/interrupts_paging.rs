@@ -278,6 +278,90 @@ fn long_mode_interrupt_delivery_can_use_ist_stack_under_paging() -> Result<(), C
 }
 
 #[test]
+fn long_mode_stack_page_fault_during_interrupt_delivery_delivers_pf_using_ist(
+) -> Result<(), CpuExit> {
+    // Trigger a page fault during the first stack push while delivering an interrupt.
+    // The page fault handler uses IST1 so it can be delivered even when the current stack
+    // page is not present.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x10000u64;
+    let pdpt_base = 0x11000u64;
+    let pd_base = 0x12000u64;
+    let pt_base = 0x13000u64;
+
+    phys.write_u64(pml4_base, pdpt_base | PTE_P | PTE_RW | PTE_US);
+    phys.write_u64(pdpt_base, pd_base | PTE_P | PTE_RW | PTE_US);
+    phys.write_u64(pd_base, pt_base | PTE_P | PTE_RW | PTE_US);
+
+    // Leaf mappings for the pages we touch.
+    set_pte(&mut phys, pt_base, 0x1, PTE_P | PTE_RW); // IDT supervisor-only
+    set_pte(&mut phys, pt_base, 0x2, PTE_P | PTE_RW); // interrupt handler supervisor-only
+    set_pte(&mut phys, pt_base, 0x3, PTE_P | PTE_RW); // #PF handler supervisor-only
+    set_pte(&mut phys, pt_base, 0x4, PTE_P | PTE_RW); // TSS supervisor-only
+    // Page 0x8 (0x8000..0x8FFF) intentionally left not-present: stack push faults there.
+    set_pte(&mut phys, pt_base, 0x9, PTE_P | PTE_RW); // IST stack supervisor-only
+
+    let mut bus = PagingBus::new(phys);
+
+    let idt_base = 0x1000u64;
+    let int_handler = 0x2000u64;
+    let pf_handler = 0x3000u64;
+    let tss_base = 0x4000u64;
+
+    let stack_top = 0x9000u64;
+    let ist1_top = 0xA000u64;
+
+    // Interrupt gate at 0x80 (CPL0 is allowed to invoke it) and page fault handler at vector 14.
+    write_idt_gate64(bus.inner_mut(), idt_base, 0x80, 0x08, int_handler, 0, 0x8E);
+    write_idt_gate64(bus.inner_mut(), idt_base, 14, 0x08, pf_handler, 1, 0x8E);
+    // Provide a #GP gate so unexpected faults don't instantly triple fault.
+    write_idt_gate64(bus.inner_mut(), idt_base, 13, 0x08, pf_handler, 1, 0x8E);
+
+    // TSS.IST1 at +0x24.
+    bus.inner_mut().write_u64(tss_base + 0x24, ist1_top);
+
+    let mut cpu = CpuCore::new(CpuMode::Long);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pml4_base;
+    cpu.state.control.cr4 = CR4_PAE;
+    cpu.state.msr.efer = EFER_LME;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+
+    cpu.state.segments.cs.selector = 0x08; // CPL0
+    cpu.state.segments.ss.selector = 0;
+    cpu.state.write_gpr64(gpr::RSP, stack_top);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    let return_rip = 0x5555u64;
+    cpu.pending.raise_software_interrupt(0x80, return_rip);
+    cpu.deliver_pending_event(&mut bus)?;
+
+    // Stack push into the not-present page should raise #PF and transfer to its handler.
+    assert_eq!(cpu.state.rip(), pf_handler);
+    assert_eq!(cpu.state.control.cr2, stack_top - 8);
+
+    // #PF uses IST1: error_code, RIP, CS, RFLAGS, old RSP, old SS.
+    let frame_base = cpu.state.read_gpr64(gpr::RSP);
+    assert_eq!(frame_base, ist1_top - 48);
+    assert_eq!(bus.read_u64(frame_base).unwrap(), 0x2); // not-present + write, supervisor
+    assert_eq!(bus.read_u64(frame_base + 8).unwrap(), return_rip);
+    assert_eq!(bus.read_u64(frame_base + 16).unwrap(), 0x08);
+    assert_ne!(bus.read_u64(frame_base + 24).unwrap() & 0x200, 0);
+
+    Ok(())
+}
+
+#[test]
 fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Result<(), CpuExit>
 {
     // Physical memory layout (identity-mapped for low pages):

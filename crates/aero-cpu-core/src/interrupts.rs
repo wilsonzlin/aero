@@ -1035,6 +1035,18 @@ fn push16<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
     match bus.write_u16(addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
+        Err(crate::exception::Exception::PageFault { addr, error_code }) => {
+            state.control.cr2 = addr;
+            deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::PageFault,
+                saved_rip,
+                Some(error_code),
+            )
+            .map(|()| PushOutcome::NestedExceptionDelivered)
+        }
         Err(_) => deliver_exception(
             bus,
             state,
@@ -1059,6 +1071,18 @@ fn push32<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
     match bus.write_u32(addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
+        Err(crate::exception::Exception::PageFault { addr, error_code }) => {
+            state.control.cr2 = addr;
+            deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::PageFault,
+                saved_rip,
+                Some(error_code),
+            )
+            .map(|()| PushOutcome::NestedExceptionDelivered)
+        }
         Err(_) => deliver_exception(
             bus,
             state,
@@ -1083,6 +1107,18 @@ fn push64<B: CpuBus>(
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
     match bus.write_u64(addr, value) {
         Ok(()) => Ok(PushOutcome::Pushed),
+        Err(crate::exception::Exception::PageFault { addr, error_code }) => {
+            state.control.cr2 = addr;
+            deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::PageFault,
+                saved_rip,
+                Some(error_code),
+            )
+            .map(|()| PushOutcome::NestedExceptionDelivered)
+        }
         Err(_) => deliver_exception(
             bus,
             state,
