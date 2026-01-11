@@ -3,6 +3,7 @@ use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, Step
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
 use aero_cpu_core::state::{
     gpr, CpuMode as CoreCpuMode, CpuState as CoreCpuState, Segment as CoreSegment, FLAG_CF, FLAG_ZF,
+    RFLAGS_IF,
 };
 use firmware::bda::BiosDataArea;
 use firmware::bios::{
@@ -353,6 +354,41 @@ fn aero_cpu_core_int10_tty_hypercall_roundtrip() {
     assert_eq!(vm.mem.read_u8(0xB8000), b'A');
     assert_eq!(vm.mem.read_u8(0xB8001), 0x07);
     assert_eq!(BiosDataArea::read_cursor_pos_page0(&vm.mem), (0, 1));
+}
+
+#[test]
+fn aero_cpu_core_bios_interrupt_preserves_interrupt_flag_from_caller() {
+    let bios = Bios::new(test_bios_config());
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: CLI; STI; INT 10h; HLT
+    vm.mem
+        .write_physical(0x7C00, &[0xFA, 0xFB, 0xCD, 0x10, 0xF4]);
+    vm.cpu.gpr[gpr::RAX] = 0x0E00 | (b'X' as u64);
+
+    assert!(vm.cpu.get_flag(RFLAGS_IF), "POST should leave IF enabled");
+
+    assert!(matches!(vm.step(), StepExit::Continue)); // CLI (assist)
+    assert!(!vm.cpu.get_flag(RFLAGS_IF));
+
+    assert!(matches!(vm.step(), StepExit::Continue)); // STI (assist)
+    assert!(vm.cpu.get_flag(RFLAGS_IF));
+
+    assert!(matches!(vm.step(), StepExit::Branch)); // INT
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x10))); // HLT in ROM stub
+    assert!(matches!(vm.step(), StepExit::Branch)); // IRET
+
+    // BIOS dispatch must preserve IF from the original interrupt frame, despite the CPU clearing
+    // IF while servicing the software interrupt.
+    assert!(vm.cpu.get_flag(RFLAGS_IF));
+    assert_eq!(vm.cpu.segments.cs.selector, 0x0000);
+    assert_eq!(vm.cpu.rip(), 0x7C04);
+
+    assert!(matches!(vm.step(), StepExit::Halted)); // final HLT
+    assert_eq!(vm.bios.tty_output(), b"X");
 }
 
 #[test]
