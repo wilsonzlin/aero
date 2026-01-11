@@ -45,8 +45,8 @@ import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { UsbBroker } from "./usb/usb_broker";
-import { explainWebUsbError, formatWebUsbError } from "./platform/webusb_troubleshooting";
 import { WebHidPassthroughRuntime } from "./usb/webhid_passthrough_runtime";
+import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -2802,98 +2802,7 @@ function renderInputPanel(): HTMLElement {
 }
 
 function renderWebUsbBrokerPanel(): HTMLElement {
-  const status = el("pre", { text: "" });
-  const errorTitle = el("div", { class: "bad", text: "" });
-  const errorDetails = el("div", { class: "hint", text: "" });
-  const errorRaw = el("pre", { class: "mono", text: "" });
-  const errorHints = el("ul");
-
-  function clearError(): void {
-    errorTitle.textContent = "";
-    errorDetails.textContent = "";
-    errorRaw.textContent = "";
-    errorHints.replaceChildren();
-  }
-
-  function showError(err: unknown): void {
-    const explained = explainWebUsbError(err);
-    errorTitle.textContent = explained.title;
-    errorDetails.textContent = explained.details ?? "";
-    errorRaw.textContent = formatWebUsbError(err);
-    errorHints.replaceChildren(...explained.hints.map((h) => el("li", { text: h })));
-  }
-
-  function setStatus(info: { vendorId: number; productId: number; productName?: string } | null): void {
-    if (!info) {
-      status.textContent = "Selected device: (none)";
-      return;
-    }
-    const vid = info.vendorId.toString(16).padStart(4, "0");
-    const pid = info.productId.toString(16).padStart(4, "0");
-    status.textContent = `Selected device: ${info.productName ? `${info.productName} ` : ""}(vid=0x${vid} pid=0x${pid})`;
-  }
-
-  setStatus(null);
-
-  const supported = typeof (navigator as unknown as { usb?: unknown }).usb !== "undefined";
-  if (!supported) {
-    errorTitle.textContent = "WebUSB is not available in this browser context.";
-  }
-
-  if (supported) {
-    // Keep the panel in sync with broker selection/disconnect events by attaching a MessagePort.
-    const channel = new MessageChannel();
-    usbBroker.attachWorkerPort(channel.port1);
-    channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
-      const data = ev.data as Partial<{ type: string; ok: boolean; error?: string; info?: unknown }> | undefined;
-      if (!data || data.type !== "usb.selected") return;
-      if (data.ok && data.info && typeof data.info === "object") {
-        const info = data.info as { vendorId: number; productId: number; productName?: string };
-        setStatus(info);
-        clearError();
-      } else {
-        setStatus(null);
-        if (typeof data.error === "string") {
-          showError(data.error);
-        }
-      }
-    });
-    channel.port2.start();
-  }
-
-  const selectButton = el("button", {
-    text: "Select WebUSB device for passthrough broker",
-    disabled: supported ? undefined : "true",
-    onclick: () => {
-      clearError();
-      usbBroker
-        .requestDevice()
-        .then((info) => {
-          setStatus(info);
-        })
-        .catch((err) => {
-          showError(err);
-        });
-    },
-  }) as HTMLButtonElement;
-
-  const hint = el("div", {
-    class: "mono",
-    text: "The main thread owns WebUSB; workers send usb.action messages and receive usb.completion replies.",
-  });
-
-  return el(
-    "div",
-    { class: "panel" },
-    el("h2", { text: "WebUSB passthrough broker" }),
-    hint,
-    el("div", { class: "row" }, selectButton),
-    status,
-    errorTitle,
-    errorDetails,
-    errorRaw,
-    errorHints,
-  );
+  return renderWebUsbBrokerPanelUi(usbBroker);
 }
 
 function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {

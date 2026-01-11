@@ -140,7 +140,7 @@ function installMockFetch(): () => void {
 }
 
 describe("net/l2RelaySignalingClient", () => {
-  it("creates an l2 DataChannel with reliable semantics (ordered by default)", async () => {
+  it("creates an l2 DataChannel with reliable semantics (unordered by default)", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const originalPc = g.RTCPeerConnection;
     g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
@@ -156,7 +156,7 @@ describe("net/l2RelaySignalingClient", () => {
 
       expect(pc.createdLabel).toBe("l2");
       expect(pc.createdInit).toBeDefined();
-      expect(pc.createdInit?.ordered).toBe(true);
+      expect(pc.createdInit?.ordered).toBe(false);
       expect(pc.createdInit?.maxRetransmits).toBeUndefined();
       expect(pc.createdInit?.maxPacketLifeTime).toBeUndefined();
     } finally {

@@ -90,17 +90,89 @@ export class UsbBroker {
 
   private readonly ports = new Set<MessagePort | Worker>();
   private readonly portListeners = new Map<MessagePort | Worker, EventListener>();
+  private readonly deviceChangeListeners = new Set<() => void>();
 
   private readonly queue: QueueItem[] = [];
   private processing = false;
 
   constructor() {
-    getNavigatorUsb()?.addEventListener?.("disconnect", (ev: Event) => {
+    const usb = getNavigatorUsb();
+    usb?.addEventListener?.("disconnect", (ev: Event) => {
       const device = (ev as unknown as { device?: USBDevice }).device;
-      if (!device || !this.device) return;
-      if (device !== this.device) return;
-      this.handleDisconnect("WebUSB device disconnected.");
+      if (device && this.device && device === this.device) {
+        this.handleDisconnect("WebUSB device disconnected.");
+      }
+      this.emitDeviceChange();
     });
+
+    usb?.addEventListener?.("connect", () => {
+      this.emitDeviceChange();
+    });
+  }
+
+  subscribeToDeviceChanges(listener: () => void): () => void {
+    this.deviceChangeListeners.add(listener);
+    return () => {
+      this.deviceChangeListeners.delete(listener);
+    };
+  }
+
+  async getKnownDevices(): Promise<USBDevice[]> {
+    const usb = getNavigatorUsb();
+    if (!usb || typeof usb.getDevices !== "function") {
+      throw new Error("WebUSB is unavailable (navigator.usb.getDevices missing).");
+    }
+
+    try {
+      return await usb.getDevices();
+    } catch (err) {
+      const wrapped = new Error("navigator.usb.getDevices() failed.");
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (wrapped as any).cause = err;
+      } catch {
+        // ignore
+      }
+      throw wrapped;
+    }
+  }
+
+  async attachKnownDevice(device: USBDevice): Promise<UsbDeviceInfo> {
+    const backend = new WebUsbBackend(device);
+
+    try {
+      await backend.ensureOpenAndClaimed();
+    } catch (err) {
+      try {
+        await device.close();
+      } catch {
+        // Ignore close errors; failing to open/claim is the root issue.
+      }
+      throw err;
+    }
+
+    // Replace any previously-selected device and fail outstanding actions so they don't accidentally run on the new device.
+    this.resetSelectedDevice("WebUSB device replaced.");
+
+    this.device = device;
+    this.backend = backend;
+    this.selectedInfo = {
+      vendorId: device.vendorId,
+      productId: device.productId,
+      productName: device.productName ?? undefined,
+    };
+    this.disconnectError = null;
+    this.disconnectSignal = createDeferred();
+
+    const msg: UsbSelectedMessage = { type: "usb.selected", ok: true, info: this.selectedInfo };
+    this.broadcast(msg);
+    return this.selectedInfo;
+  }
+
+  async detachSelectedDevice(reason = "WebUSB device detached."): Promise<void> {
+    if (!this.device && !this.backend && !this.selectedInfo) return;
+    this.resetSelectedDevice(reason);
+    this.broadcast({ type: "usb.selected", ok: false, error: reason } satisfies UsbSelectedMessage);
   }
 
   async requestDevice(filters?: USBDeviceFilter[]): Promise<UsbDeviceInfo> {
@@ -330,6 +402,16 @@ export class UsbBroker {
   private broadcast(msg: UsbSelectedMessage): void {
     for (const port of this.ports) {
       this.postToPort(port, msg);
+    }
+  }
+
+  private emitDeviceChange(): void {
+    for (const listener of this.deviceChangeListeners) {
+      try {
+        listener();
+      } catch (err) {
+        console.warn("UsbBroker device-change listener failed", err);
+      }
     }
   }
 }

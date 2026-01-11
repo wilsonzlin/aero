@@ -84,6 +84,87 @@ afterEach(() => {
 });
 
 describe("usb/UsbBroker", () => {
+  it("getKnownDevices() returns navigator.usb.getDevices()", async () => {
+    const deviceA = { vendorId: 0x1234, productId: 0x5678 } as unknown as USBDevice;
+    const deviceB = { vendorId: 0xabcd, productId: 0x0001 } as unknown as USBDevice;
+
+    const getDevices = vi.fn(async () => [deviceA, deviceB]);
+    stubNavigatorUsb({ getDevices });
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    await expect(broker.getKnownDevices()).resolves.toEqual([deviceA, deviceB]);
+    expect(getDevices).toHaveBeenCalledTimes(1);
+  });
+
+  it("attachKnownDevice() opens/claims via WebUsbBackend and does not call requestDevice()", async () => {
+    const ensureOpenAndClaimed = vi.fn(async () => {});
+
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {
+          await ensureOpenAndClaimed();
+        }
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      productName: "Demo",
+      close: vi.fn(async () => {}),
+    } as unknown as USBDevice;
+
+    const requestDevice = vi.fn(async () => device);
+    stubNavigatorUsb({ requestDevice });
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    await broker.attachKnownDevice(device);
+
+    expect(ensureOpenAndClaimed).toHaveBeenCalledTimes(1);
+    expect(requestDevice).toHaveBeenCalledTimes(0);
+  });
+
+  it("attachKnownDevice() broadcasts usb.selected to attached ports", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      productName: "Demo",
+      close: async () => {},
+    } as unknown as USBDevice;
+    stubNavigatorUsb({ requestDevice: vi.fn(async () => device) });
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    await broker.attachKnownDevice(device);
+
+    const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
+    expect(selected).toEqual([
+      { type: "usb.selected", ok: true, info: { vendorId: 0x1234, productId: 0x5678, productName: "Demo" } },
+    ]);
+  });
+
   it("serializes actions via FIFO queue", async () => {
     const callOrder: number[] = [];
     const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
