@@ -417,6 +417,14 @@ VirtIoSndWaveRtDpcRoutine(
 
         if (InterlockedCompareExchange(&stream->RxInFlight, 0, 0) != 0) {
             KeReleaseSpinLock(&stream->Lock, oldIrql);
+            /*
+             * If an interrupt is lost/delayed, the RX completion may already be
+             * sitting in the used ring. Poll the rxq so capture continues to
+             * make progress (completions are still throttled by this period timer).
+             */
+            if (dx != NULL) {
+                (VOID)VirtIoSndHwDrainRxCompletions(dx, NULL, NULL);
+            }
             goto Exit;
         }
 
