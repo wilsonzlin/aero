@@ -880,6 +880,7 @@ Capture data path (`rxq`):
 - The device MUST fill payload bytes with captured PCM samples when stream 1 is running.
 - If not enough captured samples are available, the device MUST fill the missing part with silence and complete the buffer with OK status.
 - If stream 1 is not running, the device MUST complete the buffer with `IO_ERR`.
+- The device MAY reject capture buffers with payloads larger than **4 MiB** with `BAD_MSG` (implementation safety limit).
 
 ## 4. Versioning and compatibility
 
