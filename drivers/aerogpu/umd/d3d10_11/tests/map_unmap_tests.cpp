@@ -124,6 +124,8 @@ struct Harness {
   uint64_t next_fence = 1;
   uint64_t completed_fence = 0;
   uint64_t last_submitted_fence = 0;
+  uint32_t wait_call_count = 0;
+  uint32_t last_wait_timeout_ms = 0;
 
   std::vector<Allocation> allocations;
   AEROGPU_WDDM_ALLOCATION_HANDLE next_handle = 1;
@@ -225,11 +227,12 @@ struct Harness {
   }
 
   static HRESULT AEROGPU_APIENTRY WaitForFence(void* user, uint64_t fence, uint32_t timeout_ms) {
-    (void)timeout_ms;
     if (!user) {
       return E_INVALIDARG;
     }
     auto* h = reinterpret_cast<Harness*>(user);
+    h->wait_call_count++;
+    h->last_wait_timeout_ms = timeout_ms;
     if (fence == 0 || h->completed_fence >= fence) {
       return S_OK;
     }
@@ -1032,6 +1035,8 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   }
 
   AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  dev.harness.wait_call_count = 0;
+  dev.harness.last_wait_timeout_ms = ~0u;
   HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
                                        buf.hResource,
                                        /*subresource=*/0,
@@ -1041,11 +1046,19 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   if (!Check(hr == DXGI_ERROR_WAS_STILL_DRAWING, "Map(DO_NOT_WAIT) should return DXGI_ERROR_WAS_STILL_DRAWING")) {
     return false;
   }
+  if (!Check(dev.harness.wait_call_count == 1, "Map(DO_NOT_WAIT) should issue exactly one fence wait poll")) {
+    return false;
+  }
+  if (!Check(dev.harness.last_wait_timeout_ms == 0, "Map(DO_NOT_WAIT) should pass timeout_ms=0 to fence wait")) {
+    return false;
+  }
 
   // Mark the fence complete and retry; DO_NOT_WAIT should now succeed.
   dev.harness.completed_fence = pending_fence;
 
   mapped = {};
+  dev.harness.wait_call_count = 0;
+  dev.harness.last_wait_timeout_ms = ~0u;
   hr = dev.device_funcs.pfnMap(dev.hDevice,
                                buf.hResource,
                                /*subresource=*/0,
@@ -1053,6 +1066,12 @@ bool TestMapDoNotWaitReportsStillDrawing() {
                                AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT,
                                &mapped);
   if (!Check(hr == S_OK, "Map(DO_NOT_WAIT) should succeed once fence is complete")) {
+    return false;
+  }
+  if (!Check(dev.harness.wait_call_count == 1, "Map(DO_NOT_WAIT) retry should poll fence once")) {
+    return false;
+  }
+  if (!Check(dev.harness.last_wait_timeout_ms == 0, "Map(DO_NOT_WAIT) retry should still pass timeout_ms=0")) {
     return false;
   }
   if (!Check(mapped.pData != nullptr, "Map returned a non-null pointer")) {
