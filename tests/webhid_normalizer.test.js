@@ -106,3 +106,10 @@ test('webhid_normalize: derives isRelative when omitted', () => {
   assert.equal(out.isAbsolute, false);
   assert.equal(out.isRelative, true);
 });
+
+test('webhid_normalize: rejects ambiguous single-usage ranges', () => {
+  assert.throws(
+    () => normalizeSingleItem(makeItem({ isRange: true, usages: [5], usageMinimum: 5, usageMaximum: 6 })),
+    /isRange=true/,
+  );
+});
