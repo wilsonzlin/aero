@@ -177,9 +177,14 @@ Notes:
 
 ## Legacy / transitional virtio-pci path (not shipped)
 
-The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for QEMU defaults).
+The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example
+`src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`).
+That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only
+negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the default
+contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
+stock QEMU defaults).
 
-CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
+CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `ci/check-win7-virtio-snd-modern-build.ps1`.
 
 ## Design notes
 
