@@ -80,9 +80,9 @@ This is the simplest option because platform-specific config files are applied a
 
 Configure your host with:
 
-- Root directory: `web`
-- Build command: `npm ci && npm run build`
-- Output directory: `dist`
+- Root directory: `.`
+- Build command: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm -w web run build`
+- Output directory: `web/dist`
 
 ### Option B: Deploy a GitHub Release web artifact (zip)
 
