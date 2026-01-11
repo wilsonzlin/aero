@@ -282,7 +282,9 @@ In a Win7 VM with AeroGPU installed and working correctly:
   * creates a non-shared mip chain texture (Levels=4) as a baseline for `NumAllocations` logging
   * creates a shared render-target surface and attempts shared textures that would imply multiple mips (Levels=4 and Levels=0/full chain), which may be rejected by the MVP single-allocation policy
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
+* `d3d10_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
+* `d3d10_1_map_do_not_wait` is the D3D10.1 variant of the above `Map(READ, DO_NOT_WAIT)` non-blocking poll test
 * `d3d10_caps_smoke` validates `ID3D10Device::CheckFormatSupport` bits for a few core RT/DS + index/vertex formats used by common apps
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
 * `d3d11_texture` draws a textured triangle using a 2x2 BGRA texture and validates that the **center pixel samples the expected texel** (corner remains clear color) via staging readback
