@@ -60,10 +60,38 @@ export type NormalizedHidCollectionInfo = HidCollectionInfo;
 export type NormalizedHidReportInfo = HidReportInfo;
 export type NormalizedHidReportItem = HidReportItem;
 
+const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
+
+function isContiguousUsageRange(usages: readonly number[]): boolean {
+  if (usages.length === 0) return true;
+
+  const sorted = Array.from(new Set(usages)).sort((a, b) => a - b);
+  const min = sorted[0]!;
+  const max = sorted[sorted.length - 1]!;
+  if (min === max) return true;
+
+  // Support the legacy `[min, max]` representation.
+  if (sorted.length === 2) return true;
+
+  const span = max - min + 1;
+  if (span !== sorted.length) return false;
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i] !== min + i) return false;
+  }
+  return true;
+}
+
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
+  const usages = Array.from(item.usages);
+
+  // WebHID uses `isRange` + expanded `usages` lists. Be robust to malformed input:
+  // if `isRange` is true but the list is not contiguous, downgrade to explicit usages.
+  const isRange =
+    item.isRange && (usages.length > MAX_RANGE_CONTIGUITY_CHECK_LEN || isContiguousUsageRange(usages));
+
   return {
     usagePage: item.usagePage,
-    usages: Array.from(item.usages),
+    usages,
     usageMinimum: item.usageMinimum,
     usageMaximum: item.usageMaximum,
     reportSize: item.reportSize,
@@ -86,7 +114,7 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
     isBufferedBytes: item.isBufferedBytes,
     isConstant: item.isConstant,
     isLinear: item.isLinear,
-    isRange: item.isRange,
+    isRange,
     isRelative: item.isRelative,
     isVolatile: item.isVolatile,
     hasNull: item.hasNull,
@@ -119,4 +147,3 @@ export function normalizeCollections(
 ): NormalizedHidCollectionInfo[] {
   return collections.map(normalizeCollection);
 }
-

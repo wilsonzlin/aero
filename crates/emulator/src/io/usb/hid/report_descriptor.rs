@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+const MAX_EXPANDED_USAGE_RANGE: u32 = 4096;
+
 /// WebHID-like view of a parsed HID report descriptor.
 ///
 /// This is intentionally a minimal subset that is sufficient for:
@@ -24,6 +26,12 @@ pub struct HidCollectionInfo {
 pub struct HidReportInfo {
     pub report_id: u32,
     pub items: Vec<HidReportItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HidReportDescriptorParseResult {
+    pub collections: Vec<HidCollectionInfo>,
+    pub truncated_ranges: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,12 +91,12 @@ pub enum HidDescriptorError {
     MultipleUsagePages { existing: u32, new: u32 },
     #[error("usage range is incomplete (must have both Usage Minimum and Usage Maximum)")]
     IncompleteUsageRange,
+    #[error("usage range is invalid: minimum {min:#x} > maximum {max:#x}")]
+    UsageRangeMinGreaterThanMax { min: u32, max: u32 },
     #[error("report id {report_id} is out of range (must be <= 255)")]
     InvalidReportId { report_id: u32 },
     #[error("unitExponent {unit_exponent} is out of range (must be -8..=7)")]
     InvalidUnitExponent { unit_exponent: i32 },
-    #[error("is_range report items must contain at least two usages (min/max)")]
-    InvalidUsageRange,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,13 +235,14 @@ fn get_or_create_report<'a>(
 
 pub fn parse_report_descriptor(
     bytes: &[u8],
-) -> Result<Vec<HidCollectionInfo>, HidDescriptorError> {
+) -> Result<HidReportDescriptorParseResult, HidDescriptorError> {
     let mut global = GlobalState::default();
     let mut global_stack: Vec<GlobalState> = Vec::new();
     let mut local = LocalState::default();
 
     let mut root: Vec<HidCollectionInfo> = Vec::new();
     let mut collection_stack: Vec<HidCollectionInfo> = Vec::new();
+    let mut truncated_ranges = false;
 
     let mut cursor = 0usize;
     while cursor < bytes.len() {
@@ -286,12 +295,31 @@ pub fn parse_report_descriptor(
                         let is_buffered_bytes = (flags & (1 << 8)) != 0;
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
-                        let (is_range, usages) =
-                            match (local.usage_minimum, local.usage_maximum) {
-                                (Some(min), Some(max)) => (true, vec![min, max]),
-                                (None, None) => (false, local.usages.clone()),
-                                _ => return Err(HidDescriptorError::IncompleteUsageRange),
-                            };
+                        let (is_range, usages) = match (local.usage_minimum, local.usage_maximum) {
+                            (Some(min), Some(max)) => {
+                                if min > max {
+                                    return Err(HidDescriptorError::UsageRangeMinGreaterThanMax {
+                                        min,
+                                        max,
+                                    });
+                                }
+                                match max.checked_sub(min).and_then(|d| d.checked_add(1)) {
+                                    Some(len) if len <= MAX_EXPANDED_USAGE_RANGE => {
+                                        let mut out = Vec::with_capacity(len as usize);
+                                        for u in min..=max {
+                                            out.push(u);
+                                        }
+                                        (true, out)
+                                    }
+                                    _ => {
+                                        truncated_ranges = true;
+                                        (true, vec![min, max])
+                                    }
+                                }
+                            }
+                            (None, None) => (false, local.usages.clone()),
+                            _ => return Err(HidDescriptorError::IncompleteUsageRange),
+                        };
 
                         let item = HidReportItem {
                             is_array,
@@ -454,7 +482,10 @@ pub fn parse_report_descriptor(
         return Err(HidDescriptorError::UnbalancedCollections);
     }
 
-    Ok(root)
+    Ok(HidReportDescriptorParseResult {
+        collections: root,
+        truncated_ranges,
+    })
 }
 
 fn encode_unsigned(value: u32) -> [u8; 4] {
@@ -570,11 +601,38 @@ fn synthesize_report(
         emit_unsigned(out, ItemType::Global, 9, item.report_count)?;
 
         if item.is_range {
-            if item.usages.len() < 2 {
-                return Err(HidDescriptorError::InvalidUsageRange);
+            if !item.usages.is_empty() {
+                let mut sorted = item.usages.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                let min = *sorted.first().unwrap();
+                let max = *sorted.last().unwrap();
+
+                let contiguous = if min == max {
+                    true
+                } else if item.usages.len() == 2 {
+                    // Support legacy `[min, max]` representation without needing to allocate the
+                    // full expanded list.
+                    true
+                } else if let Some(span) = max.checked_sub(min).and_then(|d| d.checked_add(1)) {
+                    span as usize == sorted.len()
+                        && sorted
+                            .iter()
+                            .enumerate()
+                            .all(|(idx, &v)| v == min + (idx as u32))
+                } else {
+                    false
+                };
+
+                if contiguous {
+                    emit_unsigned(out, ItemType::Local, 1, min)?;
+                    emit_unsigned(out, ItemType::Local, 2, max)?;
+                } else {
+                    for usage in sorted {
+                        emit_unsigned(out, ItemType::Local, 0, usage)?;
+                    }
+                }
             }
-            emit_unsigned(out, ItemType::Local, 1, item.usages[0])?;
-            emit_unsigned(out, ItemType::Local, 2, item.usages[1])?;
         } else {
             for &usage in &item.usages {
                 emit_unsigned(out, ItemType::Local, 0, usage)?;
@@ -840,7 +898,7 @@ mod tests {
 
     fn roundtrip(desc: &[u8]) {
         let parsed = parse_report_descriptor(desc).unwrap();
-        let synthesized = synthesize_report_descriptor(&parsed).unwrap();
+        let synthesized = synthesize_report_descriptor(&parsed.collections).unwrap();
         let reparsed = parse_report_descriptor(&synthesized).unwrap();
         assert_eq!(parsed, reparsed);
     }
@@ -891,7 +949,7 @@ mod tests {
             "expected Report ID item (0x85 0x01) in synthesized descriptor: {desc:02x?}"
         );
         let reparsed = parse_report_descriptor(&desc).unwrap();
-        assert_eq!(collections, reparsed);
+        assert_eq!(collections, reparsed.collections);
     }
 
     #[test]
@@ -935,7 +993,7 @@ mod tests {
             "expected 2-byte Usage (0x0a 0x34 0x12) in descriptor: {desc:02x?}"
         );
         let reparsed = parse_report_descriptor(&desc).unwrap();
-        assert_eq!(collections, reparsed);
+        assert_eq!(collections, reparsed.collections);
     }
 
     #[test]
@@ -975,7 +1033,7 @@ mod tests {
             "expected Logical Minimum (-127) encoding (0x15 0x81): {desc:02x?}"
         );
         let reparsed = parse_report_descriptor(&desc).unwrap();
-        assert_eq!(collections, reparsed);
+        assert_eq!(collections, reparsed.collections);
     }
 
     #[test]
@@ -1037,10 +1095,10 @@ mod tests {
         ];
 
         let parsed = parse_report_descriptor(&desc).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].input_reports.len(), 1);
-        assert_eq!(parsed[0].input_reports[0].items.len(), 1);
-        assert_eq!(parsed[0].input_reports[0].items[0].unit_exponent, -2);
+        assert_eq!(parsed.collections.len(), 1);
+        assert_eq!(parsed.collections[0].input_reports.len(), 1);
+        assert_eq!(parsed.collections[0].input_reports[0].items.len(), 1);
+        assert_eq!(parsed.collections[0].input_reports[0].items[0].unit_exponent, -2);
     }
 
     #[test]
@@ -1128,7 +1186,114 @@ mod tests {
         assert!(found, "expected 2-byte Input item with Buffered Bytes flag: {desc:02x?}");
 
         let reparsed = parse_report_descriptor(&desc).unwrap();
-        assert_eq!(collections, reparsed);
+        assert_eq!(collections, reparsed.collections);
+    }
+
+    #[test]
+    fn parse_expands_keyboard_modifier_usage_range() {
+        let kb = UsbHidKeyboard::new();
+        let parsed = parse_report_descriptor(kb.get_hid_report_descriptor()).unwrap();
+        assert!(!parsed.truncated_ranges);
+        assert_eq!(parsed.collections.len(), 1);
+
+        let collection = &parsed.collections[0];
+        assert_eq!(collection.input_reports.len(), 1);
+        let report = &collection.input_reports[0];
+        assert_eq!(report.report_id, 0);
+        let modifier_item = &report.items[0];
+        assert!(modifier_item.is_range);
+        assert_eq!(
+            modifier_item.usages,
+            vec![0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7]
+        );
+
+        let synthesized = synthesize_report_descriptor(&parsed.collections).unwrap();
+        assert!(
+            synthesized
+                .windows(4)
+                .any(|w| w == [0x19, 0xE0, 0x29, 0xE7]),
+            "expected Usage Minimum/Maximum to cover E0..E7, got: {synthesized:02x?}"
+        );
+    }
+
+    #[test]
+    fn synth_range_single_usage_emits_min_eq_max() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x06,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_range: true,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 1,
+                    usage_page: 0x07,
+                    usages: vec![5],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(4).any(|w| w == [0x19, 0x05, 0x29, 0x05]),
+            "expected single-usage range to synthesize as Usage Min/Max(5): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn synth_noncontiguous_range_falls_back_to_explicit_usages() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x06,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_range: true,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 0,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 3,
+                    usage_page: 0x07,
+                    usages: vec![1, 3, 4],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(6).any(|w| w == [0x09, 0x01, 0x09, 0x03, 0x09, 0x04]),
+            "expected explicit Usage tags for non-contiguous range: {desc:02x?}"
+        );
+        assert!(
+            !desc.windows(4).any(|w| w == [0x19, 0x01, 0x29, 0x04]),
+            "did not expect Usage Minimum/Maximum for non-contiguous usages: {desc:02x?}"
+        );
     }
 
     fn simple_item(report_size: u32, report_count: u32) -> HidReportItem {

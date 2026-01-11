@@ -1,5 +1,3 @@
-pub mod report_descriptor;
-
 use crate::usb::{SetupPacket, UsbDevice, UsbHandshake, UsbSpeed};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;

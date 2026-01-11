@@ -12,7 +12,7 @@ pub use gamepad::UsbHidGamepadHandle;
 
 pub use report_descriptor::{
     parse_report_descriptor, synthesize_report_descriptor, HidCollectionInfo, HidDescriptorError,
-    HidReportInfo, HidReportItem,
+    HidReportDescriptorParseResult, HidReportInfo, HidReportItem,
 };
 
 pub use passthrough::{UsbHidPassthrough, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
