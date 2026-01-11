@@ -18,51 +18,117 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A0D8D2A5-9E9B-4B2C-90F3-3E0A06A5E9B1}</ProjectGuid>
-    <Keyword>MakeFileProj</Keyword>
+    <Keyword>Win32Proj</Keyword>
     <RootNamespace>virtiotransporttest</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\i386\\virtio-transport-test.sys" copy /y "%%D\\i386\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <NMakeBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ &amp;&amp; for /d %%D in (obj*) do if exist "%%D\\amd64\\virtio-transport-test.sys" copy /y "%%D\\amd64\\virtio-transport-test.sys" "$(OutDir)" &amp;&amp; if not exist "$(OutDir)virtio-transport-test.sys" exit /b 1</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;VIRTIO_CORE_ENABLE_DIAGNOSTICS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\virtio-core\include;$(ProjectDir)..\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wdmguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;VIRTIO_CORE_ENABLE_DIAGNOSTICS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\virtio-core\include;$(ProjectDir)..\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wdmguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;VIRTIO_CORE_ENABLE_DIAGNOSTICS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\virtio-core\include;$(ProjectDir)..\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wdmguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN7;_WIN32_WINNT=0x0601;WINVER=0x0601;VIRTIO_CORE_ENABLE_DIAGNOSTICS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\virtio-core\include;$(ProjectDir)..\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wdmguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
-    <None Include="makefile" />
-    <None Include="sources" />
-    <None Include="virtio-transport-test.inf" />
-    <None Include="src\virtio_transport_test.c" />
+    <ClCompile Include="src\virtio_transport_test.c" />
+    <ClCompile Include="..\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\virtio-core\src\virtio_pci_caps.c" />
+    <ClCompile Include="..\virtio-core\src\virtio_pci_modern.c" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="..\virtio-core\include\virtio_pci_modern.h" />
+    <None Include="virtio-transport-test.inf" />
+  </ItemGroup>
+
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets" />
 </Project>

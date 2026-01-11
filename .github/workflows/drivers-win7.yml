@@ -43,6 +43,8 @@ jobs:
           has_win7_virtio_common=false
           has_win7_virtio_modern_common=false
           has_portable_virtq_split=false
+          has_portable_virtio_pci_modern=false
+          has_win7_virtio_cap_parser=false
 
           if [[ -f "drivers/windows7/virtio/common/tests/CMakeLists.txt" ]]; then
             has_win7_virtio_common=true
@@ -53,8 +55,14 @@ jobs:
           if [[ -f "drivers/windows/virtio/common/tests/CMakeLists.txt" ]]; then
             has_portable_virtq_split=true
           fi
+          if [[ -f "drivers/windows/virtio/pci-modern/tests/CMakeLists.txt" ]]; then
+            has_portable_virtio_pci_modern=true
+          fi
+          if [[ -f "drivers/win7/virtio/tests/CMakeLists.txt" ]]; then
+            has_win7_virtio_cap_parser=true
+          fi
 
-          if [[ "$has_win7_virtio_common" != "true" && "$has_win7_virtio_modern_common" != "true" && "$has_portable_virtq_split" != "true" ]]; then
+          if [[ "$has_win7_virtio_common" != "true" && "$has_win7_virtio_modern_common" != "true" && "$has_portable_virtq_split" != "true" && "$has_portable_virtio_pci_modern" != "true" && "$has_win7_virtio_cap_parser" != "true" ]]; then
             echo "No virtio host tests found; skipping."
             exit 0
           fi
@@ -88,8 +96,10 @@ jobs:
           $hasWin7VirtioCommon = Test-Path -LiteralPath 'drivers/windows7/virtio/common/tests/CMakeLists.txt'
           $hasWin7VirtioModernCommon = Test-Path -LiteralPath 'drivers/windows7/virtio-modern/common/tests/CMakeLists.txt'
           $hasPortableVirtqSplit = Test-Path -LiteralPath 'drivers/windows/virtio/common/tests/CMakeLists.txt'
+          $hasPortableVirtioPciModern = Test-Path -LiteralPath 'drivers/windows/virtio/pci-modern/tests/CMakeLists.txt'
+          $hasWin7VirtioCapParser = Test-Path -LiteralPath 'drivers/win7/virtio/tests/CMakeLists.txt'
 
-          if (!$hasWin7VirtioCommon -and !$hasWin7VirtioModernCommon -and !$hasPortableVirtqSplit) {
+          if (!$hasWin7VirtioCommon -and !$hasWin7VirtioModernCommon -and !$hasPortableVirtqSplit -and !$hasPortableVirtioPciModern -and !$hasWin7VirtioCapParser) {
             Write-Host "No virtio host tests found; skipping."
             exit 0
           }
