@@ -108,6 +108,32 @@ function parseCaddyfile(filePath) {
   return [{ matcher: 'caddyfile', headers }];
 }
 
+function parseNetlifyToml(filePath) {
+  const headers = {};
+  const lines = readText(filePath).split(/\r?\n/);
+  let inValues = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    if (/^\[headers\.values\]\s*$/.test(trimmed)) {
+      inValues = true;
+      continue;
+    }
+    if (inValues && trimmed.startsWith('[')) {
+      // Next TOML section.
+      break;
+    }
+    if (!inValues) continue;
+
+    const match = trimmed.match(/^([A-Za-z0-9-]+)\s*=\s*"([^"]*)"\s*$/);
+    if (!match) continue;
+    const [, key, value] = match;
+    headers[key] = value;
+  }
+  return [{ matcher: 'netlify', headers }];
+}
+
 function parseNginxConf(filePath) {
   const headers = {};
   const lines = readText(filePath).split(/\r?\n/);
@@ -167,6 +193,7 @@ const targets = [
   { type: 'vite', path: 'web/vite.config.ts' },
   { type: 'headers', path: 'web/public/_headers' },
   { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
+  { type: 'netlify', path: 'deploy/netlify.toml' },
   { type: 'vercel', path: 'deploy/vercel.json' },
   // The primary Vercel deployment config lives at repo root.
   { type: 'vercel', path: 'vercel.json' },
@@ -187,6 +214,9 @@ for (const target of targets) {
   switch (target.type) {
     case 'headers':
       rules = parseHeadersFile(filePath);
+      break;
+    case 'netlify':
+      rules = parseNetlifyToml(filePath);
       break;
     case 'vercel':
       rules = parseVercelJson(filePath);
