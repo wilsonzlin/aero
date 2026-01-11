@@ -689,6 +689,10 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         return status;
     }
 
+    RtlZeroMemory(deviceContext->QueueNotifyAddrCache, sizeof(deviceContext->QueueNotifyAddrCache));
+    deviceContext->PciDevice.QueueNotifyAddrCache = deviceContext->QueueNotifyAddrCache;
+    deviceContext->PciDevice.QueueNotifyAddrCacheCount = VIRTIO_INPUT_QUEUE_COUNT;
+
     revisionId = 0;
     status = VirtioPciModernValidateAeroContractV1RevisionId(&deviceContext->PciDevice, &revisionId);
     if (!NT_SUCCESS(status)) {
@@ -1157,12 +1161,20 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             VirtioInputReadReportQueuesStopAndFlush(Device, STATUS_DEVICE_NOT_READY);
         }
 
-         deviceContext->VirtioStarted = 1;
-         VirtioPciAddStatus(&deviceContext->PciDevice, VIRTIO_STATUS_DRIVER_OK);
+        deviceContext->VirtioStarted = 1;
+        VirtioPciAddStatus(&deviceContext->PciDevice, VIRTIO_STATUS_DRIVER_OK);
 
-         virtio_input_device_reset_state(&deviceContext->InputDevice, emitResetReports ? true : false);
-         deviceContext->InD0 = TRUE;
-     }
+        virtio_input_device_reset_state(&deviceContext->InputDevice, emitResetReports ? true : false);
+        deviceContext->InD0 = TRUE;
+
+        if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 0) {
+            WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[0]);
+            VioInputEventQProcessUsedBuffersLocked(deviceContext);
+            WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[0]);
+        } else {
+            VioInputEventQProcessUsedBuffersLocked(deviceContext);
+        }
+    }
 
     VirtioInputApplyTransportState(deviceContext);
     return STATUS_SUCCESS;

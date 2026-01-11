@@ -144,6 +144,7 @@ typedef struct _DEVICE_CONTEXT {
 
     VIOINPUT_COUNTERS Counters;
     VIRTIO_PCI_MODERN_DEVICE PciDevice;
+    volatile UINT16* QueueNotifyAddrCache[VIRTIO_INPUT_QUEUE_COUNT];
     WDFDMAENABLER DmaEnabler;
     UINT64 NegotiatedFeatures;
 
