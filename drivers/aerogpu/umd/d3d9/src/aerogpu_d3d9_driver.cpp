@@ -3559,7 +3559,6 @@ static HRESULT device_open_resource_impl(
   res->depth = std::max(1u, pOpenResource->depth);
   res->mip_levels = std::max(1u, pOpenResource->mip_levels);
   res->usage = pOpenResource->usage;
-  res->wddm_hAllocation = get_wddm_allocation_from_open_resource(pOpenResource);
 
   // Prefer a reconstructed size when the runtime provides a description; fall
   // back to the size_bytes persisted in allocation private data.
