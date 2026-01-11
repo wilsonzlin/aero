@@ -47,13 +47,18 @@ async function closeServer(server: http.Server | net.Server): Promise<void> {
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
-    const id = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
     // Avoid keeping the process open just for the timer in case the promise
     // settles quickly.
-    (id as unknown as { unref?: () => void }).unref?.();
+    (timer as unknown as { unref?: () => void }).unref?.();
   });
-  return Promise.race([promise, timeout]);
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 describe("tcp-mux browser client codec", () => {
