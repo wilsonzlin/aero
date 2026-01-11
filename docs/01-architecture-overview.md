@@ -134,7 +134,7 @@
 
 To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 
-- Each vCPU has its own `aero_cpu_core::CpuCore` (owns `CpuState`, `interrupts::PendingEventState`, and deterministic time).
+- Each vCPU has its own `aero_cpu_core::CpuCore` (owns `CpuState`, `interrupts::PendingEventState`, and `time::TimeSource`).
 - Guest physical memory and device models are shared.
 - Scheduling is either:
   - **Parallel vCPU workers** (one Web Worker per vCPU), or

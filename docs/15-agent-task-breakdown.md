@@ -96,7 +96,7 @@ pub trait CpuBus {
 // Port IO is modeled directly on the CPU bus via `CpuBus::io_read/io_write`.
 //
 // Architectural interrupt/exception delivery is handled by `aero_cpu_core::CpuCore`
-// (wrapper around `state::CpuState` + `interrupts::PendingEventState` + deterministic time).
+// (wrapper around `state::CpuState` + `interrupts::PendingEventState` + `time::TimeSource`).
 // External interrupts are injected by queuing a vector in `PendingEventState` and delivered
 // at instruction boundaries.
 ```
