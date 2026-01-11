@@ -152,8 +152,10 @@ export function compareGatewayBenchmarks({
   // Treat missing candidate metrics as unstable. This avoids silently passing
   // when a benchmark run fails or a metric stops being reported.
   //
-  // Note: missing baseline metrics are allowed so we can add new metrics without
-  // breaking comparisons against older baselines.
+  // Note: missing baseline metrics are treated as unstable by compare_core for
+  // non-informational metrics. If you want to roll out a new metric without
+  // breaking comparisons, mark it informational until the baseline also
+  // produces it (or avoid adding it to the threshold policy yet).
   const missingCandidateRequired = (result.comparisons ?? []).some(
     (c: any) => c?.status === "missing_candidate" && !c?.informational,
   );
