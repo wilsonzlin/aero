@@ -1174,6 +1174,21 @@ function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {
 }
 
 function renderRemoteDiskPanel(): HTMLElement {
+  const SETTINGS_KEY = 'aero.remoteDiskPanel.settings.v1';
+
+  function stableUrlForStorage(url: string): string {
+    // Avoid persisting signed URLs / auth query params into localStorage.
+    try {
+      const u = new URL(url, location.href);
+      u.search = '';
+      u.hash = '';
+      return u.toString();
+    } catch {
+      const noHash = url.split('#', 1)[0] ?? url;
+      return (noHash.split('?', 1)[0] ?? noHash).trim();
+    }
+  }
+
   const warning = el(
     'div',
     { class: 'mono' },
@@ -1229,6 +1244,48 @@ function renderRemoteDiskPanel(): HTMLElement {
   let handle: number | null = null;
   let statsPollPending = false;
 
+  const saveSettings = () => {
+    const payload = {
+      enabled: enabledInput.checked,
+      mode: modeSelect.value,
+      cacheBackend: cacheBackendSelect.value,
+      credentials: credentialsSelect.value,
+      url: stableUrlForStorage(urlInput.value),
+      blockKiB: blockSizeInput.value,
+      cacheLimitMiB: cacheLimitInput.value,
+      prefetch: prefetchInput.value,
+      maxConcurrentFetches: maxConcurrentFetchesInput.value,
+      cacheImageId: cacheImageIdInput.value,
+      cacheVersion: cacheVersionInput.value,
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
+  };
+
+  const restoreSettings = () => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<Record<string, unknown>>;
+      if (typeof parsed.enabled === 'boolean') enabledInput.checked = parsed.enabled;
+      if (typeof parsed.mode === 'string' && ['range', 'chunked'].includes(parsed.mode)) modeSelect.value = parsed.mode;
+      if (typeof parsed.cacheBackend === 'string' && ['auto', 'opfs', 'idb'].includes(parsed.cacheBackend)) {
+        cacheBackendSelect.value = parsed.cacheBackend;
+      }
+      if (typeof parsed.credentials === 'string' && ['same-origin', 'include', 'omit'].includes(parsed.credentials)) {
+        credentialsSelect.value = parsed.credentials;
+      }
+      if (typeof parsed.url === 'string') urlInput.value = parsed.url;
+      if (typeof parsed.blockKiB === 'string') blockSizeInput.value = parsed.blockKiB;
+      if (typeof parsed.cacheLimitMiB === 'string') cacheLimitInput.value = parsed.cacheLimitMiB;
+      if (typeof parsed.prefetch === 'string') prefetchInput.value = parsed.prefetch;
+      if (typeof parsed.maxConcurrentFetches === 'string') maxConcurrentFetchesInput.value = parsed.maxConcurrentFetches;
+      if (typeof parsed.cacheImageId === 'string') cacheImageIdInput.value = parsed.cacheImageId;
+      if (typeof parsed.cacheVersion === 'string') cacheVersionInput.value = parsed.cacheVersion;
+    } catch {
+      // ignore
+    }
+  };
+
   function formatMaybeBytes(bytes: number | null): string {
     return bytes === null ? 'off' : formatByteSize(bytes);
   }
@@ -1256,11 +1313,13 @@ function renderRemoteDiskPanel(): HTMLElement {
     if (!enabledInput.checked) {
       void closeHandle();
     }
+    saveSettings();
     updateButtons();
   });
   modeSelect.addEventListener('change', () => {
     void closeHandle();
     updateModeUi();
+    saveSettings();
     updateButtons();
   });
   for (const input of [
@@ -1276,9 +1335,11 @@ function renderRemoteDiskPanel(): HTMLElement {
   ]) {
     input.addEventListener('change', () => {
       void closeHandle();
+      saveSettings();
       updateButtons();
     });
   }
+  restoreSettings();
   updateModeUi();
   updateButtons();
 
