@@ -218,13 +218,46 @@ fn parse_signature_chunk_with_entry_size(
                 )));
         }
 
-        let semantic_index =
-            read_u32_le_entry(bytes, entry_start + 4, entry_index, "semantic_index")?;
-        let system_value_type =
-            read_u32_le_entry(bytes, entry_start + 8, entry_index, "system_value_type")?;
-        let component_type =
-            read_u32_le_entry(bytes, entry_start + 12, entry_index, "component_type")?;
-        let register = read_u32_le_entry(bytes, entry_start + 16, entry_index, "register")?;
+        let semantic_index = read_u32_le_entry(
+            bytes,
+            entry_start.checked_add(4).ok_or_else(|| {
+                DxbcError::invalid_chunk(format!(
+                    "signature entry {entry_index} semantic_index offset overflows"
+                ))
+            })?,
+            entry_index,
+            "semantic_index",
+        )?;
+        let system_value_type = read_u32_le_entry(
+            bytes,
+            entry_start.checked_add(8).ok_or_else(|| {
+                DxbcError::invalid_chunk(format!(
+                    "signature entry {entry_index} system_value_type offset overflows"
+                ))
+            })?,
+            entry_index,
+            "system_value_type",
+        )?;
+        let component_type = read_u32_le_entry(
+            bytes,
+            entry_start.checked_add(12).ok_or_else(|| {
+                DxbcError::invalid_chunk(format!(
+                    "signature entry {entry_index} component_type offset overflows"
+                ))
+            })?,
+            entry_index,
+            "component_type",
+        )?;
+        let register = read_u32_le_entry(
+            bytes,
+            entry_start.checked_add(16).ok_or_else(|| {
+                DxbcError::invalid_chunk(format!(
+                    "signature entry {entry_index} register offset overflows"
+                ))
+            })?,
+            entry_index,
+            "register",
+        )?;
 
         let (mask, read_write_mask, stream) = match entry_size {
             SIGNATURE_ENTRY_LEN_V0 => {
@@ -233,8 +266,16 @@ fn parse_signature_chunk_with_entry_size(
                 // - read_write_mask
                 // - stream
                 // - min_precision (ignored)
-                let packed =
-                    read_u32_le_entry(bytes, entry_start + 20, entry_index, "mask/rw_mask/stream")?;
+                let packed = read_u32_le_entry(
+                    bytes,
+                    entry_start.checked_add(20).ok_or_else(|| {
+                        DxbcError::invalid_chunk(format!(
+                            "signature entry {entry_index} packed mask offset overflows"
+                        ))
+                    })?,
+                    entry_index,
+                    "mask/rw_mask/stream",
+                )?;
                 (
                     (packed & 0xFF) as u8,
                     ((packed >> 8) & 0xFF) as u8,
@@ -243,19 +284,35 @@ fn parse_signature_chunk_with_entry_size(
             }
             SIGNATURE_ENTRY_LEN_V1 => {
                 // 32-byte variant: mask/rw bytes followed by stream/min-precision DWORDs.
-                let mask = *bytes.get(entry_start + 20).ok_or_else(|| {
+                let mask_offset = entry_start.checked_add(20).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "signature entry {entry_index} mask offset overflows"
+                    ))
+                })?;
+                let read_write_mask_offset = entry_start.checked_add(21).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "signature entry {entry_index} read_write_mask offset overflows"
+                    ))
+                })?;
+                let stream_offset = entry_start.checked_add(24).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "signature entry {entry_index} stream offset overflows"
+                    ))
+                })?;
+
+                let mask = *bytes.get(mask_offset).ok_or_else(|| {
                     DxbcError::invalid_chunk(format!(
                         "need 1 byte for entry {entry_index} mask at {}",
-                        entry_start + 20
+                        mask_offset
                     ))
                 })?;
-                let read_write_mask = *bytes.get(entry_start + 21).ok_or_else(|| {
+                let read_write_mask = *bytes.get(read_write_mask_offset).ok_or_else(|| {
                     DxbcError::invalid_chunk(format!(
                         "need 1 byte for entry {entry_index} read_write_mask at {}",
-                        entry_start + 21
+                        read_write_mask_offset
                     ))
                 })?;
-                let stream = read_u32_le_entry(bytes, entry_start + 24, entry_index, "stream")?;
+                let stream = read_u32_le_entry(bytes, stream_offset, entry_index, "stream")?;
                 (mask, read_write_mask, stream)
             }
             other => {
@@ -324,20 +381,34 @@ fn detect_v1_layout(bytes: &[u8], param_offset: usize) -> bool {
     // As a fast-path, prefer the v0 layout when the v0 packed-byte stream or
     // min-precision fields are non-zero. This avoids mis-detecting padded v0
     // signature tables as v1.
-    let Some(stream_byte) = bytes.get(param_offset + 22).copied() else {
+    let Some(stream_byte) = param_offset
+        .checked_add(22)
+        .and_then(|offset| bytes.get(offset))
+        .copied()
+    else {
         return false;
     };
-    let Some(min_precision_byte) = bytes.get(param_offset + 23).copied() else {
+    let Some(min_precision_byte) = param_offset
+        .checked_add(23)
+        .and_then(|offset| bytes.get(offset))
+        .copied()
+    else {
         return false;
     };
     if stream_byte != 0 || min_precision_byte != 0 {
         return false;
     }
 
-    let Some(stream) = read_u32_le_opt(bytes, param_offset + 24) else {
+    let Some(stream) = param_offset
+        .checked_add(24)
+        .and_then(|offset| read_u32_le_opt(bytes, offset))
+    else {
         return false;
     };
-    let Some(min_precision) = read_u32_le_opt(bytes, param_offset + 28) else {
+    let Some(min_precision) = param_offset
+        .checked_add(28)
+        .and_then(|offset| read_u32_le_opt(bytes, offset))
+    else {
         return false;
     };
     (stream <= 3) && (min_precision <= 8)
