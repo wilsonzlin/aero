@@ -28,7 +28,11 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+    if (ctx->Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
+    if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -49,20 +53,27 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
     }
 
     if (ctx->Dx->Tx.Buffers == NULL || ctx->Dx->Tx.MaxPeriodBytes != PeriodBytes) {
+        /*
+         * TxInit is re-entrant (called when the WaveRT pin format changes). Clear
+         * the dispatch flag before tearing down the engine so DPC/Write paths
+         * don't attempt to submit against a partially uninitialized context.
+         */
+        InterlockedExchange(&ctx->Dx->TxEngineInitialized, 0);
+
         VirtioSndTxUninit(&ctx->Dx->Tx);
 
          status = VirtioSndTxInit(
-             &ctx->Dx->Tx,
-             &ctx->Dx->DmaCtx,
+              &ctx->Dx->Tx,
+              &ctx->Dx->DmaCtx,
              &ctx->Dx->Queues[VIRTIOSND_QUEUE_TX],
              PeriodBytes,
              8,
-             FALSE);
+              FALSE);
          if (!NT_SUCCESS(status)) {
              VIRTIOSND_TRACE_ERROR("backend(virtio): TxInit failed: 0x%08X\n", (UINT)status);
              return status;
          }
-     }
+      }
 
     /*
      * Allow the INTx DPC to drain and dispatch txq used entries to the TX engine.
@@ -90,7 +101,11 @@ static NTSTATUS VirtIoSndBackendVirtio_Prepare(_In_ PVOID Context)
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+    if (ctx->Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
+    if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -109,7 +124,11 @@ static NTSTATUS VirtIoSndBackendVirtio_Start(_In_ PVOID Context)
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+    if (ctx->Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
+    if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -128,7 +147,11 @@ static NTSTATUS VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+    if (ctx->Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
+    if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -150,6 +173,7 @@ static NTSTATUS VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
 
     if (!ctx->Dx->Started || ctx->Dx->Removed) {
         // Device is gone/stopped; just discard local TX buffers.
+        InterlockedExchange(&ctx->Dx->TxEngineInitialized, 0);
         VirtioSndTxUninit(&ctx->Dx->Tx);
         ctx->BufferBytes = 0;
         ctx->PeriodBytes = 0;
@@ -175,7 +199,11 @@ VirtIoSndBackendVirtio_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const V
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+    if (ctx->Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
+    if (!ctx->Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
