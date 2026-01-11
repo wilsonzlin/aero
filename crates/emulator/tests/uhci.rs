@@ -188,6 +188,42 @@ impl UsbDeviceModel for DummyInterruptOutDevice {
     }
 }
 
+struct TestInterruptInDevice {
+    data: Vec<u8>,
+}
+
+impl TestInterruptInDevice {
+    fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+}
+
+impl UsbDeviceModel for TestInterruptInDevice {
+    fn get_device_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn get_config_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn get_hid_report_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
+        (ep == 0x81).then(|| self.data.clone())
+    }
+}
+
 #[test]
 fn uhci_root_hub_portsc_reset_enables_port() {
     let mut mem = TestMemBus::new(0x1000);
@@ -376,6 +412,56 @@ fn uhci_interrupt_in_polling_reads_hid_reports() {
     let st = mem.read_u32(TD0 as u64 + 4);
     assert!(st & TD_STATUS_ACTIVE != 0);
     assert!(st & (1 << 19) != 0); // NAK
+}
+
+#[test]
+fn uhci_qh_does_not_skip_inactive_tds() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(TestInterruptInDevice::new(vec![1, 2, 3, 4])));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    let sentinel = [0xa5, 0xa5, 0xa5, 0xa5];
+    mem.write_physical(BUF_DATA as u64, &sentinel);
+
+    // QH -> TD0(inactive) -> TD1(active IN), so the controller must stop at TD0 and not
+    // advance the QH element pointer to TD1.
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(false, false),
+        td_token(PID_IN, 0, 1, 0, sentinel.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, true),
+        td_token(PID_IN, 0, 1, 0, sentinel.len()),
+        BUF_DATA,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD0);
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert!(st1 & TD_STATUS_ACTIVE != 0);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + sentinel.len()),
+        sentinel
+    );
 }
 
 #[test]

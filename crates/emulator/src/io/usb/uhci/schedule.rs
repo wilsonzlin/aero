@@ -90,10 +90,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
 
         let td_addr = elem.addr();
         match process_single_td(ctx, td_addr) {
-            TdProgress::NoProgress { next_link } => {
-                ctx.mem.write_u32(qh_addr.wrapping_add(4) as u64, next_link);
-                elem = LinkPointer(next_link);
-            }
+            TdProgress::NoProgress => break,
             TdProgress::Advanced { next_link, stop } => {
                 ctx.mem.write_u32(qh_addr.wrapping_add(4) as u64, next_link);
                 elem = LinkPointer(next_link);
@@ -119,7 +116,7 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
 
     let link = LinkPointer(ctx.mem.read_u32(td_addr as u64));
     match process_single_td(ctx, td_addr) {
-        TdProgress::NoProgress { .. } => link,
+        TdProgress::NoProgress => link,
         TdProgress::Advanced { stop, .. } => {
             if stop || link.terminated() || link.is_qh() {
                 link
@@ -133,7 +130,7 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
 
 #[derive(Debug)]
 enum TdProgress {
-    NoProgress { next_link: u32 },
+    NoProgress,
     Advanced { next_link: u32, stop: bool },
     Nak,
 }
@@ -149,7 +146,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
     let buffer = ctx.mem.read_u32(td_addr.wrapping_add(12) as u64);
 
     if status & TD_STATUS_ACTIVE == 0 {
-        return TdProgress::NoProgress { next_link };
+        return TdProgress::NoProgress;
     }
 
     status &=
