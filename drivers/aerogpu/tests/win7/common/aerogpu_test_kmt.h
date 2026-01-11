@@ -351,6 +351,94 @@ static inline bool AerogpuEscapeWithTimeout(const D3DKMT_FUNCS* f,
   return false;
 }
 
+struct D3DKMTQueryAdapterInfoCtx {
+  const D3DKMT_FUNCS* f;
+  D3DKMT_HANDLE adapter;
+  UINT type;
+  std::vector<unsigned char> buf;
+  NTSTATUS status;
+};
+
+static DWORD WINAPI D3DKMTQueryAdapterInfoThreadProc(LPVOID param) {
+  D3DKMTQueryAdapterInfoCtx* ctx = (D3DKMTQueryAdapterInfoCtx*)param;
+  if (!ctx || !ctx->f || !ctx->f->QueryAdapterInfo || !ctx->adapter || ctx->buf.empty()) {
+    if (ctx) {
+      ctx->status = kStatusInvalidParameter;
+    }
+    return 0;
+  }
+
+  D3DKMT_QUERYADAPTERINFO q;
+  ZeroMemory(&q, sizeof(q));
+  q.hAdapter = ctx->adapter;
+  q.Type = ctx->type;
+  q.pPrivateDriverData = &ctx->buf[0];
+  q.PrivateDriverDataSize = (UINT)ctx->buf.size();
+
+  ctx->status = ctx->f->QueryAdapterInfo(&q);
+  return 0;
+}
+
+static inline bool D3DKMTQueryAdapterInfoWithTimeout(const D3DKMT_FUNCS* f,
+                                                     D3DKMT_HANDLE adapter,
+                                                     UINT type,
+                                                     void* buf,
+                                                     UINT buf_size,
+                                                     DWORD timeout_ms,
+                                                     NTSTATUS* out_status) {
+  if (out_status) {
+    *out_status = 0;
+  }
+  if (!f || !adapter || !f->QueryAdapterInfo || !buf || buf_size == 0) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  // Run D3DKMTQueryAdapterInfo on a worker thread so a buggy kernel driver cannot hang the test
+  // process indefinitely. If the call times out, we intentionally leak the context (the worker
+  // thread may still be running) and rely on process termination to clean up.
+  D3DKMTQueryAdapterInfoCtx* ctx = new D3DKMTQueryAdapterInfoCtx();
+  ctx->f = f;
+  ctx->adapter = adapter;
+  ctx->type = type;
+  ctx->status = 0;
+  ctx->buf.assign((const unsigned char*)buf, (const unsigned char*)buf + buf_size);
+
+  HANDLE thread = CreateThread(NULL, 0, D3DKMTQueryAdapterInfoThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    if (out_status) {
+      *out_status = (NTSTATUS)GetLastError();
+    }
+    delete ctx;
+    return false;
+  }
+
+  DWORD w = WaitForSingleObject(thread, timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    CloseHandle(thread);
+    if (out_status) {
+      *out_status = ctx->status;
+    }
+    if (NtSuccess(ctx->status)) {
+      memcpy(buf, &ctx->buf[0], buf_size);
+      delete ctx;
+      return true;
+    }
+    delete ctx;
+    return false;
+  }
+
+  CloseHandle(thread);
+  if (out_status) {
+    *out_status = (w == WAIT_TIMEOUT) ? (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */ : (NTSTATUS)GetLastError();
+  }
+  // Avoid deadlock-prone teardown paths (CloseAdapter/FreeLibrary) in this case.
+  InterlockedExchange(&g_skip_close_adapter, 1);
+  return false;
+}
+
 static inline bool AerogpuQueryFence(const D3DKMT_FUNCS* f,
                                      D3DKMT_HANDLE adapter,
                                      unsigned long long* out_submitted,

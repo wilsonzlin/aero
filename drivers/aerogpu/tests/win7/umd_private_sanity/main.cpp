@@ -49,24 +49,27 @@ static int RunUmdPrivateSanity(int argc, char** argv) {
   aerogpu_umd_private_v1 blob;
   ZeroMemory(&blob, sizeof(blob));
 
-  aerogpu_test::kmt::D3DKMT_QUERYADAPTERINFO q;
-  ZeroMemory(&q, sizeof(q));
-  q.hAdapter = adapter;
-  q.pPrivateDriverData = &blob;
-  q.PrivateDriverDataSize = sizeof(blob);
-
   // Avoid depending on the WDK numeric KMTQAITYPE_UMDRIVERPRIVATE constant; probe a small range
   // and look for a valid AeroGPU UMDRIVERPRIVATE v1 blob.
   UINT found_type = 0xFFFFFFFFu;
   NTSTATUS last_status = 0;
   for (UINT type = 0; type < 256; ++type) {
     ZeroMemory(&blob, sizeof(blob));
-    q.Type = type;
-    NTSTATUS st = kmt.QueryAdapterInfo(&q);
-    last_status = st;
-    if (st < 0) {
+    NTSTATUS st = 0;
+    if (!aerogpu_test::kmt::D3DKMTQueryAdapterInfoWithTimeout(&kmt,
+                                                              adapter,
+                                                              type,
+                                                              &blob,
+                                                              sizeof(blob),
+                                                              2000,
+                                                              &st)) {
+      last_status = st;
+      if (st == (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */) {
+        break;
+      }
       continue;
     }
+    last_status = st;
 
     if (blob.size_bytes < sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
       continue;
@@ -85,6 +88,9 @@ static int RunUmdPrivateSanity(int argc, char** argv) {
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);
 
   if (found_type == 0xFFFFFFFFu) {
+    if (last_status == (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */) {
+      return reporter.Fail("D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) timed out");
+    }
     return reporter.Fail("D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) probe failed (last NTSTATUS=0x%08lX)",
                          (unsigned long)last_status);
   }
