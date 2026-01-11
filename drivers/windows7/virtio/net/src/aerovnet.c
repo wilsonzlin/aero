@@ -786,15 +786,13 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   /*
    * Contract v1 ring invariants (docs/windows7-virtio-driver-contract.md §2.3):
    * - MUST offer INDIRECT_DESC
-   * - MUST NOT offer EVENT_IDX or PACKED
+   * - EVENT_IDX/PACKED are not negotiated by the driver (split ring, always-notify)
    *
-   * (We validate these bits against the host-offered feature set.)
+   * Some hypervisors (notably QEMU) may still advertise EVENT_IDX/PACKED even
+   * when the guest chooses not to negotiate them, so do not fail init just
+   * because those bits are present in the offered feature set.
    */
   Adapter->HostFeatures = VirtioPciReadDeviceFeatures(&Adapter->Vdev);
-  if ((Adapter->HostFeatures & (AEROVNET_FEATURE_RING_EVENT_IDX | AEROVNET_FEATURE_RING_PACKED)) != 0) {
-    VirtioPciResetDevice(&Adapter->Vdev);
-    return NDIS_STATUS_NOT_SUPPORTED;
-  }
 
   // Contract v1 features (docs/windows7-virtio-driver-contract.md §3.2.3):
   // - required: VERSION_1 + INDIRECT_DESC + MAC + STATUS
