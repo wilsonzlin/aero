@@ -2817,7 +2817,16 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
     return E_FAIL;
   }
 
-  if (src->storage.size() >= bytes_needed) {
+  bool use_src_storage = src->storage.size() >= bytes_needed;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  // Guest-backed resources may still allocate a CPU shadow buffer (e.g. shared
+  // resources opened via OpenResource). On real WDDM builds the authoritative
+  // bytes live in the WDDM allocation, so prefer mapping it directly.
+  if (src->backing_alloc_id != 0) {
+    use_src_storage = false;
+  }
+#endif
+  if (use_src_storage) {
     src_base = src->storage.data();
   } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
@@ -2840,7 +2849,13 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
     }
   }
 
-  if (dst->storage.size() >= bytes_needed) {
+  bool use_dst_storage = dst->storage.size() >= bytes_needed;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (dst->backing_alloc_id != 0) {
+    use_dst_storage = false;
+  }
+#endif
+  if (use_dst_storage) {
     dst_base = dst->storage.data();
   } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
@@ -4190,7 +4205,13 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
     return E_FAIL;
   }
 
-  if (src->storage.size() >= src_bytes) {
+  bool use_src_storage = src->storage.size() >= src_bytes;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (src->backing_alloc_id != 0) {
+    use_src_storage = false;
+  }
+#endif
+  if (use_src_storage) {
     src_base = src->storage.data();
   } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
@@ -4213,7 +4234,13 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
     }
   }
 
-  if (dst->storage.size() >= dst_bytes) {
+  bool use_dst_storage = dst->storage.size() >= dst_bytes;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (dst->backing_alloc_id != 0) {
+    use_dst_storage = false;
+  }
+#endif
+  if (use_dst_storage) {
     dst_base = dst->storage.data();
   } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
@@ -6263,17 +6290,69 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     const uint64_t src_offset_u64 =
         static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * ss.stride_bytes;
     const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * ss.stride_bytes;
-    if (src_offset_u64 > ss.vb->storage.size() || size_u64 > ss.vb->storage.size() - src_offset_u64) {
+    const uint64_t vb_size_u64 = ss.vb->size_bytes;
+    if (src_offset_u64 > vb_size_u64 || size_u64 > vb_size_u64 - src_offset_u64) {
       return E_INVALIDARG;
+    }
+
+    const uint8_t* src_vertices = nullptr;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+    void* vb_ptr = nullptr;
+    bool vb_locked = false;
+#endif
+
+    bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(src_offset_u64 + size_u64);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+    // Guest-backed buffers may still allocate a CPU shadow buffer (e.g. shared
+    // resources opened via OpenResource). On real WDDM builds the authoritative
+    // bytes live in the WDDM allocation, so prefer mapping it directly.
+    if (ss.vb->backing_alloc_id != 0) {
+      use_vb_storage = false;
+    }
+#endif
+
+    if (use_vb_storage) {
+      src_vertices = ss.vb->storage.data() + static_cast<size_t>(src_offset_u64);
+    } else {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+      if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                     dev->wddm_device,
+                                                     ss.vb->wddm_hAllocation,
+                                                     src_offset_u64,
+                                                     size_u64,
+                                                     &vb_ptr);
+        if (FAILED(lock_hr) || !vb_ptr) {
+          return FAILED(lock_hr) ? lock_hr : E_FAIL;
+        }
+        vb_locked = true;
+        src_vertices = static_cast<const uint8_t*>(vb_ptr);
+      } else
+#endif
+      {
+        return E_INVALIDARG;
+      }
     }
 
     std::vector<uint8_t> converted;
     HRESULT hr = convert_xyzrhw_to_clipspace_locked(
         dev,
-        ss.vb->storage.data() + static_cast<size_t>(src_offset_u64),
+        src_vertices,
         ss.stride_bytes,
         vertex_count,
         &converted);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+    if (vb_locked) {
+      const HRESULT unlock_hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, ss.vb->wddm_hAllocation);
+      if (FAILED(unlock_hr)) {
+        logf("aerogpu-d3d9: draw_primitive fixedfunc: UnlockCb failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+             static_cast<unsigned long>(unlock_hr),
+             static_cast<unsigned>(ss.vb->backing_alloc_id),
+             static_cast<unsigned long long>(ss.vb->wddm_hAllocation));
+        return unlock_hr;
+      }
+    }
+#endif
     if (FAILED(hr)) {
       return hr;
     }
@@ -6797,68 +6876,211 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     const uint64_t index_offset_u64 =
         static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
 
-    if (index_offset_u64 > dev->index_buffer->storage.size() ||
-        index_bytes_u64 > dev->index_buffer->storage.size() - index_offset_u64) {
+    std::vector<uint8_t> expanded;
+    const uint64_t expanded_bytes_u64 = static_cast<uint64_t>(index_count) * ss.stride_bytes;
+    if (expanded_bytes_u64 == 0 || expanded_bytes_u64 > 0x7FFFFFFFu) {
       return E_INVALIDARG;
     }
 
-    const uint8_t* index_data = dev->index_buffer->storage.data() + static_cast<size_t>(index_offset_u64);
-
-    std::vector<uint8_t> expanded;
-    try {
-      expanded.resize(static_cast<size_t>(static_cast<uint64_t>(index_count) * ss.stride_bytes));
-    } catch (...) {
-      return E_OUTOFMEMORY;
+    const uint64_t ib_size_u64 = dev->index_buffer->size_bytes;
+    if (index_offset_u64 > ib_size_u64 || index_bytes_u64 > ib_size_u64 - index_offset_u64) {
+      return E_INVALIDARG;
     }
 
-    float vp_x = 0.0f;
-    float vp_y = 0.0f;
-    float vp_w = 1.0f;
-    float vp_h = 1.0f;
-    get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
+    {
+      const uint8_t* index_data = nullptr;
+      const uint8_t* vb_base = nullptr;
+      uint32_t min_vtx = 0;
+      uint32_t max_vtx = 0;
+      bool have_bounds = false;
 
-    for (uint32_t i = 0; i < index_count; i++) {
-      uint32_t idx = 0;
-      if (index_size == 4) {
-        std::memcpy(&idx, index_data + i * 4, sizeof(idx));
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+      struct AutoUnlock {
+        Device* dev = nullptr;
+        WddmAllocationHandle hAllocation = 0;
+        uint32_t alloc_id = 0;
+        const char* tag = nullptr;
+        bool locked = false;
+
+        AutoUnlock(Device* dev, WddmAllocationHandle hAllocation, uint32_t alloc_id, const char* tag)
+            : dev(dev), hAllocation(hAllocation), alloc_id(alloc_id), tag(tag) {}
+
+        ~AutoUnlock() {
+          if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
+            const HRESULT hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation);
+            if (FAILED(hr)) {
+              logf("aerogpu-d3d9: draw_indexed_primitive fixedfunc: UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+                   tag ? tag : "?",
+                   static_cast<unsigned long>(hr),
+                   static_cast<unsigned>(alloc_id),
+                   static_cast<unsigned long long>(hAllocation));
+            }
+          }
+        }
+      };
+
+      AutoUnlock ib_lock(dev, dev->index_buffer->wddm_hAllocation, dev->index_buffer->backing_alloc_id, "IB");
+      AutoUnlock vb_lock(dev, ss.vb->wddm_hAllocation, ss.vb->backing_alloc_id, "VB");
+      void* ib_ptr = nullptr;
+      void* vb_ptr = nullptr;
+#endif
+
+      // Lock index buffer if we don't have a CPU shadow copy.
+      bool use_ib_storage = dev->index_buffer->storage.size() >= static_cast<size_t>(index_offset_u64 + index_bytes_u64);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+      // Guest-backed buffers can have a CPU shadow allocation when they are
+      // shared/OpenResource'd; in WDDM builds the underlying allocation memory is
+      // authoritative.
+      if (dev->index_buffer->backing_alloc_id != 0) {
+        use_ib_storage = false;
+      }
+#endif
+      if (use_ib_storage) {
+        index_data = dev->index_buffer->storage.data() + static_cast<size_t>(index_offset_u64);
       } else {
-        uint16_t idx16 = 0;
-        std::memcpy(&idx16, index_data + i * 2, sizeof(idx16));
-        idx = idx16;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+        if (dev->index_buffer->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+          const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                       dev->wddm_device,
+                                                       dev->index_buffer->wddm_hAllocation,
+                                                       index_offset_u64,
+                                                       index_bytes_u64,
+                                                       &ib_ptr);
+          if (FAILED(lock_hr) || !ib_ptr) {
+            return FAILED(lock_hr) ? lock_hr : E_FAIL;
+          }
+          ib_lock.locked = true;
+          index_data = static_cast<const uint8_t*>(ib_ptr);
+        } else
+#endif
+        {
+          return E_INVALIDARG;
+        }
       }
 
-      const int64_t vtx = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(idx);
-      if (vtx < 0) {
+      // First pass: compute min/max referenced vertex index so we can map a single
+      // contiguous vertex range.
+      for (uint32_t i = 0; i < index_count; ++i) {
+        uint32_t idx = 0;
+        if (index_size == 4) {
+          std::memcpy(&idx, index_data + static_cast<size_t>(i) * 4, sizeof(idx));
+        } else {
+          uint16_t idx16 = 0;
+          std::memcpy(&idx16, index_data + static_cast<size_t>(i) * 2, sizeof(idx16));
+          idx = idx16;
+        }
+
+        const int64_t vtx = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(idx);
+        if (vtx < 0) {
+          return E_INVALIDARG;
+        }
+        const uint32_t vtx_u32 = static_cast<uint32_t>(vtx);
+        if (!have_bounds) {
+          min_vtx = vtx_u32;
+          max_vtx = vtx_u32;
+          have_bounds = true;
+        } else {
+          min_vtx = std::min(min_vtx, vtx_u32);
+          max_vtx = std::max(max_vtx, vtx_u32);
+        }
+      }
+      if (!have_bounds) {
         return E_INVALIDARG;
       }
 
-      const uint64_t src_off_u64 =
-          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(vtx) * ss.stride_bytes;
-      if (src_off_u64 > ss.vb->storage.size() || ss.stride_bytes > ss.vb->storage.size() - src_off_u64) {
+      const uint64_t vb_size_u64 = ss.vb->size_bytes;
+      const uint64_t vb_range_offset =
+          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(min_vtx) * ss.stride_bytes;
+      const uint64_t vb_range_size =
+          (static_cast<uint64_t>(max_vtx) - static_cast<uint64_t>(min_vtx) + 1) * ss.stride_bytes;
+      if (vb_range_offset > vb_size_u64 || vb_range_size > vb_size_u64 - vb_range_offset) {
         return E_INVALIDARG;
       }
 
-      const uint8_t* src = ss.vb->storage.data() + static_cast<size_t>(src_off_u64);
-      uint8_t* dst = expanded.data() + static_cast<size_t>(i) * ss.stride_bytes;
-      std::memcpy(dst, src, ss.stride_bytes);
+      bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(vb_range_offset + vb_range_size);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+      if (ss.vb->backing_alloc_id != 0) {
+        use_vb_storage = false;
+      }
+#endif
+      if (use_vb_storage) {
+        vb_base = ss.vb->storage.data() + static_cast<size_t>(vb_range_offset);
+      } else {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+        if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+          const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                       dev->wddm_device,
+                                                       ss.vb->wddm_hAllocation,
+                                                       vb_range_offset,
+                                                       vb_range_size,
+                                                       &vb_ptr);
+          if (FAILED(lock_hr) || !vb_ptr) {
+            return FAILED(lock_hr) ? lock_hr : E_FAIL;
+          }
+          vb_lock.locked = true;
+          vb_base = static_cast<const uint8_t*>(vb_ptr);
+        } else
+#endif
+        {
+          return E_INVALIDARG;
+        }
+      }
 
-      const float x = read_f32_unaligned(src + 0);
-      const float y = read_f32_unaligned(src + 4);
-      const float z = read_f32_unaligned(src + 8);
-      const float rhw = read_f32_unaligned(src + 12);
+      try {
+        expanded.resize(static_cast<size_t>(expanded_bytes_u64));
+      } catch (...) {
+        return E_OUTOFMEMORY;
+      }
 
-      const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
-      // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
-      // so typical D3D9 pre-transformed vertex coordinates line up with pixel
-      // centers.
-      const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
-      const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
-      const float ndc_z = z;
+      float vp_x = 0.0f;
+      float vp_y = 0.0f;
+      float vp_w = 1.0f;
+      float vp_h = 1.0f;
+      get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
 
-      write_f32_unaligned(dst + 0, ndc_x * w);
-      write_f32_unaligned(dst + 4, ndc_y * w);
-      write_f32_unaligned(dst + 8, ndc_z * w);
-      write_f32_unaligned(dst + 12, w);
+      for (uint32_t i = 0; i < index_count; i++) {
+        uint32_t idx = 0;
+        if (index_size == 4) {
+          std::memcpy(&idx, index_data + static_cast<size_t>(i) * 4, sizeof(idx));
+        } else {
+          uint16_t idx16 = 0;
+          std::memcpy(&idx16, index_data + static_cast<size_t>(i) * 2, sizeof(idx16));
+          idx = idx16;
+        }
+
+        const int64_t vtx = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(idx);
+        if (vtx < 0) {
+          return E_INVALIDARG;
+        }
+        const uint32_t vtx_u32 = static_cast<uint32_t>(vtx);
+        const uint64_t local_off =
+            (static_cast<uint64_t>(vtx_u32) - static_cast<uint64_t>(min_vtx)) * ss.stride_bytes;
+        if (local_off + ss.stride_bytes > vb_range_size) {
+          return E_INVALIDARG;
+        }
+
+        const uint8_t* src = vb_base + static_cast<size_t>(local_off);
+        uint8_t* dst = expanded.data() + static_cast<size_t>(i) * ss.stride_bytes;
+        std::memcpy(dst, src, ss.stride_bytes);
+
+        const float x = read_f32_unaligned(src + 0);
+        const float y = read_f32_unaligned(src + 4);
+        const float z = read_f32_unaligned(src + 8);
+        const float rhw = read_f32_unaligned(src + 12);
+
+        const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
+        // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
+        // so typical D3D9 pre-transformed vertex coordinates line up with pixel
+        // centers.
+        const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
+        const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
+        const float ndc_z = z;
+
+        write_f32_unaligned(dst + 0, ndc_x * w);
+        write_f32_unaligned(dst + 4, ndc_y * w);
+        write_f32_unaligned(dst + 8, ndc_z * w);
+        write_f32_unaligned(dst + 12, w);
+      }
     }
 
     HRESULT hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(expanded.size()));
