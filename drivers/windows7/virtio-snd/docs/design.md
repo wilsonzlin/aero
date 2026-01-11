@@ -55,7 +55,7 @@ Responsibilities:
 - Handle `eventq` for asynchronous device events (if used by the device model).
 - Implement the PCM data path:
   - playback: submit PCM buffers on `txq`
-  - capture: receive buffers on `rxq` (not required for Aero contract v1)
+  - capture: receive buffers on `rxq` (defined by the contract, but not implemented by this driver yet)
 
 The protocol engine should be written to:
 
@@ -122,18 +122,15 @@ Observed drift between the definitive contract and the current emulator:
 
 - Contract v1 (`docs/windows7-virtio-driver-contract.md`):
   - does **not** negotiate `VIRTIO_F_RING_EVENT_IDX`
-  - specifies `rxq` size **64**
 - Emulator implementation (`crates/aero-virtio/src/devices/snd.rs`):
   - advertises `VIRTIO_F_RING_EVENT_IDX`
-  - reports `queue_max_size()` **256** for `txq` and `rxq`
 
 Driver stance:
 
 - Negotiate only the features the driver actually requires for correctness
   (at minimum `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` for contract v1).
-- Do not assume fixed queue sizes from the contract text; derive queue sizes from the
-  device-reported `common_cfg.queue_size` at runtime and size ring allocations
-  accordingly.
+- Validate device-reported `common_cfg.queue_size` / `queue_notify_off` against the
+  contract for the queues the driver wires up, and fail bring-up on mismatch.
 - Treat `VIRTIO_F_RING_EVENT_IDX` as optional: only negotiate it if the driver fully
   implements the event-index algorithms; otherwise operate in always-notify mode.
 
