@@ -79,6 +79,46 @@ int main() {
 #endif
   std::printf("\n");
 
+  std::printf("== Win7 caps enum values (for tracing) ==\n");
+  std::printf("  D3D10DDICAPS_TYPE_D3D10_FEATURE_LEVEL          = %u\n",
+              static_cast<unsigned>(D3D10DDICAPS_TYPE_D3D10_FEATURE_LEVEL));
+  std::printf("  D3D10DDICAPS_TYPE_FORMAT_SUPPORT               = %u\n",
+              static_cast<unsigned>(D3D10DDICAPS_TYPE_FORMAT_SUPPORT));
+  std::printf("  D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS   = %u\n",
+              static_cast<unsigned>(D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS));
+
+  std::printf("  D3D10_1DDICAPS_TYPE_D3D10_FEATURE_LEVEL        = %u\n",
+              static_cast<unsigned>(D3D10_1DDICAPS_TYPE_D3D10_FEATURE_LEVEL));
+  std::printf("  D3D10_1DDICAPS_TYPE_FORMAT_SUPPORT             = %u\n",
+              static_cast<unsigned>(D3D10_1DDICAPS_TYPE_FORMAT_SUPPORT));
+  std::printf("  D3D10_1DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS = %u\n",
+              static_cast<unsigned>(D3D10_1DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS));
+
+  std::printf("  D3D11DDICAPS_TYPE_THREADING                    = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_THREADING));
+  std::printf("  D3D11DDICAPS_TYPE_DOUBLES                      = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_DOUBLES));
+  std::printf("  D3D11DDICAPS_TYPE_FORMAT                       = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_FORMAT));
+  // Some WDKs don't expose a named FORMAT_SUPPORT2 enum member. The runtime
+  // still uses it (commonly value 3) for D3D11_FEATURE_FORMAT_SUPPORT2.
+  std::printf("  D3D11DDICAPS_TYPE_FORMAT_SUPPORT2              = %u (if present)\n", 3u);
+  std::printf("  D3D11DDICAPS_TYPE_D3D10_X_HARDWARE_OPTIONS     = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_D3D10_X_HARDWARE_OPTIONS));
+  std::printf("  D3D11DDICAPS_TYPE_D3D11_OPTIONS                = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_D3D11_OPTIONS));
+  std::printf("  D3D11DDICAPS_TYPE_ARCHITECTURE_INFO            = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_ARCHITECTURE_INFO));
+  std::printf("  D3D11DDICAPS_TYPE_D3D9_OPTIONS                 = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_D3D9_OPTIONS));
+  std::printf("  D3D11DDICAPS_TYPE_FEATURE_LEVELS               = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_FEATURE_LEVELS));
+  std::printf("  D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS   = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS));
+  std::printf("  D3D11DDICAPS_TYPE_SHADER                       = %u\n",
+              static_cast<unsigned>(D3D11DDICAPS_TYPE_SHADER));
+  std::printf("\n");
+
   std::printf("== D3D11DDI_ADAPTERFUNCS ==\n");
   std::printf("  sizeof(D3D11DDI_ADAPTERFUNCS) = %zu\n", sizeof(D3D11DDI_ADAPTERFUNCS));
   std::printf("  offsetof(pfnGetCaps) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnGetCaps));
