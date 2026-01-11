@@ -5,6 +5,7 @@ use aero_protocol::aerogpu::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
         AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
         AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+        AEROGPU_COPY_FLAG_WRITEBACK_DST,
         AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
         AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
@@ -717,4 +718,59 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
         &src_tex_data,
         "copy should win over stale dirty-range upload"
     );
+}
+
+#[test]
+fn d3d9_copy_buffer_writeback_flag_is_rejected() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping copy flag test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    const OPC_CREATE_BUFFER: u32 = 0x100;
+    const OPC_COPY_BUFFER: u32 = 0x105;
+
+    const SRC_HANDLE: u32 = 1;
+    const DST_HANDLE: u32 = 2;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, 16); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected COPY_BUFFER writeback flag to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("WRITEBACK_DST")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
 }

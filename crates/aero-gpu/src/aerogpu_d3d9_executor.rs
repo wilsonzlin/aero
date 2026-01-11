@@ -3,6 +3,7 @@ use std::ops::Range;
 
 use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
+use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST;
 use thiserror::Error;
 
 use crate::aerogpu_executor::AllocTable;
@@ -845,6 +846,7 @@ impl AerogpuD3d9Executor {
                 dst_offset_bytes,
                 src_offset_bytes,
                 size_bytes,
+                flags,
                 ..
             } => {
                 self.ensure_encoder();
@@ -852,6 +854,17 @@ impl AerogpuD3d9Executor {
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if size_bytes == 0 {
                         return Ok(());
+                    }
+                    if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+                        return Err(AerogpuD3d9Error::Validation(
+                            "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet"
+                                .into(),
+                        ));
+                    }
+                    if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "COPY_BUFFER: unknown flags 0x{flags:08X}"
+                        )));
                     }
 
                     let src_underlying = self.resolve_resource_handle(src_buffer)?;
@@ -952,6 +965,7 @@ impl AerogpuD3d9Executor {
                 src_y,
                 width,
                 height,
+                flags,
                 ..
             } => {
                 self.ensure_encoder();
@@ -959,6 +973,17 @@ impl AerogpuD3d9Executor {
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if width == 0 || height == 0 {
                         return Ok(());
+                    }
+                    if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+                        return Err(AerogpuD3d9Error::Validation(
+                            "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet"
+                                .into(),
+                        ));
+                    }
+                    if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "COPY_TEXTURE2D: unknown flags 0x{flags:08X}"
+                        )));
                     }
 
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
