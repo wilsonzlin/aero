@@ -7,8 +7,14 @@
 #include "virtio_pci_modern_wdm.h"
 #include "virtiosnd_queue_split.h"
 
-/* Modern virtio split rings only require 16/2/4-byte alignment (contract v1). */
-#define VIRTIOSND_SPLIT_RING_ALIGN 16u
+/*
+ * For simplicity, place the used ring on a page boundary.
+ *
+ * Contract v1 only requires 16/2/4-byte alignment for desc/avail/used, but
+ * PAGE_SIZE keeps the layout conservative and matches the original driver
+ * contract guidance for split rings.
+ */
+#define VIRTIOSND_SPLIT_RING_ALIGN PAGE_SIZE
 
 typedef struct _VIRTIOSND_QUEUE_SPLIT_LOCK_STATE {
     KIRQL OldIrql;
@@ -264,6 +270,17 @@ VirtioSndQueueSplitCreate(
     qs->NotifyLength = notify_length;
     qs->QueueNotifyOff = queue_notify_off;
 
+    if (event_idx) {
+        /* Aero contract v1 does not negotiate EVENT_IDX. */
+        status = STATUS_NOT_SUPPORTED;
+        goto Fail;
+    }
+    if (!indirect) {
+        /* Aero contract v1 requires INDIRECT_DESC. */
+        status = STATUS_NOT_SUPPORTED;
+        goto Fail;
+    }
+
     if (notify_base != NULL && notify_off_multiplier != 0) {
         ULONGLONG offset64;
         ULONG_PTR offset;
@@ -313,37 +330,29 @@ VirtioSndQueueSplitCreate(
     indirect_table_count = 0;
     indirect_max_desc = 0;
     if (indirect) {
-        /* One indirect table per potential in-flight request (best-effort). */
-        indirect_table_count = queue_size;
-        indirect_max_desc = (queue_size < 32) ? queue_size : 32;
+        SIZE_T indirect_bytes;
 
-        if (indirect_table_count != 0 && indirect_max_desc != 0) {
-            SIZE_T indirect_bytes = sizeof(VIRTQ_DESC) * (SIZE_T)indirect_table_count * (SIZE_T)indirect_max_desc;
+        indirect_table_count = (USHORT)VIRTIOSND_QUEUE_SPLIT_INDIRECT_TABLE_COUNT(queue_size);
+        indirect_max_desc = (USHORT)VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC;
+        indirect_bytes = sizeof(VIRTQ_DESC) * (SIZE_T)indirect_table_count * (SIZE_T)indirect_max_desc;
 
-            status = VirtIoSndAllocCommonBuffer(DmaCtx, indirect_bytes, FALSE, &qs->IndirectPool);
-            if (NT_SUCCESS(status)) {
-                if ((((ULONG_PTR)qs->IndirectPool.Va) & 0xFu) != 0 || (qs->IndirectPool.DmaAddr & 0xFu) != 0) {
-                    VirtIoSndFreeCommonBuffer(DmaCtx, &qs->IndirectPool);
-                    indirect_table_count = 0;
-                    indirect_max_desc = 0;
-                    qs->IndirectTableCount = 0;
-                    qs->IndirectMaxDesc = 0;
-                } else {
-                    /*
-                     * This DMA buffer is shared with the (potentially untrusted) device; clear it
-                     * to avoid leaking stale kernel memory.
-                     */
-                    RtlZeroMemory(qs->IndirectPool.Va, indirect_bytes);
-                    qs->IndirectTableCount = indirect_table_count;
-                    qs->IndirectMaxDesc = indirect_max_desc;
-                }
-            } else {
-                indirect_table_count = 0;
-                indirect_max_desc = 0;
-                qs->IndirectTableCount = 0;
-                qs->IndirectMaxDesc = 0;
-            }
+        status = VirtIoSndAllocCommonBuffer(DmaCtx, indirect_bytes, FALSE, &qs->IndirectPool);
+        if (!NT_SUCCESS(status)) {
+            goto Fail;
         }
+
+        if ((((ULONG_PTR)qs->IndirectPool.Va) & 0xFu) != 0 || (qs->IndirectPool.DmaAddr & 0xFu) != 0) {
+            status = STATUS_DATATYPE_MISALIGNMENT;
+            goto Fail;
+        }
+
+        /*
+         * This DMA buffer is shared with the (potentially untrusted) device; clear it
+         * to avoid leaking stale kernel memory.
+         */
+        RtlZeroMemory(qs->IndirectPool.Va, indirect_bytes);
+        qs->IndirectTableCount = indirect_table_count;
+        qs->IndirectMaxDesc = indirect_max_desc;
     }
 
     status = VirtqSplitInit(

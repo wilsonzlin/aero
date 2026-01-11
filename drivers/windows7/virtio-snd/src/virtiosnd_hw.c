@@ -170,13 +170,14 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         /*
-         * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC and expects drivers to
-         * use indirect descriptors for TX submissions to keep ring descriptor
-         * consumption low. Force the split virtqueue policy to always prefer
-         * indirect for txq as long as an indirect table pool is available.
+         * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC. For controlq + txq,
+         * always prefer indirect descriptors (threshold=0) as long as an indirect
+         * table pool is available.
          */
-        if ((USHORT)q == VIRTIO_SND_QUEUE_TX && Dx->QueueSplit[q].Vq != NULL && Dx->QueueSplit[q].Vq->indirect_pool_va != NULL) {
-            Dx->QueueSplit[q].Vq->indirect_threshold = 0;
+        if (Dx->QueueSplit[q].Vq != NULL && Dx->QueueSplit[q].Vq->indirect_pool_va != NULL) {
+            if (q == VIRTIOSND_QUEUE_CONTROL || q == VIRTIOSND_QUEUE_TX) {
+                Dx->QueueSplit[q].Vq->indirect_threshold = 0;
+            }
         }
 
         notifyOffReadback = 0;
@@ -195,6 +196,36 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         VIRTIOSND_TRACE("queue %lu enabled (size=%u)\n", q, (UINT)size);
+
+        if (Dx->QueueSplit[q].Vq != NULL) {
+            VIRTIOSND_TRACE(
+                "queue %lu ring: VA=%p DMA=%I64x bytes=%Iu cache=%s\n",
+                q,
+                Dx->QueueSplit[q].Ring.Va,
+                (ULONGLONG)Dx->QueueSplit[q].Ring.DmaAddr,
+                Dx->QueueSplit[q].Ring.Size,
+                Dx->QueueSplit[q].Ring.CacheEnabled ? "MmCached" : "MmNonCached");
+
+            VIRTIOSND_TRACE(
+                "queue %lu desc VA=%p PA=%I64x | avail VA=%p PA=%I64x | used VA=%p PA=%I64x\n",
+                q,
+                Dx->QueueSplit[q].Vq->desc,
+                (ULONGLONG)Dx->QueueSplit[q].Vq->desc_pa,
+                Dx->QueueSplit[q].Vq->avail,
+                (ULONGLONG)Dx->QueueSplit[q].Vq->avail_pa,
+                Dx->QueueSplit[q].Vq->used,
+                (ULONGLONG)Dx->QueueSplit[q].Vq->used_pa);
+
+            VIRTIOSND_TRACE(
+                "queue %lu indirect: VA=%p DMA=%I64x bytes=%Iu tables=%u max_desc=%u cache=%s\n",
+                q,
+                Dx->QueueSplit[q].IndirectPool.Va,
+                (ULONGLONG)Dx->QueueSplit[q].IndirectPool.DmaAddr,
+                Dx->QueueSplit[q].IndirectPool.Size,
+                (UINT)Dx->QueueSplit[q].IndirectTableCount,
+                (UINT)Dx->QueueSplit[q].IndirectMaxDesc,
+                Dx->QueueSplit[q].IndirectPool.CacheEnabled ? "MmCached" : "MmNonCached");
+        }
     }
 
     return STATUS_SUCCESS;

@@ -9,6 +9,21 @@
 
 #include "virtqueue_split.h"
 
+/*
+ * Indirect descriptor sizing (Aero contract v1).
+ *
+ * virtio-snd requests are submitted as:
+ *   header + payload SG elements + response/status
+ *
+ * 16 descriptors covers the expected maximum shape:
+ *   1 header + up to 14 payload SG elements + 1 response/status.
+ *
+ * The driver allocates one indirect table per ring entry so the maximum number
+ * of in-flight requests equals the ring size.
+ */
+#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC 16u
+#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_TABLE_COUNT(_qsz) (_qsz)
+
 typedef struct _VIRTIOSND_QUEUE_SPLIT {
     USHORT QueueIndex;
     USHORT QueueSize;
@@ -78,9 +93,8 @@ typedef VOID EVT_VIRTIOSND_QUEUE_SPLIT_USED(
  */
 VOID
 VirtioSndQueueSplitDrainUsed(_Inout_ VIRTIOSND_QUEUE_SPLIT* qs,
-                              _In_ EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
+                             _In_ EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
                               _In_opt_ void* Context);
-
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

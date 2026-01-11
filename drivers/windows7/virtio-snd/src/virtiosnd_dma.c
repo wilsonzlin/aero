@@ -126,24 +126,43 @@ VirtIoSndAllocCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, SIZE_T Size, BOOLEAN Cach
         PVOID va;
         PHYSICAL_ADDRESS pa;
         MEMORY_CACHING_TYPE cacheType;
+        BOOLEAN cacheEnabled;
 
         low.QuadPart = 0;
         high.QuadPart = -1;
         boundary.QuadPart = 0;
-        cacheType = VirtIoSndCacheTypeFromBool(CacheEnabled);
+        cacheEnabled = CacheEnabled;
+        cacheType = VirtIoSndCacheTypeFromBool(cacheEnabled);
 
         va = MmAllocateContiguousMemorySpecifyCache(Size, low, high, boundary, cacheType);
+        if (va == NULL && !cacheEnabled) {
+            /*
+             * Best-effort fallback: cached contiguous allocation. This is still
+             * correct on x86/x64 (cache-coherent DMA) and avoids hard failure if
+             * the non-cached pool is fragmented.
+             */
+            cacheEnabled = TRUE;
+            cacheType = MmCached;
+            va = MmAllocateContiguousMemorySpecifyCache(Size, low, high, boundary, cacheType);
+        }
         if (va == NULL) {
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
         pa = MmGetPhysicalAddress(va);
 
+        VIRTIOSND_TRACE(
+            "DMA: alloc contiguous buffer %Iu bytes cache=%s VA=%p DMA=%I64x\n",
+            Size,
+            cacheEnabled ? "MmCached" : "MmNonCached",
+            va,
+            (ULONGLONG)pa.QuadPart);
+
         Out->Va = va;
         Out->DmaAddr = (UINT64)pa.QuadPart;
         Out->Size = Size;
         Out->IsCommonBuffer = FALSE;
-        Out->CacheEnabled = CacheEnabled;
+        Out->CacheEnabled = cacheEnabled;
         return STATUS_SUCCESS;
     }
 }
