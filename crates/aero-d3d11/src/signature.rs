@@ -43,15 +43,15 @@ pub enum SignatureError {
     MissingChunk(FourCC),
     MalformedChunk {
         fourcc: FourCC,
-        reason: &'static str,
+        reason: String,
     },
     OutOfBounds {
         fourcc: FourCC,
-        reason: &'static str,
+        reason: String,
     },
     InvalidUtf8 {
         fourcc: FourCC,
-        reason: &'static str,
+        reason: String,
     },
 }
 
@@ -102,30 +102,16 @@ fn parse_signature_from_dxbc(
         return Ok(None);
     };
 
-    let chunk = res.map_err(|err| map_dxbc_error(preferred, &err))?;
+    let chunk = res.map_err(|err| map_dxbc_signature_error(preferred, err))?;
     Ok(Some(convert_dxbc_signature_chunk(preferred, chunk)?))
-}
-
-fn map_dxbc_error(fourcc: FourCC, err: &aero_dxbc::DxbcError) -> SignatureError {
-    if err.context().contains("UTF-8") || err.context().contains("utf-8") {
-        SignatureError::InvalidUtf8 {
-            fourcc,
-            reason: "invalid UTF-8 in signature chunk",
-        }
-    } else {
-        SignatureError::MalformedChunk {
-            fourcc,
-            reason: "failed to parse signature chunk",
-        }
-    }
 }
 
 pub fn parse_signature_chunk(
     fourcc: FourCC,
     bytes: &[u8],
 ) -> Result<DxbcSignature, SignatureError> {
-    let chunk =
-        parse_dxbc_signature_chunk(fourcc, bytes).map_err(|err| map_dxbc_error(fourcc, &err))?;
+    let chunk = parse_dxbc_signature_chunk(fourcc, bytes)
+        .map_err(|err| map_dxbc_signature_error(fourcc, err))?;
     convert_dxbc_signature_chunk(fourcc, chunk)
 }
 
@@ -135,15 +121,11 @@ fn convert_dxbc_signature_chunk(
 ) -> Result<DxbcSignature, SignatureError> {
     let mut parameters = Vec::with_capacity(chunk.entries.len());
     for entry in chunk.entries {
-        let stream: u8 =
-            entry
-                .stream
-                .unwrap_or(0)
-                .try_into()
-                .map_err(|_| SignatureError::MalformedChunk {
-                    fourcc,
-                    reason: "stream index out of range",
-                })?;
+        let stream_u32 = entry.stream.unwrap_or(0);
+        let stream = u8::try_from(stream_u32).map_err(|_| SignatureError::MalformedChunk {
+            fourcc,
+            reason: format!("entry stream {stream_u32} does not fit in u8"),
+        })?;
 
         parameters.push(DxbcSignatureParameter {
             semantic_name: entry.semantic_name,
@@ -159,4 +141,16 @@ fn convert_dxbc_signature_chunk(
     }
 
     Ok(DxbcSignature { parameters })
+}
+
+fn map_dxbc_signature_error(fourcc: FourCC, err: aero_dxbc::DxbcError) -> SignatureError {
+    let reason = err.context().to_owned();
+    let is_utf8 = reason.to_ascii_lowercase().contains("utf-8");
+    match err {
+        aero_dxbc::DxbcError::OutOfBounds { .. } => SignatureError::OutOfBounds { fourcc, reason },
+        aero_dxbc::DxbcError::InvalidChunk { .. } if is_utf8 => {
+            SignatureError::InvalidUtf8 { fourcc, reason }
+        }
+        _ => SignatureError::MalformedChunk { fourcc, reason },
+    }
 }
