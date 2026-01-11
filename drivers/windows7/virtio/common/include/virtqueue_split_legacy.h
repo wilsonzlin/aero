@@ -129,7 +129,10 @@ size_t virtqueue_split_ring_size(uint16_t queue_size, uint32_t queue_align, virt
 
 /*
  * Allocate and free a DMA-able ring buffer using the OS shim.
- * Convenience helpers for virtio-pci legacy queue setup.
+ *
+ * Note: virtio-pci modern devices do not require the entire ring to be a single
+ * physically-contiguous allocation, but these helpers are convenient for miniport
+ * drivers (single buffer, simpler pointer->PA arithmetic).
  */
 int virtqueue_split_alloc_ring(const virtio_os_ops_t *os,
                                void *os_ctx,

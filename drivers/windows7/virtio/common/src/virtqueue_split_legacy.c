@@ -216,7 +216,7 @@ int virtqueue_split_init(virtqueue_split_t *vq,
         return VIRTIO_ERR_RANGE;
     }
     if ((ring_dma->paddr & ((uint64_t)queue_align - 1u)) != 0) {
-        /* Legacy queue base must satisfy QUEUE_ALIGN. */
+        /* Ring base must satisfy queue_align (legacy QUEUE_ALIGN or used-ring alignment). */
         return VIRTIO_ERR_RANGE;
     }
     /*
