@@ -812,6 +812,10 @@ struct VirtioSndPciDevice {
   std::wstring service;
   std::wstring inf_path;
   std::wstring inf_section;
+  std::wstring driver_desc;
+  std::wstring provider_name;
+  std::wstring driver_version;
+  std::wstring driver_date;
   DWORD cm_problem = 0;
   ULONG cm_status = 0;
   bool is_modern = false;
@@ -874,6 +878,18 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (auto sec = QueryDeviceDriverRegString(devinfo, &dev, L"InfSection")) {
       snd.inf_section = *sec;
     }
+    if (auto desc = QueryDeviceDriverRegString(devinfo, &dev, L"DriverDesc")) {
+      snd.driver_desc = *desc;
+    }
+    if (auto provider = QueryDeviceDriverRegString(devinfo, &dev, L"ProviderName")) {
+      snd.provider_name = *provider;
+    }
+    if (auto ver = QueryDeviceDriverRegString(devinfo, &dev, L"DriverVersion")) {
+      snd.driver_version = *ver;
+    }
+    if (auto date = QueryDeviceDriverRegString(devinfo, &dev, L"DriverDate")) {
+      snd.driver_date = *date;
+    }
 
     ULONG status = 0;
     ULONG problem = 0;
@@ -905,6 +921,11 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
              WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
              WideToUtf8(snd.inf_section).c_str(), WideToUtf8(expected_service).c_str());
+    if (!snd.driver_desc.empty() || !snd.provider_name.empty() || !snd.driver_version.empty() || !snd.driver_date.empty()) {
+      log.Logf("virtio-snd: pci driver desc=%s provider=%s version=%s date=%s",
+               WideToUtf8(snd.driver_desc).c_str(), WideToUtf8(snd.provider_name).c_str(),
+               WideToUtf8(snd.driver_version).c_str(), WideToUtf8(snd.driver_date).c_str());
+    }
     log.Logf("virtio-snd: pci cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
              static_cast<unsigned long>(snd.cm_status), CmStatusFlagsToString(snd.cm_status).c_str(),
              static_cast<unsigned long>(snd.cm_problem), CmProblemCodeToName(snd.cm_problem),
