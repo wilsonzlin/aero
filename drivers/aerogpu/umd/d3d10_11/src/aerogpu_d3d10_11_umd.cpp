@@ -2497,9 +2497,15 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
-  sh->handle = allocate_global_handle(dev->adapter);
-  // Geometry stage isn't represented in the current command stream; keep as vertex-stage for hashing/ID purposes.
-  sh->stage = AEROGPU_SHADER_STAGE_VERTEX;
+  // Geometry shaders are accepted by the Win7 D3D11 runtime at FL10_0, but the
+  // AeroGPU command stream / WebGPU backend currently has no geometry-shader
+  // stage. For bring-up, treat GS as a no-op and do not forward DXBC to the host.
+  //
+  // NOTE: The created Shader's `handle` intentionally stays 0 so
+  // `DestroyPixelShader11`/`DestroyVertexShader11`-style cleanup does not emit a
+  // host-side DESTROY_SHADER for a shader that was never created.
+  sh->handle = 0;
+  sh->stage = 0;
   return S_OK;
 }
 
@@ -2875,7 +2881,7 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   ctx->current_gs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HGEOMETRYSHADER, AeroGpuShader>(hShader)->handle : 0;
   // Geometry shaders are currently ignored (no GS stage in the AeroGPU command
   // stream / WebGPU backend). Binding/unbinding must not fail so apps can use
-  // pass-through GS shaders (e.g. to rename varyings).
+  // pass-through GS shaders (e.g. to rename varyings). See CreateGeometryShader11.
 }
 
 template <typename THandle>
@@ -2919,14 +2925,13 @@ void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              const D3D11DDI_HRESOURCE* phBuffers,
                                              const UINT*,
                                              const UINT*) {
-  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phBuffers, NumBuffers)) {
+  if (!hCtx.pDrvPrivate) {
     return;
   }
-  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
-  if (!ctx || !ctx->device) {
-    return;
-  }
-  SetError(ctx->device, E_NOTIMPL);
+  // Geometry shaders are ignored for bring-up; accept and ignore state changes
+  // so apps that set up a GS pipeline can still run.
+  (void)NumBuffers;
+  (void)phBuffers;
 }
 
 template <typename THandle>
@@ -3278,14 +3283,13 @@ void AEROGPU_APIENTRY GsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              UINT,
                                              UINT NumViews,
                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
-  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phViews, NumViews)) {
+  if (!hCtx.pDrvPrivate) {
     return;
   }
-  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
-  if (!ctx || !ctx->device) {
-    return;
-  }
-  SetError(ctx->device, E_NOTIMPL);
+  // Geometry shaders are ignored for bring-up; accept and ignore state changes
+  // so apps that set up a GS pipeline can still run.
+  (void)NumViews;
+  (void)phViews;
 }
 
 void AEROGPU_APIENTRY VsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -3320,14 +3324,13 @@ void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
                                       UINT,
                                       UINT NumSamplers,
                                       const D3D11DDI_HSAMPLER* phSamplers) {
-  if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phSamplers, NumSamplers)) {
+  if (!hCtx.pDrvPrivate) {
     return;
   }
-  auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx);
-  if (!ctx || !ctx->device) {
-    return;
-  }
-  SetError(ctx->device, E_NOTIMPL);
+  // Geometry shaders are ignored for bring-up; accept and ignore state changes
+  // so apps that set up a GS pipeline can still run.
+  (void)NumSamplers;
+  (void)phSamplers;
 }
 
 void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewports, const D3D10_DDI_VIEWPORT* pViewports) {
