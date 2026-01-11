@@ -89,6 +89,18 @@ services:
       # gateway defaults to allowing the origin derived from PUBLIC_BASE_URL.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
 
+      # Same-origin UDP relay integration.
+      #
+      # This enables `POST /session` to return `udpRelay` connection info for browser
+      # clients, pointing at the relay behind the same Caddy origin.
+      UDP_RELAY_BASE_URL: https://${AERO_DOMAIN:-localhost}
+      UDP_RELAY_AUTH_MODE: ${AUTH_MODE:-none}
+      UDP_RELAY_API_KEY: ${API_KEY:-}
+      UDP_RELAY_JWT_SECRET: ${JWT_SECRET:-}
+      UDP_RELAY_TOKEN_TTL_SECONDS: ${UDP_RELAY_TOKEN_TTL_SECONDS:-300}
+      UDP_RELAY_AUDIENCE: ${UDP_RELAY_AUDIENCE:-}
+      UDP_RELAY_ISSUER: ${UDP_RELAY_ISSUER:-}
+
       # Enable trust for X-Forwarded-* only when the gateway is not directly
       # exposed to the public internet.
       TRUST_PROXY: ${TRUST_PROXY:-1}
@@ -156,9 +168,9 @@ services:
       - AERO_STUN_URLS=${AERO_STUN_URLS:-stun:stun.l.google.com:19302}
 
       # Optional auth / policy configuration (passed through when set in deploy/.env).
-      - AUTH_MODE
-      - API_KEY
-      - JWT_SECRET
+      - AUTH_MODE=${AUTH_MODE:-none}
+      - API_KEY=${API_KEY:-}
+      - JWT_SECRET=${JWT_SECRET:-}
       - SIGNALING_AUTH_TIMEOUT
       - MAX_SIGNALING_MESSAGE_BYTES
       - MAX_SIGNALING_MESSAGES_PER_SECOND

@@ -201,6 +201,7 @@ The UDP relay (`proxy/webrtc-udp-relay`) has two networking surfaces:
   - `GET /webrtc/ice`
   - `GET /webrtc/signal` (WebSocket)
   - `POST /webrtc/offer` and `POST /offer`
+  - `GET /udp` (WebSocket UDP fallback; same datagram framing as the WebRTC DataChannel)
 - **UDP (not proxyable)**: ICE + data plane UDP ports must be reachable by browser clients.
 
 Defaults in `deploy/docker-compose.yml`:
@@ -214,7 +215,11 @@ If you change the ICE port range, you must update:
 1) The env vars (`WEBRTC_UDP_PORT_MIN/MAX`), and
 2) The published UDP port range (firewall + docker `ports:`).
 
-The relay also supports auth and a strict UDP destination policy; see:
+The relay supports authentication via `AUTH_MODE` (and `API_KEY`/`JWT_SECRET`). These values
+are also used by `backend/aero-gateway` to mint `udpRelay.token` in `POST /session` so the
+frontend can discover how to authenticate to the relay.
+
+The relay also supports a strict UDP destination policy; see:
 
 - `proxy/webrtc-udp-relay/README.md` (authoritative)
 
@@ -344,8 +349,11 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&host=exampl
 If you see a successful handshake but the connection immediately closes, the
 gateway may be rejecting the query parameters or target.
 
-> Note: once gateway auth is enforced, you will likely need to call `GET /session` first to obtain
-> a cookie-backed session (and then include that cookie when connecting to `/tcp`).
+> Note: the gateway requires a cookie-backed session for `/tcp`. Create one first with:
+>
+> ```bash
+> curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
+> ```
 
 ## L2 tunnel proxy (/l2)
 
@@ -402,18 +410,25 @@ curl -k https://localhost/healthz
 # UDP relay ICE discovery (should return 200 + {"iceServers":[...]}):
 curl -k https://localhost/webrtc/ice
 
-# Optional: session bootstrap (sets a Secure cookie when behind the TLS proxy):
-curl -kI https://localhost/session
+# Session bootstrap (sets a Secure cookie when behind the TLS proxy and returns relay config):
+curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
 ```
 
 ### `/session` and UDP relay integration notes
 
-`backend/aero-gateway` currently implements `GET /session` as a minimal cookie smoke test.
-In a full Aero deployment, `/session` is expected to also return the browser-facing UDP relay
-configuration (URL + token), so the frontend can discover:
+`backend/aero-gateway` implements `POST /session` as the session bootstrap endpoint.
+It sets the `aero_session` cookie and returns a JSON payload that includes (when configured):
 
-- which `/webrtc/*` URL to use (same-origin behind Caddy), and
-- how to authenticate to the relay (API key / JWT / session-derived token).
+- `udpRelay.baseUrl` (expected to be the same origin in this deploy stack)
+- `udpRelay.endpoints`:
+  - `/webrtc/ice` (ICE server discovery)
+  - `/webrtc/signal` (WebSocket signaling)
+  - `/webrtc/offer` and `/offer` (HTTP offer/answer flows)
+  - `/udp` (WebSocket UDP fallback)
+- `udpRelay.token` / `udpRelay.expiresAt` when `AUTH_MODE` is enabled
+
+In this deploy stack, the gateway is configured to advertise the relay at the same origin
+(`https://$AERO_DOMAIN`) so the browser can stay single-origin and avoid CORS/cookie issues.
 
 ## CORS / origin strategy
 

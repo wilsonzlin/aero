@@ -51,7 +51,7 @@
 	}
 
 	# WebRTC signaling / ICE discovery for the UDP relay service.
-	@aero_webrtc_udp_relay path /webrtc* /offer
+	@aero_webrtc_udp_relay path /webrtc* /offer /udp*
 	handle @aero_webrtc_udp_relay {
 		import aero_headers
 		reverse_proxy {$AERO_WEBRTC_UDP_RELAY_UPSTREAM:aero-webrtc-udp-relay:8080}

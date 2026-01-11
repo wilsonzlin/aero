@@ -185,8 +185,42 @@ function requestSessionCookie() {
       },
       (res) => {
         const status = res.statusCode ?? 0;
-        res.resume();
+        res.setEncoding("utf8");
+        let bodyText = "";
+        res.on("data", (chunk) => {
+          bodyText += chunk;
+        });
         res.on("end", () => {
+          let payload;
+          try {
+            payload = JSON.parse(bodyText || "{}");
+          } catch (err) {
+            reject(new Error(`invalid JSON from /session: ${err}`));
+            return;
+          }
+          if (!payload || typeof payload !== "object") {
+            reject(new Error("invalid /session response body"));
+            return;
+          }
+          const udpRelay = payload.udpRelay;
+          if (!udpRelay || typeof udpRelay !== "object") {
+            reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
+            return;
+          }
+          const endpoints = udpRelay.endpoints;
+          if (!endpoints || typeof endpoints !== "object") {
+            reject(new Error("missing udpRelay.endpoints in /session response"));
+            return;
+          }
+          if (endpoints.webrtcIce !== "/webrtc/ice") {
+            reject(new Error(`unexpected udpRelay.endpoints.webrtcIce: ${endpoints.webrtcIce}`));
+            return;
+          }
+          if (endpoints.udp !== "/udp") {
+            reject(new Error(`unexpected udpRelay.endpoints.udp: ${endpoints.udp}`));
+            return;
+          }
+
           const setCookie = res.headers["set-cookie"];
           if (!setCookie) {
             reject(new Error("missing Set-Cookie from /session"));
