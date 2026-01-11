@@ -58,6 +58,8 @@ Currently validated files:
 
 - `web/vite.config.ts`
 - `vite.harness.config.ts`
+- `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
+- `backend/aero-gateway/src/middleware/securityHeaders.ts`
 - `deploy/k8s/chart/aero-gateway/values.yaml` (Helm chart defaults)
 - `web/public/_headers`
 - `deploy/cloudflare-pages/_headers`

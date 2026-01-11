@@ -140,6 +140,9 @@ CI validates that the following stay in sync with the canonical values:
     - `deploy/vercel.json` (headers-only template)
   - Kubernetes (Helm chart defaults):
     - `deploy/k8s/chart/aero-gateway/values.yaml`
+  - Backend (aero-gateway) middleware:
+    - `backend/aero-gateway/src/middleware/crossOriginIsolation.ts`
+    - `backend/aero-gateway/src/middleware/securityHeaders.ts`
   - `deploy/caddy/Caddyfile`
   - `deploy/nginx/nginx.conf`
 
