@@ -284,6 +284,8 @@ static int RunD3D10Triangle(int argc, char** argv) {
   const FLOAT clear_rgba[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   device->ClearRenderTargetView(rtv.get(), clear_rgba);
   device->Draw(3, 0);
+  // Avoid any ambiguity around copying from a still-bound render target.
+  device->OMSetRenderTargets(0, NULL, NULL);
 
   // Read back the center pixel before present.
   D3D10_TEXTURE2D_DESC bb_desc;
