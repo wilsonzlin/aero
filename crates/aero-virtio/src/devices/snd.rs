@@ -58,6 +58,16 @@ pub trait AudioCaptureSource {
     }
 }
 
+impl<T: AudioCaptureSource + ?Sized> AudioCaptureSource for Box<T> {
+    fn read_mono_f32(&mut self, dst: &mut [f32]) -> usize {
+        (**self).read_mono_f32(dst)
+    }
+
+    fn take_dropped_samples(&mut self) -> u64 {
+        (**self).take_dropped_samples()
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NullCaptureSource;
 
