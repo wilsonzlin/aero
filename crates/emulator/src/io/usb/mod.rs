@@ -1,4 +1,5 @@
 pub mod core;
+pub mod descriptor_fixups;
 pub mod hid;
 pub mod hub;
 pub mod uhci;
