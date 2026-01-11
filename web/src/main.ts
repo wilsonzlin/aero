@@ -555,6 +555,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
 
   let steps = 0;
   let serialBytes: number | null = 0;
+  let unloadHandlerAttached = false;
 
   // Expose current snapshot panel state for Playwright smoke tests.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -607,6 +608,19 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     workerClient = null;
     testState.ready = false;
     testState.streaming = false;
+  }
+
+  function ensureUnloadHandler(): void {
+    if (unloadHandlerAttached) return;
+    unloadHandlerAttached = true;
+    window.addEventListener(
+      "pagehide",
+      () => {
+        workerClient?.terminate();
+        workerClient = null;
+      },
+      { once: true },
+    );
   }
 
   async function restoreSnapshotFromOpfs(): Promise<{ sizeBytes: number; serialBytes: number | null } | null> {
@@ -726,23 +740,24 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   });
 
-  if (!report.opfs) {
-    clearAutosaveTimer();
-    status.textContent = "Snapshots unavailable (OPFS missing).";
-    setButtonsEnabled(false);
-    setError("OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).");
-    testState.ready = false;
-    testState.streaming = false;
-  } else {
-    setButtonsEnabled(false);
-    status.textContent = "Initializing demo VM worker…";
+    if (!report.opfs) {
+      clearAutosaveTimer();
+      status.textContent = "Snapshots unavailable (OPFS missing).";
+      setButtonsEnabled(false);
+      setError("OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).");
+      testState.ready = false;
+      testState.streaming = false;
+    } else {
+      setButtonsEnabled(false);
+      status.textContent = "Initializing demo VM worker…";
 
-    try {
-      workerClient = new DemoVmWorkerClient({
-        onStatus: (state) => {
-          steps = state.steps;
-          serialBytes = state.serialBytes;
-          output.textContent =
+      try {
+        ensureUnloadHandler();
+        workerClient = new DemoVmWorkerClient({
+          onStatus: (state) => {
+            steps = state.steps;
+            serialBytes = state.serialBytes;
+            output.textContent =
             `steps=${steps.toLocaleString()} ` +
             `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
         },
