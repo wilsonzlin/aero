@@ -25,9 +25,11 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
+- `aerogpu_alloc_privdata.h` – allocation private driver data (KMD → UMD), including the KMD `ShareToken` used for shared surfaces.
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
-- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
-- `aerogpu_escape.h` – stable `DxgkDdiEscape` packet header + base ops (UMD/tool ↔ KMD control channel).
+- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract (UMD→KMD input blob) for stable per-allocation metadata across CreateAllocation/OpenAllocation.
+- `aerogpu_win7_abi.h` – driver-private WOW64-stable user↔kernel ABI blobs (no pointers; fixed layout across x86/x64).
+- `aerogpu_escape.h` – driver-private `DxgkDdiEscape` packet header + base ops (UMD/tool ↔ KMD control channel).
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`; ring dumps report canonical submit fields like `cmd_gpa`/`cmd_size_bytes`/`signal_fence`.)
 - `aerogpu_protocol.h` – **legacy bring-up ABI** (monolithic header; PCI `1AED:0001`). Deprecated/legacy-only; kept for reference and for the emulator legacy device model.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.

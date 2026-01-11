@@ -167,82 +167,36 @@ This is the core frame-pacing behavior DWM relies on.
 ### 3) Resource behaviors Ex clients rely on
 
 #### Shared resources / shared handles
-
+ 
 DWM composition commonly depends on the ability to share render targets/textures across components. D3D9 already has `pSharedHandle` parameters, but D3D9Ex tends to rely on this behavior more heavily and in more cases.
+ 
+Define a guest/host sharing model that does **not** attempt to expose host OS handles:
 
-Define a guest/host handle model that does **not** attempt to expose host OS handles:
+- The D3D9/D3D9Ex API surface uses a user-mode `HANDLE` (`pSharedHandle`) to represent “shared resources”.
+  - This value is a normal Windows handle: **process-local**, not stable cross-process, and commonly different in the consumer after `DuplicateHandle`.
+  - **AeroGPU does _not_ use the numeric `HANDLE` value as the protocol `share_token`.**
+- In the AeroGPU protocol, `share_token` is defined as the **KMD-generated allocation `ShareToken`** returned to the UMD via allocation private driver data (see `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
+  - **Do not** treat the raw Win32 `HANDLE` value itself as a stable cross-process token. The handle is still required for correctness (it is how another process asks Windows to open the shared resource), but it is not a good host-mapping key.
 
-- **Do not** treat the raw Win32 `HANDLE` value itself as a stable cross-process
-  token:
-  - shared handles may be duplicated (`DuplicateHandle`) and the numeric value is
-    not guaranteed to match across processes (or 32-bit vs 64-bit).
-  - the UMD also cannot "forge" a handle value; dxgkrnl owns the handle table.
-  The handle is still used for correctness (it is how another process asks
-  Windows to open the shared resource), but it is not a good host-mapping key.
+Expected sequence:
 
-- Instead we introduce an AeroGPU-owned **share_token** (`u64`) that is stable
-  across guest processes for the lifetime of the shared resource.
+1. **Create shared resource → export (token)**
+   - Producer process creates a shareable resource (`pSharedHandle != nullptr`).
+   - The KMD generates/stores a `ShareToken` for the underlying allocation and returns it to the UMD (allocation private driver data).
+   - The UMD submits `EXPORT_SHARED_SURFACE { resource_handle, share_token=ShareToken }` so the host can map `share_token → resource`.
 
-- On “export” (resource creation with `pSharedHandle != nullptr`):
-  1. The UMD generates a non-zero `alloc_id` (`<= 0x7fffffff`) and a stable
-     non-zero `share_token` and writes them into the WDDM **allocation private
-     driver data** blob (`aerogpu_wddm_alloc_priv`) passed to dxgkrnl/KMD during
-     allocation creation (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-     For shared allocations, dxgkrnl preserves the blob and returns the exact
-     same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process.
-  2. The UMD requests a normal WDDM shared handle (the value written to
-     `*pSharedHandle` is still the OS handle).
-  3. The KMD treats the private-data blob as **UMD → KMD input**: validates it
-     (magic/version/flags/size), records the IDs, and uses `alloc_id` when
-     building per-submit `aerogpu_alloc_table` entries for the host.
-  4. The UMD informs the host: `(share_token → host_resource_id)` mapping is created
-     (via `AEROGPU_CMD_EXPORT_SHARED_SURFACE`).
+2. **Open shared resource → import (token)**
+   - Consumer process opens the resource via the OS shared handle mechanism (the handle must already be valid in the consumer process via `DuplicateHandle`/inheritance).
+   - The KMD resolves the shared allocation and returns the same `ShareToken` (allocation private driver data).
+   - The UMD submits `IMPORT_SHARED_SURFACE { share_token=ShareToken } -> resource_handle` to obtain a host resource alias.
 
-- On “import” (open from a shared handle):
-  1. The UMD performs the normal WDDM open. For shared allocations, dxgkrnl
-     preserves the allocation private driver data and returns the exact same
-     bytes on `OpenResource`/`DxgkDdiOpenAllocation` in other processes, so the
-     opening process recovers the exporting process’s `alloc_id` / `share_token`.
-  2. The UMD passes `share_token` to the host.
-  3. Host returns an existing host-side resource ID or errors if unknown.
+**Key invariant:** `share_token` must be stable across processes inside the guest VM. The KMD `ShareToken` is stable; user-mode `HANDLE` numeric values are not.
 
-**Key invariant:** `share_token` must be stable across processes inside the guest VM.
-In real Windows, the shared resource identity is represented by a kernel object
-referenced by per-process `HANDLE` values; in Aero, stability is provided by the
-UMD-provided `share_token` stored in preserved WDDM allocation private data (and
-validated/consumed by the KMD) and the host mapping table keyed by that token.
-
-**Implementation note (AeroGPU/WDDM):**
-Do not use raw Win32/D3DKMT handle values (which are process-local) as host
-sharing keys.
-
-`share_token` is a host-side mapping key, so it must be collision-resistant
-across the entire guest (multi-process). Prefer generating a random non-zero
-`uint64_t` token per shared resource (and persisting it in allocation private
-data). If `alloc_id` is globally unique across guest processes for the lifetime
-of the shared resource, `share_token = (uint64_t)alloc_id` is also acceptable.
-
-A robust scheme (and the one used by the current in-tree D3D9 UMD) is:
-
-- Allocate `alloc_id` from a cross-process monotonic counter (e.g. a named file mapping/shared memory region updated with `InterlockedIncrement64`) and keep it in the UMD-owned 31-bit range (e.g. `alloc_id = token & 0x7fffffff`, skipping 0).
-- Generate `share_token` **independently** as a collision-resistant 64-bit value (prefer a crypto RNG; fall back to mixed entropy + SplitMix64).
-- Store both values in preserved WDDM allocation private driver data so other processes can recover them verbatim on `OpenResource`/`OpenAllocation`.
-
-**Also:** `alloc_id` itself should avoid collisions across guest processes for
-shared allocations. DWM may open and compose many redirected surfaces from
-different processes in a single submission, and the KMD’s per-submit allocation
-table is keyed by `alloc_id`.
-
-**Note:** AeroGPU splits the `alloc_id` namespace to avoid collisions:
-UMD-generated IDs must keep the high bit clear (`1..0x7fffffff`), while the KMD
-reserves `0x80000000..0xffffffff` for internal/synthesized allocations where the
-runtime does not provide an AeroGPU private-data blob. See
-`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`.
+See `docs/graphics/win7-shared-surfaces-share-token.md` for implementation details and the cross-process validation test.
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
-**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` to exercise this exact cross-process “create shared → open shared” path.
-By default it validates cross-process pixel sharing via readback; pass `--no-validate-sharing` to focus on open + submit only (`--dump` always validates).
+**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc` to exercise this exact cross-process “create shared → open shared” path.
 
 ##### MVP limitation: shared surfaces must be single-allocation
 
