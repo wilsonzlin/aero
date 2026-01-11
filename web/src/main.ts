@@ -1313,6 +1313,14 @@ function renderRemoteDiskPanel(): HTMLElement {
     el("option", { value: "include", text: "credentials: include" }),
     el("option", { value: "omit", text: "credentials: omit" }),
   ) as HTMLSelectElement;
+  const cacheImageIdInput = el("input", {
+    type: "text",
+    placeholder: "cache image id (optional)",
+  }) as HTMLInputElement;
+  const cacheVersionInput = el("input", {
+    type: "text",
+    placeholder: "cache version (optional)",
+  }) as HTMLInputElement;
   const urlInput = el("input", { type: "url", placeholder: "http://localhost:9000/disk-images/large.bin" }) as HTMLInputElement;
   const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
   const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
@@ -1345,6 +1353,8 @@ function renderRemoteDiskPanel(): HTMLElement {
     const chunked = modeSelect.value === "chunked";
     blockSizeInput.disabled = chunked;
     maxConcurrentFetchesInput.disabled = !chunked;
+    cacheImageIdInput.disabled = chunked;
+    cacheVersionInput.disabled = chunked;
     urlInput.placeholder = chunked
       ? "http://localhost:9000/disk-images/manifest.json"
       : "http://localhost:9000/disk-images/large.bin";
@@ -1362,7 +1372,17 @@ function renderRemoteDiskPanel(): HTMLElement {
     updateModeUi();
     updateButtons();
   });
-  for (const input of [urlInput, cacheBackendSelect, credentialsSelect, blockSizeInput, cacheLimitInput, prefetchInput, maxConcurrentFetchesInput]) {
+  for (const input of [
+    urlInput,
+    cacheBackendSelect,
+    credentialsSelect,
+    cacheImageIdInput,
+    cacheVersionInput,
+    blockSizeInput,
+    cacheLimitInput,
+    prefetchInput,
+    maxConcurrentFetchesInput,
+  ]) {
     input.addEventListener("change", () => {
       void closeHandle();
       updateButtons();
@@ -1391,22 +1411,26 @@ function renderRemoteDiskPanel(): HTMLElement {
     const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
 
     const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
+    const cacheImageId = cacheImageIdInput.value.trim();
+    const cacheVersion = cacheVersionInput.value.trim();
     const opened =
       modeSelect.value === "chunked"
         ? await client.openChunked(url, {
-          cacheLimitBytes,
-          credentials: credentialsSelect.value as RequestCredentials,
+            cacheLimitBytes,
+            credentials: credentialsSelect.value as RequestCredentials,
           prefetchSequentialChunks: prefetchSequential,
           maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
-          cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
-        })
+            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
+          })
         : await client.openRemote(url, {
-          blockSize: Number(blockSizeInput.value) * 1024,
-          cacheLimitBytes,
-          credentials: credentialsSelect.value as RequestCredentials,
-          prefetchSequentialBlocks: prefetchSequential,
-          cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
-        });
+            blockSize: Number(blockSizeInput.value) * 1024,
+            cacheLimitBytes,
+            credentials: credentialsSelect.value as RequestCredentials,
+            prefetchSequentialBlocks: prefetchSequential,
+            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
+            ...(cacheImageId ? { cacheImageId } : {}),
+            ...(cacheVersion ? { cacheVersion } : {}),
+          });
     handle = opened.handle;
     updateButtons();
     return opened.handle;
@@ -1543,16 +1567,23 @@ function renderRemoteDiskPanel(): HTMLElement {
     warning,
     el(
       "div",
-        { class: "row" },
-        el("label", { text: "Enable:" }),
-        enabledInput,
-        el("label", { text: "Mode:" }),
-        modeSelect,
-        cacheBackendSelect,
-        credentialsSelect,
-        el("label", { text: "URL:" }),
-        urlInput,
-      ),
+      { class: "row" },
+      el("label", { text: "Enable:" }),
+      enabledInput,
+      el("label", { text: "Mode:" }),
+      modeSelect,
+      cacheBackendSelect,
+      credentialsSelect,
+      el("label", { text: "URL:" }),
+      urlInput,
+    ),
+    el(
+      "div",
+      { class: "row" },
+      el("label", { text: "Cache key (range):" }),
+      cacheImageIdInput,
+      cacheVersionInput,
+    ),
     el(
       "div",
       { class: "row" },
