@@ -1,14 +1,16 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
 
 using aerogpu_test::ComPtr;
 
-static int FailD3D11WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -16,6 +18,9 @@ static int FailD3D11WithRemovedReason(const char* test_name,
                                  test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
+  }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
   }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
@@ -74,11 +79,13 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_map_dynamic_buffer_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu] [--require-umd]",
+        "Usage: %s.exe [--dump] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -93,14 +100,14 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -122,12 +129,12 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
                                  D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                  feature_levels,
                                  ARRAYSIZE(feature_levels),
-                                 D3D11_SDK_VERSION,
-                                 device.put(),
-                                 &chosen_level,
-                                 context.put());
+                                  D3D11_SDK_VERSION,
+                                  device.put(),
+                                  &chosen_level,
+                                  context.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D11CreateDevice(HARDWARE)", hr);
+    return reporter.FailHresult("D3D11CreateDevice(HARDWARE)", hr);
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
@@ -139,9 +146,8 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(kTestName,
-                                         "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
-                                         hr_adapter);
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
+                                    hr_adapter);
       }
     } else {
       DXGI_ADAPTER_DESC ad;
@@ -149,8 +155,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
-          return aerogpu_test::FailHresult(
-              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
         }
       } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
@@ -158,42 +163,38 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
         if (!allow_microsoft && ad.VendorId == 0x1414) {
-          return aerogpu_test::Fail(kTestName,
-                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                    "Install AeroGPU driver or pass --allow-microsoft.",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)ad.DeviceId);
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
         }
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) &&
             !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
-                                    "or use --require-vid/--require-did)",
-                                    ad.Description);
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
         }
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -214,7 +215,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> dynamic_buf;
   hr = device->CreateBuffer(&dyn_desc, NULL, dynamic_buf.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(dynamic)", hr);
+    return reporter.FailHresult("CreateBuffer(dynamic)", hr);
   }
 
   // Bind the buffer as a vertex buffer to increase the chance the runtime exercises the dynamic IA
@@ -236,24 +237,24 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> staging_a;
   hr = device->CreateBuffer(&st_desc, NULL, staging_a.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging_a)", hr);
+    return reporter.FailHresult("CreateBuffer(staging_a)", hr);
   }
 
   ComPtr<ID3D11Buffer> staging_b;
   hr = device->CreateBuffer(&st_desc, NULL, staging_b.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging_b)", hr);
+    return reporter.FailHresult("CreateBuffer(staging_b)", hr);
   }
 
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic, WRITE_DISCARD)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(dynamic, WRITE_DISCARD)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_buf.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(dynamic, WRITE_DISCARD) returned NULL pData");
+    return reporter.Fail("Map(dynamic, WRITE_DISCARD) returned NULL pData");
   }
 
   uint8_t* dst = (uint8_t*)map.pData;
@@ -271,11 +272,15 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic, WRITE_DISCARD #2)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter,
+                                      kTestName,
+                                      "Map(dynamic, WRITE_DISCARD #2)",
+                                      hr,
+                                      device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_buf.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(dynamic, WRITE_DISCARD #2) returned NULL pData");
+    return reporter.Fail("Map(dynamic, WRITE_DISCARD #2) returned NULL pData");
   }
 
   uint8_t* dst_b = (uint8_t*)map.pData;
@@ -289,11 +294,12 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic, WRITE_NO_OVERWRITE)", hr, device.get());
+    return FailD3D11WithRemovedReason(
+        &reporter, kTestName, "Map(dynamic, WRITE_NO_OVERWRITE)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_buf.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(dynamic, WRITE_NO_OVERWRITE) returned NULL pData");
+    return reporter.Fail("Map(dynamic, WRITE_NO_OVERWRITE) returned NULL pData");
   }
 
   uint8_t* dst2 = (uint8_t*)map.pData;
@@ -309,18 +315,22 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging_a.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging_a, READ)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging_a, READ)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging_a.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging_a, READ) returned NULL pData");
+    return reporter.Fail("Map(staging_a, READ) returned NULL pData");
   }
 
   if (dump) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring path =
+        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_discard0.bin");
     DumpBytesToFileIfRequested(kTestName,
                                L"d3d11_map_dynamic_buffer_sanity_discard0.bin",
                                map.pData,
                                kByteWidth);
+    reporter.AddArtifactPathW(path);
   }
 
   const uint8_t* got = (const uint8_t*)map.pData;
@@ -329,11 +339,10 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     if (got[i] != expected) {
       context->Unmap(staging_a.get(), 0);
       PrintDeviceRemovedReasonIfAny(kTestName, device.get());
-      return aerogpu_test::Fail(kTestName,
-                                "staging_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
-                                (unsigned long)i,
-                                (unsigned)got[i],
-                                (unsigned)expected);
+      return reporter.Fail("staging_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                           (unsigned long)i,
+                           (unsigned)got[i],
+                           (unsigned)expected);
     }
   }
 
@@ -343,16 +352,19 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging_b.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging_b, READ)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging_b, READ)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging_b.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging_b, READ) returned NULL pData");
+    return reporter.Fail("Map(staging_b, READ) returned NULL pData");
   }
   if (dump) {
     // Keep the original dump name for the final buffer contents.
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring path = aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity.bin");
     DumpBytesToFileIfRequested(
         kTestName, L"d3d11_map_dynamic_buffer_sanity.bin", map.pData, kByteWidth);
+    reporter.AddArtifactPathW(path);
   }
 
   got = (const uint8_t*)map.pData;
@@ -364,11 +376,10 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     if (got[i] != expected) {
       context->Unmap(staging_b.get(), 0);
       PrintDeviceRemovedReasonIfAny(kTestName, device.get());
-      return aerogpu_test::Fail(kTestName,
-                                "staging_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
-                                (unsigned long)i,
-                                (unsigned)got[i],
-                                (unsigned)expected);
+      return reporter.Fail("staging_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                           (unsigned long)i,
+                           (unsigned)got[i],
+                           (unsigned)expected);
     }
   }
 
@@ -382,7 +393,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> dynamic_ib;
   hr = device->CreateBuffer(&idx_desc, NULL, dynamic_ib.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(dynamic index)", hr);
+    return reporter.FailHresult("CreateBuffer(dynamic index)", hr);
   }
 
   context->IASetIndexBuffer(dynamic_ib.get(), DXGI_FORMAT_R16_UINT, 0);
@@ -390,11 +401,12 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_ib.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic index, WRITE_DISCARD)", hr, device.get());
+    return FailD3D11WithRemovedReason(
+        &reporter, kTestName, "Map(dynamic index, WRITE_DISCARD)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_ib.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(dynamic index, WRITE_DISCARD) returned NULL pData");
+    return reporter.Fail("Map(dynamic index, WRITE_DISCARD) returned NULL pData");
   }
   uint8_t* ib_dst = (uint8_t*)map.pData;
   for (size_t i = 0; i < kByteWidth; ++i) {
@@ -406,12 +418,11 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   hr = context->Map(dynamic_ib.get(), 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &map);
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(
-        kTestName, "Map(dynamic index, WRITE_NO_OVERWRITE)", hr, device.get());
+        &reporter, kTestName, "Map(dynamic index, WRITE_NO_OVERWRITE)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_ib.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(dynamic index, WRITE_NO_OVERWRITE) returned NULL pData");
+    return reporter.Fail("Map(dynamic index, WRITE_NO_OVERWRITE) returned NULL pData");
   }
   ib_dst = (uint8_t*)map.pData;
   for (size_t i = kOverwriteStart; i < kByteWidth; ++i) {
@@ -422,7 +433,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> staging_ib;
   hr = device->CreateBuffer(&st_desc, NULL, staging_ib.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging index)", hr);
+    return reporter.FailHresult("CreateBuffer(staging index)", hr);
   }
 
   context->CopyResource(staging_ib.get(), dynamic_ib.get());
@@ -431,16 +442,20 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging_ib.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging index, READ)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging index, READ)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging_ib.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging index, READ) returned NULL pData");
+    return reporter.Fail("Map(staging index, READ) returned NULL pData");
   }
 
   if (dump) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring path =
+        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_index.bin");
     DumpBytesToFileIfRequested(
         kTestName, L"d3d11_map_dynamic_buffer_sanity_index.bin", map.pData, kByteWidth);
+    reporter.AddArtifactPathW(path);
   }
 
   got = (const uint8_t*)map.pData;
@@ -452,11 +467,10 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     if (got[i] != expected) {
       context->Unmap(staging_ib.get(), 0);
       PrintDeviceRemovedReasonIfAny(kTestName, device.get());
-      return aerogpu_test::Fail(kTestName,
-                                "staging index mismatch at offset %lu: got 0x%02X expected 0x%02X",
-                                (unsigned long)i,
-                                (unsigned)got[i],
-                                (unsigned)expected);
+      return reporter.Fail("staging index mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                           (unsigned long)i,
+                           (unsigned)got[i],
+                           (unsigned)expected);
     }
   }
   context->Unmap(staging_ib.get(), 0);
@@ -471,7 +485,7 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> dynamic_cb;
   hr = device->CreateBuffer(&cb_desc, NULL, dynamic_cb.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(dynamic constant)", hr);
+    return reporter.FailHresult("CreateBuffer(dynamic constant)", hr);
   }
 
   ID3D11Buffer* cbs[] = {dynamic_cb.get()};
@@ -484,26 +498,27 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ComPtr<ID3D11Buffer> staging_cb_a;
   hr = device->CreateBuffer(&st_desc, NULL, staging_cb_a.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging constant_a)", hr);
+    return reporter.FailHresult("CreateBuffer(staging constant_a)", hr);
   }
 
   ComPtr<ID3D11Buffer> staging_cb_b;
   hr = device->CreateBuffer(&st_desc, NULL, staging_cb_b.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging constant_b)", hr);
+    return reporter.FailHresult("CreateBuffer(staging constant_b)", hr);
   }
 
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName,
-                                     "Map(dynamic constant, WRITE_DISCARD)",
-                                     hr,
-                                     device.get());
+    return FailD3D11WithRemovedReason(&reporter,
+                                      kTestName,
+                                      "Map(dynamic constant, WRITE_DISCARD)",
+                                      hr,
+                                      device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_cb.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(dynamic constant, WRITE_DISCARD) returned NULL pData");
+    return reporter.Fail("Map(dynamic constant, WRITE_DISCARD) returned NULL pData");
   }
 
   uint8_t* cb_dst = (uint8_t*)map.pData;
@@ -517,15 +532,15 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName,
-                                     "Map(dynamic constant, WRITE_DISCARD #2)",
-                                     hr,
-                                     device.get());
+    return FailD3D11WithRemovedReason(&reporter,
+                                      kTestName,
+                                      "Map(dynamic constant, WRITE_DISCARD #2)",
+                                      hr,
+                                      device.get());
   }
   if (!map.pData) {
     context->Unmap(dynamic_cb.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(dynamic constant, WRITE_DISCARD #2) returned NULL pData");
+    return reporter.Fail("Map(dynamic constant, WRITE_DISCARD #2) returned NULL pData");
   }
 
   uint8_t* cb_dst2 = (uint8_t*)map.pData;
@@ -540,19 +555,24 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging_cb_a.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName,
-                                     "Map(staging constant_a, READ)",
-                                     hr,
-                                     device.get());
+    return FailD3D11WithRemovedReason(&reporter,
+                                      kTestName,
+                                      "Map(staging constant_a, READ)",
+                                      hr,
+                                      device.get());
   }
   if (!map.pData) {
     context->Unmap(staging_cb_a.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging constant_a, READ) returned NULL pData");
+    return reporter.Fail("Map(staging constant_a, READ) returned NULL pData");
   }
 
   if (dump) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring path =
+        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_constant_discard0.bin");
     DumpBytesToFileIfRequested(
         kTestName, L"d3d11_map_dynamic_buffer_sanity_constant_discard0.bin", map.pData, cb_desc.ByteWidth);
+    reporter.AddArtifactPathW(path);
   }
 
   got = (const uint8_t*)map.pData;
@@ -561,11 +581,11 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     if (got[i] != expected) {
       context->Unmap(staging_cb_a.get(), 0);
       PrintDeviceRemovedReasonIfAny(kTestName, device.get());
-      return aerogpu_test::Fail(kTestName,
-                                "staging constant_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
-                                (unsigned long)i,
-                                (unsigned)got[i],
-                                (unsigned)expected);
+      return reporter.Fail(
+          "staging constant_a mismatch at offset %lu: got 0x%02X expected 0x%02X",
+          (unsigned long)i,
+          (unsigned)got[i],
+          (unsigned)expected);
     }
   }
 
@@ -574,19 +594,24 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging_cb_b.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName,
-                                     "Map(staging constant_b, READ)",
-                                     hr,
-                                     device.get());
+    return FailD3D11WithRemovedReason(&reporter,
+                                      kTestName,
+                                      "Map(staging constant_b, READ)",
+                                      hr,
+                                      device.get());
   }
   if (!map.pData) {
     context->Unmap(staging_cb_b.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging constant_b, READ) returned NULL pData");
+    return reporter.Fail("Map(staging constant_b, READ) returned NULL pData");
   }
 
   if (dump) {
+    const std::wstring dir = aerogpu_test::GetModuleDir();
+    const std::wstring path =
+        aerogpu_test::JoinPath(dir, L"d3d11_map_dynamic_buffer_sanity_constant.bin");
     DumpBytesToFileIfRequested(
         kTestName, L"d3d11_map_dynamic_buffer_sanity_constant.bin", map.pData, cb_desc.ByteWidth);
+    reporter.AddArtifactPathW(path);
   }
 
   got = (const uint8_t*)map.pData;
@@ -595,18 +620,16 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     if (got[i] != expected) {
       context->Unmap(staging_cb_b.get(), 0);
       PrintDeviceRemovedReasonIfAny(kTestName, device.get());
-      return aerogpu_test::Fail(kTestName,
-                                "staging constant_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
-                                (unsigned long)i,
-                                (unsigned)got[i],
-                                (unsigned)expected);
+      return reporter.Fail(
+          "staging constant_b mismatch at offset %lu: got 0x%02X expected 0x%02X",
+          (unsigned long)i,
+          (unsigned)got[i],
+          (unsigned)expected);
     }
   }
 
   context->Unmap(staging_cb_b.get(), 0);
-
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
