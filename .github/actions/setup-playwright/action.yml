@@ -30,7 +30,7 @@ inputs:
 outputs:
   cache-hit:
     description: Whether the browser cache was restored from an exact key match.
-    value: ${{ steps.cache-state.outputs.cache_hit != 'false' && steps.cache-state.outputs.cache_hit || steps.browser-cache.outputs.cache-hit }}
+    value: ${{ steps.browser-cache.outputs.cache-hit || 'false' }}
 
 runs:
   using: composite
@@ -185,79 +185,6 @@ runs:
         setOutput('with_deps', withDeps ? 'true' : 'false');
         NODE
         
-    - name: Determine whether browser cache is already available (job-local)
-      id: cache-state
-      shell: bash
-      env:
-        CACHE_PATH: ${{ steps.vars.outputs.cache_path }}
-        BROWSERS_KEY: ${{ steps.vars.outputs.browsers_key }}
-        CACHE_KEY_HASH: ${{ hashFiles(steps.vars.outputs.cache_key_file) }}
-      run: |
-        set -euo pipefail
-        node <<'NODE'
-        const fs = require('fs');
-        
-        const cachePath = process.env.CACHE_PATH;
-        const browsersKey = process.env.BROWSERS_KEY;
-        const cacheKeyHash = process.env.CACHE_KEY_HASH;
-        
-        const fingerprint = `${cachePath}::${browsersKey}::${cacheKeyHash}`;
-        const existing = (process.env.AERO_PLAYWRIGHT_CACHE_FINGERPRINTS || '')
-          .split(/\r?\n/u)
-          .filter(Boolean);
-        
-        let skipRestore = false;
-        if (existing.includes(fingerprint)) {
-          try {
-            const entries = fs.readdirSync(cachePath);
-            if (entries.length) skipRestore = true;
-          } catch {
-            // Cache path doesn't exist (yet) => can't skip.
-          }
-        }
-        
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip_restore=${skipRestore ? 'true' : 'false'}\n`);
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `cache_hit=${skipRestore ? 'job-local' : 'false'}\n`);
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `fingerprint=${fingerprint}\n`);
-        NODE
-
-    - name: Restore Playwright browser cache
-      id: browser-cache
-      if: steps.cache-state.outputs.skip_restore != 'true'
-      uses: actions/cache@v4
-      with:
-        path: ${{ steps.vars.outputs.cache_path }}
-        key: ${{ runner.os }}-playwright-${{ steps.vars.outputs.browsers_key }}-${{ hashFiles(steps.vars.outputs.cache_key_file) }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-${{ steps.vars.outputs.browsers_key }}-
-          ${{ runner.os }}-playwright-
-
-    - name: Record Playwright cache fingerprint (job-local)
-      if: steps.cache-state.outputs.skip_restore != 'true'
-      shell: bash
-      env:
-        FINGERPRINT: ${{ steps.cache-state.outputs.fingerprint }}
-      run: |
-        set -euo pipefail
-        
-        if [[ -n "${AERO_PLAYWRIGHT_CACHE_FINGERPRINTS:-}" ]]; then
-          if printf '%s\n' "$AERO_PLAYWRIGHT_CACHE_FINGERPRINTS" | grep -Fxq "$FINGERPRINT"; then
-            exit 0
-          fi
-          {
-            echo "AERO_PLAYWRIGHT_CACHE_FINGERPRINTS<<EOF"
-            printf '%s\n' "$AERO_PLAYWRIGHT_CACHE_FINGERPRINTS"
-            echo "$FINGERPRINT"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-        else
-          {
-            echo "AERO_PLAYWRIGHT_CACHE_FINGERPRINTS<<EOF"
-            echo "$FINGERPRINT"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-        fi
-
     - name: Resolve Playwright CLI + version
       id: playwright
       shell: bash
@@ -281,7 +208,7 @@ runs:
         NODE
 
     - name: Check whether browsers are already installed
-      id: check
+      id: precheck
       shell: bash
       env:
         PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
@@ -330,6 +257,68 @@ runs:
         );
         NODE
 
+    - name: Restore Playwright browser cache
+      id: browser-cache
+      if: steps.precheck.outputs.missing == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.vars.outputs.cache_path }}
+        key: ${{ runner.os }}-playwright-${{ steps.vars.outputs.browsers_key }}-${{ hashFiles(steps.vars.outputs.cache_key_file) }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-${{ steps.vars.outputs.browsers_key }}-
+          ${{ runner.os }}-playwright-
+
+    - name: Re-check browser install after cache restore
+      id: check
+      if: steps.precheck.outputs.missing == 'true'
+      shell: bash
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
+        BROWSERS: ${{ steps.vars.outputs.browsers }}
+        PLAYWRIGHT_CLI: ${{ steps.playwright.outputs.cli }}
+      run: |
+        set -euo pipefail
+        node <<'NODE'
+        const fs = require('fs');
+        const { execFileSync } = require('child_process');
+        
+        const browsers = (process.env.BROWSERS || '').split(/\s+/).filter(Boolean);
+        if (!browsers.length) throw new Error('setup-playwright: no browsers requested');
+        
+        const output = execFileSync(
+          process.execPath,
+          [process.env.PLAYWRIGHT_CLI, 'install', '--dry-run', ...browsers],
+          {
+            env: process.env,
+            stdio: ['ignore', 'pipe', 'inherit'],
+          }
+        ).toString('utf8');
+        
+        const conciseOutput = output
+          .split(/\\r?\\n/)
+          .filter((line) => line.startsWith('browser:') || line.trim().startsWith('Install location:'))
+          .join('\\n');
+        if (conciseOutput.trim()) process.stdout.write(`${conciseOutput}\\n`);
+        
+        const locations = [...output.matchAll(/^\\s*Install location:\\s*(.+)\\s*$/gm)]
+          .map((match) => match[1].trim());
+        const unique = [...new Set(locations)];
+        const missing = unique.filter((p) => !fs.existsSync(p));
+        
+        if (missing.length) {
+          console.log('Missing install locations after cache restore:');
+          for (const location of missing) console.log(`- ${location}`);
+        }
+        
+        const delimiter = `EOF_${Math.random().toString(16).slice(2)}`;
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `missing=${missing.length > 0 ? 'true' : 'false'}\n`);
+        fs.appendFileSync(
+          process.env.GITHUB_OUTPUT,
+          `missing_locations<<${delimiter}\n${missing.join('\n')}\n${delimiter}\n`
+        );
+        NODE
+
     - name: Install Playwright browsers
       if: steps.check.outputs.missing == 'true'
       shell: bash
@@ -354,13 +343,13 @@ runs:
       if: always()
       shell: bash
       env:
-        CACHE_HIT: ${{ steps.cache-state.outputs.cache_hit != 'false' && steps.cache-state.outputs.cache_hit || steps.browser-cache.outputs.cache-hit }}
+        CACHE_HIT: ${{ steps.browser-cache.outputs.cache-hit || 'skipped' }}
         WORKING_DIRECTORY: ${{ steps.vars.outputs.working_directory }}
         CACHE_PATH: ${{ steps.vars.outputs.cache_path }}
         CACHE_KEY_FILE: ${{ steps.vars.outputs.cache_key_file }}
         BROWSERS: ${{ steps.vars.outputs.browsers }}
         PLAYWRIGHT_VERSION: ${{ steps.playwright.outputs.version }}
-        NEEDS_INSTALL: ${{ steps.check.outputs.missing }}
+        NEEDS_INSTALL: ${{ steps.precheck.outputs.missing == 'true' && steps.check.outputs.missing || 'false' }}
         PLAYWRIGHT_CLI: ${{ steps.playwright.outputs.cli }}
         PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"

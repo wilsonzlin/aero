@@ -59,9 +59,7 @@ jobs:
         with:
           browsers: chromium
           working-directory: ${{ steps.node-workspace-base.outputs.dir }}
-          # Use the candidate lockfile for caching so we restore once per job (the baseline
-          # invocation will still install any additional browser revisions it needs).
-          lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
+          lockfile: ${{ steps.node-workspace-base.outputs.lockfile }}
 
       - name: Run storage perf (baseline)
         working-directory: ${{ steps.node-workspace-base.outputs.dir }}
