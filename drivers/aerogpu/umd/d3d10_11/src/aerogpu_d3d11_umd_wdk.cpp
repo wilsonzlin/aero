@@ -2220,7 +2220,20 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
 
-  auto* res = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pDesc->hResource) : nullptr;
+  D3D11DDI_HRESOURCE hRes{};
+  __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::hDrvResource) {
+    hRes = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::hDrvResource) {
+    __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::hResource) {
+      hRes = pDesc->hResource;
+    }
+  }
+  if (!hRes.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hRes);
   auto* rtv = new (hView.pDrvPrivate) RenderTargetView();
   rtv->texture = res ? res->handle : 0;
   rtv->resource = res;
@@ -2245,7 +2258,21 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
   if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  auto* res = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pDesc->hResource) : nullptr;
+
+  D3D11DDI_HRESOURCE hRes{};
+  __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
+    hRes = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::hResource) {
+      hRes = pDesc->hResource;
+    }
+  }
+  if (!hRes.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hRes);
   auto* dsv = new (hView.pDrvPrivate) DepthStencilView();
   dsv->texture = res ? res->handle : 0;
   dsv->resource = res;
@@ -2275,7 +2302,21 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
   if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  auto* res = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pDesc->hResource) : nullptr;
+
+  D3D11DDI_HRESOURCE hRes{};
+  __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
+    hRes = pDesc->hDrvResource;
+  }
+  __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
+    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::hResource) {
+      hRes = pDesc->hResource;
+    }
+  }
+  if (!hRes.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hRes);
   auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
   srv->texture = res ? res->handle : 0;
   srv->resource = res;
