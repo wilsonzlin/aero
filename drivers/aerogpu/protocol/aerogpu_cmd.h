@@ -200,6 +200,10 @@ enum aerogpu_resource_usage_flags {
  * backed by a guest allocation, the host MUST write the resulting bytes into
  * the guest backing memory before signaling the submission fence.
  *
+ * This requires the submission to provide an alloc-table entry for the
+ * destination resource's `backing_alloc_id` (as specified by its CREATE_* packet)
+ * so the host can resolve the guest physical address range to write.
+ *
  * If the destination resource has no guest backing allocation, the host should
  * treat this as a validation error (recommended) so drivers don't get silent
  * failures.
@@ -347,6 +351,7 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_upload_resource) == 32);
  *   - dst_buffer MUST be backed by a guest allocation.
  *   - The host MUST write back the resulting bytes into the guest backing
  *     memory before signaling the submission fence.
+ *   - The submission must provide an alloc-table entry for that allocation ID.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_copy_buffer {
@@ -377,6 +382,7 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_copy_buffer) == 48);
  *   - dst_texture MUST be backed by a guest allocation.
  *   - The host MUST write back the resulting bytes into the guest backing
  *     memory before signaling the submission fence.
+ *   - The submission must provide an alloc-table entry for that allocation ID.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_copy_texture2d {

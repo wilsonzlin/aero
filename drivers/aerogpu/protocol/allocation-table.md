@@ -102,9 +102,16 @@ For each entry:
 
 ### Cross-check rules with the command stream
 
-- Any packet that references `backing_alloc_id != 0` requires that:
+- Any packet that requires `alloc_id` resolution requires that:
   - the allocation table is present for the submission, and
   - the referenced `alloc_id` exists in that table.
+
+This includes:
+
+- Packets that carry `backing_alloc_id` fields directly (`CREATE_BUFFER`, `CREATE_TEXTURE2D`).
+- Packets that operate on a *resource that is guest-backed* (its `backing_alloc_id != 0`) and require the host to read/write guest memory, such as:
+  - `RESOURCE_DIRTY_RANGE` (common Map/Unmap upload case).
+  - `COPY_*` packets when `WRITEBACK_DST` is set (readback into guest memory).
 
 ## Guest-side requirements (Win7/WDDM 1.1)
 
@@ -113,7 +120,9 @@ On Win7, the KMD builds the per-submit allocation table from the submission’s 
 Therefore, any UMD submission that includes packets which require `alloc_id` resolution must ensure the corresponding WDDM allocation handle is included in the submit allocation list for that submission. This includes:
 
 - Packets that carry `backing_alloc_id` fields directly (`CREATE_BUFFER`, `CREATE_TEXTURE2D`).
-- Packets that operate on a *resource that is guest-backed* (its `backing_alloc_id != 0`) and require the host to read/write guest memory, such as `RESOURCE_DIRTY_RANGE` (common Map/Unmap upload case).
+- Packets that operate on a *resource that is guest-backed* (its `backing_alloc_id != 0`) and require the host to read/write guest memory, such as:
+  - `RESOURCE_DIRTY_RANGE` (common Map/Unmap upload case).
+  - `COPY_*` packets when `WRITEBACK_DST` is set (readback into guest memory).
 
 ## Backing interpretation (`aerogpu_cmd.h`)
 
