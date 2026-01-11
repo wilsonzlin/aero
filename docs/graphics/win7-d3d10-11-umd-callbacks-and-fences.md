@@ -164,19 +164,79 @@ Then it submits via the runtime callbacks which route into:
 
 followed by dxgkrnl scheduling and eventual KMD `DxgkDdiSubmitCommand`.
 
-### 3.1 The core submission structs (d3dumddi.h)
+### 3.1 Create the kernel device + context (get `hContext`, `hSyncObject`, and initial DMA buffer pointers)
+
+The submission callbacks in `d3dumddi.h` are **context-scoped**: before you can submit anything, you need:
+
+- a kernel device handle (`D3DKMT_HANDLE hDevice`),
+- a kernel context handle (`D3DKMT_HANDLE hContext`), and
+- a synchronization object (`D3DKMT_HANDLE hSyncObject`) you can wait on with a target fence value.
+
+On Win7, these are created via callbacks in the shared device callback table:
+
+- `D3DDDI_DEVICECALLBACKS::pfnCreateDeviceCb`
+- `D3DDDI_DEVICECALLBACKS::pfnCreateContextCb2` (preferred on WDDM 1.1) or `pfnCreateContextCb`
+
+#### Create the kernel device: `pfnCreateDeviceCb` + `D3DDDICB_CREATEDEVICE`
+
+Struct:
+
+- `D3DDDICB_CREATEDEVICE`
+
+Important fields:
+
+- `HANDLE hAdapter` (input) — the adapter handle you returned from `OpenAdapter*` (for D3D10/11 this is typically the `.pDrvPrivate` pointer behind `D3D10DDI_HADAPTER` / `D3D11DDI_HADAPTER`).
+- `D3DKMT_HANDLE hDevice` (output) — kernel device handle; store it.
+
+#### Create the kernel context: `pfnCreateContextCb2`/`pfnCreateContextCb` + `D3DDDICB_CREATECONTEXT`
+
+Struct:
+
+- `D3DDDICB_CREATECONTEXT`
+
+Important inputs:
+
+- `D3DKMT_HANDLE hDevice` — the kernel device handle from `pfnCreateDeviceCb`.
+- `UINT NodeOrdinal` — set to `0` for a single-node MVP.
+- `UINT EngineAffinity` — set to `0` for a single-engine MVP.
+- `Flags` — **zero-initialize** for bring-up unless you know you need a bit.
+- `VOID* pPrivateDriverData` / `UINT PrivateDriverDataSize` — bring-up can pass `NULL`/`0` unless your KMD needs context-private data.
+
+Important outputs:
+
+- `D3DKMT_HANDLE hContext` — kernel context handle; pass this to render/present/wait CBs.
+- `D3DKMT_HANDLE hSyncObject` — monitored-fence synchronization object; pass this in wait calls.
+- Initial submission buffers (owned by the runtime; treat as the “current DMA buffer”):
+  - `VOID* pCommandBuffer` + `UINT CommandBufferSize` (**bytes**)
+  - `D3DDDI_ALLOCATIONLIST* pAllocationList` + `UINT AllocationListSize` (**entries**)
+  - `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList` + `UINT PatchLocationListSize` (**entries**)
+  - If your header exposes it: `VOID* pDmaBufferPrivateData` + `UINT DmaBufferPrivateDataSize` (**bytes**)
+
+> **Key Win7 rule:** the runtime is allowed to **rotate** DMA buffers and lists over time. After each submission, update your stored pointers/sizes from whatever “out” fields your header exposes (see render/present notes below).
+
+#### Lifetime / cleanup callbacks
+
+At shutdown, these additional `D3DDDI_DEVICECALLBACKS` entries may exist (check for presence in your headers):
+
+- `pfnDestroySynchronizationObjectCb` (takes a struct with `hSyncObject`)
+- `pfnDestroyContextCb` (takes a struct with `hContext`)
+- `pfnDestroyDeviceCb` (takes a struct with `hDevice`)
+
+### 3.2 The core submission structs (d3dumddi.h)
 
 The *shared* WDDM 1.x CB structs used by D3D10/11 are declared in `d3dumddi.h`:
 
 The corresponding **function pointers** are in the shared runtime callback table:
 
 - `D3DDDI_DEVICECALLBACKS`
+  - `pfnCreateDeviceCb`
+  - `pfnCreateContextCb2` / `pfnCreateContextCb`
   - `pfnGetCommandBufferCb`
   - `pfnRenderCb`
   - `pfnPresentCb`
   - `pfnWaitForSynchronizationObjectCb`
 
-#### Acquire / allocate a command buffer
+#### Acquire / (re)acquire a command buffer
 
 Callback:
 
@@ -185,6 +245,8 @@ Callback:
 Struct:
 
 - `D3DDDICB_GETCOMMANDINFO`
+
+CreateContext already provides the **initial** `pCommandBuffer` / lists. `pfnGetCommandBufferCb` is the runtime entrypoint used to acquire a *fresh* DMA buffer instance (and is the standard place where the UMD receives a pointer to `pDmaBufferPrivateData`).
 
 Important fields (header names):
 
@@ -217,6 +279,7 @@ Important fields:
 - `D3DKMT_HANDLE hContext`
 - `UINT CommandLength` (bytes written to `pCommandBuffer`)
 - `VOID* pCommandBuffer`
+- `UINT CommandBufferSize` (bytes; some WDKs include this as an in/out field)
 - `UINT AllocationListSize` (count) + `D3DDDI_ALLOCATIONLIST* pAllocationList`
 - `UINT PatchLocationListSize` (count) + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
 - `VOID* pDmaBufferPrivateData`
@@ -225,7 +288,7 @@ Fence output (Win7 pattern):
 
 - `UINT64 NewFenceValue` (written by the callback on success; use as the target value when waiting for completion via `WaitForSynchronizationObject`)
 
-> Some header/interface revisions also include “new capacity” outputs (e.g. `NewCommandBufferSize`, `NewAllocationListSize`, `NewPatchLocationListSize`) to help you size the next DMA buffer build. If present, treat them as advisory and still respect the capacities returned by the next `pfnGetCommandBufferCb` call.
+> **Buffer rotation:** in some Win7-era header revisions, `D3DDDICB_RENDER` treats the buffer/list pointer+size fields as **IN/OUT** (you pass the current buffers, and on return the runtime may overwrite them with the next buffers/capacities). If your header has this behavior, update your stored `pCommandBuffer` / `pAllocationList` / `pPatchLocationList` and their capacities after each successful submit.
 
 #### Submit a present DMA buffer
 
@@ -242,6 +305,7 @@ Important common submission fields (present has additional present-specific fiel
 - `D3DKMT_HANDLE hContext`
 - `UINT CommandLength` (bytes)
 - `VOID* pCommandBuffer`
+- `UINT CommandBufferSize` (bytes; some WDKs include this as an in/out field)
 - `UINT AllocationListSize` (count) + `D3DDDI_ALLOCATIONLIST* pAllocationList`
 - `UINT PatchLocationListSize` (count) + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
 - `VOID* pDmaBufferPrivateData`
@@ -250,40 +314,46 @@ Fence output (Win7 pattern):
 
 - `UINT64 NewFenceValue` (written by the callback on success)
 
-### 3.2 Minimal call sequence (render submission)
+### 3.3 Minimal call sequence (render submission)
 
 At a “flush boundary” (e.g. `D3D10DDI_DEVICEFUNCS::pfnFlush` or `D3D11DDI_DEVICECONTEXTFUNCS::pfnFlush`):
 
-1. **Acquire** a command buffer:
+1. **Ensure you have a context** (once per device, at bring-up):
+   - `pfnCreateDeviceCb` → kernel `hDevice`
+   - `pfnCreateContextCb2`/`pfnCreateContextCb` → `hContext`, `hSyncObject`, and an initial `pCommandBuffer` + list pointers/capacities.
+2. **Acquire** a command buffer (per submission, if you use `pfnGetCommandBufferCb` in your design):
    - Fill a `D3DDDICB_GETCOMMANDINFO` with `hContext`.
    - Call `pfnGetCommandBufferCb(&get)`.
-2. **Fill**:
-   - Write your DMA stream to `get.pCommandBuffer`.
-   - Write allocation references into `get.pAllocationList[0..N)`.
-   - Write patch entries into `get.pPatchLocationList[0..M)` (for AeroGPU, typically `M=0`).
-   - Write per-submit metadata into `get.pDmaBufferPrivateData` (fixed-size).
-3. **Submit**:
-   - Fill `D3DDDICB_RENDER`:
-     - `hContext = ...`
-     - `CommandLength = <bytes actually written>`
-     - `pCommandBuffer = get.pCommandBuffer`
-     - `AllocationListSize = N`, `pAllocationList = get.pAllocationList`
-     - `PatchLocationListSize = M`, `pPatchLocationList = get.pPatchLocationList`
-     - `pDmaBufferPrivateData = get.pDmaBufferPrivateData`
-   - Call `pfnRenderCb(&render)`.
-   - On success, read back `render.NewFenceValue` and treat it as the fence value for this submission (store it as “last submitted”, and use it to update per-resource “last write fence” tracking).
+   - Otherwise, use the “current” `pCommandBuffer`/lists you last received from `CreateContext` or from the previous submit callback.
+3. **Fill**:
+   - Write your DMA stream to `pCommandBuffer`.
+   - Write allocation references into `pAllocationList[0..N)`.
+   - Write patch entries into `pPatchLocationList[0..M)` (for AeroGPU, typically `M=0`).
+   - If `pDmaBufferPrivateData != NULL`, write per-submit metadata into it (fixed-size).
+4. **Submit**:
+    - Fill `D3DDDICB_RENDER`:
+      - `hContext = ...`
+      - `CommandLength = <bytes actually written>`
+      - `pCommandBuffer = pCommandBuffer`
+      - `AllocationListSize = N`, `pAllocationList = pAllocationList`
+      - `PatchLocationListSize = M`, `pPatchLocationList = pPatchLocationList`
+      - `pDmaBufferPrivateData = pDmaBufferPrivateData` (or `NULL` if not used / size is 0)
+    - Call `pfnRenderCb(&render)`.
+    - On success:
+      - read back `render.NewFenceValue` and treat it as the fence value for this submission (store it as “last submitted”, and use it to update per-resource “last write fence” tracking)
+      - if your header treats buffer/list fields as in/out, update your stored pointers/capacities from `render` for the next submission.
 
-### 3.3 Minimal call sequence (present submission)
+### 3.4 Minimal call sequence (present submission)
 
 In `D3D10DDI_DEVICEFUNCS::pfnPresent` (called by DXGI on Win7 for both D3D10 and D3D11 devices):
 
 1. Flush/submit any outstanding render work that must precede present.
-2. Acquire a command buffer via `pfnGetCommandBufferCb`.
+2. Acquire a command buffer (either via `pfnGetCommandBufferCb` or by using the current runtime-provided buffer pointers).
 3. Encode your present command(s) into the DMA buffer (e.g. an `AEROGPU_CMD_PRESENT` packet referencing the backbuffer allocation index).
 4. Submit via `pfnPresentCb(&present)`.
 5. On success, read back `present.NewFenceValue` and treat it as the fence value for the present submission (useful for throttling and for “present implies completion” queries).
 
-### 3.4 Patch lists: “empty is valid” if you design for it
+### 3.5 Patch lists: “empty is valid” if you design for it
 
 If your DMA stream never embeds GPU virtual addresses (AeroGPU uses allocation indices), you can submit with:
 
@@ -292,11 +362,14 @@ If your DMA stream never embeds GPU virtual addresses (AeroGPU uses allocation i
 
 **Do not** put uninitialized junk in the patch list. If `PatchLocationListSize != 0`, dxgkrnl and the KMD may attempt to interpret it.
 
-### 3.5 DMA buffer private data (`pDmaBufferPrivateData`)
+### 3.6 DMA buffer private data (`pDmaBufferPrivateData`)
 
-The private-data blob is sized by the KMD via `DXGK_DRIVERCAPS::DmaBufferPrivateDataSize` and is provided to the UMD as:
+The private-data blob is sized by the KMD via `DXGK_DRIVERCAPS::DmaBufferPrivateDataSize`.
 
-- `D3DDDICB_GETCOMMANDINFO::pDmaBufferPrivateData` with capacity `DmaBufferPrivateDataSize`
+Where you receive the pointer depends on the exact Win7-era header/interface revision:
+
+- Common path: `D3DDDICB_GETCOMMANDINFO::pDmaBufferPrivateData` with capacity `DmaBufferPrivateDataSize`
+- Some headers also surface it alongside the initial DMA buffer in `D3DDDICB_CREATECONTEXT` and/or treat it as an in/out field on submit structs. In that case, treat it as part of your “current DMA buffer state” just like `pCommandBuffer`.
 
 Rules:
 
@@ -339,6 +412,10 @@ Important fields:
 - `const D3DKMT_HANDLE* ObjectHandleArray` (one per sync object)
 - `const UINT64* FenceValueArray` (target values; one per sync object)
 - `UINT64 Timeout` (milliseconds; `0` is a poll, `~0ULL` is effectively “infinite wait”)
+
+**Which sync object handle to wait on:**
+
+- Use the `hSyncObject` returned by `pfnCreateContextCb2`/`pfnCreateContextCb` (see §3.1). This is the monitored-fence object whose value advances with your submissions.
 
 **How to pick the target fence value:**
 
@@ -454,6 +531,9 @@ Win7-era D3D10/11 UMD DDI headers:
 
 It includes the Win7 D3D10/11 UMD DDI headers and prints `sizeof`/`offsetof` for:
 
+- Context bring-up:
+  - `D3DDDICB_CREATEDEVICE`
+  - `D3DDDICB_CREATECONTEXT`
 - `D3DDDICB_GETCOMMANDINFO`
 - `D3DDDICB_RENDER`
 - `D3DDDICB_PRESENT`
@@ -472,10 +552,13 @@ To implement correct Win7 submission + `Map(READ)` synchronization in a D3D10/11
    - `D3D10DDIARG_OPENADAPTER::pAdapterCallbacks`
    - `D3D10DDIARG_CREATEDEVICE::pCallbacks` / `D3D11DDIARG_CREATEDEVICE::pCallbacks`
 2. Implement `pfnSetErrorCb` usage for all failing `void` DDIs.
-3. Create and store a kernel `hContext` and one or more synchronization objects for that context (via the `d3dumddi.h` context creation CBs).
-4. Implement “acquire → fill → submit”:
-   - `pfnGetCommandBufferCb` + `D3DDDICB_GETCOMMANDINFO`
-   - `pfnRenderCb` + `D3DDDICB_RENDER`
-   - `pfnPresentCb` + `D3DDDICB_PRESENT`
+3. Create and store kernel submission state via `d3dumddi.h` callbacks:
+   - `pfnCreateDeviceCb` + `D3DDDICB_CREATEDEVICE` → `hDevice`
+   - `pfnCreateContextCb2`/`pfnCreateContextCb` + `D3DDDICB_CREATECONTEXT` → `hContext`, `hSyncObject`, and initial DMA buffer pointers/capacities
+4. Implement “fill → submit” (and optionally “acquire →” if using `pfnGetCommandBufferCb`):
+   - optional acquire: `pfnGetCommandBufferCb` + `D3DDDICB_GETCOMMANDINFO`
+   - submit render: `pfnRenderCb` + `D3DDDICB_RENDER`
+   - submit present: `pfnPresentCb` + `D3DDDICB_PRESENT`
+   - update stored DMA buffer pointers if the submit structs are in/out in your header revision.
 5. Track per-resource “last GPU write fence” and implement `Map(READ)` wait:
-   - `pfnWaitForSynchronizationObjectCb` + `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`
+   - `pfnWaitForSynchronizationObjectCb` + `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT` with `ObjectHandleArray[0] = hSyncObject`

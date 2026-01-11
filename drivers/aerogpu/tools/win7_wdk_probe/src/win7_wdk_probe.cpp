@@ -39,6 +39,12 @@ int main() {
 
   // Runtime callback table (function pointers) that the UMD uses for submission/sync.
   PRINT_SIZE(D3DDDI_DEVICECALLBACKS);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnCreateDeviceCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnDestroyDeviceCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnCreateContextCb2);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnCreateContextCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnDestroyContextCb);
+  PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnDestroySynchronizationObjectCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnGetCommandBufferCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnRenderCb);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnPresentCb);
@@ -54,6 +60,46 @@ int main() {
   PRINT_SIZE(D3D11DDI_DEVICECALLBACKS);
   PRINT_OFF_OPT(D3D11DDI_DEVICECALLBACKS, pfnSetErrorCb);
   PrintSeparator();
+
+  // Device/context creation structs (hContext + hSyncObject + initial DMA buffers).
+#if defined(_MSC_VER)
+  __if_exists(D3DDDICB_CREATEDEVICE) {
+    PRINT_SIZE(D3DDDICB_CREATEDEVICE);
+    PRINT_OFF_OPT(D3DDDICB_CREATEDEVICE, hAdapter);
+    PRINT_OFF_OPT(D3DDDICB_CREATEDEVICE, hDevice);
+    PrintSeparator();
+  }
+  __if_not_exists(D3DDDICB_CREATEDEVICE) {
+    printf("%-48s <n/a>\n", "D3DDDICB_CREATEDEVICE");
+    PrintSeparator();
+  }
+
+  __if_exists(D3DDDICB_CREATECONTEXT) {
+    PRINT_SIZE(D3DDDICB_CREATECONTEXT);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, hDevice);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, NodeOrdinal);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, EngineAffinity);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, Flags);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, pPrivateDriverData);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, PrivateDriverDataSize);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, hContext);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, hSyncObject);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, pCommandBuffer);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, CommandBufferSize);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, pAllocationList);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, AllocationListSize);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, pPatchLocationList);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, PatchLocationListSize);
+    // Some header revisions also expose per-DMA-buffer private data here.
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, pDmaBufferPrivateData);
+    PRINT_OFF_OPT(D3DDDICB_CREATECONTEXT, DmaBufferPrivateDataSize);
+    PrintSeparator();
+  }
+  __if_not_exists(D3DDDICB_CREATECONTEXT) {
+    printf("%-48s <n/a>\n", "D3DDDICB_CREATECONTEXT");
+    PrintSeparator();
+  }
+#endif
 
   // Core submission/wait CB structs used by D3D10/D3D11 UMDs on WDDM 1.1.
   PRINT_SIZE(D3DDDICB_GETCOMMANDINFO);
@@ -72,11 +118,13 @@ int main() {
   PRINT_OFF_OPT(D3DDDICB_RENDER, hContext);
   PRINT_OFF_OPT(D3DDDICB_RENDER, pCommandBuffer);
   PRINT_OFF_OPT(D3DDDICB_RENDER, CommandLength);
+  PRINT_OFF_OPT(D3DDDICB_RENDER, CommandBufferSize);
   PRINT_OFF_OPT(D3DDDICB_RENDER, pAllocationList);
   PRINT_OFF_OPT(D3DDDICB_RENDER, AllocationListSize);
   PRINT_OFF_OPT(D3DDDICB_RENDER, pPatchLocationList);
   PRINT_OFF_OPT(D3DDDICB_RENDER, PatchLocationListSize);
   PRINT_OFF_OPT(D3DDDICB_RENDER, pDmaBufferPrivateData);
+  PRINT_OFF_OPT(D3DDDICB_RENDER, DmaBufferPrivateDataSize);
 #if defined(_MSC_VER)
   __if_exists(D3DDDICB_RENDER::NewFenceValue) { PRINT_OFF(D3DDDICB_RENDER, NewFenceValue); }
   __if_exists(D3DDDICB_RENDER::NewCommandBufferSize) { PRINT_OFF(D3DDDICB_RENDER, NewCommandBufferSize); }
@@ -89,11 +137,13 @@ int main() {
   PRINT_OFF_OPT(D3DDDICB_PRESENT, hContext);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, pCommandBuffer);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, CommandLength);
+  PRINT_OFF_OPT(D3DDDICB_PRESENT, CommandBufferSize);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, pAllocationList);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, AllocationListSize);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, pPatchLocationList);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, PatchLocationListSize);
   PRINT_OFF_OPT(D3DDDICB_PRESENT, pDmaBufferPrivateData);
+  PRINT_OFF_OPT(D3DDDICB_PRESENT, DmaBufferPrivateDataSize);
 #if defined(_MSC_VER)
   __if_exists(D3DDDICB_PRESENT::NewFenceValue) { PRINT_OFF(D3DDDICB_PRESENT, NewFenceValue); }
 #endif
