@@ -11,15 +11,17 @@ The repository intentionally contains *two* split-ring implementations:
      - drivers/windows/virtio/common/virtqueue_split.{c,h}
      - API surface: `VIRTQ_SPLIT` / `VirtqSplit*`
 
-  2) Legacy portable engine (kept for transitional/QEMU experiments + host tests):
-     - drivers/windows7/virtio/common/src/virtqueue_split_legacy.c
-     - drivers/windows7/virtio/common/include/virtqueue_split_legacy.h
-     - API surface: `virtqueue_split_*` + `virtio_os_ops_t`
+  2) Legacy portable engine (used by Win7 miniports + host tests):
+      - drivers/windows7/virtio/common/src/virtqueue_split_legacy.c
+      - drivers/windows7/virtio/common/include/virtqueue_split_legacy.h
+      - API surface: `virtqueue_split_*` + `virtio_os_ops_t`
 
-All shipped Windows 7 virtio drivers (blk/net/input/snd) are expected to use the
-canonical engine. The legacy portable engine is retained for host-side unit
-tests and compatibility/experimentation. This script encodes that intended
-wiring and fails on drift.
+In-tree driver wiring:
+  - virtio-blk / virtio-net: legacy portable engine (pairs with the Win7
+    miniport virtio-pci modern transport in drivers/windows7/virtio/common).
+  - virtio-input / virtio-snd: canonical engine.
+
+This script encodes that intended wiring and fails on drift.
 """
 
 from __future__ import annotations
@@ -119,18 +121,18 @@ def main() -> None:
     # MSBuild projects: enforce the expected split-virtqueue engine per driver.
     # ---------------------------------------------------------------------
     msbuild_projects: dict[str, tuple[Path, str, str, str]] = {
-        # Win7 miniports (StorPort/NDIS) use the WDF-free canonical split-ring engine.
+        # Win7 miniports (StorPort/NDIS) use the Win7 common portable split-ring engine.
         "virtio-blk": (
             REPO_ROOT / "drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj",
-            "virtqueue_split.c",
             "virtqueue_split_legacy.c",
-            "windows/virtio/common",
+            "virtqueue_split.c",
+            "virtio/common/include",
         ),
         "virtio-net": (
             REPO_ROOT / "drivers/windows7/virtio-net/aero_virtio_net.vcxproj",
-            "virtqueue_split.c",
             "virtqueue_split_legacy.c",
-            "windows/virtio/common",
+            "virtqueue_split.c",
+            "virtio/common/include",
         ),
         # virtio-input targets Win7 (KMDF 1.9) and uses the canonical split virtqueue engine.
         "virtio-input": (
@@ -176,15 +178,15 @@ def main() -> None:
     sources_files: dict[str, tuple[Path, str, str, str]] = {
         "virtio-blk": (
             REPO_ROOT / "drivers/windows7/virtio-blk/sources",
-            "virtqueue_split.c",
             "virtqueue_split_legacy.c",
-            "windows/virtio/common",
+            "virtqueue_split.c",
+            "virtio/common/include",
         ),
         "virtio-net": (
             REPO_ROOT / "drivers/windows7/virtio-net/sources",
-            "virtqueue_split.c",
             "virtqueue_split_legacy.c",
-            "windows/virtio/common",
+            "virtqueue_split.c",
+            "virtio/common/include",
         ),
         "virtio-input": (
             REPO_ROOT / "drivers/windows7/virtio-input/sources",

@@ -12,14 +12,10 @@ Reference code in this repo:
   - `drivers/windows/virtio/common/virtqueue_split.{c,h}`
   - Used by:
     - `drivers/windows7/virtio-input/` (KMDF; Win7 target)
-    - `drivers/windows7/virtio-blk/` (StorPort miniport; Win7 target)
-    - `drivers/windows7/virtio-net/` (NDIS miniport; Win7 target)
     - `drivers/windows7/virtio-snd/` (WDM; Win7 target)
     - Host tests: `drivers/windows/virtio/common/tests/` (`CMakeLists.txt`, `Makefile`)
 
   In-tree include sites for `virtqueue_split.h`:
-  - `drivers/windows7/virtio-blk/include/aero_virtio_blk.h`
-  - `drivers/windows7/virtio-net/include/aero_virtio_net.h`
   - `drivers/windows7/virtio-snd/include/virtiosnd_queue_split.h`
   - `drivers/windows7/virtio-input/src/device.c`
   - `drivers/windows7/virtio-input/src/virtio_statusq.c`
@@ -30,9 +26,13 @@ Reference code in this repo:
   - `drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`
   - `drivers/windows7/virtio/common/include/virtqueue_split_legacy.h`
   - Used by:
+    - `drivers/windows7/virtio-blk/` (StorPort miniport; Win7 target)
+    - `drivers/windows7/virtio-net/` (NDIS miniport; Win7 target)
     - Host tests: `drivers/windows7/virtio/common/tests/` (`CMakeLists.txt`)
 
   In-tree include sites for `virtqueue_split_legacy.h`:
+  - `drivers/windows7/virtio-blk/include/aero_virtio_blk.h`
+  - `drivers/windows7/virtio-net/include/aero_virtio_net.h`
   - Unit tests: `drivers/windows7/virtio/common/tests/{test_main.c,fake_pci_device.h}`
   - `drivers/windows7/virtio-snd/src/virtiosnd_backend_virtio.c` (experimental backend; not compiled by default)
 
@@ -41,9 +41,9 @@ header named `virtqueue_split.h` in-tree. The legacy portable header is named
 `virtqueue_split_legacy.h` to avoid include-path ambiguity.
 
 With this policy in place, every in-tree `#include "virtqueue_split.h"` resolves
-to `drivers/windows/virtio/common/virtqueue_split.h` (CI enforces that Win7
-driver build files include `drivers/windows/virtio/common` in their include
-paths).
+to `drivers/windows/virtio/common/virtqueue_split.h`. CI enforces that drivers
+which include `virtqueue_split.h` (for example `virtio-input` and `virtio-snd`)
+include `drivers/windows/virtio/common` in their include paths.
 
 ## Build wiring (where each engine is compiled)
 
@@ -51,10 +51,6 @@ These are the build entry points that pull in each implementation (kept here so
 it’s obvious which driver binaries are expected to link which engine):
 
 - Canonical engine (`drivers/windows/virtio/common/virtqueue_split.c`)
-  - `drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj`
-  - `drivers/windows7/virtio-blk/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
-  - `drivers/windows7/virtio-net/aero_virtio_net.vcxproj`
-  - `drivers/windows7/virtio-net/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
   - `drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj`
   - `drivers/windows7/virtio-snd/src/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
   - `drivers/windows7/virtio-input/aero_virtio_input.vcxproj`
@@ -64,6 +60,10 @@ it’s obvious which driver binaries are expected to link which engine):
     - `drivers/windows/virtio/common/tests/Makefile`
 
 - Legacy portable engine (`drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`)
+  - `drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj`
+  - `drivers/windows7/virtio-blk/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
+  - `drivers/windows7/virtio-net/aero_virtio_net.vcxproj`
+  - `drivers/windows7/virtio-net/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
   - Host tests: `drivers/windows7/virtio/common/tests/CMakeLists.txt`
   - `drivers/windows7/virtio-snd/src/virtiosnd_backend_virtio.c` (experimental backend; not compiled by default)
 
