@@ -22,5 +22,6 @@ The manifest can declare:
 
 ## Files
 
-- `ci-package.json`: minimal template (this file is required for CI build+packaging in real driver directories). Update/remove `infFiles` and `wow64Files` as needed.
+- `ci-package.json`: minimal template (this file is required for CI build+packaging in real driver directories). Add `infFiles` and/or update `wow64Files` as needed.
+- `ci-package.inf-wow64-example.json`: example manifest showing `infFiles` + `wow64Files` usage (explicit INF selection + WOW64 payload DLLs).
 - `ci-package.wdf-example.json`: WDF coinstaller example.

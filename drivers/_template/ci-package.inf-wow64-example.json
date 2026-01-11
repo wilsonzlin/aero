@@ -1,0 +1,6 @@
+{
+  "$schema": "../../ci/driver-package.schema.json",
+  "infFiles": ["packaging/win7/your-driver.inf"],
+  "wow64Files": ["your-32bit-umd.dll"],
+  "additionalFiles": ["README.md", "packaging/win7/install.cmd"]
+}
