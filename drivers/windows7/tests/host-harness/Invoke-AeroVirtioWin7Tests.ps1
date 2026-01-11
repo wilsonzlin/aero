@@ -218,21 +218,22 @@ function Wait-AeroSelftestResult {
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
         # Ensure we saw the virtio-input test marker so older selftest binaries (blk/net-only)
         # cannot accidentally pass the host harness.
-        if ($sawVirtioInputPass) {
-          # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
-          # virtio-snd testing cannot accidentally pass.
-          if ($sawVirtioSndPass -or $sawVirtioSndSkip) {
-            return @{ Result = "PASS"; Tail = $tail }
-          }
-          if ($sawVirtioSndFail) {
-            return @{ Result = "FAIL"; Tail = $tail }
-          }
-          return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
-        }
         if ($sawVirtioInputFail) {
           return @{ Result = "FAIL"; Tail = $tail }
         }
-        return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
+        if (-not $sawVirtioInputPass) {
+          return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
+        }
+
+        # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
+        # virtio-snd testing cannot accidentally pass.
+        if ($sawVirtioSndFail) {
+          return @{ Result = "FAIL"; Tail = $tail }
+        }
+        if ($sawVirtioSndPass -or $sawVirtioSndSkip) {
+          return @{ Result = "PASS"; Tail = $tail }
+        }
+        return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
         return @{ Result = "FAIL"; Tail = $tail }

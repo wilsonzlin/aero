@@ -280,6 +280,13 @@ def main() -> int:
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                         # Require the virtio-input test marker so older selftest binaries cannot
                         # accidentally pass the host harness.
+                        if saw_virtio_input_fail:
+                            print(
+                                "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            return 1
                         if not saw_virtio_input_pass:
                             print(
                                 "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
@@ -324,6 +331,13 @@ def main() -> int:
                         if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
                             saw_virtio_snd_fail = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                            if saw_virtio_input_fail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                return 1
                             if not saw_virtio_input_pass:
                                 print(
                                     "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
