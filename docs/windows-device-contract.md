@@ -111,7 +111,9 @@ Notes:
 - `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` (canonical / current ABI).
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
 - The deprecated legacy bring-up AeroGPU HWID `PCI\VEN_1AED&DEV_0001` requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
-- Windows service names are case-insensitive. The AeroGPU INF installs `AeroGPU` (`AddService = AeroGPU, ...`), but this contract normalizes it to `aerogpu`.
+- Windows service names are case-insensitive. The canonical AeroGPU INFs install `aerogpu` (`AddService = aerogpu, ...`).
+  The legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` may use different casing (for example `AeroGPU`);
+  this contract normalizes the name to `aerogpu`.
 
 Compatibility note (non-canonical virtio PCI Device IDs):
 
