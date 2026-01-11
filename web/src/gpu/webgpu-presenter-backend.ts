@@ -83,6 +83,8 @@ export class WebGpuPresenterBackend implements Presenter {
   private cursorHotX = 0;
   private cursorHotY = 0;
 
+  private destroyed = false;
+
   public async init(
     canvas: OffscreenCanvas,
     width: number,
@@ -90,6 +92,7 @@ export class WebGpuPresenterBackend implements Presenter {
     dpr: number,
     opts?: PresenterInitOptions,
   ): Promise<void> {
+    this.destroyed = false;
     this.canvas = canvas;
     this.opts = opts ?? {};
     this.srcWidth = width;
@@ -129,12 +132,19 @@ export class WebGpuPresenterBackend implements Presenter {
 
     const ctx = (canvas as any).getContext('webgpu') as any;
     if (!ctx) {
+      try {
+        device.destroy?.();
+      } catch {
+        // Ignore.
+      }
       throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
     }
     this.ctx = ctx;
 
     // Report device loss asynchronously.
     (device.lost as Promise<any> | undefined)?.then((info) => {
+      if (this.destroyed) return;
+      if (this.device !== device) return;
       const reason = info?.reason ?? 'unknown';
       const message = info?.message ? `: ${info.message}` : '';
       this.opts.onError?.(new PresenterError('webgpu_device_lost', `WebGPU device lost (${reason})${message}`));
@@ -309,10 +319,16 @@ export class WebGpuPresenterBackend implements Presenter {
   }
 
   public destroy(): void {
+    this.destroyed = true;
     this.frameTexture?.destroy?.();
     this.cursorTexture?.destroy?.();
     try {
       this.ctx?.unconfigure?.();
+    } catch {
+      // Ignore.
+    }
+    try {
+      this.device?.destroy?.();
     } catch {
       // Ignore.
     }
