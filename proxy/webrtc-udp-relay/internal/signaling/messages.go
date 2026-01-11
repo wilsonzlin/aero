@@ -105,8 +105,8 @@ func (m SignalMessage) Validate() error {
 		if m.APIKey == "" && m.Token == "" {
 			return fmt.Errorf("auth message missing apiKey/token")
 		}
-		if m.APIKey != "" && m.Token != "" {
-			return fmt.Errorf("auth message must not include both apiKey and token")
+		if m.APIKey != "" && m.Token != "" && m.APIKey != m.Token {
+			return fmt.Errorf("auth message must not include both apiKey and token unless they match")
 		}
 		if m.SDP != nil || m.Candidate != nil || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("auth message has unexpected fields")

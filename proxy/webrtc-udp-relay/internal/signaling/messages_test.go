@@ -54,3 +54,24 @@ func TestSignalMessage_DisallowUnknownFields(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+
+func TestSignalMessage_UnmarshalAuth_AllowsTokenAndAPIKeyWhenMatching(t *testing.T) {
+	raw := []byte(`{ "type":"auth", "token":"secret", "apiKey":"secret" }`)
+	got, err := ParseSignalMessage(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Type != MessageTypeAuth {
+		t.Fatalf("type=%q, want %q", got.Type, MessageTypeAuth)
+	}
+	if got.Token != "secret" || got.APIKey != "secret" {
+		t.Fatalf("unexpected credential fields: %#v", got)
+	}
+}
+
+func TestSignalMessage_UnmarshalAuth_RejectsTokenAndAPIKeyMismatch(t *testing.T) {
+	raw := []byte(`{ "type":"auth", "token":"t1", "apiKey":"t2" }`)
+	if _, err := ParseSignalMessage(raw); err == nil {
+		t.Fatalf("expected error")
+	}
+}
