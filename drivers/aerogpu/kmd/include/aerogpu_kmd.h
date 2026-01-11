@@ -71,6 +71,7 @@ typedef struct _AEROGPU_SUBMISSION {
 } AEROGPU_SUBMISSION;
 
 typedef struct _AEROGPU_ALLOCATION {
+    LIST_ENTRY ListEntry;
     ULONG AllocationId;
     ULONGLONG ShareToken;
     SIZE_T SizeBytes;
@@ -106,6 +107,8 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG LastSubmittedFence;
     ULONG LastCompletedFence;
 
+    LIST_ENTRY Allocations;
+    KSPIN_LOCK AllocationsLock;
     volatile LONG NextAllocationId;
 
     /* Current mode (programmed via CommitVidPn / SetVidPnSourceAddress). */

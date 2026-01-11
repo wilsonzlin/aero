@@ -400,6 +400,78 @@ static VOID AeroGpuRetireSubmissionsUpToFence(_Inout_ AEROGPU_ADAPTER* Adapter, 
     }
 }
 
+static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
+{
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+    InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
+    KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+}
+
+static BOOLEAN AeroGpuTryUntrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ const AEROGPU_ALLOCATION* Allocation)
+{
+    BOOLEAN found = FALSE;
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+
+    for (PLIST_ENTRY entry = Adapter->Allocations.Flink; entry != &Adapter->Allocations; entry = entry->Flink) {
+        const AEROGPU_ALLOCATION* candidate = CONTAINING_RECORD(entry, AEROGPU_ALLOCATION, ListEntry);
+        if (candidate == Allocation) {
+            RemoveEntryList(entry);
+            found = TRUE;
+            break;
+        }
+    }
+
+    KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+    return found;
+}
+
+static VOID AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_opt_ HANDLE hAllocation)
+{
+    if (!hAllocation) {
+        return;
+    }
+
+    AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)hAllocation;
+    if (!AeroGpuTryUntrackAllocation(Adapter, alloc)) {
+        /*
+         * Be tolerant of dxgkrnl calling CloseAllocation/DestroyAllocation in
+         * different patterns. If the handle is already freed we should not
+         * touch it again.
+         */
+        static LONG g_UntrackedAllocFreeWarned = 0;
+        if (InterlockedExchange(&g_UntrackedAllocFreeWarned, 1) == 0) {
+            AEROGPU_LOG("Allocation free: untracked handle=%p", hAllocation);
+        }
+        return;
+    }
+
+    ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+}
+
+static VOID AeroGpuFreeAllAllocations(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    for (;;) {
+        AEROGPU_ALLOCATION* alloc = NULL;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+        if (!IsListEmpty(&Adapter->Allocations)) {
+            PLIST_ENTRY entry = RemoveHeadList(&Adapter->Allocations);
+            alloc = CONTAINING_RECORD(entry, AEROGPU_ALLOCATION, ListEntry);
+        }
+        KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+        if (!alloc) {
+            return;
+        }
+
+        ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+    }
+}
+
 /* ---- DxgkDdi* ----------------------------------------------------------- */
 
 static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceObject,
@@ -420,6 +492,8 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->RingLock);
     KeInitializeSpinLock(&adapter->PendingLock);
     InitializeListHead(&adapter->PendingSubmissions);
+    KeInitializeSpinLock(&adapter->AllocationsLock);
+    InitializeListHead(&adapter->Allocations);
 
     adapter->CurrentWidth = 1024;
     adapter->CurrentHeight = 768;
@@ -550,6 +624,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     }
 
     AEROGPU_LOG0("RemoveDevice");
+    AeroGpuFreeAllAllocations(adapter);
     ExFreePoolWithTag(adapter, AEROGPU_POOL_TAG);
     return STATUS_SUCCESS;
 }
@@ -996,15 +1071,15 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
     }
 
     /*
-     * WDDM alloc lifetime model used by this driver:
-     * - DxgkDdiCreateAllocation allocates an AEROGPU_ALLOCATION wrapper per hAllocation.
-     * - DxgkDdiOpenAllocation allocates a *separate* wrapper for opened shared handles.
-     * - Windows 7 dxgkrnl is expected to call:
-     *     * DxgkDdiDestroyAllocation for CreateAllocation handles.
-     *     * DxgkDdiCloseAllocation for OpenAllocation handles.
+     * WDDM allocation lifetime model used by this driver:
+     * - Both DxgkDdiCreateAllocation and DxgkDdiOpenAllocation allocate an
+     *   AEROGPU_ALLOCATION wrapper per returned hAllocation.
+     * - Windows 7 may release those handles via either DxgkDdiCloseAllocation
+     *   or DxgkDdiDestroyAllocation depending on the object and sharing model.
      *
-     * CloseAllocation defensively ignores non-opened handles to avoid double-free
-     * if dxgkrnl ever sends them (observed behavior should not).
+     * To avoid double-free/use-after-free across different Win7 call patterns,
+     * the driver tracks all live wrappers in adapter->Allocations and only frees
+     * handles that are still tracked.
      */
     BOOLEAN isShared = FALSE;
     /*
@@ -1025,14 +1100,14 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             for (UINT j = 0; j < i; ++j) {
                 HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
                 if (hAllocation) {
-                    ExFreePoolWithTag((PVOID)hAllocation, AEROGPU_POOL_TAG);
+                    AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
                     pCreate->pAllocationInfo[j].hAllocation = NULL;
                 }
             }
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
-        ULONG allocId = (ULONG)InterlockedIncrement((volatile LONG*)&adapter->NextAllocationId);
+        ULONG allocId = (ULONG)InterlockedIncrement(&adapter->NextAllocationId);
         if (allocId == 0) {
             AEROGPU_LOG("CreateAllocation: allocation id overflow (wrapped to 0), failing with 0x%08lx",
                         STATUS_INTEGER_OVERFLOW);
@@ -1041,7 +1116,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             for (UINT j = 0; j < i; ++j) {
                 HANDLE hAllocation = pCreate->pAllocationInfo[j].hAllocation;
                 if (hAllocation) {
-                    ExFreePoolWithTag((PVOID)hAllocation, AEROGPU_POOL_TAG);
+                    AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
                     pCreate->pAllocationInfo[j].hAllocation = NULL;
                 }
             }
@@ -1085,6 +1160,8 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         info->SupportedReadSegmentSet = 1;
         info->SupportedWriteSegmentSet = 1;
 
+        AeroGpuTrackAllocation(adapter, alloc);
+
         AEROGPU_LOG("CreateAllocation: alloc_id=%lu shared=%lu share_token=0x%I64x size=%Iu",
                    alloc->AllocationId,
                    isShared ? 1ul : 0ul,
@@ -1098,16 +1175,17 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 static NTSTATUS APIENTRY AeroGpuDdiDestroyAllocation(_In_ const HANDLE hAdapter,
                                                     _In_ const DXGKARG_DESTROYALLOCATION* pDestroy)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!pDestroy) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (!adapter) {
         return STATUS_INVALID_PARAMETER;
     }
 
     for (UINT i = 0; i < pDestroy->NumAllocations; ++i) {
         HANDLE hAllocation = pDestroy->pAllocationList[i].hAllocation;
-        if (hAllocation) {
-            ExFreePoolWithTag((PVOID)hAllocation, AEROGPU_POOL_TAG);
-        }
+        AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
     }
 
     return STATUS_SUCCESS;
@@ -1195,6 +1273,8 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         info->SupportedReadSegmentSet = 1;
         info->SupportedWriteSegmentSet = 1;
 
+        AeroGpuTrackAllocation(adapter, alloc);
+
         AEROGPU_LOG("OpenAllocation: alloc_id=%lu share_token=0x%I64x size=%Iu",
                    alloc->AllocationId,
                    alloc->ShareToken,
@@ -1207,7 +1287,7 @@ Cleanup:
     for (UINT j = 0; j < pOpen->NumAllocations; ++j) {
         HANDLE hAllocation = pOpen->pOpenAllocation[j].hAllocation;
         if (hAllocation) {
-            ExFreePoolWithTag((PVOID)hAllocation, AEROGPU_POOL_TAG);
+            AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
             pOpen->pOpenAllocation[j].hAllocation = NULL;
         }
     }
@@ -1217,27 +1297,17 @@ Cleanup:
 static NTSTATUS APIENTRY AeroGpuDdiCloseAllocation(_In_ const HANDLE hAdapter,
                                                    _In_ const DXGKARG_CLOSEALLOCATION* pClose)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!pClose) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (!adapter) {
         return STATUS_INVALID_PARAMETER;
     }
 
     for (UINT i = 0; i < pClose->NumAllocations; ++i) {
         HANDLE hAllocation = pClose->pAllocationList[i].hAllocation;
-        if (!hAllocation) {
-            continue;
-        }
-
-        const AEROGPU_ALLOCATION* alloc = (const AEROGPU_ALLOCATION*)hAllocation;
-        if ((alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_OPENED) == 0) {
-            /*
-             * Defensive: only free wrappers produced by DxgkDdiOpenAllocation.
-             * CreateAllocation wrappers are owned by DxgkDdiDestroyAllocation.
-             */
-            continue;
-        }
-
-        ExFreePoolWithTag((PVOID)hAllocation, AEROGPU_POOL_TAG);
+        AeroGpuUntrackAndFreeAllocation(adapter, hAllocation);
     }
 
     return STATUS_SUCCESS;
