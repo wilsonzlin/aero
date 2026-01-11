@@ -187,6 +187,12 @@ static void test_contract_v1_parse_fixed_layout_ok(void) {
     add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
     add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
+    /* Non-zero cap IDs should be round-tripped by the parser. */
+    cfg[0x40 + 5] = 0x11;
+    cfg[0x54 + 5] = 0x22;
+    cfg[0x70 + 5] = 0x33;
+    cfg[0x80 + 5] = 0x44;
+
     bars[0] = bar0_base;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
@@ -196,6 +202,7 @@ static void test_contract_v1_parse_fixed_layout_ok(void) {
     }
 
     expect_u32("contract_v1_parse_fixed_layout_ok.common.bar", (uint32_t)caps.common_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.common.id", (uint32_t)caps.common_cfg.id, 0x11);
     expect_u32("contract_v1_parse_fixed_layout_ok.common.cap_offset", (uint32_t)caps.common_cfg.cap_offset, 0x40);
     expect_u32("contract_v1_parse_fixed_layout_ok.common.cap_len", (uint32_t)caps.common_cfg.cap_len, 16);
     expect_u32("contract_v1_parse_fixed_layout_ok.common.offset", caps.common_cfg.offset, 0x0000);
@@ -203,6 +210,7 @@ static void test_contract_v1_parse_fixed_layout_ok(void) {
     expect_u64("contract_v1_parse_fixed_layout_ok.common.addr", caps.common_cfg.addr, bar0_base + 0x0000);
 
     expect_u32("contract_v1_parse_fixed_layout_ok.notify.bar", (uint32_t)caps.notify_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.notify.id", (uint32_t)caps.notify_cfg.id, 0x22);
     expect_u32("contract_v1_parse_fixed_layout_ok.notify.cap_offset", (uint32_t)caps.notify_cfg.cap_offset, 0x54);
     expect_u32("contract_v1_parse_fixed_layout_ok.notify.cap_len", (uint32_t)caps.notify_cfg.cap_len, 20);
     expect_u32("contract_v1_parse_fixed_layout_ok.notify.offset", caps.notify_cfg.offset, 0x1000);
@@ -211,6 +219,7 @@ static void test_contract_v1_parse_fixed_layout_ok(void) {
     expect_u32("contract_v1_parse_fixed_layout_ok.notify.mult", caps.notify_off_multiplier, 4);
 
     expect_u32("contract_v1_parse_fixed_layout_ok.isr.bar", (uint32_t)caps.isr_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.isr.id", (uint32_t)caps.isr_cfg.id, 0x33);
     expect_u32("contract_v1_parse_fixed_layout_ok.isr.cap_offset", (uint32_t)caps.isr_cfg.cap_offset, 0x70);
     expect_u32("contract_v1_parse_fixed_layout_ok.isr.cap_len", (uint32_t)caps.isr_cfg.cap_len, 16);
     expect_u32("contract_v1_parse_fixed_layout_ok.isr.offset", caps.isr_cfg.offset, 0x2000);
@@ -218,6 +227,7 @@ static void test_contract_v1_parse_fixed_layout_ok(void) {
     expect_u64("contract_v1_parse_fixed_layout_ok.isr.addr", caps.isr_cfg.addr, bar0_base + 0x2000);
 
     expect_u32("contract_v1_parse_fixed_layout_ok.device.bar", (uint32_t)caps.device_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.device.id", (uint32_t)caps.device_cfg.id, 0x44);
     expect_u32("contract_v1_parse_fixed_layout_ok.device.cap_offset", (uint32_t)caps.device_cfg.cap_offset, 0x80);
     expect_u32("contract_v1_parse_fixed_layout_ok.device.cap_len", (uint32_t)caps.device_cfg.cap_len, 16);
     expect_u32("contract_v1_parse_fixed_layout_ok.device.offset", caps.device_cfg.offset, 0x3000);
