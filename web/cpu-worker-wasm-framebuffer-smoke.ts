@@ -25,7 +25,12 @@ declare global {
       error?: string;
       hashes?: { first: string; second: string };
       frames?: { firstSeq: number; secondSeq: number };
-      samples?: { firstPixel: number[]; secondPixel: number[] };
+      samples?: {
+        firstPixel00: number[];
+        secondPixel00: number[];
+        firstPixelAway: number[];
+        secondPixelAway: number[];
+      };
     };
   }
 }
@@ -139,21 +144,30 @@ async function main() {
         // Hash a small prefix (enough to catch changes without scanning the whole frame).
         const prefix = slot.subarray(0, Math.min(1024, slot.byteLength));
         const hash = fnv1a32Hex(prefix);
-        const pixel = samplePixel(slot, layout.strideBytes, 0, 0);
-        return { seq, hash, pixel };
+        const pixel00 = samplePixel(slot, layout.strideBytes, 0, 0);
+        const pixelAway = samplePixel(
+          slot,
+          layout.strideBytes,
+          Math.min(layout.width - 1, CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE + 1),
+          Math.min(layout.height - 1, CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE + 1),
+        );
+        return { seq, hash, pixel00, pixelAway };
       }
       throw new Error("Failed to capture a consistent published frame.");
     };
 
     await waitForSeqAtLeast(1);
     const first = capture();
-    await waitForSeqAtLeast(first.seq + 2);
+    await waitForSeqAtLeast(first.seq + 4);
     const second = capture();
 
-    const pass = first.hash !== second.hash;
-    log(`first: seq=${first.seq} hash=${first.hash} pixel=${first.pixel.join(",")}`);
-    log(`second: seq=${second.seq} hash=${second.hash} pixel=${second.pixel.join(",")}`);
-    log(pass ? "PASS" : "FAIL");
+    const pass =
+      first.hash !== second.hash &&
+      // Ensure the pattern is not the JS fallback (which only changes the top-left tile).
+      first.pixelAway.join(",") !== second.pixelAway.join(",");
+    log(`first: seq=${first.seq} hash=${first.hash} pixel00=${first.pixel00.join(",")} pixelAway=${first.pixelAway.join(",")}`);
+    log(`second: seq=${second.seq} hash=${second.hash} pixel00=${second.pixel00.join(",")} pixelAway=${second.pixelAway.join(",")}`);
+    log(pass ? "PASS" : "FAIL (expected pixelAway to change; wasm demo may be unavailable)");
 
     coordinator.stop();
 
@@ -162,7 +176,12 @@ async function main() {
       pass,
       hashes: { first: first.hash, second: second.hash },
       frames: { firstSeq: first.seq, secondSeq: second.seq },
-      samples: { firstPixel: first.pixel, secondPixel: second.pixel },
+      samples: {
+        firstPixel00: first.pixel00,
+        secondPixel00: second.pixel00,
+        firstPixelAway: first.pixelAway,
+        secondPixelAway: second.pixelAway,
+      },
     };
   } catch (err) {
     coordinator.stop();

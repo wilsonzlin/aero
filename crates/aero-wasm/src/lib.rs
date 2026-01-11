@@ -1019,7 +1019,28 @@ impl CpuWorkerDemo {
             let shared =
                 unsafe { SharedFramebuffer::from_raw_parts(framebuffer_offset_bytes as *mut u8, layout) }
                     .map_err(|e| JsValue::from_str(&format!("Invalid shared framebuffer base: {e}")))?;
-            shared.header().init(layout);
+            // The JS runtime may have already initialized the header (and in the
+            // CPU worker we may start publishing frames via a JS fallback while
+            // the threaded WASM module initializes asynchronously). Only
+            // overwrite the header when it is uninitialized or incompatible with
+            // the requested layout.
+            let header = shared.header();
+            let needs_init = {
+                let snap = header.snapshot();
+                snap.magic != aero_shared::shared_framebuffer::SHARED_FRAMEBUFFER_MAGIC
+                    || snap.version != aero_shared::shared_framebuffer::SHARED_FRAMEBUFFER_VERSION
+                    || snap.width != layout.width
+                    || snap.height != layout.height
+                    || snap.stride_bytes != layout.stride_bytes
+                    || snap.format != layout.format as u32
+                    || snap.tile_size != layout.tile_size
+                    || snap.tiles_x != layout.tiles_x
+                    || snap.tiles_y != layout.tiles_y
+                    || snap.dirty_words_per_buffer != layout.dirty_words_per_buffer
+            };
+            if needs_init {
+                header.init(layout);
+            }
 
             // Reset the demo guest counter so tests can make deterministic assertions.
             unsafe {
