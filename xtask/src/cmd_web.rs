@@ -1,7 +1,7 @@
 use crate::error::{Result, XtaskError};
 use crate::paths;
 use crate::runner::Runner;
-use std::process::Command;
+use crate::tools;
 
 pub fn print_help() {
     println!(
@@ -32,7 +32,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         }
     };
 
-    let mut cmd = Command::new("npm");
+    let mut cmd = tools::npm();
     cmd.current_dir(&node_dir).args(["run", &script]);
     if !opts.extra_args.is_empty() {
         cmd.arg("--");
@@ -112,4 +112,3 @@ fn next_value(
         None => Err(XtaskError::Message(format!("{flag} requires a value"))),
     }
 }
-

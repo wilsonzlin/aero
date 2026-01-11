@@ -1,6 +1,7 @@
 use crate::error::{Result, XtaskError};
 use crate::paths;
 use crate::runner::Runner;
+use crate::tools;
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -138,7 +139,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             .as_ref()
             .expect("node dir should be resolved when TS tests are enabled");
 
-        let mut cmd = Command::new("npm");
+        let mut cmd = tools::npm();
         cmd.current_dir(node_dir)
             .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
             .args(["run", "test:unit"]);
@@ -162,7 +163,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             .as_ref()
             .expect("node dir should be resolved when E2E tests are enabled");
 
-        let mut cmd = Command::new("npm");
+        let mut cmd = tools::npm();
         cmd.current_dir(node_dir)
             .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
             .args(["run", "test:e2e", "--"]);

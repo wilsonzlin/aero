@@ -15,6 +15,7 @@ mod error;
 mod fixture_sources;
 mod paths;
 mod runner;
+mod tools;
 
 use crate::error::{Result, XtaskError};
 
