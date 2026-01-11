@@ -373,6 +373,10 @@ impl UsbDeviceModel for UsbHubDevice {
                         USB_DESCRIPTOR_TYPE_DEVICE => Some(self.get_device_descriptor().to_vec()),
                         USB_DESCRIPTOR_TYPE_CONFIGURATION => Some(self.get_config_descriptor().to_vec()),
                         USB_DESCRIPTOR_TYPE_STRING => self.string_descriptor(desc_index),
+                        // Accept hub descriptor fetch as both a class request (the common case) and
+                        // a standard request. Some host stacks probe descriptor type 0x29 using a
+                        // standard GET_DESCRIPTOR despite it being class-specific.
+                        USB_DESCRIPTOR_TYPE_HUB => Some(HUB_DESCRIPTOR.to_vec()),
                         _ => None,
                     };
                     data.map(|v| ControlResponse::Data(clamp_response(v, setup.w_length)))

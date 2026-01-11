@@ -389,3 +389,27 @@ fn usb_hub_hub_descriptor_fields_are_stable_and_correct_length() {
     // Configuration descriptor should expose a non-zero bMaxPower.
     assert_eq!(hub.get_config_descriptor()[8], 50);
 }
+
+#[test]
+fn usb_hub_standard_get_descriptor_accepts_hub_descriptor_type() {
+    const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
+
+    let mut hub = UsbHubDevice::new();
+
+    let ControlResponse::Data(class_desc) = hub.handle_control_request(
+        setup(0xa0, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        None,
+    ) else {
+        panic!("expected Data response");
+    };
+
+    let ControlResponse::Data(std_desc) = hub.handle_control_request(
+        setup(0x80, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        None,
+    ) else {
+        panic!("expected Data response");
+    };
+
+    assert_eq!(std_desc, class_desc);
+    assert_eq!(std_desc[1], HUB_DESCRIPTOR_TYPE as u8);
+}
