@@ -11,6 +11,7 @@
 
 #include "aerogpu_kmd_query.h"
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_wddm_alloc_list.h"
 
 namespace aerogpu {
 
@@ -70,6 +71,10 @@ struct Resource {
   bool locked = false;
   uint32_t locked_offset = 0;
   uint32_t locked_size = 0;
+
+  WddmAllocationHandle wddm_hAllocation = 0;
+  uint32_t wddm_alloc_id = 0;
+  uint32_t wddm_alloc_offset_bytes = 0;
 
   std::vector<uint8_t> storage;
 };
