@@ -418,6 +418,33 @@ async fn empty_aero_allowed_origins_falls_back_to_shared_env_var() {
 }
 
 #[tokio::test]
+async fn comma_only_aero_allowed_origins_falls_back_to_shared_env_var() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    // Some deployment templates may produce comma-only placeholders; treat these as unset.
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", ",,");
+    let _fallback_allowed = EnvVarGuard::set("ALLOWED_ORIGINS", "https://allowed.test");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://allowed.test"));
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn allowed_origins_extra_appends_without_replacing_base() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");

@@ -119,23 +119,19 @@ impl SecurityConfig {
             .map(|v| v.trim() == "1")
             .unwrap_or(false);
 
+        fn env_non_empty_csv(name: &'static str) -> Option<String> {
+            std::env::var(name)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| v.split(',').any(|entry| !entry.trim().is_empty()))
+        }
+
         let allowed_origins = {
-            let base: Option<(&'static str, String)> = std::env::var("AERO_L2_ALLOWED_ORIGINS")
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .map(|v| ("AERO_L2_ALLOWED_ORIGINS", v))
-                .or_else(|| {
-                    std::env::var("ALLOWED_ORIGINS")
-                        .ok()
-                        .map(|v| v.trim().to_string())
-                        .filter(|v| !v.is_empty())
-                        .map(|v| ("ALLOWED_ORIGINS", v))
-                });
-            let extra = std::env::var("AERO_L2_ALLOWED_ORIGINS_EXTRA")
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
+            let base: Option<(&'static str, String)> =
+                env_non_empty_csv("AERO_L2_ALLOWED_ORIGINS")
+                    .map(|v| ("AERO_L2_ALLOWED_ORIGINS", v))
+                    .or_else(|| env_non_empty_csv("ALLOWED_ORIGINS").map(|v| ("ALLOWED_ORIGINS", v)));
+            let extra = env_non_empty_csv("AERO_L2_ALLOWED_ORIGINS_EXTRA")
                 .map(|v| ("AERO_L2_ALLOWED_ORIGINS_EXTRA", v));
 
             let mut sources = Vec::new();
