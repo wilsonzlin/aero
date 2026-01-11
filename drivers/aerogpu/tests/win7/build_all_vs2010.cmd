@@ -18,6 +18,7 @@ call "%~dp0d3d9ex_query_latency\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d9ex_shared_surface\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d9ex_shared_allocations\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d10_triangle\\build_vs2010.cmd" || exit /b 1
+call "%~dp0d3d10_1_triangle\\build_vs2010.cmd" || exit /b 1
 call "%~dp0d3d11_triangle\\build_vs2010.cmd" || exit /b 1
 call "%~dp0readback_sanity\\build_vs2010.cmd" || exit /b 1
 

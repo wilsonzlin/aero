@@ -26,21 +26,21 @@ Common flags:
 drivers/aerogpu/tests/win7/
   build_all_vs2010.cmd
   run_all.cmd
-  d3d9ex_triangle/
+  d3d9ex_dwm_probe/
   d3d9ex_event_query/
-  d3d9ex_query_latency/
-   d3d9ex_shared_surface/
-   d3d9ex_shared_allocations/
-   d3d9ex_dwm_probe/
-   d3d9ex_event_query/
-   wait_vblank_pacing/
-   vblank_wait_sanity/
-   vblank_wait_pacing/
+  vblank_wait_sanity/
+  wait_vblank_pacing/
+  vblank_wait_pacing/
   get_scanline_sanity/
   d3d9_raster_status_sanity/
   d3d9_raster_status_pacing/
   dwm_flush_pacing/
+  d3d9ex_triangle/
+  d3d9ex_query_latency/
+  d3d9ex_shared_surface/
+  d3d9ex_shared_allocations/
   d3d10_triangle/
+  d3d10_1_triangle/
   d3d11_triangle/
   readback_sanity/
   timeout_runner/
@@ -59,10 +59,10 @@ drivers/aerogpu/tests/win7/
 The recommended build path is **Visual Studio 2010** (or the VS2010 toolchain) using `cl.exe`.
 
 * Visual Studio 2010 (or “Visual C++ 2010 Express” + Windows SDK 7.1)
-* **DirectX SDK (June 2010)** (recommended) – provides `fxc.exe` needed to compile the D3D10/D3D11 shaders.
+* **DirectX SDK (June 2010)** (recommended) – provides `fxc.exe` needed to compile the D3D10/D3D10.1/D3D11 shaders.
   * Ensure `fxc.exe` is on `PATH` (e.g. add `%DXSDK_DIR%Utilities\bin\x86`).
 
-> Note: The shader-based tests (D3D10/D3D11) do **not** compile shaders at runtime. Shaders are compiled by `fxc.exe` during the build and written as `.cso` next to the `.exe`.
+> Note: The shader-based tests (D3D10/D3D10.1/D3D11) do **not** compile shaders at runtime. Shaders are compiled by `fxc.exe` during the build and written as `.cso` next to the `.exe`.
 
 ## Build (VS2010 command prompt)
 
@@ -152,6 +152,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
 * `d3d9ex_shared_allocations` creates shared D3D9Ex resources (shared render-target surface + shared mipmapped texture) to exercise shared-surface allocation behavior
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware) and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 
