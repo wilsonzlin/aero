@@ -17,7 +17,7 @@ impl AuthMode {
             "cookie_or_api_key" | "session_or_token" => Ok(AuthMode::CookieOrApiKey),
             "cookie_and_api_key" | "session_and_token" => Ok(AuthMode::CookieAndApiKey),
             other => anyhow::bail!(
-                "unsupported AERO_L2_AUTH_MODE={other:?} (expected one of: none, token, session, session_or_token, session_and_token; legacy aliases: cookie, api_key, jwt, cookie_or_jwt, cookie_or_api_key)"
+                "unsupported AERO_L2_AUTH_MODE={other:?} (supported values: none, token, session, session_or_token, session_and_token, jwt, cookie_or_jwt; aliases: cookie, api_key, cookie_or_api_key, cookie_and_api_key)"
             ),
         }
     }
