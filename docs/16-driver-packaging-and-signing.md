@@ -80,7 +80,7 @@ Template examples are available under `drivers/_template/`:
 
 To allow CI to copy `WdfCoInstaller*.dll` into staged packages (from the installed WDK redist directories):
 
-1. The driver must declare `wdfCoInstaller` in `drivers/<name>/ci-package.json`.
+1. The driver must declare `wdfCoInstaller` in `drivers/<driver>/ci-package.json`.
 2. CI must run catalog generation with **explicit opt-in**:
 
 ```powershell

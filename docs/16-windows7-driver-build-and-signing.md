@@ -351,7 +351,7 @@ Some Windows 7-era driver packages (especially KMDF-based ones) may require ship
 Policy in this repo:
 
 - CI does **not** include any WDK redistributables by default.
-- Drivers that require a WDF coinstaller must declare it in `drivers/<name>/ci-package.json`, and CI must be run with explicit opt-in:
+- Drivers that require a WDF coinstaller must declare it in `drivers/<driver>/ci-package.json`, and CI must be run with explicit opt-in:
 
 ```powershell
 .\ci\make-catalogs.ps1 -IncludeWdfCoInstaller
