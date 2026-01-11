@@ -413,7 +413,7 @@ fn set_logic_szp(flags: &mut u64, res: u64, bits: u32) {
 }
 
 fn parity8(v: u8) -> bool {
-    v.count_ones() % 2 == 0
+    v.count_ones().is_multiple_of(2)
 }
 
 fn exec_mul<B: CpuBus>(

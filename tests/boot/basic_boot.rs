@@ -193,7 +193,7 @@ fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
 
     // SMBIOS EPS should be discoverable by spec search rules.
     let eps_addr = find_smbios_eps(&mut mem).expect("SMBIOS EPS not found after BIOS POST");
-    assert!(eps_addr >= EBDA_BASE && eps_addr < EBDA_BASE + 1024);
+    assert!((EBDA_BASE..EBDA_BASE + 1024).contains(&eps_addr));
 
     let eps = read_bytes(&mut mem, eps_addr, 0x1F);
     assert_eq!(&eps[0..4], b"_SM_");

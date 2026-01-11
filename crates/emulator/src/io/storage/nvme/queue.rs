@@ -82,7 +82,7 @@ pub enum PrpError {
 }
 
 fn is_page_aligned(addr: u64, page_size: usize) -> bool {
-    addr as usize % page_size == 0
+    (addr as usize).is_multiple_of(page_size)
 }
 
 pub fn prp_segments(
@@ -109,7 +109,7 @@ pub fn prp_segments(
         return Ok(segments);
     }
 
-    let additional_pages = (remaining + page_size - 1) / page_size;
+    let additional_pages = remaining.div_ceil(page_size);
     if additional_pages == 1 {
         if !is_page_aligned(prp2, page_size) {
             return Err(PrpError::Invalid);

@@ -1,5 +1,6 @@
 use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 
+#[allow(clippy::too_many_arguments)]
 fn make_ipv4_tcp_frame(
     src_mac: [u8; 6],
     dst_mac: [u8; 6],
@@ -59,7 +60,10 @@ fn parse_blocks(mut bytes: &[u8]) -> Vec<Block<'_>> {
         let block_type = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         let total_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
         assert!(total_len >= 12, "pcapng invalid block length");
-        assert!(total_len % 4 == 0, "pcapng block length not 32-bit aligned");
+        assert!(
+            total_len.is_multiple_of(4),
+            "pcapng block length not 32-bit aligned"
+        );
         assert!(bytes.len() >= total_len, "pcapng truncated block");
         assert_eq!(
             &bytes[total_len - 4..total_len],

@@ -39,8 +39,10 @@ pub fn build_acpi_table_set(base_address: u64) -> BuiltAcpiTables {
 }
 
 pub fn build_acpi_table_set_with_hpet(base_address: u64, hpet_base: u64) -> BuiltAcpiTables {
-    let mut cfg = AcpiConfig::default();
-    cfg.hpet_addr = hpet_base;
+    let cfg = AcpiConfig {
+        hpet_addr: hpet_base,
+        ..Default::default()
+    };
 
     // Keep the legacy table-set builder API simple: the caller provides a base for the SDT blob.
     // Place the NVS window and RSDP at fixed offsets to avoid overlapping the table blob.

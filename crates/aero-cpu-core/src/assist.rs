@@ -19,22 +19,13 @@ use crate::time::TimeSource;
 /// that depends on that state, it exits with [`AssistReason`]. The caller feeds
 /// those exits into [`handle_assist`], which emulates the instruction against
 /// the JIT ABI [`CpuState`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AssistContext {
     /// CPUID feature policy used for `CPUID` and for masking MSR writes (e.g.
     /// keeping `IA32_EFER` coherent with advertised features).
     pub features: CpuFeatures,
     /// Optional log of `INVLPG` linear addresses (useful for integration tests).
     pub invlpg_log: Vec<u64>,
-}
-
-impl Default for AssistContext {
-    fn default() -> Self {
-        Self {
-            features: CpuFeatures::default(),
-            invlpg_log: Vec::new(),
-        }
-    }
 }
 
 /// Execute a Tier-0 assist exit.
@@ -55,10 +46,8 @@ pub fn handle_assist<B: CpuBus>(
     bus.sync(state);
     let ip = state.rip();
     let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
-    let bytes = fetch_wrapped(state, bus, fetch_addr, 15).map_err(|e| {
-        state.apply_exception_side_effects(&e);
-        e
-    })?;
+    let bytes = fetch_wrapped(state, bus, fetch_addr, 15)
+        .inspect_err(|e| state.apply_exception_side_effects(e))?;
     let addr_size_override = has_addr_size_override(&bytes, state.bitness());
     let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
         Ok(decoded) => decoded,
@@ -69,10 +58,8 @@ pub fn handle_assist<B: CpuBus>(
         }
     };
 
-    exec_decoded(ctx, time, state, bus, &decoded, addr_size_override).map_err(|e| {
-        state.apply_exception_side_effects(&e);
-        e
-    })?;
+    exec_decoded(ctx, time, state, bus, &decoded, addr_size_override)
+        .inspect_err(|e| state.apply_exception_side_effects(e))?;
     // Assists can update paging-related state (CR0/CR3/CR4/EFER/CPL). Sync the
     // bus so the next instruction boundary observes those updates even if the
     // caller doesn't go through `tier0::exec::step` immediately.
@@ -94,10 +81,8 @@ pub fn handle_assist_decoded<B: CpuBus>(
     decoded: &DecodedInst,
     addr_size_override: bool,
 ) -> Result<(), Exception> {
-    exec_decoded(ctx, time, state, bus, decoded, addr_size_override).map_err(|e| {
-        state.apply_exception_side_effects(&e);
-        e
-    })
+    exec_decoded(ctx, time, state, bus, decoded, addr_size_override)
+        .inspect_err(|e| state.apply_exception_side_effects(e))
 }
 
 fn exec_decoded<B: CpuBus>(
@@ -1026,7 +1011,7 @@ fn instr_retf<B: CpuBus>(
     };
 
     let off_bits = state.bitness();
-    let off_size = (off_bits / 8) as u32;
+    let off_size = off_bits / 8;
     let off = pop_sized(state, bus, off_size)? & mask_bits(off_bits);
     let cs = pop_u16(state, bus)?;
     let sp = state.stack_ptr().wrapping_add(pop_imm as u64);
@@ -1088,7 +1073,7 @@ fn far_call<B: CpuBus>(
     // Push current CS then return IP.
     let cs = state.segments.cs.selector;
     push_u16(state, bus, cs)?;
-    let ret_size = (state.bitness() / 8) as u32;
+    let ret_size = state.bitness() / 8;
     push_sized(state, bus, return_ip, ret_size)?;
     far_jump(state, bus, selector, offset)
 }

@@ -18,7 +18,7 @@ pub fn build_bios_rom() -> Vec<u8> {
     // Encoding: JMP FAR ptr16:16 => EA iw (offset) iw (segment)
     // Target: F000:E000.
     let reset_off = 0xFFF0usize;
-    rom[reset_off + 0] = 0xEA;
+    rom[reset_off] = 0xEA;
     rom[reset_off + 1] = 0x00; // offset low
     rom[reset_off + 2] = 0xE0; // offset high (0xE000)
     rom[reset_off + 3] = 0x00; // segment low
@@ -29,7 +29,7 @@ pub fn build_bios_rom() -> Vec<u8> {
     // In a full-system integration this address is never reached because POST
     // is performed in host code, but it provides deterministic behavior if it is.
     let stub_off = 0xE000usize;
-    rom[stub_off + 0] = 0xFA;
+    rom[stub_off] = 0xFA;
     rom[stub_off + 1] = 0xF4;
     rom[stub_off + 2] = 0xEB;
     rom[stub_off + 3] = 0xFE;

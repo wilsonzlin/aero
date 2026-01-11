@@ -111,7 +111,7 @@ impl AcpiTables {
         if config.cpu_count == 0 {
             return Err(AcpiBuildError::CpuCountMustBeNonZero);
         }
-        if config.rsdp_addr % ACPI_TABLE_ALIGNMENT != 0 {
+        if !config.rsdp_addr.is_multiple_of(ACPI_TABLE_ALIGNMENT) {
             return Err(AcpiBuildError::RsdpNotAligned(config.rsdp_addr));
         }
 
@@ -149,15 +149,18 @@ impl AcpiTables {
             });
         }
 
-        let mut aero_cfg = aero_acpi::AcpiConfig::default();
-        aero_cfg.cpu_count = config.cpu_count;
-
-        aero_cfg.pci_mmio_base = u32::try_from(config.pci_mmio_start).map_err(|_| {
+        let pci_mmio_base = u32::try_from(config.pci_mmio_start).map_err(|_| {
             AcpiBuildError::AddressDoesNotFitInU32 {
                 table: "PCI MMIO base",
                 addr: config.pci_mmio_start,
             }
         })?;
+
+        let mut aero_cfg = aero_acpi::AcpiConfig {
+            cpu_count: config.cpu_count,
+            pci_mmio_base,
+            ..Default::default()
+        };
 
         // Keep the MMIO window ending right below the IOAPIC base (matching the default).
         if aero_cfg.io_apic_addr <= aero_cfg.pci_mmio_base {

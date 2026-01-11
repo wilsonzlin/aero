@@ -647,7 +647,7 @@ impl AeroGpuSoftwareExecutor {
             AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8X8Unorm => Some([
                 tex.data[off + 2], // r
                 tex.data[off + 1], // g
-                tex.data[off + 0], // b
+                tex.data[off], // b
                 if matches!(tex.format, AeroGpuFormat::B8G8R8A8Unorm) {
                     tex.data[off + 3]
                 } else {
@@ -655,7 +655,7 @@ impl AeroGpuSoftwareExecutor {
                 },
             ]),
             AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8X8Unorm => Some([
-                tex.data[off + 0],
+                tex.data[off],
                 tex.data[off + 1],
                 tex.data[off + 2],
                 if matches!(tex.format, AeroGpuFormat::R8G8B8A8Unorm) {
@@ -1065,6 +1065,7 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle(
         tex: &mut Texture2DResource,
         clip: (i32, i32, i32, i32),
@@ -1130,6 +1131,7 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_depth(
         tex: &mut Texture2DResource,
         depth_tex: &mut Texture2DResource,
@@ -1219,6 +1221,7 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_textured(
         tex: &mut Texture2DResource,
         src_tex: &Texture2DResource,
@@ -1288,6 +1291,7 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rasterize_triangle_depth_textured(
         tex: &mut Texture2DResource,
         depth_tex: &mut Texture2DResource,
@@ -1446,8 +1450,7 @@ impl AeroGpuSoftwareExecutor {
                 .map(|l| l.parsed.clone())
         };
 
-        let mut vertices: Vec<Vertex> = Vec::new();
-        vertices.reserve(vertex_indices.len());
+        let mut vertices = Vec::with_capacity(vertex_indices.len());
 
         for &idx in vertex_indices {
             if idx < 0 {
@@ -1838,7 +1841,7 @@ impl AeroGpuSoftwareExecutor {
         let binding = self
             .state
             .vertex_buffers
-            .get(0)
+            .first()
             .copied()
             .unwrap_or_default();
         if binding.buffer == 0 {
@@ -1863,7 +1866,7 @@ impl AeroGpuSoftwareExecutor {
         let a = ((color_argb >> 24) & 0xff) as f32 / 255.0;
         let r = ((color_argb >> 16) & 0xff) as f32 / 255.0;
         let g = ((color_argb >> 8) & 0xff) as f32 / 255.0;
-        let b = ((color_argb >> 0) & 0xff) as f32 / 255.0;
+        let b = (color_argb & 0xff) as f32 / 255.0;
 
         Some(Vertex {
             pos: (x, y),
@@ -3163,7 +3166,7 @@ impl AeroGpuSoftwareExecutor {
                 let start_slot = u32::from_le(packet_cmd.start_slot) as usize;
                 let sampler_count = u32::from_le(packet_cmd.sampler_count) as usize;
                 let expected_size = match cmd::AerogpuCmdSetSamplers::SIZE_BYTES
-                    .checked_add(sampler_count.checked_mul(4).unwrap_or(usize::MAX))
+                    .checked_add(sampler_count.saturating_mul(4))
                 {
                     Some(v) => v,
                     None => {

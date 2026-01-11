@@ -80,7 +80,7 @@ pub fn exec<B: CpuBus>(
                 return Ok(ExecOutcome::Assist(AssistReason::Privileged));
             }
             let ret_size = state.bitness() / 8;
-            push(state, bus, next_ip, ret_size as u32)?;
+            push(state, bus, next_ip, ret_size)?;
             let target = branch_target(state, bus, instr, next_ip)?;
             state.set_rip(target);
             Ok(ExecOutcome::Branch)
@@ -92,7 +92,7 @@ pub fn exec<B: CpuBus>(
                 0
             };
             let ret_size = state.bitness() / 8;
-            let target = pop(state, bus, ret_size as u32)? & state.mode.ip_mask();
+            let target = pop(state, bus, ret_size)? & state.mode.ip_mask();
             let sp = state.stack_ptr().wrapping_add(pop_imm as u64);
             state.set_stack_ptr(sp);
             state.set_rip(target);
@@ -102,7 +102,7 @@ pub fn exec<B: CpuBus>(
         Mnemonic::Push => {
             let bits = op_bits(state, instr, 0)?;
             let v = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
-            push(state, bus, v, (bits / 8) as u32)?;
+            push(state, bus, v, bits / 8)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Pop => {
@@ -113,7 +113,7 @@ pub fn exec<B: CpuBus>(
                 return Ok(ExecOutcome::Assist(AssistReason::Privileged));
             }
             let bits = op_bits(state, instr, 0)?;
-            let v = pop(state, bus, (bits / 8) as u32)?;
+            let v = pop(state, bus, bits / 8)?;
             super::ops_data::write_op_sized(state, bus, instr, 0, v, bits, next_ip)?;
             // `POP SS` creates an interrupt shadow for the following instruction.
             if instr.op_kind(0) == OpKind::Register && instr.op0_register() == Register::SS {
@@ -208,12 +208,12 @@ pub fn exec<B: CpuBus>(
         Mnemonic::Pushf => {
             let bits = state.bitness();
             let v = state.rflags() & mask_bits(bits);
-            push(state, bus, v, (bits / 8) as u32)?;
+            push(state, bus, v, bits / 8)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Popf => {
             let bits = state.bitness();
-            let v = pop(state, bus, (bits / 8) as u32)? & mask_bits(bits);
+            let v = pop(state, bus, bits / 8)? & mask_bits(bits);
             let old = state.rflags();
 
             // POPF can update more than the arithmetic status flags. In particular, real-mode

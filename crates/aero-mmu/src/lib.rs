@@ -460,13 +460,11 @@ impl Mmu {
             ));
         }
 
-        if access.is_write() && !writable_ok {
-            if is_user || self.wp_enabled() {
-                return Err(PageFault::new(
-                    vaddr,
-                    pf_error_code(true, access, is_user, false),
-                ));
-            }
+        if access.is_write() && !writable_ok && (is_user || self.wp_enabled()) {
+            return Err(PageFault::new(
+                vaddr,
+                pf_error_code(true, access, is_user, false),
+            ));
         }
 
         if access.is_execute() && self.nx_enabled() && nx {
@@ -487,7 +485,7 @@ impl Mmu {
         is_user: bool,
     ) -> Result<(TlbEntry, u64), PageFault> {
         let pd_base = (self.cr3 & 0xffff_ffff) & !0xfff;
-        let pd_index = ((vaddr >> 22) & 0x3ff) as u64;
+        let pd_index = (vaddr >> 22) & 0x3ff;
         let pde_addr = pd_base + pd_index * 4;
         let pde_raw = bus.read_u32(pde_addr) as u64;
         if pde_raw & PTE_P == 0 {
@@ -527,7 +525,7 @@ impl Mmu {
 
             let page_size = PageSize::Size4M;
             let vbase = vaddr & !(page_size.bytes() - 1);
-            let pbase = (pde & 0xffc0_0000) as u64;
+            let pbase = pde & 0xffc0_0000;
             let global = self.cr4_pge() && (pde & PTE_G != 0);
             let dirty = new_pde & PTE_D != 0;
             let entry = TlbEntry::new(
@@ -548,8 +546,8 @@ impl Mmu {
         }
 
         // 4KB pages via PT.
-        let pt_base = (pde as u64) & 0xffff_f000;
-        let pt_index = ((vaddr >> 12) & 0x3ff) as u64;
+        let pt_base = pde & 0xffff_f000;
+        let pt_index = (vaddr >> 12) & 0x3ff;
         let pte_addr = pt_base + pt_index * 4;
         let pte_raw = bus.read_u32(pte_addr) as u64;
         let pte = match self.check_entry32(bus, pte_addr, pte_raw) {
@@ -573,7 +571,7 @@ impl Mmu {
 
         let page_size = PageSize::Size4K;
         let vbase = vaddr & !(page_size.bytes() - 1);
-        let pbase = (pte & 0xffff_f000) as u64;
+        let pbase = pte & 0xffff_f000;
         let global = self.cr4_pge() && (pte & PTE_G != 0);
         let dirty = new_pte & PTE_D != 0;
         let entry = TlbEntry::new(
@@ -604,7 +602,7 @@ impl Mmu {
         let addr_mask = self.phys_addr_mask();
 
         let pdpt_base = (self.cr3 & 0xffff_ffff) & !0x1f;
-        let pdpt_index = ((vaddr >> 30) & 0x3) as u64;
+        let pdpt_index = (vaddr >> 30) & 0x3;
         let pdpte_addr = pdpt_base + pdpt_index * 8;
         let pdpte = bus.read_u64(pdpte_addr);
 
@@ -629,7 +627,7 @@ impl Mmu {
         let mut eff_nx = nx_enabled && (pdpte & PTE_NX != 0);
 
         let pd_base = (pdpte & addr_mask) & !0xfff;
-        let pd_index = ((vaddr >> 21) & 0x1ff) as u64;
+        let pd_index = (vaddr >> 21) & 0x1ff;
         let pde_addr = pd_base + pd_index * 8;
         let pde = bus.read_u64(pde_addr);
 
@@ -685,7 +683,7 @@ impl Mmu {
         }
 
         let pt_base = (pde & addr_mask) & !0xfff;
-        let pt_index = ((vaddr >> 12) & 0x1ff) as u64;
+        let pt_index = (vaddr >> 12) & 0x1ff;
         let pte_addr = pt_base + pt_index * 8;
         let pte = bus.read_u64(pte_addr);
 
@@ -749,7 +747,7 @@ impl Mmu {
         let addr_mask = self.phys_addr_mask();
 
         let pml4_base = (self.cr3 & addr_mask) & !0xfff;
-        let pml4_index = ((vaddr >> 39) & 0x1ff) as u64;
+        let pml4_index = (vaddr >> 39) & 0x1ff;
         let pml4e_addr = pml4_base + pml4_index * 8;
         let pml4e = bus.read_u64(pml4e_addr);
 
@@ -771,7 +769,7 @@ impl Mmu {
         let mut eff_nx = nx_enabled && (pml4e & PTE_NX != 0);
 
         let pdpt_base = (pml4e & addr_mask) & !0xfff;
-        let pdpt_index = ((vaddr >> 30) & 0x1ff) as u64;
+        let pdpt_index = (vaddr >> 30) & 0x1ff;
         let pdpte_addr = pdpt_base + pdpt_index * 8;
         let pdpte = bus.read_u64(pdpte_addr);
 
@@ -827,7 +825,7 @@ impl Mmu {
         }
 
         let pd_base = (pdpte & addr_mask) & !0xfff;
-        let pd_index = ((vaddr >> 21) & 0x1ff) as u64;
+        let pd_index = (vaddr >> 21) & 0x1ff;
         let pde_addr = pd_base + pd_index * 8;
         let pde = bus.read_u64(pde_addr);
 
@@ -883,7 +881,7 @@ impl Mmu {
         }
 
         let pt_base = (pde & addr_mask) & !0xfff;
-        let pt_index = ((vaddr >> 12) & 0x1ff) as u64;
+        let pt_index = (vaddr >> 12) & 0x1ff;
         let pte_addr = pt_base + pt_index * 8;
         let pte = bus.read_u64(pte_addr);
 
@@ -958,6 +956,7 @@ impl Mmu {
         Some(entry)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_entry64(
         &self,
         bus: &mut impl MemoryBus,

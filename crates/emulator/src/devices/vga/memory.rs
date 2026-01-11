@@ -279,7 +279,7 @@ impl VgaMemory {
         match write_mode {
             0 => {
                 let rotated = value.rotate_right(rotate_count as u32);
-                let set_reset = gc_regs.get(0).copied().unwrap_or(0) & 0x0f;
+                let set_reset = gc_regs.first().copied().unwrap_or(0) & 0x0f;
                 let enable_set_reset = gc_enable_set_reset;
                 let bit_mask = gc_bit_mask;
 
@@ -353,7 +353,7 @@ impl VgaMemory {
             3 => {
                 let rotated = value.rotate_right(rotate_count as u32);
                 let bit_mask = rotated & gc_bit_mask;
-                let set_reset = gc_regs.get(0).copied().unwrap_or(0) & 0x0f;
+                let set_reset = gc_regs.first().copied().unwrap_or(0) & 0x0f;
 
                 for plane_idx in 0..VGA_NUM_PLANES {
                     let plane = VramPlane(plane_idx);

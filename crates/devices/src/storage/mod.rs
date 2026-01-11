@@ -4,6 +4,10 @@ pub trait DiskBackend: Send {
     /// Total disk size in bytes.
     fn len(&self) -> u64;
 
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()>;
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()>;
     fn flush(&mut self) -> io::Result<()>;

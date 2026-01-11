@@ -129,7 +129,7 @@ impl PcapngWriter {
 
 fn pad_to_32(buf: &mut Vec<u8>) {
     let pad_len = (4 - (buf.len() % 4)) % 4;
-    buf.extend(std::iter::repeat(0u8).take(pad_len));
+    buf.extend(std::iter::repeat_n(0u8, pad_len));
 }
 
 fn write_block(out: &mut Vec<u8>, block_type: u32, body: &[u8], opts: &[u8]) {

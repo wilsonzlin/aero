@@ -35,7 +35,7 @@ impl VhdFooter {
             return Err(DiskError::CorruptImage("vhd footer checksum mismatch"));
         }
 
-        if current_size == 0 || current_size % SECTOR_SIZE as u64 != 0 {
+        if current_size == 0 || !current_size.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd current_size invalid"));
         }
 
@@ -73,13 +73,13 @@ impl VhdDynamicHeader {
         let max_table_entries = be_u32(&raw[28..32]);
         let block_size = be_u32(&raw[32..36]);
 
-        if table_offset % SECTOR_SIZE as u64 != 0 {
+        if !table_offset.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage("vhd bat offset misaligned"));
         }
         if max_table_entries == 0 {
             return Err(DiskError::CorruptImage("vhd max_table_entries is zero"));
         }
-        if block_size == 0 || (block_size as u64) % SECTOR_SIZE as u64 != 0 {
+        if block_size == 0 || !u64::from(block_size).is_multiple_of(u64::from(SECTOR_SIZE)) {
             return Err(DiskError::CorruptImage("vhd block_size invalid"));
         }
 
@@ -137,8 +137,8 @@ impl<S: ByteStorage> VhdDisk<S> {
                 storage.read_at(footer.data_offset, &mut raw_header)?;
                 let dynamic = VhdDynamicHeader::parse(&raw_header)?;
 
-                let required_entries = (footer.current_size + dynamic.block_size as u64 - 1)
-                    / dynamic.block_size as u64;
+                let required_entries =
+                    footer.current_size.div_ceil(dynamic.block_size as u64);
                 if (dynamic.max_table_entries as u64) < required_entries {
                     return Err(DiskError::CorruptImage("vhd bat too small"));
                 }
@@ -176,7 +176,7 @@ impl<S: ByteStorage> VhdDisk<S> {
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        if bytes % SECTOR_SIZE as usize != 0 {
+        if !bytes.is_multiple_of(SECTOR_SIZE as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: SECTOR_SIZE,
@@ -204,7 +204,7 @@ impl<S: ByteStorage> VhdDisk<S> {
             .as_ref()
             .ok_or(DiskError::CorruptImage("vhd is not dynamic"))?;
         let sectors_per_block = (dyn_hdr.block_size as u64) / SECTOR_SIZE as u64;
-        let bitmap_bytes = (sectors_per_block + 7) / 8;
+        let bitmap_bytes = sectors_per_block.div_ceil(8);
         let bitmap_size = align_up(bitmap_bytes, SECTOR_SIZE as u64);
         Ok((sectors_per_block, bitmap_size))
     }

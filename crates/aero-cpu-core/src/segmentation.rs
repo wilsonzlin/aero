@@ -59,21 +59,11 @@ pub enum LoadReason {
     FarControlTransfer,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentCache {
     pub base: u64,
     pub limit: u32,
     pub attrs: DescriptorAttributes,
-}
-
-impl Default for SegmentCache {
-    fn default() -> Self {
-        Self {
-            base: 0,
-            limit: 0,
-            attrs: DescriptorAttributes::default(),
-        }
-    }
 }
 
 impl SegmentCache {}

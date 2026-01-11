@@ -119,9 +119,7 @@ impl MemoryBus {
 
             // Split on 1MiB boundaries because A20 masking changes bit 20 (the 1MiB bit), so
             // a linear physical access may become non-contiguous after masking.
-            let next_boundary = (addr | A20_BOUNDARY_MASK)
-                .checked_add(1)
-                .unwrap_or(u64::MAX);
+            let next_boundary = (addr | A20_BOUNDARY_MASK).saturating_add(1);
             let max_len = next_boundary.saturating_sub(addr);
             let remaining = (dst.len() - pos) as u64;
 
@@ -153,9 +151,7 @@ impl MemoryBus {
                 break;
             };
 
-            let next_boundary = (addr | A20_BOUNDARY_MASK)
-                .checked_add(1)
-                .unwrap_or(u64::MAX);
+            let next_boundary = (addr | A20_BOUNDARY_MASK).saturating_add(1);
             let max_len = next_boundary.saturating_sub(addr);
             let remaining = (src.len() - pos) as u64;
 

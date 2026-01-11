@@ -56,7 +56,7 @@ impl state::MsrState {
             IA32_GS_BASE => Ok(self.gs_base),
             IA32_KERNEL_GS_BASE => Ok(self.kernel_gs_base),
             IA32_APIC_BASE => Ok(self.apic_base),
-            IA32_TSC_AUX => Ok((self.tsc_aux & 0xFFFF_FFFF) as u64),
+            IA32_TSC_AUX => Ok(u64::from(self.tsc_aux)),
             _ => Err(Exception::gp0()),
         }
     }

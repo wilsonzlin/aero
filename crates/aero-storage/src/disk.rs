@@ -17,7 +17,7 @@ pub trait VirtualDisk {
     fn flush(&mut self) -> Result<()>;
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> Result<()> {
-        if buf.len() % SECTOR_SIZE != 0 {
+        if !buf.len().is_multiple_of(SECTOR_SIZE) {
             return Err(DiskError::UnalignedLength {
                 len: buf.len(),
                 alignment: SECTOR_SIZE,
@@ -31,7 +31,7 @@ pub trait VirtualDisk {
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> Result<()> {
-        if buf.len() % SECTOR_SIZE != 0 {
+        if !buf.len().is_multiple_of(SECTOR_SIZE) {
             return Err(DiskError::UnalignedLength {
                 len: buf.len(),
                 alignment: SECTOR_SIZE,

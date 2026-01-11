@@ -211,6 +211,7 @@ impl NetTracer {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_udp_proxy_at(
         &self,
         timestamp_ns: u64,

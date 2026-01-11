@@ -224,7 +224,7 @@ impl IoApic {
                 if entry >= self.redirection.len() {
                     return 0;
                 }
-                if idx % 2 == 0 {
+                if idx.is_multiple_of(2) {
                     self.redirection[entry].read_low()
                 } else {
                     self.redirection[entry].read_high()
@@ -244,7 +244,7 @@ impl IoApic {
                     return;
                 }
 
-                if idx % 2 == 0 {
+                if idx.is_multiple_of(2) {
                     let transition = self.redirection[entry].write_low(v);
                     if transition == MaskTransition::Unmasked {
                         self.maybe_deliver_level(entry as u32);

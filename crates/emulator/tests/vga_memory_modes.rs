@@ -142,7 +142,7 @@ fn chain4_addressing_interleaves_planes() {
     write_gc(&mut vga, 0x05, 0x00); // write mode 0
     write_gc(&mut vga, 0x08, 0xff); // bit mask
 
-    vga.mem_write_u8(&mut vram, A0000 + 0, 0xaa);
+    vga.mem_write_u8(&mut vram, A0000, 0xaa);
     vga.mem_write_u8(&mut vram, A0000 + 1, 0xbb);
     vga.mem_write_u8(&mut vram, A0000 + 2, 0xcc);
     vga.mem_write_u8(&mut vram, A0000 + 3, 0xdd);

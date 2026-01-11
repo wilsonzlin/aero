@@ -558,12 +558,10 @@ impl PciConfigSpace {
         if matches!(
             self.bars.get(bar_index).and_then(|bar| bar.def),
             Some(PciBarDefinition::Mmio64 { .. })
-        ) {
-            if bar_index + 1 < self.bars.len() {
-                let hi_off = 0x10 + (bar_index + 1) * 4;
-                self.bytes[hi_off..hi_off + 4]
-                    .copy_from_slice(&((base >> 32) as u32).to_le_bytes());
-            }
+        ) && bar_index + 1 < self.bars.len()
+        {
+            let hi_off = 0x10 + (bar_index + 1) * 4;
+            self.bytes[hi_off..hi_off + 4].copy_from_slice(&((base >> 32) as u32).to_le_bytes());
         }
     }
 
@@ -573,13 +571,11 @@ impl PciConfigSpace {
         }
 
         // High dword of a 64-bit BAR.
-        if self.bars[bar_index].def.is_none() && bar_index > 0 {
-            if matches!(
-                self.bars[bar_index - 1].def,
-                Some(PciBarDefinition::Mmio64 { .. })
-            ) {
-                return self.write_bar64_high(bar_index - 1, value);
-            }
+        if self.bars[bar_index].def.is_none()
+            && bar_index > 0
+            && matches!(self.bars[bar_index - 1].def, Some(PciBarDefinition::Mmio64 { .. }))
+        {
+            return self.write_bar64_high(bar_index - 1, value);
         }
 
         let Some(def) = self.bars[bar_index].def else {

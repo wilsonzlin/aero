@@ -19,7 +19,7 @@ pub struct VbeMode {
 
 impl VbeMode {
     pub const fn bytes_per_pixel(self) -> u16 {
-        (self.bpp as u16 + 7) / 8
+        (self.bpp as u16).div_ceil(8)
     }
 
     pub const fn bytes_per_scan_line(self) -> u16 {
@@ -43,6 +43,12 @@ pub struct VbeDevice {
     pub dac_width_bits: u8,
     pub palette: [u8; 256 * 4],
     modes: &'static [VbeMode],
+}
+
+impl Default for VbeDevice {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VbeDevice {

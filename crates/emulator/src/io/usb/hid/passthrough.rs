@@ -846,12 +846,7 @@ fn build_config_descriptor(
 
 fn report_descriptor_report_lengths(
     report_descriptor_bytes: &[u8],
-) -> (
-    bool,
-    HashMap<u8, usize>,
-    HashMap<u8, usize>,
-    HashMap<u8, usize>,
-) {
+) -> ReportLengthMaps {
     let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
         let (report_ids_in_use, input_bits, output_bits, feature_bits) =
             scan_report_descriptor_bits(report_descriptor_bytes);
@@ -886,10 +881,13 @@ fn report_descriptor_report_lengths(
     )
 }
 
+type ReportLengthMaps = (bool, HashMap<u8, usize>, HashMap<u8, usize>, HashMap<u8, usize>);
+type ReportBitMaps = (bool, HashMap<u8, u64>, HashMap<u8, u64>, HashMap<u8, u64>);
+
 fn bits_to_report_lengths(bits: &HashMap<u8, u64>) -> HashMap<u8, usize> {
     let mut out = HashMap::new();
     for (&report_id, &total_bits) in bits {
-        let mut bytes = usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
+        let mut bytes = usize::try_from(total_bits.div_ceil(8)).unwrap_or(usize::MAX);
         if report_id != 0 {
             bytes = bytes.saturating_add(1);
         }
@@ -961,21 +959,11 @@ fn report_bits(report: &report_descriptor::HidReportInfo) -> u64 {
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct ScanGlobalState {
     report_id: u32,
     report_size: u32,
     report_count: u32,
-}
-
-impl Default for ScanGlobalState {
-    fn default() -> Self {
-        Self {
-            report_id: 0,
-            report_size: 0,
-            report_count: 0,
-        }
-    }
 }
 
 fn scan_parse_unsigned(data: &[u8]) -> u32 {
@@ -990,7 +978,7 @@ fn scan_parse_unsigned(data: &[u8]) -> u32 {
 
 fn scan_report_descriptor_bits(
     report_descriptor: &[u8],
-) -> (bool, HashMap<u8, u64>, HashMap<u8, u64>, HashMap<u8, u64>) {
+) -> ReportBitMaps {
     let mut global = ScanGlobalState::default();
     let mut global_stack: Vec<ScanGlobalState> = Vec::new();
 
@@ -1189,7 +1177,7 @@ mod tests {
             SetupPacket {
                 bm_request_type: 0x80,
                 b_request: USB_REQUEST_GET_DESCRIPTOR,
-                w_value: ((USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8) | 0,
+                w_value: (USB_DESCRIPTOR_TYPE_CONFIGURATION as u16) << 8,
                 w_index: 0,
                 w_length: 255,
             },

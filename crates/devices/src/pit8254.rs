@@ -180,18 +180,12 @@ impl Channel {
         match self.mode {
             2 => {
                 // Mode 2: high for reload-1 ticks, low for 1 tick.
-                if reload == 0 {
-                    true
-                } else if self.phase_ticks == reload - 1 {
-                    false
-                } else {
-                    true
-                }
+                self.phase_ticks != reload - 1
             }
             3 => {
                 // Mode 3: square wave, with high half possibly one tick longer for odd reload.
                 let reload = if reload == 1 { 2 } else { reload };
-                let high_ticks = (reload + 1) / 2;
+                let high_ticks = reload.div_ceil(2);
                 self.phase_ticks < high_ticks
             }
             _ => true,
@@ -206,16 +200,15 @@ impl Channel {
         match self.mode {
             2 => {
                 let remaining = reload.saturating_sub(self.phase_ticks);
-                let val = if remaining == 65_536 {
+                if remaining == 65_536 {
                     0
                 } else {
                     remaining as u16
-                };
-                val
+                }
             }
             3 => {
                 let reload = if reload == 1 { 2 } else { reload };
-                let high_ticks = (reload + 1) / 2;
+                let high_ticks = reload.div_ceil(2);
                 let low_ticks = reload / 2;
                 let (ticks_into_half, half_len) = if self.phase_ticks < high_ticks {
                     (self.phase_ticks, high_ticks)

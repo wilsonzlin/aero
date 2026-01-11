@@ -27,9 +27,9 @@ fn dlab_switches_data_registers() {
     let mut uart = Uart16550::new(UartConfig::COM1);
 
     uart.port_write(0x3F8 + 3, 1, 0x80);
-    uart.port_write(0x3F8 + 0, 1, 0x34);
+    uart.port_write(0x3F8, 1, 0x34);
     uart.port_write(0x3F8 + 1, 1, 0x12);
-    assert_eq!(uart.port_read(0x3F8 + 0, 1) as u8, 0x34);
+    assert_eq!(uart.port_read(0x3F8, 1) as u8, 0x34);
     assert_eq!(uart.port_read(0x3F8 + 1, 1) as u8, 0x12);
 
     uart.port_write(0x3F8 + 3, 1, 0x00);

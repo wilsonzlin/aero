@@ -167,7 +167,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
                 .any(|b| matches!(b, 0x26 | 0x2E | 0x36 | 0x3E));
             let needs_rex_r_mask = opcode.map == OpcodeMap::Primary
                 && matches!(opcode.opcode, 0x8C | 0x8E)
-                && prefixes.rex.map_or(false, |r| r.r);
+                && prefixes.rex.is_some_and(|r| r.r);
 
             if rex_count > 1 || has_ignored_seg_prefix || needs_rex_r_mask {
                 // In 64-bit mode, CS/DS/ES/SS segment override prefixes are accepted but ignored.
@@ -357,14 +357,14 @@ fn fixup_implicit_operands(
         }
         (OpcodeMap::Map0F, 0x18..=0x1F, Some(reg))
             if operands.len() == 2
-                && operands.get(0) == operands.get(1)
-                && matches!(operands.get(0), Some(Operand::Memory(_))) =>
+                && operands.first() == operands.get(1)
+                && matches!(operands.first(), Some(Operand::Memory(_))) =>
         {
             // Some decoders expose the `0F 18..1F /r` "reserved NOP" encodings as `r/m, r` where the
             // ModRM.reg field selects a register operand. `yaxpeax-x86` currently models these as
             // `mem, mem`; rewrite the second operand to the expected register form.
             let mut reg_index = reg;
-            if mode == DecodeMode::Bits64 && prefixes.rex.map_or(false, |r| r.r) {
+            if mode == DecodeMode::Bits64 && prefixes.rex.is_some_and(|r| r.r) {
                 reg_index |= 0b1000;
             }
             operands[1] = Operand::Gpr {
@@ -377,7 +377,7 @@ fn fixup_implicit_operands(
         (OpcodeMap::Primary, 0xF6 | 0xF7, Some(2..=7))
         | (OpcodeMap::Primary, 0xFE, Some(0 | 1))
         | (OpcodeMap::Primary, 0xFF, Some(0 | 1))
-            if operands.len() == 2 && operands.get(0) == operands.get(1) =>
+            if operands.len() == 2 && operands.first() == operands.get(1) =>
         {
             operands.pop();
         }
@@ -481,7 +481,7 @@ fn effective_operand_size(mode: DecodeMode, prefixes: Prefixes) -> OperandSize {
             }
         }
         DecodeMode::Bits64 => {
-            if prefixes.rex.map_or(false, |r| r.w) {
+            if prefixes.rex.is_some_and(|r| r.w) {
                 OperandSize::Bits64
             } else if prefixes.operand_size_override {
                 OperandSize::Bits16
@@ -586,6 +586,7 @@ fn parse_opcode(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_relative_immediate(
     bytes: &[u8],
     mode: DecodeMode,
@@ -705,7 +706,7 @@ fn classify_inst(opcode: OpcodeBytes, operands: &[Operand]) -> InstFlags {
                 flags.is_branch = true;
             }
         }
-        (OpcodeMap::Primary, 0xE9 | 0xEB | 0xEA) => flags.is_branch = true,
+        (OpcodeMap::Primary, 0xE9..=0xEB) => flags.is_branch = true,
         (OpcodeMap::Primary, 0x70..=0x7F) => flags.is_branch = true,
         (OpcodeMap::Map0F, 0x80..=0x8F) => flags.is_branch = true,
         (OpcodeMap::Primary, 0xC2 | 0xC3 | 0xCA | 0xCB) => flags.is_ret = true,
@@ -1902,7 +1903,7 @@ fn gpr_from_regspec<R: RegSpecLike>(reg: R) -> Option<crate::inst::Gpr> {
 fn mem_disp(prefixes: Prefixes, addr_size: AddressSize, disp: i64) -> crate::inst::MemoryOperand {
     crate::inst::MemoryOperand {
         segment: prefixes.segment,
-        addr_size: addr_size,
+        addr_size,
         base: None,
         index: None,
         scale: 1,
@@ -1919,7 +1920,7 @@ fn mem_base<R: RegSpecLike>(
 ) -> crate::inst::MemoryOperand {
     crate::inst::MemoryOperand {
         segment: prefixes.segment,
-        addr_size: addr_size,
+        addr_size,
         base: gpr_from_regspec(base),
         index: None,
         scale: 1,
@@ -1937,7 +1938,7 @@ fn mem_reg_disp<R: RegSpecLike>(
     if is_rip_reg(base) {
         crate::inst::MemoryOperand {
             segment: prefixes.segment,
-            addr_size: addr_size,
+            addr_size,
             base: None,
             index: None,
             scale: 1,
@@ -1962,7 +1963,7 @@ fn mem_base_index<R: RegSpecLike>(
         // RIP-relative.
         crate::inst::MemoryOperand {
             segment: prefixes.segment,
-            addr_size: addr_size,
+            addr_size,
             base: None,
             index: None,
             scale: 1,
@@ -1972,7 +1973,7 @@ fn mem_base_index<R: RegSpecLike>(
     } else {
         crate::inst::MemoryOperand {
             segment: prefixes.segment,
-            addr_size: addr_size,
+            addr_size,
             base: gpr_from_regspec(base),
             index: index.and_then(gpr_from_regspec),
             scale,
@@ -1991,7 +1992,7 @@ fn mem_index_only<R: RegSpecLike>(
 ) -> crate::inst::MemoryOperand {
     crate::inst::MemoryOperand {
         segment: prefixes.segment,
-        addr_size: addr_size,
+        addr_size,
         base: None,
         index: gpr_from_regspec(index),
         scale,

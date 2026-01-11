@@ -18,6 +18,10 @@ pub trait PciCapability: Any {
     fn set_offset(&mut self, offset: u8);
     fn len(&self) -> u8;
 
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn sync_to_config(&self, config: &mut [u8; PCI_CONFIG_SPACE_SIZE]);
     fn sync_from_config(&mut self, config: &mut [u8; PCI_CONFIG_SPACE_SIZE]);
 

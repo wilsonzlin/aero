@@ -1580,10 +1580,10 @@ fn cvt_i64_to_f32(mxcsr: u32, src: i64) -> (f32, u32) {
     let shift = (msb as i32) - 23;
 
     let (mut mantissa_full, rem) = if shift <= 0 {
-        ((mag << (-shift as u32)) as u64, 0u64)
+        (mag << (-shift as u32), 0u64)
     } else {
         let shift = shift as u32;
-        ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
+        (mag >> shift, mag & ((1u64 << shift) - 1))
     };
 
     let mut mxcsr_flags = 0;
@@ -1636,10 +1636,10 @@ fn cvt_i64_to_f64(mxcsr: u32, src: i64) -> (f64, u32) {
     let shift = (msb as i32) - 52;
 
     let (mut mantissa_full, rem) = if shift <= 0 {
-        ((mag << (-shift as u32)) as u64, 0u64)
+        (mag << (-shift as u32), 0u64)
     } else {
         let shift = shift as u32;
-        ((mag >> shift) as u64, mag & ((1u64 << shift) - 1))
+        (mag >> shift, mag & ((1u64 << shift) - 1))
     };
 
     let mut mxcsr_flags = 0;

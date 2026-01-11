@@ -179,37 +179,64 @@ impl CpuState {
     }
 
     pub fn decode_v1<R: Read>(r: &mut R) -> Result<Self> {
-        let mut state = CpuState::default();
-        state.rax = r.read_u64_le()?;
-        state.rbx = r.read_u64_le()?;
-        state.rcx = r.read_u64_le()?;
-        state.rdx = r.read_u64_le()?;
-        state.rsi = r.read_u64_le()?;
-        state.rdi = r.read_u64_le()?;
-        state.rbp = r.read_u64_le()?;
-        state.rsp = r.read_u64_le()?;
-        state.r8 = r.read_u64_le()?;
-        state.r9 = r.read_u64_le()?;
-        state.r10 = r.read_u64_le()?;
-        state.r11 = r.read_u64_le()?;
-        state.r12 = r.read_u64_le()?;
-        state.r13 = r.read_u64_le()?;
-        state.r14 = r.read_u64_le()?;
-        state.r15 = r.read_u64_le()?;
-        state.rip = r.read_u64_le()?;
-        state.rflags = r.read_u64_le()?;
+        let rax = r.read_u64_le()?;
+        let rbx = r.read_u64_le()?;
+        let rcx = r.read_u64_le()?;
+        let rdx = r.read_u64_le()?;
+        let rsi = r.read_u64_le()?;
+        let rdi = r.read_u64_le()?;
+        let rbp = r.read_u64_le()?;
+        let rsp = r.read_u64_le()?;
+        let r8 = r.read_u64_le()?;
+        let r9 = r.read_u64_le()?;
+        let r10 = r.read_u64_le()?;
+        let r11 = r.read_u64_le()?;
+        let r12 = r.read_u64_le()?;
+        let r13 = r.read_u64_le()?;
+        let r14 = r.read_u64_le()?;
+        let r15 = r.read_u64_le()?;
+        let rip = r.read_u64_le()?;
+        let rflags = r.read_u64_le()?;
         // v1 stores selectors only. Populate the hidden caches with real-mode defaults to make
         // best-effort v1 restores usable for simple guests.
-        state.cs = SegmentState::real_mode(r.read_u16_le()?);
-        state.ds = SegmentState::real_mode(r.read_u16_le()?);
-        state.es = SegmentState::real_mode(r.read_u16_le()?);
-        state.fs = SegmentState::real_mode(r.read_u16_le()?);
-        state.gs = SegmentState::real_mode(r.read_u16_le()?);
-        state.ss = SegmentState::real_mode(r.read_u16_le()?);
-        for xmm in &mut state.xmm {
-            *xmm = r.read_u128_le()?;
+        let cs = SegmentState::real_mode(r.read_u16_le()?);
+        let ds = SegmentState::real_mode(r.read_u16_le()?);
+        let es = SegmentState::real_mode(r.read_u16_le()?);
+        let fs = SegmentState::real_mode(r.read_u16_le()?);
+        let gs = SegmentState::real_mode(r.read_u16_le()?);
+        let ss = SegmentState::real_mode(r.read_u16_le()?);
+        let mut xmm = [0u128; 16];
+        for reg in &mut xmm {
+            *reg = r.read_u128_le()?;
         }
-        Ok(state)
+        Ok(Self {
+            rax,
+            rbx,
+            rcx,
+            rdx,
+            rsi,
+            rdi,
+            rbp,
+            rsp,
+            r8,
+            r9,
+            r10,
+            r11,
+            r12,
+            r13,
+            r14,
+            r15,
+            rip,
+            rflags,
+            cs,
+            ds,
+            es,
+            fs,
+            gs,
+            ss,
+            xmm,
+            ..Self::default()
+        })
     }
 
     pub fn encode_v2<W: Write>(&self, w: &mut W) -> Result<()> {
@@ -259,39 +286,73 @@ impl CpuState {
     }
 
     pub fn decode_v2<R: Read>(r: &mut R) -> Result<Self> {
-        let mut state = CpuState::default();
-        state.rax = r.read_u64_le()?;
-        state.rcx = r.read_u64_le()?;
-        state.rdx = r.read_u64_le()?;
-        state.rbx = r.read_u64_le()?;
-        state.rsp = r.read_u64_le()?;
-        state.rbp = r.read_u64_le()?;
-        state.rsi = r.read_u64_le()?;
-        state.rdi = r.read_u64_le()?;
-        state.r8 = r.read_u64_le()?;
-        state.r9 = r.read_u64_le()?;
-        state.r10 = r.read_u64_le()?;
-        state.r11 = r.read_u64_le()?;
-        state.r12 = r.read_u64_le()?;
-        state.r13 = r.read_u64_le()?;
-        state.r14 = r.read_u64_le()?;
-        state.r15 = r.read_u64_le()?;
-        state.rip = r.read_u64_le()?;
-        state.rflags = r.read_u64_le()?;
-        state.mode = CpuMode::decode(r.read_u8()?)?;
-        state.halted = r.read_u8()? != 0;
-        state.es = SegmentState::decode(r)?;
-        state.cs = SegmentState::decode(r)?;
-        state.ss = SegmentState::decode(r)?;
-        state.ds = SegmentState::decode(r)?;
-        state.fs = SegmentState::decode(r)?;
-        state.gs = SegmentState::decode(r)?;
-        state.fpu = FpuState::decode(r)?;
-        state.mxcsr = r.read_u32_le()?;
-        for xmm in &mut state.xmm {
-            *xmm = r.read_u128_le()?;
+        let rax = r.read_u64_le()?;
+        let rcx = r.read_u64_le()?;
+        let rdx = r.read_u64_le()?;
+        let rbx = r.read_u64_le()?;
+        let rsp = r.read_u64_le()?;
+        let rbp = r.read_u64_le()?;
+        let rsi = r.read_u64_le()?;
+        let rdi = r.read_u64_le()?;
+        let r8 = r.read_u64_le()?;
+        let r9 = r.read_u64_le()?;
+        let r10 = r.read_u64_le()?;
+        let r11 = r.read_u64_le()?;
+        let r12 = r.read_u64_le()?;
+        let r13 = r.read_u64_le()?;
+        let r14 = r.read_u64_le()?;
+        let r15 = r.read_u64_le()?;
+        let rip = r.read_u64_le()?;
+        let rflags = r.read_u64_le()?;
+        let mode = CpuMode::decode(r.read_u8()?)?;
+        let halted = r.read_u8()? != 0;
+        let es = SegmentState::decode(r)?;
+        let cs = SegmentState::decode(r)?;
+        let ss = SegmentState::decode(r)?;
+        let ds = SegmentState::decode(r)?;
+        let fs = SegmentState::decode(r)?;
+        let gs = SegmentState::decode(r)?;
+        let fpu = FpuState::decode(r)?;
+        let mxcsr = r.read_u32_le()?;
+        let mut xmm = [0u128; 16];
+        for reg in &mut xmm {
+            *reg = r.read_u128_le()?;
         }
-        r.read_exact(&mut state.fxsave)?;
+        let mut fxsave = [0u8; FXSAVE_AREA_SIZE];
+        r.read_exact(&mut fxsave)?;
+        let mut state = Self {
+            rax,
+            rcx,
+            rdx,
+            rbx,
+            rsp,
+            rbp,
+            rsi,
+            rdi,
+            r8,
+            r9,
+            r10,
+            r11,
+            r12,
+            r13,
+            r14,
+            r15,
+            rip,
+            rflags,
+            mode,
+            halted,
+            es,
+            cs,
+            ss,
+            ds,
+            fs,
+            gs,
+            fpu,
+            mxcsr,
+            xmm,
+            fxsave,
+            ..Self::default()
+        };
         // Optional CPU v2 extension. Older v2 snapshots may end at the FXSAVE bytes.
         let mut ext_len_first = [0u8; 1];
         match r.read_exact(&mut ext_len_first) {
@@ -341,18 +402,13 @@ impl CpuState {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CpuMode {
+    #[default]
     Real = 0,
     Protected = 1,
     Long = 2,
     Vm86 = 3,
-}
-
-impl Default for CpuMode {
-    fn default() -> Self {
-        Self::Real
-    }
 }
 
 impl CpuMode {

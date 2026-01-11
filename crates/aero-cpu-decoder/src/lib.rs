@@ -192,6 +192,12 @@ impl DecodedInstruction {
     pub fn len(&self) -> u8 {
         self.instruction.len() as u8
     }
+
+    #[inline]
+    /// Returns `true` when the decoded instruction has length 0.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Decode a single instruction from `bytes` without parsing prefix metadata.
@@ -225,7 +231,7 @@ pub fn decode_instruction(
         _ => return Err(DecodeError::InvalidInstruction),
     }
 
-    let len = instruction.len() as usize;
+    let len = instruction.len();
     if len == 0 || len > MAX_INSTRUCTION_LEN {
         return Err(DecodeError::InvalidInstruction);
     }

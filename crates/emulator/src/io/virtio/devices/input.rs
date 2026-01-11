@@ -683,10 +683,8 @@ fn write_chain(
     let mut written = 0usize;
 
     for desc in descs {
-        if desc.flags & VRING_DESC_F_WRITE == 0 {
-            if offset == 0 {
-                break;
-            }
+        if desc.flags & VRING_DESC_F_WRITE == 0 && offset == 0 {
+            break;
         }
 
         let desc_len = desc.len as usize;

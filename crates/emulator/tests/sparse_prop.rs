@@ -56,7 +56,7 @@ const MAX_SECTORS_PER_OP: u64 = 32;
 
 fn write_op_strategy() -> impl Strategy<Value = WriteOp> {
     (0u64..TOTAL_SECTORS).prop_flat_map(|lba| {
-        let max = (TOTAL_SECTORS - lba).min(MAX_SECTORS_PER_OP).max(1);
+        let max = (TOTAL_SECTORS - lba).clamp(1, MAX_SECTORS_PER_OP);
         (Just(lba), 1u64..=max).prop_flat_map(|(lba, sectors)| {
             let len = sectors as usize * SECTOR_SIZE as usize;
             prop::collection::vec(any::<u8>(), len).prop_map(move |data| WriteOp { lba, data })

@@ -233,7 +233,7 @@ impl AeroGpuCursorConfig {
         }
 
         // Validate GPA arithmetic does not wrap.
-        let pitch_u64 = u64::try_from(self.pitch_bytes).ok()?;
+        let pitch_u64 = u64::from(self.pitch_bytes);
         let row_bytes_u64 = u64::try_from(row_bytes).ok()?;
         let last_row_gpa = self
             .fb_gpa
@@ -406,14 +406,15 @@ mod tests {
         // - BGRA: (R=1,G=2,B=3,A=4), (R=10,G=20,B=30,A=40)
         mem.write_physical(fb_gpa, &[3, 2, 1, 4, 30, 20, 10, 40]);
 
-        let mut cfg = AeroGpuCursorConfig::default();
-        cfg.enable = true;
-        cfg.width = 2;
-        cfg.height = 1;
-        cfg.pitch_bytes = 8;
-        cfg.fb_gpa = fb_gpa;
-
-        cfg.format = AeroGpuFormat::B8G8R8A8Unorm;
+        let mut cfg = AeroGpuCursorConfig {
+            enable: true,
+            width: 2,
+            height: 1,
+            pitch_bytes: 8,
+            fb_gpa,
+            format: AeroGpuFormat::B8G8R8A8Unorm,
+            ..Default::default()
+        };
         assert_eq!(
             cfg.read_rgba(&mut mem).unwrap(),
             vec![1, 2, 3, 4, 10, 20, 30, 40]

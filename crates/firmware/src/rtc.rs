@@ -27,6 +27,14 @@ pub struct DateTime {
     pub nanosecond: u32,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RtcError {
+    InvalidMonth,
+    InvalidDay,
+    InvalidTimeOfDay,
+    InvalidCmosField,
+}
+
 impl DateTime {
     pub fn new(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Self {
         Self {
@@ -63,13 +71,13 @@ impl DateTime {
         self.add_days(days);
     }
 
-    pub fn set_date(&mut self, year: u16, month: u8, day: u8) -> Result<(), ()> {
+    pub fn set_date(&mut self, year: u16, month: u8, day: u8) -> Result<(), RtcError> {
         if !(1..=12).contains(&month) {
-            return Err(());
+            return Err(RtcError::InvalidMonth);
         }
         let dim = days_in_month(year, month);
         if day == 0 || day > dim {
-            return Err(());
+            return Err(RtcError::InvalidDay);
         }
         self.year = year;
         self.month = month;
@@ -77,9 +85,9 @@ impl DateTime {
         Ok(())
     }
 
-    pub fn set_time_of_day(&mut self, time: Duration) -> Result<(), ()> {
+    pub fn set_time_of_day(&mut self, time: Duration) -> Result<(), RtcError> {
         if time.as_secs() >= 86_400 {
-            return Err(());
+            return Err(RtcError::InvalidTimeOfDay);
         }
         let secs = time.as_secs();
         self.hour = (secs / 3600) as u8;
@@ -113,7 +121,7 @@ impl DateTime {
 }
 
 fn is_leap_year(year: u16) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn days_in_month(year: u16, month: u8) -> u8 {
@@ -257,7 +265,7 @@ impl CmosRtc {
         self.bcd_mode = enabled;
     }
 
-    pub fn set_time_of_day(&mut self, time: Duration) -> Result<(), ()> {
+    pub fn set_time_of_day(&mut self, time: Duration) -> Result<(), RtcError> {
         self.datetime.set_time_of_day(time)
     }
 
@@ -267,12 +275,12 @@ impl CmosRtc {
         minute: u8,
         second: u8,
         daylight_savings: u8,
-    ) -> Result<(), ()> {
-        let hour = self.decode_hour(hour).ok_or(())?;
-        let minute = self.decode_field(minute).ok_or(())?;
-        let second = self.decode_field(second).ok_or(())?;
+    ) -> Result<(), RtcError> {
+        let hour = self.decode_hour(hour).ok_or(RtcError::InvalidCmosField)?;
+        let minute = self.decode_field(minute).ok_or(RtcError::InvalidCmosField)?;
+        let second = self.decode_field(second).ok_or(RtcError::InvalidCmosField)?;
         if minute >= 60 || second >= 60 {
-            return Err(());
+            return Err(RtcError::InvalidTimeOfDay);
         }
 
         self.daylight_savings = daylight_savings != 0;
@@ -282,11 +290,17 @@ impl CmosRtc {
         ))
     }
 
-    pub fn set_date_cmos(&mut self, century: u8, year: u8, month: u8, day: u8) -> Result<(), ()> {
-        let century = self.decode_field(century).ok_or(())?;
-        let year = self.decode_field(year).ok_or(())?;
-        let month = self.decode_field(month).ok_or(())?;
-        let day = self.decode_field(day).ok_or(())?;
+    pub fn set_date_cmos(
+        &mut self,
+        century: u8,
+        year: u8,
+        month: u8,
+        day: u8,
+    ) -> Result<(), RtcError> {
+        let century = self.decode_field(century).ok_or(RtcError::InvalidCmosField)?;
+        let year = self.decode_field(year).ok_or(RtcError::InvalidCmosField)?;
+        let month = self.decode_field(month).ok_or(RtcError::InvalidCmosField)?;
+        let day = self.decode_field(day).ok_or(RtcError::InvalidCmosField)?;
 
         let full_year = (century as u16) * 100 + (year as u16);
         self.datetime.set_date(full_year, month, day)

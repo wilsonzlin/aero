@@ -140,6 +140,12 @@ impl PortIoDevice for ImcrPort {
     }
 }
 
+impl Default for PlatformInterrupts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlatformInterrupts {
     pub fn new() -> Self {
         let mut isa_irq_to_gsi = [0u32; 16];

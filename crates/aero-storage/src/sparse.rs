@@ -98,7 +98,7 @@ pub struct AeroSparseDisk<B> {
 impl<B: StorageBackend> AeroSparseDisk<B> {
     pub fn create(mut backend: B, cfg: AeroSparseConfig) -> Result<Self> {
         let block_size = cfg.block_size_bytes as u64;
-        if block_size == 0 || (block_size as usize) % SECTOR_SIZE != 0 {
+        if block_size == 0 || !block_size.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::InvalidSparseHeader(
                 "block_size must be a non-zero multiple of 512",
             ));
@@ -144,7 +144,7 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         let header = AeroSparseHeader::decode(&header_bytes)?;
 
         let block_size = header.block_size_u64();
-        if block_size == 0 || (block_size as usize) % SECTOR_SIZE != 0 {
+        if block_size == 0 || !block_size.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::InvalidSparseHeader(
                 "block_size must be a non-zero multiple of 512",
             ));

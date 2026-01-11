@@ -20,6 +20,12 @@ pub struct PciConfigSpace {
     data: [u8; 256],
 }
 
+impl Default for PciConfigSpace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PciConfigSpace {
     pub fn new() -> Self {
         Self { data: [0; 256] }

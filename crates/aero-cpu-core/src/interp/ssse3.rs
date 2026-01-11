@@ -141,8 +141,8 @@ pub fn palignr(dst: u128, src: u128, imm: u8) -> u128 {
     concat[16..].copy_from_slice(&src);
 
     let mut out = [0u8; 16];
-    for i in 0..16 {
-        out[i] = concat.get(i + shift).copied().unwrap_or(0);
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = concat.get(i + shift).copied().unwrap_or(0);
     }
     u128::from_le_bytes(out)
 }

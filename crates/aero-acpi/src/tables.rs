@@ -563,8 +563,8 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     out.push(0); // FADT_MINOR_VERSION
 
     // X_FIRMWARE_CTRL + X_DSDT
-    out.extend_from_slice(&(facs_addr as u64).to_le_bytes());
-    out.extend_from_slice(&(dsdt_addr as u64).to_le_bytes());
+    out.extend_from_slice(&facs_addr.to_le_bytes());
+    out.extend_from_slice(&dsdt_addr.to_le_bytes());
 
     // Extended GAS fields
     let x_pm1a_evt = Gas::new_io(32, cfg.pm1a_evt_blk);
@@ -996,8 +996,7 @@ fn eisa_id_to_u32(id: &str) -> Option<u32> {
     let c1 = bytes[0];
     let c2 = bytes[1];
     let c3 = bytes[2];
-    if !(b'A'..=b'Z').contains(&c1) || !(b'A'..=b'Z').contains(&c2) || !(b'A'..=b'Z').contains(&c3)
-    {
+    if !c1.is_ascii_uppercase() || !c2.is_ascii_uppercase() || !c3.is_ascii_uppercase() {
         return None;
     }
 
@@ -1125,6 +1124,7 @@ fn hpet_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn word_addr_space_descriptor(
     resource_type: u8,
     general_flags: u8,
@@ -1149,6 +1149,7 @@ fn word_addr_space_descriptor(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dword_addr_space_descriptor(
     resource_type: u8,
     general_flags: u8,

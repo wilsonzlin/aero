@@ -100,7 +100,7 @@ pub struct InMemoryDisk {
 
 impl InMemoryDisk {
     pub fn new(mut data: Vec<u8>) -> Self {
-        if data.len() % 512 != 0 {
+        if !data.len().is_multiple_of(512) {
             let new_len = (data.len() + 511) & !511;
             data.resize(new_len, 0);
         }
@@ -184,10 +184,12 @@ pub struct BiosConfig {
 
 impl Default for BiosConfig {
     fn default() -> Self {
-        let mut acpi_placement = AcpiPlacement::default();
         // RSDP must live in the standard BIOS scan region (< 1MiB) and be 16-byte aligned.
         // We keep it in the EBDA so guests can find it by scanning the first KiB.
-        acpi_placement.rsdp_addr = EBDA_BASE + 0x100;
+        let acpi_placement = AcpiPlacement {
+            rsdp_addr: EBDA_BASE + 0x100,
+            ..AcpiPlacement::default()
+        };
         Self {
             memory_size_bytes: 16 * 1024 * 1024,
             boot_drive: 0x80,
@@ -268,7 +270,7 @@ impl Bios {
             video: VideoDevice::new(),
             bda_time,
             config,
-            acpi_builder: Box::new(acpi::AeroAcpiBuilder::default()),
+            acpi_builder: Box::new(acpi::AeroAcpiBuilder),
             e820_map: Vec::new(),
             pci_devices: Vec::new(),
             keyboard_queue: VecDeque::new(),

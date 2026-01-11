@@ -45,16 +45,18 @@ pub fn build_and_write(
     pirq_to_gsi: [u32; 4],
     placement: AcpiPlacement,
 ) -> Option<AcpiInfo> {
-    let mut cfg = AcpiConfig::default();
-    cfg.cpu_count = cpu_count.max(1);
-    cfg.pirq_to_gsi = pirq_to_gsi;
-    // Enable PCIe-friendly config space access via MMCONFIG/ECAM.
-    //
-    // This must match the platform MMIO mapping (see `aero-pc-platform`).
-    cfg.pcie_ecam_base = PCIE_ECAM_BASE;
-    cfg.pcie_segment = PCIE_ECAM_SEGMENT;
-    cfg.pcie_start_bus = PCIE_ECAM_START_BUS;
-    cfg.pcie_end_bus = PCIE_ECAM_END_BUS;
+    let cfg = AcpiConfig {
+        cpu_count: cpu_count.max(1),
+        pirq_to_gsi,
+        // Enable PCIe-friendly config space access via MMCONFIG/ECAM.
+        //
+        // This must match the platform MMIO mapping (see `aero-pc-platform`).
+        pcie_ecam_base: PCIE_ECAM_BASE,
+        pcie_segment: PCIE_ECAM_SEGMENT,
+        pcie_start_bus: PCIE_ECAM_START_BUS,
+        pcie_end_bus: PCIE_ECAM_END_BUS,
+        ..Default::default()
+    };
 
     let tables = AcpiTables::build(&cfg, placement);
 

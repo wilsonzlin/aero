@@ -83,14 +83,14 @@ fn program_stripes_vram(vram: &mut VgaMemory) {
                 let x = byte_x * 8 + bit;
                 let idx = stripes_color_index(x);
                 let mask = 1u8 << (7 - bit);
-                for plane in 0..4 {
+                for (plane, plane_byte) in plane_bytes.iter_mut().enumerate() {
                     if ((idx >> plane) & 1) != 0 {
-                        plane_bytes[plane] |= mask;
+                        *plane_byte |= mask;
                     }
                 }
             }
-            for plane in 0..4 {
-                vram.write_plane_byte(plane, offset, plane_bytes[plane]);
+            for (plane, &plane_byte) in plane_bytes.iter().enumerate() {
+                vram.write_plane_byte(plane, offset, plane_byte);
             }
         }
     }

@@ -25,7 +25,7 @@ impl<S: ByteStorage> RawDisk<S> {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
         let len = storage.len()?;
-        if len % sector_size as u64 != 0 {
+        if !len.is_multiple_of(sector_size as u64) {
             return Err(DiskError::CorruptImage(
                 "raw size not multiple of sector size",
             ));
@@ -42,7 +42,7 @@ impl<S: ByteStorage> RawDisk<S> {
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        if bytes % self.sector_size as usize != 0 {
+        if !bytes.is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: self.sector_size,

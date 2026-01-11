@@ -59,6 +59,7 @@ impl Default for TlbEntry {
 }
 
 impl TlbEntry {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         vbase: u64,
         pbase: u64,

@@ -1,4 +1,4 @@
-use crate::io::storage::disk::DiskBackend;
+use crate::io::storage::disk::{DiskBackend, DiskResult};
 use crate::io::virtio::vio_core::{DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE};
 use memory::GuestMemory;
 
@@ -79,8 +79,8 @@ impl VirtualDrive {
         &mut *self.backend
     }
 
-    pub fn flush(&mut self) -> Result<(), ()> {
-        self.backend.flush().map_err(|_| ())
+    pub fn flush(&mut self) -> DiskResult<()> {
+        self.backend.flush()
     }
 }
 
@@ -168,7 +168,7 @@ impl VirtioBlkDevice {
                 },
                 VIRTIO_BLK_T_FLUSH => match self.drive.flush() {
                     Ok(()) => VIRTIO_BLK_S_OK,
-                    Err(()) => VIRTIO_BLK_S_IOERR,
+                    Err(_) => VIRTIO_BLK_S_IOERR,
                 },
                 _ => VIRTIO_BLK_S_UNSUPP,
             },
@@ -204,7 +204,7 @@ impl VirtioBlkDevice {
         }
         let disk_sector_size = u64::from(self.drive.sector_size());
         let byte_offset = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE).ok_or(())?;
-        if disk_sector_size == 0 || byte_offset % disk_sector_size != 0 {
+        if disk_sector_size == 0 || !byte_offset.is_multiple_of(disk_sector_size) {
             return Err(());
         }
         let mut lba = byte_offset / disk_sector_size;
@@ -215,7 +215,7 @@ impl VirtioBlkDevice {
                 return Err(());
             }
             let len = desc.len as usize;
-            if disk_sector_size == 0 || (len as u64) % disk_sector_size != 0 {
+            if disk_sector_size == 0 || !(len as u64).is_multiple_of(disk_sector_size) {
                 return Err(());
             }
             let sectors = (len as u64) / disk_sector_size;
@@ -251,7 +251,7 @@ impl VirtioBlkDevice {
         }
         let disk_sector_size = u64::from(self.drive.sector_size());
         let byte_offset = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE).ok_or(())?;
-        if disk_sector_size == 0 || byte_offset % disk_sector_size != 0 {
+        if disk_sector_size == 0 || !byte_offset.is_multiple_of(disk_sector_size) {
             return Err(());
         }
         let mut lba = byte_offset / disk_sector_size;
@@ -261,7 +261,7 @@ impl VirtioBlkDevice {
                 return Err(());
             }
             let len = desc.len as usize;
-            if disk_sector_size == 0 || (len as u64) % disk_sector_size != 0 {
+            if disk_sector_size == 0 || !(len as u64).is_multiple_of(disk_sector_size) {
                 return Err(());
             }
             let sectors = (len as u64) / disk_sector_size;

@@ -87,7 +87,7 @@ impl AtaDevice {
         words[88] = udma_supported | udma_selected;
 
         // Words 100-103: total LBA48 sectors.
-        let lba48 = total_sectors as u64;
+        let lba48 = total_sectors;
         words[100] = (lba48 & 0xFFFF) as u16;
         words[101] = ((lba48 >> 16) & 0xFFFF) as u16;
         words[102] = ((lba48 >> 32) & 0xFFFF) as u16;

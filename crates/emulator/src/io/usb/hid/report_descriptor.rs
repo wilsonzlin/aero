@@ -549,10 +549,7 @@ fn parse_local_usage(
     Ok(parse_unsigned(data))
 }
 
-fn get_or_create_report<'a>(
-    reports: &'a mut Vec<HidReportInfo>,
-    report_id: u32,
-) -> &'a mut HidReportInfo {
+fn get_or_create_report(reports: &mut Vec<HidReportInfo>, report_id: u32) -> &mut HidReportInfo {
     if let Some(idx) = reports.iter().position(|r| r.report_id == report_id) {
         &mut reports[idx]
     } else {
@@ -732,13 +729,12 @@ pub fn parse_report_descriptor(
                         }
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
-                        let usage = if let Some(&usage) = local.usages.first() {
-                            usage
-                        } else if let Some(min) = local.usage_minimum {
-                            min
-                        } else {
-                            0
-                        };
+                        let usage = local
+                            .usages
+                            .first()
+                            .copied()
+                            .or(local.usage_minimum)
+                            .unwrap_or_default();
 
                         collection_stack.push(HidCollectionInfo {
                             usage_page,
@@ -1484,7 +1480,7 @@ mod tests {
         let hat_item = report
             .items
             .iter()
-            .find(|item| item.usage_page == 0x01 && item.usages.iter().any(|&u| u == 0x39))
+            .find(|item| item.usage_page == 0x01 && item.usages.contains(&0x39))
             .expect("missing hat switch item");
         assert!(
             hat_item.has_null,
@@ -2979,7 +2975,7 @@ mod proptests {
         }
     }
 
-    fn normalize_collections(collections: &mut Vec<HidCollectionInfo>) {
+    fn normalize_collections(collections: &mut [HidCollectionInfo]) {
         for c in collections.iter_mut() {
             normalize_collection(c);
         }

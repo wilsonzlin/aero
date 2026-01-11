@@ -10,6 +10,10 @@ pub trait StorageBackend {
     /// Current length in bytes.
     fn len(&mut self) -> Result<u64>;
 
+    fn is_empty(&mut self) -> Result<bool> {
+        Ok(self.len()? == 0)
+    }
+
     /// Resize to `len` bytes.
     fn set_len(&mut self, len: u64) -> Result<()>;
 

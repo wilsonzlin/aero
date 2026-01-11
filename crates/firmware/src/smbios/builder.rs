@@ -55,7 +55,7 @@ fn read_ebda_base<M: MemoryBus>(mem: &mut M) -> Option<u32> {
     let base = (segment as u32) << 4;
 
     // Sanity check: EBDA should live below VGA memory (0xA0000).
-    if base < 0x80000 || base >= 0xA0000 {
+    if !(0x80000..0xA0000).contains(&base) {
         return None;
     }
 

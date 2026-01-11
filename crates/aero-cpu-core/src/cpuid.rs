@@ -474,7 +474,7 @@ fn cpuid_topology(features: &CpuFeatures, subleaf: u32) -> CpuidResult {
         0 => CpuidResult {
             eax: ilog2_ceil(threads),
             ebx: threads,
-            ecx: 0 | (1 << 8), // level 0 SMT
+            ecx: 1 << 8, // level 0 SMT
             edx: features.topology.x2apic_id,
         },
         1 => CpuidResult {

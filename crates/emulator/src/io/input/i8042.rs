@@ -28,9 +28,9 @@ enum OutputSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingCommand {
-    WriteCommandByte,
-    WriteOutputPort,
-    WriteToMouse,
+    CommandByte,
+    OutputPort,
+    ToMouse,
 }
 
 /// Hooks for wiring the i8042 controller into the rest of the system.
@@ -215,7 +215,7 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             0x60 => {
                 // Write command byte (next byte on data port).
                 self.pending_command
-                    .set(Some(PendingCommand::WriteCommandByte));
+                    .set(Some(PendingCommand::CommandByte));
             }
             0xA7 => {
                 // Disable mouse port.
@@ -257,11 +257,11 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
             0xD1 => {
                 // Write output port (next byte on data port).
                 self.pending_command
-                    .set(Some(PendingCommand::WriteOutputPort));
+                    .set(Some(PendingCommand::OutputPort));
             }
             0xD4 => {
                 // Write to mouse (next byte on data port).
-                self.pending_command.set(Some(PendingCommand::WriteToMouse));
+                self.pending_command.set(Some(PendingCommand::ToMouse));
             }
             0xDD => {
                 // Non-standard but seen in some firmware: disable A20 gate.
@@ -283,9 +283,9 @@ impl<Cb: I8042Callbacks> I8042Controller<Cb> {
 
     fn execute_controller_command_data(&mut self, cmd: PendingCommand, value: u8) {
         match cmd {
-            PendingCommand::WriteCommandByte => self.command_byte.set(value),
-            PendingCommand::WriteOutputPort => self.write_output_port(value),
-            PendingCommand::WriteToMouse => self.send_to_mouse(value),
+            PendingCommand::CommandByte => self.command_byte.set(value),
+            PendingCommand::OutputPort => self.write_output_port(value),
+            PendingCommand::ToMouse => self.send_to_mouse(value),
         }
     }
 

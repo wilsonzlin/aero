@@ -53,6 +53,12 @@ impl FramebufferHeader {
     }
 }
 
+impl Default for FramebufferHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn required_framebuffer_bytes(width: u32, height: u32, stride_bytes: u32) -> Option<usize> {
     if width == 0 || height == 0 {
         return None;
@@ -76,7 +82,7 @@ impl<'a> SharedFramebuffer<'a> {
         if bytes.len() < HEADER_BYTE_LENGTH {
             return Err(FramebufferError::BufferTooSmall);
         }
-        if (bytes.as_ptr() as usize) % mem::align_of::<FramebufferHeader>() != 0 {
+        if !(bytes.as_ptr() as usize).is_multiple_of(mem::align_of::<FramebufferHeader>()) {
             return Err(FramebufferError::Misaligned);
         }
 
@@ -96,11 +102,11 @@ impl<'a> SharedFramebuffer<'a> {
     }
 
     pub fn pixels(&self) -> &[u8] {
-        &self.pixels
+        self.pixels
     }
 
     pub fn pixels_mut(&mut self) -> &mut [u8] {
-        &mut self.pixels
+        self.pixels
     }
 
     pub fn initialize_rgba8888(&self) {
@@ -129,7 +135,7 @@ impl<'a> SharedFramebuffer<'a> {
         let min_stride = width
             .checked_mul(4)
             .ok_or(FramebufferError::InvalidDimensions)?;
-        if stride_bytes < min_stride || stride_bytes % 4 != 0 {
+        if stride_bytes < min_stride || !stride_bytes.is_multiple_of(4) {
             return Err(FramebufferError::InvalidDimensions);
         }
         let required = required_framebuffer_bytes(width, height, stride_bytes)

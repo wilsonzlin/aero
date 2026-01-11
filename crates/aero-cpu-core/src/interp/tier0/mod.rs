@@ -93,7 +93,7 @@ fn atomic_rmw_sized<B: CpuBus, R>(
                 let (new, ret) = f(old as u64);
                 (new as u32, ret)
             }),
-            64 => bus.atomic_rmw::<u64, _>(start, |old| f(old)),
+            64 => bus.atomic_rmw::<u64, _>(start, f),
             _ => Err(Exception::InvalidOpcode),
         };
     }

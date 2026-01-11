@@ -149,17 +149,15 @@ fn pcmp_generate_mask(
     let mut res1 = 0u32;
     match op {
         StrOp::EqualAny => {
-            for i in 0..len_a {
-                let ai = a_elems[i];
-                if b_elems[..len_b].iter().any(|&bj| bj == ai) {
+            for (i, &ai) in a_elems.iter().enumerate().take(len_a) {
+                if b_elems[..len_b].contains(&ai) {
                     res1 |= 1u32 << i;
                 }
             }
         }
         StrOp::Ranges => {
             let range_count = len_b / 2;
-            for i in 0..len_a {
-                let ai = a_elems[i];
+            for (i, &ai) in a_elems.iter().enumerate().take(len_a) {
                 let mut match_any = false;
                 for r in 0..range_count {
                     let lo = b_elems[r * 2];
@@ -244,14 +242,14 @@ fn pcmp_mask_to_xmm(mask: u32, n: usize, imm8: u8, elem: StrElem) -> u128 {
 
     match elem {
         StrElem::Byte => {
-            for i in 0..n {
-                out[i] = if ((mask >> i) & 1) != 0 { 0xFF } else { 0 };
+            for (i, byte) in out.iter_mut().enumerate().take(n) {
+                *byte = if ((mask >> i) & 1) != 0 { 0xFF } else { 0 };
             }
         }
         StrElem::Word => {
-            for i in 0..n {
+            for (i, chunk) in out.chunks_exact_mut(2).enumerate().take(n) {
                 let v = if ((mask >> i) & 1) != 0 { 0xFFFFu16 } else { 0 };
-                out[i * 2..i * 2 + 2].copy_from_slice(&v.to_le_bytes());
+                chunk.copy_from_slice(&v.to_le_bytes());
             }
         }
     }

@@ -131,6 +131,12 @@ impl MsiCapability {
     }
 }
 
+impl Default for MsiCapability {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PciCapability for MsiCapability {
     fn id(&self) -> u8 {
         PCI_CAP_ID_MSI

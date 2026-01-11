@@ -222,6 +222,12 @@ pub struct VbeState {
     palette: [u32; 256],
 }
 
+impl Default for VbeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VbeState {
     pub fn new() -> Self {
         // Deterministic mode list. The 32bpp mode IDs intentionally reuse the
@@ -332,7 +338,8 @@ impl VbeState {
 
     pub fn controller_info(&self) -> VbeControllerInfo {
         // Total video memory in 64KiB blocks.
-        let total_mem_blocks = ((VBE_LFB_SIZE + 0xFFFF) / 0x1_0000) as u16;
+        let total_mem_blocks =
+            u16::try_from(VBE_LFB_SIZE.div_ceil(0x1_0000)).unwrap_or(u16::MAX);
 
         VbeControllerInfo {
             signature: *b"VESA",

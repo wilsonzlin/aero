@@ -136,11 +136,9 @@ impl PciBus {
             self.refresh_device_decoding(bdf, command, bar_ranges);
         }
 
-        if let Some((bar, change)) = effects.bar {
-            if let PciBarChange::Changed { old, new } = change {
-                // BAR updates only affect mappings if decoding is enabled.
-                self.apply_bar_change(bdf, command, bar, old, new);
-            }
+        if let Some((bar, PciBarChange::Changed { old, new })) = effects.bar {
+            // BAR updates only affect mappings if decoding is enabled.
+            self.apply_bar_change(bdf, command, bar, old, new);
         }
     }
 
@@ -410,7 +408,7 @@ impl PciConfigMechanism1 {
                 let device = ((self.addr >> 11) & 0x1F) as u8;
                 let function = ((self.addr >> 8) & 0x07) as u8;
                 let reg = (self.addr & 0xFC) as u16;
-                let offset = reg + u16::from(port - CONFIG_DATA_PORT);
+                let offset = reg + (port - CONFIG_DATA_PORT);
                 pci.read_config(PciBdf::new(bus, device, function), offset, size)
             }
             _ => all_ones(size),
@@ -438,7 +436,7 @@ impl PciConfigMechanism1 {
                 let device = ((self.addr >> 11) & 0x1F) as u8;
                 let function = ((self.addr >> 8) & 0x07) as u8;
                 let reg = (self.addr & 0xFC) as u16;
-                let offset = reg + u16::from(port - CONFIG_DATA_PORT);
+                let offset = reg + (port - CONFIG_DATA_PORT);
                 pci.write_config(PciBdf::new(bus, device, function), offset, size, value);
             }
             _ => {}

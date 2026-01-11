@@ -326,7 +326,7 @@ impl PciBus {
         let function = ((self.config_address >> 8) & 0x07) as u8;
         let register_base = (self.config_address & 0xFC) as u16;
         let port_offset = port - CONFIG_DATA_PORT;
-        let offset = register_base + port_offset as u16;
+        let offset = register_base + port_offset;
         self.config_read(bus, device, function, offset, size)
     }
 
@@ -340,7 +340,7 @@ impl PciBus {
         let function = ((self.config_address >> 8) & 0x07) as u8;
         let register_base = (self.config_address & 0xFC) as u16;
         let port_offset = port - CONFIG_DATA_PORT;
-        let offset = register_base + port_offset as u16;
+        let offset = register_base + port_offset;
         self.config_write(bus, device, function, offset, size, value);
     }
 }

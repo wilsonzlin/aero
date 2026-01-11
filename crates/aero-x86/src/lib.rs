@@ -34,12 +34,11 @@ pub fn decode(bytes: &[u8], ip: u64, bitness: u32) -> Result<DecodedInst, Decode
     })
 }
 
-/// Minimal Tier-1 decode / normalization layer.
-///
-/// This module exists primarily to support the Tier-1 JIT front-end unit tests
-/// without requiring the full interpreter decode pipeline.
 pub mod tier1 {
-    //! Very small x86-64 decoder for Tier-1 JIT unit tests.
+    //! Minimal Tier-1 decode / normalization layer.
+    //!
+    //! This module exists primarily to support the Tier-1 JIT front-end unit tests
+    //! without requiring the full interpreter decode pipeline.
     //!
     //! This decoder only supports a subset of x86-64 sufficient for building and
     //! testing basic-block discovery + translation. It is **not** intended to be
@@ -180,10 +179,8 @@ pub mod tier1 {
                         first = false;
                     }
                     if addr.disp != 0 || first {
-                        if !first {
-                            if addr.disp >= 0 {
-                                f.write_str("+")?;
-                            }
+                        if !first && addr.disp >= 0 {
+                            f.write_str("+")?;
                         }
                         write!(f, "{}", addr.disp)?;
                     }

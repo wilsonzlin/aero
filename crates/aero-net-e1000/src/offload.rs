@@ -117,7 +117,7 @@ pub fn apply_checksum_offload(
         frame[ctx.ipcso..ctx.ipcso + 2].fill(0);
 
         // ipcse is inclusive. If the context is invalid, fall back to the IHL.
-        let header_end = if ctx.ipcse >= ctx.ipcss && ctx.ipcse + 1 <= frame.len() {
+        let header_end = if ctx.ipcse >= ctx.ipcss && ctx.ipcse < frame.len() {
             ctx.ipcse + 1
         } else {
             ctx.ipcss + ihl
@@ -229,7 +229,7 @@ pub fn tso_segment(
     let base_ip_id = u16::from_be_bytes(frame[ctx.ipcss + 4..ctx.ipcss + 6].try_into().unwrap());
 
     let payload = &frame[hdr_len..];
-    let segments = (payload.len() + ctx.mss - 1) / ctx.mss;
+    let segments = payload.len().div_ceil(ctx.mss);
     if segments > MAX_TSO_SEGMENTS {
         return Err(OffloadError::InvalidContext("tso too many segments"));
     }

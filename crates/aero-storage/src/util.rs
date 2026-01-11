@@ -17,7 +17,7 @@ pub fn div_ceil_u64(n: u64, d: u64) -> Result<u64> {
     if d == 0 {
         return Err(DiskError::OffsetOverflow);
     }
-    Ok((n / d) + u64::from(n % d != 0))
+    Ok(n.div_ceil(d))
 }
 
 pub fn checked_range(offset: u64, len: usize, capacity: u64) -> Result<()> {

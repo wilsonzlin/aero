@@ -182,10 +182,10 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemStorage {
 
     let dyn_header_offset = 512u64;
     let table_offset = 512u64 + 1024u64;
-    let blocks = (virtual_size + block_size as u64 - 1) / block_size as u64;
+    let blocks = virtual_size.div_ceil(block_size as u64);
     let max_table_entries = blocks as u32;
     let bat_bytes = max_table_entries as u64 * 4;
-    let bat_size = ((bat_bytes + 511) / 512) * 512;
+    let bat_size = bat_bytes.div_ceil(512) * 512;
 
     let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
     let file_len = 512 + 1024 + bat_size + 512;

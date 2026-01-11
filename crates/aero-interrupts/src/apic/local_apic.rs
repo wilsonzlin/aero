@@ -169,7 +169,7 @@ impl LapicState {
 
         let tick_ns = self.timer_tick_ns();
         let remaining_ns = deadline - now;
-        let remaining_ticks = (remaining_ns + tick_ns - 1) / tick_ns;
+        let remaining_ticks = remaining_ns.div_ceil(tick_ns);
         remaining_ticks.min(u64::from(u32::MAX)) as u32
     }
 
@@ -251,7 +251,7 @@ impl LapicState {
             REG_ICR_HIGH => self.icr_high,
             REG_LVT_TIMER => self.lvt_timer,
             REG_INITIAL_COUNT => self.initial_count,
-            REG_CURRENT_COUNT => u32::from(self.current_count_at(now)),
+            REG_CURRENT_COUNT => self.current_count_at(now),
             REG_DIVIDE_CONFIG => self.divide_config,
             _ if is_apic_array_register(offset, REG_ISR_BASE) => {
                 let idx = apic_array_index(offset, REG_ISR_BASE);
@@ -289,11 +289,13 @@ pub trait LapicInterruptSink: Send + Sync {
     fn inject_external_interrupt(&self, vector: u8);
 }
 
+pub type EoiNotifier = Arc<dyn Fn(u8) + Send + Sync>;
+
 /// Local APIC (LAPIC) model with a MMIO register page and an APIC timer.
 pub struct LocalApic {
     clock: Arc<dyn Clock + Send + Sync>,
     state: Mutex<LapicState>,
-    eoi_notifiers: Mutex<Vec<Arc<dyn Fn(u8) + Send + Sync>>>,
+    eoi_notifiers: Mutex<Vec<EoiNotifier>>,
 }
 
 impl LocalApic {
@@ -376,7 +378,7 @@ impl LocalApic {
     }
 
     /// Register a callback that is invoked when the guest writes the EOI register.
-    pub fn register_eoi_notifier(&self, notifier: Arc<dyn Fn(u8) + Send + Sync>) {
+    pub fn register_eoi_notifier(&self, notifier: EoiNotifier) {
         self.eoi_notifiers.lock().unwrap().push(notifier);
     }
 
@@ -598,7 +600,7 @@ impl IoSnapshot for LocalApic {
 }
 
 fn is_apic_array_register(offset: u64, base: u64) -> bool {
-    offset >= base && offset < base + 0x80 && (offset - base) % 0x10 == 0
+    offset >= base && offset < base + 0x80 && (offset - base).is_multiple_of(0x10)
 }
 
 fn apic_array_index(offset: u64, base: u64) -> usize {

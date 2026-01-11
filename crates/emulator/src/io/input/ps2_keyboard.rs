@@ -5,9 +5,9 @@ const KBD_SELF_TEST_OK: u8 = 0xAA;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingCommand {
-    SetLeds,
-    SetScancodeSet,
-    SetTypematic,
+    Leds,
+    ScancodeSet,
+    Typematic,
 }
 
 /// Minimal PS/2 keyboard device model.
@@ -58,7 +58,7 @@ impl Ps2Keyboard {
             0xED => {
                 // Set LEDs
                 self.output.push_back(KBD_ACK);
-                self.pending = Some(PendingCommand::SetLeds);
+                self.pending = Some(PendingCommand::Leds);
             }
             0xF2 => {
                 // Identify (MF2 keyboard)
@@ -69,12 +69,12 @@ impl Ps2Keyboard {
             0xF0 => {
                 // Get/Set scan code set
                 self.output.push_back(KBD_ACK);
-                self.pending = Some(PendingCommand::SetScancodeSet);
+                self.pending = Some(PendingCommand::ScancodeSet);
             }
             0xF3 => {
                 // Set typematic rate/delay
                 self.output.push_back(KBD_ACK);
-                self.pending = Some(PendingCommand::SetTypematic);
+                self.pending = Some(PendingCommand::Typematic);
             }
             0xF4 => {
                 // Enable scanning
@@ -101,19 +101,19 @@ impl Ps2Keyboard {
 
     fn handle_pending_data(&mut self, pending: PendingCommand, byte: u8) {
         match pending {
-            PendingCommand::SetLeds => {
+            PendingCommand::Leds => {
                 self.leds = byte & 0x07;
                 self.output.push_back(KBD_ACK);
             }
-            PendingCommand::SetScancodeSet => {
+            PendingCommand::ScancodeSet => {
                 self.output.push_back(KBD_ACK);
                 match byte {
                     0 => self.output.push_back(self.scancode_set),
-                    1 | 2 | 3 => self.scancode_set = byte,
+                    1..=3 => self.scancode_set = byte,
                     _ => {}
                 }
             }
-            PendingCommand::SetTypematic => {
+            PendingCommand::Typematic => {
                 self.typematic = byte;
                 self.output.push_back(KBD_ACK);
             }

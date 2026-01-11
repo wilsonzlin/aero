@@ -19,102 +19,94 @@ pub fn cpu_state_from_cpu_core(core: &CoreCpuState) -> CpuState {
     let mut core = core.clone();
     // Snapshot encoding stores materialized RFLAGS (no lazy flags).
     core.commit_lazy_flags();
-
-    let mut cpu = CpuState::default();
-
-    cpu.rax = core.gpr[core_gpr::RAX];
-    cpu.rcx = core.gpr[core_gpr::RCX];
-    cpu.rdx = core.gpr[core_gpr::RDX];
-    cpu.rbx = core.gpr[core_gpr::RBX];
-    cpu.rsp = core.gpr[core_gpr::RSP];
-    cpu.rbp = core.gpr[core_gpr::RBP];
-    cpu.rsi = core.gpr[core_gpr::RSI];
-    cpu.rdi = core.gpr[core_gpr::RDI];
-    cpu.r8 = core.gpr[core_gpr::R8];
-    cpu.r9 = core.gpr[core_gpr::R9];
-    cpu.r10 = core.gpr[core_gpr::R10];
-    cpu.r11 = core.gpr[core_gpr::R11];
-    cpu.r12 = core.gpr[core_gpr::R12];
-    cpu.r13 = core.gpr[core_gpr::R13];
-    cpu.r14 = core.gpr[core_gpr::R14];
-    cpu.r15 = core.gpr[core_gpr::R15];
-
-    cpu.rip = core.rip;
-    cpu.rflags = core.rflags;
-    cpu.mode = match core.mode {
-        CoreCpuMode::Real => CpuMode::Real,
-        CoreCpuMode::Protected => CpuMode::Protected,
-        CoreCpuMode::Long => CpuMode::Long,
-        CoreCpuMode::Vm86 => CpuMode::Vm86,
-    };
-    cpu.halted = core.halted;
-    cpu.pending_bios_int = core.pending_bios_int;
-    cpu.pending_bios_int_valid = core.pending_bios_int_valid;
-    cpu.a20_enabled = core.a20_enabled;
-    cpu.irq13_pending = core.irq13_pending;
-
-    cpu.es = segment_from_core(&core.segments.es);
-    cpu.cs = segment_from_core(&core.segments.cs);
-    cpu.ss = segment_from_core(&core.segments.ss);
-    cpu.ds = segment_from_core(&core.segments.ds);
-    cpu.fs = segment_from_core(&core.segments.fs);
-    cpu.gs = segment_from_core(&core.segments.gs);
-
-    cpu.fpu = FpuState {
-        fcw: core.fpu.fcw,
-        fsw: core.fpu.fsw,
-        ftw: core.fpu.ftw,
-        top: core.fpu.top,
-        fop: core.fpu.fop,
-        fip: core.fpu.fip,
-        fdp: core.fpu.fdp,
-        fcs: core.fpu.fcs,
-        fds: core.fpu.fds,
-        st: core.fpu.st,
-    };
-    cpu.mxcsr = core.sse.mxcsr;
-    cpu.xmm = core.sse.xmm;
-    cpu.fxsave = fxsave64_bytes(&core.fpu, &core.sse);
-
-    cpu
+    CpuState {
+        rax: core.gpr[core_gpr::RAX],
+        rbx: core.gpr[core_gpr::RBX],
+        rcx: core.gpr[core_gpr::RCX],
+        rdx: core.gpr[core_gpr::RDX],
+        rsi: core.gpr[core_gpr::RSI],
+        rdi: core.gpr[core_gpr::RDI],
+        rbp: core.gpr[core_gpr::RBP],
+        rsp: core.gpr[core_gpr::RSP],
+        r8: core.gpr[core_gpr::R8],
+        r9: core.gpr[core_gpr::R9],
+        r10: core.gpr[core_gpr::R10],
+        r11: core.gpr[core_gpr::R11],
+        r12: core.gpr[core_gpr::R12],
+        r13: core.gpr[core_gpr::R13],
+        r14: core.gpr[core_gpr::R14],
+        r15: core.gpr[core_gpr::R15],
+        rip: core.rip,
+        rflags: core.rflags,
+        mode: match core.mode {
+            CoreCpuMode::Real => CpuMode::Real,
+            CoreCpuMode::Protected => CpuMode::Protected,
+            CoreCpuMode::Long => CpuMode::Long,
+            CoreCpuMode::Vm86 => CpuMode::Vm86,
+        },
+        halted: core.halted,
+        pending_bios_int: core.pending_bios_int,
+        pending_bios_int_valid: core.pending_bios_int_valid,
+        a20_enabled: core.a20_enabled,
+        irq13_pending: core.irq13_pending,
+        es: segment_from_core(&core.segments.es),
+        cs: segment_from_core(&core.segments.cs),
+        ss: segment_from_core(&core.segments.ss),
+        ds: segment_from_core(&core.segments.ds),
+        fs: segment_from_core(&core.segments.fs),
+        gs: segment_from_core(&core.segments.gs),
+        fpu: FpuState {
+            fcw: core.fpu.fcw,
+            fsw: core.fpu.fsw,
+            ftw: core.fpu.ftw,
+            top: core.fpu.top,
+            fop: core.fpu.fop,
+            fip: core.fpu.fip,
+            fdp: core.fpu.fdp,
+            fcs: core.fpu.fcs,
+            fds: core.fpu.fds,
+            st: core.fpu.st,
+        },
+        mxcsr: core.sse.mxcsr,
+        xmm: core.sse.xmm,
+        fxsave: fxsave64_bytes(&core.fpu, &core.sse),
+    }
 }
 
 pub fn mmu_state_from_cpu_core(core: &CoreCpuState) -> MmuState {
-    let mut mmu = MmuState::default();
-    mmu.cr0 = core.control.cr0;
-    mmu.cr2 = core.control.cr2;
-    mmu.cr3 = core.control.cr3;
-    mmu.cr4 = core.control.cr4;
-    mmu.cr8 = core.control.cr8;
-
-    mmu.gdtr_base = core.tables.gdtr.base;
-    mmu.gdtr_limit = core.tables.gdtr.limit;
-    mmu.idtr_base = core.tables.idtr.base;
-    mmu.idtr_limit = core.tables.idtr.limit;
-    mmu.ldtr = segment_from_core(&core.tables.ldtr);
-    mmu.tr = segment_from_core(&core.tables.tr);
-
-    mmu.dr0 = core.debug.dr[0];
-    mmu.dr1 = core.debug.dr[1];
-    mmu.dr2 = core.debug.dr[2];
-    mmu.dr3 = core.debug.dr[3];
-    mmu.dr6 = core.debug.dr6;
-    mmu.dr7 = core.debug.dr7;
-
-    mmu.efer = core.msr.efer;
-    mmu.star = core.msr.star;
-    mmu.lstar = core.msr.lstar;
-    mmu.cstar = core.msr.cstar;
-    mmu.sfmask = core.msr.fmask;
-    mmu.sysenter_cs = core.msr.sysenter_cs;
-    mmu.sysenter_eip = core.msr.sysenter_eip;
-    mmu.sysenter_esp = core.msr.sysenter_esp;
-    mmu.fs_base = core.msr.fs_base;
-    mmu.gs_base = core.msr.gs_base;
-    mmu.kernel_gs_base = core.msr.kernel_gs_base;
-    mmu.apic_base = core.msr.apic_base;
-    mmu.tsc = core.msr.tsc;
-    mmu
+    MmuState {
+        cr0: core.control.cr0,
+        cr2: core.control.cr2,
+        cr3: core.control.cr3,
+        cr4: core.control.cr4,
+        cr8: core.control.cr8,
+        dr0: core.debug.dr[0],
+        dr1: core.debug.dr[1],
+        dr2: core.debug.dr[2],
+        dr3: core.debug.dr[3],
+        dr6: core.debug.dr6,
+        dr7: core.debug.dr7,
+        efer: core.msr.efer,
+        star: core.msr.star,
+        lstar: core.msr.lstar,
+        cstar: core.msr.cstar,
+        sfmask: core.msr.fmask,
+        sysenter_cs: core.msr.sysenter_cs,
+        sysenter_eip: core.msr.sysenter_eip,
+        sysenter_esp: core.msr.sysenter_esp,
+        fs_base: core.msr.fs_base,
+        gs_base: core.msr.gs_base,
+        kernel_gs_base: core.msr.kernel_gs_base,
+        apic_base: core.msr.apic_base,
+        tsc: core.msr.tsc,
+        gdtr_base: core.tables.gdtr.base,
+        gdtr_limit: core.tables.gdtr.limit,
+        idtr_base: core.tables.idtr.base,
+        idtr_limit: core.tables.idtr.limit,
+        ldtr: segment_from_core(&core.tables.ldtr),
+        tr: segment_from_core(&core.tables.tr),
+        ..Default::default()
+    }
 }
 
 pub fn apply_cpu_state_to_cpu_core(cpu: &CpuState, core: &mut CoreCpuState) {

@@ -70,11 +70,11 @@ impl ExceptionClass {
 
 fn should_double_fault(first: Exception, second: Exception) -> bool {
     use ExceptionClass as C;
-    match (C::of(first), C::of(second)) {
-        (C::Contributory, C::Contributory | C::PageFault) => true,
-        (C::PageFault, C::Contributory | C::PageFault) => true,
-        _ => false,
-    }
+    matches!(
+        (C::of(first), C::of(second)),
+        (C::Contributory, C::Contributory | C::PageFault)
+            | (C::PageFault, C::Contributory | C::PageFault)
+    )
 }
 
 fn deliver_cpu_exception<B: CpuBus>(
@@ -660,6 +660,7 @@ fn deliver_exception<B: CpuBus>(
     res
 }
 
+#[allow(clippy::too_many_arguments)]
 fn deliver_vector<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
@@ -739,6 +740,7 @@ fn deliver_real_mode<B: CpuBus>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn deliver_protected_mode<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
@@ -777,17 +779,15 @@ fn deliver_protected_mode<B: CpuBus>(
         );
     }
 
-    if is_interrupt && source == InterruptSource::Software {
-        if state.cpl() > gate.dpl {
-            return deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::GeneralProtection,
-                saved_rip,
-                Some(0),
-            );
-        }
+    if is_interrupt && source == InterruptSource::Software && state.cpl() > gate.dpl {
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            saved_rip,
+            Some(0),
+        );
     }
 
     let current_cpl = state.cpl();
@@ -869,6 +869,7 @@ fn deliver_protected_mode<B: CpuBus>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn deliver_long_mode<B: CpuBus>(
     bus: &mut B,
     state: &mut state::CpuState,
@@ -907,17 +908,15 @@ fn deliver_long_mode<B: CpuBus>(
         );
     }
 
-    if is_interrupt && source == InterruptSource::Software {
-        if state.cpl() > gate.dpl {
-            return deliver_exception(
-                bus,
-                state,
-                pending,
-                Exception::GeneralProtection,
-                saved_rip,
-                Some(0),
-            );
-        }
+    if is_interrupt && source == InterruptSource::Software && state.cpl() > gate.dpl {
+        return deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::GeneralProtection,
+            saved_rip,
+            Some(0),
+        );
     }
 
     if !is_canonical(gate.offset) {
@@ -1494,8 +1493,8 @@ fn tss32_stack_for_cpl<B: CpuBus>(
     let esp_off = 4u64 + ring_off;
     let ss_off = 8u64 + ring_off;
     let limit = state.tables.tr.limit as u64;
-    if esp_off.checked_add(3).map_or(true, |end| end > limit)
-        || ss_off.checked_add(1).map_or(true, |end| end > limit)
+    if esp_off.checked_add(3).is_none_or(|end| end > limit)
+        || ss_off.checked_add(1).is_none_or(|end| end > limit)
     {
         return Err(CpuException::ts(0));
     }
@@ -1528,7 +1527,7 @@ fn tss64_rsp_for_cpl<B: CpuBus>(
     let base = state.tables.tr.base;
     let off = 4u64 + (cpl as u64) * 8;
     let limit = state.tables.tr.limit as u64;
-    if off.checked_add(7).map_or(true, |end| end > limit) {
+    if off.checked_add(7).is_none_or(|end| end > limit) {
         return Err(CpuException::ts(0));
     }
     let addr = base.checked_add(off).ok_or(CpuException::ts(0))?;
@@ -1554,7 +1553,7 @@ fn tss64_ist_stack<B: CpuBus>(
     let base = state.tables.tr.base;
     let off = 0x24u64 + (ist as u64 - 1) * 8;
     let limit = state.tables.tr.limit as u64;
-    if off.checked_add(7).map_or(true, |end| end > limit) {
+    if off.checked_add(7).is_none_or(|end| end > limit) {
         return Err(CpuException::ts(0));
     }
     let addr = base.checked_add(off).ok_or(CpuException::ts(0))?;

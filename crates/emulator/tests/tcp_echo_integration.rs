@@ -52,6 +52,7 @@ fn wrap_udp_ipv4_eth(
     .expect("build Ethernet frame")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wrap_tcp_ipv4_eth(
     src_mac: MacAddr,
     dst_mac: MacAddr,

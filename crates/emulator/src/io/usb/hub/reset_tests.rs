@@ -58,7 +58,7 @@ fn port_enabled(hub: &mut UsbHubDevice, port: u16) -> bool {
 #[test]
 fn hub_reset_clears_configuration_disables_ports_and_resets_downstream_addresses() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyDevice::default()));
+    hub.attach(1, Box::new(DummyDevice));
 
     // Configure the hub (SET_CONFIGURATION(1)).
     assert_eq!(
@@ -161,7 +161,7 @@ fn hub_reset_clears_configuration_disables_ports_and_resets_downstream_addresses
 #[test]
 fn hub_interrupt_endpoint_naks_when_unconfigured() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyDevice::default()));
+    hub.attach(1, Box::new(DummyDevice));
 
     // Configure: interrupt endpoint should report the initial connection change bitmap.
     assert_eq!(

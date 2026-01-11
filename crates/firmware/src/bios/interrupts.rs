@@ -144,7 +144,7 @@ fn handle_int13(
             }
 
             let lba = ((cylinder * heads + head) * spt + (sector as u32 - 1)) as u64;
-            let bx = (cpu.gpr[gpr::RBX] & 0xFFFF) as u64;
+            let bx = cpu.gpr[gpr::RBX] & 0xFFFF;
             let dst = cpu.apply_a20(cpu.segments.es.base.wrapping_add(bx));
 
             // Many real BIOS implementations use DMA for this path and require the transfer
@@ -334,7 +334,7 @@ fn handle_int13(
             // Fill the EDD drive parameter table (subset).
             // We write as much as the caller says they can accept.
             let write_len = buf_size.min(0x1E) as u16;
-            bus.write_u16(table_addr + 0, write_len);
+            bus.write_u16(table_addr, write_len);
             if buf_size >= 4 {
                 bus.write_u16(table_addr + 2, 0); // flags
             }
@@ -469,7 +469,7 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             0x88 => {
                 // Extended memory size (KB above 1MB).
                 let ext_kb = bios.config.memory_size_bytes.saturating_sub(1024 * 1024) / 1024;
-                cpu.gpr[gpr::RAX] = ext_kb.min(0xFFFF) as u64;
+                cpu.gpr[gpr::RAX] = ext_kb.min(0xFFFF);
                 cpu.rflags &= !FLAG_CF;
             }
             _ => {
@@ -601,7 +601,7 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                     cpu.gpr[gpr::RAX] &= !0xFF00;
                     cpu.rflags &= !FLAG_CF;
                 }
-                Err(()) => {
+                Err(_) => {
                     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | (1u64 << 8);
                     cpu.rflags |= FLAG_CF;
                 }
@@ -631,7 +631,7 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
                     cpu.gpr[gpr::RAX] &= !0xFF00;
                     cpu.rflags &= !FLAG_CF;
                 }
-                Err(()) => {
+                Err(_) => {
                     cpu.gpr[gpr::RAX] = (cpu.gpr[gpr::RAX] & !0xFF00) | (1u64 << 8);
                     cpu.rflags |= FLAG_CF;
                 }

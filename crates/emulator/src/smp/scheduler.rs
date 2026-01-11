@@ -19,6 +19,12 @@ pub struct DeterministicScheduler {
     next_cpu: usize,
 }
 
+impl Default for DeterministicScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DeterministicScheduler {
     pub fn new() -> Self {
         Self { next_cpu: 0 }

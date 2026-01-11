@@ -105,10 +105,8 @@ fn exec_cmpxchg8b<B: CpuBus>(
     }
     let addr = calc_ea(state, instr, next_ip, true)?;
 
-    let expected =
-        ((state.read_reg(Register::EDX) as u64) << 32) | (state.read_reg(Register::EAX) as u64);
-    let replacement =
-        ((state.read_reg(Register::ECX) as u64) << 32) | (state.read_reg(Register::EBX) as u64);
+    let expected = (state.read_reg(Register::EDX) << 32) | state.read_reg(Register::EAX);
+    let replacement = (state.read_reg(Register::ECX) << 32) | state.read_reg(Register::EBX);
 
     let (old, swapped) = if instr.has_lock_prefix() {
         super::atomic_rmw_sized(state, bus, addr, 64, |old| {
@@ -166,9 +164,9 @@ fn exec_cmpxchg16b<B: CpuBus>(
             })?
         } else {
             let mut buf = [0u8; 16];
-            for i in 0..buf.len() {
+            for (i, slot) in buf.iter_mut().enumerate() {
                 let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
-                buf[i] = bus.atomic_rmw::<u8, _>(byte_addr, |old| (old, old))?;
+                *slot = bus.atomic_rmw::<u8, _>(byte_addr, |old| (old, old))?;
             }
             let old = u128::from_le_bytes(buf);
             if old == expected {

@@ -451,11 +451,11 @@ pub struct PendingSummary {
 }
 
 trait RequestDirectionExt {
-    fn is_device_to_host(self) -> bool;
+    fn is_device_to_host(&self) -> bool;
 }
 
 impl RequestDirectionExt for crate::io::usb::RequestDirection {
-    fn is_device_to_host(self) -> bool {
+    fn is_device_to_host(&self) -> bool {
         matches!(self, crate::io::usb::RequestDirection::DeviceToHost)
     }
 }

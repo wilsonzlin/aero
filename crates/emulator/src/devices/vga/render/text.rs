@@ -20,6 +20,12 @@ pub struct TextModeRenderer {
     framebuffer: Vec<u32>,
 }
 
+impl Default for TextModeRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextModeRenderer {
     pub fn new() -> Self {
         Self {

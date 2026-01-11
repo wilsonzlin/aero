@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 
 use crate::io::PortIO;
 
+type TxCallback = Box<dyn FnMut(u16, &[u8])>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UartConfig {
     pub base_port: u16,
@@ -38,7 +40,7 @@ pub struct Uart16550 {
     mcr: Cell<u8>,
     scr: Cell<u8>,
     rx_fifo: RefCell<VecDeque<u8>>,
-    tx_callback: RefCell<Option<Box<dyn FnMut(u16, &[u8])>>>,
+    tx_callback: RefCell<Option<TxCallback>>,
 }
 
 impl std::fmt::Debug for Uart16550 {

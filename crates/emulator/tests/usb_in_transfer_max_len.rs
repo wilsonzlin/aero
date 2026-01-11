@@ -38,7 +38,7 @@ impl UsbDeviceModel for OversizedLegacyPoll {
 
 #[test]
 fn handle_in_transfer_truncates_handle_interrupt_in_results() {
-    let mut dev = OversizedInterruptIn::default();
+    let mut dev = OversizedInterruptIn;
     assert_eq!(
         dev.handle_in_transfer(0x81, 8),
         UsbInResult::Data(vec![0u8; 8])
@@ -47,7 +47,7 @@ fn handle_in_transfer_truncates_handle_interrupt_in_results() {
 
 #[test]
 fn handle_in_transfer_truncates_legacy_poll_interrupt_in_results() {
-    let mut dev = OversizedLegacyPoll::default();
+    let mut dev = OversizedLegacyPoll;
     assert_eq!(
         dev.handle_in_transfer(0x81, 8),
         UsbInResult::Data(vec![0u8; 8])
@@ -73,6 +73,6 @@ impl UsbDeviceModel for OversizedHandleInTransfer {
 
 #[test]
 fn attached_usb_device_clamps_misbehaving_handle_in_transfer_results() {
-    let mut dev = AttachedUsbDevice::new(Box::new(OversizedHandleInTransfer::default()));
+    let mut dev = AttachedUsbDevice::new(Box::new(OversizedHandleInTransfer));
     assert_eq!(dev.handle_in(1, 8), UsbInResult::Data(vec![0u8; 8]));
 }

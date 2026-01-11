@@ -93,6 +93,12 @@ pub struct BusMasterChannel {
     drive_dma_capable: [bool; 2],
 }
 
+impl Default for BusMasterChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BusMasterChannel {
     pub fn new() -> Self {
         Self {
@@ -128,14 +134,14 @@ impl BusMasterChannel {
                 st as u32
             }
             4 => match size {
-                4 => self.prd_addr as u32,
-                2 => (self.prd_addr & 0xFFFF) as u32,
-                1 => (self.prd_addr & 0xFF) as u32,
+                4 => self.prd_addr,
+                2 => self.prd_addr & 0xFFFF,
+                1 => self.prd_addr & 0xFF,
                 _ => 0,
             },
-            5 => ((self.prd_addr >> 8) & 0xFF) as u32,
-            6 => ((self.prd_addr >> 16) & 0xFF) as u32,
-            7 => ((self.prd_addr >> 24) & 0xFF) as u32,
+            5 => (self.prd_addr >> 8) & 0xFF,
+            6 => (self.prd_addr >> 16) & 0xFF,
+            7 => (self.prd_addr >> 24) & 0xFF,
             _ => 0,
         }
     }
@@ -162,7 +168,7 @@ impl BusMasterChannel {
             }
             4 => {
                 if size == 4 {
-                    self.prd_addr = val as u32 & 0xFFFF_FFFC;
+                    self.prd_addr = val & 0xFFFF_FFFC;
                 }
             }
             _ => {}

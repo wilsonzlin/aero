@@ -248,7 +248,7 @@ fn usb_hub_class_clear_feature_device_accepts_hub_change_selectors() {
 #[test]
 fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    hub.attach(1, Box::new(DummyUsbDevice));
 
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
@@ -335,7 +335,7 @@ fn usb_hub_standard_endpoint_requests_stall_for_unknown_endpoint() {
 #[test]
 fn usb_hub_clear_port_power_disables_routing_and_sets_enable_change() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    hub.attach(1, Box::new(DummyUsbDevice));
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
         ControlResponse::Ack
@@ -383,7 +383,7 @@ fn usb_hub_clear_port_power_disables_routing_and_sets_enable_change() {
 #[test]
 fn usb_hub_clear_port_power_resets_downstream_address() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    hub.attach(1, Box::new(DummyUsbDevice));
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
         ControlResponse::Ack
@@ -436,7 +436,7 @@ fn usb_hub_clear_port_power_resets_downstream_address() {
 #[test]
 fn usb_hub_port_enable_set_and_clear_feature() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    hub.attach(1, Box::new(DummyUsbDevice));
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
         ControlResponse::Ack
@@ -501,7 +501,7 @@ fn usb_hub_port_enable_set_and_clear_feature() {
 #[test]
 fn usb_hub_port_suspend_set_and_clear_feature() {
     let mut hub = UsbHubDevice::new();
-    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    hub.attach(1, Box::new(DummyUsbDevice));
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
         ControlResponse::Ack
@@ -659,7 +659,7 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
     const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
 
     let mut hub = UsbHubDevice::with_port_count(8);
-    hub.attach(8, Box::new(DummyUsbDevice::default()));
+    hub.attach(8, Box::new(DummyUsbDevice));
 
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),
@@ -716,7 +716,7 @@ fn usb_hub_interrupt_bitmap_scales_with_port_count() {
 #[test]
 fn usb_hub_interrupt_bitmap_respects_max_len() {
     let mut hub = UsbHubDevice::with_port_count(8);
-    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    hub.attach(1, Box::new(DummyUsbDevice));
 
     assert_eq!(
         hub.handle_control_request(set_configuration(1), None),

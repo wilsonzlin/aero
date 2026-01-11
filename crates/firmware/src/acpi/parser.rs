@@ -83,7 +83,7 @@ pub fn parse_rsdt_entries(rsdt_bytes: &[u8]) -> Option<Vec<u32>> {
     if length < ACPI_HEADER_SIZE || length > rsdt_bytes.len() {
         return None;
     }
-    if (length - ACPI_HEADER_SIZE) % 4 != 0 {
+    if !(length - ACPI_HEADER_SIZE).is_multiple_of(4) {
         return None;
     }
     let entries_bytes = &rsdt_bytes[ACPI_HEADER_SIZE..length];
@@ -103,7 +103,7 @@ pub fn parse_xsdt_entries(xsdt_bytes: &[u8]) -> Option<Vec<u64>> {
     if length < ACPI_HEADER_SIZE || length > xsdt_bytes.len() {
         return None;
     }
-    if (length - ACPI_HEADER_SIZE) % 8 != 0 {
+    if !(length - ACPI_HEADER_SIZE).is_multiple_of(8) {
         return None;
     }
     let entries_bytes = &xsdt_bytes[ACPI_HEADER_SIZE..length];

@@ -125,18 +125,13 @@ impl Default for StreamingDiskOptions {
 }
 
 /// Persistent cache backend used for storing fetched chunks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum StreamingCacheBackend {
     /// Store chunks as individual files under `cache_dir/chunks/`.
     Directory,
     /// Store chunks in a sparse file at `cache_dir/cache.bin`.
+    #[default]
     SparseFile,
-}
-
-impl Default for StreamingCacheBackend {
-    fn default() -> Self {
-        Self::SparseFile
-    }
 }
 
 #[derive(Clone)]
@@ -254,6 +249,7 @@ impl SparseFileChunkStore {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(path)
             .map_err(|e| StreamingDiskError::Io(e.to_string()))?;
         file.set_len(total_size)
@@ -565,7 +561,9 @@ impl StreamingDisk {
             ));
         }
 
-        if config.options.chunk_size == 0 || config.options.chunk_size % DEFAULT_SECTOR_SIZE != 0 {
+        if config.options.chunk_size == 0
+            || !config.options.chunk_size.is_multiple_of(DEFAULT_SECTOR_SIZE)
+        {
             return Err(StreamingDiskError::Protocol(format!(
                 "chunk_size must be a non-zero multiple of sector size ({DEFAULT_SECTOR_SIZE})"
             )));
@@ -605,8 +603,7 @@ impl StreamingDisk {
                 )));
             }
 
-            let expected_chunks =
-                ((total_size + config.options.chunk_size - 1) / config.options.chunk_size) as usize;
+            let expected_chunks = total_size.div_ceil(config.options.chunk_size) as usize;
             if manifest.sha256.len() != expected_chunks {
                 return Err(StreamingDiskError::Protocol(format!(
                     "manifest chunk count ({}) does not match expected ({expected_chunks})",
@@ -763,12 +760,12 @@ impl StreamingDisk {
         let token = self.inner.cancel_token.lock().await.clone();
         let chunk_size = self.inner.options.chunk_size;
 
-        let (sequential, read_ahead_chunks) = {
-            let mut state = self.inner.state.lock().await;
-            let sequential = state.last_read_end.map_or(true, |prev| prev == offset);
-            state.last_read_end = Some(end);
-            (sequential, self.inner.options.read_ahead_chunks)
-        };
+            let (sequential, read_ahead_chunks) = {
+                let mut state = self.inner.state.lock().await;
+                let sequential = state.last_read_end.is_none_or(|prev| prev == offset);
+                state.last_read_end = Some(end);
+                (sequential, self.inner.options.read_ahead_chunks)
+            };
 
         let start_chunk = offset / chunk_size;
         let end_chunk = (end.saturating_sub(1)) / chunk_size;
@@ -807,7 +804,7 @@ impl StreamingDisk {
 
     /// Read `buf.len()` bytes starting at sector `lba`.
     pub async fn read_sectors(&self, lba: u64, buf: &mut [u8]) -> Result<(), StreamingDiskError> {
-        if buf.len() as u64 % DEFAULT_SECTOR_SIZE != 0 {
+        if !(buf.len() as u64).is_multiple_of(DEFAULT_SECTOR_SIZE) {
             return Err(StreamingDiskError::Protocol(format!(
                 "read_sectors buffer length must be multiple of {DEFAULT_SECTOR_SIZE}"
             )));

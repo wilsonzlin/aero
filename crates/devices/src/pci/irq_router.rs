@@ -316,16 +316,15 @@ impl IoSnapshot for PciIntxRouter {
                 let Some(pin) = PciInterruptPin::from_config_u8(pin_u8) else {
                     continue;
                 };
-                if level {
-                    if self
+                if level
+                    && self
                         .source_level
                         .insert(IntxSource { bdf, pin }, true)
                         .is_some()
-                    {
-                        return Err(SnapshotError::InvalidFieldEncoding(
-                            "duplicate INTx source entry",
-                        ));
-                    }
+                {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "duplicate INTx source entry",
+                    ));
                 }
             }
             d.finish()?;

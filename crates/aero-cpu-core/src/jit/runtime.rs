@@ -77,7 +77,7 @@ impl PageVersionTracker {
         }
 
         let start_page = paddr >> PAGE_SHIFT;
-        let end = paddr.checked_add(len as u64 - 1).unwrap_or(u64::MAX);
+        let end = paddr.saturating_add(len as u64 - 1);
         let end_page = end >> PAGE_SHIFT;
 
         let Ok(end_idx) = usize::try_from(end_page) else {
@@ -98,9 +98,7 @@ impl PageVersionTracker {
             return Vec::new();
         }
         let start_page = code_paddr >> PAGE_SHIFT;
-        let end = code_paddr
-            .checked_add(byte_len as u64 - 1)
-            .unwrap_or(u64::MAX);
+        let end = code_paddr.saturating_add(byte_len as u64 - 1);
         let end_page = end >> PAGE_SHIFT;
 
         (start_page..=end_page)

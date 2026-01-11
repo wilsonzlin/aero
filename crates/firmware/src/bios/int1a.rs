@@ -54,7 +54,7 @@ impl Bios {
                         cpu.set_ah(0);
                         cpu.clear_cf();
                     }
-                    Err(()) => {
+                    Err(_) => {
                         cpu.set_ah(1);
                         cpu.set_cf();
                     }
@@ -81,7 +81,7 @@ impl Bios {
                         cpu.set_ah(0);
                         cpu.clear_cf();
                     }
-                    Err(()) => {
+                    Err(_) => {
                         cpu.set_ah(1);
                         cpu.set_cf();
                     }

@@ -3,7 +3,7 @@ pub mod vga;
 
 use self::{vbe::VbeDevice, vga::VgaDevice};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VideoDevice {
     pub vga: VgaDevice,
     pub vbe: VbeDevice,

@@ -243,11 +243,11 @@ pub fn fetch_wrapped<B: CpuBus>(
     }
 
     let mut buf = [0u8; 15];
-    for i in 0..len {
+    for (i, byte) in buf.iter_mut().enumerate().take(len) {
         let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
         // Use `CpuBus::fetch` (execute access) even on the slow path so paging-aware
         // busses (NX bit, supervisor execute restrictions) observe the correct access type.
-        buf[i] = bus.fetch(byte_addr, 1)?[0];
+        *byte = bus.fetch(byte_addr, 1)?[0];
     }
     Ok(buf)
 }

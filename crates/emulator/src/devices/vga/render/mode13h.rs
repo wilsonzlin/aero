@@ -16,6 +16,12 @@ pub struct Mode13hRenderer {
     full_repaint_requested: bool,
 }
 
+impl Default for Mode13hRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mode13hRenderer {
     pub fn new() -> Self {
         Self {
@@ -91,9 +97,15 @@ impl Mode13hRenderer {
             let start_line = start / BYTES_PER_SCANLINE;
             let end_line = (end - 1) / BYTES_PER_SCANLINE;
 
-            for y in start_line..=end_line {
-                if y < MODE13H_HEIGHT {
-                    dirty_scanlines[y] = true;
+            let start_line = start_line.min(MODE13H_HEIGHT);
+            let end_line = end_line.min(MODE13H_HEIGHT.saturating_sub(1));
+            if start_line <= end_line {
+                for dirty in dirty_scanlines
+                    .iter_mut()
+                    .take(end_line + 1)
+                    .skip(start_line)
+                {
+                    *dirty = true;
                 }
             }
         }

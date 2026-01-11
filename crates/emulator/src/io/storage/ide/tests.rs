@@ -60,7 +60,7 @@ impl IsoBackend for MemIso {
     }
 
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> DiskResult<()> {
-        if buf.len() % 2048 != 0 {
+        if !buf.len().is_multiple_of(2048) {
             return Err(DiskError::InvalidBufferLength);
         }
         let start = lba as usize * 2048;
@@ -128,8 +128,8 @@ fn ata_pio_read_multi_sector() {
     let data = disk.data_mut();
     for i in 0..512 {
         let a = (i & 0xFF) as u8;
-        let b = (255 - (i as u8)) as u8;
-        data[1 * 512 + i] = a;
+        let b = 255 - (i as u8);
+        data[512 + i] = a;
         data[2 * 512 + i] = b;
         expected[i] = a;
         expected[512 + i] = b;
@@ -154,7 +154,7 @@ fn ata_pio_read_multi_sector() {
 
     let mut data = vec![0u8; 1024];
     for i in 0..(1024 / 2) {
-        let w = ide.io_read(PRIMARY_PORTS.cmd_base + 0, 2) as u16;
+        let w = ide.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
         data[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
 
@@ -179,12 +179,12 @@ fn ata_pio_write_multi_sector() {
     ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0x30);
 
     let mut payload = vec![0u8; 1024];
-    for i in 0..payload.len() {
-        payload[i] = (i.wrapping_mul(7) & 0xFF) as u8;
+    for (i, b) in payload.iter_mut().enumerate() {
+        *b = (i.wrapping_mul(7) & 0xFF) as u8;
     }
     for i in 0..(payload.len() / 2) {
         let w = u16::from_le_bytes([payload[i * 2], payload[i * 2 + 1]]);
-        ide.io_write(PRIMARY_PORTS.cmd_base + 0, 2, w as u32);
+        ide.io_write(PRIMARY_PORTS.cmd_base, 2, w as u32);
     }
 
     // Re-read via PIO to validate the write stuck.
@@ -197,7 +197,7 @@ fn ata_pio_write_multi_sector() {
 
     let mut readback = vec![0u8; 1024];
     for i in 0..(readback.len() / 2) {
-        let w = ide.io_read(PRIMARY_PORTS.cmd_base + 0, 2) as u16;
+        let w = ide.io_read(PRIMARY_PORTS.cmd_base, 2) as u16;
         readback[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(readback, payload);
@@ -234,7 +234,7 @@ fn ata_pio_write_sectors_ext_uses_lba48() {
 
     // Transfer one sector (PIO OUT).
     for i in 0..256u16 {
-        ide.io_write(PRIMARY_PORTS.cmd_base + 0, 2, i as u32);
+        ide.io_write(PRIMARY_PORTS.cmd_base, 2, i as u32);
     }
 
     let inner = shared.lock().unwrap();
@@ -280,7 +280,7 @@ fn ata_dma_prd_scatter_gather_crosses_page_boundary() {
     ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
 
     // Start bus master (direction=read).
-    ide.io_write(bm_base + 0, 1, 0x09);
+    ide.io_write(bm_base, 1, 0x09);
     ide.tick(&mut mem);
 
     // Validate the DMA wrote the correct bytes into both segments.
@@ -317,7 +317,7 @@ fn atapi_read_10_returns_correct_bytes() {
         ide.io_write(sec.cmd_base + 7, 1, 0xA0);
         for i in 0..6 {
             let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
-            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+            ide.io_write(sec.cmd_base, 2, w as u32);
         }
     }
 
@@ -331,7 +331,7 @@ fn atapi_read_10_returns_correct_bytes() {
     req_sense[4] = 18;
     send_packet(&mut ide, sec, &req_sense, 18);
     for _ in 0..9 {
-        let _ = ide.io_read(sec.cmd_base + 0, 2);
+        let _ = ide.io_read(sec.cmd_base, 2);
     }
 
     // Send READ(10) for LBA=1, blocks=1 (should return "WORLD" at start).
@@ -343,7 +343,7 @@ fn atapi_read_10_returns_correct_bytes() {
 
     let mut out = vec![0u8; 2048];
     for i in 0..(2048 / 2) {
-        let w = ide.io_read(sec.cmd_base + 0, 2) as u16;
+        let w = ide.io_read(sec.cmd_base, 2) as u16;
         out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
 
@@ -388,7 +388,7 @@ fn atapi_dma_read_10_transfers_via_bus_master() {
         ide.io_write(sec.cmd_base + 7, 1, 0xA0);
         for i in 0..6 {
             let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
-            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+            ide.io_write(sec.cmd_base, 2, w as u32);
         }
     }
 
@@ -402,7 +402,7 @@ fn atapi_dma_read_10_transfers_via_bus_master() {
     req_sense[4] = 18;
     send_packet_dma(&mut ide, sec, &req_sense, 18);
     for _ in 0..9 {
-        let _ = ide.io_read(sec.cmd_base + 0, 2);
+        let _ = ide.io_read(sec.cmd_base, 2);
     }
 
     // READ(10) for LBA=0, blocks=1.
@@ -413,7 +413,7 @@ fn atapi_dma_read_10_transfers_via_bus_master() {
     send_packet_dma(&mut ide, sec, &pkt, 2048);
 
     // Start the secondary bus master engine, direction=read (device -> memory).
-    ide.io_write(bm_base + 8 + 0, 1, 0x09);
+    ide.io_write(bm_base + 8, 1, 0x09);
     ide.tick(&mut mem);
 
     // DMA should have populated the guest buffer.
@@ -449,7 +449,7 @@ fn atapi_get_event_status_notification_returns_media_event_header() {
         ide.io_write(sec.cmd_base + 7, 1, 0xA0);
         for i in 0..6 {
             let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
-            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+            ide.io_write(sec.cmd_base, 2, w as u32);
         }
     }
 
@@ -462,7 +462,7 @@ fn atapi_get_event_status_notification_returns_media_event_header() {
     req_sense[4] = 18;
     send_packet(&mut ide, sec, &req_sense, 18);
     for _ in 0..9 {
-        let _ = ide.io_read(sec.cmd_base + 0, 2);
+        let _ = ide.io_read(sec.cmd_base, 2);
     }
 
     // GET EVENT STATUS NOTIFICATION, request nonzero so we get an 8-byte response.
@@ -474,7 +474,7 @@ fn atapi_get_event_status_notification_returns_media_event_header() {
 
     let mut out = [0u8; 8];
     for i in 0..4 {
-        let w = ide.io_read(sec.cmd_base + 0, 2) as u16;
+        let w = ide.io_read(sec.cmd_base, 2) as u16;
         out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(out[0..2], [0, 6]); // payload length following the first 2 bytes
@@ -504,7 +504,7 @@ fn atapi_read_disc_information_returns_valid_length_field() {
         ide.io_write(sec.cmd_base + 7, 1, 0xA0);
         for i in 0..6 {
             let w = u16::from_le_bytes([pkt[i * 2], pkt[i * 2 + 1]]);
-            ide.io_write(sec.cmd_base + 0, 2, w as u32);
+            ide.io_write(sec.cmd_base, 2, w as u32);
         }
     }
 
@@ -517,7 +517,7 @@ fn atapi_read_disc_information_returns_valid_length_field() {
     req_sense[4] = 18;
     send_packet(&mut ide, sec, &req_sense, 18);
     for _ in 0..9 {
-        let _ = ide.io_read(sec.cmd_base + 0, 2);
+        let _ = ide.io_read(sec.cmd_base, 2);
     }
 
     let mut disc_info = [0u8; 12];
@@ -525,9 +525,9 @@ fn atapi_read_disc_information_returns_valid_length_field() {
     disc_info[7..9].copy_from_slice(&34u16.to_be_bytes());
     send_packet(&mut ide, sec, &disc_info, 34);
 
-    let mut out = vec![0u8; 34];
+    let mut out = [0u8; 34];
     for i in 0..(34 / 2) {
-        let w = ide.io_read(sec.cmd_base + 0, 2) as u16;
+        let w = ide.io_read(sec.cmd_base, 2) as u16;
         out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
     }
     assert_eq!(out[0..2], [0, 32]); // out.len() - 2

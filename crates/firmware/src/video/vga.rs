@@ -7,6 +7,12 @@ pub struct VgaDevice {
     default_attr: u8,
 }
 
+impl Default for VgaDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VgaDevice {
     pub fn new() -> Self {
         Self {
@@ -95,6 +101,7 @@ impl VgaDevice {
         BiosDataArea::write_cursor_pos_page0(mem, row, col);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn scroll_up(
         &mut self,
         mem: &mut impl MemoryBus,
@@ -110,7 +117,7 @@ impl VgaDevice {
             return;
         }
 
-        let cols = BiosDataArea::read_screen_cols(mem) as u16;
+        let cols = BiosDataArea::read_screen_cols(mem);
         let rows = 25u16;
         let top_row = top_row as u16;
         let top_col = top_col as u16;
@@ -193,7 +200,7 @@ impl VgaDevice {
     }
 
     fn write_text_cell(&self, mem: &mut impl MemoryBus, row: u8, col: u8, ch: u8, attr: u8) {
-        let cols = BiosDataArea::read_screen_cols(mem) as u16;
+        let cols = BiosDataArea::read_screen_cols(mem);
         let off = self.text_offset(cols, row as u16, col as u16);
         mem.write_u8(self.text_base + off, ch);
         mem.write_u8(self.text_base + off + 1, attr);

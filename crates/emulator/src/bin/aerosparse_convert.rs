@@ -199,7 +199,7 @@ fn main() {
         }
 
         copied += 1;
-        if copied % 1024 == 0 {
+        if copied.is_multiple_of(1024) {
             eprintln!("copied {copied} blocks...");
         }
     }

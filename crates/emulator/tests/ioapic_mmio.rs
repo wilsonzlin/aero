@@ -43,7 +43,7 @@ fn ioapic_mmio_programming_via_system_bus() {
     let vector = 0x45u32;
     let redtbl_low = 0x10u32 + (gsi * 2);
 
-    write_u32(&mut bus, IOAPIC_MMIO_BASE + 0x00, redtbl_low);
+    write_u32(&mut bus, IOAPIC_MMIO_BASE, redtbl_low);
     write_u32(&mut bus, IOAPIC_MMIO_BASE + 0x10, vector);
 
     ioapic.lock().unwrap().set_irq_level(gsi, true);

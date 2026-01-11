@@ -72,14 +72,13 @@ impl UhciController {
 
     fn update_irq(&mut self) {
         let mut pending = false;
-        if self.regs.usbsts & USBSTS_USBINT != 0 {
-            if (self.regs.usbint_causes & USBINT_CAUSE_IOC != 0
+        if self.regs.usbsts & USBSTS_USBINT != 0
+            && ((self.regs.usbint_causes & USBINT_CAUSE_IOC != 0
                 && self.regs.usbintr & USBINTR_IOC != 0)
                 || (self.regs.usbint_causes & USBINT_CAUSE_SHORT_PACKET != 0
-                    && self.regs.usbintr & USBINTR_SHORT_PACKET != 0)
-            {
-                pending = true;
-            }
+                    && self.regs.usbintr & USBINTR_SHORT_PACKET != 0))
+        {
+            pending = true;
         }
         if self.regs.usbsts & USBSTS_USBERRINT != 0 && self.regs.usbintr & USBINTR_TIMEOUT_CRC != 0
         {

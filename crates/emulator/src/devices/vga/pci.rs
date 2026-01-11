@@ -23,6 +23,12 @@ pub struct VgaPciFunction {
     lfb: Vec<u8>,
 }
 
+impl Default for VgaPciFunction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VgaPciFunction {
     pub fn new() -> Self {
         Self::new_with_lfb(DEFAULT_LFB_BASE, DEFAULT_LFB_SIZE)

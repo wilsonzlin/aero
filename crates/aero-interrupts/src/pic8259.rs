@@ -249,7 +249,7 @@ impl Pic8259 {
     }
 
     fn refresh_level_triggered_irr(&mut self) {
-        self.irr = self.irr | (self.line_level & !self.isr);
+        self.irr |= self.line_level & !self.isr;
         self.irr &= self.line_level | self.isr;
     }
 

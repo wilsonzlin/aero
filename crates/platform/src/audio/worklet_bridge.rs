@@ -105,14 +105,11 @@ impl InterleavedRingBuffer {
         if state.capacity_frames != 0 {
             let restored_capacity = state
                 .capacity_frames
-                .min(MAX_RESTORED_CAPACITY_FRAMES)
-                .max(1);
+                .clamp(1, MAX_RESTORED_CAPACITY_FRAMES);
             if restored_capacity != self.capacity_frames {
                 self.capacity_frames = restored_capacity;
-                let samples = self
-                    .capacity_frames
-                    .saturating_mul(self.channel_count)
-                    .min(u32::MAX) as usize;
+                let samples =
+                    self.capacity_frames.saturating_mul(self.channel_count) as usize;
                 self.storage.resize(samples, 0.0);
             }
         }

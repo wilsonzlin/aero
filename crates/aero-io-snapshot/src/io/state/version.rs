@@ -311,6 +311,7 @@ impl<'a> SnapshotReader<'a> {
 pub mod codec {
     use super::{SnapshotError, SnapshotResult};
 
+    #[derive(Default)]
     pub struct Encoder {
         pub buf: Vec<u8>,
     }

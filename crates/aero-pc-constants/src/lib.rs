@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 
-/// Shared physical address / topology constants for the x86 PC platform.
-///
-/// This crate exists so the BIOS/firmware (`firmware`) and the device platform wiring
-/// (`aero-pc-platform`) agree on addresses that must match exactly at runtime.
+//! Shared physical address / topology constants for the x86 PC platform.
+//!
+//! This crate exists so the BIOS/firmware (`firmware`) and the device platform wiring
+//! (`aero-pc-platform`) agree on addresses that must match exactly at runtime.
 
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///

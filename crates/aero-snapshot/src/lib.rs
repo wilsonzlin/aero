@@ -30,34 +30,18 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::io::{ReadLeExt, WriteLeExt};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SaveOptions {
     pub ram: RamWriteOptions,
 }
 
-impl Default for SaveOptions {
-    fn default() -> Self {
-        Self {
-            ram: RamWriteOptions::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RestoreOptions {
     /// For dirty-page snapshots, the expected parent snapshot id this diff should be applied on
     /// top of.
     ///
     /// Full snapshots are standalone and ignore this field.
     pub expected_parent_snapshot_id: Option<u64>,
-}
-
-impl Default for RestoreOptions {
-    fn default() -> Self {
-        Self {
-            expected_parent_snapshot_id: None,
-        }
-    }
 }
 
 pub trait SnapshotSource {

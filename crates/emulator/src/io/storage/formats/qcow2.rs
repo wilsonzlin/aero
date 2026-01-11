@@ -84,7 +84,7 @@ impl Qcow2Header {
         if size == 0 {
             return Err(DiskError::CorruptImage("qcow2 size is zero"));
         }
-        if size % SECTOR_SIZE as u64 != 0 {
+        if !size.is_multiple_of(SECTOR_SIZE as u64) {
             return Err(DiskError::CorruptImage(
                 "qcow2 size not multiple of sector size",
             ));
@@ -97,7 +97,7 @@ impl Qcow2Header {
         if l1_size == 0 {
             return Err(DiskError::CorruptImage("qcow2 l1_size is zero"));
         }
-        if l1_table_offset % 8 != 0 || refcount_table_offset % 8 != 0 {
+        if !l1_table_offset.is_multiple_of(8) || !refcount_table_offset.is_multiple_of(8) {
             return Err(DiskError::CorruptImage("qcow2 table offset misaligned"));
         }
         if refcount_table_clusters == 0 {
@@ -111,8 +111,8 @@ impl Qcow2Header {
 
         let cluster_size = 1u64 << cluster_bits;
         let l2_entries_per_table = cluster_size / 8;
-        let guest_clusters = (size + cluster_size - 1) / cluster_size;
-        let required_l1 = (guest_clusters + l2_entries_per_table - 1) / l2_entries_per_table;
+        let guest_clusters = size.div_ceil(cluster_size);
+        let required_l1 = guest_clusters.div_ceil(l2_entries_per_table);
         if (l1_size as u64) < required_l1 {
             return Err(DiskError::CorruptImage("qcow2 l1 table too small"));
         }
@@ -164,7 +164,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
             .ok_or(DiskError::Unsupported("qcow2 refcount table too large"))?;
         let refcount_bytes_usize = usize::try_from(refcount_table_bytes)
             .map_err(|_| DiskError::Unsupported("qcow2 refcount table too large"))?;
-        if refcount_table_bytes % 8 != 0 {
+        if !refcount_table_bytes.is_multiple_of(8) {
             return Err(DiskError::CorruptImage("qcow2 refcount table size invalid"));
         }
         let mut refcount_buf = vec![0u8; refcount_bytes_usize];
@@ -209,7 +209,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        if bytes % SECTOR_SIZE as usize != 0 {
+        if !bytes.is_multiple_of(SECTOR_SIZE as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: SECTOR_SIZE,
@@ -416,7 +416,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
 
     fn set_refcount_for_offset(&mut self, cluster_offset: u64, value: u16) -> DiskResult<()> {
         let cluster_size = self.cluster_size();
-        if cluster_offset % cluster_size != 0 {
+        if !cluster_offset.is_multiple_of(cluster_size) {
             return Err(DiskError::CorruptImage("qcow2 cluster offset not aligned"));
         }
         self.set_refcount(cluster_offset / cluster_size, value)

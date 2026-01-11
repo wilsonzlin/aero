@@ -222,5 +222,5 @@ fn webhid_report_item_deserializes_without_is_relative_field() {
         }"#,
     );
 
-    assert_eq!(collection.input_reports[0].items[0].is_absolute, false);
+    assert!(!collection.input_reports[0].items[0].is_absolute);
 }

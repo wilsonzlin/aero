@@ -178,12 +178,7 @@ impl AhciController {
         self.update_hba_is();
 
         let global_ie = self.hba.ghc & GHC_IE != 0;
-        let mut pending = false;
-        if global_ie {
-            if (self.port0.is & self.port0.ie) != 0 {
-                pending = true;
-            }
-        }
+        let pending = global_ie && (self.port0.is & self.port0.ie) != 0;
 
         self.irq_level = pending;
     }
@@ -808,7 +803,7 @@ fn build_identify_data(total_sectors: u64, sector_size: u32) -> [u8; 512] {
     if sector_size != 512 {
         // Word 106: physical sector size / logical sector size information valid.
         words[106] = 1 << 14;
-        let words_per_sector = (sector_size / 2) as u32;
+        let words_per_sector = sector_size / 2;
         words[117] = (words_per_sector & 0xffff) as u16;
         words[118] = (words_per_sector >> 16) as u16;
     }

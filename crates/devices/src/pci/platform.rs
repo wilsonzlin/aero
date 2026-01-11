@@ -25,6 +25,12 @@ impl PciHostBridge {
     }
 }
 
+impl Default for PciHostBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PciDevice for PciHostBridge {
     fn config(&self) -> &PciConfigSpace {
         &self.config
@@ -44,6 +50,12 @@ impl PciIsaBridge {
         let mut config = PciConfigSpace::new(INTEL_VENDOR_ID, ICH9_LPC_DEVICE_ID);
         config.set_class_code(0x06, 0x01, 0x00, 0x00);
         Self { config }
+    }
+}
+
+impl Default for PciIsaBridge {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

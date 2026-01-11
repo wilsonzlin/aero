@@ -642,22 +642,22 @@ impl IdeController {
 
         if let Some(off) = port.checked_sub(self.primary.ports.cmd_base) {
             if off < 8 {
-                return Self::read_cmd_reg(&mut self.primary, off as u16, size);
+                return Self::read_cmd_reg(&mut self.primary, off, size);
             }
         }
         if let Some(off) = port.checked_sub(self.secondary.ports.cmd_base) {
             if off < 8 {
-                return Self::read_cmd_reg(&mut self.secondary, off as u16, size);
+                return Self::read_cmd_reg(&mut self.secondary, off, size);
             }
         }
         if let Some(off) = port.checked_sub(self.primary.ports.ctrl_base) {
             if off < 2 {
-                return Self::read_ctrl_reg(&mut self.primary, off as u16);
+                return Self::read_ctrl_reg(&mut self.primary, off);
             }
         }
         if let Some(off) = port.checked_sub(self.secondary.ports.ctrl_base) {
             if off < 2 {
-                return Self::read_ctrl_reg(&mut self.secondary, off as u16);
+                return Self::read_ctrl_reg(&mut self.secondary, off);
             }
         }
 
@@ -673,26 +673,25 @@ impl IdeController {
 
         if let Some(off) = port.checked_sub(self.primary.ports.cmd_base) {
             if off < 8 {
-                Self::write_cmd_reg(&mut self.primary, off as u16, size, val as u32);
+                Self::write_cmd_reg(&mut self.primary, off, size, val);
                 return;
             }
         }
         if let Some(off) = port.checked_sub(self.secondary.ports.cmd_base) {
             if off < 8 {
-                Self::write_cmd_reg(&mut self.secondary, off as u16, size, val as u32);
+                Self::write_cmd_reg(&mut self.secondary, off, size, val);
                 return;
             }
         }
         if let Some(off) = port.checked_sub(self.primary.ports.ctrl_base) {
             if off < 2 {
-                Self::write_ctrl_reg(&mut self.primary, off as u16, val as u8);
+                Self::write_ctrl_reg(&mut self.primary, off, val as u8);
                 return;
             }
         }
         if let Some(off) = port.checked_sub(self.secondary.ports.ctrl_base) {
             if off < 2 {
-                Self::write_ctrl_reg(&mut self.secondary, off as u16, val as u8);
-                return;
+                Self::write_ctrl_reg(&mut self.secondary, off, val as u8);
             }
         }
     }

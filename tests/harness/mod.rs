@@ -123,8 +123,8 @@ fn rescale_integer_multiple(image: &RgbaImage, target_w: u32, target_h: u32) -> 
     // Downscale if the source is an integer multiple of the target.
     if target_w != 0
         && target_h != 0
-        && image.width() % target_w == 0
-        && image.height() % target_h == 0
+        && image.width().is_multiple_of(target_w)
+        && image.height().is_multiple_of(target_h)
     {
         let sx = image.width() / target_w;
         let sy = image.height() / target_h;
@@ -136,8 +136,8 @@ fn rescale_integer_multiple(image: &RgbaImage, target_w: u32, target_h: u32) -> 
     // Upscale if the target is an integer multiple of the source.
     if image.width() != 0
         && image.height() != 0
-        && target_w % image.width() == 0
-        && target_h % image.height() == 0
+        && target_w.is_multiple_of(image.width())
+        && target_h.is_multiple_of(image.height())
     {
         let sx = target_w / image.width();
         let sy = target_h / image.height();
@@ -184,8 +184,8 @@ fn resample_upscale_nearest(
 }
 
 fn crop_image(image: &RgbaImage, crop: ImageCrop) -> Result<RgbaImage> {
-    if crop.x.checked_add(crop.width).unwrap_or(u32::MAX) > image.width()
-        || crop.y.checked_add(crop.height).unwrap_or(u32::MAX) > image.height()
+    if crop.x.saturating_add(crop.width) > image.width()
+        || crop.y.saturating_add(crop.height) > image.height()
     {
         return Err(anyhow!(
             "crop {crop:?} out of bounds for image {}x{}",
@@ -758,11 +758,11 @@ mod which {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            return (path
+            (path
                 .metadata()
                 .ok()
                 .map(|m| m.permissions().mode() & 0o111 != 0))
-            .unwrap_or(false);
+            .unwrap_or(false)
         }
         #[cfg(not(unix))]
         {

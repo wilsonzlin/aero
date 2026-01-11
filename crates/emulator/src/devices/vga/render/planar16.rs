@@ -11,6 +11,12 @@ pub struct Mode12hRenderer {
     framebuffer: Vec<u32>,
 }
 
+impl Default for Mode12hRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mode12hRenderer {
     pub fn new() -> Self {
         Self {
@@ -57,7 +63,7 @@ impl Mode12hRenderer {
                         | (((p2 >> bit_index) & 1) << 2)
                         | (((p3 >> bit_index) & 1) << 3);
 
-                    let dac_index = map_attribute_controller(regs, raw_index as u8) & pel_mask;
+                    let dac_index = map_attribute_controller(regs, raw_index) & pel_mask;
                     let pixel = palette[dac_index as usize];
 
                     let x = byte_x * 8 + bit;

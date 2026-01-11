@@ -134,7 +134,7 @@ impl AerogpuCmdWriter {
         backing_offset_bytes: u32,
     ) {
         assert!(
-            size_bytes % COPY_BUFFER_ALIGNMENT == 0,
+            size_bytes.is_multiple_of(COPY_BUFFER_ALIGNMENT),
             "CREATE_BUFFER size_bytes must be {COPY_BUFFER_ALIGNMENT}-byte aligned (got {size_bytes})",
         );
         let base = self.append_raw(
@@ -286,9 +286,9 @@ impl AerogpuCmdWriter {
         flags: u32,
     ) {
         assert!(
-            dst_offset_bytes % COPY_BUFFER_ALIGNMENT == 0
-                && src_offset_bytes % COPY_BUFFER_ALIGNMENT == 0
-                && size_bytes % COPY_BUFFER_ALIGNMENT == 0,
+            dst_offset_bytes.is_multiple_of(COPY_BUFFER_ALIGNMENT)
+                && src_offset_bytes.is_multiple_of(COPY_BUFFER_ALIGNMENT)
+                && size_bytes.is_multiple_of(COPY_BUFFER_ALIGNMENT),
             "COPY_BUFFER offsets and size must be {COPY_BUFFER_ALIGNMENT}-byte aligned (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})",
         );
         let base = self.append_raw(

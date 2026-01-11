@@ -92,7 +92,7 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
         while idx < bufs.len() {
             // Validate alignment up-front.
             let buf_len = bufs[idx].len();
-            if buf_len % sector_size != 0 {
+            if !buf_len.is_multiple_of(sector_size) {
                 return Err(DiskError::UnalignedBuffer {
                     len: buf_len,
                     sector_size: sector_size as u32,
@@ -109,7 +109,7 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
             let mut merged_len = 0usize;
             while idx < bufs.len() {
                 let next_len = bufs[idx].len();
-                if next_len % sector_size != 0 {
+                if !next_len.is_multiple_of(sector_size) {
                     return Err(DiskError::UnalignedBuffer {
                         len: next_len,
                         sector_size: sector_size as u32,
@@ -150,7 +150,7 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
         let mut idx = 0usize;
         while idx < bufs.len() {
             let buf_len = bufs[idx].len();
-            if buf_len % sector_size != 0 {
+            if !buf_len.is_multiple_of(sector_size) {
                 return Err(DiskError::UnalignedBuffer {
                     len: buf_len,
                     sector_size: sector_size as u32,
@@ -167,7 +167,7 @@ impl<B: DiskBackend> DiskBackend for CoalescingBackend<B> {
             let mut merged_len = 0usize;
             while idx < bufs.len() {
                 let next_len = bufs[idx].len();
-                if next_len % sector_size != 0 {
+                if !next_len.is_multiple_of(sector_size) {
                     return Err(DiskError::UnalignedBuffer {
                         len: next_len,
                         sector_size: sector_size as u32,
@@ -243,7 +243,9 @@ impl<B: DiskBackend> BlockCache<B> {
 
     pub fn new(backend: B, config: BlockCacheConfig) -> DiskResult<Self> {
         let sector_size = backend.sector_size();
-        if config.block_size == 0 || (config.block_size as u64) % sector_size as u64 != 0 {
+        if config.block_size == 0
+            || !u64::from(config.block_size).is_multiple_of(u64::from(sector_size))
+        {
             return Err(DiskError::Unsupported(
                 "cache block size must be a multiple of backend sector size",
             ));
@@ -411,7 +413,7 @@ impl<B: DiskBackend> DiskBackend for BlockCache<B> {
     }
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
-        if buf.len() % self.sector_size as usize != 0 {
+        if !buf.len().is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: buf.len(),
                 sector_size: self.sector_size,
@@ -450,7 +452,7 @@ impl<B: DiskBackend> DiskBackend for BlockCache<B> {
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
-        if buf.len() % self.sector_size as usize != 0 {
+        if !buf.len().is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: buf.len(),
                 sector_size: self.sector_size,

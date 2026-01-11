@@ -174,7 +174,7 @@ fn is_canonical(addr: u64) -> bool {
 
 pub fn parse_system_descriptor_16(raw_low: u64, raw_high: u64) -> SystemDescriptor {
     let (base_low, limit_raw, mut attrs) = parse_common_fields(raw_low);
-    let base_high = (raw_high & 0xFFFF_FFFF) as u64;
+    let base_high = raw_high & 0xFFFF_FFFF;
     let limit = effective_limit(limit_raw, attrs.granularity);
     attrs.s = false;
     SystemDescriptor {
@@ -413,8 +413,8 @@ impl CpuState {
         }
         let base = self.tables.tr.base;
         let limit = self.tables.tr.limit as u64;
-        if 4u64.checked_add(3).map_or(true, |end| end > limit)
-            || 8u64.checked_add(1).map_or(true, |end| end > limit)
+        if 4u64.checked_add(3).is_none_or(|end| end > limit)
+            || 8u64.checked_add(1).is_none_or(|end| end > limit)
         {
             return Err(Exception::ts(0));
         }
@@ -443,7 +443,7 @@ impl CpuState {
         }
         let base = self.tables.tr.base;
         let limit = self.tables.tr.limit as u64;
-        if 4u64.checked_add(7).map_or(true, |end| end > limit) {
+        if 4u64.checked_add(7).is_none_or(|end| end > limit) {
             return Err(Exception::ts(0));
         }
         // 64-bit TSS: RSP0 at +4.
@@ -472,7 +472,7 @@ impl CpuState {
         let base = self.tables.tr.base;
         let off = 0x24u64 + (index as u64 - 1) * 8;
         let limit = self.tables.tr.limit as u64;
-        if off.checked_add(7).map_or(true, |end| end > limit) {
+        if off.checked_add(7).is_none_or(|end| end > limit) {
             return Err(Exception::ts(0));
         }
         let rsp = self.with_supervisor_access(bus, |bus, state| {
@@ -496,7 +496,7 @@ impl CpuState {
         }
         let base = self.tables.tr.base;
         let limit = self.tables.tr.limit as u64;
-        if 0x66u64.checked_add(1).map_or(true, |end| end > limit) {
+        if 0x66u64.checked_add(1).is_none_or(|end| end > limit) {
             return Err(Exception::ts(0));
         }
         self.with_supervisor_access(bus, |bus, state| {

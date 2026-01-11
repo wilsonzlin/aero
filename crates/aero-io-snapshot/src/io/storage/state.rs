@@ -382,7 +382,7 @@ pub struct IdeInFlightCommandState {
     pub is_write: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IdeControllerState {
     pub command: u8,
     pub status: u8,
@@ -391,20 +391,6 @@ pub struct IdeControllerState {
     pub lba: u32,
     pub dma_active: bool,
     pub in_flight: Option<IdeInFlightCommandState>,
-}
-
-impl Default for IdeControllerState {
-    fn default() -> Self {
-        Self {
-            command: 0,
-            status: 0,
-            error: 0,
-            sector_count: 0,
-            lba: 0,
-            dma_active: false,
-            in_flight: None,
-        }
-    }
 }
 
 impl IoSnapshot for IdeControllerState {
@@ -509,7 +495,7 @@ pub struct NvmeInFlightCommandState {
     pub length: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NvmeControllerState {
     pub cap: u64,
     pub vs: u32,
@@ -526,28 +512,6 @@ pub struct NvmeControllerState {
     pub io_cqs: Vec<NvmeCompletionQueueState>,
     pub intx_level: bool,
     pub in_flight: Vec<NvmeInFlightCommandState>,
-}
-
-impl Default for NvmeControllerState {
-    fn default() -> Self {
-        Self {
-            cap: 0,
-            vs: 0,
-            intms: 0,
-            intmc: 0,
-            cc: 0,
-            csts: 0,
-            aqa: 0,
-            asq: 0,
-            acq: 0,
-            admin_sq: None,
-            admin_cq: None,
-            io_sqs: Vec::new(),
-            io_cqs: Vec::new(),
-            intx_level: false,
-            in_flight: Vec::new(),
-        }
-    }
 }
 
 impl IoSnapshot for NvmeControllerState {

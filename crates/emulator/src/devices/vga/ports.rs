@@ -425,8 +425,8 @@ impl VgaDevice {
                 let src = &self.lfb[..needed.min(self.lfb.len())];
                 for y in 0..h {
                     let row = &src[y * pitch..(y + 1) * pitch];
-                    for x in 0..w {
-                        let idx = row[x] as usize;
+                    for (x, &idx_byte) in row.iter().take(w).enumerate() {
+                        let idx = idx_byte as usize;
                         self.frontbuffer[y * w + x] = palette[idx];
                     }
                 }
@@ -684,7 +684,6 @@ impl VgaDevice {
             p if p == active_crtc_data => self.crtc_reg_read(),
 
             // Unimplemented ports.
-            0x3C0..=0x3DF => UNIMPLEMENTED_READ_VALUE,
             _ => UNIMPLEMENTED_READ_VALUE,
         }
     }

@@ -44,6 +44,10 @@ impl CodeCache {
         self.map.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     pub fn contains(&self, entry_rip: u64) -> bool {
         self.map.contains_key(&entry_rip)
     }

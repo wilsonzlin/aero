@@ -25,6 +25,9 @@ pub trait ByteStorage {
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> DiskResult<()>;
     fn flush(&mut self) -> DiskResult<()>;
     fn len(&mut self) -> DiskResult<u64>;
+    fn is_empty(&mut self) -> DiskResult<bool> {
+        Ok(self.len()? == 0)
+    }
     fn set_len(&mut self, len: u64) -> DiskResult<()>;
 }
 
@@ -52,7 +55,7 @@ pub trait DiskBackend {
     fn readv_sectors(&mut self, mut lba: u64, bufs: &mut [&mut [u8]]) -> DiskResult<()> {
         let sector_size = self.sector_size();
         for buf in bufs {
-            if buf.len() % sector_size as usize != 0 {
+            if !buf.len().is_multiple_of(sector_size as usize) {
                 return Err(DiskError::UnalignedBuffer {
                     len: buf.len(),
                     sector_size,
@@ -71,7 +74,7 @@ pub trait DiskBackend {
     fn writev_sectors(&mut self, mut lba: u64, bufs: &[&[u8]]) -> DiskResult<()> {
         let sector_size = self.sector_size();
         for buf in bufs {
-            if buf.len() % sector_size as usize != 0 {
+            if !buf.len().is_multiple_of(sector_size as usize) {
                 return Err(DiskError::UnalignedBuffer {
                     len: buf.len(),
                     sector_size,
@@ -153,7 +156,7 @@ impl VirtualDrive {
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<u64> {
-        if bytes % self.sector_size as usize != 0 {
+        if !bytes.is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: self.sector_size,
@@ -248,7 +251,7 @@ impl MemDisk {
     }
 
     fn check_range(&self, lba: u64, bytes: usize) -> DiskResult<u64> {
-        if bytes % self.sector_size as usize != 0 {
+        if !bytes.is_multiple_of(self.sector_size as usize) {
             return Err(DiskError::UnalignedBuffer {
                 len: bytes,
                 sector_size: self.sector_size,

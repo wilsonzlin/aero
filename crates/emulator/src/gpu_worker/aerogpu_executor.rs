@@ -1282,7 +1282,7 @@ mod tests {
         )
         .unwrap();
 
-        mem.write_u32(gpa + 0, AEROGPU_RING_MAGIC);
+        mem.write_u32(gpa, AEROGPU_RING_MAGIC);
         mem.write_u32(gpa + 4, AeroGpuRegs::default().abi_version);
         mem.write_u32(gpa + 8, size_bytes);
         mem.write_u32(gpa + 12, entry_count);
@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     fn write_submit_desc(mem: &mut dyn MemoryBus, gpa: u64, fence: u64, flags: u32) {
-        mem.write_u32(gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(gpa, AeroGpuSubmitDesc::SIZE_BYTES);
         mem.write_u32(gpa + 4, flags);
         mem.write_u32(gpa + 8, 0);
         mem.write_u32(gpa + 12, 0);
@@ -1323,12 +1323,14 @@ mod tests {
             u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
                 .unwrap();
 
-        let mut regs = AeroGpuRegs::default();
-        regs.ring_gpa = ring_gpa;
-        regs.ring_size_bytes = ring_size_bytes;
-        regs.ring_control = ring_control::ENABLE;
-        regs.fence_gpa = fence_gpa;
-        regs.irq_enable = irq_bits::FENCE;
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            fence_gpa,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
 
         let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
             verbose: false,
@@ -1421,7 +1423,7 @@ mod tests {
         let size_bytes = AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * entry_stride_bytes;
 
         // Write the allocation table header.
-        mem.write_u32(alloc_table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+        mem.write_u32(alloc_table_gpa, AEROGPU_ALLOC_TABLE_MAGIC);
         mem.write_u32(alloc_table_gpa + 4, abi_version);
         mem.write_u32(alloc_table_gpa + 8, size_bytes);
         mem.write_u32(alloc_table_gpa + 12, entry_count);
@@ -1434,7 +1436,7 @@ mod tests {
             let entry_gpa =
                 alloc_table_gpa + header_size + u64::from(i) * u64::from(entry_stride_bytes);
             let alloc_id = i + 1;
-            mem.write_u32(entry_gpa + 0, alloc_id);
+            mem.write_u32(entry_gpa, alloc_id);
             mem.write_u32(entry_gpa + 4, 0);
             mem.write_u64(entry_gpa + 8, 0x2000u64 + u64::from(alloc_id) * 0x1000);
             mem.write_u64(entry_gpa + 16, 0x100);
@@ -1493,7 +1495,7 @@ mod tests {
 
         // Minimal command stream: header only (no packets).
         let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
-        mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+        mem.write_u32(cmd_gpa, AEROGPU_CMD_STREAM_MAGIC);
         mem.write_u32(cmd_gpa + 4, AeroGpuRegs::default().abi_version);
         mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
         mem.write_u32(cmd_gpa + 12, 0); // flags
@@ -1503,7 +1505,7 @@ mod tests {
         // One ring entry with a fence.
         write_ring_header(&mut mem, ring_gpa, 1, 0, 1);
         let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-        mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(desc_gpa, AeroGpuSubmitDesc::SIZE_BYTES);
         mem.write_u32(desc_gpa + 4, 0); // flags
         mem.write_u32(desc_gpa + 8, 0); // context_id
         mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -1517,19 +1519,21 @@ mod tests {
             u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + AeroGpuSubmitDesc::SIZE_BYTES as u64)
                 .unwrap();
 
-        let mut regs = AeroGpuRegs::default();
-        regs.ring_gpa = ring_gpa;
-        regs.ring_size_bytes = ring_size_bytes;
-        regs.ring_control = ring_control::ENABLE;
-        regs.fence_gpa = fence_gpa;
-        regs.irq_enable = irq_bits::FENCE;
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            fence_gpa,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
 
         let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
             verbose: false,
             keep_last_submissions: 0,
             fence_completion: AeroGpuFenceCompletionMode::Deferred,
         });
-        exec.set_backend(Box::new(RejectingBackend::default()));
+        exec.set_backend(Box::new(RejectingBackend));
 
         exec.process_doorbell(&mut regs, &mut mem);
 
@@ -1591,7 +1595,7 @@ mod tests {
         let fb_gpa = 0x4000u64;
 
         let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
-        mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+        mem.write_u32(cmd_gpa, AEROGPU_CMD_STREAM_MAGIC);
         mem.write_u32(cmd_gpa + 4, AeroGpuRegs::default().abi_version);
         mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
         mem.write_u32(cmd_gpa + 12, 0);
@@ -1600,7 +1604,7 @@ mod tests {
 
         write_ring_header(&mut mem, ring_gpa, 1, 0, 1);
         let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-        mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(desc_gpa, AeroGpuSubmitDesc::SIZE_BYTES);
         mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT);
         mem.write_u32(desc_gpa + 8, 0);
         mem.write_u32(desc_gpa + 12, 0);
@@ -1614,12 +1618,14 @@ mod tests {
             u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + AeroGpuSubmitDesc::SIZE_BYTES as u64)
                 .unwrap();
 
-        let mut regs = AeroGpuRegs::default();
-        regs.ring_gpa = ring_gpa;
-        regs.ring_size_bytes = ring_size_bytes;
-        regs.ring_control = ring_control::ENABLE;
-        regs.fence_gpa = fence_gpa;
-        regs.irq_enable = irq_bits::FENCE;
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            fence_gpa,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
 
         regs.scanout0.enable = true;
         regs.scanout0.width = 1;

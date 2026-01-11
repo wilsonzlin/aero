@@ -195,12 +195,13 @@ fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
     let features = (dev.mmio_read(&mut mem, mmio::FEATURES_LO, 4) as u64)
         | ((dev.mmio_read(&mut mem, mmio::FEATURES_HI, 4) as u64) << 32);
 
-    if (features & FEATURE_TRANSFER) != 0 {
-        assert!(AEROGPU_ABI_MINOR >= 1);
+    let transfer_supported = (features & FEATURE_TRANSFER) != 0;
+    let transfer_expected = AEROGPU_ABI_MINOR >= 1;
+    assert_eq!(transfer_supported, transfer_expected);
+
+    if transfer_supported {
         assert_eq!(AerogpuCmdOpcode::CopyBuffer as u32, 0x105);
         assert_eq!(AerogpuCmdOpcode::CopyTexture2d as u32, 0x106);
-    } else {
-        assert!(AEROGPU_ABI_MINOR < 1);
     }
 }
 
@@ -331,7 +332,7 @@ fn doorbell_rejects_unknown_major_abi_version() {
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
     // Ring header: advertise an unsupported major version.
-    let unsupported_major = ((AEROGPU_ABI_MAJOR + 1) << 16) | 0;
+    let unsupported_major = (AEROGPU_ABI_MAJOR + 1) << 16;
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, unsupported_major);
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
@@ -449,8 +450,10 @@ fn scanout_bgra_converts_to_rgba() {
 
 #[test]
 fn vblank_tick_sets_irq_status() {
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
     let mut mem = VecMemory::new(0x1000);
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
 
@@ -468,8 +471,10 @@ fn vblank_tick_sets_irq_status() {
 
 #[test]
 fn enabling_vblank_irq_does_not_immediately_fire_on_catchup_ticks() {
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
     let mut mem = VecMemory::new(0x1000);
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
 
@@ -496,8 +501,10 @@ fn enabling_vblank_irq_does_not_immediately_fire_on_catchup_ticks() {
 
 #[test]
 fn vsynced_present_fence_completes_on_vblank() {
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
 
     let mut mem = VecMemory::new(0x40_000);
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -610,12 +617,13 @@ fn vsynced_present_fence_completes_on_vblank() {
 
 #[test]
 fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
-    cfg.executor = AeroGpuExecutorConfig {
-        verbose: false,
-        keep_last_submissions: 0,
-        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
     };
 
     let mut mem = VecMemory::new(0x40_000);
@@ -731,8 +739,10 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
 
 #[test]
 fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
 
     let mut mem = VecMemory::new(0x40_000);
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
@@ -835,8 +845,10 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
 
 #[test]
 fn scanout_disable_stops_vblank_and_clears_pending_irq() {
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vblank_hz = Some(10);
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
     let mut mem = VecMemory::new(0x1000);
     let mut dev = AeroGpuPciDevice::new(cfg, 0);
 
@@ -1074,7 +1086,7 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1085,7 +1097,7 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa, 64); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -1108,7 +1120,7 @@ fn cmd_exec_d3d9_triangle_renders_to_guest_memory() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     assert_eq!(dev.regs.completed_fence, 1);
-    assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(mem.read_u32(fence_gpa), AEROGPU_FENCE_PAGE_MAGIC);
 
     let center = read_pixel_bgra(
         &mut mem,
@@ -1322,7 +1334,7 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1333,7 +1345,7 @@ fn cmd_exec_d3d11_input_layout_triangle_renders_to_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -1458,7 +1470,7 @@ fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1469,7 +1481,7 @@ fn cmd_exec_copy_buffer_writeback_to_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -1690,7 +1702,7 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1701,7 +1713,7 @@ fn cmd_exec_copy_texture2d_writeback_to_guest_memory() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -1953,7 +1965,7 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -1964,7 +1976,7 @@ fn cmd_exec_d3d11_scissor_clips_draw_when_enabled() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -2205,7 +2217,7 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -2216,7 +2228,7 @@ fn cmd_exec_d3d11_cull_mode_culls_ccw_when_front_ccw_false() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -2454,7 +2466,7 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -2465,7 +2477,7 @@ fn cmd_exec_d3d11_cull_mode_keeps_ccw_when_front_ccw_true() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -2741,7 +2753,7 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -2752,7 +2764,7 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -2989,7 +3001,7 @@ fn exec_d3d11_fullscreen_triangle_center_pixel(push_blend_state: impl FnOnce(&mu
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -3000,7 +3012,7 @@ fn exec_d3d11_fullscreen_triangle_center_pixel(push_blend_state: impl FnOnce(&mu
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -3404,7 +3416,7 @@ fn cmd_exec_d3d11_depth_test_rejects_farther_triangle() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -3415,7 +3427,7 @@ fn cmd_exec_d3d11_depth_test_rejects_farther_triangle() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -3803,7 +3815,7 @@ fn cmd_exec_d3d11_texture_sampling_point_clamp_matches_expected_texels() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -3814,7 +3826,7 @@ fn cmd_exec_d3d11_texture_sampling_point_clamp_matches_expected_texels() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);
@@ -4201,7 +4213,7 @@ fn cmd_exec_d3d11_texture_sampling_respects_sampler_repeat() {
     mem.write_physical(cmd_gpa, &stream);
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
     mem.write_u32(ring_gpa + 8, ring_size);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -4212,7 +4224,7 @@ fn cmd_exec_d3d11_texture_sampling_respects_sampler_repeat() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64);
+    mem.write_u32(desc_gpa, 64);
     mem.write_u32(desc_gpa + 4, 0);
     mem.write_u32(desc_gpa + 8, 0);
     mem.write_u32(desc_gpa + 12, 0);

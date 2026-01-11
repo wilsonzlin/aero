@@ -161,9 +161,11 @@ fn reset_port(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, portsc: u16) {
     }
 }
 
+type InterruptOutLog = Rc<RefCell<Vec<(u8, Vec<u8>)>>>;
+
 #[derive(Clone, Debug)]
 struct DummyInterruptOutDevice {
-    received: Rc<RefCell<Vec<(u8, Vec<u8>)>>>,
+    received: InterruptOutLog,
 }
 
 impl DummyInterruptOutDevice {

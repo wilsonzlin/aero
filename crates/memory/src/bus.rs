@@ -466,7 +466,7 @@ impl PhysicalMemoryBus {
             // higher-level callers request an arbitrary byte count (e.g. DMA-style reads).
             let size = [8usize, 4, 2, 1]
                 .into_iter()
-                .find(|&candidate| remaining >= candidate && (addr % candidate as u64) == 0)
+                .find(|&candidate| remaining >= candidate && addr.is_multiple_of(candidate as u64))
                 .unwrap_or(1);
             let value = self.mmio_regions[region_idx].handler.read(addr, size);
             let bytes = value.to_le_bytes();
@@ -482,7 +482,7 @@ impl PhysicalMemoryBus {
             let remaining = src.len() - pos;
             let size = [8usize, 4, 2, 1]
                 .into_iter()
-                .find(|&candidate| remaining >= candidate && (addr % candidate as u64) == 0)
+                .find(|&candidate| remaining >= candidate && addr.is_multiple_of(candidate as u64))
                 .unwrap_or(1);
             let mut buf = [0u8; 8];
             buf[..size].copy_from_slice(&src[pos..pos + size]);
@@ -1031,7 +1031,7 @@ impl Bus {
                     // Only issue multi-byte MMIO/ROM accesses when naturally aligned. Unaligned
                     // reads fall back to byte-granular operations to avoid sending unaligned
                     // 64-bit operations to device models that require alignment.
-                    if (offset % size as u64) != 0 {
+                    if !offset.is_multiple_of(size as u64) {
                         // Fall through to byte-wise reads below.
                     } else {
                         return match &mut region.kind {
@@ -1076,7 +1076,7 @@ impl Bus {
                 if self.regions[region_idx].contains(last) {
                     let region = &mut self.regions[region_idx];
                     let offset = addr - region.start;
-                    if (offset % size as u64) != 0 {
+                    if !offset.is_multiple_of(size as u64) {
                         // Fall through to byte-wise writes below.
                     } else {
                         match &mut region.kind {

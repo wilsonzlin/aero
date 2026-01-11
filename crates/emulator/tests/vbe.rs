@@ -47,7 +47,7 @@ fn controller_info_basic_fields() {
     assert_eq!(info.version(), 0x0300);
 
     // We place the mode list at the start of our BIOS data blob.
-    let expected_mode_list_ptr = ((VBE_BIOS_DATA_PADDR >> 4) << 16) | 0x0000;
+    let expected_mode_list_ptr = (VBE_BIOS_DATA_PADDR >> 4) << 16;
     assert_eq!(info.video_mode_ptr(), expected_mode_list_ptr);
 }
 

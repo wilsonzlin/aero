@@ -334,7 +334,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                     && is_x87_opcode(&bytes, cpu.state.bitness())
                 {
                     if let Err(fp_e) =
-                        super::check_fp_available(&mut cpu.state, crate::fpu::FpKind::X87)
+                        super::check_fp_available(&cpu.state, crate::fpu::FpKind::X87)
                     {
                         cpu.state.apply_exception_side_effects(&fp_e);
                         return BatchResult {

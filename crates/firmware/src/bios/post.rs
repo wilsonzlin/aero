@@ -14,7 +14,7 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
-        mut pci: Option<&mut dyn PciConfigSpace>,
+        pci: Option<&mut dyn PciConfigSpace>,
     ) {
         // Reset transient POST state.
         self.e820_map.clear();
@@ -85,7 +85,7 @@ impl Bios {
         cpu.a20_enabled = bus.a20_enabled();
 
         // 6) Optional PCI enumeration + deterministic IRQ routing (must match ACPI `_PRT`).
-        if let Some(pci) = pci.as_deref_mut() {
+        if let Some(pci) = pci {
             self.enumerate_pci(pci);
         }
 

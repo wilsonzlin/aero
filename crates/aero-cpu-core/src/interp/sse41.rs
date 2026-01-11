@@ -133,9 +133,9 @@ pub fn insertps(dst: u128, src: u128, imm8: u8) -> u128 {
     let mut dst_lanes = as_u32x4(dst);
 
     dst_lanes[dst_sel] = src_lanes[src_sel];
-    for i in 0..4 {
+    for (i, lane) in dst_lanes.iter_mut().enumerate() {
         if (zmask >> i) & 1 != 0 {
-            dst_lanes[i] = 0;
+            *lane = 0;
         }
     }
 

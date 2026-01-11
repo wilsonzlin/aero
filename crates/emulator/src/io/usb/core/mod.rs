@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn set_address_invalid_fields_stall() {
-        let mut dev = AttachedUsbDevice::new(Box::new(AckModel::default()));
+        let mut dev = AttachedUsbDevice::new(Box::new(AckModel));
 
         // Invalid address (must be <= 127).
         assert_eq!(
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn new_setup_aborts_pending_set_address() {
-        let mut dev = AttachedUsbDevice::new(Box::new(AckModel::default()));
+        let mut dev = AttachedUsbDevice::new(Box::new(AckModel));
 
         let set_address = SetupPacket {
             bm_request_type: 0x00,

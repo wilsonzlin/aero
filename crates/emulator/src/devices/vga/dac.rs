@@ -10,6 +10,12 @@ pub struct VgaDac {
     component_index: u8,
 }
 
+impl Default for VgaDac {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VgaDac {
     pub fn new() -> Self {
         Self {

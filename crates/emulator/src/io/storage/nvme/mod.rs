@@ -452,7 +452,7 @@ impl NvmeController {
             return (0, NvmeStatus::invalid_field());
         }
         let size = cmd.qsize();
-        if size == 0 || cmd.prp1 as usize % self.page_size != 0 {
+        if size == 0 || !(cmd.prp1 as usize).is_multiple_of(self.page_size) {
             return (0, NvmeStatus::invalid_field());
         }
 
@@ -474,7 +474,7 @@ impl NvmeController {
             return (0, NvmeStatus::invalid_field());
         }
         let size = cmd.qsize();
-        if size == 0 || cmd.prp1 as usize % self.page_size != 0 {
+        if size == 0 || !(cmd.prp1 as usize).is_multiple_of(self.page_size) {
             return (0, NvmeStatus::invalid_field());
         }
 
@@ -531,7 +531,7 @@ impl NvmeController {
         let nlb = cmd.nlb() as u64;
         if slba
             .checked_add(nlb)
-            .map_or(true, |end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > self.disk.total_sectors())
         {
             return (0, NvmeStatus::lba_out_of_range());
         }
@@ -557,7 +557,7 @@ impl NvmeController {
         let nlb = cmd.nlb() as u64;
         if slba
             .checked_add(nlb)
-            .map_or(true, |end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > self.disk.total_sectors())
         {
             return (0, NvmeStatus::lba_out_of_range());
         }

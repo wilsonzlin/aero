@@ -321,6 +321,12 @@ pub struct PciConfig {
     bar1_probe: bool,
 }
 
+impl Default for PciConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PciConfig {
     pub const VENDOR_ID: u16 = 0x8086;
     pub const DEVICE_ID: u16 = 0x100E; // 82540EM (QEMU default)
@@ -633,7 +639,7 @@ impl E1000Device {
         match offset {
             // IOADDR (selected MMIO register offset).
             0x0..=0x3 => {
-                let shift = ((offset & 3) * 8) as u32;
+                let shift = (offset & 3) * 8;
                 match size {
                     4 => self.io_reg,
                     2 => (self.io_reg >> shift) & 0xffff,
@@ -651,7 +657,7 @@ impl E1000Device {
     pub fn io_write(&mut self, mem: &mut dyn MemoryBus, offset: u32, size: usize, value: u32) {
         match offset {
             0x0..=0x3 => {
-                let shift = ((offset & 3) * 8) as u32;
+                let shift = (offset & 3) * 8;
                 if size == 4 {
                     self.io_reg = value & !3;
                     return;
@@ -907,14 +913,14 @@ impl E1000Device {
     }
 
     fn rx_ring_desc_count(&self) -> Option<u32> {
-        if self.rdlen < RxDesc::LEN as u32 || (self.rdlen % RxDesc::LEN as u32) != 0 {
+        if self.rdlen < RxDesc::LEN as u32 || !self.rdlen.is_multiple_of(RxDesc::LEN as u32) {
             return None;
         }
         Some(self.rdlen / RxDesc::LEN as u32)
     }
 
     fn tx_ring_desc_count(&self) -> Option<u32> {
-        if self.tdlen < TxDesc::LEN as u32 || (self.tdlen % TxDesc::LEN as u32) != 0 {
+        if self.tdlen < TxDesc::LEN as u32 || !self.tdlen.is_multiple_of(TxDesc::LEN as u32) {
             return None;
         }
         Some(self.tdlen / TxDesc::LEN as u32)
@@ -1240,11 +1246,9 @@ impl E1000Device {
                                         }
                                     }
                                 }
-                            } else {
-                                if (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
-                                    let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
-                                    self.queue_tx_frame(frame);
-                                }
+                            } else if (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
+                                let _ = apply_checksum_offload(&mut frame, self.tx_ctx, flags);
+                                self.queue_tx_frame(frame);
                             }
                         }
                     }

@@ -353,7 +353,7 @@ impl Vga {
             }
             // DAC data.
             0x3C9 => {
-                let component = (val & 0x3F) as u8;
+                let component = val & 0x3F;
                 let idx = (self.dac_write_component as usize).min(2);
                 self.dac_write_latch[idx] = component;
                 self.dac_write_component = self.dac_write_component.wrapping_add(1);

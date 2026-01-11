@@ -80,7 +80,7 @@ pub struct NullAeroGpuBackend;
 
 impl NullAeroGpuBackend {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 

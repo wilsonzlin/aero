@@ -233,14 +233,14 @@ pub fn parse_ipc_buffer(bytes: &[u8]) -> Result<IpcLayout, IpcLayoutError> {
             return Err(IpcLayoutError::QueueReservedNotZero { index: i, reserved });
         }
 
-        if (offset_bytes as usize) % RECORD_ALIGN != 0 {
+        if !(offset_bytes as usize).is_multiple_of(RECORD_ALIGN) {
             return Err(IpcLayoutError::QueueOffsetMisaligned {
                 index: i,
                 offset_bytes,
                 align: RECORD_ALIGN,
             });
         }
-        if (capacity_bytes as usize) % RECORD_ALIGN != 0 {
+        if !(capacity_bytes as usize).is_multiple_of(RECORD_ALIGN) {
             return Err(IpcLayoutError::QueueCapacityMisaligned {
                 index: i,
                 capacity_bytes,

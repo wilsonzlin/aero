@@ -222,8 +222,8 @@ impl Ps2Mouse {
         let x = self.dx;
         let y = -self.dy;
 
-        let x_overflow = x < -256 || x > 255;
-        let y_overflow = y < -256 || y > 255;
+        let x_overflow = !(-256..=255).contains(&x);
+        let y_overflow = !(-256..=255).contains(&y);
 
         let x_clamped = x.clamp(-256, 255);
         let y_clamped = y.clamp(-256, 255);

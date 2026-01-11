@@ -26,9 +26,8 @@ use crate::{
 /// Number of general purpose registers in [`CpuState::gpr`].
 pub const GPR_COUNT: usize = 16;
 
-/// Canonical register indices for [`CpuState::gpr`].
 pub mod gpr {
-    //! Register indices for [`super::CpuState::gpr`].
+    //! Canonical register indices for [`super::CpuState::gpr`].
     pub const RAX: usize = 0;
     pub const RCX: usize = 1;
     pub const RDX: usize = 2;
@@ -201,9 +200,10 @@ pub const CPU_STATE_ALIGN: usize = 16;
 /// For instruction decoding/execution, the effective operand/address size still
 /// depends on CS.D and prefixes.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum CpuMode {
     /// Real mode (CR0.PE = 0).
+    #[default]
     Real = 0,
     /// Protected mode (CR0.PE = 1, not executing 64-bit code).
     Protected = 1,
@@ -212,12 +212,6 @@ pub enum CpuMode {
     /// Virtual 8086 mode (placeholder; semantics largely like real mode but
     /// under protected-mode paging/privilege rules).
     Vm86 = 3,
-}
-
-impl Default for CpuMode {
-    fn default() -> Self {
-        CpuMode::Real
-    }
 }
 
 impl CpuMode {
@@ -813,10 +807,12 @@ impl CpuState {
     /// complete mode transitions should be performed by updating CR0/CR4/EFER
     /// and segment caches, then calling [`CpuState::update_mode`].
     pub fn new(mode: CpuMode) -> Self {
-        let mut state = Self::default();
-        state.mode = mode;
-        state.halted = false;
-        state.pending_bios_int_valid = false;
+        let mut state = Self {
+            mode,
+            halted: false,
+            pending_bios_int_valid: false,
+            ..Self::default()
+        };
 
         // Configure CS cache bits so helpers like `bitness()` and `ip_mask()`
         // behave consistently with the requested coarse mode.
