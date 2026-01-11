@@ -1,5 +1,9 @@
 # AeroGPU Command Protocol (toy/prototype, v0.1)
 
+> Status: **legacy**. The in-tree implementation has been removed; this document is kept for
+> reference only.
+>
+
 This document specifies a **toy/prototype** guest ↔ host command ABI (commands like
 `CREATE_SURFACE`/`PRESENT`) that was used during early bring-up.
 
