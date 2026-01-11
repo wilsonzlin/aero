@@ -36,6 +36,7 @@ If you have not installed Guest Tools yet, start here:
 - Display issues after switching to the Aero GPU:
   - [Black screen after switching to the Aero GPU](#issue-black-screen-after-switching-to-the-aero-gpu)
   - [Aero theme not available (stuck in basic graphics mode)](#issue-aero-theme-not-available-stuck-in-basic-graphics-mode)
+  - [32-bit D3D9 apps fail on Windows 7 x64 (missing WOW64 UMD)](#issue-32-bit-d3d9-apps-fail-on-windows-7-x64-missing-wow64-umd)
 - Guest Tools installation problems:
   - [`setup.cmd` fails (won't run)](#issue-setupcmd-fails-wont-run)
   - [Safe Mode recovery tips](#safe-mode-recovery-tips)
@@ -469,6 +470,32 @@ If you must keep the Aero GPU selected while recovering, use Safe Mode (below) s
    - Reboot.
 3. Then select an Aero theme:
    - Desktop right-click → Personalize → pick a theme under **Aero Themes**.
+
+## Issue: 32-bit D3D9 apps fail on Windows 7 x64 (missing WOW64 UMD)
+
+**Symptoms**
+
+- 64-bit D3D apps work (or the desktop is usable), but **32-bit** D3D9 apps fail to start or fail to create a device.
+- Common errors include failures from `Direct3DCreate9` / `CreateDevice` in 32-bit apps.
+
+**Why it happens**
+
+On Windows 7 x64, the display driver package must install **both**:
+
+- a 64-bit D3D9 UMD to `C:\\Windows\\System32\\` (despite the name, `System32` is the **64-bit** system directory on x64), and
+- a 32-bit (WOW64) D3D9 UMD to `C:\\Windows\\SysWOW64\\` (`SysWOW64` holds the **32-bit** system DLLs on x64).
+
+If the `SysWOW64` UMD is missing, **32-bit apps will not be able to use D3D9** even though 64-bit apps may work.
+
+**Fix**
+
+1. Confirm the expected UMD files exist on the guest:
+   - `C:\\Windows\\System32\\aerogpu_d3d9_x64.dll`
+   - `C:\\Windows\\SysWOW64\\aerogpu_d3d9.dll`
+2. If the `SysWOW64` DLL is missing, reinstall using the supported AeroGPU Win7 package:
+   - `drivers/aerogpu/packaging/win7/README.md`
+   - Ensure your build/staging workflow includes the WOW64 UMD in the **x64** package (the recommended `drivers\\aerogpu\\build\\stage_packaging_win7.cmd fre x64` flow does).
+3. Reboot the guest after reinstalling the display driver.
 
 ## Safe Mode recovery tips
 
