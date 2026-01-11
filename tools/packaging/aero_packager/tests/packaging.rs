@@ -870,6 +870,55 @@ fn utf8_bom_infs_are_parsed_for_reference_validation() -> anyhow::Result<()> {
 }
 
 #[test]
+fn utf16le_bom_infs_are_parsed_for_reference_validation() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+
+    // Rewrite the INF as UTF-16LE with a BOM. Many real-world driver packages ship
+    // UTF-16LE INFs and we still want referenced-file validation to work.
+    let inf_path = drivers_tmp.path().join("x86/testdrv/test.inf");
+    let inf_text = fs::read_to_string(&inf_path)?;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0xFF, 0xFE]);
+    for unit in inf_text.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    fs::write(&inf_path, bytes)?;
+
+    // Remove a referenced payload to ensure the parser actually runs.
+    fs::remove_file(drivers_tmp.path().join("x86/testdrv/test.dll"))?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("test.dll") && msg.contains("INF referenced files are missing"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
