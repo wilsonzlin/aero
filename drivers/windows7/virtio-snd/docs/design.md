@@ -6,29 +6,48 @@ This document is a **clean-room** design note for the Aero Windows 7 virtio-snd
 driver. It summarizes the intended architecture and how the pieces fit together.
 See `../SOURCES.md` for the authoritative list of references.
 
-The driver in this directory is a clean-room Windows 7 WDM audio adapter driver
-targeting the Aero Windows 7 virtio device contract (`AERO-W7-VIRTIO` v1). It
-includes a virtio-pci modern transport core, split-ring virtqueue plumbing, and
-integrates PortCls **WaveRT** + **Topology** miniports so Windows 7 can
-enumerate a **render-only** endpoint.
+The directory contains a clean-room Windows 7 WDM audio adapter driver that
+integrates PortCls **WaveRT** + **Topology** miniports so Windows 7 can enumerate
+an audio endpoint.
 
-Implemented components (code pointers):
+There are currently **two virtio transport paths** in-tree:
 
-- PortCls/WaveRT adapter + miniports: `src/adapter.c`, `src/wavert.c`,
-  `src/topology.c`
-- Virtio transport + split virtqueues + INTx ISR/DPC routing:
-  `src/virtio_pci_modern_wdm.c`, `src/virtiosnd_queue_split.c`,
-  `src/virtiosnd_intx.c`, `src/virtiosnd_hw.c`
-- virtio-snd protocol engines (control/TX/RX):
-  `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
-  - The current PortCls render endpoint drives control + TX via
-    `VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx` in `src/virtiosnd_hw.c`.
-  - The RX engine exists for future capture integration (no PortCls capture
-    endpoint yet).
+1. **Default build (PortCls endpoint driver):** uses the **legacy virtio-pci
+   I/O-port** register layout via `drivers/windows7/virtio/common` for maximum
+   compatibility with transitional virtio devices (for example stock QEMU). This
+   path only negotiates the **low 32 bits** of virtio feature flags.
+2. **Modern virtio-pci bring-up (under development):** capability/MMIO-based
+   virtio-pci modern + split-ring virtqueues + protocol engines. This path is
+   intended to align with the definitive Aero contract (`AERO-W7-VIRTIO` v1),
+   which is modern-only.
 
-Capture (`rxq`, stream id `1`) is defined by the contract. The driver brings up
-`rxq` and contains an RX streaming engine, but the current PortCls integration is
-render-only and does not submit capture buffers yet.
+## Code organization
+
+### Default build (legacy virtio-pci I/O-port)
+
+- PortCls adapter + miniports: `src/adapter.c`, `src/wavert.c`, `src/topology.c`
+- WaveRT backend interface: `include/backend.h`
+- Legacy virtio backend implementation: `src/backend_virtio_legacy.c`
+- Legacy virtio-pci bring-up + minimal `controlq`/`txq` protocol: `include/aeroviosnd.h`, `src/aeroviosnd_hw.c`
+- Shared legacy virtio transport/queue code linked in from:
+  - `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`
+  - `drivers/windows7/virtio/common/src/virtio_queue.c`
+
+### Modern virtio-pci bring-up (not built by default)
+
+The directory also contains a modern virtio-pci WDM bring-up path (for example
+`src/virtiosnd_hw.c` and related `virtiosnd_*` modules). That code is not part of
+the default PortCls build today.
+
+## Default build architecture (legacy virtio-pci endpoint driver)
+
+- **Transport:** legacy virtio-pci I/O-port register layout (transitional devices).
+- **Queues:** `controlq` (0) + `txq` (2) are used for render playback. `eventq`/`rxq`
+  are not wired up by the default driver.
+- **Interrupts:** INTx only.
+- **Protocol:** minimal PCM control flow for stream 0 (playback) and TX submissions.
+- **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
+  entries are treated as resource reclamation rather than timing.
 
 ## High-level architecture
 
@@ -36,6 +55,9 @@ The implementation is intended to be layered so that most logic is reusable acro
 other Windows 7 virtio drivers (blk/net/input).
 
 ### 1) virtio-pci modern transport layer
+
+This section describes the modern virtio-pci architecture used by the
+non-default WDM bring-up path.
 
 Responsibilities:
 
@@ -107,8 +129,10 @@ Current behavior:
 - Uses a periodic timer/DPC “software DMA” model to:
   - advance play position and signal the WaveRT notification event, and
   - submit one period of PCM into a backend callback.
-- Selects a virtio backend when the virtio transport is started successfully
-  (controlq + txq); otherwise falls back to a null backend for bring-up/debug.
+- Uses a backend abstraction (`include/backend.h`) so the WaveRT period timer path
+  can remain decoupled from virtio transport details.
+- The default build uses a legacy virtio-pci backend. A modern backend is future
+  work.
 
 ### 5) Interrupt + timer pacing model
 
@@ -162,7 +186,7 @@ Contract v1 requirements include:
   - `txq = 256`
   - `rxq = 64` (initialized; RX engine exists but capture endpoint integration is TBD)
 
-Driver stance:
+Driver stance (for eventual strict contract-v1 support):
 
 - Negotiate only the features required for correctness. For contract v1 this means enabling
   `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC` and leaving `VIRTIO_F_RING_EVENT_IDX`
@@ -170,6 +194,14 @@ Driver stance:
 - Always size ring allocations from the device-reported `common_cfg.queue_size` after selecting
   each queue. Treat unexpected values (for example smaller than required by the contract, or
   inconsistent `queue_notify_off`) as an incompatibility during bring-up.
+
+Implementation note:
+
+- The default PortCls endpoint driver currently uses the **legacy** virtio-pci
+  I/O-port transport (and therefore cannot negotiate `VIRTIO_F_VERSION_1` at bit
+  32). This is a compatibility step and is documented at a high level in
+  `docs/windows-device-contract.md`. The modern virtio-pci bring-up path in this
+  directory is the intended direction for full `AERO-W7-VIRTIO` v1 conformance.
 
 ## References
 

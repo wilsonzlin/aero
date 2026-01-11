@@ -216,9 +216,9 @@ Once the system boots with virtio-snd hardware present:
 - **SetupAPI log**
 
   Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
-
+ 
   - `aero-virtio-snd.inf`, or
-  - the device hardware ID (for Aero virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`)
+  - the device hardware ID (for virtio-snd: `PCI\VEN_1AF4&DEV_1018` for transitional devices, or `PCI\VEN_1AF4&DEV_1059` for modern-only; `&REV_01`/`SUBSYS_...` qualifiers may also appear)
 
 If the driver package is staged but the device doesn’t bind:
 

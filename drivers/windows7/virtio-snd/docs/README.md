@@ -78,9 +78,8 @@ All multi-byte fields described below are **little-endian**.
 
 The controlq request payload begins with a 32-bit `code` and the response always begins with a 32-bit `status`.
 
-Contract v1 requires these request codes (for both streams 0 and 1). The driver’s
-control engine implements the v1 subset for both streams, but the current PortCls
-integration only drives **stream 0** (playback):
+Contract v1 defines these request codes (for both streams 0 and 1). The current
+PortCls endpoint driver uses them only for **stream 0** (playback):
 
 - `VIRTIO_SND_R_PCM_INFO (0x0100)`
 - `VIRTIO_SND_R_PCM_SET_PARAMS (0x0101)`

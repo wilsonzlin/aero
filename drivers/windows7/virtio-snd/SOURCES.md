@@ -18,6 +18,9 @@ request/response structures.
     format structures.
   - *Virtio over PCI Bus* (`virtio-pci` modern transport): PCI capability discovery,
     common configuration, notification mechanism, and interrupt routing.
+  - *Virtio over PCI Bus* (legacy / transitional transport): I/O-port register map
+    used by transitional devices. The default PortCls driver build uses the legacy
+    interface for compatibility with stock QEMU-style virtio devices.
   - *Split Virtqueues*: descriptor table, available ring, used ring, and memory
     ordering requirements.
   - URL: https://docs.oasis-open.org/virtio/ (select the specific 1.x revision used by
@@ -32,11 +35,16 @@ Aero constrains virtio to a small, testable subset. The definitive contract is:
   - §2: split-ring virtqueue subset
   - §3.4: virtio-snd device contract (queue layout, minimum feature set, minimal PCM)
 
+Note: `AERO-W7-VIRTIO` v1 is modern-only. The current PortCls endpoint driver in this
+directory uses the legacy virtio-pci I/O-port register layout for compatibility with
+transitional devices; this is documented at a high level in `docs/windows-device-contract.md`.
+
 ## In-repo implementation guides consulted
  
 - Virtqueue split-ring implementation guide (Windows 7): `docs/virtio/virtqueue-split-ring-win7.md`
 - virtio-pci modern interrupts on Windows 7 (MSI-X vs INTx): `docs/windows/virtio-pci-modern-interrupts.md`
 - WDM virtio-pci modern bring-up notes (PCI caps, BAR mapping, feature negotiation, queues): `docs/windows/virtio-pci-modern-wdm.md`
+- Legacy/transitional virtio-pci overview (I/O port vs modern capabilities): `docs/16-virtio-pci-legacy-transitional.md`
 
 ## Microsoft public documentation (PortCls / WaveRT)
 
@@ -71,8 +79,17 @@ exact upstream URL + revision/date here and ensure any required notices are pres
 ### In-repo shared code reused by this driver
   
 The virtio-snd driver is linked against in-repo virtio support code (no copying;
-the WDK build pulls these sources directly). Key paths:
-  
+the build pulls these sources directly).
+
+Default PortCls build (legacy virtio-pci I/O-port):
+
+- `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`
+- `drivers/windows7/virtio/common/src/virtio_queue.c`
+- Headers under `drivers/windows7/virtio/common/include/` (notably:
+  `virtio_pci_legacy.h`, `virtio_queue.h`, `virtio_bits.h`, `virtio_os.h`)
+
+Modern virtio-pci bring-up code in this directory (not built by default) additionally references:
+
 - `drivers/windows/virtio/common/virtqueue_split.c` (plus headers in that directory)
 - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   (plus `virtio_pci_cap_parser.h`)
@@ -84,5 +101,4 @@ the WDK build pulls these sources directly). Key paths:
 - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
 - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
 - `drivers/windows7/virtio/common/include/virtqueue_split.h`
-  (SG entry definitions used by `virtiosnd_sg_core`; this is independent of the
-  `drivers/windows/virtio/common` split-virtqueue implementation linked into the driver)
+  (SG entry definitions used by the `virtiosnd_sg_*` helpers)
