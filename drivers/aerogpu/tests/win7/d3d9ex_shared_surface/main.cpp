@@ -142,9 +142,9 @@ static bool MapSharedHandleToken(HWND hwnd, HANDLE shared_handle, uint32_t* out_
   }
 
   if (out_token) {
-    *out_token = q.share_token;
+    *out_token = q.debug_token;
   }
-  return q.share_token != 0;
+  return q.debug_token != 0;
 }
 
 struct Vertex {

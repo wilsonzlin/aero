@@ -4677,7 +4677,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         io->hdr.size = sizeof(*io);
         io->hdr.reserved0 = 0;
 
-        io->share_token = 0;
+        io->debug_token = 0;
         io->reserved0 = 0;
 
         HANDLE sharedHandle = (HANDLE)(ULONG_PTR)io->shared_handle;
@@ -4739,7 +4739,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
-        io->share_token = (uint32_t)token;
+        io->debug_token = (uint32_t)token;
         return STATUS_SUCCESS;
     }
 

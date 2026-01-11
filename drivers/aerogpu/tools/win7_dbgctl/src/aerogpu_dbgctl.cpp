@@ -516,7 +516,7 @@ static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint
   q.hdr.size = sizeof(q);
   q.hdr.reserved0 = 0;
   q.shared_handle = sharedHandle;
-  q.share_token = 0;
+  q.debug_token = 0;
   q.reserved0 = 0;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
@@ -525,7 +525,7 @@ static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint
     return 2;
   }
 
-  wprintf(L"debug_token: 0x%08lx (%lu)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
+  wprintf(L"debug_token: 0x%08lx (%lu)\n", (unsigned long)q.debug_token, (unsigned long)q.debug_token);
   return 0;
 }
 
