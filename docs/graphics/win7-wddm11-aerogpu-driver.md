@@ -391,6 +391,8 @@ For each entrypoint:
 - **Purpose:** Support vblank timing (DWM stability) and enable/disable interrupts.
 - **AeroGPU MVP behavior:**
   - `ControlInterrupt`: gate vblank interrupts by enabling/disabling `AEROGPU_IRQ_SCANOUT_VBLANK` in `AEROGPU_MMIO_REG_IRQ_ENABLE`.
+    - Win7/WDDM 1.1 uses `DXGK_INTERRUPT_TYPE_CRTC_VSYNC` for vblank/vsync control and delivery; ISR must notify using
+      `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
   - `GetScanLine`: return a simulated scanline based on the scanout vblank cadence (preferred: `SCANOUT0_VBLANK_*` timing registers) with a software fallback if timing regs are unavailable.
 - **Can be deferred:** Accurate scanline emulation.
  
