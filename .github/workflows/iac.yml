@@ -49,6 +49,7 @@ jobs:
     timeout-minutes: 10
     env:
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+      TF_IN_AUTOMATION: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -134,6 +135,9 @@ jobs:
     timeout-minutes: 10
     env:
       K8S_VERSION: "1.28.0"
+      KUBECONFORM_VERSION: "0.6.6"
+      KUBECONFORM_SHA256: "2ff56999a6ed9e96fe5ab9ee52271f2db5335baf7f17789035b9561970cdd3eb"
+      KUBECONFORM_CRD_SCHEMA: "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
     steps:
       - uses: actions/checkout@v4
 
@@ -146,8 +150,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          KUBECONFORM_VERSION="0.6.6"
-          KUBECONFORM_SHA256="2ff56999a6ed9e96fe5ab9ee52271f2db5335baf7f17789035b9561970cdd3eb"
           curl -fsSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/kubeconform.tar.gz kubeconform
@@ -158,7 +160,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/kubeconform
-          key: ${{ runner.os }}-kubeconform-${{ env.K8S_VERSION }}
+          key: ${{ runner.os }}-kubeconform-${{ env.K8S_VERSION }}-${{ env.KUBECONFORM_VERSION }}
           restore-keys: |
             ${{ runner.os }}-kubeconform-
 
@@ -196,7 +198,7 @@ jobs:
               -cache "$KUBECONFORM_CACHE_DIR" \
               -strict \
               -schema-location default \
-              -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+              -schema-location "$KUBECONFORM_CRD_SCHEMA" \
               -kubernetes-version "$K8S_VERSION" \
               -summary \
               "$out"
@@ -246,8 +248,8 @@ jobs:
           set -euo pipefail
           KUBECONFORM_CACHE_DIR="$HOME/.cache/kubeconform"
           mkdir -p "$KUBECONFORM_CACHE_DIR"
-          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
-          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
+          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "$KUBECONFORM_CRD_SCHEMA" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
+          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "$KUBECONFORM_CRD_SCHEMA" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
 
   deploy-hygiene:
     name: Deploy manifest hygiene

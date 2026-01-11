@@ -131,7 +131,7 @@ const composeManifests = Array.from(
       return base === 'compose.yaml' || base === 'compose.yml';
     }),
   ]),
-);
+).sort();
 
 for (const relPath of composeManifests) {
   if (relPath === 'deploy/docker-compose.yml') continue;
