@@ -263,7 +263,7 @@ Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
 - `none`: no auth (dev only; do not expose publicly).
 - `cookie` (recommended for same-origin browser clients): requires the `aero_session` cookie issued
   by the gateway `POST /session`.
-  - Configure the cookie signing secret via `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET`).
+  - Configure the cookie signing secret via `AERO_L2_SESSION_SECRET` (or `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET`).
 - `api_key`: requires `AERO_L2_API_KEY` (or legacy `AERO_L2_TOKEN`).
   - Clients can provide credentials via `?apiKey=<value>` / `?token=<value>` query params, or
     an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
