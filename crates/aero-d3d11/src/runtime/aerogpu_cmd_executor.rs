@@ -1820,15 +1820,13 @@ impl AerogpuD3d11Executor {
 
             if writeback {
                 let bytes_per_pixel = bytes_per_texel(dst.desc.format)?;
-                let mip_w = mip_extent(dst.desc.width, dst_mip_level);
-                let mip_h = mip_extent(dst.desc.height, dst_mip_level);
-                let unpadded_bpr = mip_w
+                let unpadded_bpr = width
                     .checked_mul(bytes_per_pixel)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: bytes_per_row overflow"))?;
                 let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
                 let padded_bpr = ((unpadded_bpr + align - 1) / align) * align;
                 let buffer_size = (padded_bpr as u64)
-                    .checked_mul(mip_h as u64)
+                    .checked_mul(height as u64)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: staging buffer size overflow"))?;
                 let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("aerogpu_cmd copy_texture2d writeback staging"),
@@ -1841,8 +1839,8 @@ impl AerogpuD3d11Executor {
                         texture: &dst.texture,
                         mip_level: dst_mip_level,
                         origin: wgpu::Origin3d {
-                            x: 0,
-                            y: 0,
+                            x: dst_x,
+                            y: dst_y,
                             z: dst_array_layer,
                         },
                         aspect: wgpu::TextureAspect::All,
@@ -1852,16 +1850,16 @@ impl AerogpuD3d11Executor {
                         layout: wgpu::ImageDataLayout {
                             offset: 0,
                             bytes_per_row: Some(padded_bpr),
-                            rows_per_image: Some(mip_h),
+                            rows_per_image: Some(height),
                         },
                     },
                     wgpu::Extent3d {
-                        width: mip_w,
-                        height: mip_h,
+                        width,
+                        height,
                         depth_or_array_layers: 1,
                     },
                 );
-                staging = Some((staging_buf, padded_bpr, unpadded_bpr, mip_h));
+                staging = Some((staging_buf, padded_bpr, unpadded_bpr, height));
             }
         }
 
@@ -1875,20 +1873,61 @@ impl AerogpuD3d11Executor {
 
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let Some((staging, padded_bpr, unpadded_bpr, mip_h)) = staging else {
+                let Some((staging, padded_bpr, unpadded_bpr, copy_h)) = staging else {
                     bail!("COPY_TEXTURE2D: internal error: missing staging buffer for writeback");
                 };
                 if dst_row_pitch_bytes == 0 {
                     bail!("COPY_TEXTURE2D: WRITEBACK_DST requires non-zero dst row_pitch_bytes");
                 }
-                let required = (dst_row_pitch_bytes as u64)
-                    .checked_mul(mip_h as u64)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size overflow"))?;
-                let base_gpa = allocs.validate_write_range(
-                    dst_backing.alloc_id,
-                    dst_backing.offset_bytes,
-                    required,
-                )?;
+                let row_pitch = dst_row_pitch_bytes as u64;
+                let bytes_per_pixel = {
+                    let dst = self
+                        .resources
+                        .textures
+                        .get(&dst_texture)
+                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
+                    bytes_per_texel(dst.desc.format)?
+                };
+                let dst_x_bytes = (dst_x as u64)
+                    .checked_mul(bytes_per_pixel as u64)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
+                let row_bytes = unpadded_bpr as u64;
+                if dst_x_bytes
+                    .checked_add(row_bytes)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst row byte range overflow"))?
+                    > row_pitch
+                {
+                    bail!("COPY_TEXTURE2D: dst row_pitch_bytes too small for writeback region");
+                }
+
+                let start_offset = dst_backing
+                    .offset_bytes
+                    .checked_add(
+                        (dst_y as u64)
+                            .checked_mul(row_pitch)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_y row_pitch overflow"))?,
+                    )
+                    .and_then(|v| v.checked_add(dst_x_bytes))
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
+
+                let last_row_start = start_offset
+                    .checked_add(
+                        (copy_h as u64)
+                            .checked_sub(1)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: copy_h underflow"))?
+                            .checked_mul(row_pitch)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row offset overflow"))?,
+                    )
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: last row start overflow"))?;
+                let end_offset = last_row_start
+                    .checked_add(row_bytes)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing end overflow"))?;
+                let validate_size = end_offset
+                    .checked_sub(start_offset)
+                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
+
+                let base_gpa =
+                    allocs.validate_write_range(dst_backing.alloc_id, start_offset, validate_size)?;
 
                 let new_encoder =
                     self.device
@@ -1922,8 +1961,7 @@ impl AerogpuD3d11Executor {
                     .map_err(|e| anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}"))?;
 
                 let mapped = slice.get_mapped_range();
-                let row_pitch = dst_row_pitch_bytes as u64;
-                for row in 0..mip_h as u64 {
+                for row in 0..copy_h as u64 {
                     let src_start = row as usize * padded_bpr as usize;
                     let src_end = src_start + unpadded_bpr as usize;
                     let dst_gpa = base_gpa
