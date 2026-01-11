@@ -122,6 +122,13 @@ constexpr uint32_t kMaxFrameLatencyMax = 16;
 // DWM/PresentEx call sites if the GPU stops making forward progress.
 constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 
+// Allow escape-based inference of "last submitted fence" only as a last-resort
+// debug aid. Correct per-submission fence tracking must come from the exact
+// `SubmissionFenceId` returned by the D3D9 runtime callbacks (Render/Present).
+#ifndef AEROGPU_D3D9_ENABLE_SUBMISSION_FENCE_ESCAPE_FALLBACK
+  #define AEROGPU_D3D9_ENABLE_SUBMISSION_FENCE_ESCAPE_FALLBACK 0
+#endif
+
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
 // Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
 // detection (SFINAE) so the UMD can populate as many entrypoints as possible
@@ -1243,6 +1250,11 @@ struct has_member_NewPatchLocationListSize : std::false_type {};
 template <typename T>
 struct has_member_NewPatchLocationListSize<T, std::void_t<decltype(std::declval<T>().NewPatchLocationListSize)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_SubmissionFenceId : std::false_type {};
+template <typename T>
+struct has_member_SubmissionFenceId<T, std::void_t<decltype(std::declval<T>().SubmissionFenceId)>> : std::true_type {};
+
 template <typename ArgsT>
 void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
   if constexpr (has_member_hContext<ArgsT>::value) {
@@ -1359,16 +1371,29 @@ void update_context_from_submit_args(Device* dev, const ArgsT& args) {
 }
 
 template <typename CallbackFn>
-HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_length_bytes) {
+HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_length_bytes, uint64_t* out_submission_fence) {
+  if (out_submission_fence) {
+    *out_submission_fence = 0;
+  }
+
   using ArgPtr = typename fn_first_param<CallbackFn>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
 
   Arg args{};
   fill_submit_args(args, dev, command_length_bytes);
+  if constexpr (has_member_SubmissionFenceId<Arg>::value) {
+    args.SubmissionFenceId = 0;
+  }
 
   const HRESULT hr = cb(static_cast<ArgPtr>(&args));
   if (FAILED(hr)) {
     return hr;
+  }
+
+  if (out_submission_fence) {
+    if constexpr (has_member_SubmissionFenceId<Arg>::value) {
+      *out_submission_fence = static_cast<uint64_t>(args.SubmissionFenceId);
+    }
   }
 
   // The runtime may rotate command buffers/lists after a submission. Preserve the
@@ -1404,11 +1429,7 @@ uint64_t submit(Device* dev, bool is_present) {
     // point when the per-submit allocation list is full. Reset submission-local
     // tracking state so subsequent commands start with a fresh allocation list
     // without issuing an empty DMA buffer to the kernel.
-    uint64_t fence = 0;
-    {
-      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      fence = adapter->last_submitted_fence;
-    }
+    const uint64_t fence = dev->last_submission_fence;
     dev->cmd.reset();
     dev->alloc_list_tracker.reset();
     dev->wddm_context.reset_submission_buffers();
@@ -1419,6 +1440,7 @@ uint64_t submit(Device* dev, bool is_present) {
   const uint64_t cmd_bytes = static_cast<uint64_t>(dev->cmd.size());
 
   bool submitted_to_kmd = false;
+  uint64_t submission_fence = 0;
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
   // WDDM submission path: hand the runtime-provided DMA/alloc list buffers back
   // to dxgkrnl via the device callbacks captured at CreateDevice time.
@@ -1440,17 +1462,21 @@ uint64_t submit(Device* dev, bool is_present) {
       HRESULT submit_hr = E_NOTIMPL;
       if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
         if (is_present && dev->wddm_callbacks.pfnPresentCb) {
+          submission_fence = 0;
           submit_hr = invoke_submit_callback(dev,
                                              dev->wddm_callbacks.pfnPresentCb,
-                                             static_cast<uint32_t>(cmd_bytes));
+                                             static_cast<uint32_t>(cmd_bytes),
+                                             &submission_fence);
         }
       }
       if (!SUCCEEDED(submit_hr)) {
         if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnRenderCb) {
+            submission_fence = 0;
             submit_hr = invoke_submit_callback(dev,
                                                dev->wddm_callbacks.pfnRenderCb,
-                                               static_cast<uint32_t>(cmd_bytes));
+                                               static_cast<uint32_t>(cmd_bytes),
+                                               &submission_fence);
           }
         }
       }
@@ -1472,27 +1498,41 @@ uint64_t submit(Device* dev, bool is_present) {
 #endif
 
   uint64_t fence = 0;
-#if defined(_WIN32)
-  if (submitted_to_kmd && adapter->kmd_query_available.load(std::memory_order_acquire)) {
-    uint64_t submitted = 0;
-    uint64_t completed = 0;
-    const bool ok = adapter->kmd_query.QueryFence(&submitted, &completed);
-    if (ok) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if (submitted_to_kmd) {
+    // Critical: capture the exact `SubmissionFenceId` returned by the runtime
+    // callback for *this* submission. Do not infer per-submission fences from a
+    // global "last submitted" query; that breaks under multi-process workloads.
+    fence = submission_fence;
+
+#if AEROGPU_D3D9_ENABLE_SUBMISSION_FENCE_ESCAPE_FALLBACK
+    if (fence == 0 && adapter->kmd_query_available.load(std::memory_order_acquire)) {
+      uint64_t submitted = 0;
+      uint64_t completed = 0;
+      const bool ok = adapter->kmd_query.QueryFence(&submitted, &completed);
+      if (ok) {
+        logf("aerogpu-d3d9: WARNING: using KMD last_submitted_fence=%llu as debug fallback\n",
+             static_cast<unsigned long long>(submitted));
+        fence = submitted;
+        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+        adapter->completed_fence = std::max(adapter->completed_fence, completed);
+      } else {
+        adapter->kmd_query_available.store(false, std::memory_order_release);
+      }
+    }
+#endif
+
+    if (fence) {
       bool updated = false;
       {
         std::lock_guard<std::mutex> lock(adapter->fence_mutex);
         const uint64_t prev_submitted = adapter->last_submitted_fence;
-        const uint64_t prev_completed = adapter->completed_fence;
-        adapter->last_submitted_fence = std::max<uint64_t>(adapter->last_submitted_fence, submitted);
-        adapter->completed_fence = std::max<uint64_t>(adapter->completed_fence, completed);
-        fence = adapter->last_submitted_fence;
-        updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
+        adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
+        updated = (adapter->last_submitted_fence != prev_submitted);
       }
       if (updated) {
         adapter->fence_cv.notify_all();
       }
-    } else {
-      adapter->kmd_query_available.store(false, std::memory_order_release);
     }
   }
 #endif
@@ -1512,6 +1552,7 @@ uint64_t submit(Device* dev, bool is_present) {
        static_cast<unsigned long long>(cmd_bytes),
        static_cast<unsigned long long>(fence));
 
+  dev->last_submission_fence = fence;
   dev->cmd.reset();
   dev->alloc_list_tracker.reset();
   dev->wddm_context.reset_submission_buffers();
@@ -2927,10 +2968,6 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     std::lock_guard<std::mutex> lock(dev->mutex);
     fence = submit(dev);
   }
-  if (fence == 0 && dev->adapter) {
-    std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
-    fence = dev->adapter->last_submitted_fence;
-  }
   const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
   if (wait_res == FenceWaitResult::Failed) {
     return E_FAIL;
@@ -2959,10 +2996,6 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     fence = submit(dev);
-  }
-  if (fence == 0 && dev->adapter) {
-    std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
-    fence = dev->adapter->last_submitted_fence;
   }
   const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
   if (wait_res == FenceWaitResult::Failed) {
@@ -3662,7 +3695,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
   cmd->reserved0 = 0;
 
   const uint64_t submit_fence = submit(dev, /*is_present=*/true);
-  const uint64_t present_fence = std::max<uint64_t>(submit_fence, refresh_fence_snapshot(dev->adapter).last_submitted);
+  const uint64_t present_fence = submit_fence;
   if (present_fence) {
     dev->inflight_present_fences.push_back(present_fence);
   }
@@ -3735,7 +3768,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   cmd->reserved0 = 0;
 
   const uint64_t submit_fence = submit(dev, /*is_present=*/true);
-  const uint64_t present_fence = std::max<uint64_t>(submit_fence, refresh_fence_snapshot(dev->adapter).last_submitted);
+  const uint64_t present_fence = submit_fence;
   if (present_fence) {
     dev->inflight_present_fences.push_back(present_fence);
   }
@@ -4084,30 +4117,10 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   // Ensure all prior GPU work is submitted and capture the submission fence.
   const uint64_t submit_fence = submit(dev);
 
-  uint64_t kmd_submitted = 0;
-  uint64_t kmd_completed = 0;
-  bool have_kmd_fence = false;
-#if defined(_WIN32)
-  if (adapter->kmd_query_available.load(std::memory_order_acquire)) {
-    have_kmd_fence = adapter->kmd_query.QueryFence(&kmd_submitted, &kmd_completed);
-    if (!have_kmd_fence) {
-      adapter->kmd_query_available.store(false, std::memory_order_release);
-    }
-  }
-#endif
-
-  uint64_t fence_value = submit_fence;
-  if (have_kmd_fence) {
-    {
-      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, kmd_submitted);
-      adapter->completed_fence = std::max(adapter->completed_fence, kmd_completed);
-    }
-    fence_value = std::max<uint64_t>(fence_value, kmd_submitted);
-  } else {
-    // Fallback (and safety net): use the cached KMD fence snapshot if present.
-    fence_value = std::max<uint64_t>(fence_value, refresh_fence_snapshot(adapter).last_submitted);
-  }
+  // Use the per-submission fence returned by submit(). Do not infer fence IDs
+  // from a global "last submitted" query, which can be skewed by other
+  // devices/processes submitting concurrently (e.g. DWM + apps).
+  const uint64_t fence_value = submit_fence;
 
   q->fence_value.store(fence_value, std::memory_order_release);
   q->issued.store(true, std::memory_order_release);

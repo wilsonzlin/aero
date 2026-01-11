@@ -261,6 +261,11 @@ struct Device {
   CmdWriter cmd;
   AllocationListTracker alloc_list_tracker;
 
+  // Last submission fence ID returned by the D3D9 runtime callback for this
+  // device/context. This is required to correctly wait for "our own" work under
+  // multi-device / multi-process workloads (DWM + apps).
+  uint64_t last_submission_fence = 0;
+
   // D3D9Ex throttling + present statistics.
   //
   // These fields model the D3D9Ex "maximum frame latency" behavior used by DWM:

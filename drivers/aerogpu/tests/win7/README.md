@@ -21,6 +21,7 @@ Common flags:
   * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
   * `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
   * `--iterations=N` – for `d3d9ex_event_query`: number of query submissions to run (default 6).
+  * `--stress-iterations=N` – for `d3d9ex_event_query`: iterations per device in the multi-device stress phase (default 200).
   * `--wait-timeout-ms=N` – for `wait_vblank_pacing` and `vblank_wait_sanity`: per-wait timeout for `D3DKMTWaitForVerticalBlankEvent` (default 2000).
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
@@ -171,7 +172,7 @@ You can find the correct VID/DID in the Win7 guest via:
 In a Win7 VM with AeroGPU installed and working correctly:
 
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
-* `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking (initial poll before `Flush`) and that `D3DQUERYTYPE_EVENT` eventually signals (window is hidden by default; pass `--show` to display it)
+* `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking (initial poll before `Flush`), that `D3DQUERYTYPE_EVENT` eventually signals, and stresses interleaved multi-device submissions + `PresentEx(D3DPRESENT_DONOTWAIT)` throttling (window is hidden by default; pass `--show` to display it)
 * `vblank_wait_sanity` validates that `D3DKMTWaitForVerticalBlankEvent` blocks on vblank and does not show huge stalls (fails fast on missing/broken vblank interrupt wiring)
 * `wait_vblank_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on VidPn source 0 (AeroGPU MVP) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.
 * `vblank_wait` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on the selected display (default: primary) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.

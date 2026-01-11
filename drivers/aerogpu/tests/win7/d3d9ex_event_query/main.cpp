@@ -23,6 +23,37 @@ static int FailFast(const char* test_name, const char* fmt, ...) {
   return 1;
 }
 
+static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
+                                         HWND hwnd,
+                                         D3DPRESENT_PARAMETERS* pp,
+                                         DWORD create_flags,
+                                         IDirect3DDevice9Ex** out_dev) {
+  if (!d3d || !pp || !out_dev) {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                                   D3DDEVTYPE_HAL,
+                                   hwnd,
+                                   create_flags,
+                                   pp,
+                                   NULL,
+                                   out_dev);
+  if (FAILED(hr)) {
+    DWORD fallback_flags = create_flags;
+    fallback_flags &= ~D3DCREATE_HARDWARE_VERTEXPROCESSING;
+    fallback_flags |= D3DCREATE_SOFTWARE_VERTEXPROCESSING;
+    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                             D3DDEVTYPE_HAL,
+                             hwnd,
+                             fallback_flags,
+                             pp,
+                             NULL,
+                             out_dev);
+  }
+  return hr;
+}
+
 class GetDataRunner {
  public:
   GetDataRunner() : request_event_(NULL), done_event_(NULL), thread_(NULL), stop_(0), query_(NULL) {
@@ -177,12 +208,159 @@ class GetDataRunner {
   Result res_;
 };
 
+namespace {
+
+struct StressWorkerParams {
+  int index;
+  int iterations;
+  bool show_window;
+  HANDLE start_event;
+  volatile LONG* any_failed;
+  volatile LONG* saw_was_still_drawing;
+};
+
+static DWORD WINAPI StressWorkerThreadProc(void* userdata) {
+  StressWorkerParams* p = (StressWorkerParams*)userdata;
+  if (!p) {
+    return 1;
+  }
+
+  const wchar_t* kClassName = (p->index == 0) ? L"AeroGPU_D3D9ExEventQuery_0" : L"AeroGPU_D3D9ExEventQuery_1";
+  const wchar_t* kTitle = (p->index == 0) ? L"AeroGPU D3D9Ex EventQuery 0" : L"AeroGPU D3D9Ex EventQuery 1";
+
+  HWND hwnd = aerogpu_test::CreateBasicWindow(kClassName, kTitle, 128, 128, p->show_window);
+  if (!hwnd) {
+    InterlockedExchange(p->any_failed, 1);
+    return 1;
+  }
+
+  ComPtr<IDirect3D9Ex> d3d;
+  HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
+  if (FAILED(hr)) {
+    InterlockedExchange(p->any_failed, 1);
+    return 1;
+  }
+
+  D3DPRESENT_PARAMETERS pp;
+  ZeroMemory(&pp, sizeof(pp));
+  pp.BackBufferWidth = 128;
+  pp.BackBufferHeight = 128;
+  pp.BackBufferFormat = D3DFMT_X8R8G8B8;
+  pp.BackBufferCount = 1;
+  pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+  pp.hDeviceWindow = hwnd;
+  pp.Windowed = TRUE;
+  // Vsync makes it easy to hit the frame-latency limit and exercise DONOTWAIT.
+  pp.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
+
+  ComPtr<IDirect3DDevice9Ex> dev;
+  DWORD create_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
+  hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
+  if (FAILED(hr)) {
+    // Some environments (e.g. remote sessions) can have unusual vblank/pacing behavior; fall back to
+    // immediate present rather than failing the entire stress phase.
+    pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
+  }
+  if (FAILED(hr)) {
+    InterlockedExchange(p->any_failed, 1);
+    return 1;
+  }
+
+  hr = dev->SetMaximumFrameLatency(1);
+  if (FAILED(hr)) {
+    InterlockedExchange(p->any_failed, 1);
+    return 1;
+  }
+
+  ComPtr<IDirect3DQuery9> q;
+  hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, q.put());
+  if (FAILED(hr)) {
+    InterlockedExchange(p->any_failed, 1);
+    return 1;
+  }
+
+  WaitForSingleObject(p->start_event, INFINITE);
+
+  for (int i = 0; i < p->iterations; ++i) {
+    if (InterlockedCompareExchange(p->any_failed, 0, 0) != 0) {
+      return 1;
+    }
+
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB((p->index * 64 + i) & 255, 0, 0), 1.0f, 0);
+    if (FAILED(hr)) {
+      InterlockedExchange(p->any_failed, 1);
+      return 1;
+    }
+
+    hr = dev->BeginScene();
+    if (SUCCEEDED(hr)) {
+      dev->EndScene();
+    }
+
+    hr = q->Issue(D3DISSUE_END);
+    if (FAILED(hr)) {
+      InterlockedExchange(p->any_failed, 1);
+      return 1;
+    }
+
+    // Encourage the other thread to submit between Issue and GetData to stress
+    // per-submission fence tracking.
+    Sleep(0);
+
+    DWORD done = 0;
+    DWORD start = GetTickCount();
+    for (;;) {
+      hr = q->GetData(&done, sizeof(done), D3DGETDATA_FLUSH);
+      if (hr == S_OK) {
+        break;
+      }
+      if (hr != S_FALSE && hr != D3DERR_WASSTILLDRAWING) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      if (GetTickCount() - start > 5000) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      Sleep(0);
+    }
+
+    // Present with DONOTWAIT; if we hit the frame-latency limit, we should get
+    // D3DERR_WASSTILLDRAWING and then eventually make progress once prior work
+    // completes. This must be tracked per-device (other devices/processes
+    // should not interfere).
+    start = GetTickCount();
+    for (;;) {
+      hr = dev->PresentEx(NULL, NULL, NULL, NULL, D3DPRESENT_DONOTWAIT);
+      if (hr == S_OK) {
+        break;
+      }
+      if (hr == D3DERR_WASSTILLDRAWING) {
+        InterlockedExchange(p->saw_was_still_drawing, 1);
+      } else {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      if (GetTickCount() - start > 5000) {
+        InterlockedExchange(p->any_failed, 1);
+        return 1;
+      }
+      Sleep(0);
+    }
+  }
+
+  return 0;
+}
+
+} // namespace
+
 static int RunD3D9ExEventQuery(int argc, char** argv) {
   const char* kTestName = "d3d9ex_event_query";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--show] [--show-window] [--hidden] [--iterations=N] [--require-vid=0x####] "
-        "[--require-did=0x####] "
+        "Usage: %s.exe [--show] [--show-window] [--hidden] [--iterations=N] [--stress-iterations=N] "
+        "[--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Default: window is hidden (pass --show to display it).");
@@ -240,6 +418,21 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     iterations = 64;
   }
 
+  uint32_t stress_iterations = 200;
+  std::string stress_iterations_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--stress-iterations", &stress_iterations_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(stress_iterations_str, &stress_iterations, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --stress-iterations: %s", err.c_str());
+    }
+  }
+  if (stress_iterations < 10) {
+    stress_iterations = 10;
+  }
+  if (stress_iterations > 2000) {
+    stress_iterations = 2000;
+  }
+
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
     return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
@@ -277,24 +470,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   ComPtr<IDirect3DDevice9Ex> dev;
   DWORD create_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES |
                        D3DCREATE_MULTITHREADED;
-  hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
-                           D3DDEVTYPE_HAL,
-                           hwnd,
-                           create_flags,
-                           &pp,
-                           NULL,
-                           dev.put());
-  if (FAILED(hr)) {
-    create_flags = D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES |
-                   D3DCREATE_MULTITHREADED;
-    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
-                             D3DDEVTYPE_HAL,
-                             hwnd,
-                             create_flags,
-                             &pp,
-                             NULL,
-                             dev.put());
-  }
+  hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
   }
@@ -533,6 +709,82 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                immediate_ms,
                                (unsigned)polls);
   }
+
+  if (!saw_immediate_not_ready) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: GetData(D3DGETDATA_DONOTFLUSH) returned S_OK immediately for every iteration; "
+        "this is allowed, but it makes the test less sensitive to stalled query/fence behavior",
+        kTestName);
+  }
+
+  // --- Multi-device stress test ---
+  aerogpu_test::PrintfStdout("INFO: %s: starting multi-device stress (%u iterations per device)",
+                             kTestName,
+                             (unsigned)stress_iterations);
+
+  HANDLE start_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!start_event) {
+    return aerogpu_test::Fail(kTestName, "CreateEvent failed");
+  }
+
+  volatile LONG any_failed = 0;
+  volatile LONG saw_was_still_drawing = 0;
+
+  StressWorkerParams params[2];
+  ZeroMemory(params, sizeof(params));
+  for (int i = 0; i < 2; ++i) {
+    params[i].index = i;
+    params[i].iterations = (int)stress_iterations;
+    params[i].show_window = show_window && !hidden;
+    params[i].start_event = start_event;
+    params[i].any_failed = &any_failed;
+    params[i].saw_was_still_drawing = &saw_was_still_drawing;
+  }
+
+  HANDLE threads[2];
+  threads[0] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[0], 0, NULL);
+  threads[1] = CreateThread(NULL, 0, StressWorkerThreadProc, &params[1], 0, NULL);
+  if (!threads[0] || !threads[1]) {
+    if (threads[0]) {
+      CloseHandle(threads[0]);
+    }
+    if (threads[1]) {
+      CloseHandle(threads[1]);
+    }
+    CloseHandle(start_event);
+    return aerogpu_test::Fail(kTestName, "CreateThread failed");
+  }
+
+  SetEvent(start_event);
+
+  // Scale the join timeout with iteration count so manual runs with large
+  // --stress-iterations values don't spuriously fail, while still bounding the
+  // wait in case a worker thread hangs.
+  DWORD stress_timeout_ms = 30000;
+  const DWORD scaled_timeout_ms = (DWORD)stress_iterations * 100;
+  if (scaled_timeout_ms > stress_timeout_ms) {
+    stress_timeout_ms = scaled_timeout_ms;
+  }
+  if (stress_timeout_ms > 300000) {
+    stress_timeout_ms = 300000;
+  }
+
+  DWORD w = WaitForMultipleObjects(2, threads, TRUE, stress_timeout_ms);
+  CloseHandle(threads[0]);
+  CloseHandle(threads[1]);
+  CloseHandle(start_event);
+
+  if (w != WAIT_OBJECT_0) {
+    FailFast(kTestName, "multi-device stress timed out waiting for worker threads");
+  }
+
+  if (any_failed != 0) {
+    return aerogpu_test::Fail(kTestName, "multi-device stress worker failed");
+  }
+
+  aerogpu_test::PrintfStdout("INFO: %s: PresentEx(DONOTWAIT) observed WASSTILLDRAWING=%s",
+                             kTestName,
+                             saw_was_still_drawing != 0 ? "yes" : "no");
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
