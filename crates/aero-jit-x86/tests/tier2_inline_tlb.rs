@@ -384,7 +384,10 @@ fn run_trace(
     let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
         trace,
         &plan,
-        Tier2WasmOptions { inline_tlb: true },
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+        },
     );
     validate_wasm(&wasm);
 

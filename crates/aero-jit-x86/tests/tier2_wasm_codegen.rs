@@ -15,7 +15,7 @@ use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use aero_jit_x86::tier2::wasm_codegen::{
-    Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
+    Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
 };
 use aero_jit_x86::wasm::{
     IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -420,6 +420,75 @@ fn read_cpu_state(bytes: &[u8]) -> ([u64; 16], u64, u64) {
 
 fn v(idx: u32) -> ValueId {
     ValueId(idx)
+}
+
+#[test]
+fn tier2_code_version_guard_can_inline_version_table_reads() {
+    let mut trace = TraceIr {
+        prologue: vec![Instr::GuardCodeVersion {
+            page: 0,
+            expected: 1,
+            exit_rip: 0x9999,
+        }],
+        body: vec![],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &opt.regalloc,
+        Tier2WasmOptions {
+            inline_tlb: false,
+            code_version_guard_import: false,
+        },
+    );
+    validate_wasm(&wasm);
+
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1111;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let table_ptr = install_code_version_table(&memory, &mut store, &[1]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x1111);
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_NONE);
+
+    // Update the table entry directly and re-run: the guard should trigger invalidation without
+    // calling the host import.
+    write_u32_to_memory(&memory, &mut store, table_ptr as usize, 2);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x9999);
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION);
+    assert_eq!(
+        store.data().code_version_calls,
+        0,
+        "inline guard should not call env.code_page_version"
+    );
 }
 
 #[test]

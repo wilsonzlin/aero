@@ -30,11 +30,22 @@ pub struct Tier2WasmOptions {
     /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
     /// and stores.
     pub inline_tlb: bool,
+    /// Whether Tier-2 code-version guards should call the legacy host import
+    /// `env.code_page_version(cpu_ptr, page) -> i64`.
+    ///
+    /// When disabled, the generated WASM reads the code-version table directly from linear memory
+    /// using the offsets in [`crate::jit_ctx`].
+    pub code_version_guard_import: bool,
 }
 
 impl Default for Tier2WasmOptions {
     fn default() -> Self {
-        Self { inline_tlb: false }
+        Self {
+            inline_tlb: false,
+            // Preserve the existing ABI by default: tests and embedding code can simulate
+            // mid-trace invalidation by hooking this import.
+            code_version_guard_import: true,
+        }
     }
 }
 
@@ -607,11 +618,52 @@ impl Emitter<'_> {
                 expected,
                 exit_rip,
             } => {
-                self.f
-                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                self.f.instruction(&Instruction::I64Const(page as i64));
-                self.f
-                    .instruction(&Instruction::Call(self.imported.code_page_version));
+                if self.options.code_version_guard_import {
+                    // Legacy ABI: let the host provide the current version (and optionally inject
+                    // side effects, e.g. tests simulating mid-trace invalidation).
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.f.instruction(&Instruction::I64Const(page as i64));
+                    self.f
+                        .instruction(&Instruction::Call(self.imported.code_page_version));
+                } else {
+                    // Inline load from the code-version table (configured by the runtime via
+                    // `jit_ctx::CODE_VERSION_TABLE_{PTR,LEN}_OFFSET`).
+                    //
+                    // current = (page < table_len) ? table[page] : 0
+                    self.f.instruction(&Instruction::I64Const(page as i64));
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.f.instruction(&Instruction::I32Load(memarg(
+                        jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+                        2,
+                    )));
+                    self.f.instruction(&Instruction::I64ExtendI32U);
+                    self.f.instruction(&Instruction::I64LtU);
+                    self.f
+                        .instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+                    {
+                        // addr = table_ptr + page * 4
+                        self.f.instruction(&Instruction::LocalGet(
+                            self.layout.cpu_ptr_local(),
+                        ));
+                        self.f.instruction(&Instruction::I32Load(memarg(
+                            jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
+                            2,
+                        )));
+                        self.f.instruction(&Instruction::I64ExtendI32U);
+                        self.f.instruction(&Instruction::I64Const(page as i64));
+                        self.f.instruction(&Instruction::I64Const(4));
+                        self.f.instruction(&Instruction::I64Mul);
+                        self.f.instruction(&Instruction::I64Add);
+                        self.f.instruction(&Instruction::I32WrapI64);
+                        self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
+                        self.f.instruction(&Instruction::I64ExtendI32U);
+                    }
+                    self.f.instruction(&Instruction::Else);
+                    self.f.instruction(&Instruction::I64Const(0));
+                    self.f.instruction(&Instruction::End);
+                }
                 self.f.instruction(&Instruction::I64Const(expected as i64));
                 self.f.instruction(&Instruction::I64Ne);
                 self.f.instruction(&Instruction::If(BlockType::Empty));
