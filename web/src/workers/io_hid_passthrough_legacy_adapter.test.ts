@@ -93,6 +93,43 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
     expect(reattach.guestPort).toBe(1);
   });
 
+  it("honors numericDeviceId when provided by the sender", () => {
+    const adapter = new IoWorkerLegacyHidPassthroughAdapter({ firstDeviceId: 100 });
+
+    const collections = [
+      {
+        outputReports: [],
+        children: [],
+      },
+    ] as any;
+
+    const attachA = adapter.attach({
+      type: "hid:attach",
+      deviceId: "dev-a",
+      numericDeviceId: 200,
+      guestPort: 0,
+      vendorId: 1,
+      productId: 2,
+      collections,
+    });
+    expect(attachA.deviceId).toBe(200);
+
+    const attachB = adapter.attach({
+      type: "hid:attach",
+      deviceId: "dev-b",
+      // Collision: dev-a already reserved 200, so dev-b should get the next free ID.
+      numericDeviceId: 200,
+      guestPort: 0,
+      vendorId: 3,
+      productId: 4,
+      collections,
+    });
+    expect(attachB.deviceId).toBe(201);
+
+    const input = adapter.inputReport({ type: "hid:inputReport", deviceId: "dev-a", reportId: 1, data: new ArrayBuffer(0) });
+    expect(input?.deviceId).toBe(200);
+  });
+
   it("translates hid.sendReport payloads into legacy hid:sendReport messages", () => {
     const adapter = new IoWorkerLegacyHidPassthroughAdapter({ firstDeviceId: 10 });
 
