@@ -8,6 +8,8 @@ use std::collections::VecDeque;
 const MIN_FRAME_LEN: usize = 14;
 const MAX_FRAME_LEN: usize = 1514;
 const MAX_TX_TOTAL_LEN: usize = VirtioNetHeader::SIZE + MAX_FRAME_LEN;
+/// Upper bound on queued host→guest frames, to avoid unbounded memory growth if the guest never
+/// posts RX buffers.
 const MAX_PENDING_RX_FRAMES: usize = 256;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
