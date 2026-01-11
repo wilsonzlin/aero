@@ -603,19 +603,17 @@ fn read_shift_count<B: CpuBus>(
     instr: &Instruction,
     _next_ip: u64,
 ) -> Result<u64, Exception> {
-    match instr.op_kind(1) {
+    let count_op = match instr.mnemonic() {
+        Mnemonic::Shld | Mnemonic::Shrd => 2,
+        _ => 1,
+    };
+    match instr.op_kind(count_op) {
         OpKind::Immediate8 => Ok(instr.immediate8() as u64),
-        OpKind::Register => Ok(state.read_reg(instr.op1_register()) & 0xFF),
-        _ => {
-            // Some encodings use op2 as count (e.g. SHLD).
-            if instr.op_count() > 2 && instr.op_kind(2) == OpKind::Register {
-                Ok(state.read_reg(instr.op2_register()) & 0xFF)
-            } else if instr.op_count() > 2 && instr.op_kind(2) == OpKind::Immediate8 {
-                Ok(instr.immediate8() as u64)
-            } else {
-                Err(Exception::InvalidOpcode)
-            }
+        OpKind::Register => {
+            let reg = instr.op_register(count_op);
+            Ok(state.read_reg(reg) & 0xFF)
         }
+        _ => Err(Exception::InvalidOpcode),
     }
 }
 

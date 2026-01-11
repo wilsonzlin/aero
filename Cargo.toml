@@ -16,7 +16,6 @@ members = [
     "crates/aero-shared",
     "crates/aero-emulator",
     "crates/aero-core",
-    "crates/aero-cpu",
     "crates/aero-tests",
     "crates/aero-http-range",
     "crates/aero-ipc",

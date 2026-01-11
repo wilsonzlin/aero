@@ -1,4 +1,10 @@
-use aero_cpu::tier0::{CpuMode, CpuState, EmuException, Flag, Machine, MemoryBus, PortIo, StepOutcome};
+use aero_cpu_core::interp::tier0::exec::{step as tier0_step, StepExit};
+use aero_cpu_core::mem::CpuBus;
+use aero_cpu_core::state::{
+    mask_bits, CpuMode, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_SF, FLAG_ZF, RFLAGS_IF,
+};
+use aero_cpu_core::{AssistReason, Exception};
+use aero_x86::{decode, Instruction, Mnemonic, OpKind, Register};
 use std::collections::HashMap;
 
 struct TestMem {
@@ -7,29 +13,33 @@ struct TestMem {
 
 impl TestMem {
     fn new(size: usize) -> Self {
-        Self {
-            data: vec![0; size],
-        }
+        Self { data: vec![0; size] }
     }
 
     fn load(&mut self, addr: u64, bytes: &[u8]) {
         self.data[addr as usize..addr as usize + bytes.len()].copy_from_slice(bytes);
     }
-}
 
-impl MemoryBus for TestMem {
-    fn read_u8(&mut self, paddr: u64) -> Result<u8, EmuException> {
-        self.data
-            .get(paddr as usize)
-            .copied()
-            .ok_or(EmuException::MemOutOfBounds(paddr))
-    }
-
-    fn write_u8(&mut self, paddr: u64, value: u8) -> Result<(), EmuException> {
-        let Some(slot) = self.data.get_mut(paddr as usize) else {
-            return Err(EmuException::MemOutOfBounds(paddr));
+    fn write_u8(&mut self, addr: u64, value: u8) -> Result<(), Exception> {
+        let Some(slot) = self.data.get_mut(addr as usize) else {
+            return Err(Exception::MemoryFault);
         };
         *slot = value;
+        Ok(())
+    }
+
+    fn write_u16(&mut self, addr: u64, value: u16) -> Result<(), Exception> {
+        let bytes = value.to_le_bytes();
+        self.write_u8(addr, bytes[0])?;
+        self.write_u8(addr + 1, bytes[1])?;
+        Ok(())
+    }
+
+    fn write_u32(&mut self, addr: u64, value: u32) -> Result<(), Exception> {
+        let bytes = value.to_le_bytes();
+        for (i, b) in bytes.iter().enumerate() {
+            self.write_u8(addr + i as u64, *b)?;
+        }
         Ok(())
     }
 }
@@ -41,9 +51,9 @@ struct TestPorts {
     out_u8: Vec<(u16, u8)>,
 }
 
-impl PortIo for TestPorts {
-    fn in_u8(&mut self, _port: u16) -> u8 {
-        *self.in_u8.get(&_port).unwrap_or(&0)
+impl TestPorts {
+    fn in_u8(&mut self, port: u16) -> u8 {
+        *self.in_u8.get(&port).unwrap_or(&0)
     }
 
     fn out_u8(&mut self, port: u16, value: u8) {
@@ -54,18 +64,564 @@ impl PortIo for TestPorts {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepOutcome {
+    Continue,
+    Halted,
+}
+
+struct Machine {
+    cpu: CpuState,
+    mem: TestMem,
+    ports: TestPorts,
+    msr: HashMap<u32, u64>,
+}
+
+impl Machine {
+    fn new(cpu: CpuState, mem: TestMem, ports: TestPorts) -> Self {
+        Self {
+            cpu,
+            mem,
+            ports,
+            msr: HashMap::new(),
+        }
+    }
+
+    fn run(&mut self, max_insts: u64) -> Result<(), Exception> {
+        for _ in 0..max_insts {
+            match self.step()? {
+                StepOutcome::Continue => {}
+                StepOutcome::Halted => return Ok(()),
+            }
+        }
+        Err(Exception::Unimplemented("execution limit reached"))
+    }
+
+    fn step(&mut self) -> Result<StepOutcome, Exception> {
+        if self.cpu.halted {
+            return Ok(StepOutcome::Halted);
+        }
+        let mut bus = Bus {
+            mem: &mut self.mem,
+            ports: &mut self.ports,
+        };
+        match tier0_step(&mut self.cpu, &mut bus)? {
+            StepExit::Continue | StepExit::Branch => Ok(StepOutcome::Continue),
+            StepExit::Halted => Ok(StepOutcome::Halted),
+            StepExit::BiosInterrupt(vector) => {
+                panic!("unexpected BIOS interrupt exit: {vector:#x}")
+            }
+            StepExit::Assist(reason) => {
+                self.handle_assist(reason)?;
+                Ok(StepOutcome::Continue)
+            }
+        }
+    }
+
+    fn handle_assist(&mut self, _reason: AssistReason) -> Result<(), Exception> {
+        let mut bus = Bus {
+            mem: &mut self.mem,
+            ports: &mut self.ports,
+        };
+
+        let ip = self.cpu.rip();
+        let fetch_addr = self.cpu.seg_base_reg(Register::CS).wrapping_add(ip);
+        let bytes = bus.fetch(fetch_addr, 15)?;
+        let decoded = decode(&bytes, ip, self.cpu.bitness()).map_err(|_| Exception::InvalidOpcode)?;
+        let next_ip = ip.wrapping_add(decoded.len as u64) & self.cpu.mode.ip_mask();
+        let instr = decoded.instr;
+
+        match instr.mnemonic() {
+            Mnemonic::In => {
+                let dst = instr.op0_register();
+                let bits = reg_bits(dst)?;
+                let port = match instr.op_kind(1) {
+                    OpKind::Immediate8 => instr.immediate8() as u16,
+                    OpKind::Register => self.cpu.read_reg(instr.op1_register()) as u16,
+                    _ => return Err(Exception::InvalidOpcode),
+                };
+                let v = bus.io_read(port, bits)?;
+                self.cpu.write_reg(dst, v);
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Out => {
+                let src = instr.op1_register();
+                let bits = reg_bits(src)?;
+                let port = match instr.op_kind(0) {
+                    OpKind::Immediate8 => instr.immediate8() as u16,
+                    OpKind::Register => self.cpu.read_reg(instr.op0_register()) as u16,
+                    _ => return Err(Exception::InvalidOpcode),
+                };
+                let v = self.cpu.read_reg(src);
+                bus.io_write(port, bits, v)?;
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Cli => {
+                self.cpu.set_flag(RFLAGS_IF, false);
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Sti => {
+                self.cpu.set_flag(RFLAGS_IF, true);
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Cpuid => {
+                let leaf = self.cpu.read_reg(Register::EAX) as u32;
+                let sub = self.cpu.read_reg(Register::ECX) as u32;
+                let (eax, ebx, ecx, edx) = cpuid_leaf(leaf, sub);
+                self.cpu.write_reg(Register::EAX, eax as u64);
+                self.cpu.write_reg(Register::EBX, ebx as u64);
+                self.cpu.write_reg(Register::ECX, ecx as u64);
+                self.cpu.write_reg(Register::EDX, edx as u64);
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Rdtsc => {
+                let tsc = self.cpu.msr.tsc;
+                self.cpu.write_reg(Register::EAX, (tsc as u32) as u64);
+                self.cpu.write_reg(Register::EDX, ((tsc >> 32) as u32) as u64);
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Rdmsr => {
+                let idx = self.cpu.read_reg(Register::ECX) as u32;
+                let val = match idx {
+                    0x10 => self.cpu.msr.tsc,
+                    _ => *self.msr.get(&idx).unwrap_or(&0),
+                };
+                self.cpu.write_reg(Register::EAX, (val as u32) as u64);
+                self.cpu.write_reg(Register::EDX, ((val >> 32) as u32) as u64);
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Wrmsr => {
+                let idx = self.cpu.read_reg(Register::ECX) as u32;
+                let val = ((self.cpu.read_reg(Register::EDX) as u64) << 32)
+                    | (self.cpu.read_reg(Register::EAX) & 0xFFFF_FFFF);
+                if idx == 0x10 {
+                    self.cpu.msr.tsc = val;
+                } else {
+                    self.msr.insert(idx, val);
+                }
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Lgdt | Mnemonic::Lidt => {
+                if instr.op_kind(0) != OpKind::Memory {
+                    return Err(Exception::InvalidOpcode);
+                }
+                let addr = calc_ea(&self.cpu, &instr, next_ip, true)?;
+                let limit = bus.read_u16(addr)?;
+                let base = bus.read_u32(addr + 2)? as u64;
+                match instr.mnemonic() {
+                    Mnemonic::Lgdt => {
+                        self.cpu.tables.gdtr.limit = limit;
+                        self.cpu.tables.gdtr.base = base;
+                    }
+                    Mnemonic::Lidt => {
+                        self.cpu.tables.idtr.limit = limit;
+                        self.cpu.tables.idtr.base = base;
+                    }
+                    _ => {}
+                }
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Ltr => {
+                let sel = match instr.op_kind(0) {
+                    OpKind::Register => self.cpu.read_reg(instr.op0_register()) as u16,
+                    OpKind::Memory => {
+                        let addr = calc_ea(&self.cpu, &instr, next_ip, true)?;
+                        bus.read_u16(addr)?
+                    }
+                    _ => return Err(Exception::InvalidOpcode),
+                };
+                self.cpu.tables.tr.selector = sel;
+                self.cpu.set_rip(next_ip);
+                Ok(())
+            }
+            Mnemonic::Mov => {
+                if instr.op_kind(0) == OpKind::Register
+                    && instr.op_kind(1) == OpKind::Register
+                    && (is_ctrl_or_debug_reg(instr.op0_register())
+                        || is_ctrl_or_debug_reg(instr.op1_register()))
+                {
+                    let dst = instr.op0_register();
+                    let src = instr.op1_register();
+                    if is_ctrl_or_debug_reg(dst) {
+                        let v = self.cpu.read_reg(src);
+                        write_special_reg(&mut self.cpu, dst, v);
+                    } else {
+                        let v = read_special_reg(&self.cpu, src)?;
+                        self.cpu.write_reg(dst, v);
+                    }
+                    self.cpu.update_mode();
+                    self.cpu.set_rip(next_ip);
+                    Ok(())
+                } else {
+                    Err(Exception::Unimplemented("assisted MOV form"))
+                }
+            }
+            Mnemonic::Call if matches!(instr.op_kind(0), OpKind::FarBranch16 | OpKind::FarBranch32) => {
+                let selector = instr.far_branch_selector();
+                let target = match instr.op_kind(0) {
+                    OpKind::FarBranch16 => instr.far_branch16() as u64,
+                    OpKind::FarBranch32 => instr.far_branch32() as u64,
+                    _ => unreachable!(),
+                };
+                // push CS then return IP (top of stack).
+                let cs = self.cpu.read_reg(Register::CS);
+                push(&mut self.cpu, &mut bus, cs, 2)?;
+                push(&mut self.cpu, &mut bus, next_ip, 2)?;
+                self.cpu.write_reg(Register::CS, selector as u64);
+                self.cpu.set_rip(target & self.cpu.mode.ip_mask());
+                Ok(())
+            }
+            Mnemonic::Retf => {
+                let pop_imm = if instr.op_count() == 1 && instr.op_kind(0) == OpKind::Immediate16 {
+                    instr.immediate16() as u32
+                } else {
+                    0
+                };
+                let ip = pop(&mut self.cpu, &mut bus, 2)? & 0xFFFF;
+                let cs = pop(&mut self.cpu, &mut bus, 2)? as u16;
+                let sp = self.cpu.stack_ptr().wrapping_add(pop_imm as u64) & mask_bits(self.cpu.stack_ptr_bits());
+                self.cpu.set_stack_ptr(sp);
+                self.cpu.write_reg(Register::CS, cs as u64);
+                self.cpu.set_rip(ip);
+                Ok(())
+            }
+            Mnemonic::Int | Mnemonic::Int3 => {
+                let vector = if instr.mnemonic() == Mnemonic::Int3 {
+                    3u8
+                } else {
+                    instr.immediate8()
+                };
+                if self.cpu.bitness() != 16 {
+                    return Err(Exception::Unimplemented("INT outside real mode"));
+                }
+                let flags = self.cpu.rflags() & 0xFFFF;
+                push(&mut self.cpu, &mut bus, flags, 2)?;
+                let cs = self.cpu.read_reg(Register::CS);
+                push(&mut self.cpu, &mut bus, cs, 2)?;
+                push(&mut self.cpu, &mut bus, next_ip & 0xFFFF, 2)?;
+                let vec_addr = (vector as u64) * 4;
+                let off = bus.read_u16(vec_addr)? as u64;
+                let seg = bus.read_u16(vec_addr + 2)? as u64;
+                self.cpu.write_reg(Register::CS, seg);
+                self.cpu.set_rip(off);
+                Ok(())
+            }
+            Mnemonic::Iret => {
+                if self.cpu.bitness() != 16 {
+                    return Err(Exception::Unimplemented("IRET outside real mode"));
+                }
+                let ip = pop(&mut self.cpu, &mut bus, 2)? & 0xFFFF;
+                let cs = pop(&mut self.cpu, &mut bus, 2)? as u16;
+                let flags = pop(&mut self.cpu, &mut bus, 2)? as u16;
+                self.cpu.write_reg(Register::CS, cs as u64);
+                self.cpu.set_rip(ip);
+                self.cpu.set_rflags(flags as u64);
+                Ok(())
+            }
+            _ => Err(Exception::Unimplemented("assist handler missing mnemonic")),
+        }
+    }
+}
+
+struct Bus<'a> {
+    mem: &'a mut TestMem,
+    ports: &'a mut TestPorts,
+}
+
+impl<'a> Bus<'a> {
+    fn io_read(&mut self, port: u16, bits: u32) -> Result<u64, Exception> {
+        match bits {
+            8 => Ok(self.ports.in_u8(port) as u64),
+            16 => Ok(self.ports.in_u8(port) as u64),
+            32 => Ok(self.ports.in_u8(port) as u64),
+            _ => Err(Exception::InvalidOpcode),
+        }
+    }
+
+    fn io_write(&mut self, port: u16, bits: u32, val: u64) -> Result<(), Exception> {
+        match bits {
+            8 => {
+                self.ports.out_u8(port, val as u8);
+                Ok(())
+            }
+            16 => {
+                self.ports.out_u8(port, val as u8);
+                Ok(())
+            }
+            32 => {
+                self.ports.out_u8(port, val as u8);
+                Ok(())
+            }
+            _ => Err(Exception::InvalidOpcode),
+        }
+    }
+}
+
+impl CpuBus for Bus<'_> {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.mem
+            .data
+            .get(vaddr as usize)
+            .copied()
+            .ok_or(Exception::MemoryFault)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        let lo = self.read_u8(vaddr)? as u16;
+        let hi = self.read_u8(vaddr + 1)? as u16;
+        Ok(lo | (hi << 8))
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        let mut v = 0u32;
+        for i in 0..4 {
+            v |= (self.read_u8(vaddr + i)? as u32) << (i * 8);
+        }
+        Ok(v)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        let mut v = 0u64;
+        for i in 0..8 {
+            v |= (self.read_u8(vaddr + i)? as u64) << (i * 8);
+        }
+        Ok(v)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        let mut v = 0u128;
+        for i in 0..16 {
+            v |= (self.read_u8(vaddr + i)? as u128) << (i * 8);
+        }
+        Ok(v)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.mem.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.mem.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.mem.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        for i in 0..8 {
+            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
+        }
+        Ok(())
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        for i in 0..16 {
+            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
+        }
+        Ok(())
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        let mut buf = [0u8; 15];
+        let len = max_len.min(15);
+        for i in 0..len {
+            buf[i] = self.read_u8(vaddr + i as u64)?;
+        }
+        Ok(buf)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        match size {
+            1 => Ok(self.ports.in_u8(port) as u64),
+            _ => Ok(0),
+        }
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        match size {
+            1 => {
+                self.ports.out_u8(port, val as u8);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn reg_bits(reg: Register) -> Result<u32, Exception> {
+    use Register::*;
+    let bits = match reg {
+        AL | CL | DL | BL | AH | CH | DH | BH | SPL | BPL | SIL | DIL | R8L | R9L | R10L | R11L
+        | R12L | R13L | R14L | R15L => 8,
+        AX | CX | DX | BX | SP | BP | SI | DI | R8W | R9W | R10W | R11W | R12W | R13W | R14W
+        | R15W => 16,
+        EAX | ECX | EDX | EBX | ESP | EBP | ESI | EDI | R8D | R9D | R10D | R11D | R12D | R13D
+        | R14D | R15D => 32,
+        RAX | RCX | RDX | RBX | RSP | RBP | RSI | RDI | R8 | R9 | R10 | R11 | R12 | R13 | R14
+        | R15 => 64,
+        ES | CS | SS | DS | FS | GS => 16,
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    Ok(bits)
+}
+
+fn calc_ea(cpu: &CpuState, instr: &Instruction, next_ip: u64, include_seg: bool) -> Result<u64, Exception> {
+    let base = instr.memory_base();
+    let index = instr.memory_index();
+    let scale = instr.memory_index_scale() as u64;
+    let mut disp = instr.memory_displacement64() as i128;
+    if base == Register::RIP {
+        disp -= next_ip as i128;
+    }
+
+    let addr_bits = if base == Register::RIP {
+        64
+    } else if base != Register::None {
+        reg_bits(base)?
+    } else if index != Register::None {
+        reg_bits(index)?
+    } else {
+        match instr.memory_displ_size() {
+            2 => 16,
+            4 => 32,
+            8 => 64,
+            _ => cpu.bitness(),
+        }
+    };
+
+    let mut offset: i128 = disp;
+    if base != Register::None {
+        let base_val = if base == Register::RIP { next_ip } else { cpu.read_reg(base) };
+        offset += (base_val & mask_bits(addr_bits)) as i128;
+    }
+    if index != Register::None {
+        let idx_val = cpu.read_reg(index) & mask_bits(addr_bits);
+        offset += (idx_val as i128) * (scale as i128);
+    }
+
+    let addr = (offset as u64) & mask_bits(addr_bits);
+    if include_seg {
+        Ok(cpu.seg_base_reg(instr.memory_segment()).wrapping_add(addr))
+    } else {
+        Ok(addr)
+    }
+}
+
+fn is_ctrl_or_debug_reg(reg: Register) -> bool {
+    matches!(
+        reg,
+        Register::CR0
+            | Register::CR2
+            | Register::CR3
+            | Register::CR4
+            | Register::CR8
+            | Register::DR0
+            | Register::DR1
+            | Register::DR2
+            | Register::DR3
+            | Register::DR6
+            | Register::DR7
+    )
+}
+
+fn write_special_reg(cpu: &mut CpuState, reg: Register, value: u64) {
+    match reg {
+        Register::CR0 => cpu.control.cr0 = value,
+        Register::CR2 => cpu.control.cr2 = value,
+        Register::CR3 => cpu.control.cr3 = value,
+        Register::CR4 => cpu.control.cr4 = value,
+        Register::CR8 => cpu.control.cr8 = value,
+        Register::DR0 => cpu.debug.dr[0] = value,
+        Register::DR1 => cpu.debug.dr[1] = value,
+        Register::DR2 => cpu.debug.dr[2] = value,
+        Register::DR3 => cpu.debug.dr[3] = value,
+        Register::DR6 => cpu.debug.dr6 = value,
+        Register::DR7 => cpu.debug.dr7 = value,
+        _ => {}
+    }
+}
+
+fn read_special_reg(cpu: &CpuState, reg: Register) -> Result<u64, Exception> {
+    Ok(match reg {
+        Register::CR0 => cpu.control.cr0,
+        Register::CR2 => cpu.control.cr2,
+        Register::CR3 => cpu.control.cr3,
+        Register::CR4 => cpu.control.cr4,
+        Register::CR8 => cpu.control.cr8,
+        Register::DR0 => cpu.debug.dr[0],
+        Register::DR1 => cpu.debug.dr[1],
+        Register::DR2 => cpu.debug.dr[2],
+        Register::DR3 => cpu.debug.dr[3],
+        Register::DR6 => cpu.debug.dr6,
+        Register::DR7 => cpu.debug.dr7,
+        _ => return Err(Exception::InvalidOpcode),
+    })
+}
+
+fn push<B: CpuBus>(cpu: &mut CpuState, bus: &mut B, val: u64, size: u32) -> Result<(), Exception> {
+    let sp_bits = cpu.stack_ptr_bits();
+    let mut sp = cpu.stack_ptr();
+    sp = sp.wrapping_sub(size as u64) & mask_bits(sp_bits);
+    cpu.set_stack_ptr(sp);
+    let addr = cpu.seg_base_reg(Register::SS).wrapping_add(sp);
+    match size {
+        2 => bus.write_u16(addr, val as u16),
+        4 => bus.write_u32(addr, val as u32),
+        8 => bus.write_u64(addr, val),
+        _ => Err(Exception::InvalidOpcode),
+    }
+}
+
+fn pop<B: CpuBus>(cpu: &mut CpuState, bus: &mut B, size: u32) -> Result<u64, Exception> {
+    let sp_bits = cpu.stack_ptr_bits();
+    let sp = cpu.stack_ptr();
+    let addr = cpu.seg_base_reg(Register::SS).wrapping_add(sp);
+    let v = match size {
+        2 => bus.read_u16(addr)? as u64,
+        4 => bus.read_u32(addr)? as u64,
+        8 => bus.read_u64(addr)?,
+        _ => return Err(Exception::InvalidOpcode),
+    };
+    let new_sp = sp.wrapping_add(size as u64) & mask_bits(sp_bits);
+    cpu.set_stack_ptr(new_sp);
+    Ok(v)
+}
+
+fn cpuid_leaf(leaf: u32, _subleaf: u32) -> (u32, u32, u32, u32) {
+    match leaf {
+        0 => {
+            let vendor = *b"GenuineIntel";
+            let ebx = u32::from_le_bytes([vendor[0], vendor[1], vendor[2], vendor[3]]);
+            let edx = u32::from_le_bytes([vendor[4], vendor[5], vendor[6], vendor[7]]);
+            let ecx = u32::from_le_bytes([vendor[8], vendor[9], vendor[10], vendor[11]]);
+            (1, ebx, ecx, edx)
+        }
+        _ => (0, 0, 0, 0),
+    }
+}
+
 fn run_test(
     mode: CpuMode,
     code: &[u8],
     init: impl FnOnce(&mut CpuState, &mut TestMem, &mut TestPorts),
-) -> Machine<TestMem, TestPorts> {
+) -> Machine {
     let mut mem = TestMem::new(1024 * 1024);
     mem.load(0, code);
     let mut cpu = CpuState::new(mode);
-    cpu.set_segment_selector(iced_x86::Register::CS, 0).unwrap();
-    cpu.set_segment_selector(iced_x86::Register::DS, 0).unwrap();
-    cpu.set_segment_selector(iced_x86::Register::ES, 0).unwrap();
-    cpu.set_segment_selector(iced_x86::Register::SS, 0).unwrap();
+    cpu.write_reg(Register::CS, 0);
+    cpu.write_reg(Register::DS, 0);
+    cpu.write_reg(Register::ES, 0);
+    cpu.write_reg(Register::SS, 0);
     cpu.set_rip(0);
     let mut ports = TestPorts::default();
     init(&mut cpu, &mut mem, &mut ports);
@@ -79,14 +635,14 @@ fn make_machine(
     mode: CpuMode,
     code: &[u8],
     init: impl FnOnce(&mut CpuState, &mut TestMem, &mut TestPorts),
-) -> Machine<TestMem, TestPorts> {
+) -> Machine {
     let mut mem = TestMem::new(1024 * 1024);
     mem.load(0, code);
     let mut cpu = CpuState::new(mode);
-    cpu.set_segment_selector(iced_x86::Register::CS, 0).unwrap();
-    cpu.set_segment_selector(iced_x86::Register::DS, 0).unwrap();
-    cpu.set_segment_selector(iced_x86::Register::ES, 0).unwrap();
-    cpu.set_segment_selector(iced_x86::Register::SS, 0).unwrap();
+    cpu.write_reg(Register::CS, 0);
+    cpu.write_reg(Register::DS, 0);
+    cpu.write_reg(Register::ES, 0);
+    cpu.write_reg(Register::SS, 0);
     cpu.set_rip(0);
     let mut ports = TestPorts::default();
     init(&mut cpu, &mut mem, &mut ports);
@@ -156,7 +712,7 @@ fn boot_sector_hello_via_int10() {
     mem.write_u16(ivt + 2, bios_seg).unwrap();
 
     let mut cpu = CpuState::new(CpuMode::Real);
-    cpu.set_segment_selector(iced_x86::Register::CS, 0).unwrap();
+    cpu.write_reg(Register::CS, 0);
     cpu.set_rip(boot_addr);
 
     let ports = TestPorts::default();
@@ -183,19 +739,19 @@ fn mov_lea_xchg() {
     ];
 
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
 
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::AX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::AX),
         0x1234
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::BX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::BX),
         0x5678
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::DI).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::DI),
         0x1234 + 0x0004 + 0x10
     );
 }
@@ -211,14 +767,14 @@ fn movzx_movsx() {
     ];
 
     let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x8000).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x8000);
     });
 
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::ECX),
         0xFFFF_FF80
     );
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(), 0x80);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EDX), 0x80);
 }
 
 #[test]
@@ -235,26 +791,26 @@ fn push_pop_and_pusha_popa() {
     ];
 
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x0100).unwrap();
-        cpu.write_reg(iced_x86::Register::CX, 0x2222).unwrap();
-        cpu.write_reg(iced_x86::Register::DX, 0x3333).unwrap();
-        cpu.write_reg(iced_x86::Register::BX, 0x4444).unwrap();
-        cpu.write_reg(iced_x86::Register::BP, 0x5555).unwrap();
-        cpu.write_reg(iced_x86::Register::SI, 0x6666).unwrap();
-        cpu.write_reg(iced_x86::Register::DI, 0x7777).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x0100);
+        cpu.write_reg(iced_x86::Register::CX, 0x2222);
+        cpu.write_reg(iced_x86::Register::DX, 0x3333);
+        cpu.write_reg(iced_x86::Register::BX, 0x4444);
+        cpu.write_reg(iced_x86::Register::BP, 0x5555);
+        cpu.write_reg(iced_x86::Register::SI, 0x6666);
+        cpu.write_reg(iced_x86::Register::DI, 0x7777);
     });
 
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::BX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::BX),
         0x1234
     );
     // AX was 0 when PUSHA executed, so POPA restores it back to 0.
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::AX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::AX),
         0x0000
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::SP).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::SP),
         0x0100
     );
 }
@@ -263,17 +819,17 @@ fn push_pop_and_pusha_popa() {
 fn add_flags() {
     let code = [0x00, 0xD8, 0xF4]; // add al,bl; hlt
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0xFF).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 0x01).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0xFF);
+        cpu.write_reg(iced_x86::Register::BL, 0x01);
     });
 
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0x00);
-    assert!(machine.cpu.get_flag(Flag::Cf));
-    assert!(machine.cpu.get_flag(Flag::Zf));
-    assert!(machine.cpu.get_flag(Flag::Af));
-    assert!(!machine.cpu.get_flag(Flag::Of));
-    assert!(!machine.cpu.get_flag(Flag::Sf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0x00);
+    assert!(machine.cpu.get_flag(FLAG_CF));
+    assert!(machine.cpu.get_flag(FLAG_ZF));
+    assert!(machine.cpu.get_flag(FLAG_AF));
+    assert!(!machine.cpu.get_flag(FLAG_OF));
+    assert!(!machine.cpu.get_flag(FLAG_SF));
 }
 
 #[test]
@@ -281,32 +837,32 @@ fn adc_sbb_and_cmp_flags() {
     // adc al,bl; cmp al,bl; sbb al,bl
     let adc = [0x10, 0xD8, 0xF4]; // adc al,bl
     let machine = run_test(CpuMode::Real, &adc, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 1).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 1).unwrap();
-        cpu.set_flag(Flag::Cf, true);
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 1);
+        cpu.write_reg(iced_x86::Register::BL, 1);
+        cpu.set_flag(FLAG_CF, true);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 3);
-    assert!(!machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 3);
+    assert!(!machine.cpu.get_flag(FLAG_CF));
 
     let cmp = [0x38, 0xD8, 0xF4]; // cmp al,bl
     let machine = run_test(CpuMode::Real, &cmp, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 1).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 2).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 1);
+        cpu.write_reg(iced_x86::Register::BL, 2);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 1);
-    assert!(machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 1);
+    assert!(machine.cpu.get_flag(FLAG_CF));
 
     let sbb = [0x18, 0xD8, 0xF4]; // sbb al,bl
     let machine = run_test(CpuMode::Real, &sbb, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 0).unwrap();
-        cpu.set_flag(Flag::Cf, true);
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0);
+        cpu.write_reg(iced_x86::Register::BL, 0);
+        cpu.set_flag(FLAG_CF, true);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0xFF);
-    assert!(machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0xFF);
+    assert!(machine.cpu.get_flag(FLAG_CF));
 }
 
 #[test]
@@ -317,95 +873,95 @@ fn inc_dec_preserve_cf() {
         0xF4,
     ];
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0x7F).unwrap();
-        cpu.set_flag(Flag::Cf, true);
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0x7F);
+        cpu.set_flag(FLAG_CF, true);
     });
 
-    assert!(machine.cpu.get_flag(Flag::Cf));
-    assert!(machine.cpu.get_flag(Flag::Of)); // inc 0x7F => 0x80 overflows
+    assert!(machine.cpu.get_flag(FLAG_CF));
+    assert!(machine.cpu.get_flag(FLAG_OF)); // inc 0x7F => 0x80 overflows
 }
 
 #[test]
 fn mul_div_idiv_and_divide_error() {
     let mul = [0xF6, 0xE3, 0xF4]; // mul bl
     let machine = run_test(CpuMode::Real, &mul, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0x10).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 0x10).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0x10);
+        cpu.write_reg(iced_x86::Register::BL, 0x10);
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::AX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::AX),
         0x0100
     );
-    assert!(machine.cpu.get_flag(Flag::Cf));
-    assert!(machine.cpu.get_flag(Flag::Of));
+    assert!(machine.cpu.get_flag(FLAG_CF));
+    assert!(machine.cpu.get_flag(FLAG_OF));
 
     let div = [0xF6, 0xF3, 0xF4]; // div bl
     let machine = run_test(CpuMode::Real, &div, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AX, 0x0100).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 0x10).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AX, 0x0100);
+        cpu.write_reg(iced_x86::Register::BL, 0x10);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0x10);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AH).unwrap(), 0x00);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0x10);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AH), 0x00);
 
     let idiv = [0xF6, 0xFB, 0xF4]; // idiv bl
     let machine = run_test(CpuMode::Real, &idiv, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AX, 0xFFF0).unwrap(); // -16
-        cpu.write_reg(iced_x86::Register::BL, 0xF0).unwrap(); // -16
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AX, 0xFFF0); // -16
+        cpu.write_reg(iced_x86::Register::BL, 0xF0); // -16
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 1);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AH).unwrap(), 0);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 1);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AH), 0);
 
     // Divide by zero -> #DE
     let mut machine = make_machine(CpuMode::Real, &[0xF6, 0xF3, 0xF4], |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AX, 1).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 0).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AX, 1);
+        cpu.write_reg(iced_x86::Register::BL, 0);
     });
     let err = machine.run(10).unwrap_err();
-    assert_eq!(err, EmuException::DivideError);
+    assert_eq!(err, Exception::DivideError);
 }
 
 #[test]
 fn logic_and_shift_rotate() {
     let and_ = [0x20, 0xD8, 0xF4]; // and al,bl
     let machine = run_test(CpuMode::Real, &and_, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0xF0).unwrap();
-        cpu.write_reg(iced_x86::Register::BL, 0x0F).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0xF0);
+        cpu.write_reg(iced_x86::Register::BL, 0x0F);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0);
-    assert!(machine.cpu.get_flag(Flag::Zf));
-    assert!(!machine.cpu.get_flag(Flag::Cf));
-    assert!(!machine.cpu.get_flag(Flag::Of));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0);
+    assert!(machine.cpu.get_flag(FLAG_ZF));
+    assert!(!machine.cpu.get_flag(FLAG_CF));
+    assert!(!machine.cpu.get_flag(FLAG_OF));
 
     let neg = [0xF6, 0xD8, 0xF4]; // neg al
     let machine = run_test(CpuMode::Real, &neg, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 1).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 1);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0xFF);
-    assert!(machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0xFF);
+    assert!(machine.cpu.get_flag(FLAG_CF));
 
     let shl = [0xD0, 0xE0, 0xF4]; // shl al,1
     let machine = run_test(CpuMode::Real, &shl, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0x81).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0x81);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0x02);
-    assert!(machine.cpu.get_flag(Flag::Cf));
-    assert!(machine.cpu.get_flag(Flag::Of));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0x02);
+    assert!(machine.cpu.get_flag(FLAG_CF));
+    assert!(machine.cpu.get_flag(FLAG_OF));
 
     let ror = [0xD0, 0xC8, 0xF4]; // ror al,1
     let machine = run_test(CpuMode::Real, &ror, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
-        cpu.write_reg(iced_x86::Register::AL, 0x81).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
+        cpu.write_reg(iced_x86::Register::AL, 0x81);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0xC0);
-    assert!(machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0xC0);
+    assert!(machine.cpu.get_flag(FLAG_CF));
 }
 
 #[test]
@@ -422,14 +978,14 @@ fn cmovcc_and_setcc() {
         0xF4, // hlt
     ];
     let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::ECX),
         0x2222_2222
     );
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 1);
-    assert!(machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 1);
+    assert!(machine.cpu.get_flag(FLAG_CF));
 }
 
 #[test]
@@ -437,10 +993,10 @@ fn pushf_popf_and_clc_stc_cmc() {
     // stc; pushf; clc; popf (restores CF=1); cmc (toggles to 0)
     let code = [0xF9, 0x9C, 0xF8, 0x9D, 0xF5, 0xF4];
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x0200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x0200);
     });
-    assert!(!machine.cpu.get_flag(Flag::Cf));
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::SP).unwrap(), 0x0200);
+    assert!(!machine.cpu.get_flag(FLAG_CF));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::SP), 0x0200);
 }
 
 #[test]
@@ -455,12 +1011,12 @@ fn xadd_and_bswap() {
         0xF4,
     ];
     let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 3);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::BL).unwrap(), 1);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 3);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::BL), 1);
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::ECX),
         0x7856_3412
     );
 }
@@ -477,10 +1033,10 @@ fn bit_ops_bt_bts_btr_btc() {
         0xF4, // hlt
     ];
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 0);
-    assert!(machine.cpu.get_flag(Flag::Cf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX), 0);
+    assert!(machine.cpu.get_flag(FLAG_CF));
 }
 
 #[test]
@@ -496,15 +1052,15 @@ fn bsf_and_bsr() {
         0xF4,
     ];
     let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EBX).unwrap(), 4);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(), 4);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EBX), 4);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EDX), 4);
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::ECX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::ECX),
         0x1234_5678
     );
-    assert!(machine.cpu.get_flag(Flag::Zf));
+    assert!(machine.cpu.get_flag(FLAG_ZF));
 }
 
 #[test]
@@ -524,11 +1080,11 @@ fn rcl_rcr_shld_shrd() {
         0xF4,
     ];
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::SI).unwrap(), 0x80);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::CX).unwrap(), 0x234A);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::DX).unwrap(), 0xD123);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::SI), 0x80);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::CX), 0x234A);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::DX), 0xD123);
 }
 
 #[test]
@@ -540,41 +1096,41 @@ fn jecxz() {
         0xF4,
     ];
     let machine = run_test(CpuMode::Protected, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(), 0);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EAX), 0);
 }
 
 #[test]
 fn cbw_cwd_cwde_cdq_cdqe_cqo() {
     let real = [0xB0, 0x80, 0x98, 0x99, 0xF4]; // mov al,0x80; cbw; cwd; hlt
     let machine = run_test(CpuMode::Real, &real, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 0xFF80);
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::DX).unwrap(), 0xFFFF);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX), 0xFF80);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::DX), 0xFFFF);
 
     let prot = [0x66, 0xB8, 0x00, 0x80, 0x98, 0x99, 0xF4]; // mov ax,0x8000; cwde; cdq; hlt
     let machine = run_test(CpuMode::Protected, &prot, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::EAX),
         0xFFFF_8000
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::EDX),
         0xFFFF_FFFF
     );
 
     let long = [0xB8, 0x00, 0x00, 0x00, 0x80, 0x48, 0x98, 0x48, 0x99, 0xF4]; // mov eax,0x80000000; cdqe; cqo; hlt
     let machine = run_test(CpuMode::Long, &long, |_cpu, _mem, _ports| {});
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::RAX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::RAX),
         0xFFFF_FFFF_8000_0000
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::RDX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::RDX),
         0xFFFF_FFFF_FFFF_FFFF
     );
 }
@@ -584,19 +1140,19 @@ fn control_flow() {
     // jmp short skips mov ax,1.
     let jmp = [0xEB, 0x03, 0xB8, 0x01, 0x00, 0x31, 0xC0, 0xF4];
     let machine = run_test(CpuMode::Real, &jmp, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 0);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX), 0);
 
     // near call/ret
     let call = [
         0xB8, 0x00, 0x00, 0xE8, 0x01, 0x00, 0xF4, 0xB8, 0x34, 0x12, 0xC3,
     ];
     let machine = run_test(CpuMode::Real, &call, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::AX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::AX),
         0x1234
     );
 
@@ -609,26 +1165,26 @@ fn control_flow() {
         0xCB, // retf
     ];
     let machine = run_test(CpuMode::Real, &far, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::AX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::AX),
         0x1234
     );
 
     // loop
     let loop_ = [0xB9, 0x03, 0x00, 0x31, 0xC0, 0x40, 0xE2, 0xFD, 0xF4];
     let machine = run_test(CpuMode::Real, &loop_, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 3);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX), 3);
 
     // jcxz
     let jcxz = [0xB9, 0x00, 0x00, 0xE3, 0x03, 0xB8, 0x01, 0x00, 0xF4];
     let machine = run_test(CpuMode::Real, &jcxz, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX).unwrap(), 0);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AX), 0);
 }
 
 #[test]
@@ -685,8 +1241,8 @@ fn string_ops_rep_movs_stos_lods_cmps_scas() {
         &machine.mem.data[dst as usize..dst as usize + 4],
         &[0xAA; 4]
     );
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 1);
-    assert!(machine.cpu.get_flag(Flag::Zf));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 1);
+    assert!(machine.cpu.get_flag(FLAG_ZF));
 }
 
 #[test]
@@ -694,51 +1250,51 @@ fn system_in_out_cli_sti_cpuid_rdtsc_rdmsr_wrmsr_lgdt_lidt_ltr() {
     // in/out + cli/sti
     let in_out = [0xFB, 0xFA, 0xE4, 0x10, 0xE6, 0x11, 0xF4];
     let machine = run_test(CpuMode::Real, &in_out, |cpu, _mem, ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
         ports.in_u8.insert(0x10, 0xAB);
     });
-    assert!(!machine.cpu.get_flag(Flag::If));
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL).unwrap(), 0xAB);
+    assert!(!machine.cpu.get_flag(RFLAGS_IF));
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::AL), 0xAB);
     assert!(machine.ports.out_u8.contains(&(0x11, 0xAB)));
 
     // cpuid vendor string (leaf 0)
     let cpuid = [0x0F, 0xA2, 0xF4];
     let machine = run_test(CpuMode::Protected, &cpuid, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
-        cpu.write_reg(iced_x86::Register::EAX, 0).unwrap();
-        cpu.write_reg(iced_x86::Register::ECX, 0).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
+        cpu.write_reg(iced_x86::Register::EAX, 0);
+        cpu.write_reg(iced_x86::Register::ECX, 0);
     });
-    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(), 1);
+    assert_eq!(machine.cpu.read_reg(iced_x86::Register::EAX), 1);
 
     // rdtsc deterministic readback
     let rdtsc = [0x0F, 0x31, 0xF4];
     let machine = run_test(CpuMode::Protected, &rdtsc, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
-        cpu.tsc = 0x1234_5678_9ABC_DEF0;
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
+        cpu.msr.tsc = 0x1234_5678_9ABC_DEF0;
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::EAX),
         0x9ABC_DEF0
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::EDX),
         0x1234_5678
     );
 
     // wrmsr/rdmsr (use a non-special MSR so the value roundtrips exactly).
     let msr = [0x0F, 0x30, 0x0F, 0x32, 0xF4];
     let machine = run_test(CpuMode::Protected, &msr, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::ESP, 0x2000).unwrap();
-        cpu.write_reg(iced_x86::Register::ECX, 0x11).unwrap();
-        cpu.write_reg(iced_x86::Register::EAX, 0x1234_5678).unwrap();
-        cpu.write_reg(iced_x86::Register::EDX, 0x9ABC_DEF0).unwrap();
+        cpu.write_reg(iced_x86::Register::ESP, 0x2000);
+        cpu.write_reg(iced_x86::Register::ECX, 0x11);
+        cpu.write_reg(iced_x86::Register::EAX, 0x1234_5678);
+        cpu.write_reg(iced_x86::Register::EDX, 0x9ABC_DEF0);
     });
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::EAX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::EAX),
         0x1234_5678
     );
     assert_eq!(
-        machine.cpu.read_reg(iced_x86::Register::EDX).unwrap(),
+        machine.cpu.read_reg(iced_x86::Register::EDX),
         0x9ABC_DEF0
     );
 
@@ -751,17 +1307,17 @@ fn system_in_out_cli_sti_cpuid_rdtsc_rdmsr_wrmsr_lgdt_lidt_ltr() {
         0xF4,
     ];
     let machine = run_test(CpuMode::Real, &ldt, |cpu, mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
         mem.write_u16(0x0300, 0x0017).unwrap();
         mem.write_u32(0x0302, 0x1122_3344).unwrap();
         mem.write_u16(0x0306, 0x00FF).unwrap();
         mem.write_u32(0x0308, 0x5566_7788).unwrap();
     });
-    assert_eq!(machine.cpu.tr, 0x28);
-    assert_eq!(machine.cpu.gdtr.limit, 0x0017);
-    assert_eq!(machine.cpu.gdtr.base, 0x1122_3344);
-    assert_eq!(machine.cpu.idtr.limit, 0x00FF);
-    assert_eq!(machine.cpu.idtr.base, 0x5566_7788);
+    assert_eq!(machine.cpu.tables.tr.selector, 0x28);
+    assert_eq!(machine.cpu.tables.gdtr.limit, 0x0017);
+    assert_eq!(machine.cpu.tables.gdtr.base, 0x1122_3344);
+    assert_eq!(machine.cpu.tables.idtr.limit, 0x00FF);
+    assert_eq!(machine.cpu.tables.idtr.base, 0x5566_7788);
 }
 
 #[test]
@@ -772,7 +1328,7 @@ fn mov_to_cr0_pe_switches_to_protected_mode() {
         0xF4, // hlt
     ];
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::SP, 0x200).unwrap();
+        cpu.write_reg(iced_x86::Register::SP, 0x200);
     });
     assert_eq!(machine.cpu.mode, CpuMode::Protected);
 }
@@ -794,32 +1350,24 @@ fn run_aero_real(test: &[u8], init: RealRegs16) -> RealRegs16 {
     let mut code = Vec::from(test);
     code.push(0xF4); // hlt
     let machine = run_test(CpuMode::Real, &code, |cpu, _mem, _ports| {
-        cpu.write_reg(iced_x86::Register::AX, init.ax as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::BX, init.bx as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::CX, init.cx as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::DX, init.dx as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::SP, init.sp as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::BP, init.bp as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::SI, init.si as u64)
-            .unwrap();
-        cpu.write_reg(iced_x86::Register::DI, init.di as u64)
-            .unwrap();
+        cpu.write_reg(iced_x86::Register::AX, init.ax as u64);
+        cpu.write_reg(iced_x86::Register::BX, init.bx as u64);
+        cpu.write_reg(iced_x86::Register::CX, init.cx as u64);
+        cpu.write_reg(iced_x86::Register::DX, init.dx as u64);
+        cpu.write_reg(iced_x86::Register::SP, init.sp as u64);
+        cpu.write_reg(iced_x86::Register::BP, init.bp as u64);
+        cpu.write_reg(iced_x86::Register::SI, init.si as u64);
+        cpu.write_reg(iced_x86::Register::DI, init.di as u64);
     });
     RealRegs16 {
-        ax: machine.cpu.read_reg(iced_x86::Register::AX).unwrap() as u16,
-        bx: machine.cpu.read_reg(iced_x86::Register::BX).unwrap() as u16,
-        cx: machine.cpu.read_reg(iced_x86::Register::CX).unwrap() as u16,
-        dx: machine.cpu.read_reg(iced_x86::Register::DX).unwrap() as u16,
-        sp: machine.cpu.read_reg(iced_x86::Register::SP).unwrap() as u16,
-        bp: machine.cpu.read_reg(iced_x86::Register::BP).unwrap() as u16,
-        si: machine.cpu.read_reg(iced_x86::Register::SI).unwrap() as u16,
-        di: machine.cpu.read_reg(iced_x86::Register::DI).unwrap() as u16,
+        ax: machine.cpu.read_reg(iced_x86::Register::AX) as u16,
+        bx: machine.cpu.read_reg(iced_x86::Register::BX) as u16,
+        cx: machine.cpu.read_reg(iced_x86::Register::CX) as u16,
+        dx: machine.cpu.read_reg(iced_x86::Register::DX) as u16,
+        sp: machine.cpu.read_reg(iced_x86::Register::SP) as u16,
+        bp: machine.cpu.read_reg(iced_x86::Register::BP) as u16,
+        si: machine.cpu.read_reg(iced_x86::Register::SI) as u16,
+        di: machine.cpu.read_reg(iced_x86::Register::DI) as u16,
         flags: machine.cpu.rflags() as u16,
     }
 }

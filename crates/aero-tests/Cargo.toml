@@ -5,7 +5,8 @@ license = "MIT OR Apache-2.0"
 edition.workspace = true
 
 [dependencies]
-aero-cpu = { path = "../aero-cpu" }
+aero_cpu_core = { path = "../aero_cpu_core" }
+aero_x86 = { path = "../aero_x86" }
 iced-x86.workspace = true
 
 [dev-dependencies]
