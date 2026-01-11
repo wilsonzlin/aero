@@ -758,8 +758,12 @@ impl AerogpuD3d11Executor {
         guest_mem: &dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         let mut pending_writebacks = Vec::new();
-        let report =
-            self.execute_cmd_stream_inner(stream_bytes, allocs, guest_mem, &mut pending_writebacks)?;
+        let report = self.execute_cmd_stream_inner(
+            stream_bytes,
+            allocs,
+            guest_mem,
+            &mut pending_writebacks,
+        )?;
 
         if pending_writebacks.is_empty() {
             return Ok(report);
@@ -789,8 +793,12 @@ impl AerogpuD3d11Executor {
         guest_mem: &dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         let mut pending_writebacks = Vec::new();
-        let report =
-            self.execute_cmd_stream_inner(stream_bytes, allocs, guest_mem, &mut pending_writebacks)?;
+        let report = self.execute_cmd_stream_inner(
+            stream_bytes,
+            allocs,
+            guest_mem,
+            &mut pending_writebacks,
+        )?;
         if !pending_writebacks.is_empty() {
             self.flush_pending_writebacks_async(pending_writebacks, guest_mem)
                 .await?;
@@ -925,9 +933,12 @@ impl AerogpuD3d11Executor {
                         .try_into()
                         .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
                     guest_mem
-                        .write(dst_gpa, mapped.get(..len).ok_or_else(|| {
-                            anyhow!("COPY_BUFFER: writeback staging buffer too small")
-                        })?)
+                        .write(
+                            dst_gpa,
+                            mapped.get(..len).ok_or_else(|| {
+                                anyhow!("COPY_BUFFER: writeback staging buffer too small")
+                            })?,
+                        )
                         .map_err(anyhow_guest_mem)?;
                     drop(mapped);
                     staging.unmap();
@@ -951,38 +962,39 @@ impl AerogpuD3d11Executor {
                     while guard.is_none() {
                         guard = cv.wait(guard).unwrap();
                     }
-                    guard
-                        .take()
-                        .unwrap()
-                        .map_err(|e| anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}"))?;
+                    guard.take().unwrap().map_err(|e| {
+                        anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}")
+                    })?;
 
                     let mapped = slice.get_mapped_range();
-                    let padded_bpr_usize: usize = plan
-                        .padded_bytes_per_row
+                    let padded_bpr_usize: usize =
+                        plan.padded_bytes_per_row.try_into().map_err(|_| {
+                            anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range")
+                        })?;
+                    let unpadded_bpr_usize: usize = plan
+                        .unpadded_bytes_per_row
                         .try_into()
-                        .map_err(|_| anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range"))?;
-                    let unpadded_bpr_usize: usize = plan.unpadded_bytes_per_row.try_into().map_err(
-                        |_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"),
-                    )?;
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"))?;
                     for row in 0..plan.height as u64 {
                         let src_start = row as usize * padded_bpr_usize;
-                        let src_end = src_start
-                            .checked_add(unpadded_bpr_usize)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                        let src_end =
+                            src_start.checked_add(unpadded_bpr_usize).ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: src row end overflows usize")
+                            })?;
                         let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
                         })?;
                         let dst_gpa = plan
                             .base_gpa
-                            .checked_add(
-                                row.checked_mul(plan.row_pitch).ok_or_else(|| {
-                                    anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
-                                })?,
-                            )
+                            .checked_add(row.checked_mul(plan.row_pitch).ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
+                            })?)
                             .ok_or_else(|| {
                                 anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
                             })?;
-                        guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                        guest_mem
+                            .write(dst_gpa, row_bytes)
+                            .map_err(anyhow_guest_mem)?;
                     }
                     drop(mapped);
                     staging.unmap();
@@ -1021,9 +1033,12 @@ impl AerogpuD3d11Executor {
                         .try_into()
                         .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
                     guest_mem
-                        .write(dst_gpa, mapped.get(..len).ok_or_else(|| {
-                            anyhow!("COPY_BUFFER: writeback staging buffer too small")
-                        })?)
+                        .write(
+                            dst_gpa,
+                            mapped.get(..len).ok_or_else(|| {
+                                anyhow!("COPY_BUFFER: writeback staging buffer too small")
+                            })?,
+                        )
                         .map_err(anyhow_guest_mem)?;
                     drop(mapped);
                     staging.unmap();
@@ -1042,32 +1057,34 @@ impl AerogpuD3d11Executor {
                         .context("wgpu: map_async failed")?;
 
                     let mapped = slice.get_mapped_range();
-                    let padded_bpr_usize: usize = plan
-                        .padded_bytes_per_row
+                    let padded_bpr_usize: usize =
+                        plan.padded_bytes_per_row.try_into().map_err(|_| {
+                            anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range")
+                        })?;
+                    let unpadded_bpr_usize: usize = plan
+                        .unpadded_bytes_per_row
                         .try_into()
-                        .map_err(|_| anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range"))?;
-                    let unpadded_bpr_usize: usize = plan.unpadded_bytes_per_row.try_into().map_err(
-                        |_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"),
-                    )?;
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"))?;
                     for row in 0..plan.height as u64 {
                         let src_start = row as usize * padded_bpr_usize;
-                        let src_end = src_start
-                            .checked_add(unpadded_bpr_usize)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                        let src_end =
+                            src_start.checked_add(unpadded_bpr_usize).ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: src row end overflows usize")
+                            })?;
                         let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
                         })?;
                         let dst_gpa = plan
                             .base_gpa
-                            .checked_add(
-                                row.checked_mul(plan.row_pitch).ok_or_else(|| {
-                                    anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
-                                })?,
-                            )
+                            .checked_add(row.checked_mul(plan.row_pitch).ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
+                            })?)
                             .ok_or_else(|| {
                                 anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
                             })?;
-                        guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                        guest_mem
+                            .write(dst_gpa, row_bytes)
+                            .map_err(anyhow_guest_mem)?;
                     }
                     drop(mapped);
                     staging.unmap();
