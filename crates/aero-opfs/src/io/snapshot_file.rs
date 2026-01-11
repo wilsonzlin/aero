@@ -340,7 +340,26 @@ where
     H: OpfsSyncFileHandle,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        #[cfg(target_arch = "wasm32")]
+        if self.pos > JS_MAX_SAFE_INTEGER {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "offset {} exceeds JS MAX_SAFE_INTEGER ({JS_MAX_SAFE_INTEGER}); OPFS sync access handles use f64 offsets",
+                    self.pos
+                ),
+            ));
+        }
+
         let pos = self.pos;
+
+        #[cfg(target_arch = "wasm32")]
+        let buf = {
+            let remaining = JS_MAX_SAFE_INTEGER - pos;
+            let max = (buf.len() as u64).min(remaining) as usize;
+            &mut buf[..max]
+        };
+
         let read = self.handle_mut()?.read_at(pos, buf)?;
         self.pos = self
             .pos
@@ -355,6 +374,31 @@ where
     H: OpfsSyncFileHandle,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.pos > JS_MAX_SAFE_INTEGER {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "offset {} exceeds JS MAX_SAFE_INTEGER ({JS_MAX_SAFE_INTEGER}); OPFS sync access handles use f64 offsets",
+                        self.pos
+                    ),
+                ));
+            }
+
+            let max_len = (JS_MAX_SAFE_INTEGER - self.pos) as usize;
+            if buf.len() > max_len {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "write of {} bytes at offset {} exceeds JS MAX_SAFE_INTEGER ({JS_MAX_SAFE_INTEGER}); OPFS sync access handles use f64 offsets",
+                        buf.len(),
+                        self.pos
+                    ),
+                ));
+            }
+        }
+
         let pos = self.pos;
         let wrote = self.handle_mut()?.write_at(pos, buf)?;
         self.pos = self
