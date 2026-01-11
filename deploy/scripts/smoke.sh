@@ -14,17 +14,6 @@ SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE=101
 SMOKE_WEBRTC_UDP_PORT_MIN=50000
 SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE - 1))
 SMOKE_SESSION_SECRET="__aero_smoke_session_${PROJECT_NAME}"
-# BSD `mktemp` requires the template X's at the end of the path component, so
-# avoid a `.yml` suffix for portability (docker compose accepts any filename).
-SMOKE_COMPOSE_OVERRIDE_FILE="$(mktemp "${TMPDIR:-/tmp}/aero-smoke-compose-override-XXXXXX")"
-
-cat >"$SMOKE_COMPOSE_OVERRIDE_FILE" <<'YAML'
-services:
-  aero-l2-proxy:
-    environment:
-      # Enforce gateway session cookies (aero_session) for /l2 upgrades.
-      AERO_L2_AUTH_MODE: cookie
-YAML
 
 compose() {
   # The /udp smoke test sends a UDP datagram to the host via the docker network.
@@ -54,7 +43,6 @@ compose() {
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_L2_PROXY_LISTEN_ADDR= \
     AERO_L2_ALLOW_PRIVATE_IPS=0 \
-    AERO_L2_AUTH_MODE=cookie \
     AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
     BUILD_COMMIT= \
     BUILD_TIME= \
@@ -99,7 +87,7 @@ compose() {
     TRUST_PROXY=1 \
     CROSS_ORIGIN_ISOLATION=0 \
     AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
-    docker compose --env-file /dev/null -f "$COMPOSE_FILE" -f "$SMOKE_COMPOSE_OVERRIDE_FILE" -p "$PROJECT_NAME" "$@"
+    docker compose --env-file /dev/null -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
 }
 
 on_exit() {
@@ -116,7 +104,6 @@ on_exit() {
 
   rm -f "$SMOKE_WASM_PATH" >/dev/null 2>&1 || true
   rmdir "$SMOKE_WASM_DIR" >/dev/null 2>&1 || true
-  rm -f "$SMOKE_COMPOSE_OVERRIDE_FILE" >/dev/null 2>&1 || true
 }
 trap on_exit EXIT
 
