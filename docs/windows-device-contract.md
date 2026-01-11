@@ -39,14 +39,16 @@ Device IDs follow the virtio 1.0+ “modern” virtio-pci ID range:
 pci_device_id = 0x1040 + virtio_device_type
 ```
 
-For compatibility with older stacks/driver packages, Aero drivers/INFs MAY also match the
-“transitional” virtio ID range commonly used by hypervisors:
-
-```
-pci_device_id = 0x1000 + (virtio_device_type - 1)
-```
-
 The emulator emits the modern IDs by default.
+
+For compatibility with older stacks/driver packages, Aero drivers/INFs MAY also match the
+“transitional” virtio-pci Device ID space:
+
+```
+pci_device_id_transitional = 0x1000 + (virtio_device_type - 1)
+```
+
+This does **not** force use of the legacy virtio PCI transport in the guest driver; it only affects PCI identification. See [Virtio transport contract](#virtio-transport-contract) for BAR/MMIO/I-O details.
 
 Subsystem IDs are used to provide a stable secondary identifier:
 
@@ -82,6 +84,15 @@ Notes:
 - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
 - `aerogpu.inf` also matches the legacy AeroGPU HWID `1AED:0001`.
 - `aerogpu_dx11.inf` is an optional alternative INF if shipping D3D10/11 user-mode components.
+ 
+Compatibility note (non-canonical virtio PCI Device IDs):
+
+- virtio-net: `1AF4:1000` (transitional)
+- virtio-blk: `1AF4:1001` (transitional)
+- virtio-input: `1AF4:1011` (transitional)
+- virtio-snd: `1AF4:1018` (transitional)
+
+The emulator’s canonical profile uses the **modern** IDs in the table above, but Guest Tools and Windows driver INFs may match both modern + transitional IDs to support transitional virtio-pci devices.
 
 ## Windows hardware IDs and driver binding
 
@@ -114,6 +125,9 @@ Example (illustrative) INF model entries:
 [AeroModels.NTamd64]
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4
+; Optional compatibility (transitional IDs):
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1001
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1001&SUBSYS_00021AF4
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
@@ -220,6 +234,7 @@ Consumers must not assume any particular device ordering and must tolerate new d
 ### Manifest field conventions (normative)
 
 - `pci_vendor_id` / `pci_device_id` are hex strings with `0x` prefix (e.g. `"0x1AF4"`).
+- `pci_device_id` is the **canonical** emulator-presented Device ID for the device entry. If a driver/tool also supports additional compatibility IDs (for example, virtio transitional IDs), those MUST be represented in `hardware_id_patterns`.
 - `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1042"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.
