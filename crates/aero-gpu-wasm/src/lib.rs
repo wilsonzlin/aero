@@ -13,9 +13,8 @@ mod wasm {
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
-        AeroGpuCmd, AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation,
-        AerogpuD3d9Executor, FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory,
-        GuestMemoryError, parse_cmd_stream,
+        AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, AerogpuD3d9Executor,
+        FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory, GuestMemoryError,
     };
     use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
@@ -414,20 +413,6 @@ mod wasm {
         let mut bytes = vec![0u8; cmd_stream.length() as usize];
         cmd_stream.copy_to(&mut bytes);
 
-        let stream = parse_cmd_stream(&bytes).map_err(|err| {
-            JsValue::from_str(&format!("failed to parse AeroGPU command stream: {err}"))
-        })?;
-        let mut last_present_scanout: Option<u32> = None;
-        for cmd in &stream.cmds {
-            match cmd {
-                AeroGpuCmd::Present { scanout_id, .. }
-                | AeroGpuCmd::PresentEx { scanout_id, .. } => {
-                    last_present_scanout = Some(*scanout_id);
-                }
-                _ => {}
-            }
-        }
-
         let (alloc_table, allocations) = match alloc_table.as_ref() {
             Some(buf) => {
                 let (table, allocs) = decode_alloc_table_bytes(buf)?;
@@ -437,8 +422,9 @@ mod wasm {
         };
 
         let guest_memory = GUEST_MEMORY.with(|slot| slot.borrow().clone());
+        let allocations = allocations.as_deref();
 
-        with_d3d9_state_mut(|state| {
+        let present_count = with_d3d9_state_mut(|state| {
             match (alloc_table.as_ref(), guest_memory.as_ref()) {
                 (Some(_), None) => {
                     return Err(JsValue::from_str(
@@ -464,6 +450,24 @@ mod wasm {
                     .map_err(|err| JsValue::from_str(&err.to_string()))?,
             }
 
+            let (present_count, last_present_scanout) = PROCESSOR.with(|processor| {
+                let mut processor = processor.borrow_mut();
+                let events = processor
+                    .process_submission_with_allocations(&bytes, allocations, signal_fence)
+                    .map_err(|err| JsValue::from_str(&err.to_string()))?;
+
+                let mut present_count: Option<u64> = None;
+                let mut last_present_scanout: Option<u32> = None;
+                for event in events {
+                    if let AeroGpuEvent::PresentCompleted { scanout_id, .. } = event {
+                        last_present_scanout = Some(scanout_id);
+                        present_count = Some(processor.present_count());
+                    }
+                }
+
+                Ok::<(Option<u64>, Option<u32>), JsValue>((present_count, last_present_scanout))
+            })?;
+
             if let Some(scanout_id) = last_present_scanout {
                 state.last_presented_scanout = Some(scanout_id);
 
@@ -484,24 +488,7 @@ mod wasm {
                 }
             }
 
-            Ok(())
-        })?;
-
-        let allocations = allocations.as_deref();
-        let present_count = PROCESSOR.with(|processor| {
-            let mut processor = processor.borrow_mut();
-            let events = processor
-                .process_submission_with_allocations(&bytes, allocations, signal_fence)
-                .map_err(|err| JsValue::from_str(&err.to_string()))?;
-
-            let mut had_present = false;
-            for event in events {
-                if matches!(event, AeroGpuEvent::PresentCompleted { .. }) {
-                    had_present = true;
-                }
-            }
-
-            Ok::<Option<u64>, JsValue>(had_present.then(|| processor.present_count()))
+            Ok(present_count)
         })?;
 
         let out = Object::new();
