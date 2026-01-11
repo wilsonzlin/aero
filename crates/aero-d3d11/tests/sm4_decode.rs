@@ -821,3 +821,51 @@ fn decodes_ld_via_structural_fallback() {
         }
     );
 }
+
+#[test]
+fn decodes_ld_with_explicit_lod_operand() {
+    let mut body = Vec::<u32>::new();
+
+    // ld r0, r1, t0, l(5)
+    let explicit_lod = imm32_scalar(5);
+    let mut ld = vec![opcode_token(
+        OPCODE_LD,
+        (1 + 2 + 2 + 2 + explicit_lod.len()) as u32,
+    )];
+    ld.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&explicit_lod);
+    body.extend_from_slice(&ld);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Ld {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            coord: src_reg(RegFile::Temp, 1),
+            texture: TextureRef { slot: 0 },
+            lod: SrcOperand {
+                kind: SrcKind::ImmediateF32([5, 5, 5, 5]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+}

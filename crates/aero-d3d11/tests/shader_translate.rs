@@ -488,6 +488,52 @@ fn translates_texture_load_ld() {
 }
 
 #[test]
+fn translates_texture_load_with_nonzero_lod() {
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let lod = SrcOperand {
+        kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Ld {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                coord,
+                texture: TextureRef { slot: 0 },
+                lod,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("textureLoad(t0"));
+    assert!(translated.wgsl.contains("bitcast<i32>(0x00000003u)"));
+}
+
+#[test]
 fn translates_vs_system_value_builtins_from_siv_decls() {
     const D3D_NAME_POSITION: u32 = 1;
     const D3D_NAME_VERTEX_ID: u32 = 6;
