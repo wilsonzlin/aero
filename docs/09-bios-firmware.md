@@ -7,6 +7,14 @@ Windows 7 can boot from both legacy BIOS and UEFI. We implement a custom BIOS th
 > Implementation note: the current legacy BIOS implementation lives in `crates/firmware::bios`.
 > It uses a lightweight "HLT-in-ROM-stub hypercall" dispatch model for INT services (documented in
 > `crates/firmware/README.md`).
+>
+> The BIOS code is written against firmware-facing traits/types from `crates/machine`
+> (e.g. `machine::CpuState`, `machine::MemoryAccess`). In the canonical VM stack,
+> `crates/aero-machine` bridges those firmware-facing types to/from the canonical CPU execution
+> core (`aero_cpu_core::state::CpuState`) and the system memory/IO buses.
+>
+> For how Tier-0 surfaces BIOS interrupt stubs (and how the embedding is expected to dispatch them),
+> see [`docs/02-cpu-emulation.md`](./02-cpu-emulation.md).
 
 ---
 
