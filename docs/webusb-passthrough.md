@@ -316,6 +316,10 @@ Why:
 - Collapsing multiple guest TDs into one WebUSB transfer advances the physical endpoint’s
   toggle multiple times while the guest only advances once, desynchronizing the stream.
 
+Note: the current UHCI scheduler in `crates/emulator/src/io/usb/uhci/schedule.rs` does not yet model
+the TD token’s data-toggle bit. The “one packet per action” rule is therefore forward-looking, but
+still the recommended shape to avoid subtle bugs once toggle tracking is implemented.
+
 Mapping:
 
 - **Bulk OUT TD** → `UsbHostAction::BulkOut { ep, data }` → `USBDevice.transferOut(ep & 0x0f, ...)`
