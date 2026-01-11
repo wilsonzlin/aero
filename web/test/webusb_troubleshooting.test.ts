@@ -127,3 +127,13 @@ test("explainWebUsbError: includes secure-context hint when isSecureContext is f
     }
   }
 });
+
+test("explainWebUsbError: AbortError indicates cancellation / retry requestDevice()", () => {
+  const res = explainWebUsbError({
+    name: "AbortError",
+    message: "The user aborted a request.",
+  });
+
+  assert.ok(res.title.toLowerCase().includes("abort") || res.title.toLowerCase().includes("cancel"));
+  assert.ok(res.hints.some((hint) => hint.includes("requestDevice()")));
+});

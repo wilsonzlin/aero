@@ -157,6 +157,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   const mentionsPermissionDenied = includesAny(msgLower, ["permission", "not allowed", "denied", "access denied"]);
   const mentionsFilters = includesAny(msgLower, ["filter", "filters"]);
   const mentionsPermissionsPolicy = includesAny(msgLower, ["permissions policy", "permission policy", "feature policy"]);
+  const mentionsAbort = includesAny(msgLower, ["abort", "aborted", "aborterror", "cancelled", "canceled"]);
   const mentionsClaimInterface = includesAny(msgLower, ["claiminterface", "claim interface", "unable to claim"]);
   const mentionsOpen = includesAny(msgLower, ["failed to open", "unable to open", "open()"]);
   const mentionsDisconnected = includesAny(msgLower, ["disconnected", "not found", "no device selected"]);
@@ -188,6 +189,10 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
       title = "No USB device selected (or the device was disconnected)";
       details = "The browser did not have an active permission grant for a device.";
       break;
+    case "AbortError":
+      title = "WebUSB operation was aborted";
+      details = "The operation was canceled (for example, the chooser was closed) or interrupted.";
+      break;
     case "NotAllowedError":
       title = "WebUSB permission was denied";
       details = "The browser blocked the request (often due to user gesture or permission policy requirements).";
@@ -215,6 +220,8 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
         title = "Unable to open the USB device";
       } else if (mentionsDisconnected) {
         title = "USB device not found (or disconnected)";
+      } else if (mentionsAbort) {
+        title = "WebUSB operation was aborted";
       }
       break;
   }
@@ -254,7 +261,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     addHint("Close/release the device when done (`releaseInterface`, `close`) and avoid double-claiming interfaces.");
   }
 
-  if (name === "NotFoundError" || mentionsDisconnected) {
+  if (name === "NotFoundError" || name === "AbortError" || mentionsDisconnected) {
     addHint("If you canceled the browser chooser, just run `requestDevice()` again.");
     addHint("Ensure the device is plugged in, then run `requestDevice()` again and re-select it in the chooser.");
     addHint("If the chooser is empty, check your `filters` (vendorId/productId) and that the device is not in use.");
