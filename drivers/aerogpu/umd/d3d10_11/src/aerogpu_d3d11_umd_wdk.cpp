@@ -925,14 +925,13 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   }
 
   auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
-  if (!cb) {
+  if (!cb || !dev->runtime_device) {
     return E_FAIL;
   }
 
-  const D3DKMT_HANDLE kmt_adapter =
+  const D3DKMT_HANDLE kmt_adapter_for_debug =
       (dev->adapter != nullptr) ? static_cast<D3DKMT_HANDLE>(dev->adapter->kmt_adapter) : 0;
-
-  const HRESULT hr = dev->wddm_submit.Init(cb, hAdapter, dev->runtime_device, kmt_adapter);
+  const HRESULT hr = dev->wddm_submit.Init(cb, hAdapter, dev->runtime_device, kmt_adapter_for_debug);
   if (FAILED(hr)) {
     DestroyWddmContext(dev);
     return hr;
@@ -1085,10 +1084,10 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
 
   uint32_t timeout_ms = 0;
   if (timeout == 0ull) {
-    timeout_ms = 0;
+    timeout_ms = 0u;
   } else if (timeout == ~0ull) {
     timeout_ms = ~0u;
-  } else if (timeout > 0xFFFFFFFFull) {
+  } else if (timeout >= static_cast<UINT64>(~0u)) {
     timeout_ms = ~0u;
   } else {
     timeout_ms = static_cast<uint32_t>(timeout);
@@ -1131,7 +1130,6 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
   }
 
   dev->cmd.finalize();
-
   uint64_t fence = 0;
   const HRESULT hr = dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
   dev->cmd.reset();

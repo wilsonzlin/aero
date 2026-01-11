@@ -13,6 +13,21 @@
 
 #include "../include/aerogpu_d3d10_11_umd.h"
 
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
+// WDK build: keep this translation unit empty.
+//
+// On Win7, the exported UMD entrypoints are provided by the WDK-specific
+// translation units instead:
+//   - `aerogpu_d3d10_umd_wdk.cpp`     (OpenAdapter10)
+//   - `aerogpu_d3d10_1_umd_wdk.cpp`   (OpenAdapter10_2)
+//   - `aerogpu_d3d11_umd_wdk.cpp`     (OpenAdapter11)
+// which submit AeroGPU command streams via the shared Win7/WDDM backend in
+// `aerogpu_d3d10_11_wddm_submit.{h,cpp}`.
+//
+// Keeping this file empty in WDK builds avoids compiling a second, unused WDDM
+// submission path.
+#else
+
 #include <algorithm>
 #include <cassert>
 #include <atomic>
@@ -10225,3 +10240,5 @@ HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
 } // extern "C"
 
 #endif // defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
+
+#endif // WDK build exclusion guard (this TU is portable-only)

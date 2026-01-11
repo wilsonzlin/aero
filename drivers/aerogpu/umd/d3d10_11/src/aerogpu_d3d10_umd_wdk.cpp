@@ -35,9 +35,9 @@
 #include <d3dkmthk.h>
 
 #include "aerogpu_cmd_writer.h"
-#include "aerogpu_d3d10_11_wddm_submit.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "../../common/aerogpu_win32_security.h"
+#include "aerogpu_d3d10_11_wddm_submit.h"
 #include "../../../protocol/aerogpu_wddm_alloc.h"
 #include "../../../protocol/aerogpu_umd_private.h"
 #include "../../../protocol/aerogpu_win7_abi.h"
@@ -1355,6 +1355,7 @@ static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
     EmitSetRenderTargetsLocked(dev);
   }
 }
+
 
 // -----------------------------------------------------------------------------
 // Device DDI (core bring-up set)
