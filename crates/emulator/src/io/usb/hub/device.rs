@@ -677,7 +677,7 @@ static HUB_DEVICE_DESCRIPTOR: [u8; 18] = [
     0x01, // bcdUSB (1.10)
     0x09, // bDeviceClass (Hub)
     0x00, // bDeviceSubClass
-    0x01, // bDeviceProtocol (Full-speed hub)
+    0x00, // bDeviceProtocol (Full-speed hub)
     0x40, // bMaxPacketSize0 (64)
     0x34,
     0x12, // idVendor (0x1234)
