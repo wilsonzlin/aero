@@ -3,6 +3,7 @@
 
 #include "drivers/aerogpu/protocol/aerogpu_cmd.h"
 #include "drivers/aerogpu/protocol/aerogpu_ring.h"
+#include "drivers/aerogpu/protocol/aerogpu_umd_private.h"
 
 #define PRINT_SIZE(name, type) printf("SIZE %s %zu\n", name, sizeof(type))
 #define PRINT_OFF(name, type, field) printf("OFF %s %s %zu\n", name, #field, offsetof(type, field))
@@ -58,6 +59,8 @@ int main(void) {
   PRINT_SIZE("aerogpu_ring_header", struct aerogpu_ring_header);
   PRINT_SIZE("aerogpu_fence_page", struct aerogpu_fence_page);
 
+  PRINT_SIZE("aerogpu_umd_private_v1", aerogpu_umd_private_v1);
+
   /* -------------------------------- Offsets ------------------------------ */
   PRINT_OFF("aerogpu_cmd_stream_header", struct aerogpu_cmd_stream_header, magic);
   PRINT_OFF("aerogpu_cmd_stream_header", struct aerogpu_cmd_stream_header, abi_version);
@@ -84,6 +87,13 @@ int main(void) {
   PRINT_OFF("aerogpu_ring_header", struct aerogpu_ring_header, tail);
 
   PRINT_OFF("aerogpu_fence_page", struct aerogpu_fence_page, completed_fence);
+
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, size_bytes);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, struct_version);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_mmio_magic);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_abi_version_u32);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, device_features);
+  PRINT_OFF("aerogpu_umd_private_v1", aerogpu_umd_private_v1, flags);
 
   /* ------------------------------ Constants ------------------------------- */
   PRINT_CONST(AEROGPU_ABI_MAJOR);
@@ -157,6 +167,15 @@ int main(void) {
 
   PRINT_CONST(AEROGPU_SUBMIT_FLAG_PRESENT);
   PRINT_CONST(AEROGPU_SUBMIT_FLAG_NO_IRQ);
+
+  PRINT_CONST(AEROGPU_UMDPRIV_STRUCT_VERSION_V1);
+  PRINT_CONST(AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP);
+  PRINT_CONST(AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU);
+  PRINT_CONST(AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE);
+  PRINT_CONST(AEROGPU_UMDPRIV_FEATURE_VBLANK);
+  PRINT_CONST(AEROGPU_UMDPRIV_FLAG_IS_LEGACY);
+  PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_VBLANK);
+  PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE);
 
   return 0;
 }

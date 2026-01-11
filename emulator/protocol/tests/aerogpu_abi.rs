@@ -204,6 +204,7 @@ fn rust_layout_matches_c_headers() {
     assert_size!(AerogpuSubmitDesc, "aerogpu_submit_desc");
     assert_size!(AerogpuRingHeader, "aerogpu_ring_header");
     assert_size!(AerogpuFencePage, "aerogpu_fence_page");
+    assert_eq!(abi.size("aerogpu_umd_private_v1"), 64, "sizeof(aerogpu_umd_private_v1)");
 
     assert_off!(AerogpuSubmitDesc, cmd_gpa, "aerogpu_submit_desc", "cmd_gpa");
     assert_off!(AerogpuSubmitDesc, alloc_table_gpa, "aerogpu_submit_desc", "alloc_table_gpa");
@@ -211,6 +212,14 @@ fn rust_layout_matches_c_headers() {
     assert_off!(AerogpuRingHeader, head, "aerogpu_ring_header", "head");
     assert_off!(AerogpuRingHeader, tail, "aerogpu_ring_header", "tail");
     assert_off!(AerogpuFencePage, completed_fence, "aerogpu_fence_page", "completed_fence");
+
+    // UMD-private discovery blob (UMDRIVERPRIVATE).
+    assert_eq!(abi.offset("aerogpu_umd_private_v1", "size_bytes"), 0);
+    assert_eq!(abi.offset("aerogpu_umd_private_v1", "struct_version"), 4);
+    assert_eq!(abi.offset("aerogpu_umd_private_v1", "device_mmio_magic"), 8);
+    assert_eq!(abi.offset("aerogpu_umd_private_v1", "device_abi_version_u32"), 12);
+    assert_eq!(abi.offset("aerogpu_umd_private_v1", "device_features"), 20);
+    assert_eq!(abi.offset("aerogpu_umd_private_v1", "flags"), 28);
 
     // Constants / enum numeric values.
     assert_eq!(abi.konst("AEROGPU_ABI_MAJOR"), AEROGPU_ABI_MAJOR as u64);
@@ -368,6 +377,18 @@ fn rust_layout_matches_c_headers() {
 
     assert_eq!(abi.konst("AEROGPU_SUBMIT_FLAG_PRESENT"), AEROGPU_SUBMIT_FLAG_PRESENT as u64);
     assert_eq!(abi.konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"), AEROGPU_SUBMIT_FLAG_NO_IRQ as u64);
+
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_STRUCT_VERSION_V1"), 1);
+    assert_eq!(
+        abi.konst("AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP"),
+        0x4152_4750u64
+    );
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU"), 0x5550_4741u64);
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE"), 1u64 << 0);
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_FEATURE_VBLANK"), 1u64 << 3);
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_FLAG_IS_LEGACY"), 1u64 << 0);
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_VBLANK"), 1u64 << 1);
+    assert_eq!(abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"), 1u64 << 2);
 }
 
 #[test]
