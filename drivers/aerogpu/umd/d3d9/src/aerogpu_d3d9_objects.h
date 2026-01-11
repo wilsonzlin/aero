@@ -152,9 +152,10 @@ struct Adapter {
   std::atomic<bool> event_query_type_known{false};
   std::atomic<uint32_t> event_query_type{0};
 
-  // Monotonic share-token allocator. When running on Windows, the D3D9 UMD may
-  // be loaded into multiple guest processes (DWM + apps), so we must coordinate
-  // share-token allocation cross-process. See aerogpu_d3d9_driver.cpp.
+  // Monotonic cross-process ID allocator used for shared-allocation bookkeeping
+  // (e.g. generating stable alloc_id values). The D3D9 UMD may be loaded into
+  // multiple guest processes (DWM + apps), so we must coordinate ID allocation
+  // cross-process. See aerogpu_d3d9_driver.cpp.
   std::mutex share_token_mutex;
   HANDLE share_token_mapping = nullptr;
   void* share_token_view = nullptr;

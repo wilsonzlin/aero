@@ -897,10 +897,27 @@ uint64_t allocate_share_token(Adapter* adapter) {
   }
 
   // If we fail to set up the cross-process allocator (should be rare), fall
-  // back to a per-process counter salted by PID to avoid collisions.
-  const uint64_t local = adapter->next_share_token.fetch_add(1);
-  const uint64_t pid = static_cast<uint64_t>(GetCurrentProcessId());
-  return (pid << 32) | (local & 0xFFFFFFFFu);
+  // back to a per-process counter and fold PID bits into the *low* bits. Call
+  // sites that derive a 31-bit `alloc_id` via
+  // `token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX` must still get a cross-process-stable
+  // identifier (DWM can reference many shared allocations from different
+  // processes in a single submission).
+  //
+  // Note: This scheme is only used if CreateFileMapping/MapViewOfFile fail.
+  // The named mapping is the preferred allocator because it is monotonic across
+  // processes and avoids PID reuse/sequence wrap concerns in long sessions.
+  const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
+  const uint32_t pid_bits = (pid >> 2) & 0x1FFFFu;
+  uint32_t seq = static_cast<uint32_t>(
+      adapter->next_share_token.fetch_add(1, std::memory_order_relaxed)) &
+                 0x3FFFu;
+  if (seq == 0) {
+    seq = static_cast<uint32_t>(
+        adapter->next_share_token.fetch_add(1, std::memory_order_relaxed)) &
+          0x3FFFu;
+  }
+  const uint32_t alloc_id = (pid_bits << 14) | seq;
+  return static_cast<uint64_t>(alloc_id);
 #else
   (void)adapter;
   static std::atomic<uint64_t> next_token{1};
