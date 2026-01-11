@@ -107,6 +107,10 @@ pub const BDA_BASE: u64 = 0x0000_0400;      // BIOS Data Area
 pub const EBDA_BASE: u64 = 0x0009_F000;     // Extended BIOS Data Area
 pub const EBDA_SIZE: usize = 0x1000;        // 4KB
 
+// PCIe ECAM ("MMCONFIG") window (ACPI MCFG)
+pub const PCIE_ECAM_BASE: u64 = 0xB000_0000;
+pub const PCIE_ECAM_SIZE: u64 = 0x1000_0000; // 256MiB (buses 0..=255)
+
 #[repr(C)]
 pub struct BiosDataArea {
     com_ports: [u16; 4],           // 0x400-0x407
@@ -121,6 +125,15 @@ pub struct BiosDataArea {
     // ... more fields
 }
 ```
+
+### PCIe ECAM (MMCONFIG) + E820 hole handling
+
+To support PCIe-friendly PCI configuration space access (required by many Windows drivers), the
+platform maps a 256MiB ECAM window at `0xB000_0000..0xC000_0000` and publishes it via ACPI `MCFG`.
+
+The BIOS also reserves the ECAM range in its E820 map (type 2) and treats `0xB000_0000` as the end
+of low RAM. Any configured guest RAM above that point is remapped above 4GiB so the guest does not
+silently lose memory.
 
 ### POST Implementation
 
