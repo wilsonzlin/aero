@@ -65,6 +65,21 @@ The project is configured to output binaries that match the Win7 packaging INF:
 - Win32: `aerogpu_d3d10.dll`
 - x64: `aerogpu_d3d10_x64.dll`
 
+### Exported entrypoints
+
+The Win7 D3D10/D3D11 runtimes load the UMD and look up these exports by name:
+
+- `OpenAdapter10`
+- `OpenAdapter10_2`
+- `OpenAdapter11`
+
+On Win32, `__stdcall` would normally decorate the symbol names (for example,
+`_OpenAdapter10@4`). The build uses module-definition files to ensure the DLL
+exports the undecorated names expected by the runtimes:
+
+- `aerogpu_d3d10_11_x86.def`
+- `aerogpu_d3d10_11_x64.def`
+
 Recommended build entrypoint (builds KMD + required D3D9 UMD + optional D3D10/11 UMD and stages outputs under `drivers/aerogpu/build/out/`):
 
 ```cmd

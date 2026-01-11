@@ -382,8 +382,12 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
 #endif // !_WIN32 || !AEROGPU_UMD_USE_WDK_HEADERS
 
 // D3D10 and D3D11 runtimes look for these entrypoints in the UMD DLL.
+//
+// Note: Export names are controlled via the module-definition (.def) files in
+// this directory so Win32 builds export undecorated `OpenAdapter*` symbols
+// (instead of stdcall-decorated `_OpenAdapter*@4`) as expected by Win7 runtimes.
 extern "C" {
-AEROGPU_UMD_EXPORT HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER *pOpenData);
-AEROGPU_UMD_EXPORT HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER *pOpenData);
-AEROGPU_UMD_EXPORT HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER *pOpenData);
+HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER *pOpenData);
+HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER *pOpenData);
+HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER *pOpenData);
 }

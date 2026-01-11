@@ -1,0 +1,12 @@
+LIBRARY "aerogpu_d3d10"
+EXPORTS
+  ; Export undecorated names expected by the runtime.
+  OpenAdapter10=_OpenAdapter10@4
+  OpenAdapter10_2=_OpenAdapter10_2@4
+  OpenAdapter11=_OpenAdapter11@4
+
+  ; Also export the raw stdcall-decorated names for robustness.
+  _OpenAdapter10@4
+  _OpenAdapter10_2@4
+  _OpenAdapter11@4
+

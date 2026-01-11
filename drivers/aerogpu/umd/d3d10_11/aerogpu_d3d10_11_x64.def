@@ -1,0 +1,6 @@
+LIBRARY "aerogpu_d3d10_x64"
+EXPORTS
+  OpenAdapter10
+  OpenAdapter10_2
+  OpenAdapter11
+
