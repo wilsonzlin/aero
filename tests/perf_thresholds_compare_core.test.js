@@ -88,6 +88,32 @@ test("buildCompareResult: missing candidate for required metric is unstable (exi
   assert.equal(exitCodeForStatus(result.status), 2);
 });
 
+test("buildCompareResult: missing baseline for required metric is unstable (exit code 2)", () => {
+  const result = buildCompareResult({
+    suite: "browser",
+    profile: "pr-smoke",
+    thresholdsFile: "bench/perf_thresholds.json",
+    baselineMeta: { gitSha: "base" },
+    candidateMeta: { gitSha: "head" },
+    cases: [
+      {
+        scenario: "browser",
+        metric: "microbench_ms",
+        unit: "ms",
+        better: "lower",
+        threshold: { maxRegressionPct: 0.1 },
+        baseline: null,
+        candidate: { value: 100, cv: 0.05, n: 3 },
+      },
+    ],
+  });
+
+  assert.equal(result.status, "unstable");
+  assert.equal(result.summary.missing, 1);
+  assert.equal(result.summary.unstable, 1);
+  assert.equal(exitCodeForStatus(result.status), 2);
+});
+
 test("buildCompareResult: missing candidate for informational metric does not fail", () => {
   const result = buildCompareResult({
     suite: "browser",
