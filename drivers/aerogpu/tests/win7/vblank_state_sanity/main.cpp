@@ -16,6 +16,7 @@ static int RunVblankStateSanity(int argc, char** argv) {
         "Usage: %s.exe [--samples=N] [--interval-ms=N] [--json[=PATH]] [--allow-remote]",
         kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=10 --interval-ms=100");
+    aerogpu_test::PrintfStdout("Aliases: --vblank-samples, --vblank-interval-ms");
     aerogpu_test::PrintfStdout(
         "Queries vblank counters via a driver-private escape and validates basic monotonicity/pacing.");
     return 0;
@@ -27,18 +28,37 @@ static int RunVblankStateSanity(int argc, char** argv) {
   uint32_t samples = 10;
   uint32_t interval_ms = 100;
 
+  const char* samples_key = "--samples";
   std::string samples_str;
-  if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
+  bool got_samples = aerogpu_test::GetArgValue(argc, argv, samples_key, &samples_str);
+  if (!got_samples) {
+    samples_key = "--vblank-samples";
+    got_samples = aerogpu_test::GetArgValue(argc, argv, samples_key, &samples_str);
+  }
+  if (got_samples) {
+    if (samples_str.empty()) {
+      return reporter.Fail("%s missing value", samples_key);
+    }
     std::string err;
     if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
-      return reporter.Fail("invalid --samples: %s", err.c_str());
+      return reporter.Fail("invalid %s: %s", samples_key, err.c_str());
     }
   }
+
+  const char* interval_key = "--interval-ms";
   std::string interval_str;
-  if (aerogpu_test::GetArgValue(argc, argv, "--interval-ms", &interval_str)) {
+  bool got_interval = aerogpu_test::GetArgValue(argc, argv, interval_key, &interval_str);
+  if (!got_interval) {
+    interval_key = "--vblank-interval-ms";
+    got_interval = aerogpu_test::GetArgValue(argc, argv, interval_key, &interval_str);
+  }
+  if (got_interval) {
+    if (interval_str.empty()) {
+      return reporter.Fail("%s missing value", interval_key);
+    }
     std::string err;
     if (!aerogpu_test::ParseUint32(interval_str, &interval_ms, &err)) {
-      return reporter.Fail("invalid --interval-ms: %s", err.c_str());
+      return reporter.Fail("invalid %s: %s", interval_key, err.c_str());
     }
   }
   if (samples < 2) {
