@@ -39,13 +39,28 @@ function Resolve-Python {
 function Write-SyntheticInf {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][string]$HardwareId
+    [Parameter(Mandatory = $true)][string]$BaseName,
+    [string]$HardwareId
   )
-  @(
-    "; Synthetic INF for CI virtio-win packaging smoke tests."
-    "; Required hardware ID pattern:"
-    $HardwareId
-  ) | Out-File -FilePath $Path -Encoding ascii
+
+  $lines = New-Object "System.Collections.Generic.List[string]"
+  $lines.Add("; Synthetic INF for CI virtio-win packaging smoke tests.") | Out-Null
+  $lines.Add("[Version]") | Out-Null
+  $lines.Add('Signature="$WINDOWS NT$"') | Out-Null
+  $lines.Add("Class=System") | Out-Null
+  $lines.Add("Provider=%ProviderName%") | Out-Null
+  $lines.Add("") | Out-Null
+  $lines.Add("[SourceDisksFiles]") | Out-Null
+  $lines.Add("$BaseName.sys=1") | Out-Null
+  $lines.Add("$BaseName.cat=1") | Out-Null
+
+  if ($HardwareId) {
+    $lines.Add("") | Out-Null
+    $lines.Add("[HardwareIds]") | Out-Null
+    $lines.Add($HardwareId) | Out-Null
+  }
+
+  $lines | Out-File -FilePath $Path -Encoding ascii
 }
 
 function Write-PlaceholderBinary {
@@ -71,14 +86,7 @@ function New-SyntheticDriverFiles {
   $catName = "$InfBaseName.cat"
 
   $infPath = Join-Path $dir $infName
-  if ($HardwareId) {
-    Write-SyntheticInf -Path $infPath -HardwareId $HardwareId
-  } else {
-    @(
-      "; Synthetic INF for CI virtio-win packaging smoke tests."
-      "; No HWID validation required for this driver in tools/packaging/specs/win7-virtio-win.json"
-    ) | Out-File -FilePath $infPath -Encoding ascii
-  }
+  Write-SyntheticInf -Path $infPath -BaseName $InfBaseName -HardwareId $HardwareId
 
   Write-PlaceholderBinary -Path (Join-Path $dir $sysName)
   Write-PlaceholderBinary -Path (Join-Path $dir $catName)
