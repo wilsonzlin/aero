@@ -507,8 +507,12 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
         });
     });
 
-    exec.execute_cmd_stream_with_guest_memory(&stream_create, &guest_memory, Some(&alloc_table_create))
-        .expect("create submission should succeed");
+    exec.execute_cmd_stream_with_guest_memory(
+        &stream_create,
+        &guest_memory,
+        Some(&alloc_table_create),
+    )
+    .expect("create submission should succeed");
 
     // Full-screen triangle (pos float4 + texcoord float4), same as the main guest-backing test.
     let mut vb_data = Vec::new();
@@ -562,7 +566,10 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
         // Render target.
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, RT_HANDLE);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
             push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
             push_u32(out, width);
             push_u32(out, height);

@@ -629,7 +629,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                     resource_handle,
                     offset_bytes,
                     size_bytes,
-                } => self.exec_resource_dirty_range(resource_handle, offset_bytes, size_bytes, alloc_table),
+                } => self.exec_resource_dirty_range(
+                    resource_handle,
+                    offset_bytes,
+                    size_bytes,
+                    alloc_table,
+                ),
                 AeroGpuCmd::UploadResource {
                     resource_handle,
                     offset_bytes,
