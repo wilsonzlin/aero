@@ -84,6 +84,18 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidAttachMessage(msg)).toBe(true);
     expect(isHidProxyMessage(msg)).toBe(true);
 
+    expect(
+      isHidAttachMessage({
+        type: "hid.attach",
+        deviceId: 2,
+        vendorId: 0x1234,
+        productId: 0xabcd,
+        guestPort: 0,
+        collections: sampleCollections(),
+        hasInterruptOut: false,
+      }),
+    ).toBe(true);
+
     expect(isHidAttachMessage({ type: "hid.attach", deviceId: 1 })).toBe(false);
     expect(isHidAttachMessage({ ...msg, guestPort: 1 })).toBe(false);
     expect(isHidAttachMessage({ ...msg, guestPath: [] })).toBe(false);

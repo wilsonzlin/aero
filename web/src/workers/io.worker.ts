@@ -262,9 +262,9 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
     this.devices.set(msg.deviceId, msg);
     // Treat (re-)attach as a new session; clear any buffered reports.
     this.inputReports.set(msg.deviceId, []);
-    const portHint = msg.guestPort === undefined ? "" : ` port=${msg.guestPort}`;
+    const pathHint = msg.guestPath ? ` path=${msg.guestPath.join(".")}` : msg.guestPort === undefined ? "" : ` port=${msg.guestPort}`;
     this.host.log(
-      `hid.attach deviceId=${msg.deviceId}${portHint} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
+      `hid.attach deviceId=${msg.deviceId}${pathHint} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
       msg.deviceId,
     );
   }
@@ -307,6 +307,7 @@ type HidPassthroughBridge = WebHidPassthroughBridge | UsbHidPassthroughBridge;
 
 class WasmHidGuestBridge implements HidGuestBridge {
   readonly #bridges = new Map<number, HidPassthroughBridge>();
+  readonly #guestPaths = new Map<number, GuestUsbPath>();
 
   constructor(
     private readonly api: WasmApi,
@@ -315,6 +316,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
 
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
+    const guestPath = msg.guestPath;
 
     try {
       const UsbBridge = this.api.UsbHidPassthroughBridge;
@@ -346,6 +348,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
       }
 
       this.#bridges.set(msg.deviceId, bridge);
+      if (guestPath) this.#guestPaths.set(msg.deviceId, guestPath);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.host.error(`Failed to construct WebHID passthrough bridge: ${message}`, msg.deviceId);
@@ -357,6 +360,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
     const existing = this.#bridges.get(msg.deviceId);
     if (!existing) return;
     this.#bridges.delete(msg.deviceId);
+    this.#guestPaths.delete(msg.deviceId);
     try {
       existing.free();
     } catch {

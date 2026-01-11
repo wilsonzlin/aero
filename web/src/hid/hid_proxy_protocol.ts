@@ -17,6 +17,8 @@ export type HidAttachMessage = {
    */
   guestPath?: GuestUsbPath;
   /**
+   * @deprecated Prefer {@link HidAttachMessage.guestPath}.
+   *
    * Optional hint for which guest UHCI root port this device should be attached to.
    *
    * This is currently only used for forward-compatible guest USB wiring; the
@@ -188,7 +190,6 @@ export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isOptionalGuestUsbPort(guestPort)) return false;
 
   if (guestPath !== undefined && guestPort !== undefined && guestPath[0] !== guestPort) return false;
-
   if (!Array.isArray(value.collections) || !value.collections.every(isNormalizedHidCollectionInfo)) return false;
   if (!isBoolean(value.hasInterruptOut)) return false;
   return true;
