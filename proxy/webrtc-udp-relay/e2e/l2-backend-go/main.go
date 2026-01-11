@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 
 const (
 	subprotocol = "aero-l2-tunnel-v1"
+	tokenPrefix = "aero-l2-token."
 
 	// Minimal subset of docs/l2-tunnel-protocol.md used by the E2E harness.
 	msgMagic   = 0xA2
@@ -24,9 +28,18 @@ const (
 	msgPong    = 0x02
 )
 
+type lastHandshake struct {
+	Origin      string `json:"origin"`
+	Token       string `json:"token"`
+	TokenSource string `json:"tokenSource"`
+}
+
 func main() {
 	bindHost := envOrDefault("BIND_HOST", "127.0.0.1")
 	port := envIntOrDefault("PORT", 0)
+
+	requiredOrigin := os.Getenv("REQUIRE_ORIGIN")
+	requiredToken := os.Getenv("REQUIRE_TOKEN")
 
 	listenAddr := net.JoinHostPort(bindHost, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", listenAddr)
@@ -40,8 +53,49 @@ func main() {
 		Subprotocols: []string{subprotocol},
 	}
 
+	var lastMu sync.Mutex
+	var last lastHandshake
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /debug", func(w http.ResponseWriter, r *http.Request) {
+		lastMu.Lock()
+		snapshot := last
+		lastMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(snapshot)
+	})
 	mux.HandleFunc("GET /l2", func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		qToken := r.URL.Query().Get("token")
+		protocols := splitHeaderTokens(r.Header.Values("Sec-WebSocket-Protocol"))
+		pToken := tokenFromSubprotocols(protocols)
+
+		token := pToken
+		tokenSource := ""
+		if token != "" {
+			tokenSource = "subprotocol"
+		} else if qToken != "" {
+			token = qToken
+			tokenSource = "query"
+		}
+
+		if requiredOrigin != "" && origin != requiredOrigin {
+			http.Error(w, "origin mismatch", http.StatusForbidden)
+			return
+		}
+		if requiredToken != "" && token != requiredToken {
+			http.Error(w, "token mismatch", http.StatusForbidden)
+			return
+		}
+
+		lastMu.Lock()
+		last = lastHandshake{
+			Origin:      origin,
+			Token:       token,
+			TokenSource: tokenSource,
+		}
+		lastMu.Unlock()
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -97,6 +151,29 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func splitHeaderTokens(values []string) []string {
+	var out []string
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func tokenFromSubprotocols(protocols []string) string {
+	for _, proto := range protocols {
+		if strings.HasPrefix(proto, tokenPrefix) {
+			return strings.TrimPrefix(proto, tokenPrefix)
+		}
+	}
+	return ""
 }
 
 func envOrDefault(key, fallback string) string {

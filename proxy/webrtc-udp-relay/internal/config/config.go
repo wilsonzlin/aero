@@ -36,6 +36,7 @@ const (
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
 	EnvL2BackendWSURL    = "L2_BACKEND_WS_URL"
+	EnvL2BackendWSOrigin = "L2_BACKEND_WS_ORIGIN"
 	EnvL2BackendWSToken  = "L2_BACKEND_WS_TOKEN"
 	EnvL2MaxMessageBytes = "L2_MAX_MESSAGE_BYTES"
 
@@ -188,6 +189,7 @@ type Config struct {
 
 	// L2 tunnel bridging.
 	L2BackendWSURL    string
+	L2BackendWSOrigin string
 	L2BackendWSToken  string
 	L2MaxMessageBytes int
 
@@ -334,6 +336,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 	l2BackendWSURL := envOrDefault(lookup, EnvL2BackendWSURL, "")
+	l2BackendWSOrigin := envOrDefault(lookup, EnvL2BackendWSOrigin, "")
 	l2BackendWSToken := envOrDefault(lookup, EnvL2BackendWSToken, "")
 	l2MaxMessageBytes, err := envIntOrDefault(lookup, EnvL2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	if err != nil {
@@ -513,6 +516,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
 	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
+	fs.StringVar(&l2BackendWSOrigin, "l2-backend-ws-origin", l2BackendWSOrigin, "Origin header value to send when dialing the L2 backend WebSocket (env "+EnvL2BackendWSOrigin+")")
 	fs.StringVar(
 		&l2BackendWSToken,
 		"l2-backend-ws-token",
@@ -688,6 +692,22 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		// Preserve the original string (including path/query) but ensure whitespace
 		// isn't part of the configured URL.
 		l2BackendWSURL = strings.TrimSpace(l2BackendWSURL)
+
+		if strings.TrimSpace(l2BackendWSOrigin) != "" {
+			origin, err := normalizeOriginHeaderValue(l2BackendWSOrigin)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendWSOrigin, "--l2-backend-ws-origin", l2BackendWSOrigin, err)
+			}
+			l2BackendWSOrigin = origin
+		}
+
+		if strings.TrimSpace(l2BackendWSToken) != "" {
+			token := strings.TrimSpace(l2BackendWSToken)
+			if !isValidWebSocketSubprotocolToken(token) {
+				return Config{}, fmt.Errorf("invalid %s/%s: token must be a valid WebSocket subprotocol token (RFC 7230 tchar); got %q", EnvL2BackendWSToken, "--l2-backend-ws-token", l2BackendWSToken)
+			}
+			l2BackendWSToken = token
+		}
 	}
 
 	if strings.TrimSpace(l2BackendWSToken) != "" {
@@ -722,6 +742,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		PreferV2:                  preferV2,
 
 		L2BackendWSURL:    l2BackendWSURL,
+		L2BackendWSOrigin: l2BackendWSOrigin,
 		L2BackendWSToken:  l2BackendWSToken,
 		L2MaxMessageBytes: l2MaxMessageBytes,
 
@@ -928,6 +949,60 @@ func parseAllowedOrigins(raw string) ([]string, error) {
 	}
 
 	return out, nil
+}
+
+func normalizeOriginHeaderValue(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if raw == "null" {
+		return raw, nil
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("expected full origin like https://example.com")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("must not include credentials, query, or fragment")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", fmt.Errorf("must not include a path")
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("unsupported scheme %q (expected http or https)", u.Scheme)
+	}
+	return scheme + "://" + strings.ToLower(u.Host), nil
+}
+
+// isValidWebSocketSubprotocolToken reports whether raw is a valid WebSocket
+// subprotocol token per RFC 6455, which uses the HTTP token grammar (RFC 7230
+// tchar).
+func isValidWebSocketSubprotocolToken(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			continue
+		case c >= 'A' && c <= 'Z':
+			continue
+		case c >= '0' && c <= '9':
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func parsePortString(s string) (uint16, error) {

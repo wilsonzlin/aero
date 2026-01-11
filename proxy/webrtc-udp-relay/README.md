@@ -185,6 +185,35 @@ If Chromium fails to launch in CI, ensure the container/runner includes the Play
 - `GET /udp` → WebSocket UDP relay fallback (binary datagram frames; see `PROTOCOL.md`) (requires auth when `AUTH_MODE != none`)
   - guarded by the same origin policy as signaling endpoints
 
+## L2 tunnel bridging (optional)
+
+The relay can also bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
+endpoint (typically `aero-l2-proxy`):
+
+```
+browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
+```
+
+Configuration env vars (server → server dialing):
+
+- `L2_BACKEND_WS_URL` (optional): Backend `ws://` / `wss://` URL. When unset/empty,
+  `l2` DataChannels are rejected.
+- `L2_BACKEND_WS_ORIGIN` (optional): If set, send `Origin: <value>` when dialing the
+  backend WebSocket.
+- `L2_BACKEND_WS_TOKEN` (optional): If set, send an additional offered WebSocket
+  subprotocol `aero-l2-token.<token>` when dialing the backend (alongside
+  `aero-l2-tunnel-v1`).
+- `L2_MAX_MESSAGE_BYTES` (default `4096`): Per-message size limit enforced on the
+  DataChannel and backend WebSocket.
+
+These settings are **not** browser auth knobs; they configure only the relay's
+outbound connection to the backend. Browser signaling auth is configured via
+`AUTH_MODE` / JWT / API key.
+
+Security note: If you need to pass a token that cannot be represented as a WebSocket
+subprotocol token, you can embed `?token=...` in `L2_BACKEND_WS_URL` instead. This is
+less preferred because query strings are more likely to leak into logs/metrics.
+
 ## Implemented
 
 - Minimal production-oriented HTTP server skeleton + middleware

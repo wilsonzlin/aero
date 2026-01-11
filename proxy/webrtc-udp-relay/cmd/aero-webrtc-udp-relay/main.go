@@ -88,6 +88,7 @@ func main() {
 		DataChannelSendQueueBytes: cfg.DataChannelSendQueueBytes,
 		MaxDatagramPayloadBytes:   cfg.MaxDatagramPayloadBytes,
 		L2BackendWSURL:            cfg.L2BackendWSURL,
+		L2BackendWSOrigin:         cfg.L2BackendWSOrigin,
 		L2BackendWSToken:          cfg.L2BackendWSToken,
 		L2MaxMessageBytes:         cfg.L2MaxMessageBytes,
 		PreferV2:                  cfg.PreferV2,

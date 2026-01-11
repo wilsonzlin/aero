@@ -120,7 +120,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				return
 			}
 
-			b := newL2Bridge(dc, cfg.L2BackendWSURL, cfg.L2BackendWSToken, cfg.L2MaxMessageBytes, quota)
+			b := newL2Bridge(dc, cfg.L2BackendWSURL, cfg.L2BackendWSOrigin, cfg.L2BackendWSToken, cfg.L2MaxMessageBytes, quota)
 
 			s.mu.Lock()
 			if s.l2 != nil {

@@ -28,6 +28,7 @@ type l2Bridge struct {
 	dc *webrtc.DataChannel
 
 	backendURL      string
+	backendOrigin   string
 	backendToken    string
 	maxMessageBytes int
 	quota           *relay.Session
@@ -47,11 +48,12 @@ type l2Bridge struct {
 	sendMu sync.Mutex
 }
 
-func newL2Bridge(dc *webrtc.DataChannel, backendURL string, backendToken string, maxMessageBytes int, quota *relay.Session) *l2Bridge {
+func newL2Bridge(dc *webrtc.DataChannel, backendURL, backendOrigin, backendToken string, maxMessageBytes int, quota *relay.Session) *l2Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &l2Bridge{
 		dc:              dc,
 		backendURL:      backendURL,
+		backendOrigin:   backendOrigin,
 		backendToken:    backendToken,
 		maxMessageBytes: maxMessageBytes,
 		quota:           quota,
@@ -90,15 +92,21 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 	dialCtx, cancel := context.WithTimeout(b.ctx, l2DialTimeout)
 	defer cancel()
 
+	headers := http.Header{}
+	if b.backendOrigin != "" {
+		headers.Set("Origin", b.backendOrigin)
+	}
+
 	subprotocols := []string{l2TunnelSubprotocol}
 	if b.backendToken != "" {
 		subprotocols = append(subprotocols, l2TokenSubprotocolPrefix+b.backendToken)
 	}
+
 	dialer := websocket.Dialer{
 		HandshakeTimeout: l2DialTimeout,
 		Subprotocols:     subprotocols,
 	}
-	conn, resp, err := dialer.DialContext(dialCtx, b.backendURL, http.Header{})
+	conn, resp, err := dialer.DialContext(dialCtx, b.backendURL, headers)
 	if err != nil {
 		return nil, err
 	}

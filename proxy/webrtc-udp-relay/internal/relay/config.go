@@ -36,9 +36,15 @@ type Config struct {
 	//
 	// When empty, "l2" DataChannels are rejected.
 	L2BackendWSURL string
+
+	// L2BackendWSOrigin, when non-empty, is sent as the Origin header when the
+	// relay dials the backend WebSocket.
+	L2BackendWSOrigin string
+
 	// L2BackendWSToken is an optional token presented to the L2 backend via an
-	// additional WebSocket subprotocol entry (`aero-l2-token.<token>`). This
-	// avoids putting tokens in URLs/logs.
+	// additional offered WebSocket subprotocol entry (`aero-l2-token.<token>`).
+	//
+	// The negotiated subprotocol is still required to be `aero-l2-tunnel-v1`.
 	L2BackendWSToken string
 
 	// L2MaxMessageBytes bounds the size of individual L2 tunnel messages forwarded
@@ -112,10 +118,15 @@ func (c Config) WithDefaults() Config {
 //   - UDP_BINDING_IDLE_TIMEOUT (duration, e.g. 60s)
 //   - UDP_READ_BUFFER_BYTES (int)
 //   - DATACHANNEL_SEND_QUEUE_BYTES (int)
+//   - L2_BACKEND_WS_URL (string)
+//   - L2_BACKEND_WS_ORIGIN (string)
+//   - L2_BACKEND_WS_TOKEN (string)
+//   - L2_MAX_MESSAGE_BYTES (int)
 func ConfigFromEnv() Config {
 	c := DefaultConfig()
 	c.PreferV2 = udpproto.PreferV2FromEnv()
 	c.L2BackendWSURL = os.Getenv("L2_BACKEND_WS_URL")
+	c.L2BackendWSOrigin = os.Getenv("L2_BACKEND_WS_ORIGIN")
 	c.L2BackendWSToken = os.Getenv("L2_BACKEND_WS_TOKEN")
 	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {

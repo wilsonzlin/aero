@@ -65,6 +65,26 @@ user-space NAT/TCP stack (slirp-style). That stack can acknowledge upstream TCP
 data before the guest has received it, so allowing tunnel message loss (partial
 reliability) can break TCP correctness.
 
+#### Backend dialing configuration
+
+These settings configure the relay's **server → server** WebSocket dial to the
+backend. They are separate from browser signaling auth (`AUTH_MODE`, JWT/API key
+options), and are never sent by the browser.
+
+- `L2_BACKEND_WS_URL` (optional): Backend WebSocket URL (must be `ws://` or
+  `wss://`). When unset/empty, `l2` DataChannels are rejected.
+- `L2_BACKEND_WS_ORIGIN` (optional): If set, the relay includes
+  `Origin: <value>` on the backend WebSocket upgrade request.
+- `L2_BACKEND_WS_TOKEN` (optional): If set, the relay includes an additional
+  offered WebSocket subprotocol `aero-l2-token.<token>` alongside the required
+  `aero-l2-tunnel-v1` subprotocol. The negotiated subprotocol is still required
+  to be `aero-l2-tunnel-v1`.
+
+Security note: If your backend only supports query-string tokens (or your token
+cannot be represented as a WebSocket subprotocol token), you can instead embed
+`?token=...` directly into `L2_BACKEND_WS_URL`. This is less preferred because
+query strings are more likely to leak into logs/metrics.
+
 ---
 
 ## WebSocket UDP relay fallback (`GET /udp`)

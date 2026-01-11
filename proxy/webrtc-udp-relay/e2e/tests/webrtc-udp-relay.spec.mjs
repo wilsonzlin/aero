@@ -111,13 +111,14 @@ async function spawnGoReadyServer({ name, pkg, env }) {
   };
 }
 
-async function spawnL2BackendServer() {
+async function spawnL2BackendServer(extraEnv = {}) {
   return spawnGoReadyServer({
     name: "l2-backend-go",
     pkg: "./e2e/l2-backend-go",
     env: {
       BIND_HOST: "127.0.0.1",
       PORT: "0",
+      ...extraEnv,
     },
   });
 }
@@ -740,9 +741,16 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
 });
 
 test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page }) => {
-  const backend = await spawnL2BackendServer();
+  const origin = "https://example.com";
+  const token = "e2e-token";
+  const backend = await spawnL2BackendServer({
+    REQUIRE_ORIGIN: origin,
+    REQUIRE_TOKEN: token,
+  });
   const relay = await spawnRelayServer({
     L2_BACKEND_WS_URL: `ws://127.0.0.1:${backend.port}/l2`,
+    L2_BACKEND_WS_ORIGIN: origin,
+    L2_BACKEND_WS_TOKEN: token,
   });
   const web = await startWebServer();
 
@@ -883,6 +891,13 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
     );
 
     expect(pong).toEqual([0xa2, 0x03, 0x02, 0x00]); // PONG
+
+    const debug = await page.request.get(`http://127.0.0.1:${backend.port}/debug`);
+    expect(debug.ok()).toBeTruthy();
+    const debugJSON = await debug.json();
+    expect(debugJSON.origin).toBe(origin);
+    expect(debugJSON.token).toBe(token);
+    expect(debugJSON.tokenSource).toBe("subprotocol");
   } finally {
     await Promise.all([web.close(), relay.kill(), backend.kill()]);
   }

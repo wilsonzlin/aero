@@ -56,6 +56,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.L2BackendWSURL != "" {
 		t.Fatalf("L2BackendWSURL=%q, want empty", cfg.L2BackendWSURL)
 	}
+	if cfg.L2BackendWSOrigin != "" {
+		t.Fatalf("L2BackendWSOrigin=%q, want empty", cfg.L2BackendWSOrigin)
+	}
 	if cfg.L2BackendWSToken != "" {
 		t.Fatalf("L2BackendWSToken=%q, want empty", cfg.L2BackendWSToken)
 	}
@@ -240,6 +243,8 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey:            "secret",
 		EnvL2BackendWSURL:    "ws://127.0.0.1:8090/l2",
+		EnvL2BackendWSOrigin: "HTTPS://Example.COM:443/",
+		EnvL2BackendWSToken:  "test-token",
 		EnvL2MaxMessageBytes: "2048",
 	}), nil)
 	if err != nil {
@@ -247,6 +252,12 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	}
 	if cfg.L2BackendWSURL != "ws://127.0.0.1:8090/l2" {
 		t.Fatalf("L2BackendWSURL=%q", cfg.L2BackendWSURL)
+	}
+	if cfg.L2BackendWSOrigin != "https://example.com:443" {
+		t.Fatalf("L2BackendWSOrigin=%q", cfg.L2BackendWSOrigin)
+	}
+	if cfg.L2BackendWSToken != "test-token" {
+		t.Fatalf("L2BackendWSToken=%q", cfg.L2BackendWSToken)
 	}
 	if cfg.L2MaxMessageBytes != 2048 {
 		t.Fatalf("L2MaxMessageBytes=%d, want 2048", cfg.L2MaxMessageBytes)
