@@ -194,4 +194,32 @@ describe("usb/UsbBroker", () => {
       { type: "usb.completion", completion: { kind: "okOut", id: 2, bytesWritten: 4 } },
     ]);
   });
+
+  it("does not resend usb.selected when attaching the same port twice", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsb(device);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+
+    const broker = new UsbBroker();
+    await broker.requestDevice();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
+    expect(selected).toHaveLength(1);
+  });
 });
