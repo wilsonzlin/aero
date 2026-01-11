@@ -63,6 +63,12 @@ typedef struct _RECT {
   #ifndef E_NOTIMPL
     #define E_NOTIMPL ((HRESULT)0x80004001L)
   #endif
+  #ifndef SUCCEEDED
+    #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
+  #endif
+  #ifndef FAILED
+    #define FAILED(hr) (((HRESULT)(hr)) < 0)
+  #endif
   #ifndef AEROGPU_LUID_DEFINED
     #define AEROGPU_LUID_DEFINED
 typedef struct _LUID {
