@@ -257,6 +257,11 @@ template <typename T>
 struct has_member_pDeviceCallbacks<T, std::void_t<decltype(std::declval<T>().pDeviceCallbacks)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_pCallbacks : std::false_type {};
+template <typename T>
+struct has_member_pCallbacks<T, std::void_t<decltype(std::declval<T>().pCallbacks)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pUMCallbacks : std::false_type {};
 template <typename T>
 struct has_member_pUMCallbacks<T, std::void_t<decltype(std::declval<T>().pUMCallbacks)>> : std::true_type {};
@@ -353,6 +358,36 @@ struct has_member_SysMemPitch : std::false_type {};
 template <typename T>
 struct has_member_SysMemPitch<T, std::void_t<decltype(std::declval<T>().SysMemPitch)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pSysMemUP : std::false_type {};
+template <typename T>
+struct has_member_pSysMemUP<T, std::void_t<decltype(std::declval<T>().pSysMemUP)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_RowPitch : std::false_type {};
+template <typename T>
+struct has_member_RowPitch<T, std::void_t<decltype(std::declval<T>().RowPitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DepthPitch : std::false_type {};
+template <typename T>
+struct has_member_DepthPitch<T, std::void_t<decltype(std::declval<T>().DepthPitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SrcPitch : std::false_type {};
+template <typename T>
+struct has_member_SrcPitch<T, std::void_t<decltype(std::declval<T>().SrcPitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SrcSlicePitch : std::false_type {};
+template <typename T>
+struct has_member_SrcSlicePitch<T, std::void_t<decltype(std::declval<T>().SrcSlicePitch)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SysMemSlicePitch : std::false_type {};
+template <typename T>
+struct has_member_SysMemSlicePitch<T, std::void_t<decltype(std::declval<T>().SysMemSlicePitch)>> : std::true_type {};
+
 static const void* GetAdapterCallbacks(const D3D10DDIARG_OPENADAPTER* open) {
   if (!open) {
     return nullptr;
@@ -366,6 +401,9 @@ static const void* GetAdapterCallbacks(const D3D10DDIARG_OPENADAPTER* open) {
 static const void* GetDeviceCallbacks(const D3D11DDIARG_CREATEDEVICE* cd) {
   if (!cd) {
     return nullptr;
+  }
+  if constexpr (has_member_pCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
+    return cd->pCallbacks;
   }
   if constexpr (has_member_pDeviceCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
     return cd->pDeviceCallbacks;
@@ -450,6 +488,20 @@ static D3D10DDI_HRTDEVICE MakeRtDeviceHandle10(Device* dev) {
 
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args);
+static void InitLockForWrite(D3DDDICB_LOCK* lock) {
+  if (!lock) {
+    return;
+  }
+  // `D3DDDICB_LOCKFLAGS` bit names vary slightly across WDK releases.
+  __if_exists(D3DDDICB_LOCK::Flags) {
+    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
+      lock->Flags.WriteOnly = 1;
+    }
+    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
+      lock->Flags.Write = 1;
+    }
+  }
+}
 
 static void SetError(Device* dev, HRESULT hr) {
   if (!dev) {
@@ -1194,6 +1246,16 @@ static void EmitBindShadersLocked(Device* dev) {
 
 static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
   if (!dev || !res || !res->handle || size_bytes == 0) {
+    return;
+  }
+  if (res->backing_alloc_id != 0) {
+    // Guest-backed resources must be updated by writing into the allocation and
+    // emitting RESOURCE_DIRTY_RANGE. UPLOAD_RESOURCE payloads are host-only.
+    SetError(dev, E_NOTIMPL);
+    return;
+  }
+  if (offset_bytes > static_cast<uint64_t>(SIZE_MAX) || size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+    SetError(dev, E_OUTOFMEMORY);
     return;
   }
   const size_t off = static_cast<size_t>(offset_bytes);
@@ -2156,8 +2218,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
     cmd->size_bytes = res->size_bytes;
-    cmd->backing_alloc_id = 0;
-    cmd->backing_offset_bytes = 0;
+    cmd->backing_alloc_id = res->backing_alloc_id;
+    cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
 
     if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
@@ -2242,8 +2304,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     cmd->mip_levels = 1;
     cmd->array_layers = 1;
     cmd->row_pitch_bytes = res->row_pitch_bytes;
-    cmd->backing_alloc_id = 0;
-    cmd->backing_offset_bytes = 0;
+    cmd->backing_alloc_id = res->backing_alloc_id;
+    cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
 
     if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
@@ -4468,11 +4530,11 @@ void AEROGPU_APIENTRY DynamicConstantBufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx,
 
 void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
                                             D3D11DDI_HRESOURCE hDstResource,
-                                            UINT,
+                                            UINT dst_subresource,
                                             const D3D10_DDI_BOX* pDstBox,
                                             const void* pSysMem,
                                             UINT src_pitch,
-                                            UINT) {
+                                            UINT /*src_slice_pitch*/) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || !hDstResource.pDrvPrivate || !pSysMem) {
     if (dev) {
@@ -4488,6 +4550,51 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (dst_subresource != 0) {
+    SetError(dev, E_NOTIMPL);
+    return;
+  }
+
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
+  const D3DDDI_DEVICECALLBACKS* ddi =
+      is_guest_backed ? reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks) : nullptr;
+
+  const auto emit_dirty_range = [&](uint64_t offset_bytes, uint64_t size_bytes) {
+    if (!size_bytes) {
+      return;
+    }
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = offset_bytes;
+    cmd->size_bytes = size_bytes;
+  };
+
+  const auto lock_for_write = [&](D3DDDICB_LOCK* lock_args) -> HRESULT {
+    if (!lock_args || !ddi || !ddi->pfnLockCb || !dev->runtime_device) {
+      return E_NOTIMPL;
+    }
+    return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+  };
+
+  const auto unlock = [&](D3DDDICB_UNLOCK* unlock_args) -> HRESULT {
+    if (!unlock_args || !ddi || !ddi->pfnUnlockCb || !dev->runtime_device) {
+      return E_NOTIMPL;
+    }
+    return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), unlock_args);
+  };
+
+  if (is_guest_backed) {
+    if (!ddi || !ddi->pfnLockCb || !ddi->pfnUnlockCb) {
+      SetError(dev, E_NOTIMPL);
+      return;
+    }
+    if (res->wddm_allocation_handle == 0) {
+      SetError(dev, E_NOTIMPL);
+      return;
+    }
+  }
 
   if (res->kind == ResourceKind::Buffer) {
     uint64_t dst_off = 0;
@@ -4509,10 +4616,66 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       SetError(dev, E_FAIL);
       return;
     }
-    if (bytes) {
-      std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
-      EmitUploadLocked(dev, res, dst_off, bytes);
+    if (bytes == 0) {
+      return;
     }
+
+    std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
+    if (!is_guest_backed) {
+      EmitUploadLocked(dev, res, dst_off, bytes);
+      return;
+    }
+
+    D3DDDICB_LOCK lock_args = {};
+    lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+    __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+      lock_args.SubresourceIndex = dst_subresource;
+    }
+    __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+      lock_args.SubResourceIndex = dst_subresource;
+    }
+    InitLockForWrite(&lock_args);
+
+    HRESULT hr = lock_for_write(&lock_args);
+    if (FAILED(hr)) {
+      SetError(dev, hr);
+      return;
+    }
+
+    if (!lock_args.pData) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = dst_subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = dst_subresource;
+      }
+      (void)unlock(&unlock_args);
+      SetError(dev, E_FAIL);
+      return;
+    }
+
+    std::memcpy(static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(dst_off),
+                pSysMem,
+                static_cast<size_t>(bytes));
+
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = dst_subresource;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = dst_subresource;
+    }
+
+    hr = unlock(&unlock_args);
+    if (FAILED(hr)) {
+      SetError(dev, hr);
+      return;
+    }
+
+    emit_dirty_range(dst_off, bytes);
     return;
   }
 
@@ -4568,14 +4731,158 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
     }
 
-    // Texture updates are not guaranteed to be contiguous in memory (unless the
-    // full subresource is updated). For the bring-up path, upload the whole
-    // resource after applying the CPU-side update.
-    EmitUploadLocked(dev, res, 0, res->storage.size());
+    if (!is_guest_backed) {
+      // Texture updates are not guaranteed to be contiguous in memory (unless the
+      // full subresource is updated). For the bring-up path, upload the whole
+      // resource after applying the CPU-side update.
+      EmitUploadLocked(dev, res, 0, res->storage.size());
+      return;
+    }
+
+    D3DDDICB_LOCK lock_args = {};
+    lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+    __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+      lock_args.SubresourceIndex = dst_subresource;
+    }
+    __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+      lock_args.SubResourceIndex = dst_subresource;
+    }
+    InitLockForWrite(&lock_args);
+
+    HRESULT hr = lock_for_write(&lock_args);
+    if (FAILED(hr)) {
+      SetError(dev, hr);
+      return;
+    }
+    if (!lock_args.pData) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = dst_subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = dst_subresource;
+      }
+      (void)unlock(&unlock_args);
+      SetError(dev, E_FAIL);
+      return;
+    }
+
+    uint32_t dst_pitch = res->row_pitch_bytes;
+    __if_exists(D3DDDICB_LOCK::Pitch) {
+      if (lock_args.Pitch) {
+        dst_pitch = lock_args.Pitch;
+      }
+    }
+    if (dst_pitch < right * bpp) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = dst_subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = dst_subresource;
+      }
+      (void)unlock(&unlock_args);
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+
+    uint8_t* dst_base = static_cast<uint8_t*>(lock_args.pData);
+    for (uint32_t y = 0; y < copy_height; y++) {
+      const size_t dst_off = static_cast<size_t>(top + y) * dst_pitch + static_cast<size_t>(left) * bpp;
+      const size_t src_off = static_cast<size_t>(y) * pitch;
+      std::memcpy(dst_base + dst_off, src_bytes + src_off, row_bytes);
+    }
+
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = dst_subresource;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = dst_subresource;
+    }
+    hr = unlock(&unlock_args);
+    if (FAILED(hr)) {
+      SetError(dev, hr);
+      return;
+    }
+
+    emit_dirty_range(0, static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height));
     return;
   }
 
   SetError(dev, E_NOTIMPL);
+}
+
+void AEROGPU_APIENTRY UpdateSubresourceUP11Args(D3D11DDI_HDEVICECONTEXT hCtx, const D3D11DDIARG_UPDATESUBRESOURCEUP* pArgs) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !pArgs) {
+    if (dev) {
+      SetError(dev, E_INVALIDARG);
+    }
+    return;
+  }
+
+  const void* pSysMem = nullptr;
+  if constexpr (has_member_pSysMemUP<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pSysMem = pArgs->pSysMemUP;
+  } else if constexpr (has_member_pSysMem<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pSysMem = pArgs->pSysMem;
+  }
+
+  UINT pitch = 0;
+  if constexpr (has_member_SrcPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pitch = pArgs->SrcPitch;
+  } else if constexpr (has_member_RowPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pitch = pArgs->RowPitch;
+  } else if constexpr (has_member_SysMemPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pitch = pArgs->SysMemPitch;
+  }
+
+  UINT slice_pitch = 0;
+  if constexpr (has_member_SrcSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    slice_pitch = pArgs->SrcSlicePitch;
+  } else if constexpr (has_member_DepthPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    slice_pitch = pArgs->DepthPitch;
+  } else if constexpr (has_member_SysMemSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    slice_pitch = pArgs->SysMemSlicePitch;
+  }
+
+  UpdateSubresourceUP11(hCtx, pArgs->hDstResource, pArgs->DstSubresource, pArgs->pDstBox, pSysMem, pitch, slice_pitch);
+}
+
+void AEROGPU_APIENTRY UpdateSubresourceUP11ArgsAndSysMem(D3D11DDI_HDEVICECONTEXT hCtx,
+                                                        const D3D11DDIARG_UPDATESUBRESOURCEUP* pArgs,
+                                                        const void* pSysMem) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !pArgs) {
+    if (dev) {
+      SetError(dev, E_INVALIDARG);
+    }
+    return;
+  }
+
+  UINT pitch = 0;
+  if constexpr (has_member_SrcPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pitch = pArgs->SrcPitch;
+  } else if constexpr (has_member_RowPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pitch = pArgs->RowPitch;
+  } else if constexpr (has_member_SysMemPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    pitch = pArgs->SysMemPitch;
+  }
+
+  UINT slice_pitch = 0;
+  if constexpr (has_member_SrcSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    slice_pitch = pArgs->SrcSlicePitch;
+  } else if constexpr (has_member_DepthPitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    slice_pitch = pArgs->DepthPitch;
+  } else if constexpr (has_member_SysMemSlicePitch<D3D11DDIARG_UPDATESUBRESOURCEUP>::value) {
+    slice_pitch = pArgs->SysMemSlicePitch;
+  }
+
+  UpdateSubresourceUP11(hCtx, pArgs->hDstResource, pArgs->DstSubresource, pArgs->pDstBox, pSysMem, pitch, slice_pitch);
 }
 
 void AEROGPU_APIENTRY Flush11(D3D11DDI_HDEVICECONTEXT hCtx) {
@@ -5067,7 +5374,18 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
     ctx_funcs->pfnMap = &Map11Void;
   }
   ctx_funcs->pfnUnmap = &Unmap11;
-  ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11;
+  {
+    using Fn = decltype(ctx_funcs->pfnUpdateSubresourceUP);
+    if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11), Fn>) {
+      ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11;
+    } else if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11Args), Fn>) {
+      ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11Args;
+    } else if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11ArgsAndSysMem), Fn>) {
+      ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11ArgsAndSysMem;
+    } else {
+      ctx_funcs->pfnUpdateSubresourceUP = &DdiStub<Fn>::Call;
+    }
+  }
 
   if constexpr (has_member_pfnStagingResourceMap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
     if constexpr (std::is_same_v<decltype(ctx_funcs->pfnStagingResourceMap), decltype(&StagingResourceMap11)>) {

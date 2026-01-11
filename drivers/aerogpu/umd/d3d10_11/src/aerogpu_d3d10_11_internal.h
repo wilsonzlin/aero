@@ -348,6 +348,16 @@ struct Resource {
   aerogpu_handle_t handle = 0;
   ResourceKind kind = ResourceKind::Unknown;
 
+  // Host-visible guest backing allocation ID. 0 means the resource is host-owned
+  // and must be updated via `AEROGPU_CMD_UPLOAD_RESOURCE` payloads.
+  uint32_t backing_alloc_id = 0;
+  // Byte offset into the guest allocation described by `backing_alloc_id`.
+  uint32_t backing_offset_bytes = 0;
+  // WDDM allocation handle (D3DKMT_HANDLE in the WDK headers) used for runtime
+  // callbacks such as LockCb/UnlockCb. This is stored as a u32 so the shared
+  // header stays WDK-independent.
+  uint32_t wddm_allocation_handle = 0;
+
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
   uint32_t usage = kD3D11UsageDefault;
@@ -429,7 +439,7 @@ struct Device {
   const void* runtime_callbacks = nullptr;
   // Opaque pointer to the runtime's shared WDDM device callback table
   // (`D3DDDI_DEVICECALLBACKS`). Populated by the WDK D3D11 build for real Win7
-  // WDDM submissions + fence waits.
+  // WDDM submissions + fence waits, including LockCb/UnlockCb.
   const void* runtime_ddi_callbacks = nullptr;
   // Opaque pointer to the runtime device handle's private storage. This is used
   // for callbacks that require a `*HRTDEVICE` (e.g. `pfnSetErrorCb`) without

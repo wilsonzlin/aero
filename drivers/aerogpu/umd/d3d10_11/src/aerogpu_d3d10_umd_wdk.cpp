@@ -2161,14 +2161,56 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
   }
 
   if (res->kind == ResourceKind::Buffer) {
-    try {
-      res->storage.resize(static_cast<size_t>(res->size_bytes));
-    } catch (...) {
+    if (pUpdate->DstSubresource != 0) {
+      SetError(hDevice, E_NOTIMPL);
+      return;
+    }
+
+    uint64_t dst_off = 0;
+    uint64_t bytes = res->size_bytes;
+    if (pUpdate->pDstBox) {
+      const auto* box = pUpdate->pDstBox;
+      if (box->right < box->left || box->top != 0 || box->bottom != 1 || box->front != 0 || box->back != 1) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      dst_off = static_cast<uint64_t>(box->left);
+      bytes = static_cast<uint64_t>(box->right - box->left);
+    }
+
+    if (dst_off > res->size_bytes || bytes > res->size_bytes - dst_off) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+    if (bytes > static_cast<uint64_t>(SIZE_MAX)) {
       SetError(hDevice, E_OUTOFMEMORY);
       return;
     }
-    std::memcpy(res->storage.data(), pUpdate->pSysMemUP, res->storage.size());
+
+    if (res->storage.size() < static_cast<size_t>(res->size_bytes)) {
+      if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      try {
+        res->storage.resize(static_cast<size_t>(res->size_bytes), 0);
+      } catch (...) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+    }
+    if (bytes) {
+      std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pUpdate->pSysMemUP, static_cast<size_t>(bytes));
+    }
   } else if (res->kind == ResourceKind::Texture2D) {
+    if (pUpdate->DstSubresource != 0 || pUpdate->pDstBox) {
+      SetError(hDevice, E_NOTIMPL);
+      return;
+    }
+    if (res->mip_levels != 1 || res->array_size != 1) {
+      SetError(hDevice, E_NOTIMPL);
+      return;
+    }
     const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
     const uint32_t row_pitch = res->row_pitch_bytes ? res->row_pitch_bytes
                                                     : (res->width * bytes_per_pixel_aerogpu(aer_fmt));
@@ -2192,13 +2234,32 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
     }
   }
 
-  if (!res->storage.empty()) {
-    auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-    upload->resource_handle = res->handle;
-    upload->reserved0 = 0;
-    upload->offset_bytes = 0;
-    upload->size_bytes = res->storage.size();
+  if (res->kind == ResourceKind::Buffer) {
+    uint64_t dst_off = 0;
+    uint64_t bytes = res->size_bytes;
+    if (pUpdate->pDstBox) {
+      const auto* box = pUpdate->pDstBox;
+      dst_off = static_cast<uint64_t>(box->left);
+      bytes = static_cast<uint64_t>(box->right - box->left);
+    }
+
+    if (bytes) {
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, pUpdate->pSysMemUP, static_cast<size_t>(bytes));
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = dst_off;
+      upload->size_bytes = bytes;
+    }
+  } else if (res->kind == ResourceKind::Texture2D) {
+    if (!res->storage.empty()) {
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = 0;
+      upload->size_bytes = res->storage.size();
+    }
   }
 }
 

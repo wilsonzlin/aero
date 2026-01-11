@@ -3971,12 +3971,28 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     set_error(dev, E_INVALIDARG);
     return;
   }
-  if (pArgs->DstSubresource != 0 || pArgs->pDstBox) {
+  if (pArgs->DstSubresource != 0) {
     set_error(dev, E_NOTIMPL);
     return;
   }
 
   if (res->kind == ResourceKind::Buffer) {
+    uint64_t dst_off = 0;
+    uint64_t bytes = res->size_bytes;
+    if (pArgs->pDstBox) {
+      const auto* box = pArgs->pDstBox;
+      if (box->right < box->left || box->top != 0 || box->bottom != 1 || box->front != 0 || box->back != 1) {
+        set_error(dev, E_INVALIDARG);
+        return;
+      }
+      dst_off = static_cast<uint64_t>(box->left);
+      bytes = static_cast<uint64_t>(box->right - box->left);
+    }
+    if (dst_off > res->size_bytes || bytes > res->size_bytes - dst_off) {
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+
     if (res->storage.empty()) {
       try {
         res->storage.resize(static_cast<size_t>(res->size_bytes), 0);
@@ -3985,12 +4001,22 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
         return;
       }
     }
-    std::memcpy(res->storage.data(), pSysMem, res->storage.size());
-    emit_upload_resource_locked(dev, res, 0, res->storage.size());
+    if (bytes > std::numeric_limits<size_t>::max()) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
+    if (bytes) {
+      std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pSysMem, static_cast<size_t>(bytes));
+    }
+    emit_upload_resource_locked(dev, res, dst_off, bytes);
     return;
   }
 
   if (res->kind == ResourceKind::Texture2D) {
+    if (pArgs->pDstBox) {
+      set_error(dev, E_NOTIMPL);
+      return;
+    }
     if (res->storage.empty()) {
       try {
         res->storage.resize(static_cast<size_t>(res->row_pitch_bytes) * res->height, 0);
