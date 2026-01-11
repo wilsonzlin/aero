@@ -368,6 +368,56 @@ fn int_long_mode_ist_overrides_rsp0() -> Result<(), CpuExit> {
     Ok(())
 }
 
+#[test]
+fn int_long_mode_non_canonical_rsp0_delivers_ts_using_ist() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    // Software interrupt gate (DPL3 so CPL3 can invoke it).
+    write_idt_gate64(&mut mem, idt_base, 0x80, 0x08, 0x5000, 0, 0xEE);
+    // #TS handler uses IST1 so it can be delivered even when RSP0 is invalid.
+    write_idt_gate64(&mut mem, idt_base, 10, 0x08, 0x6000, 1, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Long);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.segments.cs.selector = 0x33; // user code (CPL3)
+    cpu.state.segments.ss.selector = 0x2B; // user data
+    cpu.state.set_rip(0x4000_0000);
+    cpu.state.write_gpr64(gpr::RSP, 0x7000);
+    cpu.state.set_rflags(0x202);
+
+    let tss_base = 0x10000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+    // Non-canonical RSP0 should raise #TS.
+    mem.write_u64(tss_base + 4, 0x0001_0000_0000_0000).unwrap();
+    // IST1 stack for #TS delivery.
+    mem.write_u64(tss_base + 0x24, 0x9000).unwrap();
+
+    cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    assert_eq!(cpu.state.rip(), 0x6000);
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0);
+    assert_eq!(cpu.state.rflags() & RFLAGS_IF, 0);
+
+    // Stack frame for #TS (IST1): error_code, RIP, CS, RFLAGS, old RSP, old SS.
+    let frame_base = cpu.state.read_gpr64(gpr::RSP);
+    assert_eq!(frame_base, 0x9000 - 48);
+    assert_eq!(mem.read_u64(frame_base).unwrap(), 0); // error_code
+    assert_eq!(mem.read_u64(frame_base + 8).unwrap(), 0x4000_0010); // RIP
+    assert_eq!(mem.read_u64(frame_base + 16).unwrap(), 0x33); // CS
+    assert_ne!(mem.read_u64(frame_base + 24).unwrap() & RFLAGS_IF, 0); // saved RFLAGS
+    assert_eq!(mem.read_u64(frame_base + 32).unwrap(), 0x7000); // old RSP
+    assert_eq!(mem.read_u64(frame_base + 40).unwrap(), 0x2B); // old SS
+
+    Ok(())
+}
+
 struct OneShotController(Option<u8>);
 
 impl InterruptController for OneShotController {

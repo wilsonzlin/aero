@@ -662,13 +662,13 @@ fn deliver_long_mode<B: CpuBus>(
     if gate.ist != 0 {
         used_ist = true;
         let new_rsp = match tss64_ist_stack(bus, state, gate.ist) {
-            Ok(rsp) if rsp != 0 => rsp,
+            Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
             _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
         let new_rsp = match tss64_rsp_for_cpl(bus, state, new_cpl) {
-            Ok(rsp) if rsp != 0 => rsp,
+            Ok(rsp) if rsp != 0 && is_canonical(rsp) => rsp,
             _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
         };
         state.write_gpr64(gpr::RSP, new_rsp);
