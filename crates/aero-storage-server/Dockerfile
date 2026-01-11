@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 
 ARG RUST_VERSION=1.92.0
+ARG GIT_SHA=dev
+ARG VERSION=$GIT_SHA
+ARG BUILD_TIMESTAMP=unknown
 FROM rust:${RUST_VERSION}-bookworm AS builder
 
 WORKDIR /workspace
@@ -13,6 +16,10 @@ COPY tools ./tools
 RUN cargo build --release --locked -p aero-storage-server
 
 FROM debian:bookworm-slim AS runtime
+
+ARG GIT_SHA=dev
+ARG VERSION=$GIT_SHA
+ARG BUILD_TIMESTAMP=unknown
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -32,6 +39,9 @@ COPY --from=builder /workspace/target/release/aero-storage-server /usr/local/bin
 
 ENV AERO_STORAGE_LISTEN_ADDR=0.0.0.0:8080
 ENV AERO_STORAGE_IMAGE_ROOT=/images
+ENV AERO_STORAGE_SERVER_VERSION=$VERSION
+ENV AERO_STORAGE_SERVER_GIT_SHA=$GIT_SHA
+ENV AERO_STORAGE_SERVER_BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 
 EXPOSE 8080
 

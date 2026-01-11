@@ -12,6 +12,9 @@ This repository ships the following production artifacts:
 3. **Networking sidecar images** (used by `deploy/docker-compose.yml`)
    - `crates/aero-l2-proxy` published to GHCR as `ghcr.io/<owner>/aero-l2-proxy`.
    - `proxy/webrtc-udp-relay` published to GHCR as `ghcr.io/<owner>/aero-webrtc-udp-relay`.
+4. **Disk/image storage server image** (`crates/aero-storage-server`)
+   - Published to GHCR as `ghcr.io/<owner>/aero-storage-server`.
+   - Includes provenance metadata via `/version` response.
 
 GitHub Actions produces these artifacts via:
 
@@ -19,6 +22,7 @@ GitHub Actions produces these artifacts via:
 - `.github/workflows/release-gateway.yml`
 - `.github/workflows/release-l2-proxy.yml`
 - `.github/workflows/release-webrtc-udp-relay.yml`
+- `.github/workflows/release-storage-server.yml`
 
 ---
 
@@ -36,10 +40,11 @@ GitHub Actions produces these artifacts via:
    ```
 
 4. Wait for GitHub Actions to finish:
-    - **Release - web** uploads `aero-web-v0.1.0.zip` to the GitHub Release.
-    - **Release - aero-gateway image** publishes `ghcr.io/<owner>/aero-gateway:0.1.0` (and related tags).
-    - **Release - aero-l2-proxy image** publishes `ghcr.io/<owner>/aero-l2-proxy:0.1.0` (and related tags).
-    - **Release - aero-webrtc-udp-relay image** publishes `ghcr.io/<owner>/aero-webrtc-udp-relay:0.1.0` (and related tags).
+   - **Release - web** uploads `aero-web-v0.1.0.zip` to the GitHub Release.
+   - **Release - aero-gateway image** publishes `ghcr.io/<owner>/aero-gateway:0.1.0` (and related tags).
+   - **Release - aero-l2-proxy image** publishes `ghcr.io/<owner>/aero-l2-proxy:0.1.0` (and related tags).
+   - **Release - aero-webrtc-udp-relay image** publishes `ghcr.io/<owner>/aero-webrtc-udp-relay:0.1.0` (and related tags).
+   - **Release - aero-storage-server image** publishes `ghcr.io/<owner>/aero-storage-server:0.1.0` (and related tags).
 
 ### Verify the release artifacts
 
@@ -54,6 +59,7 @@ GitHub Actions produces these artifacts via:
   - `ghcr.io/<owner>/aero-gateway:<version>` (e.g. `0.1.0`)
   - `ghcr.io/<owner>/aero-l2-proxy:<tag>` (e.g. `v0.1.0`)
   - `ghcr.io/<owner>/aero-webrtc-udp-relay:<tag>` (e.g. `v0.1.0`)
+  - `ghcr.io/<owner>/aero-storage-server:<tag>` (e.g. `v0.1.0`)
 
 ### Tagging / versioning behavior
 
@@ -77,7 +83,7 @@ GitHub Actions produces these artifacts via:
 For non-tag publishes (e.g. the `latest` image built from `main`), the gateway embeds
 `version: "sha-<short>"` in `GET /version` so the running container is self-describing.
 
-The `aero-l2-proxy` and `aero-webrtc-udp-relay` images use the same tag scheme.
+The `aero-l2-proxy`, `aero-webrtc-udp-relay`, and `aero-storage-server` images use the same tag scheme.
 
 ---
 
@@ -211,6 +217,13 @@ See `deploy/k8s/README.md` for ingress/TLS examples and COOP/COEP header strateg
   - `builtAt`
 
 ### L2 tunnel proxy
+
+- `GET /version` returns:
+  - `version`
+  - `gitSha`
+  - `builtAt`
+
+### Storage server
 
 - `GET /version` returns:
   - `version`
