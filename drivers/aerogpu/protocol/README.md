@@ -88,6 +88,17 @@ The key MMIO responsibilities are:
 
 See `aerogpu_pci.h` for exact offsets and bit definitions.
 
+### Device feature bits
+
+The device reports optional capability bits in `FEATURES_LO/HI`.
+
+Notable bits include:
+
+- `AEROGPU_FEATURE_VBLANK`: implements vblank IRQ + timing registers (Win7 pacing).
+- `AEROGPU_FEATURE_TRANSFER`: supports transfer/copy commands (e.g. `COPY_BUFFER`,
+  `COPY_TEXTURE2D`), including optional **writeback into guest backing memory**
+  for GPU→CPU readback. (Introduced in ABI minor 1.)
+
 ## Command submission transport
 
 ### Ring setup (KMD)
@@ -150,12 +161,23 @@ This enables compact command streams that use small IDs instead of repeating GPA
 
 See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist `alloc_id`/`share_token` across CreateAllocation/OpenAllocation.
 
+#### Guest-memory access rules
+
+- If any command in a submission requires the host to **READ or WRITE guest backing
+  memory** for an allocation (e.g., destination writeback for CPU readback), the
+  submission MUST provide an allocation table entry for that allocation ID.
+- The host must reject (validation error) any writeback to allocations marked
+  `AEROGPU_ALLOC_FLAG_READONLY`.
+
 ## Fence / completion model
 
 Fences are **monotonic 64-bit** values chosen by the guest.
 
 - Each submission provides `signal_fence`.
 - The device updates the completed fence to at least that value once the submission is finished.
+- If a submission requests any writeback into guest backing memory, the device MUST
+  only signal/advance `completed_fence` after all such writebacks are complete and
+  visible to the guest.
 - Completion is observable via:
   - MMIO `COMPLETED_FENCE_LO/HI` (always available), and
   - optionally `aerogpu_fence_page.completed_fence` if a fence page is configured.

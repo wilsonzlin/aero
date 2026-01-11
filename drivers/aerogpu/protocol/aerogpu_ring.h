@@ -47,6 +47,17 @@ enum aerogpu_engine_id {
  * `aerogpu_wddm_alloc.h`). For standard allocations created without AeroGPU
  * private data, the KMD may synthesize alloc_id values from a reserved
  * namespace.
+ *
+ * Guest-memory access rules:
+ * - If any command in a submission requires the host to READ or WRITE guest
+ *   backing memory for an allocation, the submission MUST provide an allocation
+ *   table entry for that alloc_id.
+ * - The host must reject (validation error) any guest-memory writeback to an
+ *   allocation marked AEROGPU_ALLOC_FLAG_READONLY.
+ *
+ * Fence ordering:
+ * - The host must only advance `completed_fence` for a submission after all
+ *   requested guest-memory writebacks are complete and visible to the guest.
  */
 
 #define AEROGPU_ALLOC_TABLE_MAGIC 0x434F4C41u /* "ALOC" little-endian */
@@ -62,7 +73,12 @@ struct aerogpu_alloc_table_header {
 
 enum aerogpu_alloc_flags {
   AEROGPU_ALLOC_FLAG_NONE = 0,
-  AEROGPU_ALLOC_FLAG_READONLY = (1u << 0), /* Host must not write to this alloc */
+  /*
+   * Host must not write to this allocation's guest backing memory.
+   * The host should reject any command that requests a guest-memory writeback
+   * to an allocation marked READONLY.
+   */
+  AEROGPU_ALLOC_FLAG_READONLY = (1u << 0),
 };
 
 struct aerogpu_alloc_entry {

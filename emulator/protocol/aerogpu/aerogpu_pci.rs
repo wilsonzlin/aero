@@ -5,7 +5,7 @@
 /// ABI major version (breaking changes).
 pub const AEROGPU_ABI_MAJOR: u32 = 1;
 /// ABI minor version (backwards-compatible extensions).
-pub const AEROGPU_ABI_MINOR: u32 = 0;
+pub const AEROGPU_ABI_MINOR: u32 = 1;
 
 pub const AEROGPU_ABI_VERSION_U32: u32 = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
 
@@ -71,6 +71,7 @@ pub const AEROGPU_FEATURE_FENCE_PAGE: u64 = 1u64 << 0;
 pub const AEROGPU_FEATURE_CURSOR: u64 = 1u64 << 1;
 pub const AEROGPU_FEATURE_SCANOUT: u64 = 1u64 << 2;
 pub const AEROGPU_FEATURE_VBLANK: u64 = 1u64 << 3;
+pub const AEROGPU_FEATURE_TRANSFER: u64 = 1u64 << 4;
 
 pub const AEROGPU_MMIO_REG_RING_GPA_LO: u32 = 0x0100;
 pub const AEROGPU_MMIO_REG_RING_GPA_HI: u32 = 0x0104;

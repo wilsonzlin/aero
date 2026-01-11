@@ -3,7 +3,7 @@
 // Source of truth: `drivers/aerogpu/protocol/aerogpu_pci.h`.
 
 export const AEROGPU_ABI_MAJOR = 1;
-export const AEROGPU_ABI_MINOR = 0;
+export const AEROGPU_ABI_MINOR = 1;
 export const AEROGPU_ABI_VERSION_U32 = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
 
 export function abiMajor(versionU32: number): number {
@@ -66,6 +66,7 @@ export const AEROGPU_FEATURE_FENCE_PAGE = 1n << 0n;
 export const AEROGPU_FEATURE_CURSOR = 1n << 1n;
 export const AEROGPU_FEATURE_SCANOUT = 1n << 2n;
 export const AEROGPU_FEATURE_VBLANK = 1n << 3n;
+export const AEROGPU_FEATURE_TRANSFER = 1n << 4n;
 
 export const AEROGPU_MMIO_REG_RING_GPA_LO = 0x0100;
 export const AEROGPU_MMIO_REG_RING_GPA_HI = 0x0104;

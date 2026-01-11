@@ -74,6 +74,10 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_DESTROY_RESOURCE = 0x102,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE = 0x103,
   AEROGPU_CMD_UPLOAD_RESOURCE = 0x104,
+  /* Requires AEROGPU_FEATURE_TRANSFER (ABI minor >= 1). */
+  AEROGPU_CMD_COPY_BUFFER = 0x105,
+  /* Requires AEROGPU_FEATURE_TRANSFER (ABI minor >= 1). */
+  AEROGPU_CMD_COPY_TEXTURE2D = 0x106,
 
   /* Shaders */
   AEROGPU_CMD_CREATE_SHADER_DXBC = 0x200,
@@ -157,6 +161,22 @@ enum aerogpu_resource_usage_flags {
   AEROGPU_RESOURCE_USAGE_RENDER_TARGET = (1u << 4),
   AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = (1u << 5),
   AEROGPU_RESOURCE_USAGE_SCANOUT = (1u << 6),
+};
+
+/*
+ * Copy / transfer command flags.
+ *
+ * If AEROGPU_COPY_FLAG_WRITEBACK_DST is set, and the destination resource is
+ * backed by a guest allocation, the host MUST write the resulting bytes into
+ * the guest backing memory before signaling the submission fence.
+ *
+ * If the destination resource has no guest backing allocation, the host should
+ * treat this as a validation error (recommended) so drivers don't get silent
+ * failures.
+ */
+enum aerogpu_copy_flags {
+  AEROGPU_COPY_FLAG_NONE = 0,
+  AEROGPU_COPY_FLAG_WRITEBACK_DST = (1u << 0),
 };
 
 /*
@@ -255,6 +275,69 @@ struct aerogpu_cmd_upload_resource {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_upload_resource) == 32);
+
+/*
+ * COPY_BUFFER
+ * - Source and destination resources must be buffers.
+ * - Ranges must be in-bounds:
+ *     dst_offset_bytes + size_bytes <= dst_buffer.size_bytes
+ *     src_offset_bytes + size_bytes <= src_buffer.size_bytes
+ * - If AEROGPU_COPY_FLAG_WRITEBACK_DST is set:
+ *   - dst_buffer MUST be backed by a guest allocation.
+ *   - The host MUST write back the resulting bytes into the guest backing
+ *     memory before signaling the submission fence.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_copy_buffer {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_COPY_BUFFER */
+  aerogpu_handle_t dst_buffer;
+  aerogpu_handle_t src_buffer;
+  uint64_t dst_offset_bytes;
+  uint64_t src_offset_bytes;
+  uint64_t size_bytes;
+  uint32_t flags; /* aerogpu_copy_flags */
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_copy_buffer) == 48);
+
+/*
+ * COPY_TEXTURE2D
+ * - Source and destination resources must be texture2d.
+ * - Formats must match.
+ * - Subresource indices must be valid:
+ *     dst_mip_level < dst_texture.mip_levels
+ *     dst_array_layer < dst_texture.array_layers
+ *     src_mip_level < src_texture.mip_levels
+ *     src_array_layer < src_texture.array_layers
+ * - Copy rectangle must be in-bounds of both subresources.
+ * - If AEROGPU_COPY_FLAG_WRITEBACK_DST is set:
+ *   - dst_texture MUST be backed by a guest allocation.
+ *   - The host MUST write back the resulting bytes into the guest backing
+ *     memory before signaling the submission fence.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_copy_texture2d {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_COPY_TEXTURE2D */
+  aerogpu_handle_t dst_texture;
+  aerogpu_handle_t src_texture;
+  uint32_t dst_mip_level;
+  uint32_t dst_array_layer;
+  uint32_t src_mip_level;
+  uint32_t src_array_layer;
+  uint32_t dst_x;
+  uint32_t dst_y;
+  uint32_t src_x;
+  uint32_t src_y;
+  uint32_t width;
+  uint32_t height;
+  uint32_t flags; /* aerogpu_copy_flags */
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_copy_texture2d) == 64);
 
 /* -------------------------------- Shaders -------------------------------- */
 

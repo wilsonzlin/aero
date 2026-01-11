@@ -36,7 +36,7 @@ extern "C" {
  * The ABI version is reported by MMIO register `AEROGPU_MMIO_REG_ABI_VERSION`.
  */
 #define AEROGPU_ABI_MAJOR 1u
-#define AEROGPU_ABI_MINOR 0u
+#define AEROGPU_ABI_MINOR 1u
 #define AEROGPU_ABI_VERSION_U32 (((uint32_t)AEROGPU_ABI_MAJOR << 16) | (uint32_t)AEROGPU_ABI_MINOR)
 
 /* ------------------------------- PCI identity ---------------------------- */
@@ -89,6 +89,7 @@ extern "C" {
 #define AEROGPU_FEATURE_CURSOR (1ull << 1) /* Implements cursor registers */
 #define AEROGPU_FEATURE_SCANOUT (1ull << 2) /* Implements scanout registers */
 #define AEROGPU_FEATURE_VBLANK (1ull << 3) /* Implements vblank IRQ + vblank timing regs */
+#define AEROGPU_FEATURE_TRANSFER (1ull << 4) /* Supports transfer/copy commands + optional guest writeback */
 
 /* Ring setup */
 #define AEROGPU_MMIO_REG_RING_GPA_LO 0x0100u /* RW: GPA of aerogpu_ring_header */
