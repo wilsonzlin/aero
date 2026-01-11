@@ -4,9 +4,18 @@
 
 #include "../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h"
 
+#ifndef AERO_VIRTIO_PCI_ENFORCE_REVISION_ID
+#define AERO_VIRTIO_PCI_ENFORCE_REVISION_ID 1
+#endif
+
+#ifndef AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID
+#define AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID 0
+#endif
+
 enum {
 	AERO_W7_VIRTIO_PCI_VENDOR_ID = 0x1AF4,
 	AERO_W7_VIRTIO_PCI_DEVICE_MODERN_BASE = 0x1040,
+	AERO_W7_VIRTIO_PCI_DEVICE_TRANSITIONAL_BASE = 0x1000,
 
 	AERO_W7_VIRTIO_PCI_REVISION = 0x01,
 
@@ -376,7 +385,7 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 		return STATUS_INVALID_PARAMETER;
 	}
 
-	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && bar0_len < AERO_W7_VIRTIO_BAR0_REQUIRED_LEN) {
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && bar0_len < AERO_W7_VIRTIO_BAR0_REQUIRED_LEN) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_BAR0_TOO_SMALL;
 		return STATUS_BUFFER_TOO_SMALL;
 	}
@@ -403,25 +412,53 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	}
 
 	if (device < (UINT16)AERO_W7_VIRTIO_PCI_DEVICE_MODERN_BASE) {
+#if AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID
+		/*
+		 * QEMU compatibility: allow virtio-pci transitional device IDs when the
+		 * caller explicitly opts in (typically for driver bring-up on stock QEMU
+		 * defaults).
+		 *
+		 * Transitional IDs live in 0x1000..0x103f. Even when a device advertises a
+		 * transitional ID, drivers can still use the modern capability transport.
+		 *
+		 * Treat transitional IDs as COMPAT mode regardless of the requested mode:
+		 * they are outside the strict AERO-W7-VIRTIO contract.
+		 */
+		if (device < (UINT16)AERO_W7_VIRTIO_PCI_DEVICE_TRANSITIONAL_BASE) {
+			t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_DEVICE_ID_NOT_MODERN;
+			VirtioPciModernLog(t, "virtio_pci_modern_transport: PCI device id not in virtio transitional range");
+			return STATUS_NOT_SUPPORTED;
+		}
+		if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+			t->Mode = VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT;
+		}
+#else
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_DEVICE_ID_NOT_MODERN;
 		VirtioPciModernLog(t, "virtio_pci_modern_transport: PCI device id not in modern-only range");
 		return STATUS_NOT_SUPPORTED;
+#endif
 	}
 
-	/* Enforce AERO-W7-VIRTIO v1 revision ID. */
+	/* Enforce AERO-W7-VIRTIO v1 revision ID unless the caller opts out. */
+#if AERO_VIRTIO_PCI_ENFORCE_REVISION_ID
 	if (revision != AERO_W7_VIRTIO_PCI_REVISION) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION;
 		return STATUS_NOT_SUPPORTED;
 	}
+#else
+	if (revision != AERO_W7_VIRTIO_PCI_REVISION && t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+		t->Mode = VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT;
+	}
+#endif
 
 	/* Subsystem vendor ID is fixed by contract v1. */
-	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && subsystem_vendor != (UINT16)AERO_W7_VIRTIO_PCI_VENDOR_ID) {
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && subsystem_vendor != (UINT16)AERO_W7_VIRTIO_PCI_VENDOR_ID) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_SUBSYSTEM_VENDOR_MISMATCH;
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	/* Interrupt pin is fixed by contract v1 (INTA#). */
-	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && interrupt_pin != 0x01) {
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && interrupt_pin != 0x01) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_INTERRUPT_PIN_MISMATCH;
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -438,7 +475,7 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	 * PCI BAR memory type encoding:
 	 *   bits [2:1] == 0b10 => 64-bit address
 	 */
-	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (bar0_low & 0x06u) != 0x04u) {
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (bar0_low & 0x06u) != 0x04u) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO;
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -450,7 +487,7 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	 * This catches driver resource discovery bugs where a different MMIO range
 	 * is mapped than the one the device is programmed to use.
 	 */
-	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
 		bar0_high = os->PciRead32(t->OsContext, (UINT16)(PCI_CFG_BAR0_OFF + 4));
 		bar0_cfg_base = ((UINT64)bar0_high << 32) | (UINT64)(bar0_low & ~0x0Fu);
 		if (bar0_cfg_base != bar0_pa) {
@@ -510,7 +547,7 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	{
 		volatile void *va = NULL;
 		UINT32 map_len = bar0_len;
-		if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && map_len > AERO_W7_VIRTIO_BAR0_REQUIRED_LEN) {
+		if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && map_len > AERO_W7_VIRTIO_BAR0_REQUIRED_LEN) {
 			map_len = AERO_W7_VIRTIO_BAR0_REQUIRED_LEN;
 		}
 

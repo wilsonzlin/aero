@@ -7,7 +7,7 @@
  * This module implements discovery via PCI vendor capabilities and MMIO access
  * to CommonCfg/Notify/ISR/DeviceCfg regions.
  *
- * It hard-enforces the AERO-W7-VIRTIO v1 transport contract (docs/):
+ * By default, it enforces the AERO-W7-VIRTIO v1 transport contract (docs/):
  *   - PCI Vendor ID == 0x1AF4 (virtio vendor)
  *   - PCI Device ID in the modern-only ID space (>= 0x1040)
  *   - PCI Revision ID == 0x01
@@ -23,6 +23,15 @@
  *
  * Additional STRICT-mode feature contract enforcement:
  *   - devices MUST offer VIRTIO_F_RING_INDIRECT_DESC
+ *
+ * QEMU compatibility:
+ *   - Some QEMU configurations expose virtio devices with transitional PCI IDs
+ *     (0x1000..0x103f) and/or report Revision ID 0x00 by default.
+ *   - Drivers can opt into a relaxed identity policy at build time by defining:
+ *       - AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID=1
+ *       - AERO_VIRTIO_PCI_ENFORCE_REVISION_ID=0
+ *     In those builds, transitional device IDs (and non-v1 revision IDs) will be
+ *     accepted and treated as COMPAT transport mode.
  */
 
 #include "../common/virtio_osdep.h"

@@ -114,7 +114,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Legacy'">
     <ClCompile>
-      <PreprocessorDefinitions>DBG=0;AERO_VIRTIO_SND_LEGACY=1;AERO_VIRTIO_PCI_ENFORCE_REVISION_ID=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DBG=0;AERO_VIRTIO_SND_LEGACY=1;AERO_VIRTIO_PCI_ALLOW_TRANSITIONAL_DEVICE_ID=1;AERO_VIRTIO_PCI_ENFORCE_REVISION_ID=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
 
