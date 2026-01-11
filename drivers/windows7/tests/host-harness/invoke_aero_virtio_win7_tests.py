@@ -252,6 +252,15 @@ def main() -> int:
                         tail = tail[-131072:]
 
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                        # Require the virtio-input test marker so older selftest binaries cannot
+                        # accidentally pass the host harness.
+                        if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" not in tail:
+                            print(
+                                "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            return 1
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         return 0
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
@@ -265,6 +274,13 @@ def main() -> int:
                     if chunk2:
                         tail += chunk2
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                            if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" not in tail:
+                                print(
+                                    "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                return 1
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             return 0
                         if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:

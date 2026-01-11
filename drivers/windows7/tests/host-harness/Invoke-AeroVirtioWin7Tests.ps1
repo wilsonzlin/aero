@@ -192,7 +192,15 @@ function Wait-AeroSelftestResult {
       if ($tail.Length -gt 131072) { $tail = $tail.Substring($tail.Length - 131072) }
 
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
-        return @{ Result = "PASS"; Tail = $tail }
+        # Ensure we saw the virtio-input test marker so older selftest binaries (blk/net-only)
+        # cannot accidentally pass the host harness.
+        if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
+          return @{ Result = "PASS"; Tail = $tail }
+        }
+        if ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
+          return @{ Result = "FAIL"; Tail = $tail }
+        }
+        return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
         return @{ Result = "FAIL"; Tail = $tail }
@@ -360,6 +368,14 @@ try {
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
       exit 2
+    }
+    "MISSING_VIRTIO_INPUT" {
+      Write-Host "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      exit 1
     }
     default {
       Write-Host "FAIL: unexpected harness result: $($result.Result)"
