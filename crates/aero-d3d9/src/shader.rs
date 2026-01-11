@@ -304,7 +304,19 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             continue;
         }
 
-        let op = opcode_to_op(opcode).ok_or(ShaderError::UnsupportedOpcode(opcode))?;
+        let mut params = Vec::with_capacity(param_count);
+        for _ in 0..param_count {
+            params.push(read_u32(&words, &mut idx)?);
+        }
+
+        // Many real-world SM2/3 shaders include `dcl`, `def`, and `comment` opcodes.
+        // The minimal bring-up translator only understands a small arithmetic+sampling
+        // subset; treat unknown opcodes as no-ops so we can still translate and execute
+        // simple shaders extracted from DXBC containers.
+        let Some(op) = opcode_to_op(opcode) else {
+            continue;
+        };
+
         if op == Op::End {
             instructions.push(Instruction {
                 op,
@@ -313,11 +325,6 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 sampler: None,
             });
             break;
-        }
-
-        let mut params = Vec::with_capacity(param_count);
-        for _ in 0..param_count {
-            params.push(read_u32(&words, &mut idx)?);
         }
 
         let inst = match op {
@@ -644,6 +651,8 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
         }
         ShaderStage::Pixel => {
+            // Inputs are driven by varying mapping. We just emit for any used input regs.
+            // For simplicity we emit `v#` as @location(#) and `t#` as @location(4+#).
             let mut inputs_by_reg = BTreeSet::new();
             for inst in &ir.ops {
                 for src in &inst.src {
@@ -657,8 +666,6 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
             let has_inputs = !inputs_by_reg.is_empty();
             if has_inputs {
-                // Inputs are driven by varying mapping. We just emit for any used input regs.
-                // For simplicity we emit `v#` as @location(#) and `t#` as @location(4+#).
                 wgsl.push_str("struct PsInput {\n");
                 for reg in &inputs_by_reg {
                     if let Some(loc) = ps_input_location(*reg) {
@@ -672,6 +679,8 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                 wgsl.push_str("};\n\n");
                 wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n");
             } else {
+                // WGSL does not permit empty structs, so if the shader uses no varyings we
+                // omit the input parameter entirely.
                 wgsl.push_str("@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n");
             }
             for i in 0..ir.temp_count {

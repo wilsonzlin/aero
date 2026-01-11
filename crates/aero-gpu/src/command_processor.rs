@@ -11,7 +11,7 @@
 //! translate the rest of the command stream to WebGPU, but Ex clients still need
 //! stable synchronization and sharing primitives even if rendering is minimal.
 
-use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
+use crate::protocol::{AeroGpuCmd, AeroGpuCmdStreamParseError, parse_cmd_stream};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

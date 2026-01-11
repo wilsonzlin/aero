@@ -13,6 +13,7 @@
 //! - A stable, backend-agnostic HAL (see [`hal`]) so higher-level rendering code does not fork per
 //!   backend.
 
+mod aerogpu_d3d9_executor;
 mod buffer_arena;
 mod command_processor;
 mod context;
@@ -25,11 +26,11 @@ mod present;
 mod tile_diff;
 
 pub mod frame_source;
-pub mod shader_lib;
+mod protocol;
 mod recovery;
+pub mod shader_lib;
 mod surface;
 mod time;
-mod protocol;
 mod upload;
 mod wgpu_integration;
 
@@ -38,8 +39,8 @@ mod readback;
 mod texture_format;
 mod texture_manager;
 
-pub mod bindings;
 pub mod backend;
+pub mod bindings;
 pub mod cmd;
 pub mod hal;
 pub mod pipeline_cache;
@@ -52,13 +53,14 @@ pub mod protocol_d3d11;
 pub mod protocol_d3d9;
 pub mod stats;
 
+pub use aerogpu_d3d9_executor::{AerogpuD3d9Error, AerogpuD3d9Executor};
 pub use bc_decompress::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
 };
 pub use buffer_arena::BufferArena;
 pub use command_processor::{AeroGpuCommandProcessor, AeroGpuEvent, CommandProcessorError};
 pub use context::WgpuContext;
-pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
+pub use dirty_rect::{Rect, RectMergeOutcome, merge_and_cap_rects};
 pub use error::GpuError;
 pub use error_event::{GpuErrorCategory, GpuErrorEvent, GpuErrorSeverity, GpuErrorSeverityKind};
 pub use guest_memory::{GuestMemory, GuestMemoryError, VecGuestMemory};
@@ -74,15 +76,15 @@ pub use protocol::{
     AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
 };
 pub use readback::readback_rgba8;
+pub use recovery::{BackendAvailability, GpuRecoveryMachine, RecoveryOutcome, RecoveryState};
+pub use surface::{
+    GpuPresenter, GpuSurfaceError, PresentOutcome, SimulatedSurface, SurfaceFrame, SurfaceProvider,
+    present_with_retry,
+};
 pub use texture_format::{TextureFormat, TextureFormatSelection, TextureUploadTransform};
 pub use texture_manager::{
     SamplerDesc, TextureDesc, TextureKey, TextureManager, TextureManagerError, TextureManagerStats,
     TextureRegion, TextureViewDesc,
-};
-pub use recovery::{BackendAvailability, GpuRecoveryMachine, RecoveryOutcome, RecoveryState};
-pub use surface::{
-    present_with_retry, GpuPresenter, GpuSurfaceError, PresentOutcome, SimulatedSurface,
-    SurfaceFrame, SurfaceProvider,
 };
 pub use time::now_ms;
 pub use upload::{
@@ -184,7 +186,10 @@ impl GpuBackend for GpuContext {
         self.backend.destroy_bind_group_layout(id)
     }
 
-    fn create_bind_group(&mut self, desc: hal::BindGroupDesc) -> Result<hal::BindGroupId, GpuError> {
+    fn create_bind_group(
+        &mut self,
+        desc: hal::BindGroupDesc,
+    ) -> Result<hal::BindGroupId, GpuError> {
         self.backend.create_bind_group(desc)
     }
 
