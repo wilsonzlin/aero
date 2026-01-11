@@ -19,6 +19,7 @@
 #include <d3d10_1.h>
 #include <d3dkmthk.h>
 
+#include <array>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -152,6 +153,8 @@ constexpr uint32_t kD3D10BindConstantBuffer = 0x4;
 constexpr uint32_t kD3D10BindShaderResource = 0x8;
 constexpr uint32_t kD3D10BindRenderTarget = 0x20;
 constexpr uint32_t kD3D10BindDepthStencil = 0x40;
+
+constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
@@ -393,6 +396,7 @@ struct AeroGpuDepthStencilView {
 
 struct AeroGpuShaderResourceView {
   aerogpu_handle_t texture = 0;
+  AeroGpuResource* resource = nullptr;
 };
 
 struct AeroGpuBlendState {
@@ -440,6 +444,8 @@ struct AeroGpuDevice {
 
   aerogpu_handle_t current_rtv = 0;
   aerogpu_handle_t current_dsv = 0;
+  std::array<AeroGpuResource*, kAeroGpuD3D10MaxSrvSlots> current_vs_srvs{};
+  std::array<AeroGpuResource*, kAeroGpuD3D10MaxSrvSlots> current_ps_srvs{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
@@ -2106,11 +2112,41 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (dev->current_rtv_res == res) {
     dev->current_rtv_res = nullptr;
     dev->current_rtv = 0;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+    cmd->color_count = 0;
+    cmd->depth_stencil = dev->current_dsv;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+      cmd->colors[i] = 0;
+    }
   }
   if (dev->current_vb_res == res) {
     dev->current_vb_res = nullptr;
     dev->current_vb_stride = 0;
     dev->current_vb_offset = 0;
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
+    cmd->start_slot = 0;
+    cmd->buffer_count = 0;
+  }
+
+  for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
+    if (dev->current_vs_srvs[slot] == res) {
+      dev->current_vs_srvs[slot] = nullptr;
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+      cmd->slot = slot;
+      cmd->texture = 0;
+      cmd->reserved0 = 0;
+    }
+  }
+  for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
+    if (dev->current_ps_srvs[slot] == res) {
+      dev->current_ps_srvs[slot] = nullptr;
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+      cmd->slot = slot;
+      cmd->texture = 0;
+      cmd->reserved0 = 0;
+    }
   }
 
   if (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty()) {
@@ -3179,6 +3215,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
   srv->texture = res ? res->handle : 0;
+  srv->resource = res;
   return S_OK;
 }
 
@@ -3577,9 +3614,6 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
   if (!hDevice.pDrvPrivate) {
     return;
   }
-  if (num_views && !phViews) {
-    return;
-  }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
@@ -3588,17 +3622,102 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   for (UINT i = 0; i < num_views; i++) {
+    const uint32_t slot = static_cast<uint32_t>(start_slot + i);
     aerogpu_handle_t tex = 0;
-    if (phViews[i].pDrvPrivate) {
-      tex = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i])->texture;
+    AeroGpuResource* res = nullptr;
+    if (phViews && phViews[i].pDrvPrivate) {
+      auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i]);
+      res = view ? view->resource : nullptr;
+      tex = res ? res->handle : (view ? view->texture : 0);
+    }
+    if (slot < dev->current_vs_srvs.size() && shader_stage == AEROGPU_SHADER_STAGE_VERTEX) {
+      dev->current_vs_srvs[slot] = res;
+    } else if (slot < dev->current_ps_srvs.size() && shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
+      dev->current_ps_srvs[slot] = res;
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
     cmd->shader_stage = shader_stage;
-    cmd->slot = start_slot + i;
+    cmd->slot = slot;
     cmd->texture = tex;
     cmd->reserved0 = 0;
   }
+}
+
+void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
+    if (dev->current_vs_srvs[slot]) {
+      dev->current_vs_srvs[slot] = nullptr;
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+      cmd->slot = slot;
+      cmd->texture = 0;
+      cmd->reserved0 = 0;
+    }
+  }
+  for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
+    if (dev->current_ps_srvs[slot]) {
+      dev->current_ps_srvs[slot] = nullptr;
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+      cmd->slot = slot;
+      cmd->texture = 0;
+      cmd->reserved0 = 0;
+    }
+  }
+
+  dev->current_rtv = 0;
+  dev->current_rtv_res = nullptr;
+  dev->current_dsv = 0;
+  dev->viewport_width = 0;
+  dev->viewport_height = 0;
+  auto* rt_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  rt_cmd->color_count = 0;
+  rt_cmd->depth_stencil = 0;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+    rt_cmd->colors[i] = 0;
+  }
+
+  dev->current_vs = 0;
+  dev->current_ps = 0;
+  auto* bind_cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  bind_cmd->vs = 0;
+  bind_cmd->ps = 0;
+  bind_cmd->cs = 0;
+  bind_cmd->reserved0 = 0;
+
+  dev->current_input_layout = 0;
+  auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  il_cmd->input_layout_handle = 0;
+  il_cmd->reserved0 = 0;
+
+  dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+  auto* topo_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  topo_cmd->topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+  topo_cmd->reserved0 = 0;
+
+  dev->current_vb_res = nullptr;
+  dev->current_vb_stride = 0;
+  dev->current_vb_offset = 0;
+  auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
+  vb_cmd->start_slot = 0;
+  vb_cmd->buffer_count = 0;
+
+  auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  ib_cmd->buffer = 0;
+  ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
+  ib_cmd->offset_bytes = 0;
+  ib_cmd->reserved0 = 0;
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
@@ -4304,6 +4423,34 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     }
   }
 
+  auto is_rotated = [&resources](const AeroGpuResource* res) -> bool {
+    if (!res) {
+      return false;
+    }
+    return std::find(resources.begin(), resources.end(), res) != resources.end();
+  };
+
+  for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
+    if (!is_rotated(dev->current_vs_srvs[slot])) {
+      continue;
+    }
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+    cmd->slot = slot;
+    cmd->texture = dev->current_vs_srvs[slot] ? dev->current_vs_srvs[slot]->handle : 0;
+    cmd->reserved0 = 0;
+  }
+  for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
+    if (!is_rotated(dev->current_ps_srvs[slot])) {
+      continue;
+    }
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+    cmd->slot = slot;
+    cmd->texture = dev->current_ps_srvs[slot] ? dev->current_ps_srvs[slot]->handle : 0;
+    cmd->reserved0 = 0;
+  }
+
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
   for (UINT i = 0; i < numResources; ++i) {
     aerogpu_handle_t handle = 0;
@@ -4468,6 +4615,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
   pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
+  pCreateDevice->pDeviceFuncs->pfnClearState = &ClearState;
 
   // Map/unmap. Win7 D3D11 runtimes may use specialized entrypoints.
   pCreateDevice->pDeviceFuncs->pfnMap = &Map;
@@ -4638,6 +4786,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
   pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
+  pCreateDevice->pDeviceFuncs->pfnClearState = &ClearState;
 
   pCreateDevice->pDeviceFuncs->pfnMap = &Map;
   pCreateDevice->pDeviceFuncs->pfnUnmap = &Unmap;
