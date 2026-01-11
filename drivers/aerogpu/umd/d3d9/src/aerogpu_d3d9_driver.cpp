@@ -278,6 +278,40 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
     }
   }
 
+#if defined(_WIN32)
+  // For bounded waits, prefer letting the kernel wait on the WDDM sync object.
+  // This avoids user-mode polling loops (Sleep(1) + repeated fence queries).
+  if (timeout_ms != 0) {
+    const WddmHandle sync_object = dev->wddm_context.hSyncObject;
+    if (sync_object != 0) {
+      auto* wait_fn = load_d3dkmt_wait_for_sync_object();
+      if (wait_fn) {
+        const WddmHandle handles[1] = {sync_object};
+        const uint64_t fences[1] = {fence_value};
+
+        AerogpuD3DKMTWaitForSynchronizationObject args{};
+        args.ObjectCount = 1;
+        args.ObjectHandleArray = handles;
+        args.FenceValueArray = fences;
+        args.Timeout = timeout_ms;
+
+        const AerogpuNtStatus st = wait_fn(&args);
+        if (st == kStatusSuccess) {
+          {
+            std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+            adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
+          }
+          adapter->fence_cv.notify_all();
+          return FenceWaitResult::Complete;
+        }
+        if (st == kStatusTimeout) {
+          return FenceWaitResult::NotReady;
+        }
+      }
+    }
+  }
+#endif
+
   // Fast path: for polling callers (GetData), avoid per-call kernel waits. We
   // prefer querying the KMD fence counters (throttled inside
   // refresh_fence_snapshot) so tight polling loops don't spam syscalls.
@@ -326,35 +360,6 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
     if (refresh_fence_snapshot(adapter).last_completed >= fence_value) {
       return FenceWaitResult::Complete;
     }
-
-#if defined(_WIN32)
-    if (!adapter->kmd_query_available.load(std::memory_order_acquire)) {
-      const WddmHandle sync_object = dev->wddm_context.hSyncObject;
-      if (sync_object != 0) {
-        auto* wait_fn = load_d3dkmt_wait_for_sync_object();
-        if (wait_fn) {
-          const WddmHandle handles[1] = {sync_object};
-          const uint64_t fences[1] = {fence_value};
-
-          AerogpuD3DKMTWaitForSynchronizationObject args{};
-          args.ObjectCount = 1;
-          args.ObjectHandleArray = handles;
-          args.FenceValueArray = fences;
-          args.Timeout = 0; // poll
-
-          const AerogpuNtStatus st = wait_fn(&args);
-          if (st == kStatusSuccess) {
-            {
-              std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-              adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
-            }
-            adapter->fence_cv.notify_all();
-            return FenceWaitResult::Complete;
-          }
-        }
-      }
-    }
-#endif
 
     sleep_ms(1);
   }
