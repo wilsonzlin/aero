@@ -10,6 +10,9 @@ platforms/configuration using MSBuild (command-line only).
 
 Discovery conventions (encoded here for CI determinism):
   - Drivers must live at depth <= 2 under `drivers/` (example: `drivers/win7/virtio-net`).
+    - Exception: `drivers/windows7/virtio/<name>` is allowed (depth 3) to keep the virtio
+      driver family grouped under a shared `virtio/` folder while still producing per-driver
+      build/package output paths.
   - Each driver directory provides either:
       - a solution file `<dir>/<dirName>.sln`, OR
       - exactly one project file `<dir>/*.vcxproj`.
@@ -381,8 +384,17 @@ function Try-GetDriverBuildTargetFromDirectory {
 
   # Keep discovery deterministic: CI only considers driver roots at depth <= 2
   # under drivers/ (drivers/<name>/... or drivers/<group>/<name>/...).
-  if (($displayName -split '/').Count -gt 2) {
+  #
+  # Exception: allow depth == 3 for `drivers/windows7/virtio/<name>` so that Win7 virtio
+  # drivers can live under a shared `drivers/windows7/virtio/` subtree (blk/net/common/etc).
+  $pathParts = ($displayName -split '/')
+  if ($pathParts.Count -gt 3) {
     return $null
+  }
+  if ($pathParts.Count -eq 3) {
+    if (-not ($pathParts[0] -ieq 'windows7' -and $pathParts[1] -ieq 'virtio')) {
+      return $null
+    }
   }
 
   $name = $Directory.Name
@@ -434,7 +446,7 @@ function Discover-DriverBuildTargets {
 
   $targets = New-Object System.Collections.Generic.List[object]
 
-  # Discover driver roots at depth <= 2 under drivers/. A directory is considered a
+  # Discover driver roots under drivers/. A directory is considered a
   # build target if it contains:
   #   - <dirName>.sln, OR
   #   - exactly one *.vcxproj
