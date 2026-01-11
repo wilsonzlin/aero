@@ -1042,6 +1042,14 @@ impl AerogpuD3d9Executor {
         self.presented_scanouts.retain(|_, v| *v != underlying);
     }
 
+    fn release_shared_surface_token(&mut self, share_token: u64) {
+        // KMD-emitted "share token is no longer importable" signal.
+        //
+        // Existing imported aliases remain valid and keep the underlying resource alive. We only
+        // remove the token mapping so future imports fail deterministically.
+        self.shared_surface_by_token.remove(&share_token);
+    }
+
     fn execute_cmd(
         &mut self,
         cmd: AeroGpuCmd<'_>,
@@ -2592,9 +2600,7 @@ impl AerogpuD3d9Executor {
                 Ok(())
             }
             AeroGpuCmd::ReleaseSharedSurface { share_token } => {
-                if share_token != 0 {
-                    self.shared_surface_by_token.remove(&share_token);
-                }
+                self.release_shared_surface_token(share_token);
                 Ok(())
             }
             AeroGpuCmd::ResourceDirtyRange {

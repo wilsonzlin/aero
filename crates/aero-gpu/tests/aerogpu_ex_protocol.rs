@@ -74,6 +74,13 @@ fn emit_create_texture_rgba8(out: &mut Vec<u8>, texture_handle: u32) {
     });
 }
 
+fn emit_release_shared_surface(out: &mut Vec<u8>, share_token: u64) {
+    emit_packet(out, AerogpuCmdOpcode::ReleaseSharedSurface as u32, |out| {
+        push_u64(out, share_token); // share_token
+        push_u64(out, 0); // reserved0
+    });
+}
+
 #[test]
 fn present_ex_and_shared_surfaces_update_state_and_emit_events() {
     const TOKEN: u64 = 0x1122_3344_5566_7788;
@@ -829,4 +836,191 @@ fn dirty_range_for_host_owned_resource_is_ignored() {
     processor
         .process_submission(&stream, 1)
         .expect("host-owned dirty ranges should be ignored");
+}
+
+#[test]
+fn release_unknown_token_is_a_noop() {
+    const TOKEN: u64 = 0xDEAD_BEEF_CAFE_BABE;
+
+    let stream = build_stream(|out| {
+        emit_release_shared_surface(out, TOKEN);
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&stream, 1)
+        .expect("release of unknown token must be idempotent");
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), None);
+}
+
+#[test]
+fn release_invalidates_token_but_keeps_existing_alias_valid() {
+    const TOKEN: u64 = 0x9999_AAAA_BBBB_CCCC;
+
+    let submit1 = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let submit2 = build_stream(|out| {
+        emit_release_shared_surface(out, TOKEN);
+    });
+
+    let submit3 = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
+            push_u32(out, 0x20); // resource_handle (alias)
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, 4); // size_bytes (1x1 RGBA8)
+        });
+    });
+
+    let submit4 = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x21); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&submit1, 1)
+        .expect("submit1 should succeed");
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), Some(0x10));
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    processor
+        .process_submission(&submit2, 2)
+        .expect("release should be accepted");
+
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), None);
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    processor
+        .process_submission(&submit3, 3)
+        .expect("existing aliases remain usable after release");
+
+    let err = processor.process_submission(&submit4, 4).unwrap_err();
+    assert!(matches!(
+        err,
+        CommandProcessorError::UnknownShareToken(t) if t == TOKEN
+    ));
+}
+
+#[test]
+fn release_does_not_prevent_final_destroy_and_handle_reuse() {
+    const TOKEN: u64 = 0x1111_2222_3333_4444;
+
+    let submit1 = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let submit2 = build_stream(|out| {
+        emit_release_shared_surface(out, TOKEN);
+    });
+
+    let submit3 = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+            push_u32(out, 0x10); // DestroyResource(original)
+            push_u32(out, 0);
+        });
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+            push_u32(out, 0x20); // DestroyResource(alias)
+            push_u32(out, 0);
+        });
+    });
+
+    let submit4 = build_stream(|out| {
+        // Reusing the original handle should be allowed once the last reference is gone.
+        emit_create_texture_rgba8(out, 0x10);
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&submit1, 1)
+        .expect("submit1 should succeed");
+    processor
+        .process_submission(&submit2, 2)
+        .expect("submit2 should succeed");
+
+    processor
+        .process_submission(&submit3, 3)
+        .expect("destroy after release should succeed");
+
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), None);
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x20);
+
+    processor
+        .process_submission(&submit4, 4)
+        .expect("handle reuse should succeed once the last shared-surface ref is destroyed");
+}
+
+#[test]
+fn release_is_idempotent_after_original_handle_already_destroyed() {
+    const TOKEN: u64 = 0x5555_6666_7777_8888;
+
+    let submit1 = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+            push_u32(out, 0x10); // DestroyResource(original)
+            push_u32(out, 0);
+        });
+    });
+
+    let release = build_stream(|out| {
+        emit_release_shared_surface(out, TOKEN);
+    });
+
+    let release_again = build_stream(|out| {
+        emit_release_shared_surface(out, TOKEN);
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&submit1, 1)
+        .expect("submit1 should succeed");
+
+    // Original handle is destroyed, but alias is still alive; token remains valid until release.
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), Some(0x10));
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    processor
+        .process_submission(&release, 2)
+        .expect("release should succeed");
+    assert_eq!(processor.lookup_shared_surface_token(TOKEN), None);
+    assert_eq!(processor.resolve_shared_surface(0x20), 0x10);
+
+    processor
+        .process_submission(&release_again, 3)
+        .expect("release is idempotent");
 }

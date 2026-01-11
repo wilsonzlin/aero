@@ -2683,7 +2683,7 @@ Rollback:
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiDestroyAllocation(_In_ const HANDLE hAdapter,
-                                                    _In_ const DXGKARG_DESTROYALLOCATION* pDestroy)
+                                                     _In_ const DXGKARG_DESTROYALLOCATION* pDestroy)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!pDestroy) {

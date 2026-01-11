@@ -371,6 +371,14 @@ impl AeroGpuCommandProcessor {
         Ok(())
     }
 
+    fn release_shared_surface_token(&mut self, share_token: u64) {
+        // KMD-emitted "share token is no longer importable" signal.
+        //
+        // Existing imported handles remain valid and keep the underlying resource alive via the
+        // refcount tables; we only remove the token mapping so future imports fail deterministically.
+        self.shared_surface_by_token.remove(&share_token);
+    }
+
     /// Process a single command buffer submission and update state.
     ///
     /// The caller supplies the submission's `signal_fence` value (from
@@ -627,9 +635,7 @@ impl AeroGpuCommandProcessor {
                     }
                 }
                 AeroGpuCmd::ReleaseSharedSurface { share_token } => {
-                    if share_token != 0 {
-                        self.shared_surface_by_token.remove(&share_token);
-                    }
+                    self.release_shared_surface_token(share_token);
                 }
                 _ => {
                     // For now the processor treats most commands as "handled elsewhere".
