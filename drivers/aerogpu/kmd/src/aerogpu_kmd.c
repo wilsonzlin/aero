@@ -4561,6 +4561,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                             io->desc[i].fence = (uint64_t)desc->fence;
                             io->desc[i].cmd_gpa = (uint64_t)desc->dma_buffer_gpa;
                             io->desc[i].cmd_size_bytes = desc->dma_buffer_size;
+
+                            if (desc->type == AEROGPU_SUBMIT_PRESENT) {
+                                io->desc[i].flags |= AEROGPU_SUBMIT_FLAG_PRESENT;
+                            }
                         } else {
                             /* Fallback: expose the descriptor pointer itself. */
                             io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
