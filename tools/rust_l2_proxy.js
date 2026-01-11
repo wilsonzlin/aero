@@ -174,6 +174,7 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
     const child = spawn(command, args, {
       cwd,
       env: {
+        ...process.env,
         ...env,
         ...(command === "cargo"
           ? {
