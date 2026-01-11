@@ -10,14 +10,35 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Opt into a per-checkout Cargo home to avoid that contention.
 #
 # Usage:
-#   export AERO_ISOLATE_CARGO_HOME=1
+#   export AERO_ISOLATE_CARGO_HOME=1                     # use "$REPO_ROOT/.cargo-home"
+#   export AERO_ISOLATE_CARGO_HOME="$REPO_ROOT/.cargo-home" # equivalent explicit path
+#   export AERO_ISOLATE_CARGO_HOME="/tmp/aero-cargo-home" # custom directory
 #   source scripts/agent-env.sh
-if [[ -n "${AERO_ISOLATE_CARGO_HOME:-}" ]]; then
-  # Force a repo-local Cargo home so "package cache" locks don't serialize all
-  # concurrent agents on the same host.
-  export CARGO_HOME="$REPO_ROOT/.cargo-home"
-  mkdir -p "$CARGO_HOME"
-fi
+#
+# Note: this intentionally overrides any pre-existing `CARGO_HOME` so the isolation
+# actually takes effect.
+case "${AERO_ISOLATE_CARGO_HOME:-}" in
+  "" | 0 | false | FALSE | no | NO | off | OFF)
+    ;;
+  1 | true | TRUE | yes | YES | on | ON)
+    export CARGO_HOME="$REPO_ROOT/.cargo-home"
+    mkdir -p "$CARGO_HOME"
+    ;;
+  *)
+    custom="$AERO_ISOLATE_CARGO_HOME"
+    # Expand the common `~/` shorthand (tilde is not expanded inside variables).
+    if [[ "$custom" == "~"* ]]; then
+      custom="${custom/#\~/$HOME}"
+    fi
+    # Treat non-absolute paths as relative to the repo root so the behavior is stable
+    # even when sourcing from a different working directory.
+    if [[ "$custom" != /* ]]; then
+      custom="$REPO_ROOT/$custom"
+    fi
+    export CARGO_HOME="$custom"
+    mkdir -p "$CARGO_HOME"
+    ;;
+esac
 
 # Rust/Cargo - balance speed vs memory
 export CARGO_BUILD_JOBS=4

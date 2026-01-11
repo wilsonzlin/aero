@@ -192,6 +192,8 @@ Mitigations:
 
   ```bash
   export AERO_ISOLATE_CARGO_HOME=1
+  # Or pick a custom directory:
+  # export AERO_ISOLATE_CARGO_HOME="/tmp/aero-cargo-home"
   source ./scripts/agent-env.sh
   ```
 
