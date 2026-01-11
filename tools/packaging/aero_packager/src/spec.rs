@@ -3,6 +3,17 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+fn normalize_driver_name(name: &str) -> String {
+    // Guest Tools historically shipped the AeroGPU driver under `drivers/<arch>/aero-gpu/`.
+    // The canonical directory name is now `aerogpu` to match the in-tree driver location and
+    // INF naming (`drivers/aerogpu/...`, `aerogpu.inf`). Keep the legacy dashed form as an
+    // alias for one release cycle so older specs continue to work.
+    if name.eq_ignore_ascii_case("aero-gpu") {
+        return "aerogpu".to_string();
+    }
+    name.to_string()
+}
+
 /// Packaging-time validation inputs.
 ///
 /// The packager consumes driver build artifacts from the CI pipeline, but it
@@ -81,7 +92,8 @@ impl From<PackagingSpecRaw> for PackagingSpec {
         let mut out = Vec::new();
         let mut index_by_name = std::collections::HashMap::<String, usize>::new();
 
-        for drv in raw.drivers {
+        for mut drv in raw.drivers {
+            drv.name = normalize_driver_name(&drv.name);
             // Treat driver names as case-insensitive for merge purposes. This
             // matches our packaging-time validation (which rejects duplicates
             // case-insensitively) and avoids surprising failures if a spec
@@ -92,8 +104,9 @@ impl From<PackagingSpecRaw> for PackagingSpec {
         }
 
         for legacy in raw.required_drivers {
+            let name = normalize_driver_name(&legacy.name);
             if let Some(idx) = index_by_name
-                .get(&legacy.name.to_ascii_lowercase())
+                .get(&name.to_ascii_lowercase())
                 .copied()
             {
                 let existing = &mut out[idx];
@@ -113,9 +126,9 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                 continue;
             }
 
-            index_by_name.insert(legacy.name.to_ascii_lowercase(), out.len());
+            index_by_name.insert(name.to_ascii_lowercase(), out.len());
             out.push(DriverSpec {
-                name: legacy.name,
+                name,
                 required: true,
                 expected_hardware_ids: legacy.expected_hardware_ids,
                 expected_hardware_ids_from_devices_cmd_var: legacy

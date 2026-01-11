@@ -307,6 +307,28 @@ fn drivers_and_required_drivers_merge_case_insensitively() -> anyhow::Result<()>
 }
 
 #[test]
+fn aerogpu_driver_name_alias_is_normalized() -> anyhow::Result<()> {
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "aero-gpu",
+                "required": true,
+                "expected_hardware_ids": [],
+            }
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let loaded = aero_packager::PackagingSpec::load(&spec_path)?;
+    assert_eq!(loaded.drivers.len(), 1);
+    assert_eq!(loaded.drivers[0].name, "aerogpu");
+
+    Ok(())
+}
+
+#[test]
 fn optional_drivers_are_skipped_when_missing_and_stray_driver_dirs_are_ignored(
 ) -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
