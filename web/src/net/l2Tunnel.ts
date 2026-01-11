@@ -224,6 +224,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
   private nextPingNonce = (Math.random() * 0xffff_ffff) >>> 0;
   private pendingPings = new Map<number, number>();
+  private lastInboundAtMs = 0;
 
   private opened = false;
   private closed = false;
@@ -304,6 +305,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   protected onTransportOpen(): void {
     if (this.closed || this.closing || this.opened) return;
     this.opened = true;
+    this.lastInboundAtMs = nowMs();
     this.sink({ type: "open" });
     this.startKeepalive();
     this.scheduleFlush();
@@ -312,6 +314,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   protected onTransportClose(code?: number, reason?: string): void {
     if (this.closed) return;
     this.closed = true;
+    this.lastInboundAtMs = 0;
 
     this.stopKeepalive();
     this.clearDrainRetryTimer();
@@ -327,6 +330,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
   protected onTransportMessage(data: Uint8Array): void {
     if (this.closed || this.closing) return;
+    this.lastInboundAtMs = nowMs();
     let msg;
     try {
       msg = decodeL2Message(data, { maxFramePayload: this.opts.maxFrameSize });
@@ -488,6 +492,15 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     if (this.closed || this.closing || !this.isTransportOpen()) {
       // If the transport isn't open, keepalive will restart on the next open.
       return;
+    }
+
+    if (this.opts.keepaliveMaxMs > 0 && this.lastInboundAtMs > 0) {
+      const idleTimeoutMs = this.opts.keepaliveMaxMs * 2;
+      if (idleTimeoutMs > 0 && nowMs() - this.lastInboundAtMs > idleTimeoutMs) {
+        this.emitSessionErrorThrottled(new Error(`closing L2 tunnel: keepalive timeout (${idleTimeoutMs}ms)`));
+        this.close();
+        return;
+      }
     }
 
     const nonce = this.nextPingNonce;

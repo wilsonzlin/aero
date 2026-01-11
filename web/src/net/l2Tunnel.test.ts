@@ -276,6 +276,45 @@ describe("net/l2Tunnel", () => {
     }
   });
 
+  it("closes the tunnel when keepalive pings go unanswered", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 10,
+      keepaliveMaxMs: 10,
+    });
+
+    try {
+      client.connect();
+      FakeWebSocket.last?.open();
+      await microtask();
+      expect(events[0]?.type).toBe("open");
+
+      const deadline = Date.now() + 500;
+      while (!events.some((ev) => ev.type === "close") && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      expect(events.some((ev) => ev.type === "close")).toBe(true);
+      const errEv = events.find((ev) => ev.type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
+      expect((errEv?.error as Error | undefined)?.message).toContain("keepalive timeout");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
   it("WebSocket client sends token via query string by default", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
