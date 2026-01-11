@@ -201,6 +201,17 @@ async function spawnRelayServer(extraEnv = {}) {
       cwd: moduleDir,
       env: {
         ...process.env,
+        // Keep tests deterministic even when the developer's shell environment
+        // has L2 bridge env vars set.
+        L2_BACKEND_WS_URL: "",
+        L2_BACKEND_AUTH_FORWARD_MODE: "",
+        L2_BACKEND_FORWARD_ORIGIN: "",
+        L2_BACKEND_ORIGIN: "",
+        L2_BACKEND_ORIGIN_OVERRIDE: "",
+        L2_BACKEND_WS_ORIGIN: "",
+        L2_BACKEND_TOKEN: "",
+        L2_BACKEND_WS_TOKEN: "",
+        L2_MAX_MESSAGE_BYTES: "",
         // Let the Playwright-served page (random localhost port) talk to the relay.
         ALLOWED_ORIGINS: "*",
         // Keep /webrtc/ice stable even when no STUN/TURN is configured.
