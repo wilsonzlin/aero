@@ -240,11 +240,14 @@ fn parse_ethernet(packet: &[u8]) -> Result<EthernetFrame, NetOffloadError> {
     let mut l2_len = ETH_HEADER_LEN;
     let mut ethertype = u16::from_be_bytes([packet[12], packet[13]]);
 
-    if ethertype == ETHERTYPE_VLAN || ethertype == ETHERTYPE_QINQ {
-        if packet.len() < ETH_HEADER_LEN + 4 {
+    // Support stacked VLAN tags (e.g. 802.1Q, QinQ 802.1ad). Both tag formats are:
+    //   [TCI:2][next_ethertype:2]
+    // so each tag adds 4 bytes between the base Ethernet header and the L3 payload.
+    while ethertype == ETHERTYPE_VLAN || ethertype == ETHERTYPE_QINQ {
+        if packet.len() < l2_len + 4 {
             return Err(NetOffloadError::PacketTooShort);
         }
-        ethertype = u16::from_be_bytes([packet[16], packet[17]]);
+        ethertype = u16::from_be_bytes([packet[l2_len + 2], packet[l2_len + 3]]);
         l2_len += 4;
     }
 
@@ -602,6 +605,41 @@ mod tests {
         packet
     }
 
+    fn build_qinq_ipv4_udp_frame(payload: &[u8]) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        packet.extend_from_slice(&[0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb]);
+
+        // Outer QinQ (802.1ad) tag, followed by an inner 802.1Q VLAN tag.
+        packet.extend_from_slice(&ETHERTYPE_QINQ.to_be_bytes());
+        packet.extend_from_slice(&0x0001u16.to_be_bytes()); // outer TCI
+        packet.extend_from_slice(&ETHERTYPE_VLAN.to_be_bytes());
+        packet.extend_from_slice(&0x0002u16.to_be_bytes()); // inner TCI
+        packet.extend_from_slice(&ETHERTYPE_IPV4.to_be_bytes());
+
+        let total_len = (20 + 8 + payload.len()) as u16;
+        let mut ipv4 = [0u8; 20];
+        ipv4[0] = (4 << 4) | 5;
+        ipv4[2..4].copy_from_slice(&total_len.to_be_bytes());
+        ipv4[8] = 64;
+        ipv4[9] = 17;
+        ipv4[12..16].copy_from_slice(&[192, 0, 2, 1]);
+        ipv4[16..20].copy_from_slice(&[198, 51, 100, 2]);
+        ipv4[10..12].copy_from_slice(&0u16.to_be_bytes());
+        let ip_csum = ones_complement_checksum(&ipv4);
+        ipv4[10..12].copy_from_slice(&ip_csum.to_be_bytes());
+        packet.extend_from_slice(&ipv4);
+
+        let udp_len = (8 + payload.len()) as u16;
+        let mut udp = [0u8; 8];
+        udp[0..2].copy_from_slice(&1234u16.to_be_bytes());
+        udp[2..4].copy_from_slice(&5678u16.to_be_bytes());
+        udp[4..6].copy_from_slice(&udp_len.to_be_bytes());
+        packet.extend_from_slice(&udp);
+        packet.extend_from_slice(payload);
+        packet
+    }
+
     #[test]
     fn tx_checksum_offload_fills_udp_checksum() {
         let payload = b"hello world";
@@ -653,6 +691,45 @@ mod tests {
         let udp_len = (8 + payload.len()) as u16;
 
         // UDP checksum field is left as 0x0000 (no pseudo-header seed).
+        let hdr = VirtioNetHdr {
+            flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: VIRTIO_NET_HDR_GSO_NONE,
+            hdr_len: 0,
+            gso_size: 0,
+            csum_start: udp_off as u16,
+            csum_offset: 6,
+            num_buffers: 0,
+        };
+
+        let processed = process_tx_packet(hdr, &packet).unwrap();
+        assert_eq!(processed.len(), 1);
+        let out = &processed[0];
+
+        let mut udp_segment = out[udp_off..udp_off + udp_len as usize].to_vec();
+        udp_segment[6..8].copy_from_slice(&0u16.to_be_bytes());
+
+        let mut sum: u32 = 0;
+        sum = checksum_sum_u16_words(&[192, 0, 2, 1], sum);
+        sum = checksum_sum_u16_words(&[198, 51, 100, 2], sum);
+        sum += 17u32;
+        sum += udp_len as u32;
+        sum = checksum_sum_u16_words(&udp_segment, sum);
+        let expected = fold_checksum_sum(sum);
+
+        let actual = u16::from_be_bytes([out[udp_off + 6], out[udp_off + 7]]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn tx_checksum_offload_fills_udp_checksum_without_pseudo_seed_with_qinq_vlan_tags() {
+        let payload = b"hello world";
+        let packet = build_qinq_ipv4_udp_frame(payload);
+
+        // Ethernet header (14) + QinQ (4) + VLAN (4) = 22 bytes before IPv4.
+        let eth_off = ETH_HEADER_LEN + 8;
+        let udp_off = eth_off + 20;
+        let udp_len = (8 + payload.len()) as u16;
+
         let hdr = VirtioNetHdr {
             flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
             gso_type: VIRTIO_NET_HDR_GSO_NONE,
