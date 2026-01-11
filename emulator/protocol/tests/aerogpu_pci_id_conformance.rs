@@ -153,7 +153,7 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     }
 
     // Guest Tools config is generated from the Windows device contract and intentionally targets
-    // the canonical AeroGPU HWID only.
+    // only the canonical (versioned ABI) AeroGPU PCI HWID.
     let devices_cmd_path = repo_root.join("guest-tools/config/devices.cmd");
     assert_file_contains_noncomment_line(&devices_cmd_path, &new_hwid);
     assert_file_not_contains(&devices_cmd_path, &legacy_hwid);
