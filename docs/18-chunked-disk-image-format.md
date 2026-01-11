@@ -223,7 +223,8 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 **Chunks (`*.bin`):**
 
 - `Content-Type: application/octet-stream`
-- `Cache-Control: public, max-age=31536000, immutable`
+- `Content-Encoding: identity` (recommended; avoid transparent compression)
+- `Cache-Control: public, max-age=31536000, immutable, no-transform`
 - `ETag: "<strong etag>"` (optional but recommended)
 - `Access-Control-Allow-Origin: *` (if served cross-origin without credentials)
 
