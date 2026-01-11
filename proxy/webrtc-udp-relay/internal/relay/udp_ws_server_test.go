@@ -290,6 +290,45 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeAPIKey,
+		APIKey:                   "secret",
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth","token":"t1","apiKey":"t2"}`)); err != nil {
+		t.Fatalf("WriteMessage auth: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected close error")
+	}
+	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("expected policy violation close; got %v", err)
+	}
+	if m.Get(metrics.AuthFailure) == 0 {
+		t.Fatalf("expected auth_failure metric increment")
+	}
+}
+
 func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()

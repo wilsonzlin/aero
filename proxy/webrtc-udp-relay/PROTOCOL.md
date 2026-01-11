@@ -102,6 +102,8 @@ or:
 {"type":"auth","token":"..."}
 ```
 
+Note: some clients send both `apiKey` and `token` for compatibility. If both are provided, they must match.
+
 After the connection is authenticated, the relay expects only **binary**
 datagram frames.
 
@@ -374,6 +376,8 @@ or:
 ```json
 { "type": "auth", "token": "..." }
 ```
+
+Note: some clients send both `apiKey` and `token` for compatibility. If both are provided, they must match.
 
 Offer:
 

@@ -136,6 +136,11 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			closeConn(websocket.CloseUnsupportedData, "invalid auth message")
 			return
 		}
+		if authMsg.APIKey != "" && authMsg.Token != "" && authMsg.APIKey != authMsg.Token {
+			incAuthFailure()
+			closeConn(websocket.ClosePolicyViolation, "invalid auth message")
+			return
+		}
 		cred, err := auth.CredentialFromAuthMessage(s.cfg.AuthMode, authMsg)
 		if err != nil {
 			incAuthFailure()
