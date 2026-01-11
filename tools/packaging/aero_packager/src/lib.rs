@@ -76,12 +76,15 @@ fn guest_tools_devices_cmd_service_overrides_for_spec(
         .map(|d| d.name.trim().to_ascii_lowercase())
         .collect();
 
-    // When packaging Guest Tools from upstream virtio-win drivers, the Windows service
-    // names (AddService) differ from Aero's in-tree clean-room drivers. Guest Tools
-    // uses these service names for boot-critical storage pre-seeding (0x7B avoidance).
+    // Legacy/back-compat:
     //
-    // Override service names based on the selected packaging spec so `setup.cmd` can
-    // validate and preseed against the packaged INFs.
+    // Some historical virtio-win packaging flows used the canonical in-repo device contract
+    // (`docs/windows-device-contract.json`) and relied on *spec-based* overrides to swap
+    // `AERO_VIRTIO_*_SERVICE` values to the upstream virtio-win service names.
+    //
+    // Modern virtio-win packaging should instead pass the virtio-win contract variant
+    // (`docs/windows-device-contract-virtio-win.json`) (or a derived override generated from real
+    // INFs) so the contract remains the source of truth for `config/devices.cmd`.
     let mut service_overrides = GuestToolsDevicesCmdServiceOverrides::default();
     if driver_names.contains("viostor") {
         service_overrides.virtio_blk_service = Some("viostor".to_string());
