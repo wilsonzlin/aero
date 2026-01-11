@@ -17,6 +17,7 @@ export type ConnectRelaySignalingOptions = {
 
 const DEFAULT_ICE_GATHER_TIMEOUT_MS = 10_000;
 const DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS = 30_000;
+const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
 
 export async function connectRelaySignaling(
   opts: ConnectRelaySignalingOptions,
@@ -265,17 +266,38 @@ async function openWebSocket(url: string, protocol?: string): Promise<WebSocket>
       return;
     }
 
-    const onOpen = () => {
+    let settled = false;
+    const settle = (err?: unknown) => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      resolve(ws);
+      if (err) {
+        reject(err);
+      } else {
+        resolve(ws);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        ws.close();
+      } catch {
+        // Ignore.
+      }
+      settle(new Error("websocket connect timed out"));
+    }, DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS);
+
+    const onOpen = () => {
+      clearTimeout(timer);
+      settle();
     };
     const onClose = (evt: CloseEvent) => {
-      cleanup();
-      reject(new Error(`websocket closed (${evt.code}): ${evt.reason}`));
+      clearTimeout(timer);
+      settle(new Error(`websocket closed (${evt.code}): ${evt.reason}`));
     };
     const onError = () => {
-      cleanup();
-      reject(new Error("websocket error"));
+      clearTimeout(timer);
+      settle(new Error("websocket error"));
     };
     const cleanup = () => {
       ws.removeEventListener("open", onOpen);

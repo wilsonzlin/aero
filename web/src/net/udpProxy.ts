@@ -173,18 +173,30 @@ export class WebSocketUdpProxyClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       let graceTimer: ReturnType<typeof setTimeout> | null = null;
+      let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
       const settle = (err?: unknown) => {
         if (settled) return;
         settled = true;
         if (graceTimer) clearTimeout(graceTimer);
         graceTimer = null;
+        if (connectTimer) clearTimeout(connectTimer);
+        connectTimer = null;
         if (err) {
           reject(err);
         } else {
           resolve();
         }
       };
+
+      connectTimer = setTimeout(() => {
+        try {
+          ws.close();
+        } catch {
+          // Ignore.
+        }
+        settle(new Error("udp websocket connect timed out"));
+      }, 10_000);
 
       ws.onopen = () => {
         if (!this.authToken) {
