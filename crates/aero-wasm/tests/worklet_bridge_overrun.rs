@@ -124,3 +124,22 @@ fn worklet_bridge_rejects_layout_exceeding_4gib() {
         "expected overflow error, got: {msg2}"
     );
 }
+
+#[wasm_bindgen_test]
+fn worklet_bridge_overrun_count_wraps_u32() {
+    let bridge = WorkletBridge::new(1, 1).unwrap();
+
+    let sab = bridge.shared_buffer();
+    let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+
+    // Seed the counter near u32::MAX.
+    atomics_store_u32(&header, OVERRUN_COUNT_INDEX as u32, 0xffff_fffe);
+
+    // Fill the ring buffer so the next write is fully dropped.
+    assert_eq!(bridge.write_f32_interleaved(&[0.0]), 1);
+
+    // Drop 4 frames -> 0xffff_fffe + 4 == 2 (mod 2^32).
+    assert_eq!(bridge.write_f32_interleaved(&[1.0, 2.0, 3.0, 4.0]), 0);
+    assert_eq!(bridge.overrun_count(), 2);
+    assert_eq!(atomics_load_u32(&header, OVERRUN_COUNT_INDEX as u32), 2);
+}
