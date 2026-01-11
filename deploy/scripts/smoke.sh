@@ -43,6 +43,7 @@ compose() {
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_L2_PROXY_LISTEN_ADDR= \
     AERO_L2_ALLOW_PRIVATE_IPS=0 \
+    AERO_L2_AUTH_MODE=cookie \
     AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
     BUILD_COMMIT= \
     BUILD_TIME= \
@@ -111,6 +112,22 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "deploy smoke: docker not found" >&2
   exit 1
 fi
+
+echo "deploy smoke: checking deploy/docker-compose.yml defaults" >&2
+# Ensure the canonical deploy stack continues to work out-of-the-box:
+# - `/l2` should not require cookie auth unless explicitly enabled.
+# - Operators can opt into cookie auth by setting `AERO_L2_AUTH_MODE=cookie` + `SESSION_SECRET`.
+env \
+  -u AERO_L2_AUTH_MODE \
+  -u AERO_L2_SESSION_SECRET \
+  -u AERO_L2_API_KEY \
+  -u AERO_L2_JWT_SECRET \
+  -u AERO_L2_TOKEN \
+  -u SESSION_SECRET \
+  -u AERO_GATEWAY_SESSION_SECRET \
+  docker compose --env-file /dev/null -f "$COMPOSE_FILE" config --format json \
+  | python3 -c 'import json, sys; cfg=json.load(sys.stdin); env=(cfg.get("services", {}).get("aero-l2-proxy", {}) or {}).get("environment", {}) or {}; mode=env.get("AERO_L2_AUTH_MODE", ""); allowed=("", "none", None); \
+print(f"deploy smoke: expected deploy/docker-compose.yml to default AERO_L2_AUTH_MODE to empty/none, got: {mode!r}", file=sys.stderr) if mode not in allowed else None; sys.exit(1 if mode not in allowed else 0)'
 
 pick_udp_port_range() {
   local size="$SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE"
