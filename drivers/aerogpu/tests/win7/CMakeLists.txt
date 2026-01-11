@@ -98,6 +98,11 @@ aerogpu_add_win7_test(d3d9ex_triangle
 )
 target_link_libraries(d3d9ex_triangle PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_multiframe_triangle
+  d3d9ex_multiframe_triangle/main.cpp
+)
+target_link_libraries(d3d9ex_multiframe_triangle PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_stretchrect
   d3d9ex_stretchrect/main.cpp
 )
@@ -172,6 +177,11 @@ aerogpu_add_win7_test(d3d11_map_dynamic_buffer_sanity
   d3d11_map_dynamic_buffer_sanity/main.cpp
 )
 target_link_libraries(d3d11_map_dynamic_buffer_sanity PRIVATE d3d11 dxgi)
+
+aerogpu_add_win7_test(d3d11_map_roundtrip
+  d3d11_map_roundtrip/main.cpp
+)
+target_link_libraries(d3d11_map_roundtrip PRIVATE d3d11 dxgi)
 
 aerogpu_add_win7_test(d3d11_update_subresource_texture_sanity
   d3d11_update_subresource_texture_sanity/main.cpp
