@@ -102,7 +102,7 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     );
     assert!(
         !contains_case_insensitive(&patterns, "PCI\\VEN_1AED&DEV_0001"),
-        "hardware_id_patterns for aero-gpu must not include legacy bring-up HWID PCI\\VEN_1AED&DEV_0001; the shipped INFs bind to A3A0 only (got {patterns:?})",
+        "hardware_id_patterns for aero-gpu must not include legacy bring-up HWID PCI\\VEN_1AED&DEV_0001; the canonical Windows device contract is A3A0-only (got {patterns:?})",
     );
 
     let aerogpu_inf_path = root.join("drivers/aerogpu/packaging/win7/aerogpu.inf");

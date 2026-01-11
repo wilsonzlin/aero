@@ -4,7 +4,7 @@
 
 AeroGPU spans multiple layers (emulator device model, guest kernel-mode driver, guest user-mode driver, installers/INFs, and docs). Over time, multiple “almost the same” AeroGPU PCI identities and ABIs have accumulated:
 
-- `drivers/aerogpu/protocol/{aerogpu_pci.h,aerogpu_ring.h,aerogpu_cmd.h}` defines a **versioned** PCI/MMIO + ring protocol and uses the **A3A0** PCI vendor ID.
+- `drivers/aerogpu/protocol/{aerogpu_pci.h,aerogpu_ring.h,aerogpu_cmd.h,aerogpu_escape.h}` defines a **versioned** PCI/MMIO + ring protocol and uses the **A3A0** PCI vendor ID.
 - `docs/windows-device-contract.{md,json}` documents the canonical Windows-facing AeroGPU binding contract (**A3A0**) and is checked in CI; older experiments used different PCI identities/ABIs and have been retired (see `docs/legacy/experimental-gpu-command-abi.md`).
 - Legacy stacks exist with different IDs/ABIs, notably:
   - **1AED**: legacy BAR0 MMIO ABI (and associated INF matching).
@@ -38,6 +38,7 @@ The canonical AeroGPU guest↔host ABI is the **versioned protocol** defined by:
 - [`drivers/aerogpu/protocol/aerogpu_pci.h`](../../drivers/aerogpu/protocol/aerogpu_pci.h) (PCI identity + MMIO register map + ABI version)
 - [`drivers/aerogpu/protocol/aerogpu_ring.h`](../../drivers/aerogpu/protocol/aerogpu_ring.h) (ring layout and synchronization)
 - [`drivers/aerogpu/protocol/aerogpu_cmd.h`](../../drivers/aerogpu/protocol/aerogpu_cmd.h) (command stream wire format)
+- [`drivers/aerogpu/protocol/aerogpu_escape.h`](../../drivers/aerogpu/protocol/aerogpu_escape.h) (stable Escape packet header + base ops)
 
 ABI compatibility is controlled by the versioning scheme in those headers (major/minor, device-reported version register). Any new ABI work must extend these headers (and bump versions as required) rather than creating alternate “side” ABIs.
 
