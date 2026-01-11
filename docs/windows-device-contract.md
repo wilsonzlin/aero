@@ -23,6 +23,8 @@ It exists to prevent “it boots on my machine” failures caused by silent PCI 
 The machine-readable companion manifest (for automation like Guest Tools) is:
 **[`windows-device-contract.json`](./windows-device-contract.json)**.
 
+For the optional **virtio-win** packaging flow, see: [Virtio-win packaging variant](#virtio-win-packaging-variant-non-normative).
+
 ### Virtio-win packaging variant (non-normative)
 
 When building Guest Tools media from **upstream virtio-win** driver bundles (`viostor`, `netkvm`, etc),
