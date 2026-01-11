@@ -272,6 +272,22 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
+  const UINT min_row_pitch = (UINT)kWidth * 4;
+  const auto ValidateStagingMap = [&](const char* label, const D3D11_MAPPED_SUBRESOURCE& map) -> int {
+    if (!map.pData) {
+      context->Unmap(staging.get(), 0);
+      return reporter.Fail("%s returned NULL pData", label);
+    }
+    if (map.RowPitch < min_row_pitch) {
+      context->Unmap(staging.get(), 0);
+      return reporter.Fail("%s returned too-small RowPitch=%u (min=%u)",
+                           label,
+                           (unsigned)map.RowPitch,
+                           (unsigned)min_row_pitch);
+    }
+    return 0;
+  };
+
   ID3D11RenderTargetView* rtvs[] = {rtv.get()};
   context->OMSetRenderTargets(1, rtvs, NULL);
 
@@ -441,6 +457,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   const FLOAT clear_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   const FLOAT blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   const D3D11_RECT full_rect = {0, 0, kWidth, kHeight};
+  int map_rc = 0;
 
   // Subtest 1: Scissor (left half should turn green, right half must remain red).
   {
@@ -467,6 +484,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
       return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [scissor]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [scissor]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t inside = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
@@ -521,6 +542,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         hr,
                                         device.get());
     }
+    map_rc = ValidateStagingMap("Map(staging) [scissor NULL state]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
 
     const uint32_t inside_null =
         aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
@@ -573,6 +598,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         "Map(staging) [scissor disabled]",
                                         hr,
                                         device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [scissor disabled]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t inside_disabled =
@@ -633,6 +662,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     if (FAILED(hr)) {
       return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [cull culled]", hr, device.get());
     }
+    map_rc = ValidateStagingMap("Map(staging) [cull culled]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
 
     const int cx = kWidth / 2;
     const int cy = kHeight / 2;
@@ -681,6 +714,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         hr,
                                         device.get());
     }
+    map_rc = ValidateStagingMap("Map(staging) [cull none]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
 
     const uint32_t center_no_cull = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
@@ -719,6 +756,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
       return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [cull drawn]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [cull drawn]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t center_drawn = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -765,6 +806,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         "Map(staging) [cull NULL state]",
                                         hr,
                                         device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [cull NULL state]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t center_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -813,6 +858,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
     if (FAILED(hr)) {
       return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [blend]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [blend]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const int cx = kWidth / 2;
@@ -874,6 +923,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         hr,
                                         device.get());
     }
+    map_rc = ValidateStagingMap("Map(staging) [blend disabled]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
 
     const uint32_t center_disabled = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
     if (dump) {
@@ -922,6 +975,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         "Map(staging) [write mask]",
                                         hr,
                                         device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [write mask]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t center_mask = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -973,6 +1030,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         "Map(staging) [blend factor]",
                                         hr,
                                         device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [blend factor]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t center_bf = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
@@ -1032,6 +1093,10 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                         "Map(staging) [sample mask]",
                                         hr,
                                         device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [sample mask]", map);
+    if (map_rc != 0) {
+      return map_rc;
     }
 
     const uint32_t center_sm0 = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
