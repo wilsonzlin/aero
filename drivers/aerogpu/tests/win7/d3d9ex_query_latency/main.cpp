@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -44,11 +45,13 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
   const char* kTestName = "d3d9ex_query_latency";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -63,14 +66,14 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -80,17 +83,17 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExQueryLatency",
                                               L"AeroGPU D3D9Ex Query+Latency",
-                                              kWidth,
-                                              kHeight,
-                                              !hidden);
+                                               kWidth,
+                                               kHeight,
+                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -120,7 +123,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
     }
   }
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
@@ -132,6 +135,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
       return aerogpu_test::Fail(kTestName,
                                 "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
@@ -182,7 +186,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
 
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
@@ -327,8 +331,7 @@ static int RunD3D9ExQueryLatency(int argc, char** argv) {
         kTestName);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -11,13 +12,18 @@ static double QpcToMs(LONGLONG qpc_delta, LONGLONG qpc_freq) {
   return (double)qpc_delta * 1000.0 / (double)qpc_freq;
 }
 
-static int FailFast(const char* test_name, const char* fmt, ...) {
-  printf("FAIL: %s: ", test_name);
+static int FailFast(aerogpu_test::TestReporter* reporter, const char* test_name, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  vprintf(fmt, ap);
+  std::string msg = aerogpu_test::FormatStringV(fmt, ap);
   va_end(ap);
-  printf("\n");
+
+  if (reporter) {
+    reporter->Fail("%s", msg.c_str());
+    reporter->Flush();
+  } else {
+    printf("FAIL: %s: %s\n", test_name ? test_name : "<unknown>", msg.c_str());
+  }
   fflush(stdout);
   ExitProcess(1);
   return 1;
@@ -408,13 +414,16 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   const char* kTestName = "d3d9ex_event_query";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--show] [--show-window] [--hidden] [--iterations=N] [--stress-iterations=N] [--process-stress] "
+        "Usage: %s.exe [--show] [--show-window] [--hidden] [--json[=PATH]] [--iterations=N] [--stress-iterations=N] "
+        "[--process-stress] "
         "[--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Default: window is hidden (pass --show to display it).");
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -440,14 +449,14 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -528,15 +537,14 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     CloseHandle(start_event);
 
     if (worker_rc != 0 || any_failed != 0) {
-      return aerogpu_test::Fail(kTestName, "child stress failed (index=%u)", (unsigned)child_index);
+      return reporter.Fail("child stress failed (index=%u)", (unsigned)child_index);
     }
 
     aerogpu_test::PrintfStdout("INFO: %s: child %u: PresentEx(DONOTWAIT) observed WASSTILLDRAWING=%s",
                                kTestName,
                                (unsigned)child_index,
                                saw_was_still_drawing != 0 ? "yes" : "no");
-    aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-    return 0;
+    return reporter.Pass();
   }
 
   LARGE_INTEGER qpc_freq_li;
@@ -590,6 +598,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
       return aerogpu_test::Fail(kTestName,
                                 "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
@@ -666,7 +675,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                          &hr_immediate,
                          &start_qpc,
                          &end_qpc)) {
-      FailFast(kTestName, "GetData(DONOTFLUSH warmup) hung");
+      FailFast(&reporter, kTestName, "GetData(DONOTFLUSH warmup) hung");
     }
     const double call_ms = QpcToMs(end_qpc - start_qpc, qpc_freq);
     if (call_ms > kMaxGetDataCallMs) {
@@ -702,7 +711,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                            &hr_poll,
                            &poll_start_qpc,
                            &poll_end_qpc)) {
-        FailFast(kTestName, "GetData(warmup) hung");
+        FailFast(&reporter, kTestName, "GetData(warmup) hung");
       }
       const double poll_call_ms = QpcToMs(poll_end_qpc - poll_start_qpc, qpc_freq);
       if (poll_call_ms > kMaxGetDataCallMs) {
@@ -743,7 +752,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                          &hr_immediate,
                          &start_qpc,
                          &end_qpc)) {
-      FailFast(kTestName, "GetData(DONOTFLUSH) hung (iteration %u)", (unsigned)it);
+      FailFast(&reporter, kTestName, "GetData(DONOTFLUSH) hung (iteration %u)", (unsigned)it);
     }
     const double immediate_ms = QpcToMs(end_qpc - start_qpc, qpc_freq);
 
@@ -785,7 +794,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                            &hr_poll,
                            &poll_start_qpc,
                            &poll_end_qpc)) {
-        FailFast(kTestName, "GetData poll hung (iteration %u)", (unsigned)it);
+        FailFast(&reporter, kTestName, "GetData poll hung (iteration %u)", (unsigned)it);
       }
       const double poll_call_ms = QpcToMs(poll_end_qpc - poll_start_qpc, qpc_freq);
       if (poll_call_ms > kMaxGetDataCallMs) {
@@ -971,7 +980,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
 
     DWORD w = WaitForMultipleObjects(2, procs, TRUE, stress_timeout_ms);
     if (w != WAIT_OBJECT_0) {
-      FailFast(kTestName, "multi-process stress timed out waiting for child processes");
+      FailFast(&reporter, kTestName, "multi-process stress timed out waiting for child processes");
     }
 
     bool ok = true;
@@ -1066,7 +1075,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     CloseHandle(start_event);
 
     if (w != WAIT_OBJECT_0) {
-      FailFast(kTestName, "multi-device stress timed out waiting for worker threads");
+      FailFast(&reporter, kTestName, "multi-device stress timed out waiting for worker threads");
     }
 
     if (any_failed != 0) {
@@ -1078,8 +1087,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
                                saw_was_still_drawing != 0 ? "yes" : "no");
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

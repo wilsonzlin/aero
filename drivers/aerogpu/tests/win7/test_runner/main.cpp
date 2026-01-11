@@ -668,6 +668,10 @@ int main(int argc, char** argv) {
         per_test_json_path = json_leaf;
       }
       args.push_back(L"--json=" + per_test_json_path);
+
+      // Avoid consuming stale output from a previous run if the test crashes or otherwise fails to
+      // write a report this time.
+      DeleteFileW(per_test_json_path.c_str());
     }
 
     RunResult rr = RunProcessWithTimeoutW(exe_path, args, timeout_ms, enforce_timeout);

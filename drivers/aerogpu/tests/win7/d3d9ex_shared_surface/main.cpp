@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -289,7 +290,10 @@ static DWORD RemainingTimeoutMs(DWORD start_ticks, DWORD timeout_ms) {
   return timeout_ms - elapsed;
 }
 
-static int CheckD3D9Adapter(const char* test_name, IDirect3D9Ex* d3d, const AdapterRequirements& req) {
+static int CheckD3D9Adapter(aerogpu_test::TestReporter* reporter,
+                            const char* test_name,
+                            IDirect3D9Ex* d3d,
+                            const AdapterRequirements& req) {
   D3DADAPTER_IDENTIFIER9 ident;
   ZeroMemory(&ident, sizeof(ident));
   HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
@@ -299,6 +303,9 @@ static int CheckD3D9Adapter(const char* test_name, IDirect3D9Ex* d3d, const Adap
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    if (reporter) {
+      reporter->SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
+    }
     if (!req.allow_microsoft && ident.VendorId == 0x1414) {
       return aerogpu_test::Fail(test_name,
                                 "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
@@ -333,7 +340,8 @@ static int CheckD3D9Adapter(const char* test_name, IDirect3D9Ex* d3d, const Adap
   return 0;
 }
 
-static int CreateD3D9ExDevice(const char* test_name,
+static int CreateD3D9ExDevice(aerogpu_test::TestReporter* reporter,
+                              const char* test_name,
                               HWND hwnd,
                               int width,
                               int height,
@@ -378,7 +386,7 @@ static int CreateD3D9ExDevice(const char* test_name,
     return aerogpu_test::FailHresult(test_name, "IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
-  int rc = CheckD3D9Adapter(test_name, d3d.get(), req);
+  int rc = CheckD3D9Adapter(reporter, test_name, d3d.get(), req);
   if (rc != 0) {
     return rc;
   }
@@ -489,11 +497,12 @@ static int RenderTriangleToSurface(const char* test_name,
   return 0;
 }
 
-static int ValidateSurfacePixels(const char* test_name,
-                                const wchar_t* dump_name,
-                                bool dump,
-                                IDirect3DDevice9Ex* dev,
-                                IDirect3DSurface9* surface) {
+static int ValidateSurfacePixels(aerogpu_test::TestReporter* reporter,
+                                 const char* test_name,
+                                 const wchar_t* dump_name,
+                                 bool dump,
+                                 IDirect3DDevice9Ex* dev,
+                                 IDirect3DSurface9* surface) {
   if (!dev || !surface) {
     return aerogpu_test::Fail(test_name, "internal: ValidateSurfacePixels called with NULL");
   }
@@ -535,14 +544,16 @@ static int ValidateSurfacePixels(const char* test_name,
 
   if (dump && dump_name) {
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(
-            aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), dump_name),
-            (int)desc.Width,
-            (int)desc.Height,
-            lr.pBits,
-            (int)lr.Pitch,
-            &err)) {
+    const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), dump_name);
+    if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                      (int)desc.Width,
+                                      (int)desc.Height,
+                                      lr.pBits,
+                                      (int)lr.Pitch,
+                                      &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", test_name, err.c_str());
+    } else if (reporter) {
+      reporter->AddArtifactPathW(bmp_path);
     }
   }
 
@@ -689,7 +700,8 @@ static bool PatchChildCommandLineSharedHandle(HANDLE child_process,
   return true;
 }
 
-static int RunChild(int argc,
+static int RunChild(aerogpu_test::TestReporter* reporter,
+                    int argc,
                     char** argv,
                     const AdapterRequirements& req,
                     bool dump,
@@ -819,7 +831,7 @@ static int RunChild(int argc,
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  int rc = CreateD3D9ExDevice(kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
+  int rc = CreateD3D9ExDevice(reporter, kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
   if (rc != 0) {
     return rc;
   }
@@ -943,7 +955,8 @@ static int RunChild(int argc,
   }
 
   if (validate_sharing) {
-    rc = ValidateSurfacePixels(kTestName,
+    rc = ValidateSurfacePixels(reporter,
+                               kTestName,
                                L"d3d9ex_shared_surface_child.bmp",
                                dump,
                                dev.get(),
@@ -972,13 +985,17 @@ cleanup:
     CloseHandle(ready_event);
   }
 
+  if (rc == 0 && reporter) {
+    return reporter->Pass();
+  }
   if (rc == 0) {
     aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   }
   return rc;
 }
 
-static int RunParent(int argc,
+static int RunParent(aerogpu_test::TestReporter* reporter,
+                     int argc,
                      char** argv,
                      const AdapterRequirements& req,
                      bool dump,
@@ -1001,7 +1018,7 @@ static int RunParent(int argc,
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  int rc = CreateD3D9ExDevice(kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
+  int rc = CreateD3D9ExDevice(reporter, kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
   if (rc != 0) {
     return rc;
   }
@@ -1376,7 +1393,7 @@ static int RunParent(int argc,
     }
 
     rc = ValidateSurfacePixels(
-        kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
+        reporter, kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
     if (rc != 0) {
       TerminateProcess(pi.hProcess, 1);
       WaitForSingleObject(pi.hProcess, 5000);
@@ -1519,6 +1536,17 @@ static int RunParent(int argc,
     return aerogpu_test::Fail(kTestName, "child failed with exit code %lu", (unsigned long)exit_code);
   }
 
+  if (dump && reporter) {
+    const std::wstring child_bmp_path =
+        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_child.bmp");
+    DWORD attr = GetFileAttributesW(child_bmp_path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+      reporter->AddArtifactPathW(child_bmp_path);
+    }
+  }
+  if (reporter) {
+    return reporter->Pass();
+  }
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
 }
@@ -1527,8 +1555,8 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--require-vid=0x####] "
-        "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        "Usage: %s.exe [--dump] [--hidden] [--show] [--json[=PATH]] [--validate-sharing] [--no-validate-sharing] "
+        "[--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Note: pixel sharing is validated by default; pass --no-validate-sharing to skip readback validation.");
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
@@ -1541,6 +1569,9 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   }
 
   const bool child = aerogpu_test::HasArg(argc, argv, "--child");
+  const char* report_name = child ? "d3d9ex_shared_surface(child)" : kTestName;
+  aerogpu_test::TestReporter reporter(report_name, argc, argv);
+
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   bool validate_sharing = !aerogpu_test::HasArg(argc, argv, "--no-validate-sharing");
   if (aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump) {
@@ -1567,22 +1598,22 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &req.require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     req.has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &req.require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     req.has_require_did = true;
   }
 
   if (child) {
-    return RunChild(argc, argv, req, dump, validate_sharing);
+    return RunChild(&reporter, argc, argv, req, dump, validate_sharing);
   }
-  return RunParent(argc, argv, req, dump, hidden, validate_sharing);
+  return RunParent(&reporter, argc, argv, req, dump, hidden, validate_sharing);
 }
 
 int main(int argc, char** argv) {

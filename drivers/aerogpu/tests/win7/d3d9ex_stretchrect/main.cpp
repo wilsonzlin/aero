@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -8,11 +9,13 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
   const char* kTestName = "d3d9ex_stretchrect";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -27,14 +30,14 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -45,16 +48,16 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExStretchRect",
                                               L"AeroGPU D3D9Ex StretchRect",
                                               kWidth,
-                                              kHeight,
-                                              !hidden);
+                                               kHeight,
+                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -88,7 +91,7 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
                              dev.put());
   }
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
@@ -100,6 +103,7 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
       return aerogpu_test::Fail(kTestName,
                                 "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
@@ -269,13 +273,18 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
       (br & mask) != (kWhite & mask)) {
     if (dump) {
       std::string err;
-      aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(),
-                                                         L"d3d9ex_stretchrect.bmp"),
-                                   (int)bb_desc.Width,
-                                   (int)bb_desc.Height,
-                                   lr.pBits,
-                                   (int)lr.Pitch,
-                                   &err);
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_stretchrect.bmp");
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                        (int)bb_desc.Width,
+                                        (int)bb_desc.Height,
+                                        lr.pBits,
+                                        (int)lr.Pitch,
+                                        &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
     }
     bb_sys->UnlockRect();
     return aerogpu_test::Fail(kTestName,
@@ -294,14 +303,17 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
     hr = bb_sys->LockRect(&lr, NULL, D3DLOCK_READONLY);
     if (SUCCEEDED(hr)) {
       std::string err;
-      if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(),
-                                                              L"d3d9ex_stretchrect.bmp"),
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_stretchrect.bmp");
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                         (int)bb_desc.Width,
                                         (int)bb_desc.Height,
                                         lr.pBits,
                                         (int)lr.Pitch,
                                         &err)) {
         aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
       }
       bb_sys->UnlockRect();
     }
@@ -427,8 +439,7 @@ static int RunD3D9ExStretchRect(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx", hr);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
@@ -437,4 +448,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-

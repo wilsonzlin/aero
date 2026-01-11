@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -392,7 +393,8 @@ static int CreateD3D9ExDevice(const char* test_name,
   return 0;
 }
 
-static int ValidateAdapter(const char* test_name,
+static int ValidateAdapter(aerogpu_test::TestReporter* reporter,
+                           const char* test_name,
                            IDirect3D9Ex* d3d,
                            bool allow_microsoft,
                            bool allow_non_aerogpu,
@@ -421,6 +423,9 @@ static int ValidateAdapter(const char* test_name,
                              ident.Description,
                              (unsigned)ident.VendorId,
                              (unsigned)ident.DeviceId);
+  if (reporter) {
+    reporter->SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
+  }
 
   if (!allow_microsoft && ident.VendorId == 0x1414) {
     return aerogpu_test::Fail(test_name,
@@ -454,6 +459,7 @@ static int ValidateAdapter(const char* test_name,
 
 static int RunConsumer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_ipc_consumer";
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -550,7 +556,8 @@ static int RunConsumer(int argc, char** argv) {
     return rc;
   }
 
-  rc = ValidateAdapter(kTestName,
+  rc = ValidateAdapter(&reporter,
+                       kTestName,
                        d3d.get(),
                        allow_microsoft,
                        allow_non_aerogpu,
@@ -671,19 +678,21 @@ static int RunConsumer(int argc, char** argv) {
     }
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 static int RunProducer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_ipc";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "Usage: %s.exe [--dump] [--show] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] "
         "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -700,14 +709,14 @@ static int RunProducer(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string parse_err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &parse_err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", parse_err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", parse_err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string parse_err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &parse_err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", parse_err.c_str());
+      return reporter.Fail("invalid --require-did: %s", parse_err.c_str());
     }
     has_require_did = true;
   }
@@ -727,7 +736,8 @@ static int RunProducer(int argc, char** argv) {
   if (rc != 0) {
     return rc;
   }
-  rc = ValidateAdapter(kTestName,
+  rc = ValidateAdapter(&reporter,
+                       kTestName,
                        d3d.get(),
                        allow_microsoft,
                        allow_non_aerogpu,
@@ -1006,8 +1016,15 @@ static int RunProducer(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "consumer failed with exit code %lu", (unsigned long)exit_code);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  if (dump) {
+    const std::wstring bmp_path =
+        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp");
+    DWORD attr = GetFileAttributesW(bmp_path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+      reporter.AddArtifactPathW(bmp_path);
+    }
+  }
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

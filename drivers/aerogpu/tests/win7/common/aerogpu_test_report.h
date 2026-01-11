@@ -422,6 +422,14 @@ class TestReporter {
     return Fail("%s failed with %s", what ? what : "<null>", HresultToString(hr).c_str());
   }
 
+  // Immediately write the JSON report if `--json` was supplied. This is useful for tests that
+  // intentionally terminate the process via ExitProcess() (which bypasses stack unwinding and
+  // destructors).
+  void Flush() {
+    WriteIfEnabled();
+    enabled_ = false;
+  }
+
  private:
   void WriteIfEnabled() {
     if (!enabled_) {
