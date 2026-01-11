@@ -554,8 +554,14 @@ fn enforce_security(
     }
 
     if !state.cfg.security.open {
-        let origin_header = origin_from_headers(headers);
-        let Some(origin_header) = origin_header else {
+        let mut origin_values = headers
+            .get_all(axum::http::header::ORIGIN)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+
+        let Some(origin_header) = origin_values.next() else {
             state.metrics.upgrade_reject_origin_missing();
             tracing::warn!(
                 reason = "origin_missing",
@@ -570,6 +576,25 @@ fn enforce_security(
                 (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
             ));
         };
+        if origin_values.next().is_some() {
+            state.metrics.upgrade_reject_origin_not_allowed();
+            tracing::warn!(
+                reason = "origin_invalid",
+                origin = "<multiple>",
+                auth_mode = %auth_mode(state),
+                token_present,
+                cookie_present,
+                client_ip = %client_ip,
+                "rejected l2 websocket upgrade",
+            );
+            return Err(Box::new(
+                (
+                    StatusCode::FORBIDDEN,
+                    "invalid Origin header: multiple values".to_string(),
+                )
+                    .into_response(),
+            ));
+        }
 
         let origin = match crate::origin::normalize_origin(origin_header) {
             Some(origin) => origin,

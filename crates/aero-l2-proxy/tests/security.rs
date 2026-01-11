@@ -206,6 +206,36 @@ async fn wildcard_allowed_origins_still_requires_origin_header() {
 }
 
 #[tokio::test]
+async fn multiple_origin_headers_are_rejected() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .append("origin", HeaderValue::from_static("https://allowed.test"));
+    req.headers_mut()
+        .append("origin", HeaderValue::from_static("https://blocked.test"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected multiple Origin headers to be rejected");
+    assert_http_status(err, StatusCode::FORBIDDEN);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn origin_allowlist_and_open_mode() {
     let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");

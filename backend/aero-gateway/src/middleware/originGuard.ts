@@ -65,7 +65,19 @@ export async function originGuard(
   opts: { allowedOrigins: readonly string[] },
 ): Promise<void> {
   const originHeader = request.headers.origin;
-  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+  let origin: string | undefined;
+  if (Array.isArray(originHeader)) {
+    if (originHeader.length === 0) return;
+    // Origin is a single-value header. Be strict: reject repeated headers to avoid
+    // ambiguous join/parse behaviour across HTTP stacks.
+    if (originHeader.length > 1) {
+      reply.code(403).send({ error: 'forbidden', message: 'Origin not allowed' });
+      return;
+    }
+    origin = originHeader[0];
+  } else {
+    origin = originHeader;
+  }
   if (!origin) return;
 
   const normalizedOrigin = normalizeOriginString(origin);
