@@ -3,7 +3,10 @@ name: virtio-win-packaging-smoke
 on:
   pull_request:
     paths:
+      - "ci/virtio-win-packaging-smoke.ps1"
+      - "ci/lib/New-IsoFile.ps1"
       - "drivers/scripts/**"
+      - "tools/driver-iso/**"
       - "tools/packaging/**"
       - "guest-tools/**"
       - "tools/packaging/specs/**"
@@ -12,7 +15,10 @@ on:
     branches:
       - main
     paths:
+      - "ci/virtio-win-packaging-smoke.ps1"
+      - "ci/lib/New-IsoFile.ps1"
       - "drivers/scripts/**"
+      - "tools/driver-iso/**"
       - "tools/packaging/**"
       - "guest-tools/**"
       - "tools/packaging/specs/**"
