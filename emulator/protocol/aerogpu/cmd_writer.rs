@@ -28,9 +28,15 @@ fn align_up(v: usize, a: usize) -> usize {
 }
 
 /// Safe command stream builder for `aerogpu_cmd.h`.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct AerogpuCmdWriter {
     buf: Vec<u8>,
+}
+
+impl Default for AerogpuCmdWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AerogpuCmdWriter {

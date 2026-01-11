@@ -278,7 +278,7 @@ export interface AerogpuVertexBufferBinding {
 }
 
 function alignUp(v: number, a: number): number {
-  return (v + (a - 1)) & ~(a - 1);
+  return Math.ceil(v / a) * a;
 }
 
 /**
