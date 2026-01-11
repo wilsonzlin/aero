@@ -1,5 +1,6 @@
 use emulator::io::pci::PciDevice;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use emulator::io::usb::hub::UsbHubDevice;
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
@@ -670,6 +671,134 @@ fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
         0
     );
     assert!(!uhci.irq_level());
+}
+
+#[test]
+fn uhci_remote_wakeup_propagates_through_external_hub() {
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_RD: u16 = 1 << 6;
+    const PORTSC_SUSP: u16 = 1 << 12;
+
+    let mut mem = Bus::new(0x1000);
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(keyboard.clone()));
+    uhci.controller.hub_mut().attach(0, Box::new(hub));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    // Enumerate the hub itself at address 0 -> address 1, then configure it.
+    {
+        let dev = uhci
+            .controller
+            .hub_mut()
+            .device_mut_for_address(0)
+            .expect("hub should be reachable at address 0");
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x05, // SET_ADDRESS
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+    {
+        let dev = uhci
+            .controller
+            .hub_mut()
+            .device_mut_for_address(1)
+            .expect("hub should be reachable at address 1");
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    // Power + reset hub downstream port 1 to make the keyboard reachable.
+    {
+        let dev = uhci
+            .controller
+            .hub_mut()
+            .device_mut_for_address(1)
+            .expect("hub should be reachable at address 1");
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x23, // HostToDevice | Class | Other
+                b_request: 0x03,       // SET_FEATURE
+                w_value: 8,            // PORT_POWER
+                w_index: 1,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x23, // HostToDevice | Class | Other
+                b_request: 0x03,       // SET_FEATURE
+                w_value: 4,            // PORT_RESET
+                w_index: 1,
+                w_length: 0,
+            },
+        );
+    }
+    for _ in 0..50 {
+        uhci.tick_1ms(&mut mem);
+    }
+
+    // Configure the downstream keyboard and enable remote wakeup.
+    {
+        let dev = uhci
+            .controller
+            .hub_mut()
+            .device_mut_for_address(0)
+            .expect("downstream device should be reachable at address 0");
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    // Enable resume IRQs and enter port suspend.
+    uhci.port_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP) as u32);
+
+    // User input should create a remote wakeup event while suspended.
+    keyboard.key_event(4, true); // HID usage 4 = 'a'
+    uhci.tick_1ms(&mut mem);
+
+    assert_ne!(uhci.port_read(REG_PORTSC1, 2) as u16 & PORTSC_RD, 0);
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(uhci.irq_level());
 }
 
 #[test]
