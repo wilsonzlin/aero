@@ -3143,7 +3143,13 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
     return E_INVALIDARG;
   }
 
+  // `D3D10DDIARG_OPENADAPTER::Version` negotiation constant.
+  // Some WDKs expose `D3D11DDI_SUPPORTED`; others only provide `D3D11DDI_INTERFACE_VERSION`.
+#if defined(D3D11DDI_SUPPORTED)
+  constexpr UINT supported_version = D3D11DDI_SUPPORTED;
+#else
   constexpr UINT supported_version = D3D11DDI_INTERFACE_VERSION;
+#endif
   if (pOpenData->Version == 0) {
     pOpenData->Version = supported_version;
   } else if (pOpenData->Version < supported_version) {

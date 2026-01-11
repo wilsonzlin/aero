@@ -291,7 +291,7 @@ If you accept an unsupported `Version`, the runtime may interpret your filled
 Recommended driver behavior:
 
 * `OpenAdapter11` validates the incoming interface/version.
-* If the runtime requests a newer `Version` than you support, clamp `pOpenData->Version` down to your supported version (commonly `D3D11DDI_INTERFACE_VERSION`), matching the D3D10.x negotiation pattern.
+* If the runtime requests a newer `Version` than you support, clamp `pOpenData->Version` down to your supported version (commonly `D3D11DDI_SUPPORTED` or `D3D11DDI_INTERFACE_VERSION`, depending on the WDK), matching the D3D10.x negotiation pattern.
 * Store the negotiated `Version` in adapter-private state and ensure `pfnCreateDevice` fills
   `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` matching that struct layout.
 

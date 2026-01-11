@@ -141,7 +141,13 @@ constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au);
 // Win7 D3D11 runtime requests a specific user-mode DDI interface version. If we
 // accept a version, we must fill function tables whose struct layout matches
 // that version (otherwise the runtime can crash during device creation).
+// `D3D10DDIARG_OPENADAPTER::Version` negotiation constant.
+// Some WDKs expose `D3D11DDI_SUPPORTED`; others only provide `D3D11DDI_INTERFACE_VERSION`.
+#if defined(D3D11DDI_SUPPORTED)
+constexpr UINT kAeroGpuWin7D3D11DdiSupportedVersion = D3D11DDI_SUPPORTED;
+#else
 constexpr UINT kAeroGpuWin7D3D11DdiSupportedVersion = D3D11DDI_INTERFACE_VERSION;
+#endif
 
 // Compile-time sanity (avoid sizeof assertions; layouts vary across WDKs).
 static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pfnCreateResource)>,
