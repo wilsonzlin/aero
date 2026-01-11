@@ -1261,6 +1261,37 @@ async function runLoopInner(): Promise<void> {
           });
           perf.counter("cpu:io:i8042:commandByte", cmdByte);
 
+          // PCI config + BAR MMIO demo (PciTestDevice on bus0/dev0/fn0).
+          const pci = perf.span("cpu:io:pci:probe", () => {
+            const pciEnable = 0x8000_0000;
+            const cfgAddr = (reg: number) => (pciEnable | (reg & 0xfc)) >>> 0;
+            const readDword = (reg: number) => {
+              io!.portWrite(0x0cf8, 4, cfgAddr(reg));
+              return io!.portRead(0x0cfc, 4) >>> 0;
+            };
+            const writeDword = (reg: number, value: number) => {
+              io!.portWrite(0x0cf8, 4, cfgAddr(reg));
+              io!.portWrite(0x0cfc, 4, value >>> 0);
+            };
+
+            const id = readDword(0x00);
+            const vendorId = id & 0xffff;
+            const deviceId = (id >>> 16) & 0xffff;
+            const bar0 = readDword(0x10);
+
+            // Enable memory-space decoding.
+            writeDword(0x04, 0x0000_0002);
+
+            const bar0Base = BigInt(bar0 >>> 0) & 0xffff_fff0n;
+            io!.mmioWrite(bar0Base, 4, 0xcafe_babe);
+            const mmio0 = io!.mmioRead(bar0Base, 4) >>> 0;
+
+            return { vendorId, deviceId, bar0, mmio0 };
+          });
+          perf.counter("cpu:io:pci:vendorId", pci.vendorId);
+          perf.counter("cpu:io:pci:deviceId", pci.deviceId);
+          perf.counter("cpu:io:pci:mmio0", pci.mmio0);
+
           // Emit a couple bytes on COM1; the I/O worker should mirror them back
           // as `serialOutput` events, which we forward to the coordinator/UI.
           perf.span("cpu:io:uart16550:write", () => {
@@ -1272,7 +1303,9 @@ async function runLoopInner(): Promise<void> {
 
           // eslint-disable-next-line no-console
           console.log(
-            `[cpu] io demo: i8042 status=0x${status64.toString(16)} cmdByte=0x${cmdByte.toString(16)}`,
+            `[cpu] io demo: i8042 status=0x${status64.toString(16)} cmdByte=0x${cmdByte.toString(
+              16,
+            )} pci=${pci.vendorId.toString(16)}:${pci.deviceId.toString(16)} bar0=0x${pci.bar0.toString(16)} mmio0=0x${pci.mmio0.toString(16)}`,
           );
         } catch (err) {
           // eslint-disable-next-line no-console
