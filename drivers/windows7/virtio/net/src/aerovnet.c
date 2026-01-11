@@ -724,7 +724,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   // Contract major version is encoded in PCI Revision ID.
   RevisionId = 0;
-  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, &RevisionId, 0x08, sizeof(RevisionId));
+  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x08, &RevisionId, sizeof(RevisionId));
   if (BytesRead != sizeof(RevisionId) || RevisionId != AEROVNET_PCI_REVISION_ID) {
     return NDIS_STATUS_NOT_SUPPORTED;
   }
