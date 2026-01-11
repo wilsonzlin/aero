@@ -264,7 +264,7 @@ impl HdaCodec {
                 // to explicitly unmute the pin.
                 pin_ctl: 0x40,
                 // Default config: line out, rear, green, 1/8" jack, association 1, sequence 0.
-                config_default: 0x0101_0000,
+                config_default: 0x0101_0010,
             },
             input: CodecInputWidget {
                 stream_id: 0,
@@ -276,7 +276,7 @@ impl HdaCodec {
                 conn_select: 0,
                 pin_ctl: 0x00,
                 // Default config: microphone input, rear, 1/8" jack.
-                config_default: 0x01A1_0000,
+                config_default: 0x01A1_0010,
             },
             afg_power_state: 0, // D0
         }
