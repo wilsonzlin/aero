@@ -838,7 +838,7 @@ impl UdpProxy {
         //
         // Note: this DataChannel config is for the UDP relay, where best-effort/lossy semantics are
         // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable and
-        // ordered (do NOT set `maxRetransmits`/`maxPacketLifeTime`). See ADR 0005 and
+        // ordered (do NOT set `maxRetransmits`/`maxPacketLifeTime`). See ADR 0013 and
         // `docs/l2-tunnel-protocol.md`.
         let dc = pc.create_data_channel("udp", &RtcDataChannelInit {
             ordered: false,
