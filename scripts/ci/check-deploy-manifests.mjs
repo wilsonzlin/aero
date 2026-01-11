@@ -70,7 +70,7 @@ errors.push(
 const tracked = gitTrackedFiles();
 const composeManifests = [
   ...tracked.filter((path) => path.endsWith('docker-compose.yml')),
-  ...tracked.filter((path) => path === 'compose.yaml' || path === 'compose.yml'),
+  ...tracked.filter((path) => path.endsWith('compose.yaml') || path.endsWith('compose.yml')),
 ];
 
 for (const relPath of composeManifests) {
