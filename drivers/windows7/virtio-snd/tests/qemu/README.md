@@ -66,7 +66,7 @@ qemu-system-i386 \
   -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x86.wav \
-  -device virtio-sound-pci,disable-legacy=on,audiodev=aerosnd0
+  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=aerosnd0
 ```
 
 ### Windows 7 SP1 x64
@@ -79,7 +79,7 @@ qemu-system-x86_64 \
   -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x64.wav \
-  -device virtio-sound-pci,disable-legacy=on,audiodev=aerosnd0
+  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=aerosnd0
 ```
 
 ### Audio backend alternatives
@@ -107,6 +107,9 @@ shown in the command lines above).
 Note: Many QEMU builds report `REV_00` for virtio PCI devices. Because the Aero INF matches
 `&REV_01`, Windows will not bind the Aero driver unless the device reports `REV_01`. Always verify
 the HWID in Device Manager.
+
+If your QEMU build supports overriding the PCI Revision ID, pass `x-pci-revision=0x01` as shown
+in the command lines above (the Aero Win7 host harness does this automatically).
 
 ## Verifying HWID in Device Manager
 

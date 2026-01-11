@@ -69,8 +69,12 @@ Windows will not bind the Aero driver unless the device reports `REV_01`.
 If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
 
 * If your QEMU build supports overriding PCI identification fields, set the revision/subsystem to
-  match the Aero contract v1 values. (Some builds expose `x-pci-*` properties; consult
-  `qemu-system-x86_64 -device virtio-sound-pci,help`.)
+  match the Aero contract v1 values. For Revision ID specifically, many QEMU builds expose
+  `x-pci-revision`:
+  ```bash
+  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
+  ```
+  (You can confirm supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.)
 * Alternatively, for bring-up on stock QEMU you can temporarily loosen the INF match to drop the
   `&REV_01` constraint (not recommended for Aero contract conformance).
 
