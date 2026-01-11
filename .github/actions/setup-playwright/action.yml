@@ -72,40 +72,29 @@ runs:
          const browsers = browsersRaw.split(/\s+/).filter(Boolean);
          const browsersKey = [...new Set(browsers)].sort().join('-');
          
-         let workingDirectory = (process.env.INPUT_WORKING_DIRECTORY || '').trim();
-         let resolvedLockfile = '';
-         if (!workingDirectory) {
+        let workingDirectory = (process.env.INPUT_WORKING_DIRECTORY || '').trim();
+        let resolvedLockfile = '';
+        if (!workingDirectory) {
           // Prefer using the repo's shared resolver when available so workflows
           // (and local tooling) agree on the Node workspace directory.
-          const detectScript = path.resolve(workspace, 'scripts/ci/detect-node-dir.mjs');
+          const detectScript = path.resolve(workspace, 'scripts/ci/detect_node_workspace.mjs');
           if (fs.existsSync(detectScript)) {
             const { spawnSync } = require('child_process');
-            const tmpOutput = path.join(os.tmpdir(), `aero-detect-node-dir-${process.pid}-${Date.now()}.txt`);
-            const result = spawnSync('node', [detectScript, '--github-output', tmpOutput], {
+            const result = spawnSync('node', [detectScript, '--json'], {
               cwd: workspace,
               stdio: ['ignore', 'pipe', 'pipe'],
               encoding: 'utf8',
             });
             if ((result.status ?? 1) !== 0) {
               const details = (result.stderr || result.stdout || '').trim();
-              throw new Error(`setup-playwright: detect-node-dir failed.\n\n${details}`);
+              throw new Error(`setup-playwright: detect_node_workspace failed.\n\n${details}`);
             }
-            for (const line of (result.stdout || '').split(/\r?\n/u)) {
-              const idx = line.indexOf('=');
-              if (idx === -1) continue;
-              const key = line.slice(0, idx).trim();
-              const value = line.slice(idx + 1).trim();
-              if (key === 'dir') workingDirectory = value;
-              if (key === 'lockfile') resolvedLockfile = value;
-            }
+            const parsed = JSON.parse(String(result.stdout || '').trim() || '{}');
+            if (typeof parsed.dir === 'string') workingDirectory = parsed.dir;
+            if (typeof parsed.lockfile === 'string') resolvedLockfile = parsed.lockfile;
           } else {
             const aeroNodeDir = (process.env.AERO_NODE_DIR || '').trim();
-            const candidates = [
-              aeroNodeDir || null,
-              '.',
-              'frontend',
-              'web',
-            ].filter(Boolean);
+            const candidates = [aeroNodeDir || null, '.', 'frontend', 'web'].filter(Boolean);
           
             for (const dir of candidates) {
               const pkg = path.resolve(workspace, dir, 'package.json');
@@ -115,7 +104,7 @@ runs:
               }
             }
           }
-         }
+        }
          
          if (!workingDirectory) {
            throw new Error(
@@ -196,20 +185,36 @@ runs:
       shell: bash
       env:
         CACHE_PATH: ${{ steps.vars.outputs.cache_path }}
+        BROWSERS_KEY: ${{ steps.vars.outputs.browsers_key }}
+        CACHE_KEY_HASH: ${{ hashFiles(steps.vars.outputs.cache_key_file) }}
       run: |
         set -euo pipefail
-        cache_hit="false"
-        skip_restore="false"
+        node <<'NODE'
+        const fs = require('fs');
         
-        if [[ "${AERO_PLAYWRIGHT_CACHE_RESTORED:-}" == "1" && "${AERO_PLAYWRIGHT_CACHE_PATH:-}" == "${CACHE_PATH}" ]]; then
-          if [[ -d "${CACHE_PATH}" ]] && [[ -n "$(ls -A "${CACHE_PATH}" 2>/dev/null || true)" ]]; then
-            skip_restore="true"
-            cache_hit="job-local"
-          fi
-        fi
+        const cachePath = process.env.CACHE_PATH;
+        const browsersKey = process.env.BROWSERS_KEY;
+        const cacheKeyHash = process.env.CACHE_KEY_HASH;
         
-        echo "skip_restore=${skip_restore}" >> "$GITHUB_OUTPUT"
-        echo "cache_hit=${cache_hit}" >> "$GITHUB_OUTPUT"
+        const fingerprint = `${cachePath}::${browsersKey}::${cacheKeyHash}`;
+        const existing = (process.env.AERO_PLAYWRIGHT_CACHE_FINGERPRINTS || '')
+          .split(/\r?\n/u)
+          .filter(Boolean);
+        
+        let skipRestore = false;
+        if (existing.includes(fingerprint)) {
+          try {
+            const entries = fs.readdirSync(cachePath);
+            if (entries.length) skipRestore = true;
+          } catch {
+            // Cache path doesn't exist (yet) => can't skip.
+          }
+        }
+        
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip_restore=${skipRestore ? 'true' : 'false'}\n`);
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `cache_hit=${skipRestore ? 'job-local' : 'false'}\n`);
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `fingerprint=${fingerprint}\n`);
+        NODE
 
     - name: Restore Playwright browser cache
       id: browser-cache
@@ -222,14 +227,31 @@ runs:
           ${{ runner.os }}-playwright-${{ steps.vars.outputs.browsers_key }}-
           ${{ runner.os }}-playwright-
 
-    - name: Mark Playwright cache as restored (job-local)
+    - name: Record Playwright cache fingerprint (job-local)
       if: steps.cache-state.outputs.skip_restore != 'true'
       shell: bash
+      env:
+        FINGERPRINT: ${{ steps.cache-state.outputs.fingerprint }}
       run: |
-        {
-          echo "AERO_PLAYWRIGHT_CACHE_RESTORED=1"
-          echo "AERO_PLAYWRIGHT_CACHE_PATH=${{ steps.vars.outputs.cache_path }}"
-        } >> "$GITHUB_ENV"
+        set -euo pipefail
+        
+        if [[ -n "${AERO_PLAYWRIGHT_CACHE_FINGERPRINTS:-}" ]]; then
+          if printf '%s\n' "$AERO_PLAYWRIGHT_CACHE_FINGERPRINTS" | grep -Fxq "$FINGERPRINT"; then
+            exit 0
+          fi
+          {
+            echo "AERO_PLAYWRIGHT_CACHE_FINGERPRINTS<<EOF"
+            printf '%s\n' "$AERO_PLAYWRIGHT_CACHE_FINGERPRINTS"
+            echo "$FINGERPRINT"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+        else
+          {
+            echo "AERO_PLAYWRIGHT_CACHE_FINGERPRINTS<<EOF"
+            echo "$FINGERPRINT"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+        fi
 
     - name: Resolve Playwright CLI + version
       id: playwright
