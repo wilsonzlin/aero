@@ -800,6 +800,62 @@ fn aero_cpu_core_int13_out_of_range_read_sets_status_and_int13_status_reports_it
 }
 
 #[test]
+fn aero_cpu_core_int13_disk_reset_clears_last_status() {
+    let bios = Bios::new(test_bios_config());
+    // Only one sector so a CHS read of sector 2 (LBA 1) is out-of-range.
+    let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; INT 13h; INT 13h; INT 13h; HLT
+    vm.mem.write_physical(
+        0x7C00,
+        &[0xCD, 0x13, 0xCD, 0x13, 0xCD, 0x13, 0xCD, 0x13, 0xF4],
+    );
+
+    // 1) CHS read 1 sector from cylinder 0, head 0, sector 2 into 0x0000:0x0500 (fails).
+    vm.cpu.gpr[gpr::RAX] = 0x0201;
+    vm.cpu.gpr[gpr::RCX] = 0x0002; // CH=0, CL=2
+    vm.cpu.gpr[gpr::RDX] = 0x0080; // DH=0, DL=0x80
+    set_real_mode_seg(&mut vm.cpu.segments.es, 0x0000);
+    vm.cpu.gpr[gpr::RBX] = 0x0500;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x0400);
+
+    // 2) Get status of last disk operation (should report the same error).
+    vm.cpu.gpr[gpr::RAX] = 0x0100;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x0400);
+
+    // 3) Reset disk system (clears last status).
+    vm.cpu.gpr[gpr::RAX] = 0x0000;
+    vm.cpu.gpr[gpr::RDX] = 0x0080;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+
+    // 4) Get status should now report success.
+    vm.cpu.gpr[gpr::RAX] = 0x0100;
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+
+    assert!(matches!(vm.step(), StepExit::Halted));
+}
+
+#[test]
 fn aero_cpu_core_int15_a20_query_reports_enabled_after_post() {
     let bios = Bios::new(test_bios_config());
     let disk = machine::InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
