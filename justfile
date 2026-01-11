@@ -145,8 +145,8 @@ setup:
     echo "==> Tooling: wasm crate not found yet; skipping wasm-pack checks"
   fi
 
-  if [[ -f package.json ]]; then
-    echo "==> Node: installing JS dependencies (npm ci, workspaces)"
+  if [[ -f "{{WEB_DIR}}/package.json" ]]; then
+    echo "==> Node: installing JS dependencies (npm ci)"
     if ! command -v npm >/dev/null; then
       echo "error: npm is required to install JS deps" >&2
       exit 1
@@ -154,9 +154,9 @@ setup:
     # Keep `just setup` fast by skipping the Playwright browser download. Install
     # browsers explicitly when you need to run E2E tests:
     #   npx playwright install --with-deps chromium
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
+    (cd "{{WEB_DIR}}" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci)
   else
-    echo "==> Node: package.json not found; skipping npm ci"
+    echo "==> Node: '{{WEB_DIR}}/package.json' not found; skipping npm ci"
   fi
 
   echo "==> Setup complete"
