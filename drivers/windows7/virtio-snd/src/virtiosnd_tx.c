@@ -136,6 +136,8 @@ VirtioSndTxInit(
 
     if (SuppressInterrupts) {
         VirtioSndQueueDisableInterrupts(Queue);
+    } else {
+        (VOID)VirtioSndQueueEnableInterrupts(Queue);
     }
 
     return STATUS_SUCCESS;
