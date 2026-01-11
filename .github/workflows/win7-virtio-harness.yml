@@ -44,7 +44,7 @@ jobs:
 
       - name: Prepare output directory (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'out/win7-virtio-harness' | Out-Null
@@ -65,7 +65,7 @@ jobs:
 
       - name: Validate prerequisites (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         env:
           DISK_IMAGE_PATH: ${{ inputs.disk_image_path }}
         run: |
@@ -147,7 +147,7 @@ jobs:
       - name: Build aero-virtio-selftest.exe (Windows fallback)
         if: runner.os == 'Windows' && steps.selftest_download.outcome != 'success'
         continue-on-error: true
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $buildDir = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness\build-selftest'
@@ -209,7 +209,7 @@ jobs:
 
       - name: Run Win7 virtio selftests (Windows, PowerShell harness)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         env:
           DISK_IMAGE_PATH: ${{ inputs.disk_image_path }}
           TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
@@ -229,8 +229,9 @@ jobs:
           if ($env:SNAPSHOT -eq 'true') {
             $args += '-Snapshot'
           }
-          & pwsh -NoProfile -ExecutionPolicy Bypass -File 'drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1' @args 2>&1 | Tee-Object -FilePath $harnessLog
-          exit $LASTEXITCODE
+          & powershell -NoProfile -ExecutionPolicy Bypass -File 'drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1' @args 2>&1 | Tee-Object -FilePath $harnessLog
+          $code = $LASTEXITCODE
+          exit $code
 
       - name: Collect logs for artifacts (Linux)
         if: always() && runner.os == 'Linux'
@@ -251,7 +252,7 @@ jobs:
 
       - name: Collect logs for artifacts (Windows)
         if: always() && runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         env:
           SERIAL_LOG_PATH: ${{ inputs.serial_log_path }}
         run: |
