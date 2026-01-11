@@ -31,6 +31,8 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
           /** @type {Map<number, { resolve: (value: any) => void, reject: (err: any) => void }>} */
           const pending = new Map();
+          /** @type {any[]} */
+          const completions = [];
           let nextRequestId = 1;
 
           const onMessage = (event) => {
@@ -48,6 +50,7 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
               return;
             }
             if (msg.type === "submit_complete") {
+              completions.push(msg);
               const entry = pending.get(msg.requestId);
               if (!entry) return;
               pending.delete(msg.requestId);
@@ -85,31 +88,44 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
           // an explicit GPU-protocol `tick` message.
           frameState[FRAME_STATUS_INDEX] = FRAME_DIRTY;
 
-          const writer = new AerogpuCmdWriter();
-          writer.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
-          const cmdStream = writer.finish().buffer;
+          const writerVsync = new AerogpuCmdWriter();
+          writerVsync.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+          const cmdStreamVsync = writerVsync.finish().buffer;
 
-          const submitRequestId = nextRequestId++;
-          const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
+          const writerImmediate = new AerogpuCmdWriter();
+          writerImmediate.present(0, 0);
+          const cmdStreamImmediate = writerImmediate.finish().buffer;
+
+          const submitRequestId1 = nextRequestId++;
+          const submitPromise1 = new Promise((resolve, reject) => pending.set(submitRequestId1, { resolve, reject }));
           worker.postMessage(
             {
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
-              requestId: submitRequestId,
+              requestId: submitRequestId1,
               signalFence: 1n,
-              cmdStream,
+              cmdStream: cmdStreamVsync,
             },
-            [cmdStream],
+            [cmdStreamVsync],
           );
 
-          const early = await Promise.race([
-            submitPromise.then((submit) => ({ kind: "submit", submit })),
-            sleep(50).then(() => ({ kind: "timeout" })),
-          ]);
+          const submitRequestId2 = nextRequestId++;
+          const submitPromise2 = new Promise((resolve, reject) => pending.set(submitRequestId2, { resolve, reject }));
+          worker.postMessage(
+            {
+              ...GPU_MESSAGE_BASE,
+              type: "submit_aerogpu",
+              requestId: submitRequestId2,
+              signalFence: 2n,
+              cmdStream: cmdStreamImmediate,
+            },
+            [cmdStreamImmediate],
+          );
 
-          const receivedBeforeTick = early.kind === "submit";
+          await sleep(50);
+          const receivedBeforeTick = completions.length > 0;
 
-          if (early.kind !== "submit") {
+          if (!receivedBeforeTick) {
             // Request a screenshot before ticking. This calls into the worker's internal
             // `handleTick()` to ensure the completion gate is keyed to the explicit
             // `tick` message (not internal present work).
@@ -120,16 +136,16 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
             worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId: screenshotRequestId });
             await screenshotPromise;
 
-            const afterScreenshot = await Promise.race([
-              submitPromise.then(() => ({ kind: "submit" })),
-              sleep(50).then(() => ({ kind: "timeout" })),
-            ]);
-            if (afterScreenshot.kind === "submit") {
+            await sleep(50);
+            if (completions.length > 0) {
               // Expose the failure mode explicitly; the Playwright assertion will fail below.
               window.__AERO_VSYNC_SUBMIT_RESULT__ = {
                 receivedBeforeTick: true,
-                completedFence: 1n,
-                presentCount: null,
+                completions: completions.map((c) => ({
+                  requestId: c.requestId,
+                  completedFence: c.completedFence ?? null,
+                  presentCount: c.presentCount ?? null,
+                })),
               };
               worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
               worker.terminate();
@@ -139,12 +155,15 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
             worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
           }
 
-          const submit = early.kind === "submit" ? early.submit : await submitPromise;
+          await Promise.all([submitPromise1, submitPromise2]);
 
           window.__AERO_VSYNC_SUBMIT_RESULT__ = {
             receivedBeforeTick,
-            completedFence: submit.completedFence ?? null,
-            presentCount: submit.presentCount ?? null,
+            completions: completions.map((c) => ({
+              requestId: c.requestId,
+              completedFence: c.completedFence ?? null,
+              presentCount: c.presentCount ?? null,
+            })),
           };
 
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
@@ -161,6 +180,9 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
   expect(result.error ?? null).toBeNull();
   expect(result.receivedBeforeTick).toBe(false);
-  expect(result.completedFence).toBe(1n);
-  expect(result.presentCount).toBe(1n);
+  expect(result.completions).toHaveLength(2);
+  expect(result.completions[0].completedFence).toBe(1n);
+  expect(result.completions[0].presentCount).toBe(1n);
+  expect(result.completions[1].completedFence).toBe(2n);
+  expect(result.completions[1].presentCount).toBe(2n);
 });
