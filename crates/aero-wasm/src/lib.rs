@@ -894,8 +894,8 @@ impl UsbPassthroughDemoCore {
     }
 }
 
-/// WASM export: minimal driver that queues a GET_DESCRIPTOR(Device) request to prove the
-/// WebUSB action↔completion contract end-to-end.
+/// WASM export: minimal driver that queues a handful of standard GET_DESCRIPTOR requests to prove
+/// the WebUSB action↔completion contract end-to-end.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct UsbPassthroughDemo {
