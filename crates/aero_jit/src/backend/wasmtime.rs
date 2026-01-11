@@ -17,6 +17,23 @@ use crate::wasm::{
 };
 use crate::Tier1Bus;
 
+#[derive(Debug, Default, Clone, Copy)]
+struct HostExitState {
+    mmio_exit: bool,
+    jit_exit: bool,
+    page_fault: bool,
+}
+
+impl HostExitState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn should_rollback(self) -> bool {
+        self.mmio_exit || self.jit_exit || self.page_fault
+    }
+}
+
 /// Reference `wasmtime`-powered backend that can execute Tier-1 compiled blocks.
 ///
 /// ## Tier-1 ABI contract (`export block(cpu_ptr: i32) -> i64`)
@@ -31,8 +48,8 @@ use crate::Tier1Bus;
 /// This mirrors the existing sentinel-based contract used by the older baseline WASM codegen.
 pub struct WasmtimeBackend<Cpu> {
     engine: Engine,
-    store: Store<()>,
-    linker: Linker<()>,
+    store: Store<HostExitState>,
+    linker: Linker<HostExitState>,
     memory: Memory,
     cpu_ptr: i32,
     blocks: Vec<TypedFunc<i32, i64>>,
@@ -62,7 +79,7 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         let mut config = Config::new();
         config.wasm_simd(true);
         let engine = Engine::new(&config).expect("create wasmtime engine");
-        let mut store = Store::new(&engine, ());
+        let mut store = Store::new(&engine, HostExitState::default());
         let mut linker = Linker::new(&engine);
 
         // A single shared memory is imported by all generated blocks.
@@ -191,15 +208,37 @@ where
             .cloned()
             .unwrap_or_else(|| panic!("invalid JIT table index {table_index}"));
 
+        // Snapshot state so we can roll back side effects if the block performs an MMIO/runtime
+        // exit. Tier-1 blocks do not currently provide deopt metadata for resuming mid-block, so
+        // the conservative fallback is to roll back and let the interpreter re-execute.
+        let pre_state = cpu.tier1_state().clone();
+        let ram_len = usize::try_from(self.cpu_ptr).expect("cpu_ptr must be non-negative");
+        let pre_ram = self.memory.data(&self.store)[..ram_len].to_vec();
+
+        self.store.data_mut().reset();
         self.sync_cpu_to_wasm(cpu.tier1_state());
 
         let ret = func
             .call(&mut self.store, self.cpu_ptr)
             .expect("wasm tier1 block trapped");
 
+        let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
+        let host_exit = *self.store.data();
+        if exit_to_interpreter && host_exit.should_rollback() {
+            // Restore guest RAM and CPU state snapshot.
+            self.memory
+                .write(&mut self.store, 0, &pre_ram)
+                .expect("restore guest RAM");
+            *cpu.tier1_state_mut() = pre_state.clone();
+
+            return JitBlockExit {
+                next_rip: pre_state.rip,
+                exit_to_interpreter: true,
+            };
+        }
+
         self.sync_cpu_from_wasm(cpu.tier1_state_mut());
 
-        let exit_to_interpreter = ret == JIT_EXIT_SENTINEL_I64;
         let next_rip = if exit_to_interpreter {
             cpu.tier1_state().rip
         } else {
@@ -219,7 +258,7 @@ impl<Cpu> Tier1WasmRegistry for WasmtimeBackend<Cpu> {
     }
 }
 
-fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
+fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
     fn read<const N: usize>(mem: &[u8], addr: usize) -> u64 {
         let mut v = 0u64;
         for i in 0..N {
@@ -241,7 +280,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U8,
-                move |caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<1>(mem.data(&caller), addr as usize) as i32
                 },
             )
@@ -253,7 +292,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U16,
-                move |caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<2>(mem.data(&caller), addr as usize) as i32
                 },
             )
@@ -265,7 +304,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U32,
-                move |caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
+                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i32 {
                     read::<4>(mem.data(&caller), addr as usize) as i32
                 },
             )
@@ -277,7 +316,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U64,
-                move |caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i64 {
+                move |caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64| -> i64 {
                     read::<8>(mem.data(&caller), addr as usize) as i64
                 },
             )
@@ -291,7 +330,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i32| {
                     write::<1>(mem.data_mut(&mut caller), addr as usize, value as u64);
                 },
             )
@@ -303,7 +342,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i32| {
                     write::<2>(mem.data_mut(&mut caller), addr as usize, value as u64);
                 },
             )
@@ -315,7 +354,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
+                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i32| {
                     write::<4>(mem.data_mut(&mut caller), addr as usize, value as u64);
                 },
             )
@@ -327,7 +366,7 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i64| {
+                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i64| {
                     write::<8>(mem.data_mut(&mut caller), addr as usize, value as u64);
                 },
             )
@@ -335,13 +374,16 @@ fn define_mem_helpers(linker: &mut Linker<()>, memory: Memory) {
     }
 }
 
-fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
-    // Present for ABI completeness. The minimal backend does not currently model faults/MMU.
+fn define_stub_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
+    // Present for ABI completeness. When called, treat these as runtime exits and roll back state.
     linker
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_PAGE_FAULT,
-            |_caller: Caller<'_, ()>, _cpu_ptr: i32, _addr: i64| -> i64 { JIT_EXIT_SENTINEL_I64 },
+            |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, _addr: i64| -> i64 {
+                caller.data_mut().page_fault = true;
+                JIT_EXIT_SENTINEL_I64
+            },
         )
         .expect("define page_fault");
 
@@ -353,7 +395,7 @@ fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MMU_TRANSLATE,
-                move |mut caller: Caller<'_, ()>, cpu_ptr: i32, vaddr: i64, _access: i32| -> i64 {
+                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, vaddr: i64, _access: i32| -> i64 {
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> crate::PAGE_SHIFT;
                     let idx = (vpn & crate::JIT_TLB_INDEX_MASK) as u64;
@@ -392,26 +434,28 @@ fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_JIT_EXIT_MMIO,
-            |_caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostExitState>,
              _cpu_ptr: i32,
              _vaddr: i64,
              _size: i32,
              _is_write: i32,
              _value: i64,
              rip: i64|
-             -> i64 {
-                // Return the RIP the block should resume at after the runtime has handled the
-                // MMIO access. The Tier-1 code generator returns the sentinel separately.
-                rip
-            },
-        )
-        .expect("define jit_exit_mmio");
+              -> i64 {
+                 caller.data_mut().mmio_exit = true;
+                 // Return the RIP the block should resume at after the runtime has handled the
+                 // MMIO access. The Tier-1 code generator returns the sentinel separately.
+                 rip
+              },
+         )
+         .expect("define jit_exit_mmio");
 
     linker
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_JIT_EXIT,
-            |_caller: Caller<'_, ()>, _kind: i32, rip: i64| -> i64 {
+            |mut caller: Caller<'_, HostExitState>, _kind: i32, rip: i64| -> i64 {
+                caller.data_mut().jit_exit = true;
                 // Like `jit_exit_mmio`, return the RIP to resume at while the caller uses the
                 // sentinel return value to request an interpreter step.
                 rip
