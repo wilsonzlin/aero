@@ -6,6 +6,8 @@ import { encodeL2Frame } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
+const L2_PROXY_TEST_TIMEOUT_MS = 660_000;
+
 async function connectOrReject(url, { protocols, ...opts } = {}) {
   return new Promise((resolve, reject) => {
     const protos = protocols ?? ["aero-l2-tunnel-v1"];
@@ -65,7 +67,7 @@ async function waitForClose(ws, timeoutMs = 2_000) {
   });
 }
 
-test("l2 proxy requires Origin by default", async () => {
+test("l2 proxy requires Origin by default", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
     AERO_L2_ALLOWED_ORIGINS: "https://app.example.com",
@@ -89,7 +91,7 @@ test("l2 proxy requires Origin by default", async () => {
   }
 });
 
-test("l2 proxy enforces token auth when configured", async () => {
+test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
     AERO_L2_ALLOWED_ORIGINS: "https://app.example.com",
@@ -129,7 +131,7 @@ test("l2 proxy enforces token auth when configured", async () => {
   }
 });
 
-test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", async () => {
+test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
@@ -151,7 +153,7 @@ test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", async () =
   }
 });
 
-test("l2 proxy enforces max connection quota at upgrade time", async () => {
+test("l2 proxy enforces max connection quota at upgrade time", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
@@ -174,7 +176,7 @@ test("l2 proxy enforces max connection quota at upgrade time", async () => {
   }
 });
 
-test("l2 proxy closes the socket when per-connection quotas are exceeded", async () => {
+test("l2 proxy closes the socket when per-connection quotas are exceeded", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
     AERO_L2_ALLOWED_ORIGINS: "",
