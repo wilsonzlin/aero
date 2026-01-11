@@ -173,8 +173,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Notes:
 
-- Verification requires the **guest virtio-snd selftest** to actually run (ensure the scheduled task is not configured
-  with `--disable-snd`).
+- Verification requires the **guest virtio-snd selftest** to actually run (ensure the scheduled task includes
+  `--test-snd` / `--require-snd` and is not configured with `--disable-snd`).
 - The harness prints a single-line marker suitable for log scraping:
   `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
 
@@ -221,7 +221,7 @@ only if you explicitly want the base image to be mutated.
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
-    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
 
 ### Why `x-pci-revision=0x01`?
 
@@ -304,9 +304,10 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
-By default the guest selftest **runs** the virtio-snd section unless it is disabled via `--disable-snd`.
-To exercise virtio-snd, make sure you:
+By default the guest selftest **skips** virtio-snd playback (emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set`).
+To exercise virtio-snd playback, make sure you:
 - include the virtio-snd driver in the drivers directory you provision into the guest, and
+- provision the scheduled task with `--test-snd` / `--require-snd` (for example via `New-AeroWin7TestImage.ps1 -RequireSnd`), and
 - attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).
 
 To disable the guest selftest's virtio-snd section even if a device is present (adds `--disable-snd` to the scheduled task):

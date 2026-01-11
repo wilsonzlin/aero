@@ -214,7 +214,7 @@ def main() -> int:
         action="store_true",
         help=(
             "Attach a virtio-snd device (virtio-sound-pci). Required when the guest selftest runs "
-            "virtio-snd (default; skip with --disable-snd)."
+            "virtio-snd playback (guest must be configured with --test-snd/--require-snd)."
         ),
     )
     parser.add_argument(

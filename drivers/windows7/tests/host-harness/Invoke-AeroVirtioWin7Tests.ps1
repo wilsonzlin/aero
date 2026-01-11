@@ -45,8 +45,9 @@ param(
   [string]$HttpPath = "/aero-virtio-selftest",
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
-  # Note: the guest selftest runs virtio-snd by default (skip via `--disable-snd`). To pass, you should also attach a
-  # virtio-snd device via this flag.
+  # Note: the guest selftest only runs the virtio-snd playback test when it was provisioned/configured with
+  # `--test-snd` / `--require-snd`. If you enable -WithVirtioSnd but the guest reports SKIP|flag_not_set, re-provision
+  # the scheduled task (for example via New-AeroWin7TestImage.ps1 -RequireSnd).
   [Parameter(Mandatory = $false)]
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,

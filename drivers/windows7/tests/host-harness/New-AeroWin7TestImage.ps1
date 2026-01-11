@@ -55,8 +55,8 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$AutoReboot,
 
-  # Deprecated: previously enabled the guest selftest's virtio-snd section (adds `--test-snd` to the scheduled task).
-  # The guest selftest now runs virtio-snd by default; `--test-snd` is a no-op and kept for backwards compatibility.
+  # If set, enable virtio-snd testing in the guest selftest.
+  # This adds `--test-snd` (alias: `--require-snd`) to the scheduled task.
   [Parameter(Mandatory = $false)]
   [switch]$RequireSnd,
 

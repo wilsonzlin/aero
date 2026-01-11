@@ -2806,7 +2806,7 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
-      "  --test-snd                Deprecated (virtio-snd test runs by default)\n"
+      "  --test-snd                Run virtio-snd playback test (FAIL if missing/playback fails)\n"
       "  --require-snd             Alias for --test-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: no)\n"
