@@ -252,6 +252,17 @@ fn write_u32_le(data: &js_sys::Uint8Array, offset: usize, v: u32) {
 ///
 /// This mirrors `web/src/ipc/ipc.ts::openRingByKind` so WASM code does not need JS
 /// to plumb ring offsets.
+///
+/// For the browser runtime's `ioIpcSab` segment, queue-kind values are also
+/// exposed as constants in [`crate::layout::io_ipc_queue_kind`].
+///
+/// ```ignore
+/// use aero_ipc::layout::io_ipc_queue_kind;
+///
+/// // Open the NET_TX ring (kind=2) from the ioIpc SharedArrayBuffer.
+/// let ring = aero_ipc::wasm::open_ring_by_kind(io_ipc_sab, io_ipc_queue_kind::NET_TX, 0)?;
+/// # Ok::<(), wasm_bindgen::JsValue>(())
+/// ```
 #[wasm_bindgen]
 pub fn open_ring_by_kind(
     buffer: js_sys::SharedArrayBuffer,
