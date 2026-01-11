@@ -1,22 +1,23 @@
-# Windows 7 `virtio-snd` PortCls + WaveRT (render-only) driver design
+# Windows 7 `virtio-snd` PortCls + WaveRT driver design
 
-This document is a **clean-room design reference** for a minimal Windows 7 audio driver for the repo’s [`virtio-snd`](../virtio-snd.md) device model. It describes the **PortCls + WaveRT** surface (COM interfaces, KS descriptors, properties, and INF) required to enumerate a functional render endpoint in Windows 7.
+This document is a **clean-room design reference** for a minimal Windows 7 audio driver for the repo’s [`virtio-snd`](../virtio-snd.md) device model. It describes the **PortCls + WaveRT** surface (COM interfaces, KS descriptors, properties, and INF) required to enumerate functional render + capture endpoints in Windows 7.
 
-The goal is to make the first bring-up deterministic: if the driver matches the shapes described here, Windows 7 should create a “Speakers” endpoint and the audio engine should be able to transition the stream to `RUN`.
+The goal is to make the first bring-up deterministic: if the driver matches the shapes described here, Windows 7 should create “Speakers” (render) and “Microphone” (capture) endpoints and the audio engine should be able to transition streams to `RUN`.
 
 Note: the current in-tree Windows 7 virtio-snd driver (`drivers/windows7/virtio-snd/`) supports both **render**
-and **capture** streams. This document focuses on the minimal render-only bring-up; capture support adds a WaveRT
-capture pin and maps to the virtio-snd `rxq` stream.
+and **capture** streams per `AERO-W7-VIRTIO` v1 (stream id 0 via `txq`, stream id 1 via `rxq`).
 
 ## Scope / assumptions (minimum viable endpoint)
 
 * **Windows target:** Windows 7 SP1 (x86/x64). The driver can be built with a Win7-era WinDDK (7600) layout or with newer WDKs (CI uses WDK10/MSBuild).
 * **Device model:** `virtio-snd` PCI function (`PCI\VEN_1AF4&DEV_1059&REV_01`; Aero `AERO-W7-VIRTIO` v1).
-* **Audio direction:** render-only (no capture).
-* **Streams:** device exposes **2** fixed-format virtio-snd streams by contract; this driver design uses only:
+* **Audio direction:** render + capture.
+* **Streams:** device exposes **2** fixed-format virtio-snd streams by contract:
   * Stream 0: playback/output (render)
-  * Stream 1: capture/input (not exposed yet)
-* **Format (stream 0):** fixed **stereo (2ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**.
+  * Stream 1: capture/input (capture)
+* **Format:** fixed PCM:
+  * render: **stereo (2ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**
+  * capture: **mono (1ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**
 * **Mixing:** Windows audio engine (`audiodg.exe`) does mixing; the miniport is a single shared-mode endpoint.
 * **Virtio transport:** virtio-pci **modern-only** (PCI vendor-specific capabilities + BAR0 MMIO).
 * **Virtio feature bits:** `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only.
@@ -28,7 +29,7 @@ Authoritative virtio contract:
 
 Non-goals:
 
-* Multiple pins/streams, multichannel, sample rate conversion, offload, jack sensing, power management beyond “works”, capture path.
+* Multiple endpoints per direction, sample rate conversion, offload, jack sensing, power management beyond “works”.
 
 ---
 
@@ -50,7 +51,7 @@ PortCls port driver (portcls.sys)
 Our adapter driver (virtio-snd PCI function driver)
   ↓
 Miniports inside our driver:
-  - WaveRT miniport (streaming render pin)
+  - WaveRT miniport (streaming render + capture pins)
   - Topology miniport (bridge pin + controls)
   ↓
 virtio-pci transport + virtqueues
@@ -67,7 +68,7 @@ The **PortCls adapter driver** is a single `.sys` that:
 3. Registers two PortCls subdevices:
    * `Wave` (WaveRT streaming filter factory)
    * `Topology` (topology filter factory)
-4. Routes WaveRT stream operations into a **software-DMA loop** that submits PCM to the virtio-snd TX virtqueue.
+4. Routes WaveRT stream operations into a **software-DMA loop** that submits PCM to the virtio-snd TX virtqueue (render) and posts buffers to the RX virtqueue (capture).
 
 Most implementations share hardware state via an “adapter common” object referenced by both miniports:
 
@@ -91,7 +92,7 @@ Most implementations share hardware state via an “adapter common” object ref
 
 ## 2) Required COM interfaces and responsibilities (Win7 bring-up)
 
-PortCls miniports are COM-style objects (kernel-mode, `IUnknown`-like). For Windows 7 WaveRT render bring-up, the following interfaces are required.
+PortCls miniports are COM-style objects (kernel-mode, `IUnknown`-like). For Windows 7 WaveRT render/capture bring-up, the following interfaces are required.
 
 ### 2.1 Base: `IUnknown`
 
@@ -127,11 +128,11 @@ The WaveRT miniport owns the streaming pin implementation.
 **Win7 bring-up surface (must work):**
 
 * **Stream creation (`NewStream`)**
-  * Validate pin id (render pin only).
-  * Validate data format (only the fixed PCM format).
+  * Validate pin id (render or capture).
+  * Validate data format (only the fixed PCM formats).
   * Create and return an `IMiniportWaveRTStream` instance.
 * **Hardware/stream capabilities**
-  * Report that the stream is **render** only.
+  * Report that the stream is **render** or **capture** depending on pin id.
   * Provide consistent buffer alignment requirements (typically frame-aligned).
 
 **Common implementation pattern:**
@@ -147,7 +148,7 @@ The WaveRT miniport owns the streaming pin implementation.
 This is the most sensitive part of WaveRT. The Windows 7 audio engine expects the stream object to implement a coherent model of:
 
 * **Buffer provisioning / mapping**
-  * Provide (or coordinate) a cyclic DMA buffer that the audio engine can write into (render).
+  * Provide (or coordinate) a cyclic DMA buffer that the audio engine can write into (render) or read from (capture).
   * For WaveRT this is typically a **locked kernel buffer** that PortCls maps into user mode.
 * **Position reporting**
   * Report “play position” in bytes/frames monotonically while running.
@@ -172,15 +173,16 @@ The exact method names in WDK vary slightly by WaveRT revision, but the above re
 
 ### 2.5 Topology: `IMiniportTopology`
 
-Topology miniport is “controls + wiring” for the endpoint. For a minimal render-only endpoint it can be mostly static.
+Topology miniport is “controls + wiring” for the endpoint. For a minimal fixed-format endpoint (render + capture) it can be mostly static.
 
 **Win7 bring-up surface (must work):**
 
 * Expose a topology filter descriptor with:
-  * a **bridge pin** to connect to the wave filter
-  * optionally a **speaker node** (recommended)
+  * a **render bridge pin** to connect to the wave filter
+  * a **capture bridge pin** to connect to the wave filter
+  * a **speaker node** and optionally a **microphone node** (recommended)
 * Implement (or allow PortCls to implement) minimal properties:
-  * `KSPROPERTY_AUDIO_CHANNEL_CONFIG` (report stereo)
+  * `KSPROPERTY_AUDIO_CHANNEL_CONFIG` (report stereo on render, mono on capture)
   * optionally `KSPROPSETID_Jack` stubs (fixed “connected”)
 
 ---
@@ -194,12 +196,13 @@ The driver registers **two KS filter factories** via PortCls:
 
 The descriptors below are a “shape reference”; the exact C structures are in WDK (`portcls.h`, `ks.h`, `ksmedia.h`). The important part is that the pin ids, categories, and data ranges are consistent.
 
-### 3.1 WaveRT filter (render)
+### 3.1 WaveRT filter (render + capture)
 
 **Filter categories (must include):**
 
 * `KSCATEGORY_AUDIO` — tells SysAudio/WDMAud “this is audio”.
 * `KSCATEGORY_RENDER` — tells Windows this factory provides a render endpoint.
+* `KSCATEGORY_CAPTURE` — tells Windows this factory provides a capture endpoint.
 * `KSCATEGORY_REALTIME` — strongly recommended for WaveRT (low-latency path and endpoint heuristics).
 
 **Pins:**
@@ -207,9 +210,11 @@ The descriptors below are a “shape reference”; the exact C structures are in
 | Pin ID | Name (suggested) | Role | Dataflow | Communication | Exposed to user mode |
 |-------:|------------------|------|----------|---------------|----------------------|
 | 0 | `Render` | streaming render pin | `KSPIN_DATAFLOW_IN` | `KSPIN_COMMUNICATION_SINK` | yes (apps open this) |
-| 1 | `Bridge` | connection to topology filter | (usually `OUT`) | `KSPIN_COMMUNICATION_BRIDGE` | no |
+| 1 | `Bridge` | render connection to topology filter | (usually `OUT`) | `KSPIN_COMMUNICATION_BRIDGE` | no |
+| 2 | `Capture` | streaming capture pin | `KSPIN_DATAFLOW_OUT` | `KSPIN_COMMUNICATION_SOURCE` | yes (apps open this) |
+| 3 | `BridgeCapture` | capture connection to topology filter | (usually `IN`) | `KSPIN_COMMUNICATION_BRIDGE` | no |
 
-**Render pin data range (fixed PCM):**
+**Streaming pin data ranges (fixed PCM):**
 
 * MajorFormat: `KSDATAFORMAT_TYPE_AUDIO`
 * SubFormat: `KSDATAFORMAT_SUBTYPE_PCM`
@@ -220,6 +225,10 @@ The descriptors below are a “shape reference”; the exact C structures are in
 * `MaximumChannels = MinimumChannels = 2`
 * `MinimumBitsPerSample = MaximumBitsPerSample = 16`
 * `MinimumSampleFrequency = MaximumSampleFrequency = 48000`
+
+Capture pin data range is identical except:
+
+* `MaximumChannels = MinimumChannels = 1`
 
 **Why fixed ranges instead of “wildcards”:** the simplest stable bring-up is to avoid Windows picking unexpected formats (e.g., 44.1k, float32). Once stable, widen supported ranges deliberately.
 
@@ -232,10 +241,11 @@ This is a concrete “shape” of the descriptor data that `IMiniport::GetDescri
 static const GUID* const kWaveCategories[] = {
     &KSCATEGORY_AUDIO,
     &KSCATEGORY_RENDER,
+    &KSCATEGORY_CAPTURE,
     &KSCATEGORY_REALTIME,
 };
 
-// Supported streaming formats for pin 0 ("Render")
+// Supported streaming formats for pin 0 ("Render") and pin 2 ("Capture")
 static const KSDATARANGE_AUDIO kRenderDataRanges[] = {
     {
         .DataRange = {
@@ -255,7 +265,26 @@ static const KSDATARANGE_AUDIO kRenderDataRanges[] = {
     },
 };
 
-// Pins: 0 = Render, 1 = Bridge
+static const KSDATARANGE_AUDIO kCaptureDataRanges[] = {
+    {
+        .DataRange = {
+            .FormatSize = sizeof(KSDATARANGE_AUDIO),
+            .Flags = 0,
+            .SampleSize = 0,
+            .MajorFormat = KSDATAFORMAT_TYPE_AUDIO,
+            .SubFormat = KSDATAFORMAT_SUBTYPE_PCM,
+            .Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX,
+        },
+        .MaximumChannels = 1,
+        .MinimumChannels = 1,
+        .MaximumBitsPerSample = 16,
+        .MinimumBitsPerSample = 16,
+        .MaximumSampleFrequency = 48000,
+        .MinimumSampleFrequency = 48000,
+    },
+};
+
+// Pins: 0 = Render, 1 = Bridge, 2 = Capture, 3 = BridgeCapture
 static const PCPIN_DESCRIPTOR kWavePins[] = {
     // Pin 0: render streaming pin (user visible)
     {
@@ -271,6 +300,28 @@ static const PCPIN_DESCRIPTOR kWavePins[] = {
     // Pin 1: bridge pin (internal link to topology)
     {
         .DataFlow = KSPIN_DATAFLOW_OUT,
+        .Communication = KSPIN_COMMUNICATION_BRIDGE,
+        .Category = NULL,
+        .Name = NULL,
+        .DataRanges = NULL,
+        .DataRangesCount = 0,
+        .InstancesPossible = 1,
+        .InstancesNecessary = 1,
+    },
+    // Pin 2: capture streaming pin (user visible)
+    {
+        .DataFlow = KSPIN_DATAFLOW_OUT,
+        .Communication = KSPIN_COMMUNICATION_SOURCE,
+        .Category = &KSCATEGORY_AUDIO,
+        .Name = NULL,
+        .DataRanges = (PKSDATARANGE)kCaptureDataRanges,
+        .DataRangesCount = ARRAYSIZE(kCaptureDataRanges),
+        .InstancesPossible = 1,
+        .InstancesNecessary = 1,
+    },
+    // Pin 3: bridge pin for capture (internal link to topology)
+    {
+        .DataFlow = KSPIN_DATAFLOW_IN,
         .Communication = KSPIN_COMMUNICATION_BRIDGE,
         .Category = NULL,
         .Name = NULL,
@@ -579,11 +630,14 @@ Optional improvements (later):
 
 ## 6) `virtio-snd` backend mapping
 
-This driver maps a single WaveRT render stream to the `virtio-snd` device model described in [`docs/virtio-snd.md`](../virtio-snd.md).
+This driver maps WaveRT streams to the `virtio-snd` device model described in [`docs/virtio-snd.md`](../virtio-snd.md):
+
+- render: `virtio-snd` stream id `0` (TX)
+- capture: `virtio-snd` stream id `1` (RX)
 
 ### 6.1 Control queue command sequence
 
-The minimal state machine for stream id `0` is:
+The minimal state machine for stream id `0` (render) is:
 
 1. **During device start (PnP START / adapter init):**
    * Optionally query `PCM_INFO` to confirm stream 0 exists.
@@ -602,6 +656,11 @@ The minimal state machine for stream id `0` is:
 6. **When stream is closed or transitions to `STOP`:**
    * `PCM_RELEASE`
 
+The capture stream (id `1`) uses the same control flow, but with:
+
+* `channels = 1` (mono)
+* capture buffers submitted via the virtio-snd RX queue (`rxq`)
+
 ### 6.2 TX descriptor chain payload
 
 Each TX submission is a virtqueue descriptor chain:
@@ -618,7 +677,23 @@ Each TX submission is a virtqueue descriptor chain:
 
 The miniport should treat non-OK statuses as a stream fault and transition to `STOP`.
 
-### 6.3 IRQL constraints (what can run where)
+### 6.3 RX descriptor chain payload
+
+Each RX submission is a virtqueue descriptor chain:
+
+* OUT:
+  1. `virtio_snd_pcm_xfer` header (8 bytes)
+     * `stream_id: u32` (1)
+     * `reserved: u32` (0)
+* IN:
+  1. raw PCM bytes (mono S16_LE) written by the device
+  2. `virtio_snd_pcm_status` (8 bytes)
+     * `status: u32`
+     * `latency_bytes: u32` (device model currently returns 0)
+
+The miniport should treat non-OK statuses as a stream fault and transition to `STOP`.
+
+### 6.4 IRQL constraints (what can run where)
 
 Practical constraints for a stable Win7 driver:
 
@@ -644,6 +719,7 @@ Windows 7 enumerates WDM audio endpoints through `sysaudio.sys` + `wdmaud.sys` c
 
 * Install a **PCI function driver service** for the device.
 * Register **wave** and **topology** subdevices via `HKR,Drivers\...` keys.
+* Register the **KS device interfaces** that SysAudio/MMDevice enumerates for render + capture.
 * Include/need the standard KS and WDMAudio registration sections.
 
 ### 7.1 Minimal INF outline (key directives)
@@ -652,6 +728,12 @@ At minimum:
 
 * `Include=ks.inf, wdmaudio.inf`
 * `Needs=KS.Registration, WDMAUDIO.Registration`
+
+And an interfaces section that includes both directions, for example:
+
+* `AddInterface = %KSCATEGORY_RENDER%,  %KSNAME_Wave%, VirtioSnd.Wave.Interface`
+* `AddInterface = %KSCATEGORY_CAPTURE%, %KSNAME_Wave%, VirtioSnd.Wave.Capture.Interface`
+* `AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSnd.Topology.Interface`
 
 And in `AddReg`:
 
@@ -696,6 +778,11 @@ Needs=KS.Registration,WDMAUDIO.Registration
 CopyFiles=VirtioSnd.CopyFiles
 AddReg=VirtioSnd.AddReg
 
+[VirtioSnd_Install.NT.Interfaces]
+AddInterface=%KSCATEGORY_RENDER%,%KSNAME_Wave%,VirtioSnd.Wave.Interface
+AddInterface=%KSCATEGORY_CAPTURE%,%KSNAME_Wave%,VirtioSnd.Wave.Capture.Interface
+AddInterface=%KSCATEGORY_TOPOLOGY%,%KSNAME_Topology%,VirtioSnd.Topology.Interface
+
 [VirtioSnd.AddReg]
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd.sys
@@ -729,8 +816,9 @@ Checklist:
    * Device appears under **Sound, video and game controllers**.
    * No Code 10 (start failed) / Code 52 (signature enforcement).
 2. Sound control panel:
-   * A playback device appears (often “Speakers”).
-   * Default format lists (at least) 16-bit, 48000 Hz.
+    * A playback device appears (often “Speakers”).
+    * A recording device appears (often “Microphone”).
+    * Default format lists (at least) 16-bit, 48000 Hz.
 
 Where to look when it fails:
 

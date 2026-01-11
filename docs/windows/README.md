@@ -11,5 +11,5 @@ This directory collects practical notes for writing/debugging Windows 7 (WDM/KMD
 - [Virtio PCI modern interrupt bring-up/debugging (Windows 7, MSI-X vs INTx)](./virtio-pci-modern-interrupt-debugging.md)
 - [Virtio 1.0 split virtqueue implementation guide (Win7 KMDF)](../virtio/virtqueue-split-ring-win7.md)
 - [Virtqueue DMA strategy (Windows 7 KMDF)](../windows-drivers/virtio/virtqueue-dma-strategy.md)
-- [Windows 7 `virtio-snd` PortCls + WaveRT driver design (render-only bring-up; current in-tree driver also supports capture)](./virtio-snd-portcls-wavert.md)
+- [Windows 7 `virtio-snd` PortCls + WaveRT driver design](./virtio-snd-portcls-wavert.md)
 - [Windows 7 driver build + catalog + signing pipeline (CI + local)](../16-windows7-driver-build-and-signing.md)

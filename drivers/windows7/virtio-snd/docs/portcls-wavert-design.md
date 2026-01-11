@@ -16,7 +16,10 @@ This design targets the simplest useful audio path for Aero:
 - Windows 7 SP1 (x86/x64).
 - One **render** endpoint (speaker/headphones style) backed by `virtio-snd` stream id `0` (TX).
 - One **capture** endpoint (microphone style) backed by `virtio-snd` stream id `1` (RX).
-- Fixed formats (see [Assumptions and limits](#assumptions-and-limits)).
+- Fixed formats only (see [Assumptions and limits](#assumptions-and-limits)).
+
+Format negotiation beyond the fixed contract formats, plus advanced DSP/offload,
+are out of scope for this driver.
 
 ## Why PortCls + WaveRT (Windows 7+)
 
@@ -76,7 +79,7 @@ The intended structure is a classic PortCls “adapter + miniports” design:
 
 - **Adapter / FDO**: owns the virtio transport (virtio-pci + virtqueues) and
   provides shared device services.
-- **Topology miniport**: exposes the endpoint topology (speaker + microphone).
+- **Topology miniport**: exposes the endpoint topology (speaker + microphone connectors).
 - **WaveRT miniport**: exposes one render pin and one capture pin that support WaveRT.
 - **WaveRT stream object**: created per open stream (render or capture); owns the cyclic buffer mapping,
   clock state, and notification timer/period scheduling.
@@ -113,10 +116,13 @@ The driver’s render loop:
 Because TX completions are not used for timing, virtqueue “used” processing is
 treated as backpressure/resource reclamation only.
 
-The driver’s capture loop uses the same WaveRT cyclic-buffer contract as render,
-but the dataflow is reversed: the virtio-snd device writes PCM into the buffer
-via `rxq`, and the driver advances the WaveRT **write cursor** and signals the
-notification event once per period.
+The driver’s capture loop uses the same WaveRT cyclic-buffer contract as render, but the dataflow is reversed:
+the virtio-snd device writes PCM into the buffer via `rxq`. On each period boundary, the driver submits the next
+period-sized buffer region for stream id 1, advances the WaveRT **write cursor** when RX completes, and signals
+the notification event for the audio engine.
+
+Capture completions may be polled from the period/timer path to avoid interrupt storms on device models that
+complete RX buffers immediately.
 
 ## Buffer strategy (cyclic buffer + periods)
 
@@ -124,8 +130,10 @@ notification event once per period.
 
 WaveRT exposes a **cyclic** (ring) buffer to the audio engine:
 
-- The audio engine writes render samples into the buffer at its own pace.
-- The driver reads (consumes) samples from the buffer at the device pace.
+- Render: the audio engine writes samples into the buffer at its own pace, and the driver reads
+  (consumes) samples from the buffer at the device pace.
+- Capture: the driver writes captured samples into the buffer at the device pace, and the audio
+  engine reads samples out at its own pace.
 
 For virtio-snd, the buffer lives in system memory (non-paged) and acts as the
 handoff between the Windows audio engine and the virtio-snd transport.

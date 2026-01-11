@@ -11,12 +11,15 @@ What this test plan verifies:
 3. The Windows audio stack enumerates a **render** endpoint (Control Panel → Sound)
 4. Audio playback works (audible on the host, or captured to a WAV file in headless runs)
 5. The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
-6. Audio capture works (records host input if available, otherwise records silence)
+6. Audio capture works (records host input if available; may record silence if no input source is available)
 7. The **virtio-snd** portion of the guest audio smoke test passes (selftest **Task 128**)
 
 > Note: virtio-snd capture depends on the host/QEMU audio backend providing an input
 > source. If none is available, the capture stream will record silence, but
 > endpoint enumeration should still work.
+>
+> The current Aero Windows 7 virtio-snd driver package exposes both **render** (stream id `0`, `txq`)
+> and **capture** (stream id `1`, `rxq`) endpoints per `AERO-W7-VIRTIO` v1.
 
 References:
 
@@ -265,12 +268,16 @@ If you used the `wav` audio backend, the host-side `virtio-snd-*.wav` file shoul
 
 1. Open **Control Panel** → **Sound** (or run `mmsys.cpl`).
 2. On the **Recording** tab, confirm a new recording device exists (capture endpoint).
-3. Use **Sound Recorder** (or any capture-capable app) to record a short sample.
+3. Select it → **Set Default** (optional).
+4. Use **Sound Recorder** (or any capture-capable app) to record a short sample.
 
 Notes:
 
 - QEMU capture requires an audio backend that provides an input source. If none is available,
   capture may record silence, but endpoint enumeration should still work.
+- The `wav` audiodev backend is convenient for validating render output, but it may not provide
+  a real capture source on all QEMU builds. Use a host audio backend (PulseAudio/DirectSound/etc.)
+  if you need to validate non-silent capture.
 
 ## Run the selftest audio check (Task 128)
 

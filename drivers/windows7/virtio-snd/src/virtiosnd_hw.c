@@ -915,6 +915,10 @@ _Use_decl_annotations_
 VOID VirtIoSndUninitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     LARGE_INTEGER delay;
+    ULONG attempts;
+    ULONG drained;
+    ULONG inflight;
+    KIRQL oldIrql;
 
     if (Dx == NULL) {
         return;
@@ -931,6 +935,34 @@ VOID VirtIoSndUninitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
     delay.QuadPart = -10 * 1000; /* 1ms */
     while (InterlockedCompareExchange(&Dx->Intx.DpcInFlight, 0, 0) > 0) {
         KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+
+    /*
+     * Drain completions before freeing RX request contexts so the rxq does not
+     * retain cookies that point to freed allocations.
+     *
+     * We poll here because capture completions may have interrupts suppressed in
+     * the WaveRT capture path.
+     */
+    inflight = 0;
+    for (attempts = 0; attempts < 200; ++attempts) {
+        drained = VirtIoSndRxDrainCompletions(&Dx->Rx, NULL, NULL);
+
+        KeAcquireSpinLock(&Dx->Rx.Lock, &oldIrql);
+        inflight = Dx->Rx.InflightCount;
+        KeReleaseSpinLock(&Dx->Rx.Lock, oldIrql);
+
+        if (inflight == 0) {
+            break;
+        }
+
+        if (drained == 0) {
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+
+    if (inflight != 0) {
+        VIRTIOSND_TRACE_ERROR("rx engine teardown: %lu request(s) still inflight\n", inflight);
     }
 
     VirtIoSndRxUninit(&Dx->Rx);

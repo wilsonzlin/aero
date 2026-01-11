@@ -119,11 +119,12 @@ Responsibilities:
   - query PCM stream capabilities (`PCM_INFO`)
   - configure params (`PCM_SET_PARAMS`)
   - prepare/start/stop/release for playback and capture (streams 0 and 1)
- - Handle `eventq` for asynchronous device events (if used by the device model).
- - Implement the PCM data path:
-    - playback: submit PCM buffers on `txq`
-    - capture: submit capture buffers on `rxq` (stream id `1`) and process
-      completions via the RX engine.
+- Handle `eventq` for asynchronous device events (if used by the device model).
+- Implement the PCM data path:
+   - playback: submit PCM buffers on `txq`
+   - capture: submit capture buffers on `rxq` (stream id `1`) and process
+     completions via the RX engine. The PortCls WaveRT miniport wires this up as
+     a Windows capture endpoint.
 
 The protocol engine should be written to:
 
@@ -136,7 +137,7 @@ The protocol engine should be written to:
 Implementation summary:
 
 - Adapter / PortCls registration: `src/adapter.c`
-- WaveRT miniport (render): `src/wavert.c`
+- WaveRT miniport (render + capture): `src/wavert.c`
 - Topology miniport: `src/topology.c`
 
 The driver registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology`
@@ -210,7 +211,7 @@ Contract v1 requirements include:
   - `controlq = 64`
   - `eventq = 64` (initialized; currently unused unless the device model emits events)
   - `txq = 256`
-- `rxq = 64` (initialized; used by the WaveRT capture endpoint)
+  - `rxq = 64` (initialized; used by the WaveRT capture endpoint)
 
 Driver stance (strict contract-v1):
 

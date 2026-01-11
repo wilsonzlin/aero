@@ -13,13 +13,13 @@ This `docs/README.md` is the **source of truth** for the in-tree Windows 7 `virt
 
 The shipped driver package produces `virtiosnd.sys` and exposes two fixed-format endpoints:
 
-Render (output):
+Render (output, stream 0):
 
 * 48,000 Hz
 * Stereo (2 channels)
 * 16-bit PCM little-endian (S16_LE)
 
-Capture (input):
+Capture (input, stream 1):
 
 * 48,000 Hz
 * Mono (1 channel)
@@ -88,10 +88,10 @@ The contract defines **two** fixed-format PCM streams:
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
 
-The shipped PortCls miniports expose both:
+The PortCls miniports expose both streams as Windows endpoints:
 
-- Stream 0 as a Windows render endpoint.
-- Stream 1 as a Windows capture endpoint.
+- Stream 0 (playback/output): Windows render endpoint
+- Stream 1 (capture/input): Windows capture endpoint
 
 ### QEMU support (manual testing)
 
@@ -136,6 +136,7 @@ PortCls miniports:
 - Exposes fixed-format endpoints:
   - Render (stream 0): 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
   - Capture (stream 1): 48,000 Hz, mono (1ch), 16-bit PCM LE (S16_LE)
+- Uses a QPC-based clock (`KeQueryPerformanceCounter`) for position reporting (virtqueue completions are not a reliable clock in Aero).
 - Uses a periodic timer/DPC “software DMA” model that:
   - for render: submits one period of PCM to a backend callback and advances play position (backpressure-aware)
   - for capture: submits one RX period buffer; RX completion advances write position and signals the WaveRT notification event
@@ -221,8 +222,8 @@ package exposes both streams via PortCls/WaveRT:
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
 
-Basic playback uses `controlq` + `txq`. Capture uses `controlq` + `rxq`; the emulator
-fills silence when host input is unavailable.
+Basic playback uses `controlq` + `txq`. Capture uses `controlq` + `rxq`; the emulator fills silence
+when host input is unavailable.
 
 All multi-byte fields described below are **little-endian**.
 
