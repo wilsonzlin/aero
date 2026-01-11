@@ -21,6 +21,22 @@ function withUserAgent<T>(userAgent: string, fn: () => T): T {
   }
 }
 
+function withDocument<T>(doc: unknown, fn: () => T): T {
+  const hadOwn = Object.prototype.hasOwnProperty.call(globalThis, "document");
+  const prev = (globalThis as unknown as { document?: unknown }).document;
+
+  Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
+  try {
+    return fn();
+  } finally {
+    if (hadOwn) {
+      Object.defineProperty(globalThis, "document", { value: prev, configurable: true });
+    } else {
+      delete (globalThis as unknown as { document?: unknown }).document;
+    }
+  }
+}
+
 test("explainWebUsbError: NotAllowedError includes a user-gesture hint", () => {
   const res = explainWebUsbError({
     name: "NotAllowedError",
@@ -29,6 +45,19 @@ test("explainWebUsbError: NotAllowedError includes a user-gesture hint", () => {
 
   assert.ok(res.title.toLowerCase().includes("permission") || res.title.toLowerCase().includes("gesture"));
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("user gesture")));
+});
+
+test("explainWebUsbError: includes Permissions Policy hint when policy denies usb", () => {
+  const res = withDocument(
+    {
+      permissionsPolicy: {
+        allowsFeature: (feature: string) => feature !== "usb",
+      },
+    },
+    () => explainWebUsbError({ name: "NotAllowedError", message: "Permission denied." }),
+  );
+
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("allow=\"usb\"")));
 });
 
 test("explainWebUsbError: InvalidStateError suggests device.open() and selectConfiguration()", () => {

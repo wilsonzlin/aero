@@ -140,6 +140,21 @@ function detectHostOs(): HostOs {
   return "unknown";
 }
 
+function permissionsPolicyAllowsUsb(): boolean | null {
+  if (typeof document === "undefined") return null;
+  const doc = document as unknown as {
+    permissionsPolicy?: { allowsFeature?: (feature: string) => boolean };
+    featurePolicy?: { allowsFeature?: (feature: string) => boolean };
+  };
+  const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+  if (!policy || typeof policy.allowsFeature !== "function") return null;
+  try {
+    return policy.allowsFeature("usb");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Decode a WebUSB error into actionable troubleshooting hints.
  *
@@ -170,6 +185,9 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     seen.add(hint);
     hints.push(hint);
   };
+
+  const ppUsb = permissionsPolicyAllowsUsb();
+  const ppBlocksUsb = ppUsb === false;
 
   const secureContextValue =
     typeof (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext === "boolean"
@@ -282,7 +300,11 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   }
 
   // --- Hints ---
-  if (insecureContext || mentionsSecureContext || (name === "SecurityError" && secureContextValue !== true)) {
+  if (
+    insecureContext ||
+    mentionsSecureContext ||
+    (name === "SecurityError" && secureContextValue !== true && !mentionsProtectedInterface)
+  ) {
     addHint("WebUSB requires a secure context: use https:// or http://localhost (check `isSecureContext`).");
   }
 
@@ -302,7 +324,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     );
   }
 
-  if (mentionsPermissionsPolicy) {
+  if (mentionsPermissionsPolicy || ppBlocksUsb) {
     addHint(
       "WebUSB can be blocked by Permissions Policy / enterprise policy. If you're running in an iframe, ensure the frame is allowed to use WebUSB (e.g. `allow=\"usb\"`) and that response headers permit it.",
     );
