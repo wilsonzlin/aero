@@ -361,9 +361,17 @@ fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), Statu
 #[tokio::test]
 async fn streaming_reads_and_reuses_cache() {
     let image: Vec<u8> = (0..(4096 + 123)).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, false, None)
-            .await;
+    let (url, state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        "etag-v1",
+        false,
+        None,
+        false,
+        false,
+        false,
+        None,
+    )
+    .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
@@ -414,9 +422,17 @@ async fn streaming_reads_and_reuses_cache() {
 #[tokio::test]
 async fn cache_invalidates_on_validator_change() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state1, shutdown1) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, false, None)
-            .await;
+    let (url, state1, shutdown1) = start_range_server_with_options(
+        image.clone(),
+        "etag-v1",
+        false,
+        None,
+        false,
+        false,
+        false,
+        None,
+    )
+    .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -440,9 +456,17 @@ async fn cache_invalidates_on_validator_change() {
     let _ = shutdown1.send(());
 
     // Same bytes endpoint, but validator changed => invalidate cache and re-fetch.
-    let (url2, state2, shutdown2) =
-        start_range_server_with_options(image.clone(), "etag-v2", false, None, false, false, false, None)
-            .await;
+    let (url2, state2, shutdown2) = start_range_server_with_options(
+        image.clone(),
+        "etag-v2",
+        false,
+        None,
+        false,
+        false,
+        false,
+        None,
+    )
+    .await;
     let mut config2 = StreamingDiskConfig::new(url2, cache_dir.path());
     config2.cache_backend = StreamingCacheBackend::Directory;
     config2.options.chunk_size = 1024;
@@ -603,9 +627,17 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
 #[tokio::test]
 async fn if_range_mismatch_is_reported_as_validator_mismatch() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
-    let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, false, None)
-            .await;
+    let (url, state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        "etag-v1",
+        false,
+        None,
+        false,
+        false,
+        false,
+        None,
+    )
+    .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -687,9 +719,17 @@ async fn missing_required_header_fails_open_with_http_error() {
 #[tokio::test]
 async fn open_fails_when_config_validator_mismatches_remote_etag() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
-    let (url, _state, shutdown) =
-        start_range_server_with_options(image, "etag-actual", false, None, false, false, false, None)
-            .await;
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image,
+        "etag-actual",
+        false,
+        None,
+        false,
+        false,
+        false,
+        None,
+    )
+    .await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());

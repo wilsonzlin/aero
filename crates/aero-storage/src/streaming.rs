@@ -1070,11 +1070,11 @@ impl StreamingDisk {
             if validator.trim_start().starts_with("W/") {
                 // skip
             } else {
-            headers.insert(
-                IF_RANGE,
-                HeaderValue::from_str(validator)
-                    .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
-            );
+                headers.insert(
+                    IF_RANGE,
+                    HeaderValue::from_str(validator)
+                        .map_err(|e| StreamingDiskError::Protocol(e.to_string()))?,
+                );
             }
         }
         let req = self
