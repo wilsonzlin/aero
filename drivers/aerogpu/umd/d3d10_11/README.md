@@ -84,22 +84,21 @@ All append helpers return `nullptr` (and set `CmdStreamError`) on failure (for e
 
 ### Shared surface note
 
-DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token`.
+DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` carried in preserved WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 
 On Win7/WDDM 1.1, `share_token` must be stable across guest processes. AeroGPU does
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token` (handle
 values are process-local and not stable cross-process).
 
-Canonical contract: on Win7/WDDM 1.1, the guest UMD generates a collision-resistant
+Canonical contract: on Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero
 `share_token` and persists it in the preserved WDDM allocation private driver data blob
 (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 dxgkrnl returns the same bytes on cross-process opens, so both processes observe the
 same `share_token`.
 
 The preserved WDDM allocation private-data blob (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`)
-is treated as **UMD → KMD input** and is used to persist a stable `alloc_id` across
-CreateAllocation/OpenAllocation so the KMD can build the per-submit allocation table for
-guest-backed resources.
+is also used to persist a stable `alloc_id` across CreateAllocation/OpenAllocation so the
+KMD can build the per-submit allocation table for guest-backed resources.
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero).
 

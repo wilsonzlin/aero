@@ -103,37 +103,23 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
 
 - `alloc_id` (32-bit, nonzero): UMD-owned allocation ID used by the per-submit allocation table (`alloc_id → {gpa, size_bytes, flags}`).
-- `share_token` (64-bit, nonzero for shared allocations): UMD-owned stable token used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
+- `share_token` (64-bit, nonzero for shared allocations): KMD-owned stable token used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
 
 For robustness against Win7's varying `CloseAllocation` / `DestroyAllocation` call patterns, the KMD also maintains an adapter-global open refcount keyed by `share_token`. When the final cross-process allocation wrapper for a shared surface is released, the KMD emits `RELEASE_SHARED_SURFACE { share_token }` (a best-effort internal ring submission) so the host can remove the `share_token → resource` mapping used for future `IMPORT_SHARED_SURFACE` calls.
 
-### `alloc_id` (UMD → KMD input; preserved across `OpenResource`)
+These values live in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv` / `aerogpu_wddm_alloc_priv_v2`):
 
-`alloc_id` is carried in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv.alloc_id`):
-
-- The blob is treated as **UMD → KMD input**: the UMD generates `alloc_id` and attaches it to each allocation.
-- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe the same `alloc_id`.
-- The KMD validates and stores `alloc_id` in its allocation bookkeeping and uses it when building the per-submit allocation table for the emulator.
+- The UMD supplies `alloc_id`/`flags` (and optional metadata) to the KMD.
+- The KMD writes back `size_bytes` and (for shared allocations) a stable 64-bit `share_token` during `DxgkDdiCreateAllocation` and again during `DxgkDdiOpenAllocation`.
+- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe identical IDs.
+- Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
+- The KMD stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table for the emulator.
 - To avoid silent corruption, the KMD rejects submissions where the allocation list contains the same `alloc_id` for different backing base addresses (`gpa`). (Size may vary due to alignment; the allocation table uses the maximum observed size for a given `alloc_id`.)
-- For standard allocations where the runtime does not provide an AeroGPU private-data blob, the KMD synthesizes an `alloc_id` from a reserved namespace (high bit set).
 
 The preserved private-data layout is defined in:
 
-- `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
-
-### `share_token` (UMD → KMD input; stable cross-process)
-
-For shared surfaces, the `share_token` used by the AeroGPU protocol is carried in the
-preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`
-in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`):
-
-- The UMD generates a collision-resistant token and writes it into the blob during
-  CreateResource/CreateAllocation.
-- For shared allocations, dxgkrnl preserves the blob and returns the exact same bytes
-  on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes
-  observe the same `share_token`.
-
-Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
+- `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` (canonical definition)
+- `drivers/aerogpu/protocol/aerogpu_alloc.h` (stable wrapper include)
 
 ## Building (WDK 10 / MSBuild)
 

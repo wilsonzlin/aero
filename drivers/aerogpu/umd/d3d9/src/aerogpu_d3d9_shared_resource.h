@@ -12,16 +12,18 @@
 
 namespace aerogpu {
 
-// Allocates 64-bit share tokens for D3D9Ex shared surfaces (EXPORT/IMPORT_SHARED_SURFACE).
+// Legacy helper: generates collision-resistant 64-bit tokens in user mode.
 //
-// These tokens must be collision-resistant across the entire guest (multi-process) because
-// the host maintains a global (share_token -> resource) map with no awareness of guest
-// process boundaries.
+// Older AeroGPU builds used this as the protocol `share_token` source for D3D9Ex
+// shared surfaces (EXPORT/IMPORT_SHARED_SURFACE). The current implementation has
+// the Win7 KMD generate a stable 64-bit `share_token` for each shared allocation
+// and return it to the UMD via WDDM allocation private driver data
+// (`aerogpu_wddm_alloc_priv.share_token` in
+// `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 //
-// On Win7/WDDM 1.1, the guest UMD persists the token in the preserved WDDM allocation
-// private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
-// `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the same bytes on
-// cross-process opens so other processes can IMPORT using the same token.
+// This allocator is still used as an entropy source for best-effort ID fallbacks
+// (for example when cross-process shared-memory counters are unavailable), but it
+// should not be used as the shared-surface protocol `share_token` source.
 //
 // Do NOT derive `share_token` from the numeric value of the user-mode shared `HANDLE`:
 // handle values are process-local and not stable cross-process.

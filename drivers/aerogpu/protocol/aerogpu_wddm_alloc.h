@@ -5,13 +5,13 @@
  * data" buffers.
  *
  * Key semantics (Win7 WDDM 1.1):
- * - The UMD provides an opaque private-data blob per allocation at creation
- *   time (UMD -> dxgkrnl -> KMD).
- * - dxgkrnl preserves that blob for shared allocations and returns the exact
- *   bytes back to a different process when it opens the shared resource.
- * - The KMD must treat this blob as INPUT (UMD -> KMD). Do not rely on writing
- *   into the buffer during DxgkDdiCreateAllocation expecting the UMD to observe
- *   a writeback; that is not a stable contract for Win7 WDDM 1.1.
+ * - The UMD provides a private-data buffer per allocation at creation time
+ *   (UMD -> dxgkrnl -> KMD).
+ * - The KMD fills this blob during `DxgkDdiCreateAllocation` and again during
+ *   `DxgkDdiOpenAllocation`.
+ * - For shared allocations, dxgkrnl preserves and replays the blob verbatim
+ *   across processes, so the opening UMD instance observes the same
+ *   `alloc_id`/`share_token` values.
  *
  * IMPORTANT:
  * - The numeric value of the UMD-visible `hAllocation` handle is not the same
@@ -144,11 +144,11 @@ typedef struct aerogpu_wddm_alloc_priv {
    * Stable cross-process token used by `EXPORT_SHARED_SURFACE` /
    * `IMPORT_SHARED_SURFACE`.
    *
-   * For shared allocations, the guest UMD generates a collision-resistant
-   * non-zero token and stores it here. dxgkrnl preserves the allocation private
-   * driver data bytes and returns them verbatim when another process opens the
-   * shared resource, allowing the opening UMD instance to recover the same
-   * token.
+   * For shared allocations, the KMD generates a stable non-zero token and
+   * writes it here during `DxgkDdiCreateAllocation`. dxgkrnl preserves the
+   * allocation private driver data bytes and returns them verbatim when another
+   * process opens the shared resource, allowing the opening UMD instance to
+   * recover the same token.
    *
    * Must be 0 for non-shared allocations.
    *

@@ -5,9 +5,9 @@ CI guardrail: AeroGPU Win7 shared-surface `share_token` contract.
 Background:
 - D3D shared `HANDLE` numeric values are process-local and must NOT be used as the
   AeroGPU protocol `share_token`.
-- On Win7/WDDM 1.1, the canonical AeroGPU contract is that the guest UMD generates
-  a collision-resistant `share_token` and persists it in the preserved WDDM
-  allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
+- On Win7/WDDM 1.1, the canonical AeroGPU contract is that the Win7 KMD generates
+  a stable non-zero `share_token` and persists it in the preserved WDDM allocation
+  private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the exact same
   bytes on cross-process opens, so both processes observe the same token.
 

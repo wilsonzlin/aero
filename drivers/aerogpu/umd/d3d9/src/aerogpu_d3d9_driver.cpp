@@ -3959,11 +3959,7 @@ static void consume_wddm_alloc_priv(Resource* res,
   if (priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) {
     res->is_shared = true;
   }
-
-  // For compatibility, derive a stable token if share_token is missing.
-  if (is_shared_resource && res->share_token == 0 && res->backing_alloc_id != 0) {
-    res->share_token = static_cast<uint64_t>(res->backing_alloc_id);
-  }
+  (void)is_shared_resource;
 }
 
 static aerogpu_wddm_u64 encode_wddm_alloc_priv_desc(uint32_t format, uint32_t width, uint32_t height) {
@@ -4361,15 +4357,18 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       return trace.ret(D3DERR_INVALIDCALL);
     }
 
-    // Allocate a stable cross-process alloc_id (31-bit) and a collision-resistant
-    // share_token (64-bit) and persist them in allocation private data so they
-    // survive OpenResource/OpenAllocation in another process.
+    // Allocate a stable cross-process alloc_id (31-bit) and persist it in
+    // allocation private data so it survives OpenResource/OpenAllocation in
+    // another process.
+    //
+    // The Win7 KMD fills `aerogpu_wddm_alloc_priv.share_token` during
+    // DxgkDdiCreateAllocation. For shared allocations, dxgkrnl preserves and
+    // replays the private-data blob on cross-process opens so other guest
+    // processes observe the same token.
     //
     // NOTE: DWM may compose many shared surfaces from *different* processes in a
     // single submission. alloc_id values must therefore avoid collisions across
-    // guest processes (not just within one process). share_token must also be
-    // collision-resistant across the entire guest because the host maintains a
-    // global (share_token -> resource) table.
+    // guest processes (not just within one process).
     uint32_t alloc_id = 0;
     {
       // `allocate_shared_alloc_id_token()` provides a monotonic 64-bit counter shared
@@ -4388,20 +4387,18 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       }
     }
 
-    const uint64_t share_token = dev->adapter->share_token_allocator.allocate_share_token();
-
     aerogpu_wddm_alloc_priv priv{};
     priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
     priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
     priv.alloc_id = alloc_id;
     priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
-    priv.share_token = share_token;
+    priv.share_token = 0;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
     priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
     std::memcpy(pCreateResource->pPrivateDriverData, &priv, sizeof(priv));
 
     res->backing_alloc_id = alloc_id;
-    res->share_token = share_token;
+    res->share_token = 0;
   }
 
   bool has_wddm_allocation = (res->wddm_hAllocation != 0);
@@ -4418,23 +4415,42 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       res->backing_alloc_id = alloc_id;
     }
 
-    aerogpu_wddm_alloc_priv priv{};
-    priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
-    priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
-    priv.alloc_id = alloc_id;
-    priv.flags = wants_shared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED : AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
-    priv.share_token = wants_shared ? static_cast<aerogpu_wddm_u64>(res->share_token) : 0;
-    priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
-    priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
+    aerogpu_wddm_alloc_priv priv_local{};
+    aerogpu_wddm_alloc_priv* priv = &priv_local;
+
+    // Prefer the runtime-provided private-data buffer when available: it avoids
+    // passing a pointer to stack memory across the user↔kernel boundary.
+    if (pCreateResource->pPrivateDriverData &&
+        pCreateResource->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_priv)) {
+      priv = reinterpret_cast<aerogpu_wddm_alloc_priv*>(pCreateResource->pPrivateDriverData);
+    }
+
+    // Treat the struct as in/out. Clear it so we never pick up stale bytes from
+    // a previous call (which can cause cross-process collisions).
+    std::memset(priv, 0, sizeof(*priv));
+    priv->magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+    priv->version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+    priv->alloc_id = alloc_id;
+    priv->flags = wants_shared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED : AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
+    // The Win7 KMD owns share_token generation; provide 0 as a placeholder.
+    priv->share_token = 0;
+    priv->size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
+    priv->reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
 
     const HRESULT hr = wddm_create_allocation(dev->wddm_callbacks,
                                               dev->wddm_device,
                                               res->size_bytes,
-                                              &priv,
-                                              sizeof(priv),
+                                              priv,
+                                              sizeof(*priv),
                                               &res->wddm_hAllocation);
     if (FAILED(hr) || res->wddm_hAllocation == 0) {
       return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    consume_wddm_alloc_priv(res.get(), priv, sizeof(*priv), wants_shared);
+    if (wants_shared && res->share_token == 0) {
+      logf("aerogpu-d3d9: KMD did not return share_token for shared alloc_id=%u\n", res->backing_alloc_id);
+      return E_FAIL;
     }
 
     has_wddm_allocation = true;

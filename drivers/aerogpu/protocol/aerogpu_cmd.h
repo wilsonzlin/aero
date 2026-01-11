@@ -949,7 +949,7 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * - Associates an existing `resource_handle` with a driver-chosen `share_token`.
  * - `share_token` is an opaque non-zero 64-bit value that must be stable across
  *   guest processes.
- * - On Win7/WDDM 1.1, the guest UMD persists `share_token` in the preserved WDDM
+ * - On Win7/WDDM 1.1, the guest KMD persists `share_token` in the preserved WDDM
  *   allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
  *   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl preserves this blob
  *   and returns the exact same bytes on cross-process `OpenResource`, so both

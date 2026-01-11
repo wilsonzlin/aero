@@ -31,7 +31,7 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
-- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract (UMD→KMD input blob) for stable per-allocation metadata (`alloc_id`/`share_token`) across CreateAllocation/OpenAllocation.
+- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract (UMD↔KMD via dxgkrnl; preserved across OpenResource) for stable per-allocation metadata (`alloc_id`/`share_token`) across CreateAllocation/OpenAllocation.
 - `aerogpu_win7_abi.h` – driver-private WOW64-stable user↔kernel ABI blobs (no pointers; fixed layout across x86/x64).
 - `aerogpu_escape.h` – driver-private `DxgkDdiEscape` packet header + base ops (UMD/tool ↔ KMD control channel).
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`; ring dumps report canonical submit fields like `cmd_gpa`/`cmd_size_bytes`/`signal_fence`.)
@@ -194,8 +194,8 @@ This enables compact command streams that use small IDs instead of repeating GPA
 - For D3D9Ex shared surfaces, `share_token` (as used by
   `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
   processes and must not be derived from process-local handle values.
-  Canonical contract: the guest UMD generates a collision-resistant `share_token`
-  and persists it in the preserved WDDM allocation private driver data blob
+  Canonical contract: the Win7 KMD generates a stable non-zero `share_token` and
+  persists it in the preserved WDDM allocation private driver data blob
   (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   dxgkrnl preserves the blob and returns the exact same bytes on cross-process
   `OpenResource`, so both processes observe the same `share_token`.

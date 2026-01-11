@@ -853,24 +853,23 @@ typedef struct _D3D9DDIARG_CREATERESOURCE {
 
   HANDLE* pSharedHandle; // optional
 
-  // Optional per-allocation private driver data blob (`aerogpu_wddm_alloc_priv`).
+  // Optional per-allocation private driver data blob (`aerogpu_wddm_alloc_priv` /
+  // `aerogpu_wddm_alloc_priv_v2`).
   //
   // In real WDDM builds the D3D runtime provides this as a per-allocation buffer
-  // which is treated as INPUT (UMD -> dxgkrnl -> KMD). For shared allocations,
-  // dxgkrnl preserves these bytes and returns them verbatim when another process
-  // opens the resource (OpenResource/OpenAllocation).
+  // passed through dxgkrnl to the KMD. AeroGPU uses it to carry stable IDs
+  // across the UMD↔KMD boundary and (for shared resources) across processes:
   //
-  // AeroGPU uses this buffer to persist a UMD-owned `aerogpu_wddm_alloc_priv`
-  // (primarily `alloc_id` + size) for shared resources: the UMD writes the blob
-  // during create, and dxgkrnl preserves/returns the bytes verbatim when another
-  // process opens the resource.
+  // - The UMD supplies `alloc_id` (u32) and `flags` (including whether the
+  //   allocation is shared).
+  // - The KMD writes back `size_bytes` and, for shared allocations, a stable
+  //   64-bit `share_token` in `aerogpu_wddm_alloc_priv.share_token` (see
+  //   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  // - For shared allocations, dxgkrnl preserves the blob and returns the exact
+  //   same bytes on cross-process opens, so both processes observe identical IDs.
   //
-  // NOTE: For shared surfaces, the protocol `share_token` used by
-  // `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE` is persisted in
-  // `aerogpu_wddm_alloc_priv.share_token` (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-  // The UMD chooses a collision-resistant token and stores it here so dxgkrnl can
-  // preserve/return it on cross-process opens. Do not derive it from the numeric
-  // D3D shared `HANDLE` value (process-local).
+  // Do NOT derive `share_token` from the numeric value of the D3D shared `HANDLE`
+  // (process-local).
   //
   // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //

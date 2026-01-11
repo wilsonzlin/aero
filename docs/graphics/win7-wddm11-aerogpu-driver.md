@@ -428,28 +428,15 @@ For each entrypoint:
 - **Can be deferred:** Specialized standard allocations (stereo, overlays).
  
 #### `DxgkDdiOpenAllocation` / `DxgkDdiCloseAllocation`
-  
+    
 - **Purpose:** Share/open allocations across processes/devices.
 - **AeroGPU MVP behavior:**
   - Support the minimal cases required by D3D9Ex + DWM redirected surfaces.
-  - **Do not rely on KMD→UMD writeback** through the *UMD-provided* WDDM
-    allocation private-data buffers: on Win7 WDDM 1.1, treat
-    `aerogpu_wddm_alloc.h` as **UMD→KMD input** (and preserved by dxgkrnl for
-    `OpenResource`).
-  - The UMD generates `alloc_id` (u32) at shared-resource creation time and
-    stores it in the preserved per-allocation private data blob
-    (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the same
-    bytes on `OpenResource` in another process, so both processes observe an
-    identical `alloc_id`.
-  - For D3D9Ex shared surfaces, the UMD generates a collision-resistant
-    `share_token` (u64) at shared-resource creation time and stores it alongside
-    `alloc_id` in the preserved allocation private driver data blob
-    (`aerogpu_wddm_alloc_priv.share_token` in
-    `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the exact
-    same bytes on `OpenResource` in another process, so both processes observe the
-    same `share_token` for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
-  - The KMD validates `magic/version/alloc_id` and stores the IDs/tokens in its
-    `AEROGPU_ALLOCATION` bookkeeping.
+  - Use WDDM allocation private driver data (`aerogpu_wddm_alloc_priv` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`) to carry stable per-allocation IDs across the UMD↔KMD boundary and across processes.
+    - The UMD supplies a blob with `magic/version/alloc_id/flags` (and optional metadata).
+    - The KMD validates it and writes back `size_bytes` and (for shared allocations) a stable 64-bit `share_token` (`aerogpu_wddm_alloc_priv.share_token`) during `DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`.
+    - For shared allocations, dxgkrnl preserves and replays the blob on `OpenResource`/`OpenAllocation` so all processes observe identical IDs. Do **not** use the numeric value of the shared `HANDLE` (it is process-local and not stable cross-process).
+  - The KMD stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table.
 - **Can be deferred:** General cross-process resource sharing.
 
 **Lifetime note:** In principle, `DxgkDdiCloseAllocation` is the per-open callback
@@ -613,9 +600,7 @@ For each allocation created by the KMD:
 - Back it with locked system pages (nonpaged) to avoid paging complexity.
 - Track:
   - Guest physical base address + size in bytes (for MVP, allocate physically-contiguous backing so this is a single range)
-  - A non-zero stable `alloc_id` used by the host allocation table:
-    - For allocations created by the UMD, `alloc_id` is **UMD-owned** and carried in the WDDM allocation private-data blob (`aerogpu_wddm_alloc_priv`).
-    - For standard allocations created by dxgkrnl with no AeroGPU private data, the KMD synthesizes an `alloc_id` from a reserved namespace.
+  - A non-zero stable `alloc_id` used by the host allocation table (carried via WDDM allocation private driver data, `aerogpu_wddm_alloc_priv.alloc_id`).
 
 `alloc_id` identifies the **memory backing** for resources. Resources themselves are separate objects referenced in the command stream via protocol handles (`aerogpu_handle_t`).
   
@@ -624,7 +609,7 @@ For each allocation created by the KMD:
 - For each submission, KMD sends the emulator a sideband table mapping **`alloc_id` → guest physical address + size** so the emulator can read textures/buffers and write render targets.
 - The command stream references guest backing memory via `backing_alloc_id` (a stable `alloc_id`); see [`docs/graphics/aerogpu-backing-alloc-id.md`](./aerogpu-backing-alloc-id.md).
 
-`alloc_id` must be stable across shared-handle opens. The UMD persists it in **WDDM allocation private driver data**, and dxgkrnl returns the same bytes on both allocation create and open (`DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`), so multiple guest processes can compute consistent IDs for the same underlying shared allocation.
+`alloc_id` must be stable across shared-handle opens. The KMD returns it in **WDDM allocation private driver data**, and dxgkrnl returns the same bytes on both allocation create and open (`DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`), so multiple guest processes observe consistent IDs for the same underlying shared allocation.
 
 See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-data layout (`aerogpu_wddm_alloc_priv`).
   

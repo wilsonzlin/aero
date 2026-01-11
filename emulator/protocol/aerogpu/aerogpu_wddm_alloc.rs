@@ -2,9 +2,10 @@
 //!
 //! Source of truth: `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`.
 //!
-//! This blob is provided by the UMD as input to the KMD at allocation creation time, and is
-//! preserved by dxgkrnl for shared allocations so it can be observed by a different process when
-//! opening the shared resource (`OpenResource` / `DxgkDdiOpenAllocation`).
+//! The UMD provides a per-allocation private-data buffer at creation time, and the KMD fills it
+//! during `DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`. For shared allocations, dxgkrnl
+//! preserves and replays the blob across processes so the opening UMD instance observes the same
+//! `alloc_id` / `share_token`.
 
 /// Magic for [`AerogpuWddmAllocPriv`] (`"ALLO"` little-endian).
 pub const AEROGPU_WDDM_ALLOC_PRIV_MAGIC: u32 = 0x414C_4C4F;
@@ -20,7 +21,7 @@ pub const AEROGPU_WDDM_ALLOC_ID_KMD_MIN: u32 = 0x8000_0000;
 pub const AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE: u32 = 0;
 pub const AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED: u32 = 1u32 << 0;
 
-/// Per-allocation WDDM "private driver data" blob (UMD → dxgkrnl → KMD).
+/// Per-allocation WDDM "private driver data" blob (UMD ↔ KMD via dxgkrnl).
 ///
 /// This struct is packed to match the on-the-wire ABI (no pointers; stable across x86/x64).
 #[repr(C, packed)]

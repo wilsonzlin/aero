@@ -1,4 +1,4 @@
-# Win7 shared surfaces: `share_token` vs user-mode HANDLE (AeroGPU)
+# Win7 shared surfaces: ShareToken vs user-mode HANDLE (AeroGPU)
 
 This note documents the **Win7 D3D9Ex shared-surface strategy** used by AeroGPU so future work does not accidentally rely on **process-local handle numeric values**.
 
@@ -21,8 +21,8 @@ In the AeroGPU guest↔host command stream, shared surfaces are keyed by a stabl
 - `struct aerogpu_cmd_export_shared_surface` (`drivers/aerogpu/protocol/aerogpu_cmd.h`)
 - `struct aerogpu_cmd_import_shared_surface` (`drivers/aerogpu/protocol/aerogpu_cmd.h`)
 
-On Win7/WDDM 1.1, the guest UMD generates a collision-resistant `share_token` and
-persists it in the preserved WDDM allocation private driver data blob
+On Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero `share_token` for each shared
+allocation and persists it in the preserved WDDM allocation private driver data blob
 (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 For shared allocations, dxgkrnl preserves these bytes and returns them verbatim when
 another process opens the shared resource, so the opening UMD instance observes the
@@ -33,9 +33,9 @@ same `share_token`.
 ### 1) Create shared resource → export (token)
 
 1. Producer creates a shareable resource (`pSharedHandle != NULL` in the D3D API/DDI).
-2. The UMD generates a collision-resistant `share_token` and writes it into the preserved
-   WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`).
-3. The UMD sends `AEROGPU_CMD_EXPORT_SHARED_SURFACE` with `share_token`.
+2. The UMD provides a WDDM allocation private-data buffer (`aerogpu_wddm_alloc_priv`) describing the allocation and marking it as shared (`flags |= AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED`). The UMD sets `share_token = 0` (placeholder).
+3. The KMD creates the underlying allocation, generates a stable 64-bit `share_token`, and writes it into `aerogpu_wddm_alloc_priv.share_token`.
+4. The UMD sends `AEROGPU_CMD_EXPORT_SHARED_SURFACE` with `share_token`.
 
 ### 2) Open shared resource → import (token)
 

@@ -17,10 +17,10 @@ The command stream does **not** reference resources by a per-submission “alloc
 
 - **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream. They are *not* WDDM allocation IDs/handles.
 - **Backing allocation IDs** (`alloc_id`): a stable 32-bit ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`.
-  - `alloc_id` is **UMD-owned** and is stored in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-  - The KMD validates it and uses it to build the per-submit `aerogpu_alloc_table` (`drivers/aerogpu/protocol/aerogpu_ring.h`) mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator. `backing_alloc_id` in packets is the `alloc_id` lookup key (not an index into an allocation list).
-- For **shared** allocations, `alloc_id` should avoid collisions across guest processes: DWM may open and compose many redirected surfaces from different processes in a single submission, and the per-submit allocation table is keyed by `alloc_id`.
-- `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
+  - `alloc_id` is a **driver-defined** ID carried via WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  - The KMD uses it to build the per-submit `aerogpu_alloc_table` (`drivers/aerogpu/protocol/aerogpu_ring.h`) mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator. `backing_alloc_id` in packets is the `alloc_id` lookup key (not an index into an allocation list).
+  - For **shared** allocations, dxgkrnl preserves and replays the private-data blob on `OpenResource`/`OpenAllocation` so all guest processes observe consistent IDs.
+  - `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
 
 ## Win7/WDDM submission callbacks (render vs present)
 
@@ -77,7 +77,7 @@ Cross-process shared resources are expressed explicitly in the command stream:
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token`: handle
 values are process-local and not stable cross-process.
 
-Canonical contract: on Win7/WDDM 1.1, the guest UMD generates a collision-resistant non-zero
+Canonical contract: on Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero 64-bit
 `share_token` and persists it in the preserved WDDM allocation private driver data blob
 (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`),
 which dxgkrnl returns verbatim on cross-process opens.
@@ -85,7 +85,7 @@ which dxgkrnl returns verbatim on cross-process opens.
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). In the current AeroGPU D3D9 UMD:
 
 - `alloc_id` is derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
-- `share_token` is generated via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`) for shared resources and persisted in `aerogpu_wddm_alloc_priv.share_token`.
+- `share_token` is returned by the KMD via `aerogpu_wddm_alloc_priv.share_token` (filled during `DxgkDdiCreateAllocation` and preserved across cross-process opens).
 
 See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the cross-process validation test.
 

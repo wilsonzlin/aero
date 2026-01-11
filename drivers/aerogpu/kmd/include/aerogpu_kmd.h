@@ -220,9 +220,10 @@ typedef struct _AEROGPU_ADAPTER {
      *
      * The counter is initialised so that the first generated ID is
      * AEROGPU_WDDM_ALLOC_ID_KMD_MIN, keeping the namespace split described in
-     * `aerogpu_wddm_alloc.h`.
+    * `aerogpu_wddm_alloc.h`.
      */
     volatile LONG NextKmdAllocId;
+    DECLSPEC_ALIGN(8) volatile LONGLONG NextShareToken;
 
     /*
      * Monotonic generator for `AEROGPU_CONTEXT::ContextId` values.
