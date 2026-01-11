@@ -111,11 +111,6 @@ namespace {
 
 template <typename FuncTable>
 bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name) {
-#if !defined(_WIN32)
-  (void)table;
-  (void)table_name;
-  return true;
-#else
   if (!table || !table_name) {
     return false;
   }
@@ -137,7 +132,6 @@ bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name
     }
   }
   return true;
-#endif
 }
 
 constexpr int32_t kMinGpuThreadPriority = -7;
@@ -9158,6 +9152,12 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnColorFill = device_color_fill;
   pDeviceFuncs->pfnUpdateSurface = device_update_surface;
   pDeviceFuncs->pfnUpdateTexture = device_update_texture;
+
+  if (!d3d9_validate_nonnull_vtable(pDeviceFuncs, "D3D9DDI_DEVICEFUNCS")) {
+    aerogpu::logf("aerogpu-d3d9: CreateDevice: device vtable contains NULL entrypoints; failing\n");
+    pCreateDevice->hDevice.pDrvPrivate = nullptr;
+    return trace.ret(E_FAIL);
+  }
 
   dev.release();
   return trace.ret(S_OK);
