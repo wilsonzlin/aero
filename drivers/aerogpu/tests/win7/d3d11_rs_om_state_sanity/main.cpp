@@ -509,7 +509,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     D3D11_MAPPED_SUBRESOURCE map;
@@ -563,7 +565,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -617,7 +621,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -680,7 +686,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     D3D11_MAPPED_SUBRESOURCE map;
@@ -729,7 +737,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -773,7 +783,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -819,7 +831,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -874,7 +888,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     D3D11_MAPPED_SUBRESOURCE map;
@@ -915,7 +931,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -964,7 +982,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     D3D11_MAPPED_SUBRESOURCE map;
@@ -1025,7 +1045,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -1076,7 +1098,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -1129,7 +1153,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
@@ -1189,7 +1215,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->ClearRenderTargetView(rtv.get(), clear_red);
     context->Draw(3, 0);
 
+    context->OMSetRenderTargets(0, NULL, NULL);
     context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
     context->Flush();
 
     ZeroMemory(&map, sizeof(map));
