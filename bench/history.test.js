@@ -77,6 +77,16 @@ test("normaliseBenchResult supports scenario runner report.json format", () => {
   assert.equal(scenarios.system_boot.metrics.boot_time_ms.samples.stdev, 0);
 });
 
+test("normaliseBenchResult infers throughput metrics as higher-is-better", () => {
+  const { scenarios } = normaliseBenchResult({
+    scenarioId: "storage_io",
+    status: "ok",
+    metrics: [{ id: "storage_seq_write_mb_per_s", unit: "MB/s", value: 123.4 }],
+  });
+
+  assert.equal(scenarios.storage_io.metrics.storage_seq_write_mb_per_s.better, "higher");
+});
+
 test("normaliseBenchResult supports aero-gpu-bench report format", () => {
   const { scenarios, environment } = normaliseBenchResult({
     schemaVersion: 1,
