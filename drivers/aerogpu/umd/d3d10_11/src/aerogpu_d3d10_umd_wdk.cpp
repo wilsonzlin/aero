@@ -1449,12 +1449,14 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
 
     void* dma_priv_ptr = nullptr;
     UINT dma_priv_size = 0;
+    UINT dma_priv_size_submit = 0;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBufferPrivateData) {
       dma_priv_ptr = alloc.pDmaBufferPrivateData;
     }
     __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
       dma_priv_size = alloc.DmaBufferPrivateDataSize;
     }
+    dma_priv_size_submit = dma_priv_size;
 
     if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
       if (out_hr) {
@@ -1478,11 +1480,18 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         return 0;
       }
 
+      const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
       bool has_dma_priv_size = false;
       __if_exists(D3DDDICB_ALLOCATE::DmaBufferPrivateDataSize) {
         has_dma_priv_size = true;
       }
-      if (has_dma_priv_size && dma_priv_size < AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
+      if (!has_dma_priv_size) {
+        dma_priv_size = expected_dma_priv_bytes;
+      } else if (dma_priv_size == 0) {
+        // Some header/runtime combinations carry the size field but leave it as
+        // 0. Use the fixed AeroGPU Win7 contract size instead.
+        dma_priv_size = expected_dma_priv_bytes;
+      } else if (dma_priv_size < expected_dma_priv_bytes) {
         deallocate(alloc, dma_priv_ptr, dma_priv_size);
         if (out_hr) {
           *out_hr = E_FAIL;
@@ -1490,8 +1499,19 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         dev->cmd.reset();
         return 0;
       }
-      if (!has_dma_priv_size) {
-        dma_priv_size = AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES;
+
+      dma_priv_size_submit = dma_priv_size;
+      if (dma_priv_size_submit != expected_dma_priv_bytes) {
+        static std::atomic<bool> logged_dma_priv_mismatch{false};
+        bool expected = false;
+        if (logged_dma_priv_mismatch.compare_exchange_strong(expected, true)) {
+          AEROGPU_D3D10_11_LOG("d3d10_wdk_submit: dma private data size mismatch bytes=%u expected=%u",
+                               static_cast<unsigned>(dma_priv_size_submit),
+                               static_cast<unsigned>(expected_dma_priv_bytes));
+        }
+      }
+      if (dma_priv_size_submit > expected_dma_priv_bytes) {
+        dma_priv_size_submit = expected_dma_priv_bytes;
       }
     }
 
@@ -1550,8 +1570,8 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
     hdr->size_bytes = static_cast<uint32_t>(chunk_size);
 
-    if (require_dma_priv && dma_priv_ptr && dma_priv_size) {
-      std::memset(dma_priv_ptr, 0, static_cast<size_t>(dma_priv_size));
+    if (require_dma_priv && dma_priv_ptr && dma_priv_size_submit) {
+      std::memset(dma_priv_ptr, 0, static_cast<size_t>(dma_priv_size_submit));
     }
 
     const bool is_last_chunk = (chunk_end == src_size);
@@ -1595,7 +1615,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         present.pDmaBufferPrivateData = dma_priv_ptr;
       }
       __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
-        present.DmaBufferPrivateDataSize = dma_priv_size;
+        present.DmaBufferPrivateDataSize = dma_priv_size_submit;
       }
 
       submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, dev->hrt_device, &present);
@@ -1643,7 +1663,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         render.pDmaBufferPrivateData = dma_priv_ptr;
       }
       __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
-        render.DmaBufferPrivateDataSize = dma_priv_size;
+        render.DmaBufferPrivateDataSize = dma_priv_size_submit;
       }
 
       submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, dev->hrt_device, &render);

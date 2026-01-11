@@ -334,6 +334,14 @@ HRESULT create_context_common(const CallbacksT* callbacks,
     *dma_private_data_size_out = 0;
     if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
       *dma_private_data_size_out = data.DmaBufferPrivateDataSize;
+      if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+        if (*dma_private_data_size_out == 0 && data.pDmaBufferPrivateData) {
+          // Some WDK vintages include the size field but the runtime may leave it
+          // as 0. Treat that as "unknown" and fall back to the fixed AeroGPU
+          // Win7 contract size.
+          *dma_private_data_size_out = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+        }
+      }
     } else if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
       // Some WDK vintages expose `pDmaBufferPrivateData` without also carrying a
       // size field. In that case, use the fixed Win7 AeroGPU contract size (as
@@ -898,6 +906,9 @@ void extract_alloc_outputs(SubmissionBuffers* out, const D3DDDICB_ALLOCATE& allo
       out->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
     }
   }
+  if (out->dma_private_data && out->dma_private_data_bytes == 0) {
+    out->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+  }
 }
 
 void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
@@ -1069,6 +1080,9 @@ HRESULT acquire_submit_buffers_get_command_buffer(const D3DDDI_DEVICECALLBACKS* 
       if (out->dma_private_data) {
         out->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
       }
+    }
+    if (out->dma_private_data && out->dma_private_data_bytes == 0) {
+      out->dma_private_data_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
     }
 
     if (!out->command_buffer || out->command_buffer_bytes == 0) {

@@ -1152,6 +1152,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     UINT dma_cap = 0;
     void* dma_priv_ptr = nullptr;
     size_t dma_priv_size = 0;
+    size_t dma_priv_size_submit = 0;
     bool dma_priv_ptr_present = false;
     bool dma_priv_size_present = false;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
@@ -1193,7 +1194,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     }
 
     if (dma_priv_size_present) {
-      if (dma_priv_size != 0 && dma_priv_ptr == nullptr) {
+      if (dma_priv_ptr_present && dma_priv_ptr == nullptr) {
         deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
 
         if (out_hr) {
@@ -1203,7 +1204,14 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         return 0;
       }
 
-      if (dma_priv_size < static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES)) {
+      const size_t expected_dma_priv_bytes = static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      if (dma_priv_size == 0 && dma_priv_ptr != nullptr) {
+        // Some header/runtime combinations carry the size field but leave it as
+        // 0. Use the fixed AeroGPU Win7 contract size instead.
+        dma_priv_size = expected_dma_priv_bytes;
+      }
+
+      if (dma_priv_size < expected_dma_priv_bytes) {
         deallocate_buffers(alloc, dma_priv_ptr, dma_priv_size);
 
         if (out_hr) {
@@ -1211,6 +1219,19 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         }
         dev->cmd.reset();
         return 0;
+      }
+      dma_priv_size_submit = dma_priv_size;
+      if (dma_priv_size_submit != expected_dma_priv_bytes) {
+        static std::atomic<bool> logged_dma_priv_mismatch{false};
+        bool expected = false;
+        if (logged_dma_priv_mismatch.compare_exchange_strong(expected, true)) {
+          AEROGPU_D3D10_11_LOG("wddm_submit: D3D10.1 AllocateCb returned dma private data size=%u (expected=%u)",
+                               static_cast<unsigned>(dma_priv_size_submit),
+                               static_cast<unsigned>(expected_dma_priv_bytes));
+        }
+      }
+      if (dma_priv_size_submit > expected_dma_priv_bytes) {
+        dma_priv_size_submit = expected_dma_priv_bytes;
       }
     } else if (dma_priv_ptr_present) {
       if (dma_priv_ptr == nullptr) {
@@ -1223,6 +1244,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         return 0;
       }
       dma_priv_size = static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+      dma_priv_size_submit = dma_priv_size;
     }
 
     if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
@@ -1275,13 +1297,8 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     const bool is_last_chunk = (chunk_end == src_size);
     const bool do_present = want_present && is_last_chunk && cb->pfnPresentCb != nullptr;
 
-    if (dma_priv_ptr && dma_priv_size_present) {
-      const size_t clear_bytes = std::min(
-          dma_priv_size,
-          static_cast<size_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES));
-      if (clear_bytes) {
-        std::memset(dma_priv_ptr, 0, clear_bytes);
-      }
+    if (dma_priv_ptr && dma_priv_size_submit) {
+      std::memset(dma_priv_ptr, 0, dma_priv_size_submit);
     }
 
     HRESULT submit_hr = S_OK;
@@ -1324,7 +1341,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         present.pDmaBufferPrivateData = dma_priv_ptr;
       }
       __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
-        present.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
+        present.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size_submit);
       }
       __if_exists(D3DDDICB_PRESENT::pFenceValue) {
         present.pFenceValue = reinterpret_cast<decltype(present.pFenceValue)>(&fence_value_tmp);
@@ -1373,7 +1390,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         render.pDmaBufferPrivateData = dma_priv_ptr;
       }
       __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
-        render.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
+        render.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size_submit);
       }
       __if_exists(D3DDDICB_RENDER::pFenceValue) {
         render.pFenceValue = reinterpret_cast<decltype(render.pFenceValue)>(&fence_value_tmp);
