@@ -1083,7 +1083,12 @@ uint64_t allocate_share_token(Adapter* adapter) {
 
     if (adapter->share_token_view) {
       auto* counter = reinterpret_cast<volatile LONG64*>(adapter->share_token_view);
-      const LONG64 token = InterlockedIncrement64(counter);
+      LONG64 token = InterlockedIncrement64(counter);
+      const uint32_t alloc_id =
+          static_cast<uint32_t>(static_cast<uint64_t>(token) & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
+      if (alloc_id == 0) {
+        token = InterlockedIncrement64(counter);
+      }
       return static_cast<uint64_t>(token);
     }
   }
