@@ -34,13 +34,15 @@ References:
 - A Windows 7 SP1 VM disk image (x86 or x64).
 - A virtio-snd driver package staged next to the device INF:
   - Repo layout (staging): `drivers/windows7/virtio-snd/inf/`
-  - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
+  - Guest Tools / CI bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
   - **Preferred: strict Aero contract v1** (requires the contract-v1 HWID):
     - `inf/aero-virtio-snd.inf`
     - `virtiosnd.sys` built for x86 or x64
   - **Optional: QEMU compatibility package** (for QEMU builds/configurations that cannot expose the contract-v1 HWID):
     - `inf/aero-virtio-snd-legacy.inf`
     - `virtiosnd_legacy.sys` built for x86 or x64 (MSBuild `Configuration=Legacy`)
+    - Note: this compatibility package is **not** included in the default CI driver bundle (the CI path
+      builds `Configuration=Release` only). Build/package it manually if you need it.
 - Important: `aero-virtio-snd.inf` is revision-gated and binds only to the Aero contract v1 HWID
   (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device does not expose `DEV_1059` and `REV_01`, Windows will not
   bind this package until you adjust QEMU device options (see below).

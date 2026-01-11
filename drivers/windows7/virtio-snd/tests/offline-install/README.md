@@ -33,6 +33,10 @@ drivers\virtio-snd\x86\   (Windows 7 x86)
 drivers\virtio-snd\x64\   (Windows 7 x64)
 ```
 
+Note: the default CI/Guest Tools bundle includes only the Aero contract v1 package
+(`aero-virtio-snd.inf` + `virtiosnd.sys`). The optional transitional/QEMU package
+(`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`) must be built and staged separately.
+
 > `virtio-snd` is **not boot-critical** (it’s a PnP media device, StartType=3). If staging fails or the driver is blocked by signature policy at runtime, Windows should still boot; you’ll just have an unbound device to troubleshoot.
 
 ---
