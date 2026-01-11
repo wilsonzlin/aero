@@ -308,8 +308,21 @@ class PciIdentity:
 @dataclass(frozen=True)
 class WindowsDeviceContractRow:
     identity: PciIdentity
+    class_code: tuple[int, int, int]
     driver_service_name: str
     inf_name: str
+
+
+@dataclass(frozen=True)
+class EmulatorPciProfile:
+    identity: PciIdentity
+    class_code: tuple[int, int, int]
+    header_type: int
+
+
+def format_pci_class_code(code: tuple[int, int, int]) -> str:
+    base, sub, prog_if = code
+    return f"{base:02X}/{sub:02X}/{prog_if:02X}"
 
 
 def parse_contract_revision_id(md: str) -> int:
@@ -589,11 +602,26 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, WindowsDeviceCo
 
         pci_col = parts[1]
         subsys_col = parts[2]
+        class_col = parts[3]
         service_col = parts[4]
         inf_col = parts[5]
 
         pci_vendor_s, pci_device_s = backticked(pci_col, context="PCI Vendor:Device").split(":")
         subsys_vendor_s, subsys_device_s = backticked(subsys_col, context="Subsystem Vendor:Device").split(":")
+        class_code_s = backticked(class_col, context="Class code")
+        class_parts = class_code_s.split("/")
+        if len(class_parts) != 3:
+            fail(
+                f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: could not parse class code from row {name!r} "
+                "(expected a backticked value like `01/00/00`)"
+            )
+        try:
+            class_code = (int(class_parts[0], 16), int(class_parts[1], 16), int(class_parts[2], 16))
+        except ValueError:
+            fail(
+                f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: could not parse class code from row {name!r} "
+                f"(got {class_code_s!r})"
+            )
         rev_m = re.search(r"REV\s*`0x(?P<rev>[0-9A-Fa-f]{2})`", pci_col)
         if not rev_m:
             fail(
@@ -608,6 +636,7 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, WindowsDeviceCo
                 subsystem_device_id=parse_hex(subsys_device_s),
                 revision_id=int(rev_m.group("rev"), 16),
             ),
+            class_code=class_code,
             driver_service_name=backticked(service_col, context="Windows service"),
             inf_name=backticked(inf_col, context="INF name"),
         )
@@ -750,7 +779,7 @@ def parse_windows_device_contract_feature_bits(md: str, *, file: Path) -> dict[s
     }
 
 
-def parse_emulator_pci_profiles(path: Path) -> Mapping[str, PciIdentity]:
+def parse_emulator_pci_profiles(path: Path) -> Mapping[str, EmulatorPciProfile]:
     text = read_text(path)
 
     const_values: dict[str, int] = {}
@@ -778,7 +807,7 @@ def parse_emulator_pci_profiles(path: Path) -> Mapping[str, PciIdentity]:
             return int(expr, 10)
         fail(f"{path.as_posix()}: unsupported u8 expression {expr!r} while parsing PciDeviceProfile")
 
-    profiles: dict[str, PciIdentity] = {}
+    profiles: dict[str, EmulatorPciProfile] = {}
     for profile_name in ("VIRTIO_NET", "VIRTIO_BLK", "VIRTIO_SND", "VIRTIO_INPUT_KEYBOARD", "VIRTIO_INPUT_MOUSE"):
         m = re.search(
             rf"^pub const {profile_name}: PciDeviceProfile = PciDeviceProfile \{{(?P<body>.*?)^\}};",
@@ -790,17 +819,43 @@ def parse_emulator_pci_profiles(path: Path) -> Mapping[str, PciIdentity]:
         body = m.group("body")
 
         def field(field_name: str) -> str:
-            fm = re.search(rf"^\s*{re.escape(field_name)}:\s*(?P<expr>[^,]+),", body, flags=re.M)
+            # Capture the full RHS expression (greedy within the line). Some fields (like
+            # `class: PciClassCode::new(0x02, 0x00, 0x00),`) contain commas, so a simple
+            # `[^,]+` parser would truncate.
+            fm = re.search(
+                rf"^\s*{re.escape(field_name)}:\s*(?P<expr>.+),\s*(?://.*)?$",
+                body,
+                flags=re.M,
+            )
             if not fm:
                 fail(f"{path.as_posix()}: profile {profile_name} missing field {field_name}")
             return fm.group("expr").strip()
 
-        profiles[profile_name] = PciIdentity(
-            vendor_id=eval_u16(field("vendor_id")),
-            device_id=eval_u16(field("device_id")),
-            subsystem_vendor_id=eval_u16(field("subsystem_vendor_id")),
-            subsystem_device_id=eval_u16(field("subsystem_id")),
-            revision_id=eval_u8(field("revision_id")),
+        class_expr = field("class")
+        class_m = re.search(
+            r"^PciClassCode::new\(\s*(?P<base>[^,]+)\s*,\s*(?P<sub>[^,]+)\s*,\s*(?P<prog>[^)]+?)\s*\)$",
+            class_expr,
+        )
+        if not class_m:
+            fail(
+                f"{path.as_posix()}: profile {profile_name} has unsupported class expression {class_expr!r} "
+                "(expected PciClassCode::new(base, sub, prog_if))"
+            )
+        class_code = (
+            eval_u8(class_m.group("base")),
+            eval_u8(class_m.group("sub")),
+            eval_u8(class_m.group("prog")),
+        )
+        profiles[profile_name] = EmulatorPciProfile(
+            identity=PciIdentity(
+                vendor_id=eval_u16(field("vendor_id")),
+                device_id=eval_u16(field("device_id")),
+                subsystem_vendor_id=eval_u16(field("subsystem_vendor_id")),
+                subsystem_device_id=eval_u16(field("subsystem_id")),
+                revision_id=eval_u8(field("revision_id")),
+            ),
+            class_code=class_code,
+            header_type=eval_u8(field("header_type")),
         )
 
     return profiles
@@ -1790,17 +1845,17 @@ def main() -> None:
             prof = profile_map.get(name)
             if not prof:
                 continue
-            if (prof.vendor_id, prof.device_id) != (contract.vendor_id, contract.device_id):
+            if (prof.identity.vendor_id, prof.identity.device_id) != (contract.vendor_id, contract.device_id):
                 errors.append(
                     format_error(
                         f"{name}: emulator PCI profile Vendor/Device mismatch ({AERO_DEVICES_PCI_PROFILE_RS.as_posix()}):",
                         [
                             f"expected: {contract.vendor_device_str()}",
-                            f"got: {prof.vendor_device_str()}",
+                            f"got: {prof.identity.vendor_device_str()}",
                         ],
                     )
                 )
-            if (prof.subsystem_vendor_id, prof.subsystem_device_id) != (
+            if (prof.identity.subsystem_vendor_id, prof.identity.subsystem_device_id) != (
                 contract.subsystem_vendor_id,
                 contract.subsystem_device_id,
             ):
@@ -1809,17 +1864,28 @@ def main() -> None:
                         f"{name}: emulator PCI profile subsystem mismatch ({AERO_DEVICES_PCI_PROFILE_RS.as_posix()}):",
                         [
                             f"expected: {contract.subsys_str()}",
-                            f"got: {prof.subsys_str()}",
+                            f"got: {prof.identity.subsys_str()}",
                         ],
                     )
                 )
-            if prof.revision_id != contract_rev:
+            if prof.identity.revision_id != contract_rev:
                 errors.append(
                     format_error(
                         f"{name}: emulator PCI profile revision mismatch ({AERO_DEVICES_PCI_PROFILE_RS.as_posix()}):",
                         [
                             f"expected: 0x{contract_rev:02X}",
-                            f"got: 0x{prof.revision_id:02X}",
+                            f"got: 0x{prof.identity.revision_id:02X}",
+                        ],
+                    )
+                )
+            doc = table_ids.get(name)
+            if doc and doc.class_code != prof.class_code:
+                errors.append(
+                    format_error(
+                        f"{name}: class code mismatch between docs and emulator PCI profile:",
+                        [
+                            f"{WINDOWS_DEVICE_CONTRACT_MD.as_posix()}: {format_pci_class_code(doc.class_code)}",
+                            f"{AERO_DEVICES_PCI_PROFILE_RS.as_posix()}: {format_pci_class_code(prof.class_code)}",
                         ],
                     )
                 )
