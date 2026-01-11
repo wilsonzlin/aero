@@ -672,7 +672,7 @@ pub struct DebugRegs {
 
 /// MSR subset required for Windows 7 syscall/sysenter paths.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MsrState {
     pub efer: u64,
     pub star: u64,
