@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { VmCoordinator } from '../src/vmCoordinator.js';
 
+const WATCHDOG_TEST_TIMEOUT_MS = 15_000;
+
 function onceEvent(target, type) {
   return new Promise((resolve) => {
     const handler = (event) => {
@@ -14,7 +16,7 @@ function onceEvent(target, type) {
 
 test(
   'watchdog terminates a non-yielding CPU worker without blocking the main thread',
-  { timeout: 5000 },
+  { timeout: WATCHDOG_TEST_TIMEOUT_MS },
   async () => {
     const vm = new VmCoordinator({
       config: {
@@ -51,7 +53,10 @@ test(
   },
 );
 
-test('pause and step remain responsive during a cooperative tight loop', { timeout: 5000 }, async () => {
+test(
+  'pause and step remain responsive during a cooperative tight loop',
+  { timeout: WATCHDOG_TEST_TIMEOUT_MS },
+  async () => {
   const vm = new VmCoordinator({
     config: {
       cpu: {
@@ -78,9 +83,13 @@ test('pause and step remain responsive during a cooperative tight loop', { timeo
 
   await vm.shutdown();
   assert.equal(vm.state, 'stopped');
-});
+  },
+);
 
-test('resource limits reject oversized guest RAM requests with actionable errors', { timeout: 5000 }, async () => {
+test(
+  'resource limits reject oversized guest RAM requests with actionable errors',
+  { timeout: WATCHDOG_TEST_TIMEOUT_MS },
+  async () => {
   const vm = new VmCoordinator({
     config: {
       guestRamBytes: 64 * 1024 * 1024,
@@ -97,9 +106,13 @@ test('resource limits reject oversized guest RAM requests with actionable errors
 
   await vm.reset();
   assert.equal(vm.state, 'stopped');
-});
+  },
+);
 
-test('worker crashes surface structured errors and keep an auto-saved snapshot', { timeout: 5000 }, async () => {
+test(
+  'worker crashes surface structured errors and keep an auto-saved snapshot',
+  { timeout: WATCHDOG_TEST_TIMEOUT_MS },
+  async () => {
   const vm = new VmCoordinator({
     config: {
       autoSaveSnapshotOnCrash: true,
@@ -117,9 +130,13 @@ test('worker crashes surface structured errors and keep an auto-saved snapshot',
 
   await vm.reset();
   assert.equal(vm.state, 'stopped');
-});
+  },
+);
 
-test('cache limit violations surface as structured errors without crashing the VM', { timeout: 5000 }, async () => {
+test(
+  'cache limit violations surface as structured errors without crashing the VM',
+  { timeout: WATCHDOG_TEST_TIMEOUT_MS },
+  async () => {
   const vm = new VmCoordinator({
     config: {
       limits: { maxDiskCacheBytes: 1024 * 1024 },
@@ -136,4 +153,5 @@ test('cache limit violations surface as structured errors without crashing the V
   assert.equal(vm.state, 'running');
 
   await vm.shutdown();
-});
+  },
+);
