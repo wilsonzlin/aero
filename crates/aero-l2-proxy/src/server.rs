@@ -203,6 +203,7 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn version() -> impl IntoResponse {
     let version = std::env::var("AERO_L2_PROXY_VERSION")
+        .or_else(|_| std::env::var("VERSION"))
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let git_sha = std::env::var("AERO_L2_PROXY_GIT_SHA")
         .or_else(|_| std::env::var("GIT_SHA"))
@@ -239,7 +240,7 @@ async fn version() -> impl IntoResponse {
     (
         [(
             axum::http::header::CONTENT_TYPE,
-            "application/json; charset=utf-8",
+            "application/json",
         )],
         body,
     )
