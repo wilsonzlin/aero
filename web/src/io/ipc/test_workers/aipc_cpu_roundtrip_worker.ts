@@ -48,6 +48,10 @@ try {
   io.portWrite(0x3f8, 1, 0x48);
   io.portWrite(0x3f8, 1, 0x69);
 
+  // MMIO test device (0x1000_0000) roundtrip.
+  io.mmioWrite(0x1000_0000n, 4, 0x1234_5678);
+  const mmio0 = io.mmioRead(0x1000_0000n, 4);
+
   parentPort!.postMessage({
     ok: true,
     status64,
@@ -57,6 +61,7 @@ try {
     a20Events,
     resetRequests,
     serialBytes,
+    mmio0,
   });
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });

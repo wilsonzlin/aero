@@ -45,6 +45,7 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
           a20Events?: boolean[];
           resetRequests?: number;
           serialBytes?: number[];
+          mmio0?: number;
           error?: string;
         },
       ];
@@ -69,6 +70,8 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       expect(result.resetRequests).toBe(1);
       // UART serial output should contain "Hi".
       expect(result.serialBytes).toEqual([0x48, 0x69]);
+      // MMIO write/read roundtrip.
+      expect(result.mmio0).toBe(0x1234_5678);
     } finally {
       await cpuWorker.terminate();
       await ioWorker.terminate();

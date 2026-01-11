@@ -5,6 +5,7 @@ import { queueKind } from "../../../ipc/layout.ts";
 import { encodeEvent } from "../../../ipc/protocol.ts";
 import { DeviceManager } from "../../device_manager.ts";
 import type { IrqSink } from "../../device_manager.ts";
+import type { MmioHandler } from "../../bus/mmio.ts";
 import { I8042Controller } from "../../devices/i8042.ts";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../../devices/uart16550.ts";
 import { AeroIpcIoServer } from "../aero_ipc_io.ts";
@@ -44,5 +45,22 @@ mgr.registerPortIo(0x0064, 0x0064, i8042);
 
 const uart = new Uart16550(UART_COM1, serialSink);
 mgr.registerPortIo(uart.basePort, uart.basePort + 7, uart);
+
+class MmioTestDevice implements MmioHandler {
+  #reg0 = 0;
+
+  mmioRead(offset: bigint, size: number): number {
+    if (offset === 0n && size === 4) return this.#reg0 >>> 0;
+    // Default unmapped reads are all-ones.
+    return size === 1 ? 0xff : size === 2 ? 0xffff : 0xffff_ffff;
+  }
+
+  mmioWrite(offset: bigint, size: number, value: number): void {
+    if (offset === 0n && size === 4) this.#reg0 = value >>> 0;
+  }
+}
+
+// Reserve a fixed MMIO range for the integration test.
+mgr.registerMmio(0x1000_0000n, 0x100n, new MmioTestDevice());
 
 new AeroIpcIoServer(cmdQ, evtQ, mgr, { tickIntervalMs }).run();
