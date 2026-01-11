@@ -85,10 +85,11 @@
       #error "AEROGPU_UMD_USE_WDK_HEADERS=1 but required D3D DDI headers were not found. Install the Windows Driver Kit (WDK) (Windows Kits) so d3d10umddi.h/d3d11umddi.h are available."
     #endif
   #endif
+  #include <d3dkmthk.h>
+  #include <d3dumddi.h>
   #include <d3d10umddi.h>
   #include <d3d10_1umddi.h>
   #include <d3d11umddi.h>
-  #include <d3dumddi.h>
 #else
 
 // "Runtime" handle types (opaque to the driver).
