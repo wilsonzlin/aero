@@ -507,6 +507,25 @@ static void TestQueueSetupAndNotify(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestNotifyRejectInvalidQueue(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportNotifyQueue(&t, 1);
+	assert(st == STATUS_NOT_FOUND);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 int main(void)
 {
 	TestInitOk();
@@ -525,6 +544,7 @@ int main(void)
 	TestNegotiateFeaturesStrictRejectEventIdxOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx();
 	TestQueueSetupAndNotify();
+	TestNotifyRejectInvalidQueue();
 	printf("virtio_pci_modern_transport_tests: PASS\n");
 	return 0;
 }

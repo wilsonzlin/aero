@@ -740,6 +740,9 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 	 * Avoid touching the selector-based common_cfg registers on the hot path.
 	 */
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+		if (q >= t->CommonCfg->num_queues) {
+			return STATUS_NOT_FOUND;
+		}
 		byte_off = (UINT64)q * (UINT64)t->NotifyOffMultiplier;
 		if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
 			return STATUS_INVALID_PARAMETER;
