@@ -6,7 +6,7 @@ Given:
 
 - a **user-supplied** Windows 7 SP1 ISO (32-bit or 64-bit), and
 - an **Aero-supplied** driver pack (storage/network/GPU, etc), and optionally
-- an **Aero root certificate** (for test-signed drivers),
+- an **Aero test certificate** (for test-signed drivers; CI output: `out/certs/aero-test.cer`),
 
 this tool produces a new **bootable** ISO that:
 
@@ -34,7 +34,7 @@ Binary: `target/release/aero-win7-slipstream`
 
 ```bash
 aero-win7-slipstream deps
-aero-win7-slipstream patch-iso --input Win7.iso --output Win7-Aero.iso --drivers ./aero-drivers --cert ./aero-root.cer
+aero-win7-slipstream patch-iso --input Win7.iso --output Win7-Aero.iso --drivers ./aero-drivers --cert ./aero-test.cer
 aero-win7-slipstream verify-iso --input Win7-Aero.iso
 ```
 
@@ -91,7 +91,7 @@ cargo run --release --locked -- \
   --output /path/to/Win7SP1-Aero.iso \
   --drivers /path/to/aero-driver-pack \
   --signing-mode testsigning \
-  --cert /path/to/aero-root.cer \
+  --cert /path/to/aero-test.cer \
   --unattend drivers-only \
   --backend auto \
   --verbose
