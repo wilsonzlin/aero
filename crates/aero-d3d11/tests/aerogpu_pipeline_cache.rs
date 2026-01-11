@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_execute::AerogpuCmdRuntime;
 use aero_d3d11::runtime::aerogpu_state::{PrimitiveTopology, RasterizerState, VertexBufferBinding};
@@ -351,7 +353,7 @@ fn aerogpu_render_pipeline_is_cached_across_draws() {
         let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu pipeline cache test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -439,7 +441,7 @@ fn aerogpu_compacts_sparse_vertex_slots() {
         let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping sparse-slot test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -536,7 +538,7 @@ fn aerogpu_mixes_signature_driven_vs_with_bootstrap_ps() {
         let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping mixed-translation test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -619,7 +621,7 @@ fn aerogpu_mixes_bootstrap_vs_with_signature_driven_ps() {
         let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping mixed-translation test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };

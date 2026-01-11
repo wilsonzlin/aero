@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::runtime::aerogpu_resources::{AerogpuResourceManager, DirtyRange};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
@@ -169,7 +171,13 @@ async fn read_texture_rgba8(
 #[test]
 fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue) = create_device_queue().await?;
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         // Buffer upload.
@@ -234,7 +242,13 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
 #[test]
 fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue) = create_device_queue().await?;
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let res = resources.create_texture2d(
@@ -260,7 +274,13 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
 #[test]
 fn handles_are_namespaced_per_object_type() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue) = create_device_queue().await?;
+        let (device, queue) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return Ok(());
+            }
+        };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         // The protocol uses separate handle namespaces for resources, shaders, and input layouts.
