@@ -2246,6 +2246,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
     return E_INVALIDARG;
   }
 
+  auto* out_funcs = reinterpret_cast<AEROGPU_D3D10_11_DEVICEFUNCS*>(pCreateDevice->pDeviceFuncs);
+  if (!out_funcs) {
+    return E_INVALIDARG;
+  }
+
   auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
   if (!adapter) {
     return E_FAIL;
@@ -2310,7 +2315,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   funcs.pfnFlush = &Flush;
   funcs.pfnRotateResourceIdentities = &RotateResourceIdentities;
 
-  *pCreateDevice->pDeviceFuncs = funcs;
+  *out_funcs = funcs;
   return S_OK;
 }
 
@@ -2364,7 +2369,11 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
   funcs.pfnCloseAdapter = &CloseAdapter;
   funcs.pfnGetCaps = &GetCaps;
 
-  *pOpenData->pAdapterFuncs = funcs;
+  auto* out_funcs = reinterpret_cast<D3D10DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
+  if (!out_funcs) {
+    return E_INVALIDARG;
+  }
+  *out_funcs = funcs;
   return S_OK;
 }
 

@@ -149,6 +149,7 @@ struct D3D10DDIARG_CREATEDEVICE {
   D3D10DDI_HDEVICE hDevice;
   AEROGPU_D3D10_11_DEVICEFUNCS *pDeviceFuncs;
 };
+#endif // !_WIN32 || !AEROGPU_UMD_USE_WDK_HEADERS
 
 // Resource/shader descriptors (minimal).
 typedef enum AEROGPU_DDI_RESOURCE_DIMENSION {
@@ -388,8 +389,6 @@ struct AEROGPU_D3D10_11_DEVICEFUNCS {
   PFNAEROGPU_DDI_FLUSH pfnFlush;
   PFNAEROGPU_DDI_ROTATERESOURCEIDENTITIES pfnRotateResourceIdentities;
 };
-
-#endif // !_WIN32 || !AEROGPU_UMD_USE_WDK_HEADERS
 
 // D3D10 and D3D11 runtimes look for these entrypoints in the UMD DLL.
 //
