@@ -1,10 +1,10 @@
 mod tier1_common;
 
-use aero_types::{Flag, Width};
+use aero_types::{Flag, FlagSet, Width};
 use tier1_common::SimpleBus;
 
 use aero_jit::profile::{ProfileData, TraceConfig};
-use aero_jit::tier2::ir::{FlagMask, Function, Instr, Terminator, TraceKind};
+use aero_jit::tier2::ir::{Function, Instr, Terminator, TraceKind};
 use aero_jit::tier2::trace::TraceBuilder;
 use aero_jit::tier2::{build_function_from_x86, CfgBuildConfig};
 
@@ -193,10 +193,10 @@ fn supports_parity_conditions_jp_and_jnp() {
             .any(|i| matches!(i, Instr::LoadFlag { flag: Flag::Pf, .. })));
         assert!(instrs
             .iter()
-            .any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.intersects(FlagMask::PF))));
+            .any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.contains(FlagSet::PF))));
         assert!(instrs
             .iter()
-            .any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.intersects(FlagMask::AF))));
+            .any(|i| matches!(i, Instr::BinOp { flags, .. } if flags.contains(FlagSet::AF))));
 
         // Ensure we didn't deopt due to missing parity lowering.
         assert!(!instrs

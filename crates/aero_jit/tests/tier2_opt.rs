@@ -3,7 +3,7 @@ use rand_chacha::ChaCha8Rng;
 
 mod tier1_common;
 
-use aero_types::{Flag, Gpr, Width};
+use aero_types::{Flag, FlagSet, Gpr, Width};
 use tier1_common::SimpleBus;
 
 use aero_jit::profile::{ProfileData, TraceConfig};
@@ -12,8 +12,8 @@ use aero_jit::tier2::exec::{
     RuntimeEnv, T2State,
 };
 use aero_jit::tier2::ir::{
-    BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, TraceIr, TraceKind,
-    ValueId, REG_COUNT,
+    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
+    REG_COUNT,
 };
 use aero_jit::tier2::opt::{optimize_trace, passes, OptConfig};
 use aero_jit::tier2::trace::TraceBuilder;
@@ -105,9 +105,9 @@ fn gen_random_trace(rng: &mut ChaCha8Rng, max_instrs: usize) -> TraceIr {
                 let lhs = gen_operand(rng, &values);
                 let rhs = gen_operand(rng, &values);
                 let flags = if rng.gen_bool(0.3) {
-                    FlagMask::ALL
+                    FlagSet::ALU
                 } else {
-                    FlagMask::EMPTY
+                    FlagSet::EMPTY
                 };
                 body.push(Instr::BinOp {
                     dst,
@@ -200,7 +200,7 @@ fn flag_elimination_clears_overwritten_flags() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(0)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::ALL,
+                flags: FlagSet::ALU,
             },
             Instr::StoreReg {
                 reg: Gpr::Rax,
@@ -211,7 +211,7 @@ fn flag_elimination_clears_overwritten_flags() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(2)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::ALL,
+                flags: FlagSet::ALU,
             },
             Instr::StoreReg {
                 reg: Gpr::Rbx,
@@ -223,7 +223,7 @@ fn flag_elimination_clears_overwritten_flags() {
 
     optimize_trace(&mut trace, &OptConfig::default());
 
-    let flags: Vec<FlagMask> = trace
+    let flags: Vec<FlagSet> = trace
         .iter_instrs()
         .filter_map(|i| match i {
             Instr::BinOp { flags, .. } => Some(*flags),
@@ -233,7 +233,7 @@ fn flag_elimination_clears_overwritten_flags() {
 
     assert!(flags.len() >= 2);
     assert!(flags[0].is_empty());
-    assert_eq!(flags[1], FlagMask::ALL);
+    assert_eq!(flags[1], FlagSet::ALU);
 }
 
 #[test]
@@ -254,14 +254,14 @@ fn cse_removes_duplicate_expressions() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(0)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             },
             Instr::BinOp {
                 dst: v(3),
                 op: BinOp::Add,
                 lhs: Operand::Value(v(0)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             },
             Instr::StoreReg {
                 reg: Gpr::Rcx,
@@ -349,7 +349,7 @@ fn licm_hoists_invariant_loads_out_of_loop_body() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(0)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             },
             Instr::StoreReg {
                 reg: Gpr::Rbx,
@@ -389,7 +389,7 @@ fn regalloc_cached_exec_reduces_cpu_state_traffic() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(0)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             },
             Instr::StoreReg {
                 reg: Gpr::Rax,
@@ -404,7 +404,7 @@ fn regalloc_cached_exec_reduces_cpu_state_traffic() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(3)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             },
             Instr::StoreReg {
                 reg: Gpr::Rax,
@@ -437,6 +437,89 @@ fn regalloc_cached_exec_reduces_cpu_state_traffic() {
 }
 
 #[test]
+fn memory_ops_are_barriers_and_preserved_by_optimizations() {
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::Const { dst: v(0), value: 0 },
+            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const { dst: v(2), value: 2 },
+            Instr::StoreMem {
+                addr: Operand::Value(v(0)),
+                src: Operand::Value(v(1)),
+                width: Width::W64,
+            },
+            Instr::LoadMem {
+                dst: v(3),
+                addr: Operand::Value(v(0)),
+                width: Width::W64,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(v(0)),
+                src: Operand::Value(v(2)),
+                width: Width::W64,
+            },
+            Instr::LoadMem {
+                dst: v(4),
+                addr: Operand::Value(v(0)),
+                width: Width::W64,
+            },
+            // This load is intentionally unused; it must still be preserved as a barrier.
+            Instr::LoadMem {
+                dst: v(5),
+                addr: Operand::Value(v(0)),
+                width: Width::W64,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(3)),
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(4)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut baseline_state = T2State::default();
+    let mut opt_state = baseline_state.clone();
+    let mut bus0 = SimpleBus::new(64);
+    let mut bus1 = bus0.clone();
+
+    let baseline = run_trace(&trace, &env, &mut bus0, &mut baseline_state, 1);
+
+    let mut optimized = trace.clone();
+    let out = optimize_trace(&mut optimized, &OptConfig::default());
+    let optimized_run = run_trace_with_cached_regs(
+        &optimized,
+        &env,
+        &mut bus1,
+        &mut opt_state,
+        1,
+        &out.regalloc.cached,
+    );
+
+    assert_eq!(baseline.exit, RunExit::Returned);
+    assert_eq!(optimized_run.exit, RunExit::Returned);
+
+    // Two stores at the same address with intervening loads. If CSE/DCE treat loads/stores as pure,
+    // it's easy to incorrectly fold the second load to the first.
+    assert_eq!(baseline_state.cpu.gpr[Gpr::Rax.as_u8() as usize], 1);
+    assert_eq!(baseline_state.cpu.gpr[Gpr::Rbx.as_u8() as usize], 2);
+    assert_eq!(opt_state, baseline_state);
+    assert_eq!(bus0.mem(), bus1.mem());
+
+    // The unused load should remain present after optimization (memory ops are barriers).
+    let load_count = optimized
+        .iter_instrs()
+        .filter(|i| matches!(i, Instr::LoadMem { .. }))
+        .count();
+    assert_eq!(load_count, 3);
+}
+
+#[test]
 fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     let func = Function {
         entry: BlockId(0),
@@ -458,7 +541,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
                         op: BinOp::Add,
                         lhs: Operand::Value(v(0)),
                         rhs: Operand::Value(v(1)),
-                        flags: FlagMask::ALL,
+                        flags: FlagSet::ALU,
                     },
                     Instr::StoreReg {
                         reg: Gpr::Rax,
@@ -473,7 +556,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
                         op: BinOp::LtU,
                         lhs: Operand::Value(v(2)),
                         rhs: Operand::Value(v(3)),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     },
                 ],
                 term: Terminator::Branch {

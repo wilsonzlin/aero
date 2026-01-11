@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use aero_cpu_core::state::RFLAGS_DF;
-use aero_types::{Flag, Gpr, Width};
+use aero_types::{Flag, FlagSet, Gpr, Width};
 mod tier1_common;
 
 use tier1_common::SimpleBus;
@@ -10,8 +10,7 @@ use aero_jit::abi;
 use aero_jit::profile::{ProfileData, TraceConfig};
 use aero_jit::tier2::exec::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
 use aero_jit::tier2::ir::{
-    BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, TraceIr, TraceKind,
-    ValueId,
+    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
 };
 use aero_jit::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit::tier2::trace::TraceBuilder;
@@ -277,7 +276,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
                         op: BinOp::Add,
                         lhs: Operand::Value(v(0)),
                         rhs: Operand::Value(v(1)),
-                        flags: FlagMask::ALL,
+                        flags: FlagSet::ALU,
                     },
                     Instr::StoreReg {
                         reg: Gpr::Rax,
@@ -292,7 +291,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
                         op: BinOp::LtU,
                         lhs: Operand::Value(v(2)),
                         rhs: Operand::Value(v(3)),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     },
                 ],
                 term: Terminator::Branch {

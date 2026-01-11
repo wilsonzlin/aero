@@ -3,11 +3,11 @@ use wasm_encoder::{
     ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
 };
 
-use aero_types::{Flag, Gpr, Width};
+use aero_types::{Flag, FlagSet, Gpr, Width};
 
-use crate::abi::{CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, RFLAGS_RESERVED1};
+use crate::abi::{CPU_RFLAGS_OFF, CPU_RIP_OFF, RFLAGS_RESERVED1};
 use crate::opt::RegAllocPlan;
-use crate::t2_ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
+use crate::t2_ir::{BinOp, FlagValues, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
 use crate::wasm::{
     IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
@@ -189,7 +189,7 @@ impl Tier2WasmCodegen {
             let idx = reg.as_u8() as usize;
             if let Some(local) = plan.local_for_reg[idx] {
                 f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-                f.instruction(&Instruction::I64Load(memarg(CPU_GPR_OFF[idx], 3)));
+                f.instruction(&Instruction::I64Load(memarg(gpr_offset(reg), 3)));
                 f.instruction(&Instruction::LocalSet(layout.reg_local(local)));
             }
         }
@@ -248,7 +248,7 @@ impl Tier2WasmCodegen {
                     .instruction(&Instruction::LocalGet(layout.reg_local(local)));
                 emitter
                     .f
-                    .instruction(&Instruction::I64Store(memarg(CPU_GPR_OFF[idx], 3)));
+                    .instruction(&Instruction::I64Store(memarg(gpr_offset(reg), 3)));
             }
         }
 
@@ -374,11 +374,10 @@ impl Emitter<'_> {
                 if let Some(local) = self.reg_local_for(reg) {
                     self.f.instruction(&Instruction::LocalGet(local));
                 } else {
-                    let idx = reg.as_u8() as usize;
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.f
-                        .instruction(&Instruction::I64Load(memarg(CPU_GPR_OFF[idx], 3)));
+                        .instruction(&Instruction::I64Load(memarg(gpr_offset(reg), 3)));
                 }
                 self.f
                     .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
@@ -388,12 +387,11 @@ impl Emitter<'_> {
                     self.emit_operand(src);
                     self.f.instruction(&Instruction::LocalSet(local));
                 } else {
-                    let idx = reg.as_u8() as usize;
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.emit_operand(src);
                     self.f
-                        .instruction(&Instruction::I64Store(memarg(CPU_GPR_OFF[idx], 3)));
+                        .instruction(&Instruction::I64Store(memarg(gpr_offset(reg), 3)));
                 }
             }
             Instr::LoadFlag { dst, flag } => {
@@ -519,7 +517,7 @@ impl Emitter<'_> {
         self.f.instruction(&Instruction::I64Ne);
     }
 
-    fn emit_set_flags(&mut self, mask: FlagMask, values: crate::t2_ir::FlagValues) {
+    fn emit_set_flags(&mut self, mask: FlagSet, values: FlagValues) {
         // Update only requested bits: clear bit and re-insert if value true.
         let mut update = |flag: Flag, val: bool| {
             let bit = 1u64 << (flag.rflags_bit() as u32);
@@ -535,27 +533,27 @@ impl Emitter<'_> {
                 .instruction(&Instruction::LocalSet(self.layout.rflags_local()));
         };
 
-        if mask.intersects(FlagMask::CF) {
+        if mask.contains(FlagSet::CF) {
             update(Flag::Cf, values.cf);
         }
-        if mask.intersects(FlagMask::PF) {
+        if mask.contains(FlagSet::PF) {
             update(Flag::Pf, values.pf);
         }
-        if mask.intersects(FlagMask::AF) {
+        if mask.contains(FlagSet::AF) {
             update(Flag::Af, values.af);
         }
-        if mask.intersects(FlagMask::ZF) {
+        if mask.contains(FlagSet::ZF) {
             update(Flag::Zf, values.zf);
         }
-        if mask.intersects(FlagMask::SF) {
+        if mask.contains(FlagSet::SF) {
             update(Flag::Sf, values.sf);
         }
-        if mask.intersects(FlagMask::OF) {
+        if mask.contains(FlagSet::OF) {
             update(Flag::Of, values.of);
         }
     }
 
-    fn emit_binop(&mut self, dst: ValueId, op: BinOp, lhs: Operand, rhs: Operand, flags: FlagMask) {
+    fn emit_binop(&mut self, dst: ValueId, op: BinOp, lhs: Operand, rhs: Operand, flags: FlagSet) {
         // Compute result.
         self.emit_operand(lhs);
         self.emit_operand(rhs);
@@ -605,7 +603,7 @@ impl Emitter<'_> {
         }
 
         // Emit flags from the stored result.
-        if flags.intersects(FlagMask::ZF) {
+        if flags.contains(FlagSet::ZF) {
             self.f
                 .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
             self.f.instruction(&Instruction::I64Const(0));
@@ -613,7 +611,7 @@ impl Emitter<'_> {
             self.emit_write_flag(Flag::Zf);
         }
 
-        if flags.intersects(FlagMask::SF) {
+        if flags.contains(FlagSet::SF) {
             self.f
                 .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
             self.f.instruction(&Instruction::I64Const(0));
@@ -621,21 +619,21 @@ impl Emitter<'_> {
             self.emit_write_flag(Flag::Sf);
         }
 
-        if flags.intersects(FlagMask::PF) {
+        if flags.contains(FlagSet::PF) {
             self.emit_parity_even_i32(self.layout.value_local(dst));
             self.emit_write_flag(Flag::Pf);
         }
 
         match op {
             BinOp::Add => {
-                if flags.intersects(FlagMask::CF) {
+                if flags.contains(FlagSet::CF) {
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
                     self.emit_operand(lhs);
                     self.f.instruction(&Instruction::I64LtU);
                     self.emit_write_flag(Flag::Cf);
                 }
-                if flags.intersects(FlagMask::AF) {
+                if flags.contains(FlagSet::AF) {
                     self.emit_operand(lhs);
                     self.emit_operand(rhs);
                     self.f.instruction(&Instruction::I64Xor); // lhs ^ rhs
@@ -648,7 +646,7 @@ impl Emitter<'_> {
                     self.f.instruction(&Instruction::I64Ne);
                     self.emit_write_flag(Flag::Af);
                 }
-                if flags.intersects(FlagMask::OF) {
+                if flags.contains(FlagSet::OF) {
                     self.emit_operand(lhs);
                     self.f
                         .instruction(&Instruction::LocalGet(self.layout.value_local(dst)));
@@ -666,13 +664,13 @@ impl Emitter<'_> {
                 }
             }
             BinOp::Sub => {
-                if flags.intersects(FlagMask::CF) {
+                if flags.contains(FlagSet::CF) {
                     self.emit_operand(lhs);
                     self.emit_operand(rhs);
                     self.f.instruction(&Instruction::I64LtU);
                     self.emit_write_flag(Flag::Cf);
                 }
-                if flags.intersects(FlagMask::AF) {
+                if flags.contains(FlagSet::AF) {
                     self.emit_operand(lhs);
                     self.emit_operand(rhs);
                     self.f.instruction(&Instruction::I64Xor); // lhs ^ rhs
@@ -685,7 +683,7 @@ impl Emitter<'_> {
                     self.f.instruction(&Instruction::I64Ne);
                     self.emit_write_flag(Flag::Af);
                 }
-                if flags.intersects(FlagMask::OF) {
+                if flags.contains(FlagSet::OF) {
                     self.emit_operand(lhs);
                     self.emit_operand(rhs);
                     self.f.instruction(&Instruction::I64Xor); // lhs ^ rhs
@@ -702,15 +700,15 @@ impl Emitter<'_> {
                 }
             }
             _ => {
-                if flags.intersects(FlagMask::CF) {
+                if flags.contains(FlagSet::CF) {
                     self.f.instruction(&Instruction::I32Const(0));
                     self.emit_write_flag(Flag::Cf);
                 }
-                if flags.intersects(FlagMask::AF) {
+                if flags.contains(FlagSet::AF) {
                     self.f.instruction(&Instruction::I32Const(0));
                     self.emit_write_flag(Flag::Af);
                 }
-                if flags.intersects(FlagMask::OF) {
+                if flags.contains(FlagSet::OF) {
                     self.f.instruction(&Instruction::I32Const(0));
                     self.emit_write_flag(Flag::Of);
                 }

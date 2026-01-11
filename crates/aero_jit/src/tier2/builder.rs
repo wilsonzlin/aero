@@ -5,7 +5,7 @@ use aero_types::{Cond, Flag, FlagSet, Width};
 use crate::Tier1Bus;
 
 use crate::t2_ir::{
-    BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, ValueId,
+    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId,
 };
 use crate::tier1::{discover_block, translate_block, BlockLimits};
 use crate::tier1_ir::{
@@ -95,7 +95,7 @@ impl LowerCtx {
             op: BinOp::Eq,
             lhs: val,
             rhs: Operand::Const(0),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
     }
 
@@ -145,7 +145,7 @@ impl LowerCtx {
                     op: BinOp::Or,
                     lhs: Operand::Value(cf),
                     rhs: Operand::Value(zf),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::A => {
@@ -160,7 +160,7 @@ impl LowerCtx {
                     op: BinOp::And,
                     lhs: Operand::Value(not_cf),
                     rhs: Operand::Value(not_zf),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::S => {
@@ -191,7 +191,7 @@ impl LowerCtx {
                     op: BinOp::Xor,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::Ge => {
@@ -202,7 +202,7 @@ impl LowerCtx {
                     op: BinOp::Eq,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::Le => {
@@ -215,14 +215,14 @@ impl LowerCtx {
                     op: BinOp::Xor,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
                 self.instrs.push(Instr::BinOp {
                     dst,
                     op: BinOp::Or,
                     lhs: Operand::Value(zf),
                     rhs: Operand::Value(sf_xor_of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::G => {
@@ -237,14 +237,14 @@ impl LowerCtx {
                     op: BinOp::Eq,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
                 self.instrs.push(Instr::BinOp {
                     dst,
                     op: BinOp::And,
                     lhs: Operand::Value(zf_is_zero),
                     rhs: Operand::Value(sf_eq_of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
         }
@@ -288,14 +288,14 @@ impl LowerCtx {
                         op: BinOp::Shr,
                         lhs: Operand::Value(full),
                         rhs: Operand::Const(8),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     });
                     self.instrs.push(Instr::BinOp {
                         dst,
                         op: BinOp::And,
                         lhs: Operand::Value(shifted),
                         rhs: Operand::Const(mask),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     });
                     return;
                 }
@@ -305,10 +305,12 @@ impl LowerCtx {
                     op: BinOp::And,
                     lhs: Operand::Value(full),
                     rhs: Operand::Const(mask),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
-            GuestReg::Flag(flag) => self.instrs.push(Instr::LoadFlag { dst, flag }),
+            GuestReg::Flag(flag) => {
+                self.instrs.push(Instr::LoadFlag { dst, flag });
+            }
         }
     }
 
@@ -330,7 +332,7 @@ impl LowerCtx {
                             op: BinOp::And,
                             lhs: Operand::Value(src),
                             rhs: Operand::Const(0xffff_ffff),
-                            flags: FlagMask::EMPTY,
+                            flags: FlagSet::EMPTY,
                         });
                         self.instrs.push(Instr::StoreReg {
                             reg,
@@ -355,7 +357,7 @@ impl LowerCtx {
                             op: BinOp::And,
                             lhs: Operand::Value(old),
                             rhs: Operand::Const(clear_mask),
-                            flags: FlagMask::EMPTY,
+                            flags: FlagSet::EMPTY,
                         });
 
                         let src_masked = self.fresh();
@@ -364,7 +366,7 @@ impl LowerCtx {
                             op: BinOp::And,
                             lhs: Operand::Value(src),
                             rhs: Operand::Const(mask),
-                            flags: FlagMask::EMPTY,
+                            flags: FlagSet::EMPTY,
                         });
 
                         let inserted = if shift == 0 {
@@ -376,7 +378,7 @@ impl LowerCtx {
                                 op: BinOp::Shl,
                                 lhs: Operand::Value(src_masked),
                                 rhs: Operand::Const(shift as u64),
-                                flags: FlagMask::EMPTY,
+                                flags: FlagSet::EMPTY,
                             });
                             shifted
                         };
@@ -387,7 +389,7 @@ impl LowerCtx {
                             op: BinOp::Or,
                             lhs: Operand::Value(cleared),
                             rhs: Operand::Value(inserted),
-                            flags: FlagMask::EMPTY,
+                            flags: FlagSet::EMPTY,
                         });
                         self.instrs.push(Instr::StoreReg {
                             reg,
@@ -405,21 +407,6 @@ impl LowerCtx {
             }
         }
     }
-}
-
-fn map_flag_set(flags: FlagSet) -> FlagMask {
-    let mut mask = FlagMask::EMPTY;
-    for flag in flags.iter() {
-        match flag {
-            Flag::Cf => mask.insert(FlagMask::CF),
-            Flag::Pf => mask.insert(FlagMask::PF),
-            Flag::Af => mask.insert(FlagMask::AF),
-            Flag::Zf => mask.insert(FlagMask::ZF),
-            Flag::Sf => mask.insert(FlagMask::SF),
-            Flag::Of => mask.insert(FlagMask::OF),
-        }
-    }
-    mask
 }
 
 fn map_binop(op: T1BinOp) -> Option<BinOp> {
@@ -458,7 +445,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::And,
                     lhs: ctx.op(*src),
                     rhs: Operand::Const(mask),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             IrInst::Load { dst, addr, width } => ctx.instrs.push(Instr::LoadMem {
@@ -488,7 +475,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op,
                     lhs: ctx.op(*lhs),
                     rhs: ctx.op(*rhs),
-                    flags: map_flag_set(*flags),
+                    flags: *flags,
                 });
             }
             IrInst::CmpFlags {
@@ -500,7 +487,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::Sub,
                     lhs: ctx.op(*lhs),
                     rhs: ctx.op(*rhs),
-                    flags: map_flag_set(*flags),
+                    flags: *flags,
                 });
             }
             IrInst::TestFlags {
@@ -512,7 +499,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::And,
                     lhs: ctx.op(*lhs),
                     rhs: ctx.op(*rhs),
-                    flags: map_flag_set(*flags),
+                    flags: *flags,
                 });
             }
             IrInst::EvalCond { dst, cond } => {
@@ -537,7 +524,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::Eq,
                     lhs: ctx.op(*cond),
                     rhs: Operand::Const(0),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let cond_bool = ctx.fresh();
@@ -546,7 +533,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::Eq,
                     lhs: Operand::Value(cond_is_zero),
                     rhs: Operand::Const(0),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let then_val = ctx.fresh();
@@ -555,7 +542,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::Mul,
                     lhs: ctx.op(*if_true),
                     rhs: Operand::Value(cond_bool),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let else_val = ctx.fresh();
@@ -564,7 +551,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::Mul,
                     lhs: ctx.op(*if_false),
                     rhs: Operand::Value(cond_is_zero),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 ctx.instrs.push(Instr::BinOp {
@@ -572,7 +559,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
                     op: BinOp::Add,
                     lhs: Operand::Value(then_val),
                     rhs: Operand::Value(else_val),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             IrInst::CallHelper { .. } => {

@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use aero_types::{Cond, Flag, FlagSet, Width};
 
 use crate::block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
-use crate::t2_ir::{BinOp, Block, BlockId, FlagMask, Function, Instr, Operand, Terminator, ValueId};
+use crate::t2_ir::{BinOp, Block, BlockId, Function, Instr, Operand, Terminator, ValueId};
 use crate::tier1_ir::{GuestReg, IrBlock, IrInst, IrTerminator};
 use crate::translate::translate_block;
 use crate::Tier1Bus;
@@ -250,14 +250,14 @@ impl BlockLowerer<'_> {
                         op: BinOp::Shr,
                         lhs: Operand::Value(full),
                         rhs: Operand::Const(8),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     });
                     self.instrs.push(Instr::BinOp {
                         dst,
                         op: BinOp::And,
                         lhs: Operand::Value(shifted),
                         rhs: Operand::Const(0xff),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     });
                     return;
                 }
@@ -267,7 +267,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: Operand::Value(full),
                     rhs: Operand::Const(width.mask()),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             GuestReg::Flag(flag) => {
@@ -302,7 +302,7 @@ impl BlockLowerer<'_> {
                         op: BinOp::And,
                         lhs: src,
                         rhs: Operand::Const(width.mask()),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     });
                     self.instrs.push(Instr::StoreReg {
                         reg,
@@ -329,7 +329,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: Operand::Value(old),
                     rhs: Operand::Const(preserve_mask),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let masked_src = self.fresh_temp();
@@ -338,7 +338,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: src,
                     rhs: Operand::Const(width.mask()),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let part = if shift == 0 {
@@ -350,7 +350,7 @@ impl BlockLowerer<'_> {
                         op: BinOp::Shl,
                         lhs: Operand::Value(masked_src),
                         rhs: Operand::Const(shift as u64),
-                        flags: FlagMask::EMPTY,
+                        flags: FlagSet::EMPTY,
                     });
                     Operand::Value(shifted)
                 };
@@ -361,7 +361,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Or,
                     lhs: Operand::Value(cleared),
                     rhs: part,
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 self.instrs.push(Instr::StoreReg {
@@ -383,7 +383,7 @@ impl BlockLowerer<'_> {
             op: BinOp::And,
             lhs: self.value(src),
             rhs: Operand::Const(width.mask()),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
     }
 
@@ -424,7 +424,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Shl,
                     lhs: self.value(lhs),
                     rhs: Operand::Const(shift as u64),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
                 let rhs_s = self.fresh_temp();
                 self.instrs.push(Instr::BinOp {
@@ -432,7 +432,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Shl,
                     lhs: self.value(rhs),
                     rhs: Operand::Const(shift as u64),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let res_s = self.fresh_temp();
@@ -449,7 +449,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Shr,
                     lhs: Operand::Value(res_s),
                     rhs: Operand::Const(shift as u64),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             BinOp::Shl | BinOp::Shr => {
@@ -467,7 +467,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: self.value(lhs),
                     rhs: Operand::Const(mask),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 let shifted = self.fresh_temp();
@@ -476,7 +476,7 @@ impl BlockLowerer<'_> {
                     op,
                     lhs: Operand::Value(lhs_masked),
                     rhs: self.value(rhs),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
 
                 self.instrs.push(Instr::BinOp {
@@ -484,7 +484,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: Operand::Value(shifted),
                     rhs: Operand::Const(mask),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             _ => {
@@ -527,7 +527,7 @@ impl BlockLowerer<'_> {
             op: BinOp::Shl,
             lhs: self.value(lhs),
             rhs: Operand::Const(shift as u64),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
         let rhs_s = self.fresh_temp();
         self.instrs.push(Instr::BinOp {
@@ -535,7 +535,7 @@ impl BlockLowerer<'_> {
             op: BinOp::Shl,
             lhs: self.value(rhs),
             rhs: Operand::Const(shift as u64),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
 
         self.instrs.push(Instr::BinOp {
@@ -573,7 +573,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Or,
                     lhs: Operand::Value(cf),
                     rhs: Operand::Value(zf),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::A => {
@@ -588,7 +588,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: Operand::Value(not_cf),
                     rhs: Operand::Value(not_zf),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::S => self.emit_load_flag(dst, Flag::Sf),
@@ -609,7 +609,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Xor,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::Ge => {
@@ -620,7 +620,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Eq,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::Le => {
@@ -633,14 +633,14 @@ impl BlockLowerer<'_> {
                     op: BinOp::Xor,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
                 self.instrs.push(Instr::BinOp {
                     dst,
                     op: BinOp::Or,
                     lhs: Operand::Value(zf),
                     rhs: Operand::Value(sfo),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
             Cond::G => {
@@ -653,7 +653,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::Eq,
                     lhs: Operand::Value(sf),
                     rhs: Operand::Value(of),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
                 let not_zf = self.fresh_temp();
                 self.emit_not(not_zf, Operand::Value(zf));
@@ -662,7 +662,7 @@ impl BlockLowerer<'_> {
                     op: BinOp::And,
                     lhs: Operand::Value(not_zf),
                     rhs: Operand::Value(eq),
-                    flags: FlagMask::EMPTY,
+                    flags: FlagSet::EMPTY,
                 });
             }
         }
@@ -687,7 +687,7 @@ impl BlockLowerer<'_> {
             op: BinOp::Mul,
             lhs: cond,
             rhs: if_true,
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
 
         let inv = self.fresh_temp();
@@ -699,7 +699,7 @@ impl BlockLowerer<'_> {
             op: BinOp::Mul,
             lhs: Operand::Value(inv),
             rhs: if_false,
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
 
         if width == Width::W64 {
@@ -708,7 +708,7 @@ impl BlockLowerer<'_> {
                 op: BinOp::Add,
                 lhs: Operand::Value(t),
                 rhs: Operand::Value(f),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             });
             return;
         }
@@ -719,7 +719,7 @@ impl BlockLowerer<'_> {
             op: BinOp::Add,
             lhs: Operand::Value(t),
             rhs: Operand::Value(f),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
 
         self.instrs.push(Instr::BinOp {
@@ -727,7 +727,7 @@ impl BlockLowerer<'_> {
             op: BinOp::And,
             lhs: Operand::Value(sum),
             rhs: Operand::Const(width.mask()),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
     }
 
@@ -747,32 +747,13 @@ impl BlockLowerer<'_> {
             op: BinOp::Xor,
             lhs: src,
             rhs: Operand::Const(1),
-            flags: FlagMask::EMPTY,
+            flags: FlagSet::EMPTY,
         });
     }
 }
 
-fn map_flagset(flags: FlagSet) -> FlagMask {
-    let mut out = FlagMask::EMPTY;
-    if flags.contains(FlagSet::ZF) {
-        out |= FlagMask::ZF;
-    }
-    if flags.contains(FlagSet::SF) {
-        out |= FlagMask::SF;
-    }
-    if flags.contains(FlagSet::CF) {
-        out |= FlagMask::CF;
-    }
-    if flags.contains(FlagSet::PF) {
-        out |= FlagMask::PF;
-    }
-    if flags.contains(FlagSet::AF) {
-        out |= FlagMask::AF;
-    }
-    if flags.contains(FlagSet::OF) {
-        out |= FlagMask::OF;
-    }
-    out
+fn map_flagset(flags: FlagSet) -> FlagSet {
+    flags
 }
 
 fn map_binop(op: crate::tier1_ir::BinOp) -> Option<BinOp> {

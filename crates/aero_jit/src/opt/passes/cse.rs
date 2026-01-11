@@ -138,6 +138,7 @@ fn process_list(
                     src: src2,
                 });
                 reg_state[reg.as_u8() as usize] = Some(src2);
+                reg_state[reg.as_u8() as usize] = Some(src2);
             }
             Instr::LoadMem { dst, addr, width } => {
                 let addr2 = resolve_operand(*addr, repl);
@@ -149,6 +150,8 @@ fn process_list(
                     addr: addr2,
                     width: *width,
                 });
+                // Treat memory operations as barriers (no expression CSE across them).
+                exprs.clear();
             }
             Instr::StoreMem { addr, src, width } => {
                 let addr2 = resolve_operand(*addr, repl);
@@ -161,6 +164,8 @@ fn process_list(
                     src: src2,
                     width: *width,
                 });
+                // Treat memory operations as barriers (no expression CSE across them).
+                exprs.clear();
             }
             Instr::LoadFlag { dst, flag } => {
                 output.push(Instr::LoadFlag {

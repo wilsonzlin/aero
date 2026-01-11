@@ -1,10 +1,10 @@
 use std::time::Instant;
 
 use aero_jit::Tier1Bus;
-use aero_types::Gpr;
+use aero_types::{FlagSet, Gpr};
 
 use aero_jit::tier2::exec::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
-use aero_jit::tier2::ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId};
+use aero_jit::tier2::ir::{BinOp, Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit::tier2::opt::{optimize_trace, OptConfig};
 
 #[derive(Clone, Debug)]
@@ -53,7 +53,7 @@ fn main() {
                 op: BinOp::Add,
                 lhs: Operand::Value(v(0)),
                 rhs: Operand::Value(v(1)),
-                flags: FlagMask::ALL,
+                flags: FlagSet::ALU,
             },
             Instr::StoreReg {
                 reg: Gpr::Rax,
@@ -68,7 +68,7 @@ fn main() {
                 op: BinOp::LtU,
                 lhs: Operand::Value(v(2)),
                 rhs: Operand::Value(v(3)),
-                flags: FlagMask::EMPTY,
+                flags: FlagSet::EMPTY,
             },
             Instr::Guard {
                 cond: Operand::Value(v(4)),

@@ -1,10 +1,12 @@
-use crate::t2_ir::{FlagMask, Instr, TraceIr};
+use aero_types::FlagSet;
+
+use crate::t2_ir::{flag_to_set, Instr, TraceIr};
 
 pub fn run(trace: &mut TraceIr) -> bool {
     let mut changed = false;
 
     // Treat trace boundaries and side exits as observing full flags.
-    let mut live = FlagMask::ALL;
+    let mut live = FlagSet::ALU;
 
     for inst in trace
         .body
@@ -16,12 +18,12 @@ pub fn run(trace: &mut TraceIr) -> bool {
             inst,
             Instr::Guard { .. } | Instr::GuardCodeVersion { .. } | Instr::SideExit { .. }
         ) {
-            live |= FlagMask::ALL;
+            live = live.union(FlagSet::ALU);
         }
 
         let defs = inst.flags_written();
         if !defs.is_empty() {
-            let needed = defs.intersection(live);
+            let needed = intersect_flagset(defs, live);
             if needed != defs {
                 changed = true;
                 match inst {
@@ -30,10 +32,10 @@ pub fn run(trace: &mut TraceIr) -> bool {
                     _ => {}
                 }
             }
-            live.remove(needed);
+            live = live.without(needed);
         }
 
-        live |= inst.flags_read();
+        live = live.union(inst.flags_read());
     }
 
     if changed {
@@ -47,4 +49,18 @@ pub fn run(trace: &mut TraceIr) -> bool {
     }
 
     changed
+}
+
+fn intersect_flagset(a: FlagSet, b: FlagSet) -> FlagSet {
+    if a.is_empty() || b.is_empty() {
+        return FlagSet::EMPTY;
+    }
+    let mut out = FlagSet::EMPTY;
+    for flag in a.iter() {
+        let bit = flag_to_set(flag);
+        if b.contains(bit) {
+            out = out.union(bit);
+        }
+    }
+    out
 }

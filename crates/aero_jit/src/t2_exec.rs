@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use aero_types::{Flag, Gpr};
+use aero_types::{Flag, FlagSet, Gpr};
 
 use crate::t2_ir::{
-    eval_binop, FlagMask, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
+    eval_binop, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
 };
 use crate::Tier1Bus;
 
@@ -114,7 +114,7 @@ fn exec_instr(
             values[dst.index()] = get_flag(state.cpu.rflags, flag) as u64;
         }
         Instr::SetFlags { mask, values: fv } => {
-            apply_flag_mask(&mut state.cpu.rflags, mask, fv);
+            apply_flag_set(&mut state.cpu.rflags, mask, fv);
         }
         Instr::BinOp {
             dst,
@@ -128,7 +128,7 @@ fn exec_instr(
             let (res, computed) = eval_binop(op, lhs, rhs);
             values[dst.index()] = res;
             if !flags.is_empty() {
-                apply_flag_mask(&mut state.cpu.rflags, flags, computed);
+                apply_flag_set(&mut state.cpu.rflags, flags, computed);
             }
         }
         Instr::Addr {
@@ -450,23 +450,23 @@ fn set_flag(rflags: &mut u64, flag: Flag, value: bool) {
     }
 }
 
-fn apply_flag_mask(rflags: &mut u64, mask: FlagMask, values: FlagValues) {
-    if mask.intersects(FlagMask::CF) {
+fn apply_flag_set(rflags: &mut u64, mask: FlagSet, values: FlagValues) {
+    if mask.contains(FlagSet::CF) {
         set_flag(rflags, Flag::Cf, values.cf);
     }
-    if mask.intersects(FlagMask::PF) {
+    if mask.contains(FlagSet::PF) {
         set_flag(rflags, Flag::Pf, values.pf);
     }
-    if mask.intersects(FlagMask::AF) {
+    if mask.contains(FlagSet::AF) {
         set_flag(rflags, Flag::Af, values.af);
     }
-    if mask.intersects(FlagMask::ZF) {
+    if mask.contains(FlagSet::ZF) {
         set_flag(rflags, Flag::Zf, values.zf);
     }
-    if mask.intersects(FlagMask::SF) {
+    if mask.contains(FlagSet::SF) {
         set_flag(rflags, Flag::Sf, values.sf);
     }
-    if mask.intersects(FlagMask::OF) {
+    if mask.contains(FlagSet::OF) {
         set_flag(rflags, Flag::Of, values.of);
     }
     *rflags |= crate::abi::RFLAGS_RESERVED1;
