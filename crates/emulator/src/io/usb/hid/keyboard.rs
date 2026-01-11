@@ -49,6 +49,7 @@ pub struct UsbHidKeyboard {
     configuration: u8,
     remote_wakeup_enabled: bool,
     remote_wakeup_pending: bool,
+    suspended: bool,
     interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
@@ -107,6 +108,10 @@ impl UsbDeviceModel for UsbHidKeyboardHandle {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
 
+    fn set_suspended(&mut self, suspended: bool) {
+        self.0.borrow_mut().set_suspended(suspended);
+    }
+
     fn poll_remote_wakeup(&mut self) -> bool {
         self.0.borrow_mut().poll_remote_wakeup()
     }
@@ -125,6 +130,7 @@ impl UsbHidKeyboard {
             configuration: 0,
             remote_wakeup_enabled: false,
             remote_wakeup_pending: false,
+            suspended: false,
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
@@ -163,7 +169,7 @@ impl UsbHidKeyboard {
 
         if changed {
             self.enqueue_current_report();
-            if self.remote_wakeup_enabled && self.configuration != 0 {
+            if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
                 self.remote_wakeup_pending = true;
             }
         }
@@ -313,6 +319,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_reports.clear();
+                        self.remote_wakeup_pending = false;
                     }
                     ControlResponse::Ack
                 }
@@ -513,8 +520,19 @@ impl UsbDeviceModel for UsbHidKeyboard {
         }
     }
 
+    fn set_suspended(&mut self, suspended: bool) {
+        self.suspended = suspended;
+        // Only wake events that occur *during* suspend should trigger remote wake; drop any stale
+        // pending flag when the suspend state changes.
+        self.remote_wakeup_pending = false;
+    }
+
     fn poll_remote_wakeup(&mut self) -> bool {
-        if self.remote_wakeup_pending && self.remote_wakeup_enabled && self.configuration != 0 {
+        if self.remote_wakeup_pending
+            && self.remote_wakeup_enabled
+            && self.configuration != 0
+            && self.suspended
+        {
             self.remote_wakeup_pending = false;
             true
         } else {

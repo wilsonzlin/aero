@@ -93,6 +93,8 @@ impl Port {
         const SUSP: u16 = 1 << 12;
         const RESUME: u16 = 1 << 13;
 
+        let prev_suspended = self.suspended;
+
         // Write-1-to-clear status change bits.
         if write_mask & CSC != 0 && value & CSC != 0 {
             self.connect_change = false;
@@ -123,6 +125,11 @@ impl Port {
 
         if self.reset {
             // While the port reset signal is active, suspend/resume/enable writes are ignored.
+            if self.suspended != prev_suspended {
+                if let Some(dev) = self.device.as_mut() {
+                    dev.model_mut().set_suspended(self.suspended);
+                }
+            }
             return;
         }
 
@@ -150,6 +157,11 @@ impl Port {
             self.resume_detect = false;
             self.resuming = false;
             self.resume_countdown_ms = 0;
+            if self.suspended != prev_suspended {
+                if let Some(dev) = self.device.as_mut() {
+                    dev.model_mut().set_suspended(self.suspended);
+                }
+            }
             return;
         }
 
@@ -175,9 +187,16 @@ impl Port {
                 self.resume_countdown_ms = 0;
             }
         }
+
+        if self.suspended != prev_suspended {
+            if let Some(dev) = self.device.as_mut() {
+                dev.model_mut().set_suspended(self.suspended);
+            }
+        }
     }
 
     fn tick_1ms(&mut self) {
+        let prev_suspended = self.suspended;
         if self.reset {
             self.reset_countdown_ms = self.reset_countdown_ms.saturating_sub(1);
             if self.reset_countdown_ms == 0 {
@@ -194,6 +213,12 @@ impl Port {
             if self.resume_countdown_ms == 0 {
                 self.resuming = false;
                 self.suspended = false;
+            }
+        }
+
+        if self.suspended != prev_suspended {
+            if let Some(dev) = self.device.as_mut() {
+                dev.model_mut().set_suspended(self.suspended);
             }
         }
     }

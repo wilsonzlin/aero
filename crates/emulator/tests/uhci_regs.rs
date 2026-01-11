@@ -615,6 +615,62 @@ fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
 }
 
 #[test]
+fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_RD: u16 = 1 << 6;
+    const PORTSC_SUSP: u16 = 1 << 12;
+
+    let mut mem = Bus::new(0x1000);
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    // Configure the device and enable remote wakeup.
+    {
+        let dev = uhci
+            .controller
+            .hub_mut()
+            .device_mut_for_address(0)
+            .expect("device should be reachable at address 0");
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    // Generate input *before* suspend; this should not later be interpreted as a remote wake.
+    keyboard.key_event(4, true);
+
+    uhci.port_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP) as u32);
+    uhci.tick_1ms(&mut mem);
+
+    assert_eq!(uhci.port_read(REG_PORTSC1, 2) as u16 & PORTSC_RD, 0);
+    assert_eq!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(!uhci.irq_level());
+}
+
+#[test]
 fn uhci_greset_resets_attached_devices() {
     #[derive(Clone)]
     struct ResetCountingDevice {

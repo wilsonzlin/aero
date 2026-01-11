@@ -328,6 +328,14 @@ pub trait UsbDeviceModel {
         }
     }
 
+    /// Notifies the device model that the upstream port has entered or exited suspend.
+    ///
+    /// This is primarily used to model remote wakeup behaviour: a device should only request
+    /// remote wakeup in response to activity that occurs *while suspended*.
+    fn set_suspended(&mut self, suspended: bool) {
+        let _ = suspended;
+    }
+
     /// Poll for a remote wakeup event while the upstream port is suspended.
     ///
     /// Returning `true` indicates the device would signal a remote wakeup (resume) event.

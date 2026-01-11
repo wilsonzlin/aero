@@ -44,6 +44,7 @@ pub struct UsbHidMouse {
     configuration: u8,
     remote_wakeup_enabled: bool,
     remote_wakeup_pending: bool,
+    suspended: bool,
     interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
@@ -107,6 +108,10 @@ impl UsbDeviceModel for UsbHidMouseHandle {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
 
+    fn set_suspended(&mut self, suspended: bool) {
+        self.0.borrow_mut().set_suspended(suspended);
+    }
+
     fn poll_remote_wakeup(&mut self) -> bool {
         self.0.borrow_mut().poll_remote_wakeup()
     }
@@ -125,6 +130,7 @@ impl UsbHidMouse {
             configuration: 0,
             remote_wakeup_enabled: false,
             remote_wakeup_pending: false,
+            suspended: false,
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
@@ -141,7 +147,7 @@ impl UsbHidMouse {
             self.pending_reports.pop_front();
         }
         self.pending_reports.push_back(report);
-        if self.remote_wakeup_enabled && self.configuration != 0 {
+        if self.suspended && self.remote_wakeup_enabled && self.configuration != 0 {
             self.remote_wakeup_pending = true;
         }
     }
@@ -498,8 +504,17 @@ impl UsbDeviceModel for UsbHidMouse {
         }
     }
 
+    fn set_suspended(&mut self, suspended: bool) {
+        self.suspended = suspended;
+        self.remote_wakeup_pending = false;
+    }
+
     fn poll_remote_wakeup(&mut self) -> bool {
-        if self.remote_wakeup_pending && self.remote_wakeup_enabled && self.configuration != 0 {
+        if self.remote_wakeup_pending
+            && self.remote_wakeup_enabled
+            && self.configuration != 0
+            && self.suspended
+        {
             self.remote_wakeup_pending = false;
             true
         } else {

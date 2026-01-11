@@ -2080,6 +2080,13 @@ impl AeroGpuSoftwareExecutor {
         #[allow(unreachable_patterns)]
         match op {
             cmd::AerogpuCmdOpcode::Nop | cmd::AerogpuCmdOpcode::DebugMarker => {}
+            cmd::AerogpuCmdOpcode::CreateSampler
+            | cmd::AerogpuCmdOpcode::DestroySampler
+            | cmd::AerogpuCmdOpcode::SetSamplers
+            | cmd::AerogpuCmdOpcode::SetConstantBuffers => {
+                // The software backend is intentionally minimal and ignores GPU state
+                // that is only needed for shader-based rendering.
+            }
             cmd::AerogpuCmdOpcode::CreateBuffer => {
                 let packet_cmd =
                     match Self::read_packed_prefix::<cmd::AerogpuCmdCreateBuffer>(packet) {

@@ -2765,9 +2765,15 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
     let g = ((center >> 8) & 0xFF) as u8;
     let r = ((center >> 16) & 0xFF) as u8;
 
-    assert_eq!(b, 0);
-    assert!((r as i32 - 0x80).abs() <= 2);
-    assert!((g as i32 - 0x80).abs() <= 2);
+    assert_eq!(b, 0, "unexpected blue channel; center={center:#010x}");
+    assert!(
+        (r as i32 - 0x80).abs() <= 2,
+        "unexpected red channel; center={center:#010x} r={r:#04x} g={g:#04x} b={b:#04x}",
+    );
+    assert!(
+        (g as i32 - 0x80).abs() <= 2,
+        "unexpected green channel; center={center:#010x} r={r:#04x} g={g:#04x} b={b:#04x}",
+    );
 }
 
 #[test]
