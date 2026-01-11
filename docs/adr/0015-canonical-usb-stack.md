@@ -8,6 +8,8 @@ The repository historically accumulated multiple overlapping USB/UHCI implementa
   - Rust USB device models + UHCI: `crates/aero-usb`
   - WASM exports: `crates/aero-wasm`
   - Host integration (WebHID/WebUSB broker/executor, worker proxying): `web/`
+- **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
+  - Generic main-thread broker + worker client: `src/platform/webusb_{broker,client,protocol}.ts`
 - **Legacy/native/test path (parallel):**
   - Full USB stack (UHCI, hubs, HID, passthrough helpers): `crates/emulator/src/io/usb/*`
 - **Legacy prototype (duplicate wire contract):**
@@ -114,9 +116,12 @@ Rust and TS tests passing.
    - Remove any re-exports/use-sites so there is exactly one `UsbPassthroughBridge` surface, backed
      by `aero_usb::passthrough::UsbPassthroughDevice`.
 
-3. **Consolidate browser host integration**
-   - Delete the legacy repo-root WebUSB harness (`src/platform/webusb_{broker,client,protocol}.ts`)
-     once the `web/` implementation is the only supported runtime.
+3. **Consolidate TypeScript WebUSB host integration**
+   - Treat `web/src/usb/*` as the canonical WebUSB passthrough host integration for the
+     `UsbHostAction`/`UsbHostCompletion` contract.
+   - The repo-root `src/platform/webusb_{broker,client,protocol}.ts` stack is a **generic WebUSB demo
+     RPC** (direct `navigator.usb` operations), and must not grow a second passthrough wire contract.
+   - Deletion target (once demos migrate or become redundant): `src/platform/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
    - If/when a native emulator path is still desired, migrate it to consume `aero-usb` for USB
@@ -138,4 +143,3 @@ Rust and TS tests passing.
 
 - WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts` (`/webusb_diagnostics.html`)
 - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
-

@@ -26,7 +26,7 @@ Implementation references (current repo):
   - WebUSB diagnostics panel: `web/src/usb/webusb_panel.ts`
   - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
 - Cross-language wire fixture: `docs/fixtures/webusb_passthrough_wire.json`
-- (Legacy repo-root harness) TS main-thread broker + worker client RPC: `src/platform/webusb_{broker,client,protocol}.ts`
+- (Repo-root WebUSB demo broker/client RPC; not the passthrough wire contract): `src/platform/webusb_{broker,client,protocol}.ts`
 
 Note: `crates/emulator/src/io/usb/*` contains a legacy UHCI + passthrough model used by
 native/emulator tests. Per [ADR 0015](./adr/0015-canonical-usb-stack.md), the browser/WASM runtime
@@ -164,15 +164,16 @@ The host side owns the actual `USBDevice` handle and performs WebUSB calls:
   - (re)open/select configuration/claim interfaces
   - handling `disconnect` events and surfacing errors to UI
 
-In this repo, the production WebUSB integration lives under `web/src/usb/`:
+In this repo, the canonical WebUSB passthrough integration lives under `web/src/usb/`:
 
 - **Executor** (canonical `UsbHostAction` contract): `web/src/usb/webusb_backend.ts`
   - (thin wrapper): `web/src/usb/webusb_executor.ts`
 - **Main thread broker** (worker proxy): `web/src/usb/usb_broker.ts`
   - (message schema + validators): `web/src/usb/usb_proxy_protocol.ts`
 
-Note: there is also a legacy broker/client RPC implementation under `src/platform/webusb_*` used
-by the older repo-root harness. The browser runtime uses the `web/` implementation.
+Note: there is also a separate **generic** WebUSB broker/client RPC under `src/platform/webusb_*`
+used by the repo-root WebUSB demo panels. It is not the `UsbHostAction` passthrough contract
+described in this document.
 
 ### Device lifecycle: open/configuration/interface claiming
 
