@@ -2751,6 +2751,14 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
     in_format = reinterpret_cast<const D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData)->Format;
   }
 
+  DXGI_FORMAT msaa_format = DXGI_FORMAT_UNKNOWN;
+  UINT msaa_sample_count = 0;
+  if (pCaps->Type == D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS && pCaps->DataSize >= sizeof(DXGI_FORMAT) + sizeof(UINT)) {
+    const uint8_t* in_bytes = reinterpret_cast<const uint8_t*>(pCaps->pData);
+    msaa_format = *reinterpret_cast<const DXGI_FORMAT*>(in_bytes);
+    msaa_sample_count = *reinterpret_cast<const UINT*>(in_bytes + sizeof(DXGI_FORMAT));
+  }
+
   if (pCaps->DataSize) {
     std::memset(pCaps->pData, 0, pCaps->DataSize);
   }
@@ -2799,6 +2807,18 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
         if constexpr (has_FormatSupport2<D3D10DDIARG_FORMAT_SUPPORT>::value) {
           fmt->FormatSupport2 = 0;
         }
+      }
+      break;
+
+    case D3D10DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS:
+      // D3D10::CheckMultisampleQualityLevels. Treat 1x as supported (quality 1),
+      // no MSAA yet.
+      if (pCaps->DataSize >= sizeof(DXGI_FORMAT) + sizeof(UINT) * 2) {
+        uint8_t* out_bytes = reinterpret_cast<uint8_t*>(pCaps->pData);
+        *reinterpret_cast<DXGI_FORMAT*>(out_bytes) = msaa_format;
+        *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT)) = msaa_sample_count;
+        *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT) + sizeof(UINT)) =
+            (msaa_sample_count == 1) ? 1u : 0u;
       }
       break;
 
