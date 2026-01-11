@@ -553,7 +553,7 @@ fn push_during_interrupt_delivery_page_faults() -> Result<(), CpuExit> {
     set_pte32(&mut phys, pt_base, 0x2, PTE_P32 | PTE_RW32 | PTE_US32); // INT handler (user)
     set_pte32(&mut phys, pt_base, 0x3, PTE_P32 | PTE_RW32); // #PF handler (supervisor)
     set_pte32(&mut phys, pt_base, 0x4, PTE_P32 | PTE_RW32); // TSS (supervisor)
-    // 0x7: user stack page intentionally not present.
+                                                            // 0x7: user stack page intentionally not present.
     set_pte32(&mut phys, pt_base, 0x9, PTE_P32 | PTE_RW32); // kernel stack (supervisor)
     set_pte32(&mut phys, pt_base, 0x5, PTE_P32 | PTE_RW32); // #SS handler
     set_pte32(&mut phys, pt_base, 0x6, PTE_P32 | PTE_RW32); // #GP handler
@@ -642,7 +642,7 @@ fn idt_read_page_faults() -> Result<(), CpuExit> {
 
     // Map page containing low vectors (including #PF/#GP handlers).
     set_pte32(&mut phys, pt_base, 0x1, PTE_P32 | PTE_RW32); // 0x1000
-    // Leave 0x2000 (page 0x2) not present so IDT[0xFF] gate read faults.
+                                                            // Leave 0x2000 (page 0x2) not present so IDT[0xFF] gate read faults.
 
     // Map handlers + stack.
     set_pte32(&mut phys, pt_base, 0x3, PTE_P32 | PTE_RW32); // vector 0xFF handler (unused)

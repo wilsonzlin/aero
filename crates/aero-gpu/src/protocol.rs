@@ -712,27 +712,33 @@ pub fn parse_cmd_stream(
                 }
             }
 
-            Some(AeroGpuOpcode::SetBlendState) => {
-                AeroGpuCmd::SetBlendState {
-                    state: AeroGpuBlendState {
-                        enable: read_u32_le(packet.get(8..12).ok_or(
-                            AeroGpuCmdStreamParseError::BufferTooSmall,
-                        )?),
-                        src_factor: read_u32_le(packet.get(12..16).ok_or(
-                            AeroGpuCmdStreamParseError::BufferTooSmall,
-                        )?),
-                        dst_factor: read_u32_le(packet.get(16..20).ok_or(
-                            AeroGpuCmdStreamParseError::BufferTooSmall,
-                        )?),
-                        blend_op: read_u32_le(packet.get(20..24).ok_or(
-                            AeroGpuCmdStreamParseError::BufferTooSmall,
-                        )?),
-                        color_write_mask: *packet
-                            .get(24)
+            Some(AeroGpuOpcode::SetBlendState) => AeroGpuCmd::SetBlendState {
+                state: AeroGpuBlendState {
+                    enable: read_u32_le(
+                        packet
+                            .get(8..12)
                             .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
-                    },
-                }
-            }
+                    ),
+                    src_factor: read_u32_le(
+                        packet
+                            .get(12..16)
+                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
+                    ),
+                    dst_factor: read_u32_le(
+                        packet
+                            .get(16..20)
+                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
+                    ),
+                    blend_op: read_u32_le(
+                        packet
+                            .get(20..24)
+                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
+                    ),
+                    color_write_mask: *packet
+                        .get(24)
+                        .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
+                },
+            },
             Some(AeroGpuOpcode::SetDepthStencilState) => {
                 let cmd: protocol::AerogpuCmdSetDepthStencilState = read_packed_prefix(packet)?;
                 let state = cmd.state;

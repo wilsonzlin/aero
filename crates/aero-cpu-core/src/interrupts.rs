@@ -128,10 +128,17 @@ fn deliver_cpu_exception<B: CpuBus>(
             saved_rip,
             Some(code as u32),
         ),
-        CpuException::DivideError => deliver_exception(bus, state, pending, Exception::DivideError, saved_rip, None),
-        CpuException::InvalidOpcode | CpuException::Unimplemented(_) => {
-            deliver_exception(bus, state, pending, Exception::InvalidOpcode, saved_rip, None)
+        CpuException::DivideError => {
+            deliver_exception(bus, state, pending, Exception::DivideError, saved_rip, None)
         }
+        CpuException::InvalidOpcode | CpuException::Unimplemented(_) => deliver_exception(
+            bus,
+            state,
+            pending,
+            Exception::InvalidOpcode,
+            saved_rip,
+            None,
+        ),
         CpuException::DeviceNotAvailable => deliver_exception(
             bus,
             state,
@@ -140,7 +147,9 @@ fn deliver_cpu_exception<B: CpuBus>(
             saved_rip,
             None,
         ),
-        CpuException::X87Fpu => deliver_exception(bus, state, pending, Exception::X87Fpu, saved_rip, None),
+        CpuException::X87Fpu => {
+            deliver_exception(bus, state, pending, Exception::X87Fpu, saved_rip, None)
+        }
         CpuException::SimdFloatingPointException => deliver_exception(
             bus,
             state,
@@ -440,7 +449,9 @@ pub fn iret<B: CpuBus>(
         InterruptFrame::Protected32 { stack_switched } => {
             iret_protected(state, bus, pending, saved_rip, stack_switched)?
         }
-        InterruptFrame::Long64 { stack_switched } => iret_long(state, bus, pending, saved_rip, stack_switched)?,
+        InterruptFrame::Long64 { stack_switched } => {
+            iret_long(state, bus, pending, saved_rip, stack_switched)?
+        }
     };
 
     if outcome == IretOutcome::Completed {

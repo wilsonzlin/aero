@@ -251,7 +251,10 @@ fn aerogpu_cmd_blend_factor_constant() {
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
-        let pixels = exec.read_texture_rgba8(2).await.expect("readback should succeed");
+        let pixels = exec
+            .read_texture_rgba8(2)
+            .await
+            .expect("readback should succeed");
         let width = 32usize;
         let height = 32usize;
         let x = width / 2;
@@ -288,7 +291,10 @@ fn aerogpu_cmd_sample_mask_discards_draw() {
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
-        let pixels = exec.read_texture_rgba8(2).await.expect("readback should succeed");
+        let pixels = exec
+            .read_texture_rgba8(2)
+            .await
+            .expect("readback should succeed");
         let width = 32usize;
         let height = 32usize;
         let x = width / 2;
@@ -299,4 +305,3 @@ fn aerogpu_cmd_sample_mask_discards_draw() {
         assert_eq!(px, &[255, 0, 0, 255]);
     });
 }
-
