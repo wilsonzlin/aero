@@ -1581,7 +1581,10 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
   if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {
     if (callbacks_->pfnWaitForSynchronizationObjectCb) {
       D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-      fill_wait_for_sync_object_args(&args, hContext_, /*hAdapter=*/0, handles, fence_values, fence, timeout);
+      // Some Win7-era WDK structs include an `hAdapter` field in the wait args.
+      // Provide the kernel adapter handle when available so both the runtime
+      // callback and the direct KMT thunk have enough context.
+      fill_wait_for_sync_object_args(&args, hContext_, kmt_adapter_for_debug_, handles, fence_values, fence, timeout);
 
       const HRESULT hr = CallCbMaybeHandle(callbacks_->pfnWaitForSynchronizationObjectCb,
                                            MakeRtDevice11(runtime_device_private_),
@@ -1666,8 +1669,14 @@ uint64_t WddmSubmit::QueryCompletedFence() {
 
     if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {
       if (callbacks_ && callbacks_->pfnWaitForSynchronizationObjectCb && runtime_device_private_ && hContext_ && hSyncObject_) {
-        D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-        fill_wait_for_sync_object_args(&args, hContext_, /*hAdapter=*/0, handles, fence_values, last_submitted_fence_, /*timeout=*/0);
+         D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
+         fill_wait_for_sync_object_args(&args,
+                                        hContext_,
+                                        kmt_adapter_for_debug_,
+                                        handles,
+                                        fence_values,
+                                        last_submitted_fence_,
+                                        /*timeout=*/0);
 
         const HRESULT hr = CallCbMaybeHandle(callbacks_->pfnWaitForSynchronizationObjectCb,
                                              MakeRtDevice11(runtime_device_private_),
