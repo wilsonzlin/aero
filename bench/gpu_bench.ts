@@ -14,6 +14,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { transform } from "esbuild";
 import { RunningStats } from "../packages/aero-stats/src/running-stats.js";
 
 const execFile = promisify(execFileCb);
@@ -229,8 +230,18 @@ export async function runGpuBenchmarksInPage(page, opts = {}) {
   ];
 
   for (const p of scriptPaths) {
-    const content = await fs.readFile(p, "utf8");
-    await page.addScriptTag({ type: "module", content });
+    // Benchmark scripts are authored as `.ts` (for editor tooling), but this runner
+    // injects them into a real browser page without Vite/tsc. Strip TypeScript
+    // syntax before injection so the module can execute in the browser.
+    const source = await fs.readFile(p, "utf8");
+    const loader = p.endsWith(".ts") ? "ts" : "js";
+    const result = await transform(source, {
+      loader,
+      format: "esm",
+      target: "es2020",
+      sourcefile: p,
+    });
+    await page.addScriptTag({ type: "module", content: result.code });
   }
 
   const { environment, scenarios } = await page.evaluate(
