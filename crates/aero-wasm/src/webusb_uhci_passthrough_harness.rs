@@ -45,7 +45,7 @@ const PID_OUT: u8 = 0xE1;
 // Standard requests.
 const REQ_SET_ADDRESS: u8 = 0x05;
 
-fn action_id(action: &UsbHostAction) -> u64 {
+fn action_id(action: &UsbHostAction) -> u32 {
     match action {
         UsbHostAction::ControlIn { id, .. } => *id,
         UsbHostAction::ControlOut { id, .. } => *id,
@@ -54,7 +54,7 @@ fn action_id(action: &UsbHostAction) -> u64 {
     }
 }
 
-fn completion_id(completion: &UsbHostCompletion) -> u64 {
+fn completion_id(completion: &UsbHostCompletion) -> u32 {
     match completion {
         UsbHostCompletion::ControlIn { id, .. } => *id,
         UsbHostCompletion::ControlOut { id, .. } => *id,
@@ -201,9 +201,9 @@ struct WebUsbProxyDeviceInner {
     address: u8,
     pending_address: Option<u8>,
 
-    next_id: u64,
+    next_id: u32,
     actions: VecDeque<UsbHostAction>,
-    completions: HashMap<u64, UsbHostCompletion>,
+    completions: HashMap<u32, UsbHostCompletion>,
 
     ctl_setup: Option<BusSetupPacket>,
     ctl_dir_in: bool,
@@ -211,7 +211,7 @@ struct WebUsbProxyDeviceInner {
     ctl_out_buf: Vec<u8>,
     ctl_in_buf: Vec<u8>,
     ctl_in_offset: usize,
-    ctl_action_id: Option<u64>,
+    ctl_action_id: Option<u32>,
     ctl_action_kind: Option<&'static str>,
 }
 
@@ -234,7 +234,7 @@ impl WebUsbProxyDeviceInner {
         }
     }
 
-    fn alloc_id(&mut self) -> u64 {
+    fn alloc_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
         id
@@ -248,7 +248,7 @@ impl WebUsbProxyDeviceInner {
         self.completions.insert(completion_id(&completion), completion);
     }
 
-    fn take_completion(&mut self, id: u64) -> Option<UsbHostCompletion> {
+    fn take_completion(&mut self, id: u32) -> Option<UsbHostCompletion> {
         self.completions.remove(&id)
     }
 
