@@ -7,7 +7,7 @@
 //! It exists primarily to provide an end-to-end smoke test path from a command
 //! stream to WebGPU execution.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aero_d3d9::runtime::{
     ColorFormat, D3D9Runtime, IndexFormat as RuntimeIndexFormat, RenderTarget, RuntimeConfig,
@@ -71,6 +71,12 @@ struct DeviceEntry {
 struct SharedTextureState {
     /// `share_token -> underlying texture handle`.
     shared_surface_by_token: HashMap<u64, u32>,
+    /// `share_token` values that were previously valid but were released (or removed after the
+    /// underlying texture was destroyed).
+    ///
+    /// Prevents misbehaving guests from "re-arming" a released token by re-exporting it for a
+    /// different resource.
+    retired_share_tokens: HashSet<u64>,
     /// `texture handle -> underlying texture handle`.
     ///
     /// Includes both original handles (identity mapping) and imported aliases.
@@ -80,8 +86,21 @@ struct SharedTextureState {
 }
 
 impl SharedTextureState {
+    fn retire_tokens_for_underlying(&mut self, underlying: u32) {
+        let to_retire: Vec<u64> = self
+            .shared_surface_by_token
+            .iter()
+            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
+            .collect();
+        for token in to_retire {
+            self.shared_surface_by_token.remove(&token);
+            self.retired_share_tokens.insert(token);
+        }
+    }
+
     fn clear(&mut self) {
         self.shared_surface_by_token.clear();
+        self.retired_share_tokens.clear();
         self.texture_handles.clear();
         self.texture_refcounts.clear();
     }
@@ -124,7 +143,7 @@ impl SharedTextureState {
             runtime
                 .destroy_texture(underlying)
                 .map_err(|e| e.to_string())?;
-            self.shared_surface_by_token.retain(|_, v| *v != underlying);
+            self.retire_tokens_for_underlying(underlying);
         }
 
         Ok(())
@@ -140,6 +159,11 @@ impl SharedTextureState {
         }
         if share_token == 0 {
             return Err("ExportSharedSurface share_token 0 is reserved".into());
+        }
+        if self.retired_share_tokens.contains(&share_token) {
+            return Err(format!(
+                "shared surface token 0x{share_token:016X} was previously released and cannot be reused"
+            ));
         }
         let underlying = self
             .resolve_texture_handle(resource_handle)

@@ -12,7 +12,7 @@
 //! stable synchronization and sharing primitives even if rendering is minimal.
 
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Per-submission allocation table entry (Win7 WDDM 1.1 legacy path).
 ///
@@ -98,6 +98,7 @@ pub enum CommandProcessorError {
 
     // Shared surfaces
     InvalidShareToken(u64),
+    ShareTokenRetired(u64),
     UnknownShareToken(u64),
     UnknownSharedSurfaceHandle(u32),
     SharedSurfaceHandleInUse(u32),
@@ -144,6 +145,10 @@ impl std::fmt::Display for CommandProcessorError {
             CommandProcessorError::InvalidShareToken(token) => write!(
                 f,
                 "invalid shared surface token 0x{token:016X} (0 is reserved)"
+            ),
+            CommandProcessorError::ShareTokenRetired(token) => write!(
+                f,
+                "shared surface token 0x{token:016X} was previously released and cannot be reused"
             ),
             CommandProcessorError::UnknownShareToken(token) => {
                 write!(f, "unknown shared surface token 0x{token:016X}")
@@ -239,6 +244,11 @@ pub struct AeroGpuCommandProcessor {
 
     /// share_token -> underlying resource handle.
     shared_surface_by_token: HashMap<u64, u32>,
+    /// share_token values that were previously valid but were released (or removed after the
+    /// underlying resource was destroyed).
+    ///
+    /// Prevents misbehaving guests from re-exporting a released token for a different resource.
+    retired_share_tokens: HashSet<u64>,
 
     /// Handle indirection table for shared surfaces.
     ///
@@ -322,7 +332,15 @@ impl AeroGpuCommandProcessor {
         }
 
         self.shared_surface_refcounts.remove(&underlying);
-        self.shared_surface_by_token.retain(|_, v| *v != underlying);
+        let to_retire: Vec<u64> = self
+            .shared_surface_by_token
+            .iter()
+            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
+            .collect();
+        for token in to_retire {
+            self.shared_surface_by_token.remove(&token);
+            self.retired_share_tokens.insert(token);
+        }
         Some(underlying)
     }
 
@@ -384,7 +402,11 @@ impl AeroGpuCommandProcessor {
         //
         // Existing imported handles remain valid and keep the underlying resource alive via the
         // refcount tables; we only remove the token mapping so future imports fail deterministically.
+        if share_token == 0 {
+            return;
+        }
         self.shared_surface_by_token.remove(&share_token);
+        self.retired_share_tokens.insert(share_token);
     }
 
     /// Process a single command buffer submission and update state.
@@ -621,6 +643,9 @@ impl AeroGpuCommandProcessor {
                     }
                     if share_token == 0 {
                         return Err(CommandProcessorError::InvalidShareToken(share_token));
+                    }
+                    if self.retired_share_tokens.contains(&share_token) {
+                        return Err(CommandProcessorError::ShareTokenRetired(share_token));
                     }
                     // If the handle is itself an alias, normalize to the underlying surface.
                     let Some(underlying) = self.resolve_shared_surface_handle(resource_handle)

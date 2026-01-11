@@ -138,19 +138,28 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_c
   reset();
 }
 
-AllocRef AllocationListTracker::track_buffer_read(WddmAllocationHandle hAllocation, UINT alloc_id) {
-  return track_common(hAllocation, alloc_id, /*write=*/false);
+AllocRef AllocationListTracker::track_buffer_read(WddmAllocationHandle hAllocation,
+                                                  UINT alloc_id,
+                                                  uint64_t share_token) {
+  return track_common(hAllocation, alloc_id, share_token, /*write=*/false);
 }
 
-AllocRef AllocationListTracker::track_texture_read(WddmAllocationHandle hAllocation, UINT alloc_id) {
-  return track_common(hAllocation, alloc_id, /*write=*/false);
+AllocRef AllocationListTracker::track_texture_read(WddmAllocationHandle hAllocation,
+                                                   UINT alloc_id,
+                                                   uint64_t share_token) {
+  return track_common(hAllocation, alloc_id, share_token, /*write=*/false);
 }
 
-AllocRef AllocationListTracker::track_render_target_write(WddmAllocationHandle hAllocation, UINT alloc_id) {
-  return track_common(hAllocation, alloc_id, /*write=*/true);
+AllocRef AllocationListTracker::track_render_target_write(WddmAllocationHandle hAllocation,
+                                                          UINT alloc_id,
+                                                          uint64_t share_token) {
+  return track_common(hAllocation, alloc_id, share_token, /*write=*/true);
 }
 
-AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, UINT alloc_id, bool write) {
+AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
+                                             UINT alloc_id,
+                                             uint64_t share_token,
+                                             bool write) {
   AllocRef out{};
 
   if (!list_base_ || list_capacity_ == 0) {
@@ -174,6 +183,10 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
       out.status = AllocRefStatus::kAllocIdMismatch;
       return out;
     }
+    if (e.share_token != share_token) {
+      out.status = AllocRefStatus::kAllocIdMismatch;
+      return out;
+    }
 
     out.alloc_id = e.alloc_id;
     out.list_index = e.list_index;
@@ -192,7 +205,10 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
     //
     // This can legitimately happen for shared resources (same kernel allocation
     // opened multiple times, yielding distinct per-process handles). We treat it
-    // as an alias and deduplicate by alloc_id.
+    // as an alias and deduplicate by alloc_id, but only if it refers to the same
+    // underlying shared allocation (identified by share_token). Otherwise this is
+    // a collision and must be surfaced as a deterministic error (never silently
+    // alias distinct allocations).
     const uint64_t existing_key = slot_it->second;
     auto existing_it = handle_to_entry_.find(existing_key);
     if (existing_it == handle_to_entry_.end()) {
@@ -202,6 +218,10 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
     const Entry& existing = existing_it->second;
     if (existing.alloc_id != alloc_id) {
       out.status = AllocRefStatus::kAllocIdMismatch;
+      return out;
+    }
+    if (existing.share_token == 0 || share_token == 0 || existing.share_token != share_token) {
+      out.status = AllocRefStatus::kAllocIdCollision;
       return out;
     }
 
@@ -242,7 +262,7 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation, U
   // `alloc_id` separately in the allocation's private driver data.
   set_allocation_list_slot_id(entry, idx);
 
-  handle_to_entry_.emplace(key, Entry{idx, alloc_id});
+  handle_to_entry_.emplace(key, Entry{idx, alloc_id, share_token});
   alloc_id_to_handle_.emplace(alloc_id, key);
 
   out.alloc_id = alloc_id;

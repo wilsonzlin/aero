@@ -212,10 +212,10 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
         if entry.alloc_id == 0 {
             return Err(format!("alloc table entry {idx} has alloc_id=0"));
         }
-        if entry.gpa == 0 || entry.size_bytes == 0 {
+        if entry.size_bytes == 0 {
             return Err(format!(
-                "alloc table entry {idx} has invalid gpa/size (gpa=0x{:x}, size=0x{:x})",
-                entry.gpa, entry.size_bytes
+                "alloc table entry {idx} has size_bytes=0 (alloc_id={})",
+                entry.alloc_id
             ));
         }
         if entry.gpa.checked_add(entry.size_bytes).is_none() {
@@ -224,10 +224,14 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
                 entry.gpa, entry.size_bytes
             ));
         }
-        if out.contains_key(&entry.alloc_id) {
+        if let Some(existing) = out.get(&entry.alloc_id) {
             return Err(format!(
-                "alloc table contains duplicate alloc_id={}",
-                entry.alloc_id
+                "alloc table contains duplicate alloc_id={} (gpa0=0x{:x} size0={} gpa1=0x{:x} size1={})",
+                entry.alloc_id,
+                existing.gpa,
+                existing.size_bytes,
+                entry.gpa,
+                entry.size_bytes,
             ));
         }
         out.insert(

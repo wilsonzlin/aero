@@ -2955,7 +2955,7 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   D3DDDI_ALLOCATIONLIST list[1] = {};
   dev.alloc_list_tracker.rebind(list, 1, 0xFFFFu);
 
-  auto r0 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/1, /*alloc_id=*/1);
+  auto r0 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/1, /*alloc_id=*/1, /*share_token=*/0);
   if (!Check(r0.status == AllocRefStatus::kOk, "track_buffer_read first")) {
     return false;
   }
@@ -2977,7 +2977,7 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   if (!Check(dev.alloc_list_tracker.list_len() == 0, "allocation list reset after empty submit")) {
     return false;
   }
-  auto r1 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/2, /*alloc_id=*/2);
+  auto r1 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/2, /*alloc_id=*/2, /*share_token=*/0);
   if (!Check(r1.status == AllocRefStatus::kOk, "track_buffer_read after empty submit")) {
     return false;
   }

@@ -77,8 +77,8 @@ enum aerogpu_engine_id {
  *     appending fields. Hosts must ignore unknown trailing bytes.
  * - header.entry_count * header.entry_stride_bytes must fit within
  *   header.size_bytes.
- * - Each entry must have alloc_id != 0, gpa != 0, size_bytes != 0, and
- *   gpa+size_bytes must not overflow.
+ * - Each entry must have alloc_id != 0, size_bytes != 0, and gpa+size_bytes
+ *   must not overflow.
  * - alloc_id values must be unique within a table (duplicates are a validation
  *   error).
  * - The host must reject (validation error) any command that references

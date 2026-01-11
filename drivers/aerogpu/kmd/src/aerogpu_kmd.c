@@ -14,6 +14,28 @@
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 #define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
 
+#if DBG
+/*
+ * DBG-only rate limiting for logs that can be triggered by misbehaving guests.
+ *
+ * We log the first few instances and then only at exponentially increasing
+ * intervals (power-of-two counts) to avoid spamming the kernel debugger while
+ * still leaving breadcrumbs.
+ */
+#define AEROGPU_LOG_RATELIMITED(counter, burst, fmt, ...)                                                    \
+    do {                                                                                                      \
+        LONG _n = InterlockedIncrement(&(counter));                                                           \
+        if (_n <= (burst) || ((_n & (_n - 1)) == 0)) {                                                        \
+            AEROGPU_LOG(fmt, __VA_ARGS__);                                                                     \
+            if (_n == (burst)) {                                                                               \
+                AEROGPU_LOG0("... further messages of this type suppressed (ratelimited)");                    \
+            }                                                                                                  \
+        }                                                                                                      \
+    } while (0)
+#else
+#define AEROGPU_LOG_RATELIMITED(counter, burst, fmt, ...) ((void)0)
+#endif
+
 /*
  * Optional CreateAllocation tracing.
  *
@@ -337,10 +359,10 @@ static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta)
 }
 
 static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
-                                      _In_ UINT Count,
-                                      _Outptr_result_bytebuffer_(*OutSizeBytes) PVOID* OutVa,
-                                      _Out_ PHYSICAL_ADDRESS* OutPa,
-                                      _Out_ UINT* OutSizeBytes)
+                                       _In_ UINT Count,
+                                       _Outptr_result_bytebuffer_(*OutSizeBytes) PVOID* OutVa,
+                                       _Out_ PHYSICAL_ADDRESS* OutPa,
+                                       _Out_ UINT* OutSizeBytes)
 {
     if (!OutVa || !OutPa || !OutSizeBytes) {
         return STATUS_INVALID_PARAMETER;
@@ -457,12 +479,20 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
                     const uint64_t gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
                     const uint64_t sizeBytes = (uint64_t)alloc->SizeBytes;
                     if (seenGpa[slot] != gpa) {
-                        AEROGPU_LOG("BuildAllocTable: alloc_id collision: alloc_id=%lu gpa0=0x%I64x size0=%I64u gpa1=0x%I64x size1=%I64u",
-                                   (ULONG)allocId,
-                                   (ULONGLONG)seenGpa[slot],
-                                   (ULONGLONG)seenSize[slot],
-                                   (ULONGLONG)gpa,
-                                   (ULONGLONG)sizeBytes);
+#if DBG
+                        static volatile LONG g_BuildAllocTableAllocIdCollisionLogCount = 0;
+                        AEROGPU_LOG_RATELIMITED(
+                            g_BuildAllocTableAllocIdCollisionLogCount,
+                            8,
+                            "BuildAllocTable: alloc_id collision: alloc_id=%lu first_entry=%u gpa0=0x%I64x size0=%I64u list_index=%u gpa1=0x%I64x size1=%I64u",
+                            (ULONG)allocId,
+                            (unsigned)entryIndex,
+                            (ULONGLONG)seenGpa[slot],
+                            (ULONGLONG)seenSize[slot],
+                            (unsigned)i,
+                            (ULONGLONG)gpa,
+                            (ULONGLONG)sizeBytes);
+#endif
                         if (seenSize) {
                             ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
                         }
@@ -2601,6 +2631,10 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
                 privFlags = (ULONG)priv->flags;
                 const BOOLEAN privShared = (privFlags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED) ? TRUE : FALSE;
                 if (privShared != isShared) {
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Rollback;
+                }
+                if (!privShared && priv->share_token != 0) {
                     status = STATUS_INVALID_PARAMETER;
                     goto Rollback;
                 }

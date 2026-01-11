@@ -66,42 +66,45 @@ fn shared_surface_import_is_idempotent_but_alias_rebind_is_rejected() {
 }
 
 #[test]
-fn shared_surface_export_with_zero_token_is_an_error() {
+fn shared_surface_token_zero_is_rejected() {
     let mut table = SharedSurfaceTable::default();
     table.register_handle(1);
     assert!(matches!(
         table.export(1, 0),
         Err(SharedSurfaceError::InvalidToken(0))
     ));
-}
-
-#[test]
-fn shared_surface_import_with_zero_token_is_an_error() {
-    let mut table = SharedSurfaceTable::default();
     assert!(matches!(
-        table.import(1, 0),
+        table.import(2, 0),
         Err(SharedSurfaceError::InvalidToken(0))
     ));
 }
 
 #[test]
-fn shared_surface_export_with_zero_handle_is_an_error() {
+fn shared_surface_handle_zero_is_rejected() {
     let mut table = SharedSurfaceTable::default();
     assert!(matches!(
         table.export(0, 0x1122_3344_5566_7788),
         Err(SharedSurfaceError::InvalidHandle(0))
     ));
+    assert!(matches!(
+        table.import(0, 0x1122_3344_5566_7788),
+        Err(SharedSurfaceError::InvalidHandle(0))
+    ));
 }
 
 #[test]
-fn shared_surface_import_with_zero_alias_handle_is_an_error() {
+fn shared_surface_token_reuse_after_release_is_rejected() {
     let mut table = SharedSurfaceTable::default();
-    let token = 0xAAu64;
+    let token = 0xDEAD_BEEF_u64;
 
     table.register_handle(1);
+    table.register_handle(2);
+
     table.export(1, token).unwrap();
+    assert!(table.release_token(token));
+
     assert!(matches!(
-        table.import(0, token),
-        Err(SharedSurfaceError::InvalidHandle(0))
+        table.export(2, token),
+        Err(SharedSurfaceError::TokenRetired(_))
     ));
 }

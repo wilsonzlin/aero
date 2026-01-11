@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -46,6 +46,11 @@ pub struct AerogpuD3d9Executor {
     resource_refcounts: HashMap<u32, u32>,
     /// share_token -> underlying resource handle.
     shared_surface_by_token: HashMap<u64, u32>,
+    /// share_token values that were previously valid but were released (or otherwise removed).
+    ///
+    /// Prevents misbehaving guests from "re-arming" a released token by re-exporting it for a
+    /// different resource.
+    retired_share_tokens: HashSet<u64>,
     shaders: HashMap<u32, Shader>,
     input_layouts: HashMap<u32, InputLayout>,
 
@@ -177,6 +182,8 @@ pub enum AerogpuD3d9Error {
     ReadbackStencilUnsupported(u32),
     #[error("unknown shared surface token 0x{0:016X}")]
     UnknownShareToken(u64),
+    #[error("shared surface token 0x{0:016X} was previously released and cannot be reused")]
+    ShareTokenRetired(u64),
     #[error(
         "shared surface token 0x{share_token:016X} already exported (existing_handle={existing} new_handle={new})"
     )]
@@ -745,6 +752,7 @@ impl AerogpuD3d9Executor {
             resource_handles: HashMap::new(),
             resource_refcounts: HashMap::new(),
             shared_surface_by_token: HashMap::new(),
+            retired_share_tokens: HashSet::new(),
             shaders: HashMap::new(),
             input_layouts: HashMap::new(),
             constants_buffer,
@@ -777,6 +785,7 @@ impl AerogpuD3d9Executor {
         self.resource_handles.clear();
         self.resource_refcounts.clear();
         self.shared_surface_by_token.clear();
+        self.retired_share_tokens.clear();
         self.shaders.clear();
         self.input_layouts.clear();
         self.presented_scanouts.clear();
@@ -1383,7 +1392,15 @@ impl AerogpuD3d9Executor {
 
         self.resource_refcounts.remove(&underlying);
         self.resources.remove(&underlying);
-        self.shared_surface_by_token.retain(|_, v| *v != underlying);
+        let to_retire: Vec<u64> = self
+            .shared_surface_by_token
+            .iter()
+            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
+            .collect();
+        for token in to_retire {
+            self.shared_surface_by_token.remove(&token);
+            self.retired_share_tokens.insert(token);
+        }
         self.presented_scanouts.retain(|_, v| *v != underlying);
     }
 
@@ -1392,7 +1409,11 @@ impl AerogpuD3d9Executor {
         //
         // Existing imported aliases remain valid and keep the underlying resource alive. We only
         // remove the token mapping so future imports fail deterministically.
+        if share_token == 0 {
+            return;
+        }
         self.shared_surface_by_token.remove(&share_token);
+        self.retired_share_tokens.insert(share_token);
     }
 
     fn execute_cmd(
@@ -3042,6 +3063,9 @@ impl AerogpuD3d9Executor {
                     return Err(AerogpuD3d9Error::Validation(
                         "EXPORT_SHARED_SURFACE: share_token 0 is reserved".into(),
                     ));
+                }
+                if self.retired_share_tokens.contains(&share_token) {
+                    return Err(AerogpuD3d9Error::ShareTokenRetired(share_token));
                 }
                 let underlying = self.resolve_resource_handle(resource_handle)?;
                 match self.resources.get(&underlying) {

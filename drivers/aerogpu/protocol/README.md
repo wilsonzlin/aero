@@ -188,23 +188,43 @@ validation rules, `backing_offset_bytes` / `row_pitch_bytes` interpretation, ali
 - For **shared allocations** (cross-process `OpenResource`), the UMD must embed
   the chosen `alloc_id` into the preserved WDDM allocation private data blob so
   it can be recovered in another process. See `aerogpu_wddm_alloc.h`.
-- `alloc_id` values for shared allocations should avoid collisions across guest
-  processes: DWM may compose many redirected surfaces from different processes
-  in a single submission, and the per-submit allocation table is keyed by
-  `alloc_id`. `alloc_id` must be non-zero and stay in the UMD-owned range
-  (`alloc_id <= 0x7fffffff`). A simple implementation is to allocate it from a
-  cross-process monotonic counter (e.g. named shared memory / file mapping +
-  atomic increment) and clamp/mask it into range (skipping 0).
-- For D3D9Ex shared surfaces, `share_token` (as used by
-  `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
-  processes and must not be derived from process-local handle values.
+ - `alloc_id` values for shared allocations should avoid collisions across guest
+   processes: DWM may compose many redirected surfaces from different processes
+   in a single submission, and the per-submit allocation table is keyed by
+   `alloc_id`. `alloc_id` must be non-zero and stay in the UMD-owned range
+   (`alloc_id <= 0x7fffffff`). A simple implementation is to allocate it from a
+   cross-process monotonic counter (e.g. named shared memory / file mapping +
+   atomic increment) and clamp/mask it into range (skipping 0).
+ - **Collision policy:** `alloc_id` must uniquely identify a backing allocation
+   within a submission. Duplicate `alloc_id` values are only allowed when they
+   refer to the **same underlying backing** (same guest physical address), which
+   can happen when a shared resource is opened multiple times and yields distinct
+   per-process allocation handles.
+   - If the KMD observes the same `alloc_id` mapping to **different** GPAs while
+     building the per-submit allocation table, it must reject the submission
+     deterministically (current Win7 KMD: `STATUS_INVALID_PARAMETER`).
+   - If the host observes a malformed/ambiguous allocation table (including
+     duplicate `alloc_id` entries), it must treat the submission as failed, but
+     must still complete/advance the fence (to avoid deadlock).
+ - For D3D9Ex shared surfaces, `share_token` (as used by
+   `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
+   processes and must not be derived from process-local handle values.
   Canonical contract: the Win7 KMD generates a stable non-zero `share_token` and
-  persists it in the preserved WDDM allocation private driver data blob
-  (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-  dxgkrnl preserves the blob and returns the exact same bytes on cross-process
-  `OpenResource`, so both processes observe the same `share_token`.
-- The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
-  the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
+   persists it in the preserved WDDM allocation private driver data blob
+   (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+   dxgkrnl preserves the blob and returns the exact same bytes on cross-process
+   `OpenResource`, so both processes observe the same `share_token`.
+  - **Collision policy:** `share_token` must be treated as a **globally unique**
+    identifier. The host must detect and reject:
+    - `EXPORT_SHARED_SURFACE` attempting to bind an already-exported token to a
+      different resource, and
+    - `EXPORT_SHARED_SURFACE` attempting to reuse a token that was previously
+      released (`RELEASE_SHARED_SURFACE`), and
+    - `IMPORT_SHARED_SURFACE` using an unknown/released token.
+    Current host behavior: mark the submission as failed (error/IRQ), but still
+    advance the fence.
+ - The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
+   the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 
 See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist
 `alloc_id` across CreateAllocation/OpenAllocation.

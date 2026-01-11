@@ -28,6 +28,23 @@ For shared allocations, dxgkrnl preserves these bytes and returns them verbatim 
 another process opens the shared resource, so the opening UMD instance observes the
 same `share_token`.
 
+### Collision policy
+
+`share_token` must be treated as a **globally unique** identifier:
+
+- `share_token == 0` is reserved/invalid.
+- If the host observes an `EXPORT_SHARED_SURFACE` attempting to re-bind an
+  already-exported token to a *different* resource, it must fail deterministically
+  (never silently retarget the token).
+- Once a token is released (`RELEASE_SHARED_SURFACE`) it must be treated as **retired**
+  and must never be re-exported for a new resource (misbehaving guests must get a
+  deterministic error rather than silently re-arming a stale token).
+- If the host observes an `IMPORT_SHARED_SURFACE` for an unknown/released token,
+  it must fail deterministically.
+- Host failures must **not** block fence completion: the submission must still
+  complete and advance the fence with an error indication (so the guest cannot
+  deadlock waiting on a fence that will never signal).
+
 ## Expected flow (UMD ↔ KMD ↔ host)
 
 ### 1) Create shared resource → export (token)
@@ -68,3 +85,14 @@ It should:
 3. Child opens the resource and validates content via readback.
 
 This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handles differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
+
+## Validation: alloc_id uniqueness under DWM-like batching
+
+Use the multi-producer D3D9Ex test app:
+
+- `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_many_producers/main.cpp`
+
+It spawns multiple producer processes and opens their shared surfaces in a
+compositor process, then references all of them in a single `Flush` (one
+submission). This stresses the `alloc_id` uniqueness requirement across processes
+for batched submissions (DWM composition case).

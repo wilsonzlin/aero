@@ -214,11 +214,14 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
 
   AllocRef ref{};
   if (write) {
-    ref = dev->alloc_list_tracker.track_render_target_write(res->wddm_hAllocation, res->backing_alloc_id);
+    ref = dev->alloc_list_tracker.track_render_target_write(
+        res->wddm_hAllocation, res->backing_alloc_id, res->share_token);
   } else if (res->kind == ResourceKind::Buffer) {
-    ref = dev->alloc_list_tracker.track_buffer_read(res->wddm_hAllocation, res->backing_alloc_id);
+    ref = dev->alloc_list_tracker.track_buffer_read(
+        res->wddm_hAllocation, res->backing_alloc_id, res->share_token);
   } else {
-    ref = dev->alloc_list_tracker.track_texture_read(res->wddm_hAllocation, res->backing_alloc_id);
+    ref = dev->alloc_list_tracker.track_texture_read(
+        res->wddm_hAllocation, res->backing_alloc_id, res->share_token);
   }
 
   if (ref.status == AllocRefStatus::kNeedFlush) {
@@ -226,11 +229,14 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
     (void)submit_locked(dev);
 
     if (write) {
-      ref = dev->alloc_list_tracker.track_render_target_write(res->wddm_hAllocation, res->backing_alloc_id);
+      ref = dev->alloc_list_tracker.track_render_target_write(
+          res->wddm_hAllocation, res->backing_alloc_id, res->share_token);
     } else if (res->kind == ResourceKind::Buffer) {
-      ref = dev->alloc_list_tracker.track_buffer_read(res->wddm_hAllocation, res->backing_alloc_id);
+      ref = dev->alloc_list_tracker.track_buffer_read(
+          res->wddm_hAllocation, res->backing_alloc_id, res->share_token);
     } else {
-      ref = dev->alloc_list_tracker.track_texture_read(res->wddm_hAllocation, res->backing_alloc_id);
+      ref = dev->alloc_list_tracker.track_texture_read(
+          res->wddm_hAllocation, res->backing_alloc_id, res->share_token);
     }
   }
 

@@ -31,7 +31,7 @@
 
 namespace aerogpu {
 
-using WddmAllocationHandle = decltype(std::declval<D3DDDI_ALLOCATIONLIST>().hAllocation);
+ using WddmAllocationHandle = decltype(std::declval<D3DDDI_ALLOCATIONLIST>().hAllocation);
 
 // Result of tracking an allocation reference.
 enum class AllocRefStatus : uint32_t {
@@ -50,8 +50,8 @@ struct AllocRef {
   AllocRefStatus status = AllocRefStatus::kOk;
 };
 
-class AllocationListTracker {
- public:
+ class AllocationListTracker {
+  public:
   AllocationListTracker() = default;
   AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
                         UINT list_capacity,
@@ -77,21 +77,26 @@ class AllocationListTracker {
     return list_capacity_;
   }
 
-  D3DDDI_ALLOCATIONLIST* list_base() const {
-    return list_base_;
-  }
+   D3DDDI_ALLOCATIONLIST* list_base() const {
+     return list_base_;
+   }
 
-  AllocRef track_buffer_read(WddmAllocationHandle hAllocation, UINT alloc_id);
-  AllocRef track_texture_read(WddmAllocationHandle hAllocation, UINT alloc_id);
-  AllocRef track_render_target_write(WddmAllocationHandle hAllocation, UINT alloc_id);
+  // `share_token` is required to disambiguate alloc_id aliases (same shared allocation opened
+  // multiple times) from alloc_id collisions (different allocations accidentally sharing an ID).
+  //
+  // For non-shared allocations, pass share_token=0.
+  AllocRef track_buffer_read(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
+  AllocRef track_texture_read(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
+  AllocRef track_render_target_write(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
 
  private:
   struct Entry {
     UINT list_index = 0;
     UINT alloc_id = 0;
+    uint64_t share_token = 0;
   };
 
-  AllocRef track_common(WddmAllocationHandle hAllocation, UINT alloc_id, bool write);
+  AllocRef track_common(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token, bool write);
 
   D3DDDI_ALLOCATIONLIST* list_base_ = nullptr;
   UINT list_capacity_ = 0;

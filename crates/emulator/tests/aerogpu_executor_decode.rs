@@ -11,6 +11,9 @@ use emulator::devices::aerogpu_ring::{
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
     RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
+use emulator::gpu_worker::aerogpu_backend::{
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+};
 use emulator::gpu_worker::aerogpu_executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
 };
@@ -585,5 +588,120 @@ fn malformed_cmd_stream_size_sets_error_irq() {
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
     assert_eq!(regs.completed_fence, 5);
     assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+}
+
+#[test]
+fn backend_submit_error_does_not_block_fence_completion() {
+    #[derive(Default)]
+    struct RejectBackend;
+
+    impl AeroGpuCommandBackend for RejectBackend {
+        fn reset(&mut self) {}
+
+        fn submit(
+            &mut self,
+            _mem: &mut dyn MemoryBus,
+            submission: AeroGpuBackendSubmission,
+        ) -> Result<(), String> {
+            Err(format!("rejected fence={}", submission.signal_fence))
+        }
+
+        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+            Vec::new()
+        }
+
+        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+            None
+        }
+    }
+
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::<RejectBackend>::default());
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Submit an empty command stream; the backend still receives the submission.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, 0, 0, 0, 0, 7);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 7);
+    assert_eq!(regs.stats.gpu_exec_errors, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+}
+
+#[test]
+fn backend_completion_error_advances_fence_and_sets_error_irq() {
+    #[derive(Default)]
+    struct ErrorCompletionBackend {
+        completed: Vec<AeroGpuBackendCompletion>,
+    }
+
+    impl AeroGpuCommandBackend for ErrorCompletionBackend {
+        fn reset(&mut self) {
+            self.completed.clear();
+        }
+
+        fn submit(
+            &mut self,
+            _mem: &mut dyn MemoryBus,
+            submission: AeroGpuBackendSubmission,
+        ) -> Result<(), String> {
+            self.completed.push(AeroGpuBackendCompletion {
+                fence: submission.signal_fence,
+                error: Some("simulated backend execution failure".into()),
+            });
+            Ok(())
+        }
+
+        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+            self.completed.drain(..).collect()
+        }
+
+        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+            None
+        }
+    }
+
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::<ErrorCompletionBackend>::default());
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, 0, 0, 0, 0, 9);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 9);
+    assert_eq!(regs.stats.gpu_exec_errors, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
 }

@@ -134,7 +134,8 @@ typedef struct aerogpu_wddm_alloc_priv {
    *
    * For shared allocations, alloc_id should be unique across guest processes
    * because DWM may reference many redirected surfaces from different processes
-   * in a single submission.
+   * in a single submission. alloc_id collisions must be treated as fatal
+   * validation errors (never silently alias distinct allocations).
    */
   aerogpu_wddm_u32 alloc_id;
 
@@ -150,7 +151,12 @@ typedef struct aerogpu_wddm_alloc_priv {
    * process opens the shared resource, allowing the opening UMD instance to
    * recover the same token.
    *
-   * Must be 0 for non-shared allocations.
+   * Collision policy:
+   * - share_token is treated as a globally unique identifier on the host.
+   * - share_token == 0 is reserved/invalid.
+   *
+   * Must be 0 for non-shared allocations (KMD rejects non-zero tokens when the
+   * shared flag is not set).
    *
    * Do NOT derive this from the numeric value of the D3D shared `HANDLE`: handle
    * values are process-local and not stable cross-process.

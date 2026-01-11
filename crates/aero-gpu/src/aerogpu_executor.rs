@@ -147,9 +147,10 @@ impl AllocTable {
                     "alloc table entry {alloc_id} gpa+size overflow"
                 )));
             }
-            if map.insert(alloc_id, entry).is_some() {
+            if let Some(existing) = map.insert(alloc_id, entry) {
                 return Err(ExecutorError::Validation(format!(
-                    "alloc table contains duplicate alloc_id={alloc_id}"
+                    "alloc table contains duplicate alloc_id={alloc_id} (gpa0=0x{:x} size0={} gpa1=0x{:x} size1={})",
+                    existing.gpa, existing.size_bytes, entry.gpa, entry.size_bytes
                 )));
             }
         }

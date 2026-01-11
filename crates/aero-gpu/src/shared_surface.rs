@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -10,6 +10,8 @@ pub(crate) enum SharedSurfaceError {
     UnknownHandle(u32),
     #[error("invalid shared surface token 0x{0:016X} (0 is reserved)")]
     InvalidToken(u64),
+    #[error("shared surface token 0x{0:016X} was previously released and cannot be reused")]
+    TokenRetired(u64),
     #[error("unknown shared surface token 0x{0:016X}")]
     UnknownToken(u64),
     #[error(
@@ -42,6 +44,11 @@ pub(crate) enum SharedSurfaceError {
 pub(crate) struct SharedSurfaceTable {
     /// `share_token -> underlying resource handle`.
     by_token: HashMap<u64, u32>,
+    /// `share_token` values that were previously valid but were released (or otherwise removed).
+    ///
+    /// This prevents misbehaving guests from "re-arming" a released token by re-exporting it for
+    /// a different resource, which could otherwise resurrect stale handles.
+    retired_tokens: HashSet<u64>,
     /// `handle -> underlying resource handle`.
     ///
     /// - Original resources are stored as `handle -> handle`
@@ -52,8 +59,21 @@ pub(crate) struct SharedSurfaceTable {
 }
 
 impl SharedSurfaceTable {
+    fn retire_tokens_for_underlying(&mut self, underlying: u32) {
+        let to_retire: Vec<u64> = self
+            .by_token
+            .iter()
+            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
+            .collect();
+        for token in to_retire {
+            self.by_token.remove(&token);
+            self.retired_tokens.insert(token);
+        }
+    }
+
     pub(crate) fn clear(&mut self) {
         self.by_token.clear();
+        self.retired_tokens.clear();
         self.handles.clear();
         self.refcounts.clear();
     }
@@ -83,6 +103,9 @@ impl SharedSurfaceTable {
         }
         if share_token == 0 {
             return Err(SharedSurfaceError::InvalidToken(share_token));
+        }
+        if self.retired_tokens.contains(&share_token) {
+            return Err(SharedSurfaceError::TokenRetired(share_token));
         }
         let underlying = self
             .handles
@@ -147,7 +170,9 @@ impl SharedSurfaceTable {
         if share_token == 0 {
             return false;
         }
-        self.by_token.remove(&share_token).is_some()
+        let existed = self.by_token.remove(&share_token).is_some();
+        self.retired_tokens.insert(share_token);
+        existed
     }
 
     /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if the
@@ -161,7 +186,7 @@ impl SharedSurfaceTable {
         let Some(count) = self.refcounts.get_mut(&underlying) else {
             // Table invariant broken (handle tracked but no refcount entry). Treat as last-ref so
             // callers can clean up the underlying resource instead of leaking it.
-            self.by_token.retain(|_, v| *v != underlying);
+            self.retire_tokens_for_underlying(underlying);
             return Some((underlying, true));
         };
 
@@ -171,7 +196,7 @@ impl SharedSurfaceTable {
         }
 
         self.refcounts.remove(&underlying);
-        self.by_token.retain(|_, v| *v != underlying);
+        self.retire_tokens_for_underlying(underlying);
         Some((underlying, true))
     }
 }

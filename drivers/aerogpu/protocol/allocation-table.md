@@ -94,7 +94,6 @@ These rules apply **everywhere the alloc table is consumed** (software executor,
 For each entry:
 
 - `alloc_id != 0`
-- `gpa != 0`
 - `size_bytes != 0`
 - `gpa + size_bytes` must not overflow `u64`
 - `alloc_id` must be unique within the table (duplicates are an error).

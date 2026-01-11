@@ -492,6 +492,50 @@ fn d3d9_cmd_stream_exporting_same_token_for_different_resources_is_an_error() {
 }
 
 #[test]
+fn d3d9_cmd_stream_token_reuse_after_release_is_rejected_on_export() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TEX_A: u32 = 0x10;
+    const TEX_B: u32 = 0x11;
+    const TOKEN: u64 = 0x1111_2222_3333_4444;
+    let width = 1u32;
+    let height = 1u32;
+
+    let stream = build_stream(|out| {
+        emit_create_texture2d_rgba8(out, TEX_A, width, height);
+        emit_packet(out, OPC_EXPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_A);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+
+        emit_packet(out, OPC_RELEASE_SHARED_SURFACE, |out| {
+            push_u64(out, TOKEN);
+            push_u64(out, 0);
+        });
+
+        emit_create_texture2d_rgba8(out, TEX_B, width, height);
+        emit_packet(out, OPC_EXPORT_SHARED_SURFACE, |out| {
+            push_u32(out, TEX_B);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+    });
+
+    let err = exec
+        .execute_cmd_stream(&stream)
+        .expect_err("token reuse after RELEASE_SHARED_SURFACE should be rejected");
+    assert!(matches!(err, AerogpuD3d9Error::ShareTokenRetired(t) if t == TOKEN));
+}
+
+#[test]
 fn d3d9_cmd_stream_importing_into_existing_alias_for_different_original_is_an_error() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
