@@ -134,24 +134,6 @@ constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-// Win7 D3D11 runtime requests a specific user-mode DDI interface version. If we
-// accept a version, we must fill function tables whose struct layout matches
-// that version (otherwise the runtime can crash during device creation).
-// `D3D10DDIARG_OPENADAPTER::Version` negotiation constant.
-// Some WDKs expose `D3D11DDI_SUPPORTED`; others only provide `D3D11DDI_INTERFACE_VERSION`.
-#if defined(D3D11DDI_SUPPORTED)
-constexpr UINT kAeroGpuWin7D3D11DdiSupportedVersion = D3D11DDI_SUPPORTED;
-#else
-constexpr UINT kAeroGpuWin7D3D11DdiSupportedVersion = D3D11DDI_INTERFACE_VERSION;
-#endif
-
-// Compile-time sanity (avoid sizeof assertions; layouts vary across WDKs).
-static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pfnCreateResource)>,
-              "Expected D3D11DDI_DEVICEFUNCS::pfnCreateResource");
-static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw)>,
-              "Expected D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw");
-#endif
 
 // -------------------------------------------------------------------------------------------------
 // Optional bring-up logging for adapter caps queries.
@@ -445,16 +427,6 @@ struct AeroGpuAdapter {
   uint64_t next_fence = 1;
   uint64_t completed_fence = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  aerogpu_umd_private_v1 umd_private = {};
-  bool umd_private_valid = false;
-
-  D3D10DDI_HRTADAPTER hrt_adapter = {};
-  const void* adapter_callbacks = nullptr;
-
-  // Optional D3DKMT adapter handle for dev-only escapes (e.g. QUERY_FENCE).
-  D3DKMT_HANDLE kmt_adapter = 0;
-#endif
 };
 
 #if defined(_WIN32)
@@ -678,16 +650,6 @@ struct AeroGpuResource {
   uint32_t dxgi_format = 0;
   uint32_t row_pitch_bytes = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  uint64_t wddm_allocation = 0;
-
-  // When Map/Unmap is implemented via the runtime LockCb/UnlockCb path, keep the
-  // lock pointer/pitch here so Unmap can copy the final bytes into `storage`
-  // (used by the bring-up upload path) before unlocking.
-  void* mapped_wddm_ptr = nullptr;
-  uint32_t mapped_wddm_pitch = 0;
-  uint32_t mapped_wddm_slice_pitch = 0;
-#endif
 
   // CPU-visible backing storage for resource uploads.
   //
@@ -708,12 +670,6 @@ struct AeroGpuResource {
   uint64_t mapped_offset_bytes = 0;
   uint64_t mapped_size_bytes = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  // WDDM handles returned by the runtime allocation callback (kernel-mode
-  // objects). The initial bring-up path uses a single allocation per resource.
-  D3DKMT_HANDLE hkm_resource = 0;
-  D3DKMT_HANDLE hkm_allocation = 0;
-#endif
 };
 
 struct AeroGpuShader {
@@ -786,27 +742,6 @@ struct AeroGpuDevice {
 
   std::vector<AeroGpuResource*> live_resources;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  // Monitored fence state for Win7/WDDM 1.1.
-  //
-  // - `kmt_fence_syncobj` should be a monitored-fence sync object that advances as the KMD reports
-  //   DMA-buffer completion via DXGK_INTERRUPT_TYPE_DMA_COMPLETED.
-  // - `monitored_fence_value` optionally points at the CPU VA of the fence value for fast queries.
-  // - `kmt_adapter` is used only for the escape-based fallback query path.
-  //
-  // These fields are expected to be initialized by the WDK build's device/context creation path.
-  D3DKMT_HANDLE kmt_fence_syncobj = 0;
-  volatile uint64_t* monitored_fence_value = nullptr;
-  D3DKMT_HANDLE kmt_adapter = 0;
-
-  // WDDM submission plumbing (dxgkrnl callback table + runtime handle).
-  D3D10DDI_HRTDEVICE hrt_device = {};
-  D3DDDI_DEVICECALLBACKS callbacks = {};
-
-  // Mark that the next submission is triggered by Present; used to route the
-  // final chunk through the Present callback so the KMD hits DxgkDdiPresent.
-  bool next_submit_is_present = false;
-#endif
 
   // Cached state.
   AeroGpuResource* current_rtv = nullptr;
@@ -832,89 +767,6 @@ struct AeroGpuDevice {
   }
 };
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-static HRESULT UploadInitialDataToWddmAllocation(AeroGpuDevice* dev,
-                                                 uint64_t allocation,
-                                                 const void* src,
-                                                 size_t bytes) {
-  if (!dev || !dev->callbacks || !dev->callbacks->pfnLockCb || !dev->callbacks->pfnUnlockCb || !src || !bytes ||
-      !allocation) {
-    return E_INVALIDARG;
-  }
-
-  D3DDDICB_LOCK lock = {};
-  lock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
-  HRESULT hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
-  if (FAILED(hr)) {
-    return hr;
-  }
-  if (!lock.pData) {
-    D3DDDICB_UNLOCK unlock = {};
-    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
-    dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
-    return E_FAIL;
-  }
-
-  std::memcpy(lock.pData, src, bytes);
-
-  D3DDDICB_UNLOCK unlock = {};
-  unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
-  hr = dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
-  return hr;
-}
-
-static HRESULT UploadInitialDataTex2DToWddmAllocation(AeroGpuDevice* dev,
-                                                      uint64_t allocation,
-                                                      const void* src,
-                                                      uint32_t width,
-                                                      uint32_t height,
-                                                      uint32_t bytes_per_pixel,
-                                                      uint32_t src_pitch,
-                                                      uint32_t dst_pitch) {
-  if (!dev || !dev->callbacks || !dev->callbacks->pfnLockCb || !dev->callbacks->pfnUnlockCb || !src || !width ||
-      !height || !bytes_per_pixel || !allocation) {
-    return E_INVALIDARG;
-  }
-
-  const uint64_t bytes_per_row = static_cast<uint64_t>(width) * static_cast<uint64_t>(bytes_per_pixel);
-  if (bytes_per_row > UINT32_MAX) {
-    return E_INVALIDARG;
-  }
-  if (src_pitch && src_pitch < bytes_per_row) {
-    return E_INVALIDARG;
-  }
-  if (dst_pitch < bytes_per_row) {
-    return E_INVALIDARG;
-  }
-
-  D3DDDICB_LOCK lock = {};
-  lock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
-  HRESULT hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
-  if (FAILED(hr)) {
-    return hr;
-  }
-  if (!lock.pData) {
-    D3DDDICB_UNLOCK unlock = {};
-    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
-    dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
-    return E_FAIL;
-  }
-
-  const uint8_t* src_bytes = static_cast<const uint8_t*>(src);
-  uint8_t* dst_bytes = static_cast<uint8_t*>(lock.pData);
-  const uint32_t effective_src_pitch = src_pitch ? src_pitch : static_cast<uint32_t>(bytes_per_row);
-  for (uint32_t y = 0; y < height; y++) {
-    std::memcpy(dst_bytes + static_cast<size_t>(y) * dst_pitch,
-                src_bytes + static_cast<size_t>(y) * effective_src_pitch,
-                static_cast<size_t>(bytes_per_row));
-  }
-
-  D3DDDICB_UNLOCK unlock = {};
-  unlock.hAllocation = static_cast<D3DKMT_HANDLE>(allocation);
-  hr = dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
-  return hr;
-}
-#endif
 
 template <typename THandle, typename TObject>
 TObject* FromHandle(THandle h) {
@@ -1003,73 +855,12 @@ void track_current_state_allocs_for_submit_locked(AeroGpuDevice* dev) {
   }
 }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-struct AeroGpuD3dkmtProcs {
-  decltype(&D3DKMTEscape) pfn_escape = nullptr;
-  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
-};
-
-const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
-  static AeroGpuD3dkmtProcs procs = [] {
-    AeroGpuD3dkmtProcs p{};
-    HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
-    if (!gdi32) {
-      gdi32 = LoadLibraryW(L"gdi32.dll");
-    }
-    if (!gdi32) {
-      return p;
-    }
-
-    p.pfn_escape = reinterpret_cast<decltype(&D3DKMTEscape)>(GetProcAddress(gdi32, "D3DKMTEscape"));
-    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
-        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
-    return p;
-  }();
-  return procs;
-}
-#endif
 
 uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
   if (!dev) {
     return 0;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  if (dev->monitored_fence_value) {
-    const uint64_t completed = *dev->monitored_fence_value;
-    atomic_max_u64(&dev->last_completed_fence, completed);
-    return completed;
-  }
-
-  // Dev-only fallback: ask the KMD for its fence tracking state via Escape.
-  if (dev->kmt_adapter) {
-    const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
-    if (procs.pfn_escape) {
-      aerogpu_escape_query_fence_out q{};
-      q.hdr.version = AEROGPU_ESCAPE_VERSION;
-      q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
-      q.hdr.size = sizeof(q);
-      q.hdr.reserved0 = 0;
-
-      D3DKMT_ESCAPE e{};
-      e.hAdapter = dev->kmt_adapter;
-      e.hDevice = 0;
-      e.hContext = 0;
-      e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-      e.Flags.Value = 0;
-      e.pPrivateDriverData = &q;
-      e.PrivateDriverDataSize = sizeof(q);
-
-      const NTSTATUS st = procs.pfn_escape(&e);
-      if (NT_SUCCESS(st)) {
-        atomic_max_u64(&dev->last_submitted_fence, static_cast<uint64_t>(q.last_submitted_fence));
-        atomic_max_u64(&dev->last_completed_fence, static_cast<uint64_t>(q.last_completed_fence));
-      }
-    }
-  }
-
-  return dev->last_completed_fence.load(std::memory_order_relaxed);
-#else
   if (!dev->adapter) {
     return dev->last_completed_fence.load(std::memory_order_relaxed);
   }
@@ -1078,7 +869,6 @@ uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
   const uint64_t completed = dev->adapter->completed_fence;
   atomic_max_u64(&dev->last_completed_fence, completed);
   return completed;
-#endif
 }
 
 // Waits for `fence` to be completed.
@@ -1100,40 +890,6 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
     return S_OK;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  if (!dev->kmt_fence_syncobj) {
-    return E_FAIL;
-  }
-
-  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
-  if (!procs.pfn_wait_for_syncobj) {
-    return E_FAIL;
-  }
-
-  const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
-  const UINT64 fence_values[1] = {fence};
-  const UINT64 timeout = (timeout_ms == kAeroGpuTimeoutMsInfinite) ? ~0ull : static_cast<UINT64>(timeout_ms);
-
-  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-  args.ObjectCount = 1;
-  args.ObjectHandleArray = handles;
-  args.FenceValueArray = fence_values;
-  args.Timeout = timeout;
-
-  const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
-  if (st == STATUS_TIMEOUT) {
-    return kDxgiErrorWasStillDrawing;
-  }
-  if (!NT_SUCCESS(st)) {
-    return E_FAIL;
-  }
-
-  // Waiting succeeded => the fence is at least complete even if we cannot query a monitored value.
-  atomic_max_u64(&dev->last_completed_fence, fence);
-
-  (void)AeroGpuQueryCompletedFence(dev);
-  return S_OK;
-#else
   if (!dev->adapter) {
     return E_FAIL;
   }
@@ -1159,51 +915,12 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
 
   atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
   return S_OK;
-#endif
 }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-void SetErrorIfPossible(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) {
-  if (!dev) {
-    return;
-  }
-  if (dev->callbacks.pfnSetErrorCb) {
-    dev->callbacks.pfnSetErrorCb(hDevice, hr);
-  }
-}
-
-HRESULT DeallocateResourceIfNeeded(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpuResource* res) {
-  if (!dev || !res) {
-    return E_INVALIDARG;
-  }
-  if (!dev->callbacks.pfnDeallocateCb) {
-    return S_OK;
-  }
-  if (res->hkm_resource == 0 && res->hkm_allocation == 0) {
-    return S_OK;
-  }
-
-  D3DDDICB_DEALLOCATE dealloc = {};
-  dealloc.hKMResource = res->hkm_resource;
-  dealloc.NumAllocations = (res->hkm_allocation != 0) ? 1u : 0u;
-  dealloc.HandleList = (res->hkm_allocation != 0) ? &res->hkm_allocation : nullptr;
-
-  const HRESULT hr = dev->callbacks.pfnDeallocateCb(dev->hrt_device, &dealloc);
-  if (FAILED(hr)) {
-    SetErrorIfPossible(dev, hDevice, hr);
-    return hr;
-  }
-
-  res->hkm_allocation = 0;
-  res->hkm_resource = 0;
-  return S_OK;
-}
-#else
 inline void SetErrorIfPossible(AeroGpuDevice*, D3D10DDI_HDEVICE, HRESULT) {}
 inline HRESULT DeallocateResourceIfNeeded(AeroGpuDevice*, D3D10DDI_HDEVICE, AeroGpuResource*) {
   return S_OK;
 }
-#endif
 
 inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) {
   if (dev) {
@@ -1302,173 +1019,6 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
 
   dev->cmd.finalize();
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
-  const D3D10DDI_HRTDEVICE hrt_device = dev->hrt_device;
-
-  const bool want_present = dev->next_submit_is_present;
-  dev->next_submit_is_present = false;
-
-  if (!cb || !cb->pfnAllocateCb || !cb->pfnRenderCb || !cb->pfnDeallocateCb) {
-    if (out_hr) {
-      *out_hr = E_FAIL;
-    }
-    dev->cmd.reset();
-    return 0;
-  }
-
-  const uint8_t* src = dev->cmd.data();
-  const size_t src_size = dev->cmd.size();
-  if (src_size < sizeof(aerogpu_cmd_stream_header)) {
-    if (out_hr) {
-      *out_hr = E_FAIL;
-    }
-    dev->cmd.reset();
-    return 0;
-  }
-
-  uint64_t last_fence = 0;
-
-  // Chunk at packet boundaries if the runtime returns a smaller-than-requested
-  // DMA buffer. Each chunk is a self-contained AeroGPU command stream (header +
-  // N packets).
-  size_t cur = sizeof(aerogpu_cmd_stream_header);
-  while (cur < src_size) {
-    const size_t remaining_packets_bytes = src_size - cur;
-
-    // Allocate a DMA buffer from the runtime (plus empty allocation/patch lists).
-    D3DDDICB_ALLOCATE alloc = {};
-    alloc.DmaBufferSize = static_cast<UINT>(remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header));
-    alloc.AllocationListSize = 0;
-    alloc.PatchLocationListSize = 0;
-
-    HRESULT hr = cb->pfnAllocateCb(hrt_device, &alloc);
-    if (FAILED(hr) || !alloc.pDmaBuffer || alloc.DmaBufferSize == 0) {
-      if (out_hr) {
-        *out_hr = FAILED(hr) ? hr : E_OUTOFMEMORY;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    // Safety: avoid overflow (cmd stream must always contain at least 1 packet per DMA buffer).
-    const size_t dma_cap = static_cast<size_t>(alloc.DmaBufferSize);
-    if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
-      D3DDDICB_DEALLOCATE dealloc = {};
-      dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      dealloc.pAllocationList = alloc.pAllocationList;
-      dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      cb->pfnDeallocateCb(hrt_device, &dealloc);
-
-      if (out_hr) {
-        *out_hr = E_OUTOFMEMORY;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    // Build chunk within dma_cap.
-    const size_t chunk_begin = cur;
-    size_t chunk_end = cur;
-    size_t chunk_size = sizeof(aerogpu_cmd_stream_header);
-
-    while (chunk_end < src_size) {
-      const auto* pkt = reinterpret_cast<const aerogpu_cmd_hdr*>(src + chunk_end);
-      const size_t pkt_size = static_cast<size_t>(pkt->size_bytes);
-      if (pkt_size < sizeof(aerogpu_cmd_hdr) || (pkt_size & 3u) != 0 || chunk_end + pkt_size > src_size) {
-        // Malformed command stream; should never happen.
-        assert(false && "AeroGPU command stream contains an invalid packet");
-        break;
-      }
-      if (chunk_size + pkt_size > dma_cap) {
-        break;
-      }
-      chunk_end += pkt_size;
-      chunk_size += pkt_size;
-    }
-
-    if (chunk_end == chunk_begin) {
-      // No packet fit, bail out.
-      D3DDDICB_DEALLOCATE dealloc = {};
-      dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      dealloc.pAllocationList = alloc.pAllocationList;
-      dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      cb->pfnDeallocateCb(hrt_device, &dealloc);
-
-      if (out_hr) {
-        *out_hr = E_OUTOFMEMORY;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    // Copy header + selected packets into the runtime DMA buffer.
-    auto* dst = static_cast<uint8_t*>(alloc.pDmaBuffer);
-    std::memcpy(dst, src, sizeof(aerogpu_cmd_stream_header));
-    std::memcpy(dst + sizeof(aerogpu_cmd_stream_header), src + chunk_begin, chunk_size - sizeof(aerogpu_cmd_stream_header));
-    auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
-    hdr->size_bytes = static_cast<uint32_t>(chunk_size);
-
-    // Submit: route the last chunk through Present if requested and supported, otherwise Render.
-    const bool is_last_chunk = (chunk_end == src_size);
-    const bool do_present = want_present && is_last_chunk && cb->pfnPresentCb != nullptr;
-
-    HRESULT submit_hr = S_OK;
-    UINT submission_fence = 0;
-    if (do_present) {
-      D3DDDICB_PRESENT present = {};
-      present.pDmaBuffer = alloc.pDmaBuffer;
-      present.DmaBufferSize = static_cast<UINT>(chunk_size);
-      present.pAllocationList = alloc.pAllocationList;
-      present.AllocationListSize = 0;
-      present.pPatchLocationList = alloc.pPatchLocationList;
-      present.PatchLocationListSize = 0;
-
-      submit_hr = cb->pfnPresentCb(hrt_device, &present);
-      submission_fence = present.SubmissionFenceId;
-    } else {
-      D3DDDICB_RENDER render = {};
-      render.pDmaBuffer = alloc.pDmaBuffer;
-      render.DmaBufferSize = static_cast<UINT>(chunk_size);
-      render.pAllocationList = alloc.pAllocationList;
-      render.AllocationListSize = 0;
-      render.pPatchLocationList = alloc.pPatchLocationList;
-      render.PatchLocationListSize = 0;
-
-      submit_hr = cb->pfnRenderCb(hrt_device, &render);
-      submission_fence = render.SubmissionFenceId;
-    }
-
-    // Free the allocated submission buffers regardless of render/present success.
-    {
-      D3DDDICB_DEALLOCATE dealloc = {};
-      dealloc.pDmaBuffer = alloc.pDmaBuffer;
-      dealloc.pAllocationList = alloc.pAllocationList;
-      dealloc.pPatchLocationList = alloc.pPatchLocationList;
-      cb->pfnDeallocateCb(hrt_device, &dealloc);
-    }
-
-    if (FAILED(submit_hr)) {
-      if (out_hr) {
-        *out_hr = submit_hr;
-      }
-      dev->cmd.reset();
-      return 0;
-    }
-
-    if (submission_fence != 0) {
-      last_fence = static_cast<uint64_t>(submission_fence);
-    }
-
-    cur = chunk_end;
-  }
-
-  if (last_fence != 0) {
-    atomic_max_u64(&dev->last_submitted_fence, last_fence);
-  }
-  dev->cmd.reset();
-  return last_fence;
-#else
   // Portable build: optionally hand the command stream + referenced allocations
   // to a harness/runtime callback (used to model WDDM allocation lists in
   // non-WDK builds).
@@ -1532,7 +1082,6 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
   dev->referenced_allocs.clear();
   dev->cmd.reset();
   return fence;
-#endif
 }
 
 HRESULT flush_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice) {
@@ -1588,253 +1137,9 @@ void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    for (AeroGpuResource* res : dev->live_resources) {
-      if (res) {
-        DeallocateResourceIfNeeded(dev, hDevice, res);
-      }
-    }
-    dev->live_resources.clear();
-  }
-#endif
   dev->~AeroGpuDevice();
 }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATERESOURCE*) {
-  return sizeof(AeroGpuResource);
-}
-
-HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
-                                        const D3D10DDIARG_CREATERESOURCE* pDesc,
-                                        D3D10DDI_HRESOURCE hResource,
-                                        D3D10DDI_HRTRESOURCE hRTResource) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
-    return E_INVALIDARG;
-  }
-
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  if (!dev || !dev->adapter) {
-    return E_FAIL;
-  }
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
-
-  if (!dev->callbacks.pfnAllocateCb) {
-    SetErrorIfPossible(dev, hDevice, E_FAIL);
-    return E_FAIL;
-  }
-
-  auto allocate_one = [&](uint64_t size_bytes, bool cpu_visible, bool is_rt, bool is_ds, AeroGpuResource* res) -> HRESULT {
-    if (!pDesc->pAllocationInfo || !res) {
-      return E_INVALIDARG;
-    }
-
-    auto* alloc_info = pDesc->pAllocationInfo;
-    std::memset(alloc_info, 0, sizeof(*alloc_info));
-    alloc_info[0].Size = static_cast<SIZE_T>(size_bytes);
-    alloc_info[0].Alignment = 0;
-    alloc_info[0].Flags.Value = 0;
-    alloc_info[0].Flags.CpuVisible = cpu_visible ? 1u : 0u;
-    alloc_info[0].SupportedReadSegmentSet = 1;
-    alloc_info[0].SupportedWriteSegmentSet = 1;
-
-    D3DDDICB_ALLOCATE alloc = {};
-    alloc.hResource = hRTResource;
-    alloc.NumAllocations = 1;
-    alloc.pAllocationInfo = alloc_info;
-    alloc.Flags.Value = 0;
-    alloc.Flags.CreateResource = 1;
-    alloc.ResourceFlags.Value = 0;
-    alloc.ResourceFlags.RenderTarget = is_rt ? 1u : 0u;
-    alloc.ResourceFlags.ZBuffer = is_ds ? 1u : 0u;
-
-    const HRESULT hr = dev->callbacks.pfnAllocateCb(dev->hrt_device, &alloc);
-    if (FAILED(hr)) {
-      SetErrorIfPossible(dev, hDevice, hr);
-      return hr;
-    }
-
-    res->hkm_resource = alloc.hKMResource;
-    res->hkm_allocation = alloc_info[0].hKMAllocation;
-    return S_OK;
-  };
-
-  if (pDesc->Dimension == 1) {
-    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = dev->adapter->next_handle.fetch_add(1);
-    res->kind = ResourceKind::Buffer;
-    res->bind_flags = pDesc->BindFlags;
-    res->misc_flags = pDesc->MiscFlags;
-    res->size_bytes = pDesc->ByteWidth;
-
-    const uint64_t alloc_size = AlignUpU64(static_cast<uint64_t>(res->size_bytes), 256);
-    const bool cpu_visible = pDesc->CPUAccessFlags != 0;
-    const bool is_rt = (pDesc->BindFlags & kD3D11BindRenderTarget) != 0;
-    const bool is_ds = (pDesc->BindFlags & kD3D11BindDepthStencil) != 0;
-    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, res);
-    if (FAILED(hr)) {
-      res->handle = kInvalidHandle;
-      res->~AeroGpuResource();
-      return hr;
-    }
-
-    if (pDesc->pInitialData && pDesc->InitialDataCount) {
-      const auto& init = pDesc->pInitialData[0];
-      if (!init.pSysMem) {
-        res->handle = kInvalidHandle;
-        res->~AeroGpuResource();
-        return E_INVALIDARG;
-      }
-      try {
-        res->storage.resize(static_cast<size_t>(res->size_bytes));
-      } catch (...) {
-        res->handle = kInvalidHandle;
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
-      }
-      std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
-    }
-
-    AddLiveResourceLocked(dev, res);
-
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
-    if (!cmd) {
-      RemoveLiveResourceLocked(dev, res);
-      res->handle = kInvalidHandle;
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
-    }
-    cmd->buffer_handle = res->handle;
-    cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
-    cmd->size_bytes = res->size_bytes;
-    cmd->backing_alloc_id = 0;
-    cmd->backing_offset_bytes = 0;
-    cmd->reserved0 = 0;
-
-    if (!res->storage.empty()) {
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      if (!upload) {
-        dev->last_error = E_OUTOFMEMORY;
-      } else {
-        upload->resource_handle = res->handle;
-        upload->reserved0 = 0;
-        upload->offset_bytes = 0;
-        upload->size_bytes = res->size_bytes;
-      }
-    }
-    return S_OK;
-  }
-
-  if (pDesc->Dimension == 3) {
-    if (pDesc->MipLevels != 1 || pDesc->ArraySize != 1 || pDesc->SampleDesc.Count != 1) {
-      return E_NOTIMPL;
-    }
-
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu(pDesc->Format);
-    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      return E_NOTIMPL;
-    }
-
-    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-    res->handle = dev->adapter->next_handle.fetch_add(1);
-    res->kind = ResourceKind::Texture2D;
-    res->bind_flags = pDesc->BindFlags;
-    res->misc_flags = pDesc->MiscFlags;
-    res->width = pDesc->Width;
-    res->height = pDesc->Height;
-    res->mip_levels = pDesc->MipLevels;
-    res->array_size = pDesc->ArraySize;
-    res->dxgi_format = pDesc->Format;
-
-    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
-    const uint64_t tight_row_bytes = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
-    const uint64_t row_pitch_bytes = AlignUpU64(tight_row_bytes, 256);
-    res->row_pitch_bytes = static_cast<uint32_t>(row_pitch_bytes);
-    const uint64_t alloc_size = row_pitch_bytes * static_cast<uint64_t>(res->height);
-
-    const bool cpu_visible = pDesc->CPUAccessFlags != 0;
-    const bool is_rt = (pDesc->BindFlags & kD3D11BindRenderTarget) != 0;
-    const bool is_ds = (pDesc->BindFlags & kD3D11BindDepthStencil) != 0;
-    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, res);
-    if (FAILED(hr)) {
-      res->handle = kInvalidHandle;
-      res->~AeroGpuResource();
-      return hr;
-    }
-
-    if (pDesc->pInitialData && pDesc->InitialDataCount) {
-      const auto& init = pDesc->pInitialData[0];
-      if (!init.pSysMem) {
-        res->handle = kInvalidHandle;
-        res->~AeroGpuResource();
-        return E_INVALIDARG;
-      }
-
-      if (alloc_size > static_cast<uint64_t>(SIZE_MAX)) {
-        res->handle = kInvalidHandle;
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
-      }
-      try {
-        res->storage.resize(static_cast<size_t>(alloc_size));
-      } catch (...) {
-        res->handle = kInvalidHandle;
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
-      }
-
-      const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
-      const size_t src_pitch = init.SysMemPitch ? static_cast<size_t>(init.SysMemPitch) : static_cast<size_t>(tight_row_bytes);
-      for (uint32_t y = 0; y < res->height; y++) {
-        std::memcpy(res->storage.data() + static_cast<size_t>(y) * static_cast<size_t>(row_pitch_bytes),
-                    src + static_cast<size_t>(y) * src_pitch,
-                    static_cast<size_t>(tight_row_bytes));
-      }
-    }
-
-    AddLiveResourceLocked(dev, res);
-
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
-    if (!cmd) {
-      RemoveLiveResourceLocked(dev, res);
-      res->handle = kInvalidHandle;
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
-    }
-    cmd->texture_handle = res->handle;
-    cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
-    cmd->format = aer_fmt;
-    cmd->width = res->width;
-    cmd->height = res->height;
-    cmd->mip_levels = res->mip_levels;
-    cmd->array_layers = 1;
-    cmd->row_pitch_bytes = res->row_pitch_bytes;
-    cmd->backing_alloc_id = 0;
-    cmd->backing_offset_bytes = 0;
-    cmd->reserved0 = 0;
-
-    if (!res->storage.empty()) {
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-      if (!upload) {
-        dev->last_error = E_OUTOFMEMORY;
-      } else {
-        upload->resource_handle = res->handle;
-        upload->reserved0 = 0;
-        upload->offset_bytes = 0;
-        upload->size_bytes = res->storage.size();
-      }
-    }
-    return S_OK;
-  }
-
-  return E_NOTIMPL;
-}
-#else
 SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERESOURCE*) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("CalcPrivateResourceSize");
@@ -1928,17 +1233,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         return E_INVALIDARG;
       }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-      if (is_guest_backed && res->wddm_allocation) {
-        const HRESULT hr = UploadInitialDataToWddmAllocation(
-            dev, res->wddm_allocation, init.pSysMem, static_cast<size_t>(res->size_bytes));
-        if (FAILED(hr)) {
-          res->~AeroGpuResource();
-          return hr;
-        }
-        wddm_initial_upload = true;
-      }
-#endif
 
       if (!res->storage.empty() && res->storage.size() >= static_cast<size_t>(res->size_bytes)) {
         std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
@@ -2128,23 +1422,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         return E_INVALIDARG;
       }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-      if (is_guest_backed && res->wddm_allocation) {
-        const HRESULT hr = UploadInitialDataTex2DToWddmAllocation(dev,
-                                                                  res->wddm_allocation,
-                                                                  init.pSysMem,
-                                                                  res->width,
-                                                                  res->height,
-                                                                  bpp,
-                                                                  src_pitch,
-                                                                  res->row_pitch_bytes);
-        if (FAILED(hr)) {
-          res->~AeroGpuResource();
-          return hr;
-        }
-        wddm_initial_upload = true;
-      }
-#endif
 
       const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
       uint8_t* dst = res->storage.empty() ? nullptr : res->storage.data();
@@ -2245,7 +1522,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
   AEROGPU_D3D10_RET_HR(E_NOTIMPL);
 }
-#endif
 
 void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
@@ -2266,9 +1542,6 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     return;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  DeallocateResourceIfNeeded(dev, hDevice, res);
-#endif
 
   if (res->handle != kInvalidHandle) {
     // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
@@ -2607,11 +1880,6 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
 
   const bool is_guest_backed = (res->backing_alloc_id != 0);
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  res->mapped_wddm_ptr = nullptr;
-  res->mapped_wddm_pitch = 0;
-  res->mapped_wddm_slice_pitch = 0;
-#endif
 
   // Prefer mapping guest-backed resources via their WDDM allocation.
   if (is_guest_backed && res->alloc_handle != 0 && dev->device_callbacks && dev->device_callbacks->pfnMapAllocation &&
@@ -2650,68 +1918,6 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     return S_OK;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  // Win7 WDK build: Map via LockCb/UnlockCb when a runtime-managed allocation exists.
-  if (res->wddm_allocation && dev->callbacks && dev->callbacks->pfnLockCb && dev->callbacks->pfnUnlockCb) {
-    D3DDDICB_LOCK lock = {};
-    lock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
-    SetLockSubresource(&lock, subresource);
-    SetLockRange(&lock, /*offset=*/0, /*size=*/0);
-    SetLockFlagsFromMap(&lock.Flags, map_type, map_flags);
-    HRESULT hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
-    if (FAILED(hr)) {
-      return hr;
-    }
-    if (!lock.pData) {
-      D3DDDICB_UNLOCK unlock = {};
-      unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
-      SetUnlockSubresource(&unlock, subresource);
-      dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
-      return E_FAIL;
-    }
-
-    res->mapped_wddm_ptr = lock.pData;
-    res->mapped_wddm_pitch = lock.Pitch;
-    res->mapped_wddm_slice_pitch = lock.SlicePitch;
-
-    if (map_type == AEROGPU_DDI_MAP_WRITE_DISCARD) {
-      // Discard contents are undefined; clear for deterministic tests.
-      if (res->kind == ResourceKind::Buffer) {
-        if (res->size_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
-          std::memset(lock.pData, 0, static_cast<size_t>(res->size_bytes));
-        }
-      } else if (res->kind == ResourceKind::Texture2D) {
-        const uint32_t pitch = lock.Pitch ? lock.Pitch : res->row_pitch_bytes;
-        const uint64_t bytes = static_cast<uint64_t>(pitch) * static_cast<uint64_t>(res->height);
-        if (bytes <= static_cast<uint64_t>(SIZE_MAX)) {
-          std::memset(lock.pData, 0, static_cast<size_t>(bytes));
-        }
-      }
-    }
-
-    pMapped->pData = lock.pData;
-    if (res->kind == ResourceKind::Texture2D) {
-      const uint32_t pitch = lock.Pitch ? lock.Pitch : res->row_pitch_bytes;
-      pMapped->RowPitch = pitch;
-      const uint32_t slice = lock.SlicePitch ? lock.SlicePitch : pitch * res->height;
-      pMapped->DepthPitch = slice;
-    } else {
-      pMapped->RowPitch = 0;
-      pMapped->DepthPitch = 0;
-    }
-
-    res->mapped_via_allocation = false;
-    res->mapped_ptr = nullptr;
-
-    res->mapped = true;
-    res->mapped_write = want_write;
-    res->mapped_subresource = subresource;
-    res->mapped_map_type = map_type;
-    res->mapped_offset_bytes = 0;
-    res->mapped_size_bytes = total;
-    return S_OK;
-  }
-#endif
 
   if (is_guest_backed) {
     // Guest-backed resources must be mapped via their backing allocation.
@@ -2762,9 +1968,6 @@ void unmap_resource_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpu
 
   const bool is_guest_backed = (res->backing_alloc_id != 0);
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  const bool had_wddm_lock = res->mapped_wddm_ptr != nullptr;
-#endif
 
   if (res->mapped_via_allocation) {
     if (dev->device_callbacks && dev->device_callbacks->pfnUnmapAllocation) {
@@ -2773,32 +1976,6 @@ void unmap_resource_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpu
     }
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  if (had_wddm_lock && res->mapped_write && !is_guest_backed) {
-    // Host-owned bring-up path: copy the updated bytes from the locked WDDM
-    // allocation back into shadow storage so UPLOAD_RESOURCE uses a tightly
-    // packed layout.
-    if (res->kind == ResourceKind::Buffer) {
-      const uint64_t bytes = res->size_bytes;
-      if (SUCCEEDED(ensure_resource_storage(res, bytes)) && bytes <= static_cast<uint64_t>(res->storage.size())) {
-        std::memcpy(res->storage.data(), res->mapped_wddm_ptr, static_cast<size_t>(bytes));
-      }
-    } else if (res->kind == ResourceKind::Texture2D) {
-      const uint64_t bytes = resource_total_bytes(res);
-      const uint32_t bytes_per_row = res->row_pitch_bytes;
-      const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : bytes_per_row;
-      if (bytes_per_row != 0 && src_pitch >= bytes_per_row && bytes != 0 &&
-          SUCCEEDED(ensure_resource_storage(res, bytes)) && bytes <= static_cast<uint64_t>(res->storage.size())) {
-        const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
-        for (uint32_t y = 0; y < res->height; y++) {
-          std::memcpy(res->storage.data() + static_cast<size_t>(y) * bytes_per_row,
-                      src + static_cast<size_t>(y) * src_pitch,
-                      bytes_per_row);
-        }
-      }
-    }
-  }
-#endif
 
   if (res->mapped_write && res->handle != kInvalidHandle) {
     if (is_guest_backed) {
@@ -2831,17 +2008,6 @@ void unmap_resource_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpu
     }
   }
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  if (had_wddm_lock && res->wddm_allocation && dev->callbacks && dev->callbacks->pfnUnlockCb) {
-    D3DDDICB_UNLOCK unlock = {};
-    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
-    SetUnlockSubresource(&unlock, subresource);
-    dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
-  }
-  res->mapped_wddm_ptr = nullptr;
-  res->mapped_wddm_pitch = 0;
-  res->mapped_wddm_slice_pitch = 0;
-#endif
 
   res->mapped_via_allocation = false;
   res->mapped_ptr = nullptr;
@@ -5057,9 +4223,6 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_
   }
   cmd->scanout_id = 0;
   cmd->flags = (pPresent->SyncInterval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  dev->next_submit_is_present = true;
-#endif
  
   HRESULT hr = S_OK;
   submit_locked(dev, &hr);
@@ -5154,9 +4317,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     bool is_shared = false;
     bool is_shared_alias = false;
     AeroGpuResource::WddmIdentity wddm;
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-    uint64_t wddm_allocation = 0;
-#endif
     std::vector<uint8_t> storage;
     bool mapped = false;
     bool mapped_write = false;
@@ -5180,9 +4340,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     id.is_shared = res->is_shared;
     id.is_shared_alias = res->is_shared_alias;
     id.wddm = std::move(res->wddm);
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-    id.wddm_allocation = res->wddm_allocation;
-#endif
     id.storage = std::move(res->storage);
     id.mapped = res->mapped;
     id.mapped_write = res->mapped_write;
@@ -5206,9 +4363,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     res->is_shared = id.is_shared;
     res->is_shared_alias = id.is_shared_alias;
     res->wddm = std::move(id.wddm);
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-    res->wddm_allocation = id.wddm_allocation;
-#endif
     res->storage = std::move(id.storage);
     res->mapped = id.mapped;
     res->mapped_write = id.mapped_write;
@@ -5294,16 +4448,6 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   device->adapter = adapter;
   device->device_callbacks = pCreateDevice->pDeviceCallbacks;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  // Field names vary slightly across WDK versions; use MSVC's `__if_exists` to
-  // tolerate both.
-  __if_exists(D3D10DDIARG_CREATEDEVICE::hRTDevice) {
-    device->hrt_device = pCreateDevice->hRTDevice;
-  }
-  __if_exists(D3D10DDIARG_CREATEDEVICE::pCallbacks) {
-    device->callbacks = pCreateDevice->pCallbacks;
-  }
-#endif
   AEROGPU_D3D10_11_DEVICEFUNCS funcs = {};
   funcs.pfnDestroyDevice = &DestroyDevice;
 
@@ -5611,14 +4755,6 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
   }
   pOpenData->hAdapter.pDrvPrivate = adapter;
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-  __if_exists(D3D10DDIARG_OPENADAPTER::hRTAdapter) {
-    adapter->hrt_adapter = pOpenData->hRTAdapter;
-  }
-  __if_exists(D3D10DDIARG_OPENADAPTER::pAdapterCallbacks) {
-    adapter->adapter_callbacks = pOpenData->pAdapterCallbacks;
-  }
-#endif
 
   D3D10DDI_ADAPTERFUNCS funcs = {};
   funcs.pfnGetCaps = &GetCaps;
