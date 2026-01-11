@@ -199,7 +199,8 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     use aero_protocol::aerogpu::aerogpu_cmd::{
         AerogpuBlendState, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState,
         AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetSamplerState,
-        AerogpuDepthStencilState, AerogpuRasterizerState, AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
+        AerogpuDepthStencilState, AerogpuRasterizerState,
+        AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
     };
 
     let mut w = AerogpuCmdWriter::new();

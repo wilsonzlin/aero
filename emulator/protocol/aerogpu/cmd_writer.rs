@@ -1086,7 +1086,10 @@ impl AerogpuCmdWriter {
             state_base + offset_of!(AerogpuRasterizerState, depth_bias),
             depth_bias,
         );
-        self.write_u32_at(state_base + offset_of!(AerogpuRasterizerState, flags), flags);
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuRasterizerState, flags),
+            flags,
+        );
     }
 
     pub fn set_rasterizer_state_ext(

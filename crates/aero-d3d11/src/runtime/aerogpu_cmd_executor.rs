@@ -18,11 +18,10 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
     AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
     AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
-    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
@@ -4217,7 +4216,13 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let (vs_wgsl_hash, vs_depth_clamp_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature) = {
+    let (
+        vs_wgsl_hash,
+        vs_depth_clamp_wgsl_hash,
+        vs_dxbc_hash_fnv1a64,
+        vs_entry_point,
+        vs_input_signature,
+    ) = {
         let vs = resources
             .shaders
             .get(&vs_handle)

@@ -3,10 +3,10 @@ use std::fs;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -202,7 +202,14 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled() {
     });
 }
 
-fn build_draw_stream(rt: u32, vb: u32, vs: u32, ps: u32, il: u32, rasterizer_flags: u32) -> Vec<u8> {
+fn build_draw_stream(
+    rt: u32,
+    vb: u32,
+    vs: u32,
+    ps: u32,
+    il: u32,
+    rasterizer_flags: u32,
+) -> Vec<u8> {
     let mut stream = Vec::new();
     stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
     stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
@@ -297,4 +304,3 @@ fn build_draw_stream(rt: u32, vb: u32, vs: u32, ps: u32, il: u32, rasterizer_fla
 
     stream
 }
-
