@@ -3419,7 +3419,6 @@ uint32_t allocate_umd_alloc_id(Adapter* adapter) {
 
 namespace {
 #if defined(_WIN32)
-std::once_flag g_dma_priv_size_mismatch_once;
 template <typename T, typename = void>
 struct has_pfnRenderCb : std::false_type {};
 template <typename T>
