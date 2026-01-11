@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -284,5 +285,93 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 	}
 	if string(outFrame.Payload) != "hello after auth" {
 		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello after auth")
+	}
+}
+
+func TestUDPWebSocketServer_EnforcesBindingQuota(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+
+		MaxUDPBindingsPerSession: 1,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+	relayCfg.PreferV2 = true
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	guestPort1 := uint16(1111)
+	in1 := udpproto.Frame{
+		GuestPort:  guestPort1,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("first"),
+	}
+	pkt1, err := udpproto.EncodeV1(in1)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt1); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, out1, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	got1, err := udpproto.Decode(out1)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got1.GuestPort != guestPort1 {
+		t.Fatalf("guest port mismatch: %d != %d", got1.GuestPort, guestPort1)
+	}
+
+	guestPort2 := uint16(2222)
+	in2 := udpproto.Frame{
+		GuestPort:  guestPort2,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("second"),
+	}
+	pkt2, err := udpproto.EncodeV1(in2)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt2); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("unexpected response for second guest port (expected quota enforcement)")
+	}
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("expected read timeout waiting for dropped packet; got %v", err)
+	}
+
+	if m.Get(metrics.DropReasonQuotaExceeded) == 0 || m.Get("too_many_bindings") == 0 {
+		t.Fatalf("expected quota exceeded metrics for binding limit")
+	}
+	if m.Get("udp_ws_dropped_rate_limit") == 0 {
+		t.Fatalf("expected udp_ws_dropped_rate_limit metric increment")
 	}
 }

@@ -619,18 +619,23 @@ func (wss *wsSession) run() {
 	}
 
 	for {
-		if wss.limiter != nil && !wss.limiter.Allow(1) {
-			wss.srv.incMetric(metrics.DropReasonRateLimited)
-			_ = wss.fail("rate_limited", "rate limit exceeded", websocket.ClosePolicyViolation, "rate limit exceeded")
-			return
-		}
-
 		msgType, data, err := wss.conn.ReadMessage()
 		if err != nil {
 			if !authorized && isTimeout(err) {
 				wss.srv.incMetric(metrics.AuthFailure)
 				wss.closeWith(websocket.ClosePolicyViolation, "authentication timeout")
 			}
+			return
+		}
+		// Apply the per-session signaling message rate limit *after* reading the
+		// message so we consume any bytes already in the TCP receive buffer.
+		//
+		// If we close before reading, the OS may send an abortive close (RST) due
+		// to unread data, preventing clients from reliably observing the WebSocket
+		// close code/reason.
+		if wss.limiter != nil && !wss.limiter.Allow(1) {
+			wss.srv.incMetric(metrics.DropReasonRateLimited)
+			_ = wss.fail("rate_limited", "rate limit exceeded", websocket.ClosePolicyViolation, "rate limit exceeded")
 			return
 		}
 		if msgType != websocket.TextMessage {

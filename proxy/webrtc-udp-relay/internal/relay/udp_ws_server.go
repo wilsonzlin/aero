@@ -175,10 +175,10 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics:   metricsSink,
 		closeConn: closeConn,
 	}
-	// We enforce per-session rate limits for the /udp endpoint in this HTTP
-	// handler so we can increment WebSocket-specific metrics. The SessionRelay
-	// itself still enforces protocol decoding, binding management, and outbound
-	// framing/negotiation.
+	// We enforce per-session quotas/rate limits for the /udp endpoint in this
+	// HTTP handler so we can increment WebSocket-specific metrics. The
+	// SessionRelay itself still enforces protocol decoding, binding management,
+	// and outbound framing/negotiation.
 	relay := NewSessionRelay(sender, s.relayCfg, s.policy, nil)
 	defer func() {
 		stats := relay.Stats()
@@ -234,7 +234,7 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if sess != nil {
 			destKey := netip.AddrPortFrom(frame.RemoteIP, frame.RemotePort).String()
-			if !sess.AllowClientDatagram(destKey, frame.Payload) {
+			if !sess.HandleClientDatagram(frame.GuestPort, destKey, frame.Payload) {
 				if metricsSink != nil {
 					metricsSink.Inc(wsUDPMetricDroppedByRate)
 				}
