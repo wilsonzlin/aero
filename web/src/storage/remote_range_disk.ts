@@ -1058,6 +1058,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           this.flushPending = false;
         });
     }, 0);
+    (this.flushTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   private async recordCachedChunk(chunkIndex: number, generation: number): Promise<void> {

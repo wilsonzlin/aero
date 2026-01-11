@@ -522,6 +522,7 @@ export class WebHidBroker {
       this.#inputReportEmitTimer = null;
       this.#emit();
     }, 100);
+    (this.#inputReportEmitTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   async #handleSendReportRequest(msg: HidSendReportMessage): Promise<void> {

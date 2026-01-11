@@ -438,7 +438,9 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
     if (updateTimer !== null) return;
     perf.setHudActive(true);
     update();
-    updateTimer = window.setInterval(update, 1000 / HUD_UPDATE_HZ);
+    const timer = window.setInterval(update, 1000 / HUD_UPDATE_HZ);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    updateTimer = timer as unknown as number;
   };
 
   const stopUpdates = () => {
@@ -541,10 +543,12 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
       } catch (err) {
         console.error(err);
         setText(traceDownloadBtn, 'Trace export failed');
-        traceDownloadResetTimer = window.setTimeout(() => {
+        const resetTimer = window.setTimeout(() => {
           traceDownloadResetTimer = null;
           setText(traceDownloadBtn, idleLabel);
         }, 2500);
+        (resetTimer as unknown as { unref?: () => void }).unref?.();
+        traceDownloadResetTimer = resetTimer as unknown as number;
       } finally {
         traceDownloadBtn.disabled = false;
       }

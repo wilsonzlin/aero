@@ -223,6 +223,7 @@ export class AeroPerf {
           timedOut: true,
         });
       }, timeoutMs);
+      (timeoutId as unknown as { unref?: () => void }).unref?.();
 
       this.pendingExportResponses.set(requestId, (value) => {
         if (settled) return;

@@ -296,6 +296,7 @@ export class WebHidPassthroughRuntime {
     this.#pollTimer = setInterval(() => {
       this.pollOnce();
     }, this.#pollIntervalMs);
+    (this.#pollTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   private maybeStopPolling(): void {

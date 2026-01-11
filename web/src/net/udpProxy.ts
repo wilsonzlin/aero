@@ -216,6 +216,7 @@ export class WebSocketUdpProxyClient {
         }
         settle(new Error("udp relay websocket timed out"));
       }, timeoutMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
 
       ws.onopen = () => {
         if (this.ws !== ws) return;
