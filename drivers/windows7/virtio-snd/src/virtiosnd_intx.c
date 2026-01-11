@@ -303,7 +303,7 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
         if ((isr & VIRTIOSND_ISR_QUEUE) != 0) {
             /* INTx doesn't identify which queue fired; drain configured queues. */
             VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_CONTROL], VirtIoSndIntxQueueUsed, dx);
-            if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0) {
+            if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 && dx->Tx.Queue != NULL && dx->Tx.Buffers != NULL) {
                 VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_TX], VirtIoSndIntxQueueUsed, dx);
             }
         }
