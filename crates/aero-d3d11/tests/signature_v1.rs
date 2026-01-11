@@ -243,6 +243,44 @@ fn prefers_v1_variant_when_both_present() {
 }
 
 #[test]
+fn skips_malformed_duplicate_isg1_chunks() {
+    // First chunk is malformed (`param_offset` points into the header). The second chunk is valid
+    // and should be chosen.
+    let mut bad_bytes = Vec::new();
+    bad_bytes.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bad_bytes.extend_from_slice(&4u32.to_le_bytes()); // param_offset (invalid)
+
+    let good_params = vec![sig_param("POSITION", 0, 0, 0b1111, 0)];
+    let good_bytes = build_signature_chunk_v1(&good_params);
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_ISG1, bad_bytes), (FOURCC_ISG1, good_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let sigs = parse_signatures(&dxbc).expect("parse signatures");
+
+    let isgn = sigs.isgn.expect("ISG1 signature missing");
+    assert_eq!(isgn.parameters.len(), 1);
+    assert_eq!(isgn.parameters[0].semantic_name, "POSITION");
+}
+
+#[test]
+fn falls_back_to_isgn_when_all_isg1_chunks_are_malformed() {
+    let mut bad_bytes = Vec::new();
+    bad_bytes.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bad_bytes.extend_from_slice(&4u32.to_le_bytes()); // param_offset (invalid)
+
+    let good_v0_params = vec![sig_param("POSITION", 0, 0, 0b1111, 0)];
+    let good_v0_bytes = build_signature_chunk_v0(&good_v0_params);
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_ISG1, bad_bytes), (FOURCC_ISGN, good_v0_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let sigs = parse_signatures(&dxbc).expect("parse signatures");
+
+    let isgn = sigs.isgn.expect("ISGN signature missing");
+    assert_eq!(isgn.parameters.len(), 1);
+    assert_eq!(isgn.parameters[0].semantic_name, "POSITION");
+}
+
+#[test]
 fn prefers_osg1_variant_when_both_present() {
     let v0_params = vec![sig_param("OLD_OUT", 0, 7, 0b1111, 0)];
     let v1_params = vec![sig_param("NEW_OUT", 0, 1, 0b0011, 0)];
