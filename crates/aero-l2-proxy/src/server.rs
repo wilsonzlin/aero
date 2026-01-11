@@ -248,35 +248,8 @@ fn enforce_security(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
 ) -> Result<(), Box<axum::response::Response>> {
-    if !state.cfg.security.open {
-        let origin = headers
-            .get(axum::http::header::ORIGIN)
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-
-        let Some(origin) = origin else {
-            return Err(Box::new(
-                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
-            ));
-        };
-
-        match &state.cfg.security.allowed_origins {
-            crate::config::AllowedOrigins::Any => {}
-            crate::config::AllowedOrigins::List(list) => {
-                if !list.iter().any(|allowed| allowed == origin) {
-                    return Err(Box::new(
-                        (
-                            StatusCode::FORBIDDEN,
-                            format!("Origin not allowed: {origin}"),
-                        )
-                            .into_response(),
-                    ));
-                }
-            }
-        }
-    }
-
+    // Auth is enforced before Origin checks so callers get a consistent 401 response when missing
+    // credentials, even if the request is also missing/invalid Origin (see tests/security.rs).
     match state.cfg.security.auth_mode {
         crate::config::AuthMode::None => {}
         crate::config::AuthMode::ApiKey => {
@@ -358,6 +331,35 @@ fn enforce_security(
                     )
                         .into_response(),
                 ));
+            }
+        }
+    }
+
+    if !state.cfg.security.open {
+        let origin = headers
+            .get(axum::http::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+
+        let Some(origin) = origin else {
+            return Err(Box::new(
+                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
+            ));
+        };
+
+        match &state.cfg.security.allowed_origins {
+            crate::config::AllowedOrigins::Any => {}
+            crate::config::AllowedOrigins::List(list) => {
+                if !list.iter().any(|allowed| allowed == origin) {
+                    return Err(Box::new(
+                        (
+                            StatusCode::FORBIDDEN,
+                            format!("Origin not allowed: {origin}"),
+                        )
+                            .into_response(),
+                    ));
+                }
             }
         }
     }

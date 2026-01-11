@@ -89,9 +89,10 @@ impl SecurityConfig {
             None => AllowedOrigins::List(Vec::new()),
         };
 
-        let legacy_token = std::env::var("AERO_L2_TOKEN")
-            .ok()
-            .and_then(|v| (!v.trim().is_empty()).then_some(v));
+        let legacy_token = std::env::var("AERO_L2_TOKEN").ok().and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
 
         let auth_mode_raw = std::env::var("AERO_L2_AUTH_MODE")
             .ok()
@@ -114,7 +115,10 @@ impl SecurityConfig {
         let api_key = if auth_mode == AuthMode::ApiKey {
             let key = std::env::var("AERO_L2_API_KEY")
                 .ok()
-                .and_then(|v| (!v.trim().is_empty()).then(|| v))
+                .and_then(|v| {
+                    let trimmed = v.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                })
                 .or(legacy_token);
             if key.is_none() {
                 return Err(anyhow!(
@@ -129,7 +133,10 @@ impl SecurityConfig {
         let jwt_secret = if matches!(auth_mode, AuthMode::Jwt | AuthMode::CookieOrJwt) {
             let secret = std::env::var("AERO_L2_JWT_SECRET")
                 .ok()
-                .and_then(|v| (!v.trim().is_empty()).then(|| v.into_bytes()));
+                .and_then(|v| {
+                    let trimmed = v.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+                });
             if secret.is_none() {
                 return Err(anyhow!(
                     "AERO_L2_JWT_SECRET is required for AERO_L2_AUTH_MODE=jwt/cookie_or_jwt"
@@ -143,7 +150,10 @@ impl SecurityConfig {
         let session_secret = if matches!(auth_mode, AuthMode::Cookie | AuthMode::CookieOrJwt) {
             let secret = std::env::var("AERO_L2_SESSION_SECRET")
                 .ok()
-                .and_then(|v| (!v.trim().is_empty()).then(|| v.into_bytes()));
+                .and_then(|v| {
+                    let trimmed = v.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+                });
             if secret.is_none() {
                 return Err(anyhow!(
                     "AERO_L2_SESSION_SECRET is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt"

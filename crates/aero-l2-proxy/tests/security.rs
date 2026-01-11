@@ -1,7 +1,12 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
+use ring::hmac;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -72,6 +77,20 @@ fn assert_http_status(err: WsError, expected: StatusCode) {
         WsError::Http(resp) => assert_eq!(resp.status(), expected),
         other => panic!("expected http error {expected}, got {other:?}"),
     }
+}
+
+fn make_session_token(secret: &str, sid: &str, exp_secs: u64) -> String {
+    let payload = serde_json::json!({
+        "v": 1,
+        "sid": sid,
+        "exp": exp_secs,
+    });
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_bytes);
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+    let sig = hmac::sign(&key, payload_b64.as_bytes());
+    let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.as_ref());
+    format!("{payload_b64}.{sig_b64}")
 }
 
 #[tokio::test]
@@ -248,8 +267,61 @@ async fn token_required_query_and_subprotocol() {
 }
 
 #[tokio::test]
+async fn cookie_auth_requires_valid_session_cookie() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "cookie");
+    let _secret = EnvVarGuard::set("AERO_L2_SESSION_SECRET", "sekrit");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    // Missing cookie should be rejected (Origin is not required in open mode).
+    let req = base_ws_request(addr);
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected cookie auth to reject missing session cookie");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    // Valid cookie should succeed.
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(60);
+    let token = make_session_token("sekrit", "sid", exp);
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws.send(Message::Close(None)).await;
+
+    // Expired cookies should be rejected.
+    let expired = exp.saturating_sub(120);
+    let token = make_session_token("sekrit", "sid", expired);
+    let mut req = base_ws_request(addr);
+    req.headers_mut().insert(
+        "cookie",
+        HeaderValue::from_str(&format!("aero_session={token}")).unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected expired session cookie to be rejected");
+    assert_http_status(err, StatusCode::UNAUTHORIZED);
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn open_mode_disables_origin_but_not_token_auth() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
@@ -455,7 +527,7 @@ async fn byte_quota_counts_tx_bytes() {
 
 #[tokio::test]
 async fn keepalive_ping_counts_toward_byte_quota() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _common = CommonL2Env::new();
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
