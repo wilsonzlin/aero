@@ -237,10 +237,11 @@ async function runWebUsbProbeWorker(
     pending = new Map();
     (runWebUsbProbeWorker as unknown as { pending?: Map<number, Pending> }).pending = pending;
   }
+  const pendingMap = pending;
 
   function rejectAll(err: unknown): void {
-    for (const [id, entry] of pending.entries()) {
-      pending.delete(id);
+    for (const [id, entry] of pendingMap.entries()) {
+      pendingMap.delete(id);
       window.clearTimeout(entry.timeoutHandle);
       entry.reject(err);
     }
@@ -254,9 +255,9 @@ async function runWebUsbProbeWorker(
       const data = ev.data as { id?: unknown } | null;
       const id = typeof data?.id === 'number' ? data.id : null;
       if (id === null) return;
-      const entry = pending.get(id);
+      const entry = pendingMap.get(id);
       if (!entry) return;
-      pending.delete(id);
+      pendingMap.delete(id);
       window.clearTimeout(entry.timeoutHandle);
       entry.resolve(ev.data);
     });
@@ -284,16 +285,16 @@ async function runWebUsbProbeWorker(
 
   return await new Promise((resolve, reject) => {
     const timeoutHandle = window.setTimeout(() => {
-      pending.delete(id);
+      pendingMap.delete(id);
       reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    pending.set(id, { resolve, reject, timeoutHandle });
+    pendingMap.set(id, { resolve, reject, timeoutHandle });
 
     try {
       worker!.postMessage(payload, transfer);
     } catch (err) {
-      pending.delete(id);
+      pendingMap.delete(id);
       window.clearTimeout(timeoutHandle);
       reject(err);
     }
