@@ -294,17 +294,39 @@ static inline void PrintfStdout(const char* fmt, ...) {
 // automation, `Fail()` stores the formatted message here; `TestReporter` can
 // then pick it up when the test returns without explicitly finalizing the
 // reporter.
-static inline std::string& LastFailureMessageStorage() {
-  static std::string s;
-  return s;
+static INIT_ONCE g_last_failure_init_once = INIT_ONCE_STATIC_INIT;
+static CRITICAL_SECTION g_last_failure_cs;
+static std::string g_last_failure_message;
+
+static BOOL CALLBACK InitLastFailureOnce(PINIT_ONCE, PVOID, PVOID*) {
+  InitializeCriticalSection(&g_last_failure_cs);
+  return TRUE;
+}
+
+static inline void EnsureLastFailureInit() {
+  InitOnceExecuteOnce(&g_last_failure_init_once, InitLastFailureOnce, NULL, NULL);
+}
+
+static inline void SetLastFailureMessage(const std::string& msg) {
+  EnsureLastFailureInit();
+  EnterCriticalSection(&g_last_failure_cs);
+  g_last_failure_message = msg;
+  LeaveCriticalSection(&g_last_failure_cs);
 }
 
 static inline void ClearLastFailureMessage() {
-  LastFailureMessageStorage().clear();
+  EnsureLastFailureInit();
+  EnterCriticalSection(&g_last_failure_cs);
+  g_last_failure_message.clear();
+  LeaveCriticalSection(&g_last_failure_cs);
 }
 
-static inline const std::string& GetLastFailureMessage() {
-  return LastFailureMessageStorage();
+static inline std::string GetLastFailureMessageCopy() {
+  EnsureLastFailureInit();
+  EnterCriticalSection(&g_last_failure_cs);
+  std::string out = g_last_failure_message;
+  LeaveCriticalSection(&g_last_failure_cs);
+  return out;
 }
 
 static inline int Fail(const char* test_name, const char* fmt, ...) {
@@ -340,7 +362,7 @@ static inline int Fail(const char* test_name, const char* fmt, ...) {
       msg = "<formatting failed>";
     }
   }
-  LastFailureMessageStorage() = msg;
+  SetLastFailureMessage(msg);
   vprintf(fmt, ap);
   va_end(ap);
   printf("\n");

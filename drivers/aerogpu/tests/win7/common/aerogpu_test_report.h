@@ -444,7 +444,7 @@ class TestReporter {
       report_.status = "FAIL";
     }
     if (!finalized_ && report_.failure.empty()) {
-      const std::string& last_failure = GetLastFailureMessage();
+      const std::string last_failure = GetLastFailureMessageCopy();
       if (!last_failure.empty()) {
         report_.failure = last_failure;
       }
