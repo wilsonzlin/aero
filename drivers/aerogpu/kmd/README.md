@@ -93,7 +93,6 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 - It maps elapsed time within the frame onto a synthetic `[0, height + vblank_lines)` scanline range, where `vblank_lines`
   is clamped to a small constant range (currently 20–40 lines).
 
-## Stable `alloc_id` / `share_token` (shared allocations)
 If vblank timing registers are not available, the driver falls back to a synthetic cadence based on
 `KeQueryInterruptTime()` (to avoid apps busy-waiting forever).
 
