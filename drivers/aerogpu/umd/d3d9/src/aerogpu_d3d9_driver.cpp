@@ -1399,7 +1399,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
   cmd->scanout_id = 0;
-  cmd->flags = (pPresentEx->sync_interval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  cmd->flags = (pPresentEx->sync_interval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
   cmd->d3d9_present_flags = pPresentEx->d3d9_present_flags;
   cmd->reserved0 = 0;
 
@@ -1431,7 +1431,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
   cmd->scanout_id = 0;
-  cmd->flags = (pPresent->sync_interval == 1) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+  cmd->flags = (pPresent->sync_interval != 0) ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
   cmd->d3d9_present_flags = pPresent->flags;
   cmd->reserved0 = 0;
 
