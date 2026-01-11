@@ -22,7 +22,6 @@
 #include <cstring>
 #include <mutex>
 #include <new>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1140,15 +1139,52 @@ inline void AssertNoNullDdiTable(const char* name, const void* table, size_t byt
   X(pfnEndEvent)                                                                                                   \
   X(pfnSetResourceMinLOD)
 
+// Device-level functions that should never trip the runtime error state when stubbed.
+// These are primarily Destroy* entrypoints that may be called during cleanup/reset even after
+// a higher-level failure.
+#define AEROGPU_D3D11_DEVICEFUNCS_NOOP_FIELDS(X)                                                                  \
+  X(pfnDestroyDevice)                                                                                             \
+  X(pfnDestroyResource)                                                                                           \
+  X(pfnDestroyShaderResourceView)                                                                                 \
+  X(pfnDestroyRenderTargetView)                                                                                   \
+  X(pfnDestroyDepthStencilView)                                                                                   \
+  X(pfnDestroyUnorderedAccessView)                                                                                \
+  X(pfnDestroyVertexShader)                                                                                       \
+  X(pfnDestroyPixelShader)                                                                                        \
+  X(pfnDestroyGeometryShader)                                                                                     \
+  X(pfnDestroyHullShader)                                                                                         \
+  X(pfnDestroyDomainShader)                                                                                       \
+  X(pfnDestroyComputeShader)                                                                                      \
+  X(pfnDestroyClassLinkage)                                                                                       \
+  X(pfnDestroyClassInstance)                                                                                      \
+  X(pfnDestroyElementLayout)                                                                                      \
+  X(pfnDestroySampler)                                                                                            \
+  X(pfnDestroyBlendState)                                                                                         \
+  X(pfnDestroyRasterizerState)                                                                                    \
+  X(pfnDestroyDepthStencilState)                                                                                  \
+  X(pfnDestroyQuery)                                                                                               \
+  X(pfnDestroyPredicate)                                                                                           \
+  X(pfnDestroyCounter)                                                                                             \
+  X(pfnDestroyDeviceContext)                                                                                       \
+  X(pfnDestroyDeferredContext)                                                                                    \
+  X(pfnDestroyCommandList)                                                                                        \
+  X(pfnDestroyDeviceContextState)
+
 inline void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
   if (!out) {
     return;
   }
   std::memset(out, 0, sizeof(*out));
 #define AEROGPU_ASSIGN_DEVICE_STUB(field)                                                                          \
-  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &AeroGpuDdiNoopStub<decltype(out->field)>::Func; }
+  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &AeroGpuDdiStub<decltype(out->field)>::Func; }
   AEROGPU_D3D11_DEVICEFUNCS_FIELDS(AEROGPU_ASSIGN_DEVICE_STUB)
 #undef AEROGPU_ASSIGN_DEVICE_STUB
+
+  // Ensure benign cleanup paths never spam SetErrorCb.
+#define AEROGPU_ASSIGN_DEVICE_NOOP(field)                                                                          \
+  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &AeroGpuDdiNoopStub<decltype(out->field)>::Func; }
+  AEROGPU_D3D11_DEVICEFUNCS_NOOP_FIELDS(AEROGPU_ASSIGN_DEVICE_NOOP)
+#undef AEROGPU_ASSIGN_DEVICE_NOOP
 }
 
 inline void InitDeviceContextFuncsWithStubs(D3D11DDI_DEVICECONTEXTFUNCS* out) {
@@ -1183,6 +1219,7 @@ static const D3D11DDI_DEVICECONTEXTFUNCS kStubCtxFuncs = [] {
 #undef AEROGPU_D3D11_DEVICEFUNCS_FIELDS
 #undef AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS
 #undef AEROGPU_D3D11_DEVICECONTEXTFUNCS_NOOP_FIELDS
+#undef AEROGPU_D3D11_DEVICEFUNCS_NOOP_FIELDS
 
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args) {
