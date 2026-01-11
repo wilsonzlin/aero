@@ -5,6 +5,7 @@
 // - Importing source modules across the repo (e.g. `/web/src/...`) in a browser context
 //
 // The production/canonical browser host lives in `web/` (see ADR 0001).
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Connect, type Plugin } from 'vite';
 
 import {
@@ -40,6 +41,18 @@ function wasmMimeTypePlugin(): Plugin {
 }
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      // The harness preview server (port 4173) is used for COOP/COEP + CSP matrix tests.
+      // Include the production `web/` entrypoint so it can be exercised under the same
+      // preview server (served at `/web/`), matching the expectations documented in
+      // `web/index.html`.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        web: fileURLToPath(new URL('./web/index.html', import.meta.url)),
+      },
+    },
+  },
   // Reuse `web/public` across the repo so test assets and `_headers` templates
   // are consistently available in `vite preview` runs.
   publicDir: 'web/public',

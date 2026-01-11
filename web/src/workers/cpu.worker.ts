@@ -75,6 +75,15 @@ type AudioOutputHdaDemoStartMessage = {
   gain?: number;
 };
 
+type AudioOutputHdaDemoReadyMessage = {
+  type: "audioOutputHdaDemo.ready";
+};
+
+type AudioOutputHdaDemoErrorMessage = {
+  type: "audioOutputHdaDemo.error";
+  message: string;
+};
+
 type AudioOutputHdaDemoStopMessage = {
   type: "audioOutputHdaDemo.stop";
 };
@@ -240,7 +249,9 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   }
   if (typeof api.HdaPlaybackDemo !== "function") {
     // Graceful degrade: nothing to do if the WASM build doesn't include the demo wrapper.
-    console.warn("HdaPlaybackDemo wasm export is unavailable; skipping HDA audio demo.");
+    const message = "HdaPlaybackDemo wasm export is unavailable; skipping HDA audio demo.";
+    console.warn(message);
+    ctx.postMessage({ type: "audioOutputHdaDemo.error", message } satisfies AudioOutputHdaDemoErrorMessage);
     return;
   }
 
@@ -283,6 +294,8 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
     }
     maybePostHdaDemoStats();
   }, 20);
+
+  ctx.postMessage({ type: "audioOutputHdaDemo.ready" } satisfies AudioOutputHdaDemoReadyMessage);
 }
 
 type WasmMicBridgeHandle = {
@@ -862,7 +875,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if ((msg as Partial<AudioOutputHdaDemoStartMessage>).type === "audioOutputHdaDemo.start") {
     void startHdaDemo(msg as AudioOutputHdaDemoStartMessage).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(err);
+      ctx.postMessage({ type: "audioOutputHdaDemo.error", message } satisfies AudioOutputHdaDemoErrorMessage);
       stopHdaDemo();
     });
     return;

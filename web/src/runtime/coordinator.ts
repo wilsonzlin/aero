@@ -1048,7 +1048,6 @@ export class WorkerCoordinator {
         return;
       }
     }
-
     // Workers use structured `postMessage` for low-rate control/status messages
     // (READY/ERROR/WASM_READY). High-frequency device/bus events flow through
     // the AIPC command/event rings (`web/src/ipc/*`).

@@ -1207,6 +1207,47 @@ function renderAudioPanel(): HTMLElement {
         hdaDemoStats = msg as { [k: string]: unknown };
         (globalThis as typeof globalThis & { __aeroAudioHdaDemoStats?: unknown }).__aeroAudioHdaDemoStats = hdaDemoStats;
       });
+
+      const workerReady = new Promise<void>((resolve, reject) => {
+        const worker = hdaDemoWorker;
+        if (!worker) {
+          reject(new Error("Missing HDA demo worker"));
+          return;
+        }
+
+        // Loading and instantiating the HDA demo WASM module can take a while when
+        // there is no cached compilation artifact yet (common in CI).
+        const timeoutMs = 45_000;
+        const onMessage = (ev: MessageEvent<unknown>) => {
+          const data = ev.data as { type?: unknown; message?: unknown } | null | undefined;
+          if (!data || typeof data !== "object") return;
+          if (data.type === "audioOutputHdaDemo.ready") {
+            cleanup();
+            resolve();
+          } else if (data.type === "audioOutputHdaDemo.error") {
+            cleanup();
+            reject(new Error(typeof data.message === "string" ? data.message : "HDA demo worker error"));
+          }
+        };
+        const onError = (ev: ErrorEvent) => {
+          cleanup();
+          reject(new Error(ev.message || "HDA demo worker error"));
+        };
+
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error(`Timed out waiting for HDA demo worker init (${timeoutMs}ms).`));
+        }, timeoutMs);
+
+        const cleanup = () => {
+          window.clearTimeout(timer);
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+        };
+
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError);
+      });
       hdaDemoWorker.postMessage({
         type: "audioOutputHdaDemo.start",
         ringBuffer: output.ringBuffer.buffer,
@@ -1217,7 +1258,21 @@ function renderAudioPanel(): HTMLElement {
         gain: 0.1,
       });
 
-      await output.resume();
+      try {
+        await workerReady;
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        stopHdaDemo();
+        return;
+      }
+
+      try {
+        await output.resume();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        stopHdaDemo();
+        return;
+      }
       status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
       toneTimer = window.setInterval(() => {
         const metrics = output.getMetrics();

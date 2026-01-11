@@ -41,52 +41,51 @@ test('KeyboardEvent.code → PS/2 set 2 bytes (i8042 feed)', async ({ page }) =>
     ]),
   );
 
-  await page.addInitScript(
-    ({ mapping }) => {
-      const w = window as unknown as Window;
-
-      // Emulated i8042 "device" sink: collect all bytes that would be written to the controller.
-      w.__i8042Bytes = [];
-
-      type MappingEntry = { make: number[]; break?: number[] };
-      const entries: Record<string, MappingEntry> = mapping;
-
-      function bytesForKeyEvent(code: string, pressed: boolean): number[] | undefined {
-        const entry = entries[code];
-        if (!entry) return undefined;
-
-        if (entry.break) return pressed ? entry.make.slice() : entry.break.slice();
-
-        // Simple (1-byte) make, with optional 0xE0 prefix.
-        if (entry.make.length === 1) {
-          const make = entry.make[0];
-          return pressed ? [make] : [0xf0, make];
-        }
-        if (entry.make.length === 2 && entry.make[0] === 0xe0) {
-          const make = entry.make[1];
-          return pressed ? [0xe0, make] : [0xe0, 0xf0, make];
-        }
-
-        throw new Error(`Non-simple key mapping for ${code} missing explicit break sequence`);
-      }
-
-      function onKeyEvent(ev: KeyboardEvent, pressed: boolean) {
-        const bytes = bytesForKeyEvent(ev.code, pressed);
-        if (bytes) w.__i8042Bytes.push(...bytes);
-      }
-
-      document.addEventListener('keydown', (ev) => onKeyEvent(ev, true));
-      document.addEventListener('keyup', (ev) => onKeyEvent(ev, false));
-
-      w.__pressCode = (code: string) => {
-        document.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
-        document.dispatchEvent(new KeyboardEvent('keyup', { code, bubbles: true }));
-      };
-    },
-    { mapping },
-  );
-
   await page.setContent('<!doctype html><meta charset="utf-8"><title>scancodes</title>');
+
+  // Install the key event capture in the page context. (`page.addInitScript` does
+  // not run for `page.setContent` across all Playwright/browser versions.)
+  await page.evaluate((mapping) => {
+    const w = window as unknown as Window;
+
+    // Emulated i8042 "device" sink: collect all bytes that would be written to the controller.
+    w.__i8042Bytes = [];
+
+    type MappingEntry = { make: number[]; break?: number[] };
+    const entries: Record<string, MappingEntry> = mapping;
+
+    function bytesForKeyEvent(code: string, pressed: boolean): number[] | undefined {
+      const entry = entries[code];
+      if (!entry) return undefined;
+
+      if (entry.break) return pressed ? entry.make.slice() : entry.break.slice();
+
+      // Simple (1-byte) make, with optional 0xE0 prefix.
+      if (entry.make.length === 1) {
+        const make = entry.make[0];
+        return pressed ? [make] : [0xf0, make];
+      }
+      if (entry.make.length === 2 && entry.make[0] === 0xe0) {
+        const make = entry.make[1];
+        return pressed ? [0xe0, make] : [0xe0, 0xf0, make];
+      }
+
+      throw new Error(`Non-simple key mapping for ${code} missing explicit break sequence`);
+    }
+
+    function onKeyEvent(ev: KeyboardEvent, pressed: boolean) {
+      const bytes = bytesForKeyEvent(ev.code, pressed);
+      if (bytes) w.__i8042Bytes.push(...bytes);
+    }
+
+    document.addEventListener('keydown', (ev) => onKeyEvent(ev, true));
+    document.addEventListener('keyup', (ev) => onKeyEvent(ev, false));
+
+    w.__pressCode = (code: string) => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent('keyup', { code, bubbles: true }));
+    };
+  }, mapping);
 
   await page.evaluate(() => {
     window.__i8042Bytes.length = 0;
