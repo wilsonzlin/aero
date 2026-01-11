@@ -23,6 +23,23 @@ test("OpfsLruChunkCache", async (t) => {
     assert.equal(stats.chunkCount, 1);
   });
 
+  await t.test("accepts SharedArrayBuffer-backed Uint8Array input", async () => {
+    installOpfsMock();
+    const cache = await OpfsLruChunkCache.open({ cacheKey: "test", chunkSize: 4, maxBytes: 100 });
+
+    const sab = new SharedArrayBuffer(4);
+    const data = new Uint8Array(sab);
+    data.set([9, 8, 7, 6]);
+
+    const put = await cache.putChunk(0, data);
+    assert.equal(put.stored, true);
+    assert.deepEqual(put.evicted, []);
+
+    const got = await cache.getChunk(0, 4);
+    assert.ok(got);
+    assert.deepEqual(Array.from(got), [9, 8, 7, 6]);
+  });
+
   await t.test("eviction respects LRU order (hits update recency)", async () => {
     installOpfsMock();
     const cache = await OpfsLruChunkCache.open({ cacheKey: "test", chunkSize: 4, maxBytes: 8 });
