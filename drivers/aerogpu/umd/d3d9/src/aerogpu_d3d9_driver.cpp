@@ -563,8 +563,51 @@ Query* as_query(AEROGPU_D3D9DDI_HQUERY hQuery) {
 // Command emission helpers (protocol: drivers/aerogpu/protocol/aerogpu_cmd.h)
 // -----------------------------------------------------------------------------
 
-void emit_set_render_targets_locked(Device* dev) {
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+uint64_t submit(Device* dev);
+
+bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
+  if (!dev) {
+    return false;
+  }
+  if (!dev->adapter) {
+    return false;
+  }
+
+  if (dev->cmd.bytes_remaining() >= bytes_needed) {
+    return true;
+  }
+
+  // If the current submission is non-empty, flush it and retry.
+  if (!dev->cmd.empty()) {
+    (void)submit(dev);
+  }
+
+  return dev->cmd.bytes_remaining() >= bytes_needed;
+}
+
+template <typename T>
+T* append_fixed_locked(Device* dev, uint32_t opcode) {
+  const size_t needed = align_up(sizeof(T), 4);
+  if (!ensure_cmd_space(dev, needed)) {
+    return nullptr;
+  }
+  return dev->cmd.append_fixed<T>(opcode);
+}
+
+template <typename HeaderT>
+HeaderT* append_with_payload_locked(Device* dev, uint32_t opcode, const void* payload, size_t payload_size) {
+  const size_t needed = align_up(sizeof(HeaderT) + payload_size, 4);
+  if (!ensure_cmd_space(dev, needed)) {
+    return nullptr;
+  }
+  return dev->cmd.append_with_payload<HeaderT>(opcode, payload, payload_size);
+}
+
+bool emit_set_render_targets_locked(Device* dev) {
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_targets>(dev, AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    return false;
+  }
   cmd->color_count = 4;
   cmd->depth_stencil = dev->depth_stencil ? dev->depth_stencil->handle : 0;
 
@@ -574,45 +617,59 @@ void emit_set_render_targets_locked(Device* dev) {
   for (uint32_t i = 0; i < 4; i++) {
     cmd->colors[i] = dev->render_targets[i] ? dev->render_targets[i]->handle : 0;
   }
+  return true;
 }
 
-void emit_bind_shaders_locked(Device* dev) {
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+bool emit_bind_shaders_locked(Device* dev) {
+  auto* cmd = append_fixed_locked<aerogpu_cmd_bind_shaders>(dev, AEROGPU_CMD_BIND_SHADERS);
+  if (!cmd) {
+    return false;
+  }
   cmd->vs = dev->vs ? dev->vs->handle : 0;
   cmd->ps = dev->ps ? dev->ps->handle : 0;
   cmd->cs = 0;
   cmd->reserved0 = 0;
+  return true;
 }
 
-void emit_set_topology_locked(Device* dev, uint32_t topology) {
+bool emit_set_topology_locked(Device* dev, uint32_t topology) {
   if (dev->topology == topology) {
-    return;
+    return true;
+  }
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_primitive_topology>(dev, AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!cmd) {
+    return false;
   }
   dev->topology = topology;
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
   cmd->topology = topology;
   cmd->reserved0 = 0;
+  return true;
 }
 
-void emit_create_resource_locked(Device* dev, Resource* res) {
+bool emit_create_resource_locked(Device* dev, Resource* res) {
   if (!dev || !res) {
-    return;
+    return false;
   }
 
   if (res->kind == ResourceKind::Buffer) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    auto* cmd = append_fixed_locked<aerogpu_cmd_create_buffer>(dev, AEROGPU_CMD_CREATE_BUFFER);
+    if (!cmd) {
+      return false;
+    }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER | AEROGPU_RESOURCE_USAGE_INDEX_BUFFER;
     cmd->size_bytes = res->size_bytes;
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
-    return;
+    return true;
   }
 
   if (res->kind == ResourceKind::Surface || res->kind == ResourceKind::Texture2D) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    auto* cmd = append_fixed_locked<aerogpu_cmd_create_texture2d>(dev, AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!cmd) {
+      return false;
+    }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = d3d9_usage_to_aerogpu_usage_flags(res->usage);
     cmd->format = d3d9_format_to_aerogpu(res->format);
@@ -624,80 +681,111 @@ void emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
-    return;
+    return true;
   }
+  return false;
 }
 
-void emit_destroy_resource_locked(Device* dev, aerogpu_handle_t handle) {
+bool emit_destroy_resource_locked(Device* dev, aerogpu_handle_t handle) {
   if (!dev || !handle) {
-    return;
+    return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_destroy_resource>(dev, AEROGPU_CMD_DESTROY_RESOURCE);
+  if (!cmd) {
+    return false;
+  }
   cmd->resource_handle = handle;
   cmd->reserved0 = 0;
+  return true;
 }
 
-void emit_export_shared_surface_locked(Device* dev, const Resource* res) {
+bool emit_export_shared_surface_locked(Device* dev, const Resource* res) {
   if (!dev || !res || !res->handle || !res->share_token) {
-    return;
+    return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_export_shared_surface>(dev, AEROGPU_CMD_EXPORT_SHARED_SURFACE);
+  if (!cmd) {
+    return false;
+  }
   cmd->resource_handle = res->handle;
   cmd->reserved0 = 0;
   cmd->share_token = res->share_token;
+  return true;
 }
 
-void emit_import_shared_surface_locked(Device* dev, const Resource* res) {
+bool emit_import_shared_surface_locked(Device* dev, const Resource* res) {
   if (!dev || !res || !res->handle || !res->share_token) {
-    return;
+    return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_import_shared_surface>(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_import_shared_surface>(dev, AEROGPU_CMD_IMPORT_SHARED_SURFACE);
+  if (!cmd) {
+    return false;
+  }
   cmd->out_resource_handle = res->handle;
   cmd->reserved0 = 0;
   cmd->share_token = res->share_token;
+  return true;
 }
 
-void emit_create_shader_locked(Device* dev, Shader* sh) {
+bool emit_create_shader_locked(Device* dev, Shader* sh) {
   if (!dev || !sh) {
-    return;
+    return false;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_create_shader_dxbc>(
+      dev,
       AEROGPU_CMD_CREATE_SHADER_DXBC, sh->bytecode.data(), sh->bytecode.size());
+  if (!cmd) {
+    return false;
+  }
   cmd->shader_handle = sh->handle;
   cmd->stage = d3d9_stage_to_aerogpu_stage(sh->stage);
   cmd->dxbc_size_bytes = static_cast<uint32_t>(sh->bytecode.size());
   cmd->reserved0 = 0;
+  return true;
 }
 
-void emit_destroy_shader_locked(Device* dev, aerogpu_handle_t handle) {
+bool emit_destroy_shader_locked(Device* dev, aerogpu_handle_t handle) {
   if (!dev || !handle) {
-    return;
+    return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_shader>(AEROGPU_CMD_DESTROY_SHADER);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_destroy_shader>(dev, AEROGPU_CMD_DESTROY_SHADER);
+  if (!cmd) {
+    return false;
+  }
   cmd->shader_handle = handle;
   cmd->reserved0 = 0;
+  return true;
 }
 
-void emit_create_input_layout_locked(Device* dev, VertexDecl* decl) {
+bool emit_create_input_layout_locked(Device* dev, VertexDecl* decl) {
   if (!dev || !decl) {
-    return;
+    return false;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_create_input_layout>(
+      dev,
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, decl->blob.data(), decl->blob.size());
+  if (!cmd) {
+    return false;
+  }
   cmd->input_layout_handle = decl->handle;
   cmd->blob_size_bytes = static_cast<uint32_t>(decl->blob.size());
   cmd->reserved0 = 0;
+  return true;
 }
 
-void emit_destroy_input_layout_locked(Device* dev, aerogpu_handle_t handle) {
+bool emit_destroy_input_layout_locked(Device* dev, aerogpu_handle_t handle) {
   if (!dev || !handle) {
-    return;
+    return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_input_layout>(AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_destroy_input_layout>(dev, AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
+  if (!cmd) {
+    return false;
+  }
   cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
+  return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -791,6 +879,9 @@ uint64_t submit(Device* dev) {
        static_cast<unsigned long long>(fence));
 
   dev->cmd.reset();
+  // Keep the per-context WDDM bookkeeping in a clean "ready for next submit"
+  // state even when the current build still uses the in-process submission stub.
+  dev->wddm_context.reset_submission_buffers();
   return fence;
 }
 
@@ -802,9 +893,19 @@ HRESULT flush_locked(Device* dev) {
   if (!dev || dev->cmd.empty()) {
     return S_OK;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
-  cmd->reserved0 = 0;
-  cmd->reserved1 = 0;
+  // If we cannot fit an explicit FLUSH marker into the remaining space, just
+  // submit the current buffer; the submission boundary is already a flush point.
+  const size_t flush_bytes = align_up(sizeof(aerogpu_cmd_flush), 4);
+  if (dev->cmd.bytes_remaining() < flush_bytes) {
+    submit(dev);
+    return S_OK;
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_flush>(dev, AEROGPU_CMD_FLUSH);
+  if (cmd) {
+    cmd->reserved0 = 0;
+    cmd->reserved1 = 0;
+  }
   submit(dev);
   return S_OK;
 }
@@ -1104,7 +1205,9 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
     return E_OUTOFMEMORY;
   }
 
-  emit_create_resource_locked(dev, res);
+  if (!emit_create_resource_locked(dev, res)) {
+    return E_OUTOFMEMORY;
+  }
   return S_OK;
 }
 
@@ -1243,9 +1346,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
     // Shared surface open (D3D9Ex): the host already has the original resource,
     // so we only create a new alias handle and IMPORT it.
-    emit_import_shared_surface_locked(dev, res.get());
+    if (!emit_import_shared_surface_locked(dev, res.get())) {
+      return E_OUTOFMEMORY;
+    }
   } else {
-    emit_create_resource_locked(dev, res.get());
+    if (!emit_create_resource_locked(dev, res.get())) {
+      return E_OUTOFMEMORY;
+    }
 
     if (res->is_shared) {
       if (!res->share_token) {
@@ -1253,7 +1360,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       } else {
         // Shared surface create (D3D9Ex): export exactly once so other guest
         // processes can IMPORT using the same stable share_token.
-        emit_export_shared_surface_locked(dev, res.get());
+        if (!emit_export_shared_surface_locked(dev, res.get())) {
+          return E_OUTOFMEMORY;
+        }
 
         // Shared surfaces must be importable by other processes immediately
         // after CreateResource returns. Since AeroGPU resource creation is
@@ -1364,7 +1473,9 @@ HRESULT AEROGPU_D3D9_CALL device_open_resource(
     return E_OUTOFMEMORY;
   }
 
-  emit_import_shared_surface_locked(dev, res.get());
+  if (!emit_import_shared_surface_locked(dev, res.get())) {
+    return E_OUTOFMEMORY;
+  }
 
   logf("aerogpu-d3d9: import shared_surface out_res=%u token=%llu alloc_id=%u\n",
        res->handle,
@@ -1400,7 +1511,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
     bbs.erase(std::remove(bbs.begin(), bbs.end(), res), bbs.end());
   }
   if (!res->is_shared) {
-    emit_destroy_resource_locked(dev, res->handle);
+    (void)emit_destroy_resource_locked(dev, res->handle);
   } else {
     // Shared resources are opened in multiple processes (e.g. DWM + app). We
     // intentionally do not emit DESTROY_RESOURCE on per-process close to avoid
@@ -1774,13 +1885,52 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   // Note: system-memory pool resources (e.g. CreateOffscreenPlainSurface with
   // D3DPOOL_SYSTEMMEM) are CPU-only and must not be uploaded. Similarly, read-only
   // locks do not imply a content update.
-  if (res->handle != 0 && (locked_flags & kD3DLOCK_READONLY) == 0) {
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
-    cmd->offset_bytes = offset;
-    cmd->size_bytes = size;
+  if (res->handle != 0 && (locked_flags & kD3DLOCK_READONLY) == 0 && size) {
+    const uint8_t* src = res->storage.data() + offset;
+    uint32_t remaining = size;
+    uint32_t cur_offset = offset;
+
+    // Split very large uploads across multiple packets so we can fit within a
+    // bounded WDDM DMA buffer when the command stream is span-backed.
+    while (remaining) {
+      // Ensure we can fit at least a minimal upload packet (header + 1 byte).
+      const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+      if (!ensure_cmd_space(dev, min_needed)) {
+        return E_OUTOFMEMORY;
+      }
+
+      const size_t avail = dev->cmd.bytes_remaining();
+      size_t chunk = 0;
+      if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+        chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+      }
+
+      // Account for 4-byte alignment padding at the end of the packet.
+      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+        chunk--;
+      }
+      if (!chunk) {
+        // Should only happen if the command buffer is extremely small; try a
+        // forced submit and retry.
+        submit(dev);
+        continue;
+      }
+
+      auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+          dev, AEROGPU_CMD_UPLOAD_RESOURCE, src, chunk);
+      if (!cmd) {
+        return E_OUTOFMEMORY;
+      }
+
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = cur_offset;
+      cmd->size_bytes = chunk;
+
+      src += chunk;
+      cur_offset += static_cast<uint32_t>(chunk);
+      remaining -= static_cast<uint32_t>(chunk);
+    }
   }
   return S_OK;
 }
@@ -1887,7 +2037,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
     return S_OK;
   }
   dev->render_targets[slot] = surf;
-  emit_set_render_targets_locked(dev);
+  if (!emit_set_render_targets_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
   return S_OK;
 }
 
@@ -1906,7 +2058,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_depth_stencil(
     return S_OK;
   }
   dev->depth_stencil = surf;
-  emit_set_render_targets_locked(dev);
+  if (!emit_set_render_targets_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
   return S_OK;
 }
 
@@ -1921,7 +2075,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
 
   dev->viewport = *pViewport;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_viewport>(dev, AEROGPU_CMD_SET_VIEWPORT);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->x_f32 = f32_bits(pViewport->x);
   cmd->y_f32 = f32_bits(pViewport->y);
   cmd->width_f32 = f32_bits(pViewport->w);
@@ -1958,7 +2115,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
     h = static_cast<int32_t>(pRect->bottom - pRect->top);
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->x = x;
   cmd->y = y;
   cmd->width = w;
@@ -1987,7 +2147,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
   }
   dev->textures[stage] = tex;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_texture>(dev, AEROGPU_CMD_SET_TEXTURE);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
   cmd->slot = stage;
   cmd->texture = tex ? tex->handle : 0;
@@ -2014,7 +2177,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
     dev->sampler_states[stage][state] = value;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_sampler_state>(AEROGPU_CMD_SET_SAMPLER_STATE);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_sampler_state>(dev, AEROGPU_CMD_SET_SAMPLER_STATE);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
   cmd->slot = stage;
   cmd->state = state;
@@ -2037,7 +2203,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
     dev->render_states[state] = value;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_state>(AEROGPU_CMD_SET_RENDER_STATE);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->state = state;
   cmd->value = value;
   return S_OK;
@@ -2064,7 +2233,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
   decl->blob.resize(decl_size);
   std::memcpy(decl->blob.data(), pDecl, decl_size);
 
-  emit_create_input_layout_locked(dev, decl.get());
+  if (!emit_create_input_layout_locked(dev, decl.get())) {
+    return E_OUTOFMEMORY;
+  }
 
   phDecl->pDrvPrivate = decl.release();
   return S_OK;
@@ -2087,7 +2258,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
   }
   dev->vertex_decl = decl;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_input_layout>(dev, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->input_layout_handle = decl ? decl->handle : 0;
   cmd->reserved0 = 0;
   return S_OK;
@@ -2104,7 +2278,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  emit_destroy_input_layout_locked(dev, decl->handle);
+  (void)emit_destroy_input_layout_locked(dev, decl->handle);
   delete decl;
   return S_OK;
 }
@@ -2132,7 +2306,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_shader(
   sh->bytecode.resize(bytecode_size);
   std::memcpy(sh->bytecode.data(), pBytecode, bytecode_size);
 
-  emit_create_shader_locked(dev, sh.get());
+  if (!emit_create_shader_locked(dev, sh.get())) {
+    return E_OUTOFMEMORY;
+  }
 
   phShader->pDrvPrivate = sh.release();
   return S_OK;
@@ -2157,7 +2333,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   }
   *slot = sh;
 
-  emit_bind_shaders_locked(dev);
+  if (!emit_bind_shaders_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
   return S_OK;
 }
 
@@ -2172,7 +2350,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  emit_destroy_shader_locked(dev, sh->handle);
+  (void)emit_destroy_shader_locked(dev, sh->handle);
   delete sh;
   return S_OK;
 }
@@ -2197,8 +2375,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   }
 
   const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_shader_constants_f>(
-      AEROGPU_CMD_SET_SHADER_CONSTANTS_F, pData, payload_size);
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
+      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_F, pData, payload_size);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->stage = d3d9_stage_to_aerogpu_stage(stage);
   cmd->start_register = start_reg;
   cmd->vec4_count = vec4_count;
@@ -2307,8 +2488,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
   binding.offset_bytes = offset_bytes;
   binding.reserved0 = 0;
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
-      AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+      dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->start_slot = stream;
   cmd->buffer_count = 1;
   return S_OK;
@@ -2332,7 +2516,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_indices(
   dev->index_format = fmt;
   dev->index_offset_bytes = offset_bytes;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->buffer = ib ? ib->handle : 0;
   cmd->format = d3d9_index_format_to_aerogpu(fmt);
   cmd->offset_bytes = offset_bytes;
@@ -2358,7 +2545,10 @@ HRESULT AEROGPU_D3D9_CALL device_clear(
   const float g = static_cast<float>((color_rgba8 >> 8) & 0xFF) / 255.0f;
   const float b = static_cast<float>((color_rgba8 >> 0) & 0xFF) / 255.0f;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_clear>(dev, AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->flags = flags;
   cmd->color_rgba_f32[0] = f32_bits(r);
   cmd->color_rgba_f32[1] = f32_bits(g);
@@ -2382,9 +2572,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   const uint32_t topology = d3d9_prim_to_topology(type);
-  emit_set_topology_locked(dev, topology);
+  if (!emit_set_topology_locked(dev, topology)) {
+    return E_OUTOFMEMORY;
+  }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->vertex_count = vertex_count_from_primitive(type, primitive_count);
   cmd->instance_count = 1;
   cmd->first_vertex = start_vertex;
@@ -2408,9 +2603,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   const uint32_t topology = d3d9_prim_to_topology(type);
-  emit_set_topology_locked(dev, topology);
+  if (!emit_set_topology_locked(dev, topology)) {
+    return E_OUTOFMEMORY;
+  }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->index_count = index_count_from_primitive(type, primitive_count);
   cmd->instance_count = 1;
   cmd->first_index = start_index;
@@ -2434,7 +2634,10 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     return hr;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->scanout_id = 0;
   bool vsync = (pPresentEx->sync_interval != 0);
   if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
@@ -2487,7 +2690,10 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     return hr;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present_ex>(AEROGPU_CMD_PRESENT_EX);
+  auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
+  if (!cmd) {
+    return E_OUTOFMEMORY;
+  }
   cmd->scanout_id = 0;
   bool vsync = (pPresent->sync_interval != 0);
   if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
@@ -2987,11 +3193,42 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     return hr;
   }
 
-  aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x cmd_buf=%u alloc_list=%u patch_list=%u\n",
+  // Validate the runtime-provided submission buffers. These must be present for
+  // DMA buffer construction.
+  const uint32_t min_cmd_buffer_size = static_cast<uint32_t>(
+      sizeof(aerogpu_cmd_stream_header) + align_up(sizeof(aerogpu_cmd_set_render_targets), 4));
+  if (!dev->wddm_context.pCommandBuffer ||
+      dev->wddm_context.CommandBufferSize < min_cmd_buffer_size ||
+      !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
+      !dev->wddm_context.pPatchLocationList || dev->wddm_context.PatchLocationListSize == 0 ||
+      dev->wddm_context.hSyncObject == 0) {
+    aerogpu::logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
+                  "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u sync=0x%08x\n",
+                  dev->wddm_context.pCommandBuffer,
+                  static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
+                  dev->wddm_context.pAllocationList,
+                  static_cast<unsigned>(dev->wddm_context.AllocationListSize),
+                  dev->wddm_context.pPatchLocationList,
+                  static_cast<unsigned>(dev->wddm_context.PatchLocationListSize),
+                  static_cast<unsigned>(dev->wddm_context.hSyncObject));
+
+    dev->wddm_context.destroy(dev->wddm_callbacks);
+    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
+    dev->wddm_device = 0;
+    pCreateDevice->hDevice.pDrvPrivate = nullptr;
+    return E_FAIL;
+  }
+
+  aerogpu::logf("aerogpu-d3d9: CreateDevice wddm_device=0x%08x hContext=0x%08x hSyncObject=0x%08x "
+                "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u\n",
                 static_cast<unsigned>(dev->wddm_device),
                 static_cast<unsigned>(dev->wddm_context.hContext),
+                static_cast<unsigned>(dev->wddm_context.hSyncObject),
+                dev->wddm_context.pCommandBuffer,
                 static_cast<unsigned>(dev->wddm_context.CommandBufferSize),
+                dev->wddm_context.pAllocationList,
                 static_cast<unsigned>(dev->wddm_context.AllocationListSize),
+                dev->wddm_context.pPatchLocationList,
                 static_cast<unsigned>(dev->wddm_context.PatchLocationListSize));
 
   // Wire the command stream builder to the runtime-provided DMA buffer so all
