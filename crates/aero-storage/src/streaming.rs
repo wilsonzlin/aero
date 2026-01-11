@@ -12,7 +12,8 @@ use std::{
 
 use crate::range_set::{ByteRange, RangeSet};
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH,
+    CONTENT_RANGE, ETAG, IF_RANGE, RANGE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -536,7 +537,10 @@ impl StreamingDisk {
         fs::create_dir_all(&config.cache_dir)?;
 
         let client = reqwest::Client::new();
-        let request_headers = build_header_map(&config.request_headers)?;
+        let mut request_headers = build_header_map(&config.request_headers)?;
+        // Disk bytes must be served with a stable byte representation. Defensive request to avoid
+        // accidental compression at intermediaries.
+        request_headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
         let (total_size, probed_validator) =
             probe_remote_size_and_validator(&client, &config.url, &request_headers).await?;
         let validator = config.validator.or(probed_validator);
@@ -1057,6 +1061,19 @@ impl StreamingDisk {
                 "unexpected status {}",
                 resp.status()
             )));
+        }
+
+        if let Some(encoding) = resp
+            .headers()
+            .get(CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+        {
+            let encoding = encoding.trim();
+            if !encoding.eq_ignore_ascii_case("identity") {
+                return Err(StreamingDiskError::Protocol(format!(
+                    "unexpected Content-Encoding: {encoding}"
+                )));
+            }
         }
 
         let content_range = resp

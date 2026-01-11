@@ -3,7 +3,7 @@
 use aero_storage::{
     ChunkManifest, StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
 };
-use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE, RANGE};
+use hyper::header::{ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
@@ -28,6 +28,7 @@ struct State {
     required_header: Option<(String, String)>,
     ignore_range: bool,
     wrong_content_range: bool,
+    content_encoding: Option<String>,
     counters: Counters,
 }
 
@@ -38,6 +39,7 @@ async fn start_range_server_with_options(
     required_header: Option<(&str, &str)>,
     ignore_range: bool,
     wrong_content_range: bool,
+    content_encoding: Option<&str>,
 ) -> (Url, Arc<State>, oneshot::Sender<()>) {
     let state = Arc::new(State {
         image: Arc::new(image),
@@ -46,6 +48,7 @@ async fn start_range_server_with_options(
         required_header: required_header.map(|(k, v)| (k.to_string(), v.to_string())),
         ignore_range,
         wrong_content_range,
+        content_encoding: content_encoding.map(|v| v.to_string()),
         counters: Counters::default(),
     });
 
@@ -160,6 +163,10 @@ async fn handle_request(
                         resp.headers_mut().insert(ACCEPT_RANGES, "bytes".parse().unwrap());
                         resp.headers_mut()
                             .insert(hyper::header::ETAG, current_etag.parse().unwrap());
+                        if let Some(encoding) = state.content_encoding.as_ref() {
+                            resp.headers_mut()
+                                .insert(CONTENT_ENCODING, encoding.parse().unwrap());
+                        }
                         let content_range = if state.wrong_content_range {
                             format!("bytes {}-{end_inclusive}/{}", start + 1, state.image.len())
                         } else {
@@ -232,7 +239,7 @@ async fn streaming_reads_and_reuses_cache() {
         .map(|i| (i % 251) as u8)
         .collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, None).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
@@ -284,7 +291,7 @@ async fn streaming_reads_and_reuses_cache() {
 async fn cache_invalidates_on_validator_change() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state1, shutdown1) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, None).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -309,7 +316,7 @@ async fn cache_invalidates_on_validator_change() {
 
     // Same bytes endpoint, but validator changed => invalidate cache and re-fetch.
     let (url2, state2, shutdown2) =
-        start_range_server_with_options(image.clone(), "etag-v2", false, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-v2", false, None, false, false, None).await;
     let mut config2 = StreamingDiskConfig::new(url2, cache_dir.path());
     config2.cache_backend = StreamingCacheBackend::Directory;
     config2.options.chunk_size = 1024;
@@ -332,7 +339,7 @@ async fn cache_invalidates_on_validator_change() {
 async fn inflight_dedup_avoids_duplicate_fetches() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-dedup", false, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-dedup", false, None, false, false, None).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -378,7 +385,7 @@ async fn inflight_dedup_avoids_duplicate_fetches() {
 async fn retries_transient_http_errors() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-retry", true, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-retry", true, None, false, false, None).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -406,7 +413,7 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
 
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-integrity", false, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-integrity", false, None, false, false, None).await;
 
     let chunk_size = 1024usize;
     let mut sha256 = Vec::new();
@@ -444,7 +451,7 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
 async fn if_range_mismatch_is_reported_as_validator_mismatch() {
     let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
     let (url, state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false).await;
+        start_range_server_with_options(image.clone(), "etag-v1", false, None, false, false, None).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = StreamingDiskConfig::new(url, cache_dir.path());
@@ -474,6 +481,7 @@ async fn request_headers_are_sent_on_all_http_requests() {
         Some(("x-test-auth", "secret")),
         false,
         false,
+        None,
     )
     .await;
 
@@ -497,7 +505,7 @@ async fn request_headers_are_sent_on_all_http_requests() {
 async fn range_not_supported_is_reported_when_server_ignores_range() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =
-        start_range_server_with_options(image.clone(), "etag-norange", false, None, true, false)
+        start_range_server_with_options(image.clone(), "etag-norange", false, None, true, false, None)
             .await;
 
     let cache_dir = tempdir().unwrap();
@@ -525,6 +533,36 @@ async fn content_range_mismatch_is_protocol_error() {
         None,
         false,
         true,
+        None,
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    let err = disk.read_at(0, &mut buf).await.err().unwrap();
+    assert!(matches!(err, StreamingDiskError::Protocol(_)));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn content_encoding_is_rejected() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        "etag-encoding",
+        false,
+        None,
+        false,
+        false,
+        Some("gzip"),
     )
     .await;
 
