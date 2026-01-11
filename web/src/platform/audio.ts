@@ -15,8 +15,9 @@ export type CreateAudioOutputOptions = {
    * The actual sample capacity is `ringBufferFrames * channelCount`.
    *
    * If omitted (and `ringBuffer` is not provided), this defaults to ~200ms of
-   * audio (`sampleRate / 5`, clamped to `[2048, sampleRate / 2]`). The previous
-   * behavior (~1s) was safe but introduced unacceptable interactive latency.
+   * audio at the *actual* `AudioContext.sampleRate` (`sampleRate / 5`, clamped to
+   * `[2048, sampleRate / 2]`). Browsers may ignore a requested `sampleRate`, so
+   * the default is derived from the constructed AudioContext's rate.
    */
   ringBufferFrames?: number;
   /**
@@ -477,9 +478,16 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   const sampleRate = options.sampleRate ?? 48_000;
   const latencyHint = options.latencyHint ?? "interactive";
   const channelCount = options.channelCount ?? 2;
+  const context = new AudioContextCtor({ sampleRate, latencyHint });
+
+  // Call resume() immediately (before any await) to satisfy autoplay policies.
+  const resumePromise = context.resume();
+
   const ringBufferFrames =
     options.ringBufferFrames ??
-    (options.ringBuffer ? inferRingBufferFrames(options.ringBuffer, channelCount) : getDefaultRingBufferFrames(sampleRate));
+    (options.ringBuffer
+      ? inferRingBufferFrames(options.ringBuffer, channelCount)
+      : getDefaultRingBufferFrames(context.sampleRate));
 
   let ringBuffer: AudioRingBufferLayout;
   try {
@@ -487,19 +495,12 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       ? wrapRingBuffer(options.ringBuffer, channelCount, ringBufferFrames)
       : createRingBuffer(channelCount, ringBufferFrames);
   } catch (err) {
+    await context.close();
     return createDisabledAudioOutput({
       message: err instanceof Error ? err.message : "Failed to allocate SharedArrayBuffer for audio.",
       sampleRate,
     });
   }
-
-  const context = new AudioContextCtor({
-    sampleRate,
-    latencyHint,
-  });
-
-  // Call resume() immediately (before any await) to satisfy autoplay policies.
-  const resumePromise = context.resume();
 
   if (!context.audioWorklet || typeof context.audioWorklet.addModule !== "function") {
     await context.close();
