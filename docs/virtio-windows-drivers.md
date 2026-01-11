@@ -73,7 +73,7 @@ In practice, virtio-win’s driver sources are typically distributed under a **B
 - If Aero **vendors** virtio-win artifacts (or a source subtree), we must include:
   - the upstream license texts
   - a pinned upstream version/commit reference
-  - a `THIRD_PARTY_NOTICES` entry
+  - a `THIRD_PARTY_NOTICES.md` attribution file (or equivalent redistribution notice document)
 - If Aero chooses not to vendor binaries and instead requires users to supply them, we still document the flow, but Aero is no longer “shipping” the drivers.
 
 This repo provides a **packaging + ISO build story** that works either way. The directory layout and tooling are designed so that later work can:
@@ -92,6 +92,7 @@ Drivers live under `drivers/virtio/`:
 ```
 drivers/virtio/
   manifest.json
+  THIRD_PARTY_NOTICES.md
   prebuilt/                  # where real driver files go
     win7/
       x86/
