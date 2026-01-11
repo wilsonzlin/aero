@@ -72,7 +72,9 @@ enum aerogpu_engine_id {
  *   both non-zero (present).
  * - header.magic must equal AEROGPU_ALLOC_TABLE_MAGIC.
  * - ABI major version must match. Minor may be newer.
- * - header.entry_stride_bytes must be == sizeof(struct aerogpu_alloc_entry).
+ * - header.entry_stride_bytes must be >= sizeof(struct aerogpu_alloc_entry).
+ *   - Newer ABI minor versions may extend `aerogpu_alloc_entry` by increasing the stride and
+ *     appending fields. Hosts must ignore unknown trailing bytes.
  * - header.entry_count * header.entry_stride_bytes must fit within
  *   header.size_bytes.
  * - Each entry must have alloc_id != 0, gpa != 0, size_bytes != 0, and
@@ -107,7 +109,7 @@ struct aerogpu_alloc_table_header {
   uint32_t abi_version; /* AEROGPU_ABI_VERSION_U32 */
   uint32_t size_bytes; /* Total size including header + entries */
   uint32_t entry_count;
-  uint32_t entry_stride_bytes; /* sizeof(struct aerogpu_alloc_entry) */
+  uint32_t entry_stride_bytes; /* >= sizeof(struct aerogpu_alloc_entry) */
   uint32_t reserved0;
 };
 
@@ -135,7 +137,11 @@ struct aerogpu_alloc_entry {
  */
 #pragma pack(push, 1)
 struct aerogpu_submit_desc {
-  uint32_t desc_size_bytes; /* Must be sizeof(struct aerogpu_submit_desc) */
+  /*
+   * Forward-compat: treat as a minimum size so newer ABI minor versions can append fields.
+   * The ring header's `entry_stride_bytes` must be >= desc_size_bytes.
+   */
+  uint32_t desc_size_bytes; /* >= sizeof(struct aerogpu_submit_desc) */
   uint32_t flags; /* aerogpu_submit_flags */
   uint32_t context_id; /* Driver-defined (0 == default/unknown) */
   uint32_t engine_id; /* aerogpu_engine_id */
@@ -180,7 +186,7 @@ struct aerogpu_ring_header {
   uint32_t abi_version; /* AEROGPU_ABI_VERSION_U32 */
   uint32_t size_bytes; /* Total bytes of the ring mapping */
   uint32_t entry_count; /* Number of slots; must be power-of-two */
-  uint32_t entry_stride_bytes; /* sizeof(struct aerogpu_submit_desc) */
+  uint32_t entry_stride_bytes; /* >= sizeof(struct aerogpu_submit_desc) */
   uint32_t flags;
   volatile uint32_t head; /* device-owned */
   volatile uint32_t tail; /* driver-owned */

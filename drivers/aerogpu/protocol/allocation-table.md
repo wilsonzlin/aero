@@ -86,7 +86,7 @@ These rules apply **everywhere the alloc table is consumed** (software executor,
 - ABI major version must match. Minor may be newer.
 - `size_bytes >= sizeof(aerogpu_alloc_table_header)`.
 - `size_bytes <= alloc_table_size_bytes` (descriptor-provided mapping size).
-- `entry_stride_bytes == sizeof(aerogpu_alloc_entry)`.
+- `entry_stride_bytes >= sizeof(aerogpu_alloc_entry)` (forward-compatible extension space).
 - `entry_count * entry_stride_bytes` must fit within `size_bytes`.
 
 ### Entry-level rules
