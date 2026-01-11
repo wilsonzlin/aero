@@ -319,6 +319,9 @@ struct BlendState {
     src_factor: u32,
     dst_factor: u32,
     blend_op: u32,
+    src_factor_alpha: u32,
+    dst_factor_alpha: u32,
+    blend_op_alpha: u32,
     color_write_mask: u8,
 }
 
@@ -330,6 +333,9 @@ impl Default for BlendState {
             src_factor: 1,
             dst_factor: 0,
             blend_op: 0,
+            src_factor_alpha: 1,
+            dst_factor_alpha: 0,
+            blend_op_alpha: 0,
             color_write_mask: 0xF,
         }
     }
@@ -2214,6 +2220,9 @@ impl AerogpuD3d9Executor {
                     src_factor: state.src_factor,
                     dst_factor: state.dst_factor,
                     blend_op: state.blend_op,
+                    src_factor_alpha: state.src_factor,
+                    dst_factor_alpha: state.dst_factor,
+                    blend_op_alpha: state.blend_op,
                     color_write_mask: state.color_write_mask,
                 };
                 Ok(())
@@ -3823,6 +3832,10 @@ impl AerogpuD3d9Executor {
                 Some(op) => self.state.blend_state.blend_op = op,
                 None => debug!(state_id, value, "unknown D3D9 blend op"),
             },
+            d3d9::D3DRS_SEPARATEALPHABLENDENABLE
+            | d3d9::D3DRS_SRCBLENDALPHA
+            | d3d9::D3DRS_DESTBLENDALPHA
+            | d3d9::D3DRS_BLENDOPALPHA => self.update_separate_alpha_blend_from_render_state(),
             d3d9::D3DRS_COLORWRITEENABLE => {
                 self.state.blend_state.color_write_mask = (value & 0xF) as u8
             }
@@ -3835,6 +3848,92 @@ impl AerogpuD3d9Executor {
             }
             d3d9::D3DRS_CULLMODE => self.update_cull_mode_from_render_state(),
             _ => debug!(state_id, value, "ignoring unsupported D3D9 render state"),
+        }
+
+        // D3D9 uses the color blend settings for alpha unless separate-alpha blending is enabled.
+        if matches!(
+            state_id,
+            d3d9::D3DRS_SRCBLEND | d3d9::D3DRS_DESTBLEND | d3d9::D3DRS_BLENDOP
+        ) && !self.separate_alpha_blend_enabled()
+        {
+            self.sync_alpha_blend_to_color();
+        }
+    }
+
+    fn separate_alpha_blend_enabled(&self) -> bool {
+        self.state
+            .render_states
+            .get(d3d9::D3DRS_SEPARATEALPHABLENDENABLE as usize)
+            .copied()
+            .unwrap_or(0)
+            != 0
+    }
+
+    fn sync_alpha_blend_to_color(&mut self) {
+        self.state.blend_state.src_factor_alpha = self.state.blend_state.src_factor;
+        self.state.blend_state.dst_factor_alpha = self.state.blend_state.dst_factor;
+        self.state.blend_state.blend_op_alpha = self.state.blend_state.blend_op;
+    }
+
+    fn update_separate_alpha_blend_from_render_state(&mut self) {
+        if !self.separate_alpha_blend_enabled() {
+            self.sync_alpha_blend_to_color();
+            return;
+        }
+
+        let src_raw = self
+            .state
+            .render_states
+            .get(d3d9::D3DRS_SRCBLENDALPHA as usize)
+            .copied()
+            .unwrap_or(d3d9::D3DBLEND_ONE);
+        let dst_raw = self
+            .state
+            .render_states
+            .get(d3d9::D3DRS_DESTBLENDALPHA as usize)
+            .copied()
+            .unwrap_or(d3d9::D3DBLEND_ZERO);
+        let op_raw = self
+            .state
+            .render_states
+            .get(d3d9::D3DRS_BLENDOPALPHA as usize)
+            .copied()
+            .unwrap_or(1);
+
+        let src_raw = if src_raw == 0 { d3d9::D3DBLEND_ONE } else { src_raw };
+        let dst_raw = if dst_raw == 0 { d3d9::D3DBLEND_ZERO } else { dst_raw };
+        let op_raw = if op_raw == 0 { 1 } else { op_raw };
+
+        match src_raw {
+            d3d9::D3DBLEND_BOTHSRCALPHA => {
+                self.state.blend_state.src_factor_alpha = 2;
+                self.state.blend_state.dst_factor_alpha = 3;
+            }
+            d3d9::D3DBLEND_BOTHINVSRCALPHA => {
+                self.state.blend_state.src_factor_alpha = 3;
+                self.state.blend_state.dst_factor_alpha = 2;
+            }
+            _ => {
+                if let Some(factor) = d3d9_blend_to_aerogpu(src_raw) {
+                    self.state.blend_state.src_factor_alpha = factor;
+                } else {
+                    debug!(state_id = d3d9::D3DRS_SRCBLENDALPHA, value = src_raw, "unknown D3D9 blend factor");
+                }
+                if let Some(factor) = d3d9_blend_to_aerogpu(dst_raw) {
+                    self.state.blend_state.dst_factor_alpha = factor;
+                } else {
+                    debug!(state_id = d3d9::D3DRS_DESTBLENDALPHA, value = dst_raw, "unknown D3D9 blend factor");
+                }
+            }
+        }
+
+        match d3d9_blend_op_to_aerogpu(op_raw) {
+            Some(op) => self.state.blend_state.blend_op_alpha = op,
+            None => debug!(
+                state_id = d3d9::D3DRS_BLENDOPALPHA,
+                value = op_raw,
+                "unknown D3D9 blend op"
+            ),
         }
     }
 
@@ -4289,14 +4388,19 @@ fn map_blend_state(state: BlendState) -> Option<wgpu::BlendState> {
         return None;
     }
 
-    let component = wgpu::BlendComponent {
+    let color = wgpu::BlendComponent {
         src_factor: map_blend_factor(state.src_factor),
         dst_factor: map_blend_factor(state.dst_factor),
         operation: map_blend_op(state.blend_op),
     };
+    let alpha = wgpu::BlendComponent {
+        src_factor: map_blend_factor(state.src_factor_alpha),
+        dst_factor: map_blend_factor(state.dst_factor_alpha),
+        operation: map_blend_op(state.blend_op_alpha),
+    };
     Some(wgpu::BlendState {
-        color: component,
-        alpha: component,
+        color,
+        alpha,
     })
 }
 
@@ -4481,6 +4585,10 @@ mod d3d9 {
     pub const D3DRS_SRCBLEND: u32 = 19;
     pub const D3DRS_DESTBLEND: u32 = 20;
     pub const D3DRS_BLENDOP: u32 = 171;
+    pub const D3DRS_SEPARATEALPHABLENDENABLE: u32 = 206;
+    pub const D3DRS_SRCBLENDALPHA: u32 = 207;
+    pub const D3DRS_DESTBLENDALPHA: u32 = 208;
+    pub const D3DRS_BLENDOPALPHA: u32 = 209;
 
     pub const D3DRS_COLORWRITEENABLE: u32 = 168;
     pub const D3DRS_SCISSORTESTENABLE: u32 = 174;

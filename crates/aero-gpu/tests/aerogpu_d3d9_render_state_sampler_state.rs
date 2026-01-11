@@ -168,9 +168,14 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     const D3DRS_SRCBLEND: u32 = 19;
     const D3DRS_DESTBLEND: u32 = 20;
     const D3DRS_BLENDOP: u32 = 171;
+    const D3DRS_SEPARATEALPHABLENDENABLE: u32 = 206;
+    const D3DRS_SRCBLENDALPHA: u32 = 207;
+    const D3DRS_DESTBLENDALPHA: u32 = 208;
+    const D3DRS_BLENDOPALPHA: u32 = 209;
     const D3DRS_SCISSORTESTENABLE: u32 = 174;
 
     // D3D9 blend factors/ops.
+    const D3DBLEND_ONE: u32 = 2;
     const D3DBLEND_SRCALPHA: u32 = 5;
     const D3DBLEND_INVSRCALPHA: u32 = 6;
     const D3DBLENDOP_ADD: u32 = 1;
@@ -197,6 +202,7 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     const TEX_RED: u32 = 10;
     const TEX_GREEN_ALPHA: u32 = 11;
     const TEX_BW: u32 = 12;
+    const TEX_RED_HALF_ALPHA: u32 = 13;
 
     let width = 64u32;
     let height = 64u32;
@@ -307,6 +313,20 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
         });
 
         emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, TEX_RED_HALF_ALPHA);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 1);
+            push_u32(out, 4);
+            push_u32(out, 0);
+            push_u32(out, 0);
+            push_u64(out, 0);
+        });
+
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
             push_u32(out, TEX_GREEN_ALPHA);
             push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
             push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
@@ -341,6 +361,13 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
             push_u64(out, 0);
             push_u64(out, 4);
             out.extend_from_slice(&[255, 0, 0, 255]);
+        });
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, TEX_RED_HALF_ALPHA);
+            push_u32(out, 0);
+            push_u64(out, 0);
+            push_u64(out, 4);
+            out.extend_from_slice(&[255, 0, 0, 128]);
         });
         emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
             push_u32(out, TEX_GREEN_ALPHA);
@@ -597,6 +624,51 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
             push_u32(out, 6); // first_vertex (constant-UV quad)
             push_u32(out, 0); // first_instance
         });
+
+        // Separate-alpha blend test: write into a small bottom-left region so we don't clobber the
+        // previous assertions.
+        emit_packet(out, OPC_SET_SCISSOR, |out| {
+            push_i32(out, 0);
+            push_i32(out, 48);
+            push_i32(out, 16);
+            push_i32(out, 16);
+        });
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0); // alpha = 0
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+        emit_packet(out, OPC_SET_TEXTURE, |out| {
+            push_u32(out, STAGE_PIXEL);
+            push_u32(out, 0); // slot
+            push_u32(out, TEX_RED_HALF_ALPHA);
+            push_u32(out, 0); // reserved0
+        });
+        for (state, value) in [
+            (D3DRS_ALPHABLENDENABLE, 1),
+            (D3DRS_SRCBLEND, D3DBLEND_SRCALPHA),
+            (D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA),
+            (D3DRS_BLENDOP, D3DBLENDOP_ADD),
+            (D3DRS_SEPARATEALPHABLENDENABLE, 1),
+            (D3DRS_SRCBLENDALPHA, D3DBLEND_ONE),
+            (D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA),
+            (D3DRS_BLENDOPALPHA, D3DBLENDOP_ADD),
+        ] {
+            emit_packet(out, OPC_SET_RENDER_STATE, |out| {
+                push_u32(out, state);
+                push_u32(out, value);
+            });
+        }
+        emit_packet(out, OPC_DRAW, |out| {
+            push_u32(out, 6); // vertex_count
+            push_u32(out, 1); // instance_count
+            push_u32(out, 0); // first_vertex
+            push_u32(out, 0); // first_instance
+        });
     });
 
     exec.execute_cmd_stream(&stream)
@@ -618,5 +690,17 @@ fn d3d9_cmd_stream_render_state_and_sampler_state_are_honored() {
     assert!(
         (100..=150).contains(&right[0]) && right[0] == right[1] && right[1] == right[2],
         "expected linear sampling to produce gray, got {right:?}"
+    );
+
+    // Separate alpha blend validation: color uses SRCALPHA but alpha should use ONE when separate
+    // alpha blending is enabled. Without separate alpha, we'd observe alpha ~= 64 instead of 128.
+    let separate_alpha = pixel_at(&rgba, width, 8, 56);
+    assert!(
+        (110..=145).contains(&separate_alpha[0]),
+        "expected blended red channel ~= 128, got {separate_alpha:?}"
+    );
+    assert!(
+        (110..=145).contains(&separate_alpha[3]),
+        "expected blended alpha channel ~= 128, got {separate_alpha:?}"
     );
 }
