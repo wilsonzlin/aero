@@ -109,6 +109,8 @@ jobs:
           test -f web/dist/_headers
           test -f web/dist/aero.version.json
 
+          node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync('web/dist/aero.version.json','utf8')); const expected={version:process.env.AERO_VERSION,gitSha:process.env.GIT_SHA,builtAt:process.env.BUILD_TIMESTAMP}; for(const [k,v] of Object.entries(expected)){ if(!v){ console.error('Missing expected env '+k); process.exit(1);} if(info[k]!==v){ console.error('aero.version.json '+k+' mismatch: expected '+v+' got '+info[k]); process.exit(1);} }"
+
           # Ensure both wasm build variants were produced (threaded + single fallback).
           test -f web/src/wasm/pkg-single/aero_wasm_bg.wasm
           test -f web/src/wasm/pkg-threaded/aero_wasm_bg.wasm
