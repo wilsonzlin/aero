@@ -10,6 +10,17 @@ on:
       - compose.yaml
       - scripts/ci/check-deploy-manifests.mjs
       - .github/workflows/iac.yml
+  push:
+    branches:
+      - main
+    paths:
+      - infra/**
+      - deploy/k8s/**
+      - deploy/docker-compose.yml
+      - docker-compose.yml
+      - compose.yaml
+      - scripts/ci/check-deploy-manifests.mjs
+      - .github/workflows/iac.yml
   schedule:
     # Weekly safety net: catch drift (Helm/K8s API changes, Terraform/provider updates, etc).
     - cron: "17 3 * * 1"
