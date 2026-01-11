@@ -29,7 +29,7 @@ Implementation references:
 - Wire contract fixtures:
   - Fixture JSON: `tests/fixtures/hid/webhid_normalized_mouse.json`
   - TS contract test: `web/test/webhid_normalize_fixture.test.ts`
-  - Rust contract tests: `crates/aero-usb/tests/webhid_passthrough.rs`
+  - Rust contract test (descriptor bytes): `crates/aero-wasm/tests/webhid_report_descriptor_synthesis.rs`
 
 (The same synthesis stack is also implemented in the native emulator under
 `crates/emulator/src/io/usb/hid/`, but `crates/aero-usb` is the primary reference for the browser/WASM path.)
