@@ -414,7 +414,18 @@ def main() -> int:
                             if not saw_virtio_snd_pass:
                                 msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                 if saw_virtio_snd_skip:
-                                    msg = "FAIL: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+                                    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
+                                        msg = (
+                                            "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
+                                            "but --with-virtio-snd was enabled"
+                                        )
+                                    elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
+                                        msg = (
+                                            "FAIL: virtio-snd test was skipped (--disable-snd) "
+                                            "but --with-virtio-snd was enabled"
+                                        )
+                                    else:
+                                        msg = "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
@@ -482,7 +493,18 @@ def main() -> int:
                                 if not saw_virtio_snd_pass:
                                     msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
-                                        msg = "FAIL: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+                                        if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
+                                            msg = (
+                                                "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
+                                                "but --with-virtio-snd was enabled"
+                                            )
+                                        elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
+                                            msg = (
+                                                "FAIL: virtio-snd test was skipped (--disable-snd) "
+                                                "but --with-virtio-snd was enabled"
+                                            )
+                                        else:
+                                            msg = "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1

@@ -2377,7 +2377,7 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     const auto snd_pci = DetectVirtioSndPciDevices(log);
     if (snd_pci.empty()) {
-      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected");
+      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
       if (opt.require_snd) {
         log.LogLine("virtio-snd: --require-snd set; failing");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");

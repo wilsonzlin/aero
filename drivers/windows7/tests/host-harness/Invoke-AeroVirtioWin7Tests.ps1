@@ -665,7 +665,14 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_SND_SKIPPED" {
-      Write-Host "FAIL: virtio-snd test was skipped (--disable-snd) but -WithVirtioSnd was enabled"
+      $reason = "unknown"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|flag_not_set") {
+        $reason = "guest_not_configured_with_--test-snd"
+      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|SKIP\\|disabled") {
+        $reason = "--disable-snd"
+      }
+
+      Write-Host "FAIL: virtio-snd test was skipped ($reason) but -WithVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
