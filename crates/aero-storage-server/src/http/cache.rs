@@ -104,7 +104,11 @@ fn if_none_match_matches(if_none_match: &HeaderValue, current_etag: &str) -> boo
 }
 
 fn strip_weak_prefix(tag: &str) -> &str {
-    tag.trim().strip_prefix("W/").unwrap_or(tag.trim())
+    let trimmed = tag.trim();
+    trimmed
+        .strip_prefix("W/")
+        .or_else(|| trimmed.strip_prefix("w/"))
+        .unwrap_or(trimmed)
 }
 
 /// Returns `true` if a request with `Range` may be served as partial content.
@@ -124,12 +128,17 @@ pub fn if_range_allows_range(
     let if_range = if_range.trim();
 
     // Entity-tag form. RFC 9110 requires strong comparison and disallows weak validators.
-    if if_range.starts_with('"') || if_range.starts_with("W/") {
+    if if_range.starts_with('"') || if_range.starts_with("W/") || if_range.starts_with("w/") {
         let Some(current_etag) = current_etag else {
             return false;
         };
         // If either side is weak, treat it as not matching for If-Range purposes.
-        if if_range.starts_with("W/") || current_etag.trim_start().starts_with("W/") {
+        let current_etag = current_etag.trim_start();
+        if if_range.starts_with("W/")
+            || if_range.starts_with("w/")
+            || current_etag.starts_with("W/")
+            || current_etag.starts_with("w/")
+        {
             return false;
         }
         return if_range == current_etag;
