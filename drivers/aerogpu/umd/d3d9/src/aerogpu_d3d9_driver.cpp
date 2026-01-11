@@ -195,6 +195,11 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnLightEnable);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetNPatchMode);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetStreamSourceFreq);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetGammaRamp);
+AEROGPU_DEFINE_HAS_MEMBER(pfnCreateStateBlock);
+AEROGPU_DEFINE_HAS_MEMBER(pfnDeleteStateBlock);
+AEROGPU_DEFINE_HAS_MEMBER(pfnCaptureStateBlock);
+AEROGPU_DEFINE_HAS_MEMBER(pfnApplyStateBlock);
+AEROGPU_DEFINE_HAS_MEMBER(pfnValidateDevice);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -297,6 +302,14 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnLightEnable, D3d9TraceFunc::DeviceLightEnable, S
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetNPatchMode, D3d9TraceFunc::DeviceSetNPatchMode, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetStreamSourceFreq, D3d9TraceFunc::DeviceSetStreamSourceFreq, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetGammaRamp, D3d9TraceFunc::DeviceSetGammaRamp, S_OK);
+
+// State blocks and ValidateDevice are not supported yet. Return a stable failure
+// code rather than leaving the vtable entry NULL (which would crash callers).
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnCreateStateBlock, D3d9TraceFunc::DeviceCreateStateBlock, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeleteStateBlock, D3d9TraceFunc::DeviceDeleteStateBlock, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnCaptureStateBlock, D3d9TraceFunc::DeviceCaptureStateBlock, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnApplyStateBlock, D3d9TraceFunc::DeviceApplyStateBlock, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnValidateDevice, D3d9TraceFunc::DeviceValidateDevice, D3DERR_NOTAVAILABLE);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7105,6 +7118,32 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     AEROGPU_SET_D3D9DDI_FN(
         pfnSetShaderConstB,
         aerogpu_d3d9_stub_pfnSetShaderConstB<decltype(pDeviceFuncs->pfnSetShaderConstB)>::pfnSetShaderConstB);
+  }
+
+  if constexpr (aerogpu_has_member_pfnCreateStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnCreateStateBlock,
+        aerogpu_d3d9_stub_pfnCreateStateBlock<decltype(pDeviceFuncs->pfnCreateStateBlock)>::pfnCreateStateBlock);
+  }
+  if constexpr (aerogpu_has_member_pfnDeleteStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnDeleteStateBlock,
+        aerogpu_d3d9_stub_pfnDeleteStateBlock<decltype(pDeviceFuncs->pfnDeleteStateBlock)>::pfnDeleteStateBlock);
+  }
+  if constexpr (aerogpu_has_member_pfnCaptureStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnCaptureStateBlock,
+        aerogpu_d3d9_stub_pfnCaptureStateBlock<decltype(pDeviceFuncs->pfnCaptureStateBlock)>::pfnCaptureStateBlock);
+  }
+  if constexpr (aerogpu_has_member_pfnApplyStateBlock<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnApplyStateBlock,
+        aerogpu_d3d9_stub_pfnApplyStateBlock<decltype(pDeviceFuncs->pfnApplyStateBlock)>::pfnApplyStateBlock);
+  }
+  if constexpr (aerogpu_has_member_pfnValidateDevice<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnValidateDevice,
+        aerogpu_d3d9_stub_pfnValidateDevice<decltype(pDeviceFuncs->pfnValidateDevice)>::pfnValidateDevice);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);

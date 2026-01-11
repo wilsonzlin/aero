@@ -306,6 +306,16 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::SetStreamSourceFreq (stub)";
     case D3d9TraceFunc::DeviceSetGammaRamp:
       return "Device::SetGammaRamp (stub)";
+    case D3d9TraceFunc::DeviceCreateStateBlock:
+      return "Device::CreateStateBlock (stub)";
+    case D3d9TraceFunc::DeviceDeleteStateBlock:
+      return "Device::DeleteStateBlock (stub)";
+    case D3d9TraceFunc::DeviceCaptureStateBlock:
+      return "Device::CaptureStateBlock (stub)";
+    case D3d9TraceFunc::DeviceApplyStateBlock:
+      return "Device::ApplyStateBlock (stub)";
+    case D3d9TraceFunc::DeviceValidateDevice:
+      return "Device::ValidateDevice (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

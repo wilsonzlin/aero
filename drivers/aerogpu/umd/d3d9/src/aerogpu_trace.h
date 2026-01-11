@@ -121,6 +121,11 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceSetNPatchMode,
   DeviceSetStreamSourceFreq,
   DeviceSetGammaRamp,
+  DeviceCreateStateBlock,
+  DeviceDeleteStateBlock,
+  DeviceCaptureStateBlock,
+  DeviceApplyStateBlock,
+  DeviceValidateDevice,
 
   kCount,
 };

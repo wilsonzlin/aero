@@ -146,6 +146,8 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 - `pfnSetShaderConstI` / `pfnSetShaderConstB` (no-op, returns `S_OK`)
 - `pfnSetMaterial` / `pfnSetLight` / `pfnLightEnable` (no-op, returns `S_OK`)
 - `pfnSetNPatchMode` / `pfnSetStreamSourceFreq` / `pfnSetGammaRamp` (no-op, returns `S_OK`)
+- `pfnCreateStateBlock` / `pfnDeleteStateBlock` / `pfnCaptureStateBlock` / `pfnApplyStateBlock` / `pfnValidateDevice`
+  (returns `D3DERR_NOTAVAILABLE`)
 
 ### Caps/feature gating
 
