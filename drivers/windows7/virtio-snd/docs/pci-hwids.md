@@ -37,17 +37,16 @@ So, a fully-qualified expected HWID looks like:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
-The Aero driver INF (`inf/aero-virtio-snd.inf`) includes both:
+The Aero driver INFs (`inf/aero-virtio-snd.inf` and `inf/virtio-snd.inf`) are intentionally **strict**
+for `AERO-W7-VIRTIO` v1 and match only:
 
-* **Revision-gated** forms (e.g. `PCI\VEN_1AF4&DEV_1059&REV_01`)
-* **Non-revision-gated** forms (e.g. `PCI\VEN_1AF4&DEV_1059`)
+* `PCI\VEN_1AF4&DEV_1059&REV_01`
 
-And it matches both the modern (`DEV_1059`) and transitional (`DEV_1018`) virtio-snd PCI IDs.
-
-This keeps development installs simple. For strict Aero contract-v1 binding you can tighten the
-INF to only keep revision- and subsystem-qualified entries, for example:
+Optional (commented out) tighter match:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
+
+They do **not** match transitional `DEV_1018` IDs and do not include non-`REV_01` short forms.
 
 ## QEMU mapping
 
@@ -72,8 +71,8 @@ want to validate the modern/non-transitional ID space.
 
 ### QEMU vs Aero contract v1 (REV_01)
 
-Many QEMU device models report `REV_00` by default. The Aero INF also includes short forms without
-`REV_01`, so it can bind to stock QEMU for bring-up.
+Many QEMU device models report `REV_00` by default. The Aero INFs require `REV_01`, so the driver
+will not bind to stock QEMU unless you override the revision.
 
 If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
 
@@ -84,8 +83,8 @@ If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
   -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
   ```
   (You can confirm supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.)
-* If you want strict Aero contract v1 conformance, configure QEMU to report `REV_01` (for example
-  via `x-pci-revision=0x01`) and tighten the INF to require the revision-gated match.
+* If your QEMU build does **not** support overriding the PCI Revision ID, you will need a different
+  hypervisor/device model (or a locally-modified INF) to test the strict contract-v1 match.
 
 ### Verify the emitted PCI ID (no guest required)
 
@@ -104,9 +103,8 @@ Audio: PCI device 1af4:1059
 ## Windows 7 caveats
 
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
-  `REV_...`). The Aero INF includes both revision-gated and non-revision-gated forms; if you want
-  strict contract-v1 binding, keep only the `REV_01` entries.
-* The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec. The Aero INF matches both
-  the modern and transitional ID spaces for compatibility. If you want to validate the modern ID
-  space specifically, use `disable-legacy=on` and confirm Windows enumerates `DEV_1059` (and
-  optionally `REV_01`).
+  `REV_...`). The Aero INF requires a `REV_01` match; if your device reports `REV_00`, the driver will
+  not bind.
+* The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec. The Aero Win7 contract v1
+  INF does **not** match it; if Windows shows `DEV_1018`, configure the hypervisor to expose a
+  modern-only device (e.g. QEMU `disable-legacy=on`) so Windows enumerates `DEV_1059`.

@@ -72,7 +72,7 @@ qemu-system-i386 \
   -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x86.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0
+  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
 ```
 
 ### Windows 7 SP1 x64
@@ -85,7 +85,7 @@ qemu-system-x86_64 \
   -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x64.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0
+  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
 ```
 
 ### Audio backend alternatives
@@ -102,12 +102,18 @@ The virtio specification defines two PCI device IDs for virtio-snd:
 - **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1059`
 - **Transitional (legacy+modern)**: `PCI\VEN_1AF4&DEV_1018`
 
-`inf/aero-virtio-snd.inf` matches **both** IDs (and both `REV_01` and short forms) for development
-convenience.
+The Aero Win7 contract v1 INFs are intentionally strict:
 
-Important: the **default build** of this driver uses the **legacy virtio-pci I/O-port interface**
-(see `drivers/windows7/virtio-snd/docs/README.md`), so it requires the legacy I/O-port BAR to be
-present. In practice this means you should use a **transitional** device under QEMU (the default).
+- `inf/aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01`
+  (optionally subsystem-qualified as `...&SUBSYS_00191AF4&REV_01`).
+- Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind.
+
+If Windows shows `DEV_1018` or `REV_00`, configure QEMU to expose a modern-only device and the
+contract v1 revision, for example:
+
+```bash
+-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
+```
 
 ## Verifying HWID in Device Manager
 
@@ -120,16 +126,15 @@ Before installing the driver (or when troubleshooting binding), confirm the devi
 
 Expected values include at least one of:
 
-- `PCI\VEN_1AF4&DEV_1018` (transitional; expected for the legacy I/O-port driver)
-- `PCI\VEN_1AF4&DEV_1059` (modern / non-transitional; requires the modern virtio-pci driver path)
+- `PCI\VEN_1AF4&DEV_1059&REV_01`
+- `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)
 
 More specific forms may also appear (with `SUBSYS_...` / `REV_..`). The Aero INF matches the revision-gated
-forms and the short forms for both IDs.
+forms for the modern ID (`DEV_1059`).
 
-The automated host harness probes QEMU for virtio-snd device properties (via `-device <virtio-snd>,help`):
-
-- legacy transport enabled (it does not set `disable-legacy=on`)
-- `x-pci-revision=0x01` is added when the QEMU device supports it
+The automated Win7 host harness probes QEMU for supported virtio-snd device properties (via
+`-device virtio-sound-pci,help`) and enables contract-v1 identification when supported (for example
+`disable-legacy=on` and `x-pci-revision=0x01`).
 
 - `drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1`
 - `drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py`
@@ -175,10 +180,10 @@ Reboot if prompted.
 1. In **Device Manager**, locate the installed device (after successful install it should show under **Sound, video and game controllers**).
 2. Right click → **Properties**:
    - **General** should show “This device is working properly.”
-   - **Details** tab → **Hardware Ids** should include either:
-     - `PCI\VEN_1AF4&DEV_1018` (transitional; expected for the legacy I/O-port driver), or
-     - `PCI\VEN_1AF4&DEV_1059` (modern / non-transitional),
-     and may also include more-specific `SUBSYS_...` / `REV_..` forms.
+   - **Details** tab → **Hardware Ids** should include at least one of:
+     - `PCI\VEN_1AF4&DEV_1059&REV_01`
+     - `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
+     and may also include less-specific `...&DEV_1059` variants.
    - **Driver** tab → **Driver Details** should include at least:
      - `virtiosnd.sys`
      - `portcls.sys`
@@ -279,9 +284,8 @@ Then review:
   
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
-- Confirm the HWID matches one of the patterns in `inf/aero-virtio-snd.inf` (DEV_1018/DEV_1059 with optional `REV_..`/`SUBSYS_...` qualifiers).
-- If you forced `disable-legacy=on` (modern-only), the current driver build will not start because it
-  requires the legacy I/O-port BAR. Use a transitional device (DEV_1018) and do **not** use `disable-legacy=on`.
+- Confirm the HWID matches `inf/aero-virtio-snd.inf` (`DEV_1059&REV_01`, optionally subsystem-qualified).
+- If Windows shows `DEV_1018`, the device is transitional; use `disable-legacy=on` so Windows enumerates `DEV_1059`.
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
@@ -291,7 +295,7 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 - Confirm the driver is installing a complete PortCls/WaveRT stack:
   - A WaveRT render miniport alone is not sufficient; Windows typically also expects the correct KS filter categories and (often) a topology miniport.
 - Re-check the INF:
-  - The INF matches both `DEV_1018` (transitional) and `DEV_1059` (modern) forms, with and without `REV_..` / `SUBSYS_...` qualifiers. If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
+  - The Aero INF matches `DEV_1059&REV_01` (optionally `SUBSYS_00191AF4&REV_01`) for contract v1. If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
   - The INF must register the correct audio/KS interfaces for render (e.g. `KSCATEGORY_AUDIO`, `KSCATEGORY_RENDER`).
 
 If you are iterating on INF/miniport registration, remove the device from Device Manager (and delete the driver package if requested) before reinstalling so updated INF state is applied.

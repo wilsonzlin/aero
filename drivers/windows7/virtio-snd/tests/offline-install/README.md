@@ -244,7 +244,7 @@ Once the system boots with virtio-snd hardware present:
   Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
   
   - `aero-virtio-snd.inf`, or
-  - the device hardware ID (virtio-snd may enumerate as `PCI\VEN_1AF4&DEV_1018` (transitional) or `PCI\VEN_1AF4&DEV_1059` (modern-only); `&REV_..` / `&SUBSYS_...` qualifiers may also appear)
+  - the device hardware ID (for virtio-snd: `PCI\VEN_1AF4&DEV_1059` and typically `&REV_01`; `&SUBSYS_...` qualifiers may also appear). If you see `DEV_1018`, the device is transitional and the Aero contract v1 INF will not bind.
 
 If the driver package is staged but the device doesn’t bind:
 
