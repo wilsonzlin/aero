@@ -1,8 +1,8 @@
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
-    OperandModifier, RegFile, RegisterRef, ShaderStage, Sm4Inst, Sm4Program, SrcKind, SrcOperand,
-    Swizzle, WriteMask,
+    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module, Sm4Program,
+    SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -207,10 +207,10 @@ fn translates_vertex_id_and_instance_id_builtins() {
     let shex_bytes = tokens_to_bytes(&make_sm5_program_tokens(1, &body));
 
     let isgn = build_signature_chunk(&[
-        sig_param("VID", 0, 0, 0b0001, D3D_NAME_VERTEX_ID),
-        sig_param("IID", 0, 1, 0b0001, D3D_NAME_INSTANCE_ID),
+        sig_param("VID", 0, 0, 0b0001, 0),
+        sig_param("IID", 0, 1, 0b0001, 0),
     ]);
-    let osgn = build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111, D3D_NAME_POSITION)]);
+    let osgn = build_signature_chunk(&[sig_param("POS", 0, 0, 0b1111, 0)]);
 
     let dxbc_bytes = build_dxbc(&[
         (FOURCC_SHEX, shex_bytes),
@@ -239,32 +239,119 @@ fn translates_vertex_id_and_instance_id_builtins() {
 }
 
 #[test]
-fn translates_front_facing_builtin() {
-    // No need for a real token stream here; just ensure the signature-driven IO emits the builtin.
-    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
-    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+fn translates_vertex_id_and_instance_id_builtins_from_semantics() {
+    let isgn = build_signature_chunk(&[
+        sig_param("SV_VertexID", 0, 0, 0b0001, 0),
+        sig_param("SV_InstanceID", 0, 1, 0b0001, 0),
+    ]);
+    let osgn = build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111, 0)]);
 
-    let signatures = aero_d3d11::ShaderSignatures {
-        isgn: Some(aero_d3d11::DxbcSignature {
-            parameters: vec![
-                sig_param("SV_Position", 0, 0, 0b1111, D3D_NAME_POSITION),
-                sig_param("SV_IsFrontFace", 0, 1, 0b0001, D3D_NAME_IS_FRONT_FACE),
-            ],
-        }),
-        osgn: Some(aero_d3d11::DxbcSignature {
-            parameters: vec![sig_param("SV_Target", 0, 0, 0b1111, D3D_NAME_TARGET)],
-        }),
-        psgn: None,
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("signature parse");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Add {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: src_reg(RegFile::Input, 0),
+                b: src_reg(RegFile::Input, 1),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
     };
 
-    let module = aero_d3d11::Sm4Module {
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated
+        .wgsl
+        .contains("@builtin(vertex_index) vertex_id: u32"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(instance_index) instance_id: u32"));
+    assert!(translated.wgsl.contains("f32(input.vertex_id)"));
+    assert!(translated.wgsl.contains("f32(input.instance_id)"));
+}
+
+#[test]
+fn translates_vertex_id_and_instance_id_builtins_from_system_value_type() {
+    let isgn = build_signature_chunk(&[
+        sig_param("VID", 0, 0, 0b0001, D3D_NAME_VERTEX_ID),
+        sig_param("IID", 0, 1, 0b0001, D3D_NAME_INSTANCE_ID),
+    ]);
+    let osgn = build_signature_chunk(&[sig_param("POS", 0, 0, 0b1111, D3D_NAME_POSITION)]);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("signature parse");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Add {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: src_reg(RegFile::Input, 0),
+                b: src_reg(RegFile::Input, 1),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(translated
+        .wgsl
+        .contains("@builtin(vertex_index) vertex_id: u32"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(instance_index) instance_id: u32"));
+}
+
+#[test]
+fn translates_front_facing_builtin() {
+    let isgn = build_signature_chunk(&[
+        sig_param("SV_Position", 0, 0, 0b1111, 0),
+        sig_param("SV_IsFrontFace", 0, 1, 0b0001, 0),
+    ]);
+    let osgn = build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111, 0)]);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("signature parse");
+
+    let module = Sm4Module {
         stage: ShaderStage::Pixel,
-        model: aero_d3d11::ShaderModel { major: 5, minor: 0 },
+        model: ShaderModel { major: 5, minor: 0 },
         decls: Vec::new(),
         instructions: vec![
             Sm4Inst::Mov {
                 dst: dst(RegFile::Output, 0, WriteMask::XYZW),
-                src: src_reg(RegFile::Input, 0),
+                src: src_reg(RegFile::Input, 1),
             },
             Sm4Inst::Ret,
         ],
@@ -275,4 +362,7 @@ fn translates_front_facing_builtin() {
     assert!(translated
         .wgsl
         .contains("@builtin(front_facing) front_facing: bool"));
+    assert!(translated
+        .wgsl
+        .contains("select(0.0, 1.0, input.front_facing)"));
 }
