@@ -10,6 +10,11 @@
  *
  * This file is intentionally isolated under `drivers/aerogpu/protocol/legacy/`.
  *
+ * NOTE: This legacy header defines common macro names like `AEROGPU_PCI_VENDOR_ID`
+ * and `AEROGPU_MMIO_MAGIC` that conflict with the versioned ABI headers
+ * (`aerogpu_pci.h`, `aerogpu_ring.h`). Do not include this header in code that
+ * also includes the versioned headers.
+ *
  * The canonical, versioned AeroGPU device ABI is defined in:
  *   - `drivers/aerogpu/protocol/README.md`
  *   - `aerogpu_pci.h`  (PCI/MMIO + versioning + features)
