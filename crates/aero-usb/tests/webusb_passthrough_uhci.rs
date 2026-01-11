@@ -16,6 +16,8 @@ use util::{
 
 const USBINTR_SHORT_PACKET: u16 = 1 << 3;
 const TD_CTRL_SPD: u32 = 1 << 29;
+const USBSTS_USBERRINT: u16 = 1 << 1;
+const TD_CTRL_CRCERR: u32 = 1 << 18;
 
 fn setup_packet_bytes(setup: SetupPacket) -> [u8; 8] {
     let mut bytes = [0u8; 8];
@@ -436,6 +438,89 @@ fn control_out_pending_acks_data_then_naks_status_until_completion() {
 
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
     assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+}
+
+#[test]
+fn control_in_error_completion_maps_to_timeout_and_sets_usberrint() {
+    let io_base = 0x5260;
+    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+
+    // Enable error interrupts so we can observe USBSTS_USBERRINT.
+    ctrl.port_write(io_base + REG_USBINTR, 2, 0x01u32, &mut irq); // USBINTR_TIMEOUT_CRC
+
+    let setup = SetupPacket {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0100,
+        index: 0,
+        length: 8,
+    };
+
+    let qh_addr = alloc.alloc(0x20, 0x10);
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+    let data_buf = alloc.alloc(8, 0x10);
+    let data_td = alloc.alloc(0x20, 0x10);
+    let status_td = alloc.alloc(0x20, 0x10);
+
+    mem.write(setup_buf, &setup_packet_bytes(setup));
+    write_td(
+        &mut mem,
+        setup_td,
+        data_td,
+        td_ctrl(true, false),
+        td_token(0x2D, 0, 0, false, 8),
+        setup_buf,
+    );
+    write_td(
+        &mut mem,
+        data_td,
+        status_td,
+        td_ctrl(true, false),
+        td_token(0x69, 0, 0, true, 8),
+        data_buf,
+    );
+    // Status stage: OUT ZLP.
+    write_td(
+        &mut mem,
+        status_td,
+        LINK_PTR_T,
+        td_ctrl(true, true),
+        td_token(0xE1, 0, 0, true, 0),
+        0,
+    );
+    write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(&mut mem, fl_base, qh_addr);
+
+    // Frame #1: SETUP completes, DATA TD NAKs while pending.
+    ctrl.step_frame(&mut mem, &mut irq);
+
+    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    assert_eq!(actions.len(), 1);
+    let id = match actions.pop().unwrap() {
+        UsbHostAction::ControlIn { id, .. } => id,
+        other => panic!("unexpected action: {other:?}"),
+    };
+
+    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlIn {
+        id,
+        result: UsbHostCompletionIn::Error {
+            message: "boom".to_string(),
+        },
+    });
+
+    // Frame #2: DATA TD completes with TIMEOUT/CRCERR, and controller sets USBERRINT.
+    ctrl.step_frame(&mut mem, &mut irq);
+
+    let data_ctrl = mem.read_u32(data_td + 4);
+    assert_eq!(data_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(data_ctrl & TD_CTRL_CRCERR, 0);
+    assert_eq!(actlen(data_ctrl), 0);
+    // Controller should stop processing within the QH on error, leaving the status TD active.
+    assert_eq!(mem.read_u32(qh_addr + 4), status_td);
+
+    assert_ne!(ctrl.port_read(io_base + 0x02, 2) as u16 & USBSTS_USBERRINT, 0);
+    assert!(irq.raised, "USBERRINT should assert IRQ when enabled");
 }
 
 #[test]
