@@ -59,7 +59,9 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
-          locked: auto
+          # Always require lockfiles to be honoured in CI (avoid silently updating
+          # dependencies during `cargo test`).
+          locked: always
 
       - name: cargo test (tools/packaging/aero_packager)
         shell: bash
