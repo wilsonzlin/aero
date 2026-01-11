@@ -210,7 +210,7 @@ mod tests {
     fn render_pipeline_key_hash_is_stable_for_identical_state() {
         // This is a pure unit test: we don't need wgpu to create an actual pipeline,
         // only to ensure the key is Hash/Eq-stable as we build it from state.
-        let mk = |vs: ShaderHash, ps: ShaderHash, scissor_enabled: bool| PipelineKey {
+        let mk = |vs: ShaderHash, ps: ShaderHash| PipelineKey {
             vertex_shader: vs,
             fragment_shader: ps,
             color_targets: vec![ColorTargetKey {
@@ -222,14 +222,13 @@ mod tests {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             front_face: wgpu::FrontFace::Ccw,
-            scissor_enabled,
             vertex_buffers: vec![],
             sample_count: 1,
             layout: PipelineLayoutKey::empty(),
         };
 
-        let k1 = mk(1, 2, false);
-        let k2 = mk(1, 2, false);
+        let k1 = mk(1, 2);
+        let k2 = mk(1, 2);
 
         assert_eq!(k1, k2);
         let mut h1 = DefaultHasher::new();
@@ -238,7 +237,7 @@ mod tests {
         k2.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
 
-        let k3 = mk(1, 2, true);
+        let k3 = mk(1, 3);
         assert_ne!(k1, k3);
     }
 }

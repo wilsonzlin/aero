@@ -439,7 +439,6 @@ impl AerogpuCmdRuntime {
             primitive_topology,
             cull_mode,
             front_face,
-            scissor_enabled,
             vertex_buffers: vertex_buffer_keys,
             sample_count: 1,
             layout: layout_key,

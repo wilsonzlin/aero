@@ -1565,6 +1565,8 @@ impl AerogpuD3d11Executor {
                 | OPCODE_BIND_SHADERS
                 | OPCODE_SET_INPUT_LAYOUT
                 | OPCODE_SET_BLEND_STATE
+                | OPCODE_SET_DEPTH_STENCIL_STATE
+                | OPCODE_SET_RASTERIZER_STATE
                 | OPCODE_SET_VIEWPORT
                 | OPCODE_SET_SCISSOR
                 | OPCODE_SET_VERTEX_BUFFERS
@@ -1704,6 +1706,123 @@ impl AerogpuD3d11Executor {
 
                 if next_blend != self.state.blend || next_write_mask != self.state.color_write_mask
                 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_DEPTH_STENCIL_STATE {
+                use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetDepthStencilState;
+
+                if cmd_bytes.len() < std::mem::size_of::<AerogpuCmdSetDepthStencilState>() {
+                    break;
+                }
+
+                // Depth-stencil state affects pipeline creation only when a depth attachment is
+                // bound for this pass. If no depth buffer is bound, updates are always safe.
+                if self.state.depth_stencil.is_some() {
+                    let cmd: AerogpuCmdSetDepthStencilState = read_packed_unaligned(cmd_bytes)?;
+                    let state = cmd.state;
+
+                    let next_depth_enable = u32::from_le(state.depth_enable) != 0;
+                    let next_depth_write_enable = u32::from_le(state.depth_write_enable) != 0;
+                    let next_depth_func = u32::from_le(state.depth_func);
+                    let next_stencil_enable = u32::from_le(state.stencil_enable) != 0;
+
+                    let next_depth_compare =
+                        map_compare_func(next_depth_func).unwrap_or(wgpu::CompareFunction::Always);
+                    let next_depth_compare = if next_depth_enable {
+                        next_depth_compare
+                    } else {
+                        wgpu::CompareFunction::Always
+                    };
+                    let next_depth_write_enabled = next_depth_enable && next_depth_write_enable;
+
+                    let (next_stencil_read_mask, next_stencil_write_mask) = if next_stencil_enable {
+                        (
+                            state.stencil_read_mask as u32,
+                            state.stencil_write_mask as u32,
+                        )
+                    } else {
+                        (0, 0)
+                    };
+
+                    let current_depth_compare = if self.state.depth_enable {
+                        self.state.depth_compare
+                    } else {
+                        wgpu::CompareFunction::Always
+                    };
+                    let current_depth_write_enabled =
+                        self.state.depth_enable && self.state.depth_write_enable;
+                    let (current_stencil_read_mask, current_stencil_write_mask) =
+                        if self.state.stencil_enable {
+                            (
+                                self.state.stencil_read_mask as u32,
+                                self.state.stencil_write_mask as u32,
+                            )
+                        } else {
+                            (0, 0)
+                        };
+
+                    if current_depth_compare != next_depth_compare
+                        || current_depth_write_enabled != next_depth_write_enabled
+                        || current_stencil_read_mask != next_stencil_read_mask
+                        || current_stencil_write_mask != next_stencil_write_mask
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if opcode == OPCODE_SET_RASTERIZER_STATE {
+                use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdSetRasterizerState;
+
+                if cmd_bytes.len() < std::mem::size_of::<AerogpuCmdSetRasterizerState>() {
+                    break;
+                }
+
+                let cmd: AerogpuCmdSetRasterizerState = read_packed_unaligned(cmd_bytes)?;
+                let state = cmd.state;
+
+                let cull_mode_raw = u32::from_le(state.cull_mode);
+                let front_ccw = u32::from_le(state.front_ccw) != 0;
+                let next_depth_bias = i32::from_le(state.depth_bias);
+                let flags = u32::from_le(state.flags);
+                let next_depth_clip_enabled =
+                    flags & AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE == 0;
+
+                let next_cull_mode = match cull_mode_raw {
+                    0 => None,
+                    1 => Some(wgpu::Face::Front),
+                    2 => Some(wgpu::Face::Back),
+                    _ => self.state.cull_mode,
+                };
+                let next_front_face = if front_ccw {
+                    wgpu::FrontFace::Ccw
+                } else {
+                    wgpu::FrontFace::Cw
+                };
+
+                if next_cull_mode != self.state.cull_mode
+                    || next_front_face != self.state.front_face
+                {
+                    break;
+                }
+
+                if self.state.depth_stencil.is_some() && next_depth_bias != self.state.depth_bias {
+                    break;
+                }
+
+                let current_vs_hash = if self.state.depth_clip_enabled {
+                    vs.wgsl_hash
+                } else {
+                    vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
+                };
+                let next_vs_hash = if next_depth_clip_enabled {
+                    vs.wgsl_hash
+                } else {
+                    vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
+                };
+                if current_vs_hash != next_vs_hash {
                     break;
                 }
             }
@@ -2057,6 +2176,28 @@ impl AerogpuD3d11Executor {
                         b: self.state.blend_constant[2] as f64,
                         a: self.state.blend_constant[3] as f64,
                     });
+                }
+                OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes)?,
+                OPCODE_SET_RASTERIZER_STATE => {
+                    self.exec_set_rasterizer_state(cmd_bytes)?;
+
+                    if let Some((rt_w, rt_h)) = rt_dims {
+                        if self.state.scissor_enable {
+                            if let Some(sc) = self.state.scissor {
+                                let x = sc.x.min(rt_w);
+                                let y = sc.y.min(rt_h);
+                                let width = sc.width.min(rt_w.saturating_sub(x));
+                                let height = sc.height.min(rt_h.saturating_sub(y));
+                                if width > 0 && height > 0 {
+                                    pass.set_scissor_rect(x, y, width, height);
+                                }
+                            } else {
+                                pass.set_scissor_rect(0, 0, rt_w, rt_h);
+                            }
+                        } else {
+                            pass.set_scissor_rect(0, 0, rt_w, rt_h);
+                        }
+                    }
                 }
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
@@ -5013,7 +5154,6 @@ fn get_or_create_render_pipeline_for_state<'a>(
         primitive_topology: state.primitive_topology,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
-        scissor_enabled: state.scissor_enable,
         vertex_buffers: vertex_buffer_keys,
         sample_count: 1,
         layout: layout_key,
