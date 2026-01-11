@@ -42,25 +42,25 @@ impl SetupPacket {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum UsbHostAction {
     /// Control transfer, IN direction (device-to-host).
-    ControlIn { id: u64, setup: SetupPacket },
+    ControlIn { id: u32, setup: SetupPacket },
     /// Control transfer, OUT direction (host-to-device).
     ControlOut {
-        id: u64,
+        id: u32,
         setup: SetupPacket,
         data: Vec<u8>,
     },
     /// Bulk/interrupt transfer, IN direction.
-    BulkIn { id: u64, endpoint: u8, length: u32 },
+    BulkIn { id: u32, endpoint: u8, length: u32 },
     /// Bulk/interrupt transfer, OUT direction.
     BulkOut {
-        id: u64,
+        id: u32,
         endpoint: u8,
         data: Vec<u8>,
     },
 }
 
 impl UsbHostAction {
-    fn id(&self) -> u64 {
+    fn id(&self) -> u32 {
         match self {
             UsbHostAction::ControlIn { id, .. } => *id,
             UsbHostAction::ControlOut { id, .. } => *id,
@@ -98,22 +98,22 @@ pub enum UsbHostCompletionOut {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum UsbHostCompletion {
     ControlIn {
-        id: u64,
+        id: u32,
         #[serde(flatten)]
         result: UsbHostCompletionIn,
     },
     ControlOut {
-        id: u64,
+        id: u32,
         #[serde(flatten)]
         result: UsbHostCompletionOut,
     },
     BulkIn {
-        id: u64,
+        id: u32,
         #[serde(flatten)]
         result: UsbHostCompletionIn,
     },
     BulkOut {
-        id: u64,
+        id: u32,
         #[serde(flatten)]
         result: UsbHostCompletionOut,
     },
@@ -128,7 +128,7 @@ enum UsbHostResult {
 }
 
 impl UsbHostResult {
-    fn from_completion(completion: UsbHostCompletion) -> (u64, Self) {
+    fn from_completion(completion: UsbHostCompletion) -> (u32, Self) {
         match completion {
             UsbHostCompletion::ControlIn { id, result }
             | UsbHostCompletion::BulkIn { id, result } => {
@@ -181,22 +181,25 @@ pub enum UsbOutResult {
 
 #[derive(Debug, Clone)]
 struct ControlInflight {
-    id: u64,
+    id: u32,
     setup: SetupPacket,
     data: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
 struct EpInflight {
-    id: u64,
+    id: u32,
     len: usize,
 }
 
 #[derive(Debug)]
 pub struct UsbPassthroughDevice {
-    next_id: u64,
+    // `id` is part of the Rust<->TypeScript wire contract and must be representable
+    // as a JS number (avoid `u64` here; `serde-wasm-bindgen` would surface it as
+    // a `bigint`).
+    next_id: u32,
     actions: VecDeque<UsbHostAction>,
-    completions: HashMap<u64, UsbHostResult>,
+    completions: HashMap<u32, UsbHostResult>,
     control_inflight: Option<ControlInflight>,
     ep_inflight: HashMap<u8, EpInflight>,
 }
@@ -212,13 +215,13 @@ impl UsbPassthroughDevice {
         }
     }
 
-    fn alloc_id(&mut self) -> u64 {
+    fn alloc_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
         id
     }
 
-    fn is_inflight_id(&self, id: u64) -> bool {
+    fn is_inflight_id(&self, id: u32) -> bool {
         if self
             .control_inflight
             .as_ref()
@@ -262,11 +265,11 @@ impl UsbPassthroughDevice {
         self.ep_inflight.clear();
     }
 
-    fn take_result(&mut self, id: u64) -> Option<UsbHostResult> {
+    fn take_result(&mut self, id: u32) -> Option<UsbHostResult> {
         self.completions.remove(&id)
     }
 
-    fn drop_queued_action(&mut self, id: u64) {
+    fn drop_queued_action(&mut self, id: u32) {
         self.actions.retain(|action| action.id() != id);
     }
 
@@ -455,7 +458,7 @@ impl Default for UsbPassthroughDevice {
 pub struct PendingSummary {
     pub queued_actions: usize,
     pub queued_completions: usize,
-    pub inflight_control: Option<u64>,
+    pub inflight_control: Option<u32>,
     pub inflight_endpoints: usize,
 }
 

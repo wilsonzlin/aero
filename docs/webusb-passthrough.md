@@ -118,10 +118,10 @@ type UsbHostCompletion =
 The `id` correlates an action with its completion and is also how we prevent duplicate
 WebUSB calls when the guest retries a NAKed TD.
 
-⚠️ **WASM note:** the Rust model uses `u64` ids internally. When actions are serialized out of
-WASM via `serde-wasm-bindgen`, the `id` may be surfaced to JavaScript as a `bigint` (even when
-the value is small). The worker-side runtime (`web/src/usb/webusb_passthrough_runtime.ts`)
-normalizes `bigint` ids into JS numbers (and will reset the bridge if an id exceeds
+⚠️ **WASM note:** ids are generated in Rust and must be representable as JS numbers. Older WASM
+builds used `u64` ids, which can be surfaced to JavaScript as `bigint` via `serde-wasm-bindgen`.
+The worker-side runtime (`web/src/usb/webusb_passthrough_runtime.ts`) defensively normalizes
+`bigint` ids into JS numbers (and will reset the bridge if an id exceeds
 `Number.MAX_SAFE_INTEGER`) before forwarding actions to the main-thread broker.
 
 Cancellation behavior:
