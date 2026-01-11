@@ -4,7 +4,7 @@ use aero_storage::{
     ChunkManifest, StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
 };
 use hyper::header::{
-    ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE, RANGE,
+    ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE, LAST_MODIFIED, RANGE,
 };
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -31,6 +31,12 @@ struct State {
     ignore_range: bool,
     wrong_content_range: bool,
     content_encoding: Option<String>,
+    counters: Counters,
+}
+
+struct LastModifiedState {
+    image: Arc<Vec<u8>>,
+    last_modified: String,
     counters: Counters,
 }
 
@@ -208,6 +214,111 @@ async fn handle_request(
     let mut resp = Response::new(Body::empty());
     *resp.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
     Ok(resp)
+}
+
+async fn start_last_modified_server(
+    image: Vec<u8>,
+    last_modified: &str,
+) -> (Url, Arc<LastModifiedState>, oneshot::Sender<()>) {
+    let state = Arc::new(LastModifiedState {
+        image: Arc::new(image),
+        last_modified: last_modified.to_string(),
+        counters: Counters::default(),
+    });
+
+    let make_svc = {
+        let state = state.clone();
+        make_service_fn(move |_conn| {
+            let state = state.clone();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |req| {
+                    let state = state.clone();
+                    async move {
+                        match *req.method() {
+                            Method::HEAD => {
+                                state.counters.head.fetch_add(1, Ordering::SeqCst);
+                                let mut resp = Response::new(Body::empty());
+                                *resp.status_mut() = StatusCode::OK;
+                                resp.headers_mut().insert(
+                                    CONTENT_LENGTH,
+                                    (state.image.len() as u64).to_string().parse().unwrap(),
+                                );
+                                resp.headers_mut()
+                                    .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+                                resp.headers_mut().insert(
+                                    LAST_MODIFIED,
+                                    state.last_modified.parse().unwrap(),
+                                );
+                                Ok::<_, Infallible>(resp)
+                            }
+                            Method::GET => {
+                                let Some(range_header) =
+                                    req.headers().get(RANGE).and_then(|v| v.to_str().ok())
+                                else {
+                                    let mut resp = Response::new(Body::empty());
+                                    *resp.status_mut() = StatusCode::BAD_REQUEST;
+                                    return Ok(resp);
+                                };
+                                state.counters.get_range.fetch_add(1, Ordering::SeqCst);
+                                let (start, end_exclusive) =
+                                    match parse_range_header(range_header, state.image.len() as u64) {
+                                        Ok(v) => v,
+                                        Err(status) => {
+                                            let mut resp = Response::new(Body::empty());
+                                            *resp.status_mut() = status;
+                                            return Ok(resp);
+                                        }
+                                    };
+
+                                let end_inclusive = end_exclusive - 1;
+                                let body =
+                                    state.image[start as usize..end_exclusive as usize].to_vec();
+                                let mut resp = Response::new(Body::from(body));
+                                *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
+                                resp.headers_mut().insert(
+                                    CONTENT_LENGTH,
+                                    (end_exclusive - start).to_string().parse().unwrap(),
+                                );
+                                resp.headers_mut()
+                                    .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+                                resp.headers_mut().insert(
+                                    LAST_MODIFIED,
+                                    state.last_modified.parse().unwrap(),
+                                );
+                                resp.headers_mut().insert(
+                                    CONTENT_RANGE,
+                                    format!(
+                                        "bytes {start}-{end_inclusive}/{}",
+                                        state.image.len()
+                                    )
+                                    .parse()
+                                    .unwrap(),
+                                );
+                                Ok(resp)
+                            }
+                            _ => {
+                                let mut resp = Response::new(Body::empty());
+                                *resp.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
+                                Ok(resp)
+                            }
+                        }
+                    }
+                }))
+            }
+        })
+    };
+
+    let addr: SocketAddr = ([127, 0, 0, 1], 0).into();
+    let builder = Server::try_bind(&addr).expect("bind");
+    let local_addr = builder.local_addr();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = builder
+        .serve(make_svc)
+        .with_graceful_shutdown(async move { let _ = shutdown_rx.await; });
+    tokio::spawn(server);
+
+    let url = Url::parse(&format!("http://{local_addr}/image.raw")).expect("url");
+    (url, state, shutdown_tx)
 }
 
 fn parse_range_header(header: &str, total_size: u64) -> Result<(u64, u64), StatusCode> {
@@ -602,6 +713,47 @@ async fn http_errors_redact_url_query() {
         !msg.contains("token=supersecret"),
         "error message should not contain query tokens: {msg}"
     );
+}
+
+#[tokio::test]
+async fn last_modified_is_used_as_validator_when_etag_missing() {
+    let image: Vec<u8> = (0..(4096 + 123))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    let last_modified = "Mon, 01 Jan 2024 00:00:00 GMT";
+    let (url, state, shutdown) = start_last_modified_server(image.clone(), last_modified).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+
+    let disk = StreamingDisk::open(config.clone()).await.unwrap();
+    assert_eq!(disk.validator(), Some(last_modified));
+
+    let mut buf = vec![0u8; 200];
+    disk.read_at(1000, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[1000..1200]);
+    assert_eq!(state.counters.get_range.load(Ordering::SeqCst), 2);
+    drop(disk);
+
+    let mut url2 = url.clone();
+    url2.set_query(Some("token=ignored"));
+    let mut config2 = config;
+    config2.url = url2;
+    let disk2 = StreamingDisk::open(config2).await.unwrap();
+    assert_eq!(disk2.validator(), Some(last_modified));
+    let mut buf2 = vec![0u8; 200];
+    disk2.read_at(1000, &mut buf2).await.unwrap();
+    assert_eq!(&buf2[..], &image[1000..1200]);
+    assert_eq!(
+        state.counters.get_range.load(Ordering::SeqCst),
+        2,
+        "cache should persist across runs when validator comes from Last-Modified"
+    );
+
+    let _ = shutdown.send(());
 }
 
 #[tokio::test]

@@ -12,8 +12,8 @@ use std::{
 
 use crate::range_set::{ByteRange, RangeSet};
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
-    CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH,
+    CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1073,24 +1073,16 @@ impl StreamingDisk {
                 //
                 // However, a server that does *not* support Range may also reply with 200. To
                 // avoid mislabeling the error, only treat 200 as a validator mismatch when the
-                // server provides an ETag that differs from the requested validator.
+                // server provides a validator that differs from the requested validator.
                 if resp.status() == reqwest::StatusCode::PRECONDITION_FAILED {
-                    let actual = resp
-                        .headers()
-                        .get(ETAG)
-                        .and_then(|v| v.to_str().ok())
-                        .map(|v| v.to_string());
+                    let actual = extract_validator(resp.headers());
                     return Err(StreamingDiskError::ValidatorMismatch {
                         expected: Some(expected.clone()),
                         actual,
                     });
                 }
                 if resp.status() == reqwest::StatusCode::OK {
-                    let actual = resp
-                        .headers()
-                        .get(ETAG)
-                        .and_then(|v| v.to_str().ok())
-                        .map(|v| v.to_string());
+                    let actual = extract_validator(resp.headers());
                     if actual
                         .as_deref()
                         .is_some_and(|etag| etag != expected.as_str())
@@ -1180,11 +1172,7 @@ async fn probe_remote_size_and_validator(
                 .get(CONTENT_LENGTH)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok());
-            head_validator = resp
-                .headers()
-                .get(ETAG)
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.to_string());
+            head_validator = extract_validator(resp.headers());
 
             let accept_ranges = resp
                 .headers()
@@ -1218,11 +1206,7 @@ async fn probe_remote_size_and_validator(
         )));
     }
 
-    let validator = resp
-        .headers()
-        .get(ETAG)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_string());
+    let validator = extract_validator(resp.headers());
 
     let cr = resp
         .headers()
@@ -1271,6 +1255,19 @@ fn format_reqwest_error(err: reqwest::Error) -> String {
         msg = msg.replace(url.as_str(), redacted.as_str());
     }
     msg
+}
+
+fn extract_validator(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string())
+        .or_else(|| {
+            headers
+                .get(LAST_MODIFIED)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.to_string())
+        })
 }
 
 fn cache_backend_looks_populated(
