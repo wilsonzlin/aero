@@ -754,3 +754,129 @@ impl AeroGpuCommandProcessor {
         Ok(events)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+
+    const TEST_HANDLE: u32 = 1;
+    const TEST_ALLOC_ID: u32 = 42;
+
+    fn alloc_entry(alloc_id: u32, size_bytes: u64) -> AeroGpuSubmissionAllocation {
+        AeroGpuSubmissionAllocation {
+            alloc_id,
+            gpa: 0x1000,
+            size_bytes,
+        }
+    }
+
+    #[test]
+    fn create_buffer_requires_alloc_table_when_backing_alloc_id_nonzero() {
+        let mut w = AerogpuCmdWriter::new();
+        w.create_buffer(
+            TEST_HANDLE,
+            /*usage_flags=*/ 0,
+            /*size_bytes=*/ 4,
+            TEST_ALLOC_ID,
+            0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = AeroGpuCommandProcessor::new();
+        let err = proc
+            .process_submission_with_allocations(&bytes, None, /*signal_fence=*/ 1)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            CommandProcessorError::MissingAllocationTable(TEST_ALLOC_ID)
+        );
+    }
+
+    #[test]
+    fn create_buffer_reports_unknown_alloc_id() {
+        let mut w = AerogpuCmdWriter::new();
+        w.create_buffer(
+            TEST_HANDLE,
+            /*usage_flags=*/ 0,
+            /*size_bytes=*/ 4,
+            TEST_ALLOC_ID,
+            0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = AeroGpuCommandProcessor::new();
+        let allocs = [alloc_entry(TEST_ALLOC_ID + 1, 4)];
+        let err = proc
+            .process_submission_with_allocations(&bytes, Some(&allocs), /*signal_fence=*/ 1)
+            .unwrap_err();
+        assert_eq!(err, CommandProcessorError::UnknownAllocId(TEST_ALLOC_ID));
+    }
+
+    #[test]
+    fn dirty_range_requires_alloc_table_for_guest_backed_resource() {
+        let mut proc = AeroGpuCommandProcessor::new();
+
+        // Establish a guest-backed resource in the processor state.
+        let mut w = AerogpuCmdWriter::new();
+        w.create_buffer(
+            TEST_HANDLE,
+            /*usage_flags=*/ 0,
+            /*size_bytes=*/ 4,
+            TEST_ALLOC_ID,
+            0,
+        );
+        let create = w.finish();
+        let allocs = [alloc_entry(TEST_ALLOC_ID, 4)];
+        proc.process_submission_with_allocations(&create, Some(&allocs), /*signal_fence=*/ 1)
+            .unwrap();
+
+        // A subsequent dirty-range submission must still provide an allocation table so the host
+        // can resolve the resource backing via alloc_id.
+        let mut w = AerogpuCmdWriter::new();
+        w.resource_dirty_range(
+            TEST_HANDLE,
+            /*offset_bytes=*/ 0,
+            /*size_bytes=*/ 4,
+        );
+        let dirty = w.finish();
+        let err = proc
+            .process_submission_with_allocations(&dirty, None, /*signal_fence=*/ 2)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            CommandProcessorError::MissingAllocationTable(TEST_ALLOC_ID)
+        );
+    }
+
+    #[test]
+    fn dirty_range_is_ignored_for_host_owned_resources() {
+        let mut proc = AeroGpuCommandProcessor::new();
+
+        // Host-owned resource: backing_alloc_id = 0.
+        let mut w = AerogpuCmdWriter::new();
+        w.create_buffer(
+            TEST_HANDLE,
+            /*usage_flags=*/ 0,
+            /*size_bytes=*/ 4,
+            /*backing_alloc_id=*/ 0,
+            0,
+        );
+        let create = w.finish();
+        proc.process_submission_with_allocations(&create, None, /*signal_fence=*/ 1)
+            .unwrap();
+
+        // Some guests may conservatively emit dirty notifications even for host-owned resources;
+        // these should be ignored (and must not require an allocation table).
+        let mut w = AerogpuCmdWriter::new();
+        w.resource_dirty_range(
+            TEST_HANDLE,
+            /*offset_bytes=*/ 0,
+            /*size_bytes=*/ 4,
+        );
+        let dirty = w.finish();
+        proc.process_submission_with_allocations(&dirty, None, /*signal_fence=*/ 2)
+            .unwrap();
+    }
+}
